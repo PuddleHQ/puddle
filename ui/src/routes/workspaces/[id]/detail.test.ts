@@ -407,6 +407,29 @@ describe("the overview", () => {
     ).toBeEnabled();
   });
 
+  it("shows why the settings can't be read when the API says, from either read", async () => {
+    const reason =
+      "puddle cannot read the settings of workspace demo: settings must be an object";
+    for (const path of [
+      "/api/settings/workspaces/{workspace}",
+      "/api/settings",
+    ]) {
+      await load();
+      api.refuse.set(`GET ${path}`, {
+        status: 409,
+        error: "settings_unreadable",
+        message: reason,
+      });
+      render(Settings);
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent(
+        "Couldn't read this workspace's settings.",
+      );
+      expect(alert).toHaveTextContent(reason);
+      cleanup();
+    }
+  });
+
   it("shows nothing for a workspace it doesn't know", async () => {
     url.id = "nope";
     await load();

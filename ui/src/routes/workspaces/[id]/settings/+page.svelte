@@ -150,7 +150,10 @@
   {#if settings.status === "loading"}
     <p class="muted">Loading settings&hellip;</p>
   {:else if settings.status === "failed" || !settings.overrides || !settings.effective || !settings.global}
-    <p class="muted">Couldn't read this workspace's settings.</p>
+    <div role="alert">
+      <p class="muted">Couldn't read this workspace's settings.</p>
+      {#if settings.reason}<p class="error">{settings.reason}</p>{/if}
+    </div>
   {:else}
     {@const overrides = settings.overrides}
     {@const effective = settings.effective}

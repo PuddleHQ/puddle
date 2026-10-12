@@ -7,6 +7,7 @@ import type { components } from "#lib/api/schema.d.ts";
 import {
   bodyFrom,
   MS_TERMS_VERSION,
+  unreadableReason,
   type GlobalBody,
   type GlobalView,
 } from "#lib/settings/model.ts";
@@ -107,15 +108,6 @@ export class GlobalSettings {
       return unreachable();
     }
   }
-}
-
-/** The API's own words for a damaged settings file, from whichever read said so. */
-function unreadableReason(
-  ...errors: ({ error: string; message: string } | undefined)[]
-): string | null {
-  return (
-    errors.find((e) => e?.error === "settings_unreadable")?.message ?? null
-  );
 }
 
 const refused = (message?: string): SaveResult => ({

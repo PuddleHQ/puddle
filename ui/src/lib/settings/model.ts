@@ -14,6 +14,15 @@ export type Consent = S["Consent"];
 export type ServerChoice = NonNullable<VsCodeServer["server"]>;
 export type CloseBehaviour = NonNullable<Ui["close_behaviour"]>;
 
+/** The API's own words for a damaged settings file, from whichever read said so. */
+export function unreadableReason(
+  ...errors: ({ error: string; message: string } | undefined)[]
+): string | null {
+  return (
+    errors.find((e) => e?.error === "settings_unreadable")?.message ?? null
+  );
+}
+
 /** The licence the user accepts. Its URL is also the version of the terms recorded with the consent. */
 export const MS_TERMS_URL = "https://code.visualstudio.com/license/server";
 export const MS_TERMS_VERSION = MS_TERMS_URL;

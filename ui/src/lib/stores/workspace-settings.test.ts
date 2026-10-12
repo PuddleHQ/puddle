@@ -34,6 +34,24 @@ describe("loading", () => {
     expect(settings.status).toBe("failed");
   });
 
+  it("keeps the reason a damaged settings file is refused with, and clears it on a good read", async () => {
+    const reason = "puddle cannot read the settings of workspace demo: x";
+    api.refuse.set("GET /api/settings/workspaces/{workspace}", {
+      status: 409,
+      error: "settings_unreadable",
+      message: reason,
+    });
+    await settings.load("demo");
+    expect(settings.status).toBe("failed");
+    expect(settings.reason).toBe(reason);
+    api.refuse.set("GET /api/settings", { status: 500, message: "x" });
+    await settings.load("demo");
+    expect(settings.reason).toBeNull();
+    await settings.load("demo");
+    expect(settings.status).toBe("ready");
+    expect(settings.reason).toBeNull();
+  });
+
   it("a quiet reload keeps the form on screen even when it fails", async () => {
     await settings.load("demo");
     api.down = true;

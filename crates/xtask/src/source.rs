@@ -432,6 +432,12 @@ mod tests {
     }
 
     #[test]
+    fn msb_is_resolved_for_the_target_of_each_os() {
+        assert_eq!(msb_target(HostOs::Windows), "x86_64-pc-windows-msvc");
+        assert_eq!(msb_target(HostOs::Linux), "x86_64-unknown-linux-gnu");
+    }
+
+    #[test]
     fn parses_libkrunfw_makefile() {
         let mk = "KERNEL_VERSION = linux-6.12.109\nKERNEL_REMOTE = x\nABI_VERSION = 5\nFULL_VERSION = 5.6.1\n";
         assert_eq!(

@@ -116,3 +116,5 @@ crates/puddle/src/cmd/serve.rs | Err(e) => { | the startup path runs only in the
 crates/puddle/src/cmd/serve.rs | eprintln!("puddle: {e}"); | the startup path runs only in the real binary after the front/worker split; `log_level` is unit-tested and the exit path is three lines
 crates/puddle/src/cmd/serve.rs | return ExitCode::FAILURE; | the startup path runs only in the real binary after the front/worker split; `log_level` is unit-tested and the exit path is three lines
 crates/puddle-host/src/logins.rs | _ => LoginProblemKind::Unknown, | `Problem` is non-exhaustive in puddle-logins; every variant this version has is handled above, so no test can build one that reaches the fallback
+crates/xtask/src/source.rs | fn msb_inventory(&self, os: HostOs) -> Result<Inventory> { | the GitHub source clones the fork and runs cargo-about on msb's tree; no unit test has network and the clone, so only the fixture source (DirSource) is exercised
+crates/xtask/src/source.rs | &[msb_target(os)], | the GitHub source clones the fork and runs cargo-about on msb's tree; no unit test has network and the clone (msb_target is unit tested)

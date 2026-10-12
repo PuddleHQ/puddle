@@ -360,6 +360,24 @@ mod tests {
     }
 
     #[test]
+    fn the_runtime_folder_is_for_this_os_unless_told_otherwise() {
+        // No `--os`: on Linux the folder needs an msb to ship; Windows goes on to read the parts.
+        let err = run(args(&[
+            "runtime",
+            "--tag",
+            "v0.7.7-puddle.1",
+            "--from",
+            "/nonexistent",
+        ]))
+        .unwrap_err();
+        assert_eq!(
+            matches!(err, XtaskError::Usage(_)),
+            HostOs::current() == HostOs::Linux,
+            "{err}"
+        );
+    }
+
+    #[test]
     fn last_value_wins_and_switches_are_seen() {
         let o = Options::parse(
             vec![

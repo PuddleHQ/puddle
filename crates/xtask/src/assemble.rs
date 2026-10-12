@@ -267,10 +267,8 @@ fn build(
     puddle.check()?;
 
     place(&layout, &msb, &fw, staging)?;
-    if downloads.exists() {
-        std::fs::remove_dir_all(&downloads)
-            .map_err(|e| XtaskError::io(format!("removing {}", downloads.display()), e))?;
-    }
+    std::fs::remove_dir_all(&downloads)
+        .map_err(|e| XtaskError::io(format!("removing {}", downloads.display()), e))?;
 
     let firmware_files = layout
         .iter()
@@ -283,10 +281,8 @@ fn build(
     for (name, text) in LICENCE_TEXTS {
         write(&licenses.join(name), text)?;
     }
-    write(
-        &licenses.join("NOTICE.txt"),
-        notice::render(&facts, os, &firmware_files),
-    )?;
+    let notice = notice::render(&facts, os, &firmware_files);
+    write(&licenses.join("NOTICE.txt"), notice)?;
     write(
         &licenses.join("THIRD-PARTY-msb.txt"),
         msb_inventory.render(&format!(
@@ -377,6 +373,19 @@ mod tests {
     fn a_version_that_equals_the_soname_is_refused() {
         let err = plan(&linux("5")).unwrap_err().to_string();
         assert!(err.contains(LINUX.libkrunfw), "{err}");
+    }
+
+    #[test]
+    fn a_part_that_cannot_be_copied_is_named() {
+        let dir = std::env::temp_dir();
+        let missing = dir.join("xtask-assemble-no-such-msb");
+        let err = place(&[("msb".to_owned(), Part::Msb)], &missing, &missing, &dir)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("copying") && err.contains("no-such-msb"),
+            "{err}"
+        );
     }
 
     #[test]

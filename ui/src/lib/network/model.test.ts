@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 import {
+  DETECTED_LABEL,
+  ROOT_KIND_LABEL,
+  ROUTE_SOURCE_LABEL,
   attemptKey,
   expiryText,
   findings,
@@ -185,6 +188,21 @@ describe("findings", () => {
     expect(ids(r)).toEqual(["pull-direct"]);
     r.proxy.detected = "direct";
     expect(ids(r)).toEqual([]);
+  });
+
+  it("does not call an undetected setup a company proxy", () => {
+    const r = report();
+    r.pull_proxy = { active: true, via_upstream: false };
+    r.proxy.detected = "unknown";
+    expect(ids(r)).toEqual([]);
+  });
+
+  it("has a label for every wire value, the unknown ones included", () => {
+    expect(DETECTED_LABEL.unknown).toMatch(/doesn't recognise/);
+    expect(ROUTE_SOURCE_LABEL.unknown).toMatch(/doesn't recognise/);
+    expect(ROOT_KIND_LABEL.unknown).toBe("Unknown");
+    expect(ROOT_KIND_LABEL.root).toBe("Root");
+    expect(ROOT_KIND_LABEL.intermediate).toBe("Intermediate");
   });
 
   it("summarises the problems", () => {

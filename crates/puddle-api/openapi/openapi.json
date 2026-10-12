@@ -9819,7 +9819,8 @@
           "wpad",
           "static",
           "env",
-          "direct"
+          "direct",
+          "unknown"
         ]
       },
       "ProxyMode": {
@@ -10408,7 +10409,8 @@
         "description": "A certificate kind.",
         "enum": [
           "root",
-          "intermediate"
+          "intermediate",
+          "unknown"
         ]
       },
       "RootsReport": {
@@ -10532,7 +10534,8 @@
           "system",
           "env",
           "bypass",
-          "no_proxy"
+          "no_proxy",
+          "unknown"
         ]
       },
       "Rule": {

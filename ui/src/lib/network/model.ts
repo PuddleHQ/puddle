@@ -28,6 +28,7 @@ export const DETECTED_LABEL: Record<S["ProxyDetected"], string> = {
   static: "A fixed proxy from the system settings",
   env: "Proxy environment variables",
   direct: "No proxy (direct connection)",
+  unknown: "A kind of setup this version of puddle doesn't recognise",
 };
 
 export const MODE_LABEL: Record<S["ProxyMode"], string> = {
@@ -60,6 +61,13 @@ export const ROUTE_SOURCE_LABEL: Record<S["RouteSource"], string> = {
   env: "Environment variables",
   bypass: "On the bypass list",
   no_proxy: "On the NO_PROXY list",
+  unknown: "A way of choosing this version of puddle doesn't recognise",
+};
+
+export const ROOT_KIND_LABEL: Record<S["RootKind"], string> = {
+  root: "Root",
+  intermediate: "Intermediate",
+  unknown: "Unknown",
 };
 
 export const METHOD_LABEL: Record<string, string> = {
@@ -221,7 +229,11 @@ export function findings(report: NetworkHealth): Finding[] {
         "Image downloads don't go through puddle's pull proxy, so puddle's rules and address guard don't apply to them.",
       fix: null,
     });
-  } else if (!pull_proxy.via_upstream && proxy.detected !== "direct") {
+  } else if (
+    !pull_proxy.via_upstream &&
+    proxy.detected !== "direct" &&
+    proxy.detected !== "unknown"
+  ) {
     out.push({
       id: "pull-direct",
       level: "note",

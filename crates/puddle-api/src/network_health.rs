@@ -218,7 +218,7 @@ fn proxy_report(health: &ProxyHealth) -> ProxyReport {
             Detected::Wpad => ProxyDetected::Wpad,
             Detected::Static => ProxyDetected::Static,
             Detected::Env => ProxyDetected::Env,
-            _ => ProxyDetected::Direct,
+            _ => ProxyDetected::Unknown,
         },
         auto_detect: health.auto_detect,
         pac_url: health.pac_url.clone(),
@@ -294,7 +294,8 @@ fn route(sample: &RouteSample) -> RouteDecision {
             Source::System => RouteSource::System,
             Source::Env => RouteSource::Env,
             Source::Bypass => RouteSource::Bypass,
-            _ => RouteSource::NoProxy,
+            Source::NoProxy => RouteSource::NoProxy,
+            _ => RouteSource::Unknown,
         },
     }
 }
@@ -321,7 +322,8 @@ fn roots_report(state: Option<&RootsState>, left_out_of_tls: Vec<SkippedRoot>) -
             fingerprint: cert.fingerprint().to_string(),
             kind: match cert.kind() {
                 CertKind::Root => RootKind::Root,
-                _ => RootKind::Intermediate,
+                CertKind::Intermediate => RootKind::Intermediate,
+                _ => RootKind::Unknown,
             },
             not_after: cert.not_after_unix().saturating_mul(1000),
             sources: cert.sources().iter().map(ToString::to_string).collect(),

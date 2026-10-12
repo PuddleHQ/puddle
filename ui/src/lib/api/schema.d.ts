@@ -2579,7 +2579,7 @@ export interface components {
          * @description What puddle found out about the proxy setup.
          * @enum {string}
          */
-        ProxyDetected: "pac" | "wpad" | "static" | "env" | "direct";
+        ProxyDetected: "pac" | "wpad" | "static" | "env" | "direct" | "unknown";
         /**
          * @description Where puddle gets its proxy setting from.
          * @enum {string}
@@ -2834,7 +2834,7 @@ export interface components {
          * @description A certificate kind.
          * @enum {string}
          */
-        RootKind: "root" | "intermediate";
+        RootKind: "root" | "intermediate" | "unknown";
         /** @description The company roots puddle copied into workspaces. */
         RootsReport: {
             /** @description What workspaces get. */
@@ -2890,7 +2890,7 @@ export interface components {
          * @description How a route was chosen.
          * @enum {string}
          */
-        RouteSource: "loopback" | "disabled" | "manual" | "pac" | "pac_unsupported" | "system" | "env" | "bypass" | "no_proxy";
+        RouteSource: "loopback" | "disabled" | "manual" | "pac" | "pac_unsupported" | "system" | "env" | "bypass" | "no_proxy" | "unknown";
         /** @description A rule. */
         Rule: {
             /**

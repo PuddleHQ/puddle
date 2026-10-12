@@ -210,6 +210,7 @@ fn boot_uses_the_probes_runtime_folder() {
     if std::env::consts::ARCH == "x86_64" {
         let puddle_doctor::BootFacts::Ran {
             outcome: ProcessOutcome::SpawnFailed { os_error, .. },
+            ..
         } = facts
         else {
             panic!("unexpected {facts:?}");

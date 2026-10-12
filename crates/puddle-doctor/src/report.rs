@@ -134,8 +134,12 @@ pub enum Finding {
     BootSetupFailed,
     /// This process runs in a job that doesn't allow breakaway.
     JobWithoutBreakaway,
+    /// The code integrity state couldn't be read.
+    CodeIntegrityUnreadable,
     /// The Global Secure Access client is installed.
     GlobalSecureAccessInstalled,
+    /// Whether the Global Secure Access client is installed couldn't be read.
+    GlobalSecureAccessUnknown,
 }
 
 /// One line of the report.

@@ -12,7 +12,7 @@ use puddle_runtime::{
 
 use crate::diagnose::Probe;
 use crate::facts::{
-    AccessDenied, BootFacts, CodeIntegrity, GsaFacts, HypervisorFacts, JobFacts, Os,
+    AccessDenied, BootFacts, CodeIntegrityFacts, GsaFacts, HypervisorFacts, JobFacts, Os,
     ProcessOutcome, RuntimeFacts, RuntimeState,
 };
 use crate::{boot, launch, sys};
@@ -86,7 +86,7 @@ impl Probe for SystemProbe {
         sys::hypervisor()
     }
 
-    fn code_integrity(&self) -> Option<CodeIntegrity> {
+    fn code_integrity(&self) -> Option<CodeIntegrityFacts> {
         sys::code_integrity()
     }
 

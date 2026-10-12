@@ -99,7 +99,7 @@ mod tests {
     use std::time::Duration;
 
     use puddle_doctor::{
-        BootFacts, CodeIntegrity, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, Os,
+        BootFacts, CodeIntegrityFacts, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, Os,
         ProcessOutcome, RuntimeFacts, RuntimeState,
     };
 
@@ -124,7 +124,7 @@ mod tests {
                 hypervisor_vendor: None,
             }
         }
-        fn code_integrity(&self) -> Option<CodeIntegrity> {
+        fn code_integrity(&self) -> Option<CodeIntegrityFacts> {
             None
         }
         fn runtime(&self) -> RuntimeFacts {
@@ -158,6 +158,7 @@ mod tests {
                     stderr_tail: String::new(),
                     elapsed: Duration::from_millis(900),
                 },
+                kept_logs: None,
             }
         }
         fn job(&self) -> Option<JobFacts> {

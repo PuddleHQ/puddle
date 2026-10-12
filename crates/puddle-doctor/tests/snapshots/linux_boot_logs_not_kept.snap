@@ -1,0 +1,56 @@
+puddle doctor (puddle 0.1.0, linux x86_64)
+
+ok    CPU virtualization  on (the hypervisor uses it)
+ok    Hypervisor          /dev/kvm is usable
+ok    Bundled runtime     msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)
+ok    Runtime starts      msb 0.7.7-puddle.2 (0.0 s)
+FAIL  Test boot           msb exited with 1 without booting the test VM
+      fix:  msb starts but can't boot a VM. If endpoint security runs on this PC, check its log
+            for msb: it must be allowed to start virtual machines through the hypervisor.
+            Otherwise restart the PC and run puddle doctor again, and include the lines below
+            when you report it.
+      from: error: no hypervisor
+            msb's logs of this boot were not kept: no folder to keep them in under
+            /home/dev/kept: Permission denied
+
+1 problem to fix before puddle can run sandboxes. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "linux",
+  "arch": "x86_64",
+  "ok": false,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "ok",
+      "summary": "on (the hypervisor uses it)"
+    },
+    {
+      "id": "hypervisor",
+      "status": "ok",
+      "summary": "/dev/kvm is usable"
+    },
+    {
+      "id": "runtime",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)"
+    },
+    {
+      "id": "launch",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (0.0 s)"
+    },
+    {
+      "id": "test_boot",
+      "status": "fail",
+      "summary": "msb exited with 1 without booting the test VM",
+      "finding": "boot_failed",
+      "fix": "msb starts but can't boot a VM. If endpoint security runs on this PC, check its log for msb: it must be allowed to start virtual machines through the hypervisor. Otherwise restart the PC and run puddle doctor again, and include the lines below when you report it.",
+      "detail": "error: no hypervisor\nmsb's logs of this boot were not kept: no folder to keep them in under /home/dev/kept: Permission denied"
+    }
+  ],
+  "elapsed_ms": 1234
+}

@@ -111,7 +111,8 @@ fn vm_test_boot_passes_20_in_a_row_without_a_retry() {
                 outcome: puddle_doctor::ProcessOutcome::Exited {
                     code: Some(puddle_doctor::PROBE_EXIT_CODE),
                     ..
-                }
+                },
+                ..
             }
         );
         assert!(

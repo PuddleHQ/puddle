@@ -104,6 +104,31 @@ pub struct CodeIntegrity {
     pub test_signing: bool,
 }
 
+/// What reading the Windows code integrity state gave.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CodeIntegrityFacts {
+    /// The state was read.
+    Read(CodeIntegrity),
+    /// The query failed, so the state is unknown.
+    Unreadable {
+        /// What failed, with the status code.
+        detail: String,
+    },
+}
+
+impl CodeIntegrityFacts {
+    /// The facts for a failed `NtQuerySystemInformation` call that returned `status`.
+    #[must_use]
+    pub fn query_failed(status: i32) -> Self {
+        Self::Unreadable {
+            detail: format!(
+                "NtQuerySystemInformation(SystemCodeIntegrityInformation) failed: NTSTATUS 0x{:08X}",
+                status.cast_unsigned()
+            ),
+        }
+    }
+}
+
 /// Why the runtime's file can't be opened for running.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccessDenied {
@@ -188,6 +213,25 @@ pub enum BootFacts {
     Ran {
         /// How it ended (the probe exits with [`crate::PROBE_EXIT_CODE`]).
         outcome: ProcessOutcome,
+        /// What became of msb's logs; `None` unless a failed boot was asked to keep them.
+        kept_logs: Option<KeptLogs>,
+    },
+}
+
+/// What became of msb's logs of a failed test boot that was asked to keep them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeptLogs {
+    /// The logs went to a new folder.
+    Kept {
+        /// The folder.
+        dir: PathBuf,
+        /// The files that could not be copied into it, each with its error; empty when all were.
+        failed: Vec<String>,
+    },
+    /// Nothing was kept.
+    NotKept {
+        /// Why: msb left no logs, or the folder or the read failed.
+        detail: String,
     },
 }
 
@@ -199,13 +243,103 @@ pub struct JobFacts {
 }
 
 /// Microsoft Entra Global Secure Access client state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GsaFacts {
     /// None of its services exist.
     NotInstalled,
     /// At least one of its services exists.
     Installed {
-        /// Whether one of them is running.
-        running: bool,
+        /// Whether one of them is running; `None` when a service's state couldn't be read and no
+        /// other is known to run.
+        running: Option<bool>,
     },
+    /// The service manager couldn't be asked, so it is unknown whether the client is installed.
+    Unknown {
+        /// The OS error.
+        detail: String,
+    },
+}
+
+/// What one Global Secure Access service looked like.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceState {
+    /// The service doesn't exist.
+    Missing,
+    /// It exists and isn't running.
+    Stopped,
+    /// It exists and runs.
+    Running,
+    /// It exists (or may), but its state couldn't be read: access denied, or the status query
+    /// failed.
+    Unreadable,
+}
+
+impl GsaFacts {
+    /// The client's state from what each of its services looked like: one running service is
+    /// enough, and a service that couldn't be read leaves "not running" unproven.
+    #[must_use]
+    pub fn from_services(services: impl IntoIterator<Item = ServiceState>) -> Self {
+        let (mut stopped, mut unreadable) = (false, false);
+        for state in services {
+            match state {
+                ServiceState::Running => {
+                    return Self::Installed {
+                        running: Some(true),
+                    };
+                }
+                ServiceState::Stopped => stopped = true,
+                ServiceState::Unreadable => unreadable = true,
+                ServiceState::Missing => {}
+            }
+        }
+        if unreadable {
+            Self::Installed { running: None }
+        } else if stopped {
+            Self::Installed {
+                running: Some(false),
+            }
+        } else {
+            Self::NotInstalled
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ServiceState::{Missing, Running, Stopped, Unreadable};
+
+    #[test]
+    fn gsa_state_from_its_services() {
+        let installed = |running| GsaFacts::Installed { running };
+        assert_eq!(GsaFacts::from_services([]), GsaFacts::NotInstalled);
+        assert_eq!(
+            GsaFacts::from_services([Missing, Missing]),
+            GsaFacts::NotInstalled
+        );
+        assert_eq!(
+            GsaFacts::from_services([Missing, Stopped]),
+            installed(Some(false))
+        );
+        assert_eq!(
+            GsaFacts::from_services([Stopped, Running, Unreadable]),
+            installed(Some(true))
+        );
+        // An unreadable service might be the running one: "not running" would be a guess.
+        assert_eq!(
+            GsaFacts::from_services([Stopped, Unreadable, Missing]),
+            installed(None)
+        );
+        assert_eq!(GsaFacts::from_services([Unreadable]), installed(None));
+    }
+
+    #[test]
+    fn a_failed_code_integrity_query_names_the_status() {
+        let CodeIntegrityFacts::Unreadable { detail } =
+            CodeIntegrityFacts::query_failed(i32::from_ne_bytes(0xC000_0022_u32.to_ne_bytes()))
+        else {
+            panic!("expected the unreadable state");
+        };
+        assert!(detail.contains("NTSTATUS 0xC0000022"), "{detail}");
+    }
 }

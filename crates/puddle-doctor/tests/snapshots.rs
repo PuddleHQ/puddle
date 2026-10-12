@@ -14,9 +14,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use puddle_doctor::{
-    AccessDenied, BootFacts, CheckId, CodeIntegrity, Finding, GsaFacts, HypervisorApi,
-    HypervisorFacts, JobFacts, Options, Os, Probe, ProcessOutcome, Report, RuntimeFacts,
-    RuntimeState, Status, diagnose,
+    AccessDenied, BootFacts, CheckId, CodeIntegrity, CodeIntegrityFacts, Finding, GsaFacts,
+    HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Options, Os, Probe, ProcessOutcome, Report,
+    RuntimeFacts, RuntimeState, Status, diagnose,
 };
 use puddle_runtime::RuntimeError;
 
@@ -32,7 +32,7 @@ const EXPECTED: &str = "0.7.7-puddle.2";
 struct Fake {
     os: Os,
     hv: HypervisorFacts,
-    ci: Option<CodeIntegrity>,
+    ci: Option<CodeIntegrityFacts>,
     runtime: RuntimeState,
     launch: ProcessOutcome,
     boot: BootFacts,
@@ -54,6 +54,7 @@ fn exited(code: i32, stdout: &str, stderr: &str, ms: u64) -> ProcessOutcome {
 fn booted() -> BootFacts {
     BootFacts::Ran {
         outcome: exited(42, "", "", 1130),
+        kept_logs: None,
     }
 }
 
@@ -70,12 +71,12 @@ fn windows() -> Fake {
             firmware_virtualization: Some(true),
             hypervisor_vendor: Some("Microsoft Hv".into()),
         },
-        ci: Some(CodeIntegrity {
+        ci: Some(CodeIntegrityFacts::Read(CodeIntegrity {
             hvci: true,
             user_mode_enforced: false,
             user_mode_audit: false,
             test_signing: false,
-        }),
+        })),
         runtime: RuntimeState::Ready {
             version: EXPECTED.into(),
             overridden: false,
@@ -113,8 +114,8 @@ impl Probe for Fake {
     fn hypervisor(&self) -> HypervisorFacts {
         self.hv.clone()
     }
-    fn code_integrity(&self) -> Option<CodeIntegrity> {
-        self.ci
+    fn code_integrity(&self) -> Option<CodeIntegrityFacts> {
+        self.ci.clone()
     }
     fn runtime(&self) -> RuntimeFacts {
         let (dir, msb) = if self.os == Os::Windows {
@@ -142,7 +143,7 @@ impl Probe for Fake {
         self.job
     }
     fn global_secure_access(&self) -> Option<GsaFacts> {
-        self.gsa
+        self.gsa.clone()
     }
 }
 
@@ -433,12 +434,12 @@ fn windows_blocked_by_applocker() {
 #[test]
 fn windows_blocked_by_app_control() {
     let fake = Fake {
-        ci: Some(CodeIntegrity {
+        ci: Some(CodeIntegrityFacts::Read(CodeIntegrity {
             hvci: true,
             user_mode_enforced: true,
             user_mode_audit: false,
             test_signing: false,
-        }),
+        })),
         launch: spawn_failed(
             4551,
             "Your organization used Device Guard to block this app. Contact your support person for more info.",
@@ -553,6 +554,7 @@ fn windows_boot_failed() {
                 "error: failed to start sandbox\n  → sandbox process exited (exit code: 0) before agent relay became available",
                 10_400,
             ),
+            kept_logs: None,
         },
         ..windows()
     };
@@ -571,6 +573,7 @@ fn windows_boot_timed_out() {
             outcome: ProcessOutcome::TimedOut {
                 after: Duration::from_secs(25),
             },
+            kept_logs: None,
         },
         ..windows()
     };
@@ -592,6 +595,7 @@ fn windows_boot_denied_in_a_closed_job_is_the_job_not_edr() {
         }),
         boot: BootFacts::Ran {
             outcome: exited(1, "", DENIED, 900),
+            kept_logs: None,
         },
         ..windows()
     };
@@ -630,6 +634,7 @@ fn windows_boot_spawn_refused() {
     let fake = Fake {
         boot: BootFacts::Ran {
             outcome: spawn_failed(1260, "This program is blocked by group policy."),
+            kept_logs: None,
         },
         ..windows()
     };
@@ -641,6 +646,7 @@ fn windows_boot_spawn_refused() {
     let fake = Fake {
         boot: BootFacts::Ran {
             outcome: spawn_failed(1450, "Insufficient system resources exist."),
+            kept_logs: None,
         },
         ..windows()
     };
@@ -667,13 +673,15 @@ fn windows_boot_setup_failed() {
 #[test]
 fn windows_gsa_installed_warns_and_explains() {
     let fake = Fake {
-        gsa: Some(GsaFacts::Installed { running: true }),
-        ci: Some(CodeIntegrity {
+        gsa: Some(GsaFacts::Installed {
+            running: Some(true),
+        }),
+        ci: Some(CodeIntegrityFacts::Read(CodeIntegrity {
             hvci: false,
             user_mode_enforced: false,
             user_mode_audit: true,
             test_signing: true,
-        }),
+        })),
         ..windows()
     };
     let r = check(
@@ -684,7 +692,9 @@ fn windows_gsa_installed_warns_and_explains() {
     );
     assert!(r.ok, "a warning doesn't fail the report");
     let stopped = Fake {
-        gsa: Some(GsaFacts::Installed { running: false }),
+        gsa: Some(GsaFacts::Installed {
+            running: Some(false),
+        }),
         ..windows()
     };
     let r = run(&stopped, &Options::default());
@@ -693,6 +703,141 @@ fn windows_gsa_installed_warns_and_explains() {
             .unwrap()
             .summary
             .contains("not running")
+    );
+}
+
+#[test]
+fn windows_unreadable_code_integrity_is_an_info_check_not_a_missing_one() {
+    let fake = Fake {
+        ci: Some(CodeIntegrityFacts::query_failed(status(0xC000_0022))),
+        ..windows()
+    };
+    let r = check(
+        "windows_code_integrity_unreadable",
+        &fake,
+        CheckId::CodeIntegrity,
+        Some(Finding::CodeIntegrityUnreadable),
+    );
+    let ci = r.check(CheckId::CodeIntegrity).unwrap();
+    assert_eq!(ci.status, Status::Info);
+    assert!(ci.summary.contains("could not be read"), "{ci:?}");
+    assert!(
+        ci.detail.as_deref().unwrap().contains("0xC0000022"),
+        "{ci:?}"
+    );
+    assert!(r.ok);
+}
+
+#[test]
+fn windows_gsa_that_cannot_be_asked_is_unknown_with_the_os_error() {
+    let fake = Fake {
+        gsa: Some(GsaFacts::Unknown {
+            detail: "OpenSCManagerW: Access is denied. (os error 5)".into(),
+        }),
+        ..windows()
+    };
+    let r = check(
+        "windows_gsa_unknown",
+        &fake,
+        CheckId::GlobalSecureAccess,
+        Some(Finding::GlobalSecureAccessUnknown),
+    );
+    let gsa = r.check(CheckId::GlobalSecureAccess).unwrap();
+    assert_eq!(gsa.status, Status::Info);
+    assert!(
+        gsa.detail.as_deref().unwrap().contains("os error 5"),
+        "{gsa:?}"
+    );
+    assert!(r.ok);
+}
+
+#[test]
+fn windows_gsa_with_an_unreadable_service_does_not_claim_not_running() {
+    let fake = Fake {
+        gsa: Some(GsaFacts::Installed { running: None }),
+        ..windows()
+    };
+    let r = check(
+        "windows_gsa_running_unknown",
+        &fake,
+        CheckId::GlobalSecureAccess,
+        Some(Finding::GlobalSecureAccessInstalled),
+    );
+    let summary = &r.check(CheckId::GlobalSecureAccess).unwrap().summary;
+    assert!(summary.contains("running state unknown"), "{summary}");
+    assert!(!summary.contains("not running"), "{summary}");
+}
+
+#[test]
+fn a_failed_boots_kept_logs_are_named_in_the_report() {
+    let ran = |kept_logs| Fake {
+        boot: BootFacts::Ran {
+            outcome: exited(1, "", "error: no hypervisor", 900),
+            kept_logs: Some(kept_logs),
+        },
+        ..linux()
+    };
+    let kept = ran(KeptLogs::Kept {
+        dir: "/home/dev/kept/puddle-doctor-boot-1".into(),
+        failed: vec![],
+    });
+    let r = check(
+        "linux_boot_logs_kept",
+        &kept,
+        CheckId::TestBoot,
+        Some(Finding::BootFailed),
+    );
+    let detail = r.check(CheckId::TestBoot).unwrap().detail.clone().unwrap();
+    assert!(
+        detail.contains("error: no hypervisor")
+            && detail.contains("kept in /home/dev/kept/puddle-doctor-boot-1"),
+        "{detail}"
+    );
+    let partial = ran(KeptLogs::Kept {
+        dir: "/home/dev/kept/puddle-doctor-boot-1".into(),
+        failed: vec!["runtime.log: Permission denied".into()],
+    });
+    let detail = run(&partial, &Options::default())
+        .check(CheckId::TestBoot)
+        .unwrap()
+        .detail
+        .clone()
+        .unwrap();
+    assert!(
+        detail.contains("except runtime.log: Permission denied"),
+        "{detail}"
+    );
+    let lost = ran(KeptLogs::NotKept {
+        detail: "no folder to keep them in under /home/dev/kept: Permission denied".into(),
+    });
+    let r = check(
+        "linux_boot_logs_not_kept",
+        &lost,
+        CheckId::TestBoot,
+        Some(Finding::BootFailed),
+    );
+    let detail = r.check(CheckId::TestBoot).unwrap().detail.clone().unwrap();
+    assert!(detail.contains("were not kept: no folder"), "{detail}");
+}
+
+#[test]
+fn kept_logs_are_named_even_when_the_boot_failure_has_no_other_evidence() {
+    let fake = Fake {
+        boot: BootFacts::Ran {
+            outcome: ProcessOutcome::TimedOut {
+                after: Duration::from_secs(25),
+            },
+            kept_logs: Some(KeptLogs::Kept {
+                dir: "/k/puddle-doctor-boot-2".into(),
+                failed: vec![],
+            }),
+        },
+        ..linux()
+    };
+    let r = run(&fake, &Options::default());
+    assert_eq!(
+        r.check(CheckId::TestBoot).unwrap().detail.as_deref(),
+        Some("msb's logs of this boot are kept in /k/puddle-doctor-boot-2")
     );
 }
 
@@ -837,6 +982,7 @@ fn linux_boot_killed_by_signal_and_odd_exit() {
                     stderr_tail: "boom".into(),
                     elapsed: Duration::from_millis(5),
                 },
+                kept_logs: None,
             },
             ..linux()
         };
@@ -876,6 +1022,7 @@ fn linux_boot_without_firmware_is_an_incomplete_runtime() {
                 "error: microsandbox runtime installation is incomplete: /opt/puddle/runtime/msb\nhas no matching libkrunfw",
                 40,
             ),
+            kept_logs: None,
         },
         ..linux()
     };

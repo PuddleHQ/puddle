@@ -22,6 +22,8 @@ export class GlobalSettings {
   status = $state<Status>("loading");
   view = $state.raw<GlobalView | null>(null);
   consents = $state.raw<Consents | null>(null);
+  /** Why the settings can't be read, when the API says (a damaged settings file). */
+  reason = $state<string | null>(null);
   readonly #api: StoreApi;
   #queue: Promise<unknown> = Promise.resolve();
 
@@ -31,7 +33,10 @@ export class GlobalSettings {
 
   /** Reads settings and consents. `quiet` keeps what is on screen if it fails. */
   async load(quiet = false): Promise<void> {
-    if (!quiet) this.status = "loading";
+    if (!quiet) {
+      this.status = "loading";
+      this.reason = null;
+    }
     try {
       const [settings, consents] = await Promise.all([
         this.#api.GET("/api/settings"),
@@ -44,6 +49,7 @@ export class GlobalSettings {
       } else if (!quiet) {
         this.status =
           settings.error?.error === "newer_settings" ? "newer" : "failed";
+        this.reason = unreadableReason(settings.error, consents.error);
       }
     } catch {
       if (!quiet) this.status = "failed";
@@ -101,6 +107,15 @@ export class GlobalSettings {
       return unreachable();
     }
   }
+}
+
+/** The API's own words for a damaged settings file, from whichever read said so. */
+function unreadableReason(
+  ...errors: ({ error: string; message: string } | undefined)[]
+): string | null {
+  return (
+    errors.find((e) => e?.error === "settings_unreadable")?.message ?? null
+  );
 }
 
 const refused = (message?: string): SaveResult => ({

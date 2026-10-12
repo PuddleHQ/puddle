@@ -180,7 +180,10 @@
     These settings were saved by a newer puddle. Update puddle to change them.
   </p>
 {:else if !store.view || !store.consents}
-  <p class="muted" role="alert">Couldn't read puddle's settings.</p>
+  <div role="alert">
+    <p class="muted">Couldn't read puddle's settings.</p>
+    {#if store.reason}<p class="error">{store.reason}</p>{/if}
+  </div>
 {:else}
   {@const view = store.view}
   {@const eff = view.effective}

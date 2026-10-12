@@ -42,6 +42,35 @@ describe("loading", () => {
     expect(store.status).toBe("newer");
   });
 
+  it("keeps the reason a damaged settings file is refused with, from either read", async () => {
+    const reason = "puddle cannot read the global settings: not an object";
+    api.refuse.set("GET /api/settings", {
+      status: 409,
+      error: "settings_unreadable",
+      message: reason,
+    });
+    await store.load();
+    expect(store.status).toBe("failed");
+    expect(store.reason).toBe(reason);
+    api.refuse.clear();
+    api.refuse.set("GET /api/consents", {
+      status: 409,
+      error: "settings_unreadable",
+      message: reason,
+    });
+    await store.load();
+    expect(store.reason).toBe(reason);
+    // An ordinary failure has no reason to show, and a good read clears the old one.
+    api.refuse.clear();
+    api.down = true;
+    await store.load();
+    expect(store.reason).toBeNull();
+    api.down = false;
+    await store.load();
+    expect(store.status).toBe("ready");
+    expect(store.reason).toBeNull();
+  });
+
   it("a quiet load keeps what it has when it fails", async () => {
     await store.load();
     api.down = true;

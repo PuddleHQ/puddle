@@ -235,7 +235,7 @@
             }
           },
           "409": {
-            "description": "written by a newer puddle",
+            "description": "written by a newer puddle (newer_settings), or damaged (settings_unreadable)",
             "content": {
               "application/json": {
                 "schema": {
@@ -337,7 +337,7 @@
             }
           },
           "409": {
-            "description": "written by a newer puddle",
+            "description": "written by a newer puddle (newer_settings), or damaged (settings_unreadable)",
             "content": {
               "application/json": {
                 "schema": {
@@ -1358,7 +1358,7 @@
             }
           },
           "409": {
-            "description": "settings written by a newer puddle",
+            "description": "settings written by a newer puddle (newer_settings), or damaged (settings_unreadable)",
             "content": {
               "application/json": {
                 "schema": {
@@ -1437,7 +1437,7 @@
             }
           },
           "409": {
-            "description": "settings written by a newer puddle",
+            "description": "settings written by a newer puddle (newer_settings), or damaged (settings_unreadable)",
             "content": {
               "application/json": {
                 "schema": {
@@ -3858,7 +3858,7 @@
             }
           },
           "409": {
-            "description": "written by a newer puddle",
+            "description": "written by a newer puddle (newer_settings), or damaged (settings_unreadable)",
             "content": {
               "application/json": {
                 "schema": {
@@ -3937,7 +3937,7 @@
             }
           },
           "409": {
-            "description": "written by a newer puddle",
+            "description": "written by a newer puddle (newer_settings), or damaged (settings_unreadable)",
             "content": {
               "application/json": {
                 "schema": {
@@ -4039,7 +4039,7 @@
             }
           },
           "409": {
-            "description": "written by a newer puddle",
+            "description": "written by a newer puddle (newer_settings), or damaged (settings_unreadable)",
             "content": {
               "application/json": {
                 "schema": {
@@ -4139,7 +4139,7 @@
             }
           },
           "409": {
-            "description": "written by a newer puddle",
+            "description": "written by a newer puddle (newer_settings), or damaged (settings_unreadable)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8189,6 +8189,7 @@
           "conflict",
           "identity_collision",
           "newer_settings",
+          "settings_unreadable",
           "unavailable",
           "internal"
         ]

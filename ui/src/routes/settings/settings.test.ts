@@ -27,6 +27,7 @@ beforeEach(() => {
   globalSettings.view = null;
   globalSettings.consents = null;
   globalSettings.status = "loading";
+  globalSettings.reason = null;
   toasts.items = [];
   localStorage.clear();
   delete document.documentElement.dataset["theme"];
@@ -121,6 +122,19 @@ describe("the screen", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /newer puddle\. Update puddle/,
     );
+  });
+
+  it("shows why the settings can't be read when the API says", async () => {
+    api.refuse.set("GET /api/settings", {
+      status: 409,
+      error: "settings_unreadable",
+      message:
+        "puddle cannot read the global settings: global settings must be an object",
+    });
+    render(Page);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Couldn't read puddle's settings.");
+    expect(alert).toHaveTextContent("global settings must be an object");
   });
 
   it("lists the stored fields it doesn't know, and nothing when there are none", async () => {

@@ -44,6 +44,9 @@ pub enum ErrorCode {
     IdentityCollision,
     /// The stored settings were written by a newer puddle and can't be changed by this one (409).
     NewerSettings,
+    /// A stored settings document is damaged or cannot be read, so the settings cannot be shown
+    /// or changed until it is fixed or removed (409); the message says what is wrong.
+    SettingsUnreadable,
     /// The feature isn't available in this build or state (503).
     Unavailable,
     /// puddle failed; the details are in its log (500).
@@ -107,6 +110,21 @@ impl ApiError {
             "internal error; see puddle's log",
         );
         err.detail = Some(detail.to_string());
+        err
+    }
+
+    /// Stored settings that cannot be read: the message names `what` and the cause, so the
+    /// settings page can show it; `reason` stays the bare cause.
+    pub(crate) fn settings_unreadable(what: &str, cause: &dyn std::fmt::Display) -> Self {
+        tracing::warn!(%what, error = %cause, "settings cannot be read");
+        let mut err = Self::new(
+            StatusCode::CONFLICT,
+            ErrorCode::SettingsUnreadable,
+            format!(
+                "puddle cannot read {what}: {cause}; fix that file, or remove it to go back to the defaults"
+            ),
+        );
+        err.detail = Some(cause.to_string());
         err
     }
 
@@ -352,6 +370,12 @@ mod tests {
         assert_eq!(newer.code(), ErrorCode::NewerSettings);
         let other = ApiError::from(SettingsError::NotAnObject { kind: "global" });
         assert_eq!(other.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let damaged = ApiError::settings_unreadable(
+            "the global settings",
+            &"global settings must be an object",
+        );
+        assert_eq!(damaged.status(), StatusCode::CONFLICT);
+        assert_eq!(damaged.code(), ErrorCode::SettingsUnreadable);
         let repo = ApiError::from(SettingsRepoError::new("disk full"));
         assert_eq!(repo.code(), ErrorCode::Internal);
     }

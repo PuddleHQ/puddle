@@ -3898,16 +3898,16 @@ async fn a_sign_in_to_the_company_proxy_shows_in_the_served_network_health_repor
     assert_eq!(attempts[0]["scheme"], "Basic");
     assert_eq!(attempts[0]["result"], "signed_in");
     assert!(attempts[0]["at"].as_u64().unwrap() > 0, "{report}");
-    let methods: Vec<_> = proxy
-        .seen()
-        .iter()
-        .map(|seen| (seen.method.clone(), seen.proxy_authorization.is_some()))
-        .collect();
-    assert_eq!(
-        methods[..2],
-        [("CONNECT".to_owned(), false), ("CONNECT".to_owned(), true)],
-        "{methods:?}"
-    );
+    // The proxy received the Basic credentials on a CONNECT for the listing's host. Which requests
+    // came before is not asserted: a platform that can sign in without being asked (Windows
+    // Negotiate) sends its own token first.
+    let seen = proxy.seen();
+    let signed_in = seen.iter().any(|request| {
+        request.method == "CONNECT"
+            && request.target == "api.github.com:443"
+            && request.proxy_authorization.as_deref() == Some("Basic c3ZjOnB3LXJpZ2h0")
+    });
+    assert!(signed_in, "{seen:?}");
     host.shutdown().await;
 }
 

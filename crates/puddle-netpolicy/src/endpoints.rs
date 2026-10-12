@@ -4,6 +4,7 @@
 //! the rules say.
 
 use std::fmt;
+use std::io;
 use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
@@ -58,7 +59,18 @@ pub struct OwnAddresses;
 
 impl HostAddrs for OwnAddresses {
     fn is_own(&self, ip: IpAddr) -> bool {
-        ip.is_loopback() || ip.is_unspecified() || UdpSocket::bind((ip, 0)).is_ok()
+        ip.is_loopback()
+            || ip.is_unspecified()
+            || bind_means_own(UdpSocket::bind((ip, 0)).map(drop))
+    }
+}
+
+/// Only `AddrNotAvailable` says the host does not own the address. Any other failure (out of
+/// file descriptors, a permission error) is treated as owned, so the guard fails closed.
+fn bind_means_own(bind: io::Result<()>) -> bool {
+    match bind {
+        Ok(()) => true,
+        Err(e) => e.kind() != io::ErrorKind::AddrNotAvailable,
     }
 }
 
@@ -272,5 +284,25 @@ mod tests {
         ] {
             assert_eq!(kind.to_string(), text);
         }
+    }
+
+    #[test]
+    fn a_successful_bind_or_a_failure_other_than_not_available_is_own() {
+        assert!(bind_means_own(Ok(())));
+        for kind in [
+            io::ErrorKind::PermissionDenied,
+            io::ErrorKind::Other,
+            io::ErrorKind::AddrInUse,
+            io::ErrorKind::OutOfMemory,
+        ] {
+            assert!(bind_means_own(Err(io::Error::from(kind))), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn only_address_not_available_means_not_own() {
+        assert!(!bind_means_own(Err(io::Error::from(
+            io::ErrorKind::AddrNotAvailable
+        ))));
     }
 }

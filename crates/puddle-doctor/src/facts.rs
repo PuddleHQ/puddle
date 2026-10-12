@@ -335,11 +335,11 @@ mod tests {
 
     #[test]
     fn a_failed_code_integrity_query_names_the_status() {
-        let CodeIntegrityFacts::Unreadable { detail } =
-            CodeIntegrityFacts::query_failed(i32::from_ne_bytes(0xC000_0022_u32.to_ne_bytes()))
-        else {
-            panic!("expected the unreadable state");
-        };
-        assert!(detail.contains("NTSTATUS 0xC0000022"), "{detail}");
+        let facts =
+            CodeIntegrityFacts::query_failed(i32::from_ne_bytes(0xC000_0022_u32.to_ne_bytes()));
+        assert!(
+            matches!(&facts, CodeIntegrityFacts::Unreadable { detail } if detail.contains("NTSTATUS 0xC0000022")),
+            "{facts:?}"
+        );
     }
 }

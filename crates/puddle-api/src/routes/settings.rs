@@ -301,29 +301,28 @@ mod tests {
     }
 
     #[test]
+    fn the_unreadable_repo_still_accepts_saves() {
+        Unreadable.save_global(json!({})).unwrap();
+        let name = WorkspaceName::new("box").unwrap();
+        Unreadable.save_workspace(&name, json!({})).unwrap();
+    }
+
+    #[test]
     fn a_repo_that_cannot_read_says_so_with_the_cause() {
         let err = load_global(&Unreadable).unwrap_err();
         assert_eq!(err.code(), ErrorCode::SettingsUnreadable);
-        assert!(
-            err.message().contains("the global settings"),
-            "{}",
-            err.message()
-        );
-        assert!(
-            err.message()
-                .contains("/data/global.json is not valid JSON")
-        );
+        let message = err.message();
+        assert!(message.contains("the global settings"));
+        assert!(message.contains("/data/global.json is not valid JSON"));
         // The bare cause is what other reports (the workspace record) wrap in their own words.
-        assert!(
-            !err.reason().contains("puddle cannot read"),
-            "{}",
-            err.reason()
-        );
+        let reason = err.reason();
+        assert!(!reason.contains("puddle cannot read"));
 
         let name = WorkspaceName::new("box").unwrap();
         let err = load_workspace(&Unreadable, &name).unwrap_err();
         assert_eq!(err.code(), ErrorCode::SettingsUnreadable);
-        assert!(err.message().contains("workspace box"), "{}", err.message());
-        assert!(err.message().contains("permission denied"));
+        let message = err.message();
+        assert!(message.contains("workspace box"));
+        assert!(message.contains("permission denied"));
     }
 }

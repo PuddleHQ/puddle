@@ -177,6 +177,7 @@ const REASONS: Record<string, string> = {
   puddle_endpoint: "puddle's own address",
   ssh_unsupported: "SSH is not supported",
   local_address: "a local address",
+  settings_unreadable: "unreadable settings",
   puddle_request: "puddle's own request",
 };
 

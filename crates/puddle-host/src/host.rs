@@ -374,7 +374,7 @@ fn local_access(settings: &dyn SettingsRepo, workspace: &WorkspaceName) -> Local
         Ok(access) => access,
         Err(reason) => {
             tracing::warn!(%workspace, %reason, "local destinations stay blocked: the settings cannot be read");
-            LocalAccess::NONE
+            LocalAccess::UNREADABLE
         }
     }
 }
@@ -1075,13 +1075,13 @@ mod tests {
     fn damaged_settings_block_every_local_destination_and_say_why() {
         let repo = MemorySettings::default();
         repo.save_global(json!("not an object")).unwrap();
-        assert_eq!(local_access(&repo, &name()), LocalAccess::NONE);
+        assert_eq!(local_access(&repo, &name()), LocalAccess::UNREADABLE);
         let reason = local_access_checked(&repo, &name()).unwrap_err();
         assert!(reason.contains("global settings are not valid"), "{reason}");
 
         let repo = MemorySettings::default();
         repo.save_workspace(&name(), json!([1])).unwrap();
-        assert_eq!(local_access(&repo, &name()), LocalAccess::NONE);
+        assert_eq!(local_access(&repo, &name()), LocalAccess::UNREADABLE);
         let reason = local_access_checked(&repo, &name()).unwrap_err();
         assert!(reason.contains("workspace acme"), "{reason}");
     }

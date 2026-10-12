@@ -135,7 +135,16 @@ impl NetPolicy {
         {
             return Some(BlockReason::PuddleEndpoint);
         }
-        (!access.is_on(category)).then_some(BlockReason::LocalToggle(category))
+        (!access.is_on(category)).then(|| off_reason(category, access))
+    }
+}
+
+/// Why a local category is off: its toggle, or settings that could not be read.
+fn off_reason(category: LocalCategory, access: LocalAccess) -> BlockReason {
+    if access.is_unreadable() {
+        BlockReason::SettingsUnreadable
+    } else {
+        BlockReason::LocalToggle(category)
     }
 }
 
@@ -143,7 +152,7 @@ fn verdict(class: AddressClass, access: LocalAccess) -> AddressVerdict {
     match class {
         AddressClass::Public => AddressVerdict::Allow,
         AddressClass::Local { category, .. } if !access.is_on(category) => {
-            AddressVerdict::Block(BlockReason::LocalToggle(category))
+            AddressVerdict::Block(off_reason(category, access))
         }
         AddressClass::Local { .. } if access.wildcards_reach_local() => AddressVerdict::Allow,
         AddressClass::Local { category, .. } => AddressVerdict::ExactOnly(category),
@@ -174,6 +183,11 @@ pub fn block_message(host: &Host, workspace: &WorkspaceName, reasons: &[BlockRea
         .collect();
     toggles.sort_unstable();
     toggles.dedup();
+    if reasons.contains(&BlockReason::SettingsUnreadable) {
+        return format!(
+            "{host} is a local address, and puddle could not read its settings, so every local address stays blocked until they can be read. The Settings page says what is wrong; once the settings are readable again, the toggles apply as set"
+        );
+    }
     if toggles.is_empty() {
         return match reasons.first() {
             Some(BlockReason::PuddleEndpoint) => format!(
@@ -403,6 +417,42 @@ mod tests {
             AddressVerdict::Block(BlockReason::LocalToggle(LocalCategory::Loopback))
         );
         assert!(format!("{g:?}").starts_with("NetPolicy"));
+    }
+
+    #[test]
+    fn unreadable_settings_block_local_destinations_with_their_own_reason() {
+        let g = NetPolicy::new(Arc::new(LocalAccess::UNREADABLE)).with_host_addrs(Arc::new(Lan));
+        let reason = Some(BlockReason::SettingsUnreadable);
+        for addr in ["127.0.0.1:3000", "10.0.0.5:80", "169.254.169.254:80"] {
+            assert_eq!(
+                g.check_address(&workspace(), sa(addr)),
+                AddressVerdict::Block(BlockReason::SettingsUnreadable),
+                "{addr}"
+            );
+        }
+        let ip = |s: &str| normalise_host(s).unwrap();
+        assert_eq!(g.check_target(&workspace(), &ip("10.0.0.5"), 80), reason);
+        assert_eq!(g.check_target(&workspace(), &ip("localhost"), 80), reason);
+        assert_eq!(g.check_target(&workspace(), &ip("127.0.0.1"), 80), reason);
+        // Public addresses and puddle's own endpoints are unaffected.
+        assert_eq!(
+            g.check_address(&workspace(), sa("93.184.216.34:443")),
+            AddressVerdict::Allow
+        );
+        assert_eq!(g.check_target(&workspace(), &ip("example.com"), 443), None);
+    }
+
+    #[test]
+    fn the_unreadable_settings_message_says_so() {
+        let host = Host::parse_normalised("nas.example").unwrap();
+        let msg = block_message(
+            &host,
+            &workspace(),
+            &[BlockReason::PuddleEndpoint, BlockReason::SettingsUnreadable],
+        );
+        assert!(msg.contains("could not read its settings"), "{msg}");
+        assert!(msg.contains("Settings page"), "{msg}");
+        assert!(!msg.contains("toggle is off"), "{msg}");
     }
 
     #[test]

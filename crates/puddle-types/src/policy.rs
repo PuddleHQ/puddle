@@ -177,6 +177,10 @@ pub enum BlockReason {
     /// `toggle:<category>`). When several categories are off, this names the first one in
     /// [`LocalCategory::ALL`] order; the block message lists them all.
     LocalToggle(LocalCategory),
+    /// The destination is local and puddle could not read the settings that say whether it may
+    /// be reached, so every local destination stays blocked (`settings_unreadable`). Fixing the
+    /// settings lifts it; no toggle does.
+    SettingsUnreadable,
 }
 
 impl BlockReason {
@@ -188,6 +192,7 @@ impl BlockReason {
             Self::PuddleEndpoint => "puddle_endpoint",
             Self::LocalAddress => "local_address",
             Self::LocalToggle(category) => category.audit_reason(),
+            Self::SettingsUnreadable => "settings_unreadable",
         }
     }
 }
@@ -328,6 +333,10 @@ mod tests {
         assert_eq!(BlockReason::SshUnsupported.to_string(), "ssh_unsupported");
         assert_eq!(BlockReason::PuddleEndpoint.code(), "puddle_endpoint");
         assert_eq!(BlockReason::LocalAddress.code(), "local_address");
+        assert_eq!(
+            BlockReason::SettingsUnreadable.code(),
+            "settings_unreadable"
+        );
         assert_eq!(
             BlockReason::LocalToggle(LocalCategory::LinkLocal).to_string(),
             "toggle:link_local"

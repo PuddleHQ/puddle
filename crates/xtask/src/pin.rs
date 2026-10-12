@@ -103,11 +103,11 @@ mod tests {
                 .then(|| String::from_utf8(out.stdout).unwrap().trim_end().to_owned())
         };
         let mut seen = 0;
-        for line in pins.lines().filter(|l| !l.trim_start().starts_with('#')) {
+        let pairs = pins.lines().filter_map(|line| {
             let mut fields = line.split_whitespace();
-            let (Some(tag), Some(name)) = (fields.next(), fields.next()) else {
-                continue;
-            };
+            Some((fields.next().filter(|t| *t != "#")?, fields.next()?))
+        });
+        for (tag, name) in pairs {
             assert_eq!(
                 shell(tag, name).as_deref(),
                 pinned(&pins, tag, name),

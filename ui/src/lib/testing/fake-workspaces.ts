@@ -96,25 +96,34 @@ export class FakeWorkspaces {
   bodies: unknown[] = [];
   down = false;
   /** Refuse the next call to a path (`"POST /api/workspaces"`) with this status and text. */
-  refuse = new Map<string, { status: number; message: string }>();
+  refuse = new Map<
+    string,
+    { status: number; message: string; error?: string }
+  >();
   attachReply: components["schemas"]["AttachResponse"] = {
     opened: true,
     url: null,
     message: null,
   };
 
-  private reply(status: number, data?: unknown, message = "refused") {
+  private reply(
+    status: number,
+    data?: unknown,
+    message = "refused",
+    code?: string,
+  ) {
     const response = { status, ok: status < 400 } as Response;
     return status < 400
       ? { data, response }
       : {
           error: {
             error:
-              status === 409
+              code ??
+              (status === 409
                 ? "conflict"
                 : status === 404
                   ? "not_found"
-                  : "invalid",
+                  : "invalid"),
             message,
           },
           response,
@@ -125,7 +134,7 @@ export class FakeWorkspaces {
     const r = this.refuse.get(key);
     if (!r) return null;
     this.refuse.delete(key);
-    return this.reply(r.status, undefined, r.message);
+    return this.reply(r.status, undefined, r.message, r.error);
   }
 
   private find(id: unknown) {

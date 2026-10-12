@@ -4,6 +4,7 @@
 // (the API replaces, so every save sends the whole layer).
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
+import { unreadableReason } from "#lib/settings/model.ts";
 import type { Layer } from "#lib/workspaces/settings.ts";
 
 type Effective = components["schemas"]["EffectiveSettings"];
@@ -20,6 +21,8 @@ export class WorkspaceSettings {
   unknownFields = $state.raw<string[]>([]);
   /** What a workspace with no overrides gets: the global values. */
   global = $state.raw<Effective | null>(null);
+  /** Why the settings can't be read, when the API says (a damaged settings file). */
+  reason = $state<string | null>(null);
   #name = "";
   /** Calls to `load` and `change` in order, so a slow answer never overwrites a newer one. */
   #ticket = 0;
@@ -32,7 +35,10 @@ export class WorkspaceSettings {
   /** Reads both layers. `quiet` keeps the form on screen while it does (after a failed save). */
   async load(name: string, quiet = false): Promise<void> {
     this.#name = name;
-    if (!quiet) this.status = "loading";
+    if (!quiet) {
+      this.status = "loading";
+      this.reason = null;
+    }
     const ticket = ++this.#ticket;
     try {
       const [mine, global] = await Promise.all([
@@ -50,6 +56,7 @@ export class WorkspaceSettings {
         this.status = "ready";
       } else if (!quiet) {
         this.status = "failed";
+        this.reason = unreadableReason(mine.error, global.error);
       }
     } catch {
       if (ticket === this.#ticket && !quiet) this.status = "failed";

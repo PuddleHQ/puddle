@@ -41,6 +41,21 @@ impl HostOs {
         }
     }
 
+    /// The name msb looks for its firmware library under, beside itself, when that name carries
+    /// the library's version (`libkrunfw.so.5.6.1`); `None` where the name has no version
+    /// (Windows) or no runtime folder is built (macOS). `version` is the dotted number msb was
+    /// built to look for, which the caller takes from the runtime pin.
+    #[must_use]
+    pub fn libkrunfw_versioned(self, version: &str) -> Option<String> {
+        match self {
+            Self::Linux => Some(format!(
+                "{}.{version}",
+                self.runtime_files().libkrunfw_prefix
+            )),
+            Self::Windows | Self::MacOs => None,
+        }
+    }
+
     /// The runtime files of this OS.
     #[must_use]
     pub const fn runtime_files(self) -> RuntimeFiles {
@@ -77,9 +92,10 @@ pub struct RuntimeFiles {
     /// What every release name of the firmware library starts with, for finding it in a folder
     /// (`libkrunfw.so.5.6.1`, `libkrunfw.so.5`, `libkrunfw.so`).
     pub libkrunfw_prefix: &'static str,
-    /// Whether msb finds the firmware only beside itself, so the runtime folder must hold it
-    /// (Windows). Elsewhere msb searches its library paths by version, and puddle doesn't ship
-    /// the file yet (v1).
+    /// Whether the runtime check requires the firmware beside msb under [`Self::libkrunfw`]
+    /// (Windows). On Linux msb also looks beside itself, but under a name carrying the version
+    /// it was built for ([`HostOs::libkrunfw_versioned`]), which the runtime folder holds as well
+    /// but the check can't name; a missing one is msb's own "incomplete runtime" error at boot.
     pub firmware_beside_msb: bool,
 }
 
@@ -160,6 +176,16 @@ mod tests {
         let m = HostOs::MacOs.runtime_files();
         assert_eq!((m.msb, m.libkrunfw), ("msb", "libkrunfw.5.dylib"));
         assert!(!m.firmware_beside_msb);
+    }
+
+    #[test]
+    fn only_linux_names_its_firmware_by_version() {
+        assert_eq!(
+            HostOs::Linux.libkrunfw_versioned("5.6.1").as_deref(),
+            Some("libkrunfw.so.5.6.1")
+        );
+        assert_eq!(HostOs::Windows.libkrunfw_versioned("5.6.1"), None);
+        assert_eq!(HostOs::MacOs.libkrunfw_versioned("5.6.1"), None);
     }
 
     #[test]

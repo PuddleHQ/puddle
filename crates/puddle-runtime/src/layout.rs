@@ -12,9 +12,10 @@ pub const RUNTIME_DIR_NAME: &str = "runtime";
 /// The msb executable's file name on this platform (the [`HostOs::runtime_files`] table).
 pub const MSB_FILE_NAME: &str = HostOs::current().runtime_files().msb;
 
-/// The firmware library's file name on this platform. msb loads it from beside its own binary on
-/// Windows (msb's `libkrunfw_filename`); elsewhere it names it by version and puddle doesn't ship
-/// it yet ([`RuntimeLayout::required_files`]).
+/// The firmware library's file name on this platform: what msb loads from beside its own binary on
+/// Windows (msb's `libkrunfw_filename`), and the SONAME-named file on Linux, where the runtime
+/// folder also holds a copy under the versioned name msb looks for
+/// ([`HostOs::libkrunfw_versioned`]; [`RuntimeLayout::required_files`] doesn't list it).
 pub const LIBKRUNFW_FILE_NAME: &str = HostOs::current().runtime_files().libkrunfw;
 
 /// The msb home's name inside puddle's data folder.
@@ -101,9 +102,9 @@ impl RuntimeLayout {
         self.runtime_dir.join(LIBKRUNFW_FILE_NAME)
     }
 
-    /// The files that must exist for the runtime to start: `msb`, plus the firmware where msb
-    /// finds it only beside itself (Windows, [`crate::RuntimeFiles::firmware_beside_msb`]), so
-    /// `MSB_LIBKRUNFW_PATH` stays unset.
+    /// The files that must exist for the runtime to start: `msb`, plus the firmware where the
+    /// check can name it (Windows, [`crate::RuntimeFiles::firmware_beside_msb`]), so
+    /// `MSB_LIBKRUNFW_PATH` stays unset. On Linux the versioned copy is checked by msb itself.
     #[must_use]
     pub fn required_files(&self) -> Vec<PathBuf> {
         let mut files = vec![self.msb_path()];

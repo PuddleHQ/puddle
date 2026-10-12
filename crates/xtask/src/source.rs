@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use puddle_runtime::HostOs;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, XtaskError};
@@ -16,13 +17,23 @@ use crate::tools::{Cargo, Features, git_command, run};
 pub const MSB_ASSET: &str = "msb-windows-x86_64.exe";
 /// Upstream's Windows firmware asset (the fork uses upstream's firmware).
 pub const LIBKRUNFW_ASSET: &str = "libkrunfw-windows-x86_64.dll";
+/// Upstream's Linux firmware asset: the same library the Linux runtime folder holds under its
+/// SONAME and versioned names.
+pub const LIBKRUNFW_LINUX_ASSET: &str = "libkrunfw-linux-x86_64.so";
 /// Every release's checksum list.
 pub const CHECKSUMS_ASSET: &str = "checksums.sha256";
 
-/// The msb package and features `msb.exe` is built from (upstream's MSVC release steps).
+/// The msb package and features msb is built from (upstream's release steps).
 const MSB_MANIFEST: &str = "crates/cli/Cargo.toml";
 const MSB_FEATURES: [&str; 3] = ["embed-binaries", "net", "ssh"];
-const MSB_TARGET: &str = "x86_64-pc-windows-msvc";
+
+/// The target msb's dependency tree is resolved for on `os`.
+fn msb_target(os: HostOs) -> &'static str {
+    match os {
+        HostOs::Windows => "x86_64-pc-windows-msvc",
+        HostOs::Linux | HostOs::MacOs => "x86_64-unknown-linux-gnu",
+    }
+}
 const LIBKRUNFW_SUBMODULE: &str = "vendor/libkrunfw";
 
 /// Which release an asset comes from.
@@ -98,12 +109,12 @@ pub trait ReleaseSource {
     /// When they can't be gathered.
     fn facts(&self) -> Result<ForkFacts>;
 
-    /// The licence inventory of `msb.exe`'s dependency tree at the fork tag.
+    /// The licence inventory of msb's dependency tree at the fork tag, as built for `os`.
     ///
     /// # Errors
     ///
     /// When it can't be built.
-    fn msb_inventory(&self) -> Result<Inventory>;
+    fn msb_inventory(&self, os: HostOs) -> Result<Inventory>;
 }
 
 /// A folder holding the parts: `fork/<asset>`, `upstream/<asset>`, `facts.json`,
@@ -142,7 +153,7 @@ impl ReleaseSource for DirSource {
             .map_err(|e| XtaskError::parse("facts.json", e))
     }
 
-    fn msb_inventory(&self) -> Result<Inventory> {
+    fn msb_inventory(&self, _os: HostOs) -> Result<Inventory> {
         let required = shipped_packages(&self.read("msb-tree.txt")?)?;
         Inventory::new("msb", &self.read("msb-about.json")?, required)
     }
@@ -253,7 +264,7 @@ impl ReleaseSource for GitHubSource {
         })
     }
 
-    fn msb_inventory(&self) -> Result<Inventory> {
+    fn msb_inventory(&self, os: HostOs) -> Result<Inventory> {
         let manifest = self.checkout()?.join(MSB_MANIFEST);
         let features = Features::Only(MSB_FEATURES.iter().map(ToString::to_string).collect());
         self.cargo.inventory(
@@ -261,7 +272,7 @@ impl ReleaseSource for GitHubSource {
             &manifest,
             &self.about_config,
             &features,
-            &[MSB_TARGET],
+            &[msb_target(os)],
             false,
         )
     }

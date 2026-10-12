@@ -4,6 +4,7 @@
 # downloaded file must match its SHA-256 pinned in ci/msb-runtime.sha256, and a source checkout its
 # pinned commit.
 # Usage: ci/fetch-msb.sh [<tag>] <dest-dir>     tag defaults to the SDK's fork tag (ci/msb-tag.sh)
+#        ci/fetch-msb.sh --pinned <tag> <name>  prints that pin (see `pinned`)
 #
 #   fork tag v<release>-puddle.N (TijsVK/microsandbox):
 #     Windows: the release's msb-windows-x86_64.exe and libkrunfw-windows-x86_64.dll, installed as
@@ -27,6 +28,23 @@ set -eu
 unset $(git rev-parse --local-env-vars 2>/dev/null || true)
 
 here=$(cd "$(dirname "$0")" && pwd)
+
+# pinned <tag> <name>: the third field of the matching line in ci/msb-runtime.sha256. `cargo xtask
+# runtime` reads the same lines (crates/xtask/src/pin.rs); a test there runs `--pinned` to keep both
+# readers agreeing.
+pinned() {
+    want=$(awk -v t="$1" -v a="$2" '$1 == t && $2 == a { print $3 }' "$here/msb-runtime.sha256")
+    [ -n "$want" ] || {
+        echo "fetch-msb: nothing pinned for $1 $2 in ci/msb-runtime.sha256" >&2
+        exit 1
+    }
+    echo "$want"
+}
+if [ "${1:-}" = --pinned ] && [ "$#" -eq 3 ]; then
+    pinned "$2" "$3"
+    exit 0
+fi
+
 case "$#" in
 1) tag=$("$here/msb-tag.sh"); dest=$1 ;;
 2) tag=$1; dest=$2 ;;
@@ -50,16 +68,6 @@ v*-puddle.*) release=${tag%%-puddle.*} ;;
 v*) release=$tag ;;
 *) echo "fetch-msb: not a release tag: $tag" >&2; exit 2 ;;
 esac
-
-# pinned <tag> <name>: the third field of the matching line in ci/msb-runtime.sha256.
-pinned() {
-    want=$(awk -v t="$1" -v a="$2" '$1 == t && $2 == a { print $3 }' "$here/msb-runtime.sha256")
-    [ -n "$want" ] || {
-        echo "fetch-msb: nothing pinned for $1 $2 in ci/msb-runtime.sha256" >&2
-        exit 1
-    }
-    echo "$want"
-}
 
 # fetch <repo> <tag> <asset> <out>: download one release asset and check its pinned SHA-256.
 fetch() {

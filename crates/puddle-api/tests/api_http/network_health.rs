@@ -175,6 +175,57 @@ async fn the_real_report_shows_the_setup_and_never_a_secret() {
 }
 
 #[tokio::test]
+async fn a_machine_with_no_proxy_and_an_issuing_ca_reports_no_proxy_and_intermediate() {
+    let mut root_params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+    root_params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, "Corp Root CA");
+    root_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    root_params.not_after = rcgen::date_time_ymd(2090, 1, 1);
+    let root_key = rcgen::KeyPair::generate().unwrap();
+    let root = root_params.self_signed(&root_key).unwrap();
+    let mut issuing_params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+    issuing_params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, "Corp Issuing CA");
+    issuing_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    issuing_params.not_after = rcgen::date_time_ymd(2089, 1, 1);
+    let issuing_key = rcgen::KeyPair::generate().unwrap();
+    let issuer = rcgen::Issuer::from_params(&root_params, &root_key);
+    let issuing = issuing_params.signed_by(&issuing_key, &issuer).unwrap();
+    let mut snapshot = StoreSnapshot::new();
+    snapshot.add(SOURCES[0], root.der().to_vec());
+    snapshot.add(SOURCES[5], issuing.der().to_vec());
+
+    let discovery = Discovery::new(FakeOs::new(ProxyConfig::default()), Config::default());
+    let decision = discovery
+        .route(&Destination::new(Scheme::Https, "plain.example", 443))
+        .await;
+    assert_eq!(decision.route.hops(), [Hop::Direct]);
+    let clock = Arc::new(ManualClock::new(START_MS));
+    let health = Arc::new(HostNetworkHealth::new(discovery, clock as Arc<dyn Clock>));
+    health.set_roots(Arc::new(CorporateRoots::select(
+        &snapshot,
+        SystemTime::now(),
+    )));
+    let api = start_with_network(health).await;
+
+    let body = api.get("/api/network-health").await.json();
+    assert_eq!(body["routes"][0]["host"], "plain.example");
+    assert_eq!(body["routes"][0]["source"], "no_proxy");
+    let kind_of = |subject: &str| {
+        body["roots"]["certificates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["subject"] == subject)
+            .map(|c| c["kind"].clone())
+    };
+    assert_eq!(kind_of("Corp Root CA"), Some(json!("root")));
+    assert_eq!(kind_of("Corp Issuing CA"), Some(json!("intermediate")));
+}
+
+#[tokio::test]
 async fn a_setup_that_does_not_work_as_set_is_listed_in_the_report_without_a_secret() {
     let os = FakeOs::failing_watch(
         ProxyConfig {

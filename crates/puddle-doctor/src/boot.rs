@@ -344,16 +344,6 @@ mod tests {
         );
     }
 
-    fn kept_dir(kept: &KeptLogs) -> &Path {
-        match kept {
-            KeptLogs::Kept { dir, failed } => {
-                assert!(failed.is_empty(), "{failed:?}");
-                dir
-            }
-            KeptLogs::NotKept { detail } => panic!("not kept: {detail}"),
-        }
-    }
-
     #[test]
     fn a_failed_boots_logs_are_kept_in_a_new_folder_that_is_reported() {
         let home = tempfile::tempdir().unwrap();
@@ -364,19 +354,21 @@ mod tests {
         let keep = tempfile::tempdir().unwrap();
         let first = keep_boot_logs(home.path(), keep.path());
         let second = keep_boot_logs(home.path(), keep.path());
-        let reported = [
-            kept_dir(&first).to_path_buf(),
-            kept_dir(&second).to_path_buf(),
-        ];
+        // The folder names sort in the order the boots were kept.
         let mut kept: Vec<_> = std::fs::read_dir(keep.path())
             .unwrap()
             .map(|e| e.unwrap().path())
             .collect();
         kept.sort();
-        let mut reported_sorted = reported.to_vec();
-        reported_sorted.sort();
-        assert_eq!(kept, reported_sorted);
-        for dir in &kept {
+        assert_eq!(kept.len(), 2, "{kept:?}");
+        for (dir, reported) in kept.iter().zip([first, second]) {
+            assert_eq!(
+                reported,
+                KeptLogs::Kept {
+                    dir: dir.clone(),
+                    failed: vec![]
+                }
+            );
             let name = dir.file_name().unwrap().to_string_lossy().into_owned();
             assert!(name.starts_with("puddle-doctor-boot-"), "{name}");
             assert_eq!(std::fs::read(dir.join("logs/runtime.log")).unwrap(), b"vmm");
@@ -389,10 +381,11 @@ mod tests {
     fn a_boot_without_logs_says_msb_wrote_none() {
         let home = tempfile::tempdir().unwrap();
         let keep = tempfile::tempdir().unwrap();
-        let KeptLogs::NotKept { detail } = keep_boot_logs(home.path(), keep.path()) else {
-            panic!("nothing was there to keep");
-        };
-        assert!(detail.contains("msb wrote no logs"), "{detail}");
+        let kept = keep_boot_logs(home.path(), keep.path());
+        assert!(
+            matches!(&kept, KeptLogs::NotKept { detail } if detail.contains("msb wrote no logs")),
+            "{kept:?}"
+        );
         assert_eq!(std::fs::read_dir(keep.path()).unwrap().count(), 0);
     }
 
@@ -404,11 +397,12 @@ mod tests {
         std::fs::create_dir_all(&sandbox).unwrap();
         std::fs::write(sandbox.join("logs"), b"not a folder").unwrap();
         let keep = tempfile::tempdir().unwrap();
-        let KeptLogs::NotKept { detail } = keep_boot_logs(home.path(), keep.path()) else {
-            panic!("a file is no log folder");
-        };
-        assert!(detail.contains("logs"), "{detail}");
-        assert!(!detail.contains("wrote no logs"), "{detail}");
+        let kept = keep_boot_logs(home.path(), keep.path());
+        assert!(
+            matches!(&kept, KeptLogs::NotKept { detail }
+                if detail.contains("logs") && !detail.contains("wrote no logs")),
+            "{kept:?}"
+        );
     }
 
     #[test]
@@ -421,11 +415,13 @@ mod tests {
         // A file where the keep folder should be.
         let keep = scratch.path().join("kept");
         std::fs::write(&keep, b"in the way").unwrap();
-        let KeptLogs::NotKept { detail } = keep_boot_logs(home.path(), &keep) else {
-            panic!("the keep folder can't exist");
-        };
-        assert!(detail.contains("no folder to keep them in"), "{detail}");
-        assert!(detail.contains(&*keep.to_string_lossy()), "{detail}");
+        let kept = keep_boot_logs(home.path(), &keep);
+        assert!(
+            matches!(&kept, KeptLogs::NotKept { detail }
+                if detail.contains("no folder to keep them in")
+                    && detail.contains(&*keep.to_string_lossy())),
+            "{kept:?}"
+        );
     }
 
     #[test]
@@ -448,6 +444,14 @@ mod tests {
         }
         let err = new_folder(dir.path(), "x").unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+    }
+
+    #[test]
+    fn a_keep_folder_that_cannot_be_created_is_an_error_not_a_retry() {
+        let dir = tempfile::tempdir().unwrap();
+        // The parent of the new folder doesn't exist: not "taken", so no other name is tried.
+        let err = new_folder(dir.path(), "no-such-parent/x").unwrap_err();
+        assert_ne!(err.kind(), std::io::ErrorKind::AlreadyExists);
     }
 
     #[test]

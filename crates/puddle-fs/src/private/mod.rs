@@ -6,8 +6,8 @@
 //! | Unix | new folders `0700` | `0600`, created exclusively | refuses a file with any group or other bit |
 //! | Windows | new folders get a protected ACL with one entry, full control for the current user, which their children inherit | the same ACL, set when the file is created | refuses any ACL that is missing or has an entry for another account or a non-allow entry |
 //!
-//! Every caller (the API's connection file today; settings, consent and CA key files later) gets
-//! the same behaviour through this one module.
+//! Every caller (the API's connection file, the host's settings and registry files, the database,
+//! the per-run endpoint folders) gets the same behaviour through this one module.
 
 use std::fmt;
 use std::fs::{self, File};
@@ -34,6 +34,19 @@ compile_error!("puddle-fs supports unix and windows hosts");
 /// Any file-system error.
 pub fn create_dir(dir: &Path) -> io::Result<()> {
     platform::create_dir(dir)
+}
+
+/// Creates the one folder `dir` owner-only, failing if it exists (a pre-created folder, or a
+/// symlink in the last component, is never reused). The parent must exist. Unlike [`create_dir`]
+/// this is for a folder whose whole point is that nobody else could have touched it first, such
+/// as a per-run folder under a random name.
+///
+/// # Errors
+///
+/// Any file-system error, including `AlreadyExists`, or on Unix a mode that is not exactly `0700`
+/// after creation.
+pub fn create_new_dir(dir: &Path) -> io::Result<()> {
+    platform::create_new_dir(dir)
 }
 
 /// Creates `path` owner-only, failing if it exists (so a file someone else pre-created, or a
@@ -203,6 +216,31 @@ mod tests {
         assert_eq!(
             create_file(&path).unwrap_err().kind(),
             io::ErrorKind::AlreadyExists
+        );
+    }
+
+    #[test]
+    fn create_new_dir_makes_one_owner_only_folder_and_refuses_an_existing_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("fresh");
+        create_new_dir(&sub).unwrap();
+        assert!(sub.is_dir());
+        // Already owner-only: nothing to tighten (an ACL check on Windows, mode bits on Unix).
+        assert_eq!(tighten_dir(&sub).unwrap(), None);
+        assert_eq!(
+            create_new_dir(&sub).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+    }
+
+    #[test]
+    fn create_new_dir_does_not_create_parents() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            create_new_dir(&dir.path().join("a").join("b"))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::NotFound
         );
     }
 

@@ -93,9 +93,7 @@ fn opener<R: Runtime>(app: &AppHandle<R>, problems: &Arc<Problems>) -> OpenExter
     let (app, problems) = (app.clone(), problems.clone());
     Arc::new(move |url: &Url| {
         links::open_and_report(&problems, url, |address| {
-            app.opener()
-                .open_url(address, None::<&str>)
-                .inspect_err(|err| tracing::warn!(%err, "could not open the default browser"))
+            app.opener().open_url(address, None::<&str>)
         });
     })
 }

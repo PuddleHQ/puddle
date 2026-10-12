@@ -157,7 +157,8 @@ pub async fn watch(sources: OomSources, out: mpsc::Sender<AgentMessage>) {
             false
         }
     };
-    let mut count = read_counter(&sources.vmstat).await;
+    let mut counter_failing = false;
+    let mut count = read_counter(&sources.vmstat, &mut counter_failing).await;
     if count.is_none() {
         tracing::warn!(path = %sources.vmstat.display(), "no oom_kill counter: OOM kills are seen only through the kernel log");
         if !log_ok {
@@ -180,7 +181,7 @@ pub async fn watch(sources: OomSources, out: mpsc::Sender<AgentMessage>) {
             _ = tick.tick() => {
                 let now = Instant::now();
                 if let Some(before) = count
-                    && let Some(seen) = read_counter(&sources.vmstat).await
+                    && let Some(seen) = read_counter(&sources.vmstat, &mut counter_failing).await
                 {
                     if seen > before {
                         correlator.on_counted(seen - before, now);
@@ -210,9 +211,22 @@ fn send(out: &mpsc::Sender<AgentMessage>, msg: AgentMessage) -> bool {
     }
 }
 
-async fn read_counter(path: &Path) -> Option<u64> {
-    let text = tokio::fs::read_to_string(path).await.ok()?;
-    parse_vmstat(&text)
+/// Reads the `oom_kill` counter. `failing` holds whether the previous read failed, so a read
+/// failure is warned about once per outage rather than on every poll.
+async fn read_counter(path: &Path, failing: &mut bool) -> Option<u64> {
+    match tokio::fs::read_to_string(path).await {
+        Ok(text) => {
+            *failing = false;
+            parse_vmstat(&text)
+        }
+        Err(err) => {
+            if !*failing {
+                tracing::warn!(path = %path.display(), error = %err, "oom_kill counter read failed");
+            }
+            *failing = true;
+            None
+        }
+    }
 }
 
 /// Opens the kernel log positioned at its end, so only new records are read.

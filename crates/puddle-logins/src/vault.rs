@@ -102,6 +102,16 @@ impl Vault {
         }))
     }
 
+    /// Whether an entry for `profile`'s `role` exists, without reading its token into memory.
+    /// Blocking.
+    pub(crate) fn holds(&self, profile: &Profile, role: Role) -> Result<bool, VaultError> {
+        let id = self.id(profile, role).ok_or(VaultError::Damaged)?;
+        self.store
+            .get(&id)
+            .map(|found| found.is_some())
+            .map_err(|_| VaultError::Unavailable)
+    }
+
     /// Saves the pair of `profile`'s `role`, replacing the earlier one. Blocking.
     pub(crate) fn write(
         &self,

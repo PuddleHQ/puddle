@@ -288,6 +288,13 @@ pub enum LoginProblemKind {
     /// A login puddle kept earlier could not be read back when the workspace started: the tool
     /// asks for a new sign-in.
     Unreadable,
+    /// Login capture is off for the workspace but puddle still holds logins it kept while capture
+    /// was on, so the stand-ins in the workspace are not swapped and the services refuse them:
+    /// turn capture on again, or sign in again.
+    CaptureOff,
+    /// A problem this version of puddle has no name for. Nothing is known about it, so the notice
+    /// says only that the login may not work or may not be protected.
+    Unknown,
 }
 
 /// How a pending request ended.
@@ -647,6 +654,24 @@ mod tests {
                 Event::NetworkChanged { epoch: 4 },
                 r#"{"type":"network_changed","epoch":4}"#,
                 None,
+            ),
+            (
+                Event::LoginProblem {
+                    workspace: name(),
+                    service: "GitHub".into(),
+                    kind: LoginProblemKind::CaptureOff,
+                },
+                r#"{"type":"login_problem","workspace":"box","service":"GitHub","kind":"capture_off"}"#,
+                Some(name()),
+            ),
+            (
+                Event::LoginProblem {
+                    workspace: name(),
+                    service: "GitHub".into(),
+                    kind: LoginProblemKind::Unknown,
+                },
+                r#"{"type":"login_problem","workspace":"box","service":"GitHub","kind":"unknown"}"#,
+                Some(name()),
             ),
         ] {
             assert_eq!(serde_json::to_string(&event).unwrap(), json);

@@ -2350,7 +2350,7 @@ export interface components {
          * @description What is wrong with a login, as [`Event::LoginProblem`] reports it.
          * @enum {string}
          */
-        LoginProblemKind: "store_unavailable" | "unexpected_answer" | "unusable_token" | "bound_token" | "unreadable";
+        LoginProblemKind: "store_unavailable" | "unexpected_answer" | "unusable_token" | "bound_token" | "unreadable" | "capture_off" | "unknown";
         /** @description `GET /api/network-health`: everything puddle knows about how it reaches the internet. */
         NetworkHealth: {
             /**

@@ -34,16 +34,18 @@ impl LoginNotices for EventNotices {
     }
 }
 
-/// The wire name of a problem. A problem this version does not know is the most general one,
-/// which still says the login is not protected.
+/// The wire name of a problem. A problem this version has no name for is `Unknown`: it says
+/// nothing about the login that may be untrue.
 fn kind_of(problem: Problem) -> LoginProblemKind {
     match problem {
         Problem::StoreUnavailable => LoginProblemKind::StoreUnavailable,
         Problem::UnusableToken => LoginProblemKind::UnusableToken,
         Problem::BoundToken => LoginProblemKind::BoundToken,
         Problem::Unreadable => LoginProblemKind::Unreadable,
-        // `UnexpectedAnswer` and any problem a later version adds.
-        _ => LoginProblemKind::UnexpectedAnswer,
+        Problem::CaptureOff => LoginProblemKind::CaptureOff,
+        Problem::UnexpectedAnswer => LoginProblemKind::UnexpectedAnswer,
+        // A problem a later version adds.
+        _ => LoginProblemKind::Unknown,
     }
 }
 
@@ -153,6 +155,7 @@ mod tests {
             (Problem::UnusableToken, LoginProblemKind::UnusableToken),
             (Problem::BoundToken, LoginProblemKind::BoundToken),
             (Problem::Unreadable, LoginProblemKind::Unreadable),
+            (Problem::CaptureOff, LoginProblemKind::CaptureOff),
         ];
         for (problem, _) in all {
             notices.problem(&workspace("alpha"), &builtin()[0], problem);
@@ -168,7 +171,7 @@ mod tests {
                 }
             );
         }
-        assert_eq!(sent.len(), 5);
+        assert_eq!(sent.len(), all.len());
     }
 
     #[tokio::test]

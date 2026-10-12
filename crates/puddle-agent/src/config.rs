@@ -46,7 +46,7 @@ pub enum Target {
         /// Port of the route.
         port: u32,
     },
-    /// A Unix socket (tests and local runs without a VM).
+    /// A Unix socket, or on Windows a named pipe (tests and local runs without a VM).
     Unix(PathBuf),
 }
 

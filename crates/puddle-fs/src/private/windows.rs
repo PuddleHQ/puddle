@@ -191,6 +191,61 @@ mod tests {
         assert_eq!(tighten_file(&path).unwrap(), None);
     }
 
+    /// A file that is deleted but still open elsewhere, as SQLite leaves a `-wal` or `-shm` file
+    /// while a connection closes. Returns the handle that keeps it pending.
+    fn delete_pending(path: &Path) -> File {
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_DELETE_ON_CLOSE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        };
+        let share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+        let keeper = OpenOptions::new()
+            .read(true)
+            .share_mode(share)
+            .open(path)
+            .unwrap();
+        // Closing the handle that asked for delete-on-close deletes the file, but the file stays
+        // (delete pending) until `keeper` closes too.
+        drop(
+            OpenOptions::new()
+                .read(true)
+                .share_mode(share)
+                .custom_flags(FILE_FLAG_DELETE_ON_CLOSE)
+                .open(path)
+                .unwrap(),
+        );
+        keeper
+    }
+
+    #[test]
+    fn a_file_whose_delete_is_pending_reads_as_denied_not_missing() {
+        // The premise of the retry in `private::tighten_file`.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("puddle.db-wal");
+        fs::write(&path, b"x").unwrap();
+        let keeper = delete_pending(&path);
+        let err = tighten_file(&path).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{err}");
+        drop(keeper);
+        assert_eq!(
+            tighten_file(&path).unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
+    }
+
+    #[test]
+    fn a_file_deleted_while_it_is_tightened_is_nothing_to_tighten() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("puddle.db-wal");
+        fs::write(&path, b"x").unwrap();
+        let keeper = delete_pending(&path);
+        let closer = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            drop(keeper);
+        });
+        assert_eq!(crate::private::tighten_file(&path).unwrap(), None);
+        closer.join().unwrap();
+    }
+
     #[test]
     fn a_tightened_file_refuses_a_restricted_token() {
         let dir = tempfile::tempdir().unwrap();

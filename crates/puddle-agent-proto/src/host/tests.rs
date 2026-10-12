@@ -305,6 +305,34 @@ async fn control_messages_over_the_rate_limit_are_dropped() {
 }
 
 #[tokio::test]
+async fn drops_still_pending_when_the_control_stream_closes_are_logged() {
+    let logs = Logs::default();
+    let _scope = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(logs.clone())
+            .finish(),
+    );
+    // No refill, so nothing gets through after the burst and no later message reports the count.
+    let mut h = start_with(HostConfig {
+        control_burst: 5,
+        control_per_second: 0,
+        ..HostConfig::default()
+    });
+    let mut c = h.control_stream().await;
+    for pid in 0..50 {
+        send(&mut c, &AgentMessage::oom_kill(Some(pid), None)).await;
+    }
+    c.shutdown().await.unwrap();
+    while let Ok(Some(_)) = tokio::time::timeout(Duration::from_millis(300), h.events.recv()).await
+    {
+    }
+    h.close().await.unwrap();
+    let text = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+    assert!(text.contains("dropped=45"), "{text}");
+}
+
+#[tokio::test]
 async fn a_connection_that_is_not_yamux_is_refused() {
     let (mut guest, host) = tokio::io::duplex(64);
     let server = tokio::spawn(serve_session(

@@ -576,6 +576,25 @@ mod tests {
     }
 
     #[test]
+    fn login_problem_kinds_have_fixed_wire_names() {
+        for (kind, wire) in [
+            (LoginProblemKind::CaptureOff, "capture_off"),
+            (LoginProblemKind::Unknown, "unknown"),
+        ] {
+            let event = Event::LoginProblem {
+                workspace: name(),
+                service: "GitHub".into(),
+                kind,
+            };
+            let json = format!(
+                r#"{{"type":"login_problem","workspace":"box","service":"GitHub","kind":"{wire}"}}"#
+            );
+            assert_eq!(serde_json::to_string(&event).unwrap(), json);
+            assert_eq!(serde_json::from_str::<Event>(&json).unwrap(), event);
+        }
+    }
+
+    #[test]
     fn pending_rule_and_audit_events_have_fixed_shapes() {
         let request = PendingSummary {
             id: 7,
@@ -654,24 +673,6 @@ mod tests {
                 Event::NetworkChanged { epoch: 4 },
                 r#"{"type":"network_changed","epoch":4}"#,
                 None,
-            ),
-            (
-                Event::LoginProblem {
-                    workspace: name(),
-                    service: "GitHub".into(),
-                    kind: LoginProblemKind::CaptureOff,
-                },
-                r#"{"type":"login_problem","workspace":"box","service":"GitHub","kind":"capture_off"}"#,
-                Some(name()),
-            ),
-            (
-                Event::LoginProblem {
-                    workspace: name(),
-                    service: "GitHub".into(),
-                    kind: LoginProblemKind::Unknown,
-                },
-                r#"{"type":"login_problem","workspace":"box","service":"GitHub","kind":"unknown"}"#,
-                Some(name()),
             ),
         ] {
             assert_eq!(serde_json::to_string(&event).unwrap(), json);

@@ -5,6 +5,7 @@
 # (`gh workflow run vm-windows.yml --ref <branch>`) and nightly on develop unless it already has a green run on that
 # commit. VM tests are never retried; a runner without a usable hypervisor
 # is reported as an infrastructure skip, not a test result.
+# On a pull request a runner without KVM/WHP fails the job (ci/vm-skip-policy.sh); nightly and dispatch runs skip with a warning.
 # The test binaries are built once (`cargo nextest archive`) and the tests run in five partitions
 # on five runners at once; `vm-windows (WHP, msb microVMs)` is the one result of all of them.
 name: vm-windows
@@ -115,7 +116,8 @@ jobs:
           if ($cs.HypervisorPresent -and "$whp" -eq 'Enabled') {
             "ok=true" >> $env:GITHUB_OUTPUT
           } else {
-            "::warning title=vm-windows skipped::Windows Hypervisor Platform is not usable on this runner (HypervisorPresent=$($cs.HypervisorPresent), HypervisorPlatform=$whp); VM tests did not run (infrastructure, not a test result)"
+            bash ci/vm-skip-policy.sh vm-windows "Windows Hypervisor Platform is not usable on this runner (HypervisorPresent=$($cs.HypervisorPresent), HypervisorPlatform=$whp)"
+            if ($LASTEXITCODE -ne 0) { exit 1 }
             "### vm-windows partition ${{ matrix.partition }}: SKIPPED, WHP not usable on the runner (infrastructure)" >> $env:GITHUB_STEP_SUMMARY
             "ok=false" >> $env:GITHUB_OUTPUT
           }

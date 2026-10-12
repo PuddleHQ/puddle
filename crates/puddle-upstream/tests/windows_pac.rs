@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Windows only: the real WinHTTP engine against a local PAC server, and the registry
 //! path end to end. The registry tests edit the *current user's* Internet Settings, so they run
-//! only where `GITHUB_ACTIONS` is set (a throwaway runner), never on a developer's machine, and
-//! one at a time (see `registry_test`).
+//! only where `GITHUB_ACTIONS` is set (a throwaway runner), never on a developer's machine. They
+//! run one at a time, and so does every test that asks WinHTTP for a PAC answer (see `exclusive`).
 #![cfg(windows)]
 #![expect(
     clippy::unwrap_used,
@@ -16,12 +16,13 @@
 )]
 
 use std::process::Command;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use puddle_upstream::{
-    Config, Destination, Detected, Discovery, EnvFallback, EnvOs, Hop, ModeKind, OsProxy, PacError,
-    PacQuery, ProxyAddr, RouteSource, Scheme, WinOs,
+    ChangeCallback, Config, Destination, Detected, Discovery, EnvFallback, EnvOs, Hop, ModeKind,
+    OsProxy, PacError, PacQuery, ProblemCallback, ProxyAddr, ProxyConfig, RouteSource, Scheme,
+    SettingsError, WatchGuard, WinOs,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -78,6 +79,7 @@ fn proxy(port: u16) -> Hop {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn winhttp_evaluates_a_local_pac_per_url_with_the_full_failover_list() {
+    let _exclusive = exclusive();
     let pac = pac_server().await;
     assert_eq!(
         resolve(query(&pac, "https://github.com/")).await.unwrap(),
@@ -105,10 +107,11 @@ async fn winhttp_evaluates_a_local_pac_per_url_with_the_full_failover_list() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unreachable_pac_is_an_error_not_a_hang() {
+    let _exclusive = exclusive();
     let closed = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/proxy.pac", closed.local_addr().unwrap());
     drop(closed);
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     let err = resolve(query(&url, "https://github.com/"))
         .await
         .unwrap_err();
@@ -122,6 +125,7 @@ async fn an_unreachable_pac_is_an_error_not_a_hang() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_pac_server_that_never_answers_times_out_at_the_query_timeout() {
+    let _exclusive = exclusive();
     let silent = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/proxy.pac", silent.local_addr().unwrap());
     tokio::spawn(async move {
@@ -132,7 +136,7 @@ async fn a_pac_server_that_never_answers_times_out_at_the_query_timeout() {
     });
     let mut q = query(&url, "https://github.com/");
     q.timeout = Duration::from_secs(2);
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     let err = resolve(q).await.unwrap_err();
     assert!(
         matches!(err, PacError::Timeout | PacError::Unavailable(_)),
@@ -147,6 +151,7 @@ async fn a_pac_server_that_never_answers_times_out_at_the_query_timeout() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn parallel_pac_lookups_all_answer() {
+    let _exclusive = exclusive();
     let pac = pac_server().await;
     let mut tasks = Vec::new();
     for i in 0..24 {
@@ -178,18 +183,16 @@ const KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Sett
 /// The tests share one registry key: one at a time.
 static REGISTRY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// The gate for every test that edits the Internet Settings key: `None` (skip) off a CI runner,
-/// otherwise an exclusive lock that the test holds until it returns. All registry tests share
-/// the one key and the watch on it, and nextest runs each test in its own process, in parallel:
-/// without the lock one test's values (or its clean-up deleting them) show up in another's
-/// reads. The lock is a file lock, so it holds across processes and across threads alike.
-fn registry_test() -> Option<std::fs::File> {
-    if std::env::var_os("GITHUB_ACTIONS").is_none() {
-        eprintln!(
-            "skipped: edits HKCU Internet Settings, only run on a CI runner (GITHUB_ACTIONS)"
-        );
-        return None;
-    }
+/// The cross-process lock behind every test that edits the Internet Settings key or asks WinHTTP
+/// for a PAC answer. nextest runs each test in its own process, in parallel, and these tests
+/// disturb each other: one's values (or its clean-up deleting them) show up in another's reads,
+/// every evaluated PAC script, in any process, makes WinHTTP call the proxy-change callback of
+/// every registered watch (about every 50 ms for as long as lookups run, with no registry change
+/// at all), which ends the epoch the debounce test is counting, and PAC lookups of two processes
+/// at once have given wrong results (one that must fail answering, ones that must answer
+/// failing). A file lock holds across processes and across threads alike. Held until the
+/// returned file is dropped.
+fn exclusive() -> std::fs::File {
     let path = std::env::temp_dir().join("puddle-test-hkcu-internet-settings.lock");
     let lock = std::fs::OpenOptions::new()
         .create(true)
@@ -198,7 +201,19 @@ fn registry_test() -> Option<std::fs::File> {
         .open(&path)
         .unwrap();
     lock.lock().unwrap();
-    Some(lock)
+    lock
+}
+
+/// The gate for every test that edits the Internet Settings key: `None` (skip) off a CI runner,
+/// otherwise the exclusive lock, held until the test returns.
+fn registry_test() -> Option<std::fs::File> {
+    if std::env::var_os("GITHUB_ACTIONS").is_none() {
+        eprintln!(
+            "skipped: edits HKCU Internet Settings, only run on a CI runner (GITHUB_ACTIONS)"
+        );
+        return None;
+    }
+    Some(exclusive())
 }
 
 fn reg(args: &[&str]) -> bool {
@@ -379,11 +394,48 @@ fn set_in_process(name: &str, data: &str) {
     }
 }
 
+/// The OS layer with a note of when each change notification reached discovery, so a test can
+/// tell which epoch changes a notification of its own explains.
+#[derive(Debug)]
+struct Recording {
+    inner: Arc<dyn OsProxy>,
+    calls: Arc<Mutex<Vec<Instant>>>,
+}
+
+impl OsProxy for Recording {
+    fn config(&self) -> Result<ProxyConfig, SettingsError> {
+        self.inner.config()
+    }
+
+    fn resolve_pac(&self, query: &PacQuery) -> Result<Vec<Hop>, PacError> {
+        self.inner.resolve_pac(query)
+    }
+
+    fn watch(
+        &self,
+        on_change: ChangeCallback,
+        on_problem: ProblemCallback,
+    ) -> Option<Box<dyn WatchGuard>> {
+        let calls = Arc::clone(&self.calls);
+        let noted: ChangeCallback = Arc::new(move || {
+            calls.lock().unwrap().push(Instant::now());
+            on_change();
+        });
+        self.inner.watch(noted, on_problem)
+    }
+}
+
 /// Five edits in a burst give one epoch, `debounce` after the last one. The burst is written
 /// in-process, so it is over in a few milliseconds whatever the runner's load; the test checks
 /// that rather than assuming it, so a stalled runner reads as a stall and not as a debounce bug.
-/// Everything else waits on the epoch channel: the first change (30 s at most, not a delay) and
-/// then a second change that must not come within two debounce periods.
+///
+/// WinHTTP also calls the proxy-change callback for things that are not the test's edits (it
+/// does so for every PAC lookup on the machine, and the system rewrites the `Connections` value
+/// a moment after a lookup), and those can come after the burst's epoch. So the test does not
+/// count epochs; it checks the contract per epoch against the notifications discovery was told
+/// about: an epoch comes only when a notification is new since the last epoch, and never less
+/// than `debounce` after the latest one. An epoch the notifications do not explain, or one that
+/// cuts the quiet period short, is a debounce bug whatever else the machine does.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_registry_change_ends_the_epoch_once_after_the_debounce() {
     let Some(_registry) = registry_test() else {
@@ -395,18 +447,19 @@ async fn a_registry_change_ends_the_epoch_once_after_the_debounce() {
         debounce,
         ..Config::default()
     };
-    let discovery = Discovery::new(
-        Arc::new(EnvFallback::new(Arc::new(WinOs::new()), EnvOs::default())),
-        config,
-    );
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let os = Recording {
+        inner: Arc::new(EnvFallback::new(Arc::new(WinOs::new()), EnvOs::default())),
+        calls: Arc::clone(&calls),
+    };
+    let discovery = Discovery::new(Arc::new(os), config);
     // Sets the value (and puts the old state back on drop) before the watch starts.
     let _value = RegValue::set("ProxyServer", "REG_SZ", "before.corp:3128");
     let mut epochs = discovery.subscribe();
     let watching = discovery
         .watch()
         .expect("the registry watch is available on every Windows");
-    let before = discovery.epoch();
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     for i in 0..5 {
         set_in_process("ProxyServer", &format!("flap{i}.corp:3128"));
     }
@@ -415,17 +468,43 @@ async fn a_registry_change_ends_the_epoch_once_after_the_debounce() {
         burst < debounce / 2,
         "the runner stalled for {burst:?} inside five registry writes; the debounce is {debounce:?}"
     );
-    tokio::time::timeout(Duration::from_secs(30), epochs.changed())
-        .await
-        .expect("an epoch change")
-        .unwrap();
-    assert_eq!(discovery.epoch(), before + 1, "one epoch for the burst");
-    assert!(
-        tokio::time::timeout(debounce * 2, epochs.changed())
-            .await
-            .is_err(),
-        "five quick edits must not give a second epoch: {before} -> {}",
-        discovery.epoch()
-    );
+    // The first epoch (30 s at most, not a delay), then whatever else comes within two debounce
+    // periods of quiet.
+    let mut ended = Vec::new();
+    let mut wait = Duration::from_secs(30);
+    while let Ok(changed) = tokio::time::timeout(wait, epochs.changed()).await {
+        changed.unwrap();
+        ended.push(Instant::now());
+        wait = debounce * 2;
+        assert!(
+            ended.len() < 20,
+            "the epoch keeps changing: {} changes",
+            ended.len()
+        );
+    }
+    assert!(!ended.is_empty(), "no epoch ended after the burst");
+    let calls = calls.lock().unwrap().clone();
+    let mut previous = started; // notifications at or before this one explained earlier epochs
+    for (n, epoch) in ended.iter().enumerate() {
+        // A notification that lands within a few milliseconds of an epoch may be counted by
+        // either side of it.
+        let slack = Duration::from_millis(100);
+        let latest = calls
+            .iter()
+            .filter(|call| **call + slack > previous && *call <= epoch)
+            .max()
+            .unwrap_or_else(|| {
+                panic!(
+                    "epoch change {n} came with no new notification since the last one: \
+                     the debounce produced an epoch of its own"
+                )
+            });
+        assert!(
+            *epoch - *latest >= debounce,
+            "epoch change {n} came {:?} after the latest notification; the debounce is {debounce:?}",
+            *epoch - *latest
+        );
+        previous = *epoch;
+    }
     drop(watching);
 }

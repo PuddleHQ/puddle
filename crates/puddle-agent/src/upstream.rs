@@ -132,13 +132,26 @@ async fn dial_unix(path: &std::path::Path) -> io::Result<Pin<Box<dyn Io>>> {
     Ok(Box::pin(tokio::net::UnixStream::connect(path).await?))
 }
 
-#[cfg(not(unix))]
-#[expect(clippy::unused_async, reason = "same signature as the Unix version")]
-async fn dial_unix(_path: &std::path::Path) -> io::Result<Pin<Box<dyn Io>>> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "unix sockets need a Unix guest",
-    ))
+/// A Windows host's endpoint is a named pipe at `path`; the guest never runs there, but the
+/// agent does in tests that put it in front of a real proxy. A busy pipe (every instance in
+/// use for a moment) is retried briefly, as the host's own clients do.
+#[cfg(windows)]
+async fn dial_unix(path: &std::path::Path) -> io::Result<Pin<Box<dyn Io>>> {
+    use tokio::net::windows::named_pipe::ClientOptions;
+
+    // `ERROR_PIPE_BUSY`.
+    const PIPE_BUSY: i32 = 231;
+    let mut tries = 0_u32;
+    loop {
+        match ClientOptions::new().open(path) {
+            Ok(client) => return Ok(Box::pin(client)),
+            Err(err) if err.raw_os_error() == Some(PIPE_BUSY) && tries < 100 => {
+                tries += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            Err(err) => return Err(err),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -171,5 +184,17 @@ mod tests {
             port: 0x7fff_fff1,
         });
         assert!(up.open().await.is_err());
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn a_named_pipe_is_dialled_and_a_missing_one_is_an_error() {
+        use tokio::net::windows::named_pipe::ServerOptions;
+
+        let name = format!(r"\\.\pipe\puddle-agent-dial-{}", std::process::id());
+        let _server = ServerOptions::new().create(&name).unwrap();
+        dial_unix(std::path::Path::new(&name)).await.unwrap();
+        let missing = format!(r"{name}-missing");
+        assert!(dial_unix(std::path::Path::new(&missing)).await.is_err());
     }
 }

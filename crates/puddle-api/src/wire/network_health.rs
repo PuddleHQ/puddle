@@ -19,6 +19,8 @@ pub enum ProxyMode {
     Direct,
     /// A proxy typed into puddle's settings.
     Manual,
+    /// A source of the setting this build cannot name; the report does not guess.
+    Unknown,
 }
 
 /// What puddle found out about the proxy setup.
@@ -137,6 +139,8 @@ pub enum SignInResult {
     /// The proxy asks for something puddle cannot give (a scheme it does not speak, or a
     /// password nobody configured).
     Unsupported,
+    /// An ending this build cannot name; the report does not guess.
+    Unknown,
 }
 
 /// The latest sign-in attempt to one proxy.
@@ -360,6 +364,14 @@ mod tests {
     fn the_values_for_a_state_this_build_cannot_name_are_called_unknown_on_the_wire() {
         assert_eq!(
             serde_json::to_value(ProxyDetected::Unknown).unwrap(),
+            json!("unknown")
+        );
+        assert_eq!(
+            serde_json::to_value(ProxyMode::Unknown).unwrap(),
+            json!("unknown")
+        );
+        assert_eq!(
+            serde_json::to_value(SignInResult::Unknown).unwrap(),
             json!("unknown")
         );
         assert_eq!(

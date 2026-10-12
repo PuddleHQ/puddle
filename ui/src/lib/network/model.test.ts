@@ -2,8 +2,10 @@
 import { describe, expect, it } from "vitest";
 import {
   DETECTED_LABEL,
+  MODE_LABEL,
   ROOT_KIND_LABEL,
   ROUTE_SOURCE_LABEL,
+  SIGN_IN_LABEL,
   attemptKey,
   expiryText,
   findings,
@@ -200,9 +202,19 @@ describe("findings", () => {
   it("has a label for every wire value, the unknown ones included", () => {
     expect(DETECTED_LABEL.unknown).toMatch(/doesn't recognise/);
     expect(ROUTE_SOURCE_LABEL.unknown).toMatch(/doesn't recognise/);
+    expect(MODE_LABEL.unknown).toMatch(/doesn't recognise/);
+    expect(SIGN_IN_LABEL.unknown).toMatch(/doesn't recognise/);
     expect(ROOT_KIND_LABEL.unknown).toBe("Unknown");
     expect(ROOT_KIND_LABEL.root).toBe("Root");
     expect(ROOT_KIND_LABEL.intermediate).toBe("Intermediate");
+  });
+
+  it("raises no sign-in finding for an ending it cannot name", () => {
+    const r = report();
+    r.sign_in.attempts = [
+      { proxy: "p:1", scheme: null, result: "unknown", detail: null, at: 1 },
+    ];
+    expect(ids(r)).toEqual([]);
   });
 
   it("summarises the problems", () => {

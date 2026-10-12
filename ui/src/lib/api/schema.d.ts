@@ -2584,7 +2584,7 @@ export interface components {
          * @description Where puddle gets its proxy setting from.
          * @enum {string}
          */
-        ProxyMode: "system" | "direct" | "manual";
+        ProxyMode: "system" | "direct" | "manual" | "unknown";
         /** @description One thing in the proxy setup that does not work as the user set it up. */
         ProxyProblem: {
             /** @description Which setting or part, and why, as a sentence fragment; contains no credential. */
@@ -3149,7 +3149,7 @@ export interface components {
          * @description How a sign-in to a proxy ended.
          * @enum {string}
          */
-        SignInResult: "signed_in" | "not_required" | "failed" | "unsupported";
+        SignInResult: "signed_in" | "not_required" | "failed" | "unsupported" | "unknown";
         /**
          * @description What the user does to finish a sign-in puddle started. Poll the credential's check to learn
          *     when it worked; puddle ends a sign-in nobody finished after five minutes.

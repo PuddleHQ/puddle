@@ -12,7 +12,8 @@ use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
 use puddle_store::{Clock, ManualClock};
 use puddle_upstream::{
     BasicAuth, Behaviour, Chain, ChainConfig, Config, Credentials, Destination, Discovery, FakeOs,
-    FakeProxy, Form, Hop, ProxyConfig, ProxyProblem, ProxyRules, RejectedRoot, Request, Scheme,
+    FakeProxy, Form, Hop, ManualProxy, Mode, ProxyConfig, ProxyProblem, ProxyRules, RejectedRoot,
+    Request, Scheme,
 };
 use serde_json::{Value, json};
 
@@ -211,6 +212,8 @@ async fn a_machine_with_no_proxy_and_an_issuing_ca_reports_no_proxy_and_intermed
     let api = start_with_network(health).await;
 
     let body = api.get("/api/network-health").await.json();
+    assert_eq!(body["proxy"]["mode"], "system");
+    assert_eq!(body["proxy"]["detected"], "direct");
     assert_eq!(body["routes"][0]["host"], "plain.example");
     assert_eq!(body["routes"][0]["source"], "no_proxy");
     let kind_of = |subject: &str| {
@@ -223,6 +226,99 @@ async fn a_machine_with_no_proxy_and_an_issuing_ca_reports_no_proxy_and_intermed
     };
     assert_eq!(kind_of("Corp Root CA"), Some(json!("root")));
     assert_eq!(kind_of("Corp Issuing CA"), Some(json!("intermediate")));
+}
+
+#[tokio::test]
+async fn puddles_own_proxy_modes_are_reported_as_they_were_set() {
+    let report_for = |mode: Mode| async move {
+        let discovery = Discovery::new(
+            FakeOs::new(ProxyConfig::default()),
+            Config {
+                mode,
+                ..Config::default()
+            },
+        );
+        let clock = Arc::new(ManualClock::new(START_MS));
+        let health = Arc::new(HostNetworkHealth::new(discovery, clock as Arc<dyn Clock>));
+        let api = start_with_network(health).await;
+        api.get("/api/network-health").await.json()
+    };
+
+    let direct = report_for(Mode::Direct).await;
+    assert_eq!(direct["proxy"]["mode"], "direct");
+    assert_eq!(direct["proxy"]["detected"], "direct");
+    let manual = report_for(Mode::Manual(ManualProxy {
+        proxy_server: "m.corp:8080".into(),
+        bypass: String::new(),
+    }))
+    .await;
+    assert_eq!(manual["proxy"]["mode"], "manual");
+    assert_eq!(manual["proxy"]["detected"], "static");
+}
+
+/// The sign-in result the report gives for one connection through a fake proxy that behaves as
+/// `behaviour`, answered by `auth`.
+async fn sign_in_result(behaviour: Behaviour, auth: Arc<dyn puddle_upstream::ProxyAuth>) -> Value {
+    let target = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy = FakeProxy::start(behaviour).await;
+    proxy.resolve_name("target.test", target.local_addr().unwrap());
+    let os = FakeOs::new(ProxyConfig {
+        pac_url: Some("http://pac.corp/p.pac".into()),
+        ..ProxyConfig::default()
+    });
+    let hop = Hop::Proxy(proxy.proxy_addr());
+    os.set_pac(move |_| Ok(vec![hop.clone()]));
+    let discovery = Discovery::new(os, Config::default());
+    let chain = Chain::with_config(
+        discovery.clone(),
+        auth,
+        ChainConfig::default()
+            .with_timeouts(Duration::from_millis(500), Duration::from_millis(400)),
+    );
+    let dest = Destination::new(Scheme::Https, "target.test", 443);
+    let _ = chain
+        .connect(&Request::new(&dest, Form::Tunnel, &[]).name_ok(true))
+        .await;
+    let clock = Arc::new(ManualClock::new(START_MS));
+    let health =
+        Arc::new(HostNetworkHealth::new(discovery, clock as Arc<dyn Clock>).with_chain(chain));
+    let api = start_with_network(health).await;
+    let body = api.get("/api/network-health").await.json();
+    drop(target);
+    body["sign_in"]["attempts"][0]["result"].clone()
+}
+
+#[tokio::test]
+async fn every_way_a_sign_in_can_end_is_reported_as_itself() {
+    let signed_in = sign_in_result(
+        Behaviour::Basic {
+            user: "svc".into(),
+            password: "pw".into(),
+        },
+        Arc::new(BasicAuth::new().with_default(Credentials::new("svc", "pw"))),
+    )
+    .await;
+    assert_eq!(signed_in, "signed_in");
+    let not_required = sign_in_result(Behaviour::Open, Arc::new(puddle_upstream::NoAuth)).await;
+    assert_eq!(not_required, "not_required");
+    let failed = sign_in_result(
+        Behaviour::Basic {
+            user: "svc".into(),
+            password: "pw".into(),
+        },
+        Arc::new(BasicAuth::new().with_default(Credentials::new("svc", "wrong"))),
+    )
+    .await;
+    assert_eq!(failed, "failed");
+    let unsupported = sign_in_result(
+        Behaviour::Basic {
+            user: "svc".into(),
+            password: "pw".into(),
+        },
+        Arc::new(BasicAuth::new()),
+    )
+    .await;
+    assert_eq!(unsupported, "unsupported");
 }
 
 #[tokio::test]

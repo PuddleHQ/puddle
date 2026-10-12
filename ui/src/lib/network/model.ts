@@ -35,6 +35,7 @@ export const MODE_LABEL: Record<S["ProxyMode"], string> = {
   system: "Follow the system settings",
   manual: "Fixed in puddle's settings",
   direct: "Never use a proxy",
+  unknown: "A source this version of puddle doesn't recognise",
 };
 
 export const PAC_STATE_LABEL: Record<S["PacState"], string> = {
@@ -49,6 +50,7 @@ export const SIGN_IN_LABEL: Record<S["SignInResult"], string> = {
   not_required: "No sign-in needed",
   failed: "Failed",
   unsupported: "Not possible here",
+  unknown: "An ending this version of puddle doesn't recognise",
 };
 
 export const ROUTE_SOURCE_LABEL: Record<S["RouteSource"], string> = {

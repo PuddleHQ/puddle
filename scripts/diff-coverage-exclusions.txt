@@ -106,3 +106,6 @@ crates/puddle-lifecycle/src/reconcile.rs | StopOutcome::Panicked => {} | only `L
 crates/puddle-lifecycle/src/shutdown.rs | StopOutcome::Panicked => {} | as above: `trim_and_stop` never returns it; `Lifecycle::shutdown` makes it (tested)
 crates/puddle-compute-msb/src/sandbox.rs | } | the closing brace of `stopped_by_force`, which runs only against a real msb (the VM tier); the line has no text of its own to match
 crates/puddle/src/cmd/serve.rs | exit_after(&host.shutdown().await.sandboxes) | the daemon's last step after a real host stops, which needs a real msb runtime; `exit_after` and `shutdown_lines` themselves are unit-tested
+crates/puddle-agent/src/oom.rs | Err(err) => { | `std::thread::Builder::spawn` fails only when the OS refuses a thread, and no test can make it
+crates/puddle-agent/src/oom.rs | kernel log reader not started | `std::thread::Builder::spawn` fails only when the OS refuses a thread, and no test can make it
+crates/puddle-agent/src/oom.rs | false | `std::thread::Builder::spawn` fails only when the OS refuses a thread, and no test can make it

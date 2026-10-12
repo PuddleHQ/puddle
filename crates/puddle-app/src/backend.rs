@@ -10,6 +10,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use puddle_api::{ConnectionFileError, ConnectionInfo, EventHub, RunningApi, ServeError};
+use puddle_types::Problems;
 use tokio::sync::Mutex;
 use url::Url;
 
@@ -41,6 +42,7 @@ pub struct Backend {
     info: ConnectionInfo,
     url: Url,
     events: Arc<EventHub>,
+    problems: Arc<Problems>,
     running: Mutex<Option<RunningApi>>,
 }
 
@@ -73,12 +75,14 @@ impl Backend {
     pub(crate) fn new(
         info: ConnectionInfo,
         events: Arc<EventHub>,
+        problems: Arc<Problems>,
         running: RunningApi,
     ) -> Result<Self, BackendError> {
         Ok(Self {
             url: Url::parse(&info.url)?,
             info,
             events,
+            problems,
             running: Mutex::new(Some(running)),
         })
     }
@@ -100,6 +104,13 @@ impl Backend {
     #[must_use]
     pub fn events(&self) -> &Arc<EventHub> {
         &self.events
+    }
+
+    /// The background problems the page lists as notices: where the shell raises what it has to
+    /// tell the user (a link that went nowhere).
+    #[must_use]
+    pub fn problems(&self) -> &Arc<Problems> {
+        &self.problems
     }
 
     /// Writes the connection file, so `npm run dev` in `ui/` (and the CLI) can reach this

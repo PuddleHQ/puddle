@@ -17,6 +17,9 @@ pub const MAIN_LABEL: &str = "main";
 /// Rust; tests pass a recorder.
 pub type OpenExternal = Arc<dyn Fn(&Url) + Send + Sync>;
 
+/// Tells the user a link was refused (see [`crate::links`]). Tests pass a recorder.
+pub type Refused = Arc<dyn Fn(&Url) + Send + Sync>;
+
 /// The script that runs before the page's own scripts, in the main window's top-level frame only.
 ///
 /// It sets `window.__PUDDLE__ = { token }`, the one way the SPA learns the API token (see `ui/src/lib/api/connection.ts`). The
@@ -38,11 +41,12 @@ pub fn init_script(origin: &str, token: &str) -> String {
     )
 }
 
-/// The navigation callback for the main window: keeps it on the allowed origins and sends web
-/// addresses elsewhere to `open`.
+/// The navigation callback for the main window: keeps it on the allowed origins, sends web
+/// addresses elsewhere to `open` and tells `refused` about the rest.
 pub fn navigation_handler(
     policy: OriginPolicy,
     open: OpenExternal,
+    refused: Refused,
 ) -> impl Fn(&Url) -> bool + Send + Sync + 'static {
     move |target| match policy.classify(target) {
         Navigation::Stay => true,
@@ -52,8 +56,19 @@ pub fn navigation_handler(
         }
         Navigation::Refuse => {
             tracing::warn!(scheme = target.scheme(), "main window navigation refused");
+            refused(target);
             false
         }
+    }
+}
+
+/// What a request for a new window (a `target="_blank"` link) does: web addresses go to the
+/// browser, refused ones are reported, and the window's own pages are dropped.
+fn new_window_handler(policy: &OriginPolicy, target: &Url, open: &OpenExternal, refused: &Refused) {
+    match policy.classify(target) {
+        Navigation::External => open(target),
+        Navigation::Refuse => refused(target),
+        Navigation::Stay => {}
     }
 }
 
@@ -71,6 +86,7 @@ pub fn open_main<R: Runtime, M: Manager<R>>(
     dev_url: Option<&Url>,
     debug_port: Option<u16>,
     open: OpenExternal,
+    refused: Refused,
 ) -> tauri::Result<WebviewWindow<R>> {
     if let Some(existing) = manager.get_webview_window(MAIN_LABEL) {
         return Ok(existing);
@@ -84,13 +100,10 @@ pub fn open_main<R: Runtime, M: Manager<R>>(
         .inner_size(1280.0, 800.0)
         .min_inner_size(900.0, 600.0)
         .initialization_script(init_script(&origin, token))
-        .on_navigation(navigation_handler(policy.clone(), open))
+        .on_navigation(navigation_handler(policy.clone(), open, refused.clone()))
         .on_new_window(move |target, _features| {
+            new_window_handler(&policy, &target, &on_new_window_open, &refused);
             // Never `Allow`: that is the webview's own pop-up, without our handlers.
-            // `target="_blank"` links to the web go to the browser; the rest is dropped.
-            if policy.classify(&target) == Navigation::External {
-                on_new_window_open(&target);
-            }
             NewWindowResponse::Deny
         });
     #[cfg(windows)]
@@ -141,14 +154,37 @@ mod tests {
     fn the_handler_stays_opens_or_drops() {
         let api = Url::parse("http://127.0.0.1:4711/").unwrap();
         let (open, seen) = recorder();
-        let handler = navigation_handler(OriginPolicy::new(&api, None), open);
+        let (refused, refusals) = recorder();
+        let handler = navigation_handler(OriginPolicy::new(&api, None), open, refused);
         assert!(handler(&Url::parse("http://127.0.0.1:4711/inbox").unwrap()));
         assert!(seen.lock().unwrap().is_empty());
         assert!(!handler(&Url::parse("https://example.org/a").unwrap()));
         assert_eq!(*seen.lock().unwrap(), ["https://example.org/a"]);
+        assert!(refusals.lock().unwrap().is_empty());
         assert!(!handler(&Url::parse("file:///etc/passwd").unwrap()));
         assert!(!handler(&Url::parse("http://tauri.localhost/").unwrap()));
         assert_eq!(seen.lock().unwrap().len(), 1);
+        assert_eq!(
+            *refusals.lock().unwrap(),
+            ["file:///etc/passwd", "http://tauri.localhost/"]
+        );
+    }
+
+    #[test]
+    fn a_new_window_opens_the_web_reports_the_refused_and_drops_the_rest() {
+        let api = Url::parse("http://127.0.0.1:4711/").unwrap();
+        let policy = OriginPolicy::new(&api, None);
+        let (open, opened) = recorder();
+        let (refused, refusals) = recorder();
+        for target in [
+            "https://example.org/a",
+            "mailto:a@example.org",
+            "http://127.0.0.1:4711/inbox",
+        ] {
+            new_window_handler(&policy, &Url::parse(target).unwrap(), &open, &refused);
+        }
+        assert_eq!(*opened.lock().unwrap(), ["https://example.org/a"]);
+        assert_eq!(*refusals.lock().unwrap(), ["mailto:a@example.org"]);
     }
 
     #[test]
@@ -156,10 +192,11 @@ mod tests {
         let app = tauri::test::mock_app();
         let url = Url::parse("http://127.0.0.1:4711/").unwrap();
         let (open, _) = recorder();
-        let first = open_main(&app, &url, "t", None, None, open.clone()).unwrap();
+        let (refused, _) = recorder();
+        let first = open_main(&app, &url, "t", None, None, open.clone(), refused.clone()).unwrap();
         assert_eq!(first.label(), MAIN_LABEL);
         assert_eq!(first.url().unwrap(), url);
-        let second = open_main(&app, &url, "t", None, None, open).unwrap();
+        let second = open_main(&app, &url, "t", None, None, open, refused).unwrap();
         assert_eq!(second.label(), MAIN_LABEL);
         assert_eq!(app.webview_windows().len(), 1);
     }
@@ -170,7 +207,8 @@ mod tests {
         let api = Url::parse("http://127.0.0.1:4711/").unwrap();
         let dev = Url::parse("http://localhost:5173/").unwrap();
         let (open, _) = recorder();
-        let window = open_main(&app, &api, "t", Some(&dev), None, open).unwrap();
+        let (refused, _) = recorder();
+        let window = open_main(&app, &api, "t", Some(&dev), None, open, refused).unwrap();
         assert_eq!(window.url().unwrap(), dev);
     }
 }

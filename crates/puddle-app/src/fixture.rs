@@ -8,7 +8,7 @@ use puddle_api::{
     ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, Services, SettingsRepo,
 };
 use puddle_store::{Limits, Store, SystemClock};
-use puddle_types::{EgressRequest, Host, SuffixAllows, WorkspaceName};
+use puddle_types::{EgressRequest, Host, Problems, SuffixAllows, WorkspaceName};
 
 use crate::backend::{Backend, BackendError};
 
@@ -30,14 +30,16 @@ pub(crate) async fn start(port: u16) -> Result<Backend, BackendError> {
         )
         .map_err(|e| fixture("seed", &e))?;
     let events = Arc::new(EventHub::default());
+    let problems = Arc::new(Problems::new(events.clone()));
     let services = Services::new(
         store,
         Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
         events.clone(),
         clock,
-    );
+    )
+    .with_problems(problems.clone());
     let server =
         ApiServer::bind(ApiConfig::with_port(port), ApiToken::generate()?, services).await?;
     let info = server.connection_info();
-    Backend::new(info, events, server.spawn())
+    Backend::new(info, events, problems, server.spawn())
 }

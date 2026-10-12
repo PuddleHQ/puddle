@@ -132,7 +132,8 @@ fn app_with_main() -> (tauri::App<MockRuntime>, WebviewWindow<MockRuntime>) {
         .unwrap();
     let api = Url::parse("http://127.0.0.1:4711/").unwrap();
     let open: puddle_app::window::OpenExternal = std::sync::Arc::new(|_| {});
-    let window = open_main(&app, &api, "token", None, None, open).unwrap();
+    let refused: puddle_app::window::Refused = std::sync::Arc::new(|_| {});
+    let window = open_main(&app, &api, "token", None, None, open, refused).unwrap();
     assert_eq!(window.label(), MAIN_LABEL);
     (app, window)
 }

@@ -31,6 +31,32 @@ fn user_set(text: &str) -> Result<i64, ApiError> {
     }
 }
 
+/// The store's System managed hosts as the wire shows them. A host `convert` cannot describe is
+/// left out with a warning; the count left out comes back with the hosts.
+fn wire_system_hosts(
+    hosts: Vec<puddle_store::SystemHost>,
+    convert: impl Fn(puddle_store::SystemHost) -> Option<SystemManagedHost>,
+) -> (Vec<SystemManagedHost>, usize) {
+    let mut left_out = 0;
+    let shown = hosts
+        .into_iter()
+        .filter_map(|host| {
+            let (pattern, reason) = (host.pattern, host.reason);
+            let shown = convert(host);
+            if shown.is_none() {
+                left_out += 1;
+                tracing::warn!(
+                    host = pattern,
+                    reason = ?reason,
+                    "System managed host left out: this puddle does not know its reason"
+                );
+            }
+            shown
+        })
+        .collect();
+    (shown, left_out)
+}
+
 /// Every rule set (built-in first, then yours) and the System managed hosts with their reasons.
 #[utoipa::path(
     get,
@@ -44,12 +70,10 @@ pub(crate) async fn list_rule_sets(
     let list = blocking(move || {
         let sets = state.store.rule_sets()?;
         let system = state.store.system_managed()?;
+        let (system_managed, _left_out) = wire_system_hosts(system, SystemManagedHost::from_store);
         Ok(RuleSetList {
             sets: sets.into_iter().map(RuleSetView::from_store).collect(),
-            system_managed: system
-                .into_iter()
-                .filter_map(SystemManagedHost::from_store)
-                .collect(),
+            system_managed,
         })
     })
     .await?;
@@ -162,4 +186,41 @@ pub(crate) async fn switch_rule_set(
     })
     .await?;
     Ok(Json(switched))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn host(pattern: &'static str) -> puddle_store::SystemHost {
+        puddle_store::SystemHost {
+            pattern,
+            note: "",
+            reason: puddle_store::SystemReason::CodeServer,
+            workspace: None,
+        }
+    }
+
+    #[test]
+    fn a_host_whose_reason_is_unknown_is_left_out_and_counted() {
+        let hosts = vec![host("a.example.com"), host("b.example.com")];
+        let (shown, left_out) = wire_system_hosts(hosts, |h| {
+            if h.pattern == "b.example.com" {
+                None
+            } else {
+                SystemManagedHost::from_store(h)
+            }
+        });
+        assert_eq!(left_out, 1);
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].pattern, "a.example.com");
+    }
+
+    #[test]
+    fn hosts_with_known_reasons_are_all_shown() {
+        let (shown, left_out) =
+            wire_system_hosts(vec![host("a.example.com")], SystemManagedHost::from_store);
+        assert_eq!(left_out, 0);
+        assert_eq!(shown.len(), 1);
+    }
 }

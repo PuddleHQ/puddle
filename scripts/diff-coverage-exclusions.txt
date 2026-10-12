@@ -109,3 +109,6 @@ crates/puddle/src/cmd/serve.rs | exit_after(&host.shutdown().await.sandboxes) | 
 crates/puddle-agent/src/oom.rs | Err(err) => { | `std::thread::Builder::spawn` fails only when the OS refuses a thread, and no test can make it
 crates/puddle-agent/src/oom.rs | kernel log reader not started | `std::thread::Builder::spawn` fails only when the OS refuses a thread, and no test can make it
 crates/puddle-agent/src/oom.rs | false | `std::thread::Builder::spawn` fails only when the OS refuses a thread, and no test can make it
+crates/puddle/src/cmd/serve.rs | Err(e) => { | the startup path runs only in the real binary after the front/worker split; `log_level` is unit-tested and the exit path is three lines
+crates/puddle/src/cmd/serve.rs | eprintln!("puddle: {e}"); | the startup path runs only in the real binary after the front/worker split; `log_level` is unit-tested and the exit path is three lines
+crates/puddle/src/cmd/serve.rs | return ExitCode::FAILURE; | the startup path runs only in the real binary after the front/worker split; `log_level` is unit-tested and the exit path is three lines

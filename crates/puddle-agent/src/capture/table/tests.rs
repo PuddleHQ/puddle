@@ -1,7 +1,48 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::fmt::Write as _;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use super::*;
+
+/// Collects what the tracing subscriber writes, so a test can check for a warning.
+#[derive(Clone, Default)]
+struct Logs(Arc<Mutex<Vec<u8>>>);
+
+impl Logs {
+    fn subscriber(&self) -> impl tracing::Subscriber + Send + Sync {
+        tracing_subscriber::fmt()
+            .with_writer(self.clone())
+            .with_ansi(false)
+            .finish()
+    }
+
+    fn text(&self) -> String {
+        let bytes = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+}
+
+impl io::Write for Logs {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Logs {
+    type Writer = Self;
+
+    fn make_writer(&'a self) -> Self {
+        self.clone()
+    }
+}
 
 fn ip(s: &str) -> Ipv4Addr {
     s.parse().unwrap()
@@ -249,6 +290,33 @@ fn a_table_file_that_cannot_be_used_costs_only_persistence() {
     fs::write(&blocker, "x").unwrap();
     let t = StandIns::open(&blocker.join("sub/table"));
     assert!(t.address_for("a.example").is_ok());
+}
+
+#[test]
+fn a_table_file_over_the_size_cap_is_warned_about() {
+    let logs = Logs::default();
+    let d = dir();
+    let path = d.path().join("table");
+    // A sparse file one byte past the cap: no entries are needed to reach it.
+    File::create(&path).unwrap().set_len(MAX_FILE + 1).unwrap();
+    tracing::subscriber::with_default(logs.subscriber(), || {
+        let _ = StandIns::open(&path);
+    });
+    let text = logs.text();
+    assert!(text.contains("over its size cap"), "{text}");
+    assert!(text.contains(&*path.display().to_string()), "{text}");
+}
+
+#[test]
+fn a_file_within_the_size_cap_is_not_warned_about() {
+    let logs = Logs::default();
+    let d = dir();
+    let path = d.path().join("table");
+    fs::write(&path, "198.18.0.2 a.example\n").unwrap();
+    tracing::subscriber::with_default(logs.subscriber(), || {
+        let _ = StandIns::open(&path);
+    });
+    assert!(!logs.text().contains("size cap"), "{}", logs.text());
 }
 
 #[test]

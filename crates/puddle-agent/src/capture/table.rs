@@ -284,19 +284,23 @@ impl Inner {
     /// Reads a table file: later lines override earlier ones; bad lines are skipped. Returns
     /// whether the file is long enough to be worth rewriting.
     fn load(&mut self, path: &Path) -> bool {
-        let text = match File::open(path).and_then(|f| {
+        let (text, over_cap) = match File::open(path).and_then(|f| {
             use std::io::Read as _;
+            let over_cap = f.metadata()?.len() > MAX_FILE;
             let mut text = String::new();
             f.take(MAX_FILE).read_to_string(&mut text)?;
-            Ok(text)
+            Ok((text, over_cap))
         }) {
-            Ok(text) => text,
+            Ok(read) => read,
             Err(err) if err.kind() == io::ErrorKind::NotFound => return false,
             Err(err) => {
                 tracing::warn!(path = %path.display(), error = %err, "stand-in table not read; starting empty");
                 return false;
             }
         };
+        if over_cap {
+            tracing::warn!(path = %path.display(), cap = MAX_FILE, "stand-in table is over its size cap: entries past the cap are not loaded, and the next rewrite drops them");
+        }
         let mut lines = 0;
         for line in text.lines() {
             lines += 1;

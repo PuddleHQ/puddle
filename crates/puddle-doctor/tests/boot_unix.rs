@@ -16,7 +16,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use puddle_doctor::boot::test_boot;
-use puddle_doctor::{BootFacts, PROBE_EXIT_CODE, ProcessOutcome};
+use puddle_doctor::{BootFacts, KeptLogs, PROBE_EXIT_CODE, ProcessOutcome};
 
 /// A runtime folder whose `msb` is `script`.
 fn runtime(script: &str) -> tempfile::TempDir {
@@ -67,6 +67,7 @@ fn a_failed_boot_is_reported_once() {
     let facts = test_boot(dir.path(), "x86_64", LIMIT, None);
     let BootFacts::Ran {
         outcome: ProcessOutcome::Exited { stderr_tail, .. },
+        ..
     } = facts
     else {
         panic!("unexpected {facts:?}");
@@ -81,7 +82,8 @@ fn a_hanging_boot_times_out() {
     assert!(matches!(
         facts,
         BootFacts::Ran {
-            outcome: ProcessOutcome::TimedOut { .. }
+            outcome: ProcessOutcome::TimedOut { .. },
+            ..
         }
     ));
 }
@@ -109,11 +111,20 @@ fn a_failed_boot_keeps_msbs_logs_when_asked() {
     let keep = tempfile::tempdir().unwrap();
     let facts = test_boot(dir.path(), "x86_64", LIMIT, Some(keep.path()));
     assert_eq!(exit_code(&facts), Some(1));
+    let BootFacts::Ran {
+        kept_logs: Some(KeptLogs::Kept { dir, failed }),
+        ..
+    } = &facts
+    else {
+        panic!("the kept folder should be reported: {facts:?}");
+    };
+    assert!(failed.is_empty(), "{failed:?}");
     let kept: Vec<_> = std::fs::read_dir(keep.path())
         .unwrap()
         .map(|e| e.unwrap().path())
         .collect();
     assert_eq!(kept.len(), 1, "{kept:?}");
+    assert_eq!(&kept[0], dir);
     assert_eq!(
         std::fs::read_to_string(kept[0].join("logs/runtime.log")).unwrap(),
         "vmm trace\n"
@@ -128,4 +139,40 @@ fn a_good_boot_keeps_nothing() {
     let facts = test_boot(dir.path(), "x86_64", LIMIT, Some(keep.path()));
     assert_eq!(exit_code(&facts), Some(PROBE_EXIT_CODE));
     assert_eq!(std::fs::read_dir(keep.path()).unwrap().count(), 0);
+    assert!(matches!(
+        facts,
+        BootFacts::Ran {
+            kept_logs: None,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn a_failed_boot_that_left_no_logs_says_so_when_keeping_was_asked() {
+    let dir = runtime("exit 1");
+    let keep = tempfile::tempdir().unwrap();
+    let facts = test_boot(dir.path(), "x86_64", LIMIT, Some(keep.path()));
+    let BootFacts::Ran {
+        kept_logs: Some(KeptLogs::NotKept { detail }),
+        ..
+    } = facts
+    else {
+        panic!("the missing logs should be reported: {facts:?}");
+    };
+    assert!(detail.contains("msb wrote no logs"), "{detail}");
+    assert_eq!(std::fs::read_dir(keep.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn a_failed_boot_without_a_keep_folder_reports_no_kept_logs() {
+    let dir = logging_runtime(1);
+    let facts = test_boot(dir.path(), "x86_64", LIMIT, None);
+    assert!(matches!(
+        facts,
+        BootFacts::Ran {
+            kept_logs: None,
+            ..
+        }
+    ));
 }

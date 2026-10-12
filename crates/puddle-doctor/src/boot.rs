@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use puddle_runtime::{GuestArch, RuntimeEnv, RuntimeLayout};
 
 use crate::diagnose::PROBE_EXIT_CODE;
-use crate::facts::{BootFacts, ProcessOutcome};
+use crate::facts::{BootFacts, KeptLogs, ProcessOutcome};
 use crate::launch;
 
 /// The probe's path inside the guest.
@@ -107,7 +107,8 @@ pub fn write_rootfs(dir: &Path, probe_program: &[u8]) -> std::io::Result<()> {
 /// Boots a test VM with the msb in `runtime_dir`, giving up after `limit`. Uses a throwaway msb
 /// home and root file system in the temp dir. If the probe doesn't exit with
 /// [`PROBE_EXIT_CODE`] and `keep_logs` is set, msb's logs of the boot are copied to
-/// `<keep_logs>/puddle-doctor-boot-<ms since 1970>/logs/` before the home is deleted.
+/// `<keep_logs>/puddle-doctor-boot-<ms since 1970>/logs/` before the home is deleted; the
+/// result's `kept_logs` says where they went, or why they didn't.
 #[must_use]
 pub fn test_boot(
     runtime_dir: &Path,
@@ -155,49 +156,96 @@ pub fn test_boot(
             ..
         }
     );
-    if let Some(dir) = keep_logs.filter(|_| !booted) {
-        keep_boot_logs(layout.home(), dir);
-    }
-    BootFacts::Ran { outcome }
+    let kept_logs = keep_logs
+        .filter(|_| !booted)
+        .map(|dir| keep_boot_logs(layout.home(), dir));
+    BootFacts::Ran { outcome, kept_logs }
 }
 
-/// Copies the test sandbox's log files from msb `home` to a new folder in `dir`, best effort: a
-/// boot that never got a log folder has nothing to keep, and keeping must not change the result.
-fn keep_boot_logs(home: &Path, dir: &Path) {
+/// Copies the test sandbox's log files from msb `home` to a new folder in `dir`. Keeping is best
+/// effort and never changes the boot's result, but the answer says where the logs went or why
+/// they didn't, because the caller asked for them.
+fn keep_boot_logs(home: &Path, dir: &Path) -> KeptLogs {
     let from = home.join("sandboxes").join(BOOT_SANDBOX).join("logs");
-    let Ok(entries) = std::fs::read_dir(&from) else {
-        return;
+    let entries = match std::fs::read_dir(&from) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return KeptLogs::NotKept {
+                detail: format!(
+                    "msb wrote no logs for this boot ({} doesn't exist)",
+                    from.display()
+                ),
+            };
+        }
+        Err(e) => {
+            return KeptLogs::NotKept {
+                detail: format!("{}: {e}", from.display()),
+            };
+        }
     };
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis());
-    let Some(to) = new_folder(dir, &format!("{BOOT_SANDBOX}-{stamp}")) else {
-        return;
-    };
-    let to = to.join("logs");
-    if std::fs::create_dir_all(&to).is_err() {
-        return;
-    }
-    for entry in entries.filter_map(Result::ok) {
-        let path = entry.path();
-        if path.is_file() {
-            let _ = std::fs::copy(&path, to.join(entry.file_name()));
+    let kept = new_folder(dir, &format!("{BOOT_SANDBOX}-{stamp}")).and_then(|folder| {
+        let to = folder.join("logs");
+        std::fs::create_dir_all(&to).map(|()| (folder, to))
+    });
+    let (folder, to) = match kept {
+        Ok(made) => made,
+        Err(e) => {
+            return KeptLogs::NotKept {
+                detail: format!("no folder to keep them in under {}: {e}", dir.display()),
+            };
         }
+    };
+    let failed = copy_logs(entries, &from, &to);
+    KeptLogs::Kept {
+        dir: folder,
+        failed,
     }
 }
 
+/// Copies the files among `entries` (the listing of `from`) into `to`; the files and the listing
+/// entries that couldn't be copied come back as one line each, with their error.
+fn copy_logs(entries: std::fs::ReadDir, from: &Path, to: &Path) -> Vec<String> {
+    entries
+        .filter_map(|entry| {
+            let copied = entry
+                .map_err(|e| format!("{}: {e}", from.display()))
+                .and_then(|entry| {
+                    let path = entry.path();
+                    if !path.is_file() {
+                        return Ok(());
+                    }
+                    std::fs::copy(&path, to.join(entry.file_name()))
+                        .map(drop)
+                        .map_err(|e| format!("{}: {e}", path.display()))
+                });
+            copied.err()
+        })
+        .collect()
+}
+
 /// Creates and returns a folder in `dir` named `name`, or `name-2`, `name-3`, ... when taken, so
-/// two boots kept in the same millisecond don't share one. `None` if none can be created.
-fn new_folder(dir: &Path, name: &str) -> Option<std::path::PathBuf> {
-    std::fs::create_dir_all(dir).ok()?;
-    (1..=100).find_map(|n| {
+/// two boots kept in the same millisecond don't share one.
+fn new_folder(dir: &Path, name: &str) -> std::io::Result<std::path::PathBuf> {
+    std::fs::create_dir_all(dir)?;
+    for n in 1..=100 {
         let path = if n == 1 {
             dir.join(name)
         } else {
             dir.join(format!("{name}-{n}"))
         };
-        std::fs::create_dir(&path).ok().map(|()| path)
-    })
+        match std::fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        format!("{name} and its numbered variants all exist"),
+    ))
 }
 
 fn command(layout: &RuntimeLayout, rootfs: &Path) -> Command {
@@ -296,21 +344,38 @@ mod tests {
         );
     }
 
+    fn kept_dir(kept: &KeptLogs) -> &Path {
+        match kept {
+            KeptLogs::Kept { dir, failed } => {
+                assert!(failed.is_empty(), "{failed:?}");
+                dir
+            }
+            KeptLogs::NotKept { detail } => panic!("not kept: {detail}"),
+        }
+    }
+
     #[test]
-    fn a_failed_boots_logs_are_kept_in_a_new_folder() {
+    fn a_failed_boots_logs_are_kept_in_a_new_folder_that_is_reported() {
         let home = tempfile::tempdir().unwrap();
         let logs = home.path().join("sandboxes/puddle-doctor-boot/logs");
         std::fs::create_dir_all(logs.join("nested")).unwrap();
         std::fs::write(logs.join("runtime.log"), b"vmm").unwrap();
         std::fs::write(logs.join("kernel.log"), b"").unwrap();
         let keep = tempfile::tempdir().unwrap();
-        keep_boot_logs(home.path(), keep.path());
-        keep_boot_logs(home.path(), keep.path());
-        let kept: Vec<_> = std::fs::read_dir(keep.path())
+        let first = keep_boot_logs(home.path(), keep.path());
+        let second = keep_boot_logs(home.path(), keep.path());
+        let reported = [
+            kept_dir(&first).to_path_buf(),
+            kept_dir(&second).to_path_buf(),
+        ];
+        let mut kept: Vec<_> = std::fs::read_dir(keep.path())
             .unwrap()
             .map(|e| e.unwrap().path())
             .collect();
-        assert_eq!(kept.len(), 2, "{kept:?}");
+        kept.sort();
+        let mut reported_sorted = reported.to_vec();
+        reported_sorted.sort();
+        assert_eq!(kept, reported_sorted);
         for dir in &kept {
             let name = dir.file_name().unwrap().to_string_lossy().into_owned();
             assert!(name.starts_with("puddle-doctor-boot-"), "{name}");
@@ -321,11 +386,77 @@ mod tests {
     }
 
     #[test]
-    fn a_boot_without_logs_keeps_nothing() {
+    fn a_boot_without_logs_says_msb_wrote_none() {
         let home = tempfile::tempdir().unwrap();
         let keep = tempfile::tempdir().unwrap();
-        keep_boot_logs(home.path(), keep.path());
+        let KeptLogs::NotKept { detail } = keep_boot_logs(home.path(), keep.path()) else {
+            panic!("nothing was there to keep");
+        };
+        assert!(detail.contains("msb wrote no logs"), "{detail}");
         assert_eq!(std::fs::read_dir(keep.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn an_unreadable_log_folder_is_reported_with_its_error() {
+        let home = tempfile::tempdir().unwrap();
+        // A file where the logs folder should be: reading it as a folder fails, not "missing".
+        let sandbox = home.path().join("sandboxes/puddle-doctor-boot");
+        std::fs::create_dir_all(&sandbox).unwrap();
+        std::fs::write(sandbox.join("logs"), b"not a folder").unwrap();
+        let keep = tempfile::tempdir().unwrap();
+        let KeptLogs::NotKept { detail } = keep_boot_logs(home.path(), keep.path()) else {
+            panic!("a file is no log folder");
+        };
+        assert!(detail.contains("logs"), "{detail}");
+        assert!(!detail.contains("wrote no logs"), "{detail}");
+    }
+
+    #[test]
+    fn a_keep_folder_that_cannot_be_made_is_reported_with_its_error() {
+        let home = tempfile::tempdir().unwrap();
+        let logs = home.path().join("sandboxes/puddle-doctor-boot/logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        std::fs::write(logs.join("runtime.log"), b"vmm").unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        // A file where the keep folder should be.
+        let keep = scratch.path().join("kept");
+        std::fs::write(&keep, b"in the way").unwrap();
+        let KeptLogs::NotKept { detail } = keep_boot_logs(home.path(), &keep) else {
+            panic!("the keep folder can't exist");
+        };
+        assert!(detail.contains("no folder to keep them in"), "{detail}");
+        assert!(detail.contains(&*keep.to_string_lossy()), "{detail}");
+    }
+
+    #[test]
+    fn a_log_that_cannot_be_copied_is_listed_with_its_error() {
+        let from = tempfile::tempdir().unwrap();
+        std::fs::write(from.path().join("runtime.log"), b"vmm").unwrap();
+        std::fs::create_dir(from.path().join("nested")).unwrap();
+        // The target folder doesn't exist, so the one file can't be copied; the folder is skipped.
+        let to = from.path().join("missing/logs");
+        let failed = copy_logs(std::fs::read_dir(from.path()).unwrap(), from.path(), &to);
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert!(failed[0].contains("runtime.log"), "{failed:?}");
+    }
+
+    #[test]
+    fn a_keep_folder_name_that_is_taken_a_hundred_times_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        for _ in 0..100 {
+            new_folder(dir.path(), "x").unwrap();
+        }
+        let err = new_folder(dir.path(), "x").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+    }
+
+    #[test]
+    fn two_boots_in_one_millisecond_get_separate_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = new_folder(dir.path(), "x").unwrap();
+        let b = new_folder(dir.path(), "x").unwrap();
+        assert_ne!(a, b);
+        assert!(b.ends_with("x-2"));
     }
 
     #[test]

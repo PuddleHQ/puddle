@@ -5,7 +5,7 @@
 use std::io;
 use std::path::Path;
 
-use crate::facts::{CodeIntegrity, GsaFacts, JobFacts};
+use crate::facts::{CodeIntegrityFacts, GsaFacts, JobFacts};
 
 /// Hypervisor facts for a Unix that is neither Linux nor macOS: no API is known.
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -18,7 +18,7 @@ pub(crate) fn hypervisor() -> crate::facts::HypervisorFacts {
     }
 }
 
-pub(crate) fn code_integrity() -> Option<CodeIntegrity> {
+pub(crate) fn code_integrity() -> Option<CodeIntegrityFacts> {
     None
 }
 

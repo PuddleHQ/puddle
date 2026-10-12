@@ -7,12 +7,12 @@
 //! |---|---|---|
 //! | CPU virtualization | `IsProcessorFeaturePresent(PF_VIRT_FIRMWARE_ENABLED)`; `/proc/cpuinfo` | off in UEFI/BIOS |
 //! | Hypervisor | `WHvGetCapability(HypervisorPresent)` from System32's `WinHvPlatform.dll`; `/dev/kvm`; CPUID vendor | WHP feature off, not running yet, VM without nested virtualization |
-//! | Code integrity | `NtQuerySystemInformation(SystemCodeIntegrityInformation)` | HVCI / App Control state (info) |
+//! | Code integrity | `NtQuerySystemInformation(SystemCodeIntegrityInformation)` | HVCI / App Control state (info); unreadable: an info line with the `NTSTATUS` |
 //! | Job object | `IsProcessInJob`, `QueryInformationJobObject` | job without breakaway (CI runners; info) |
 //! | Bundled runtime | [`puddle_runtime::BundledRuntime::open`], plus opening `msb` for read + execute | missing, wrong version, permissions |
 //! | Runtime starts | `msb --version` with a time limit | `AppLocker`, App Control / Smart App Control, antivirus, EDR, missing DLL, timeout |
-//! | Test boot | `msb run` of a 132-byte probe program in a tiny root file system ([`boot`]) | can't boot a VM, timeout |
-//! | Global Secure Access | its client's services | installed: explains the VM limitation |
+//! | Test boot | `msb run` of a 132-byte probe program in a tiny root file system ([`boot`]) | can't boot a VM, timeout; says where a failed boot's logs were kept, or why not |
+//! | Global Secure Access | its client's services | installed: explains the VM limitation; service manager unreadable: an info line with the OS error |
 //!
 //! [`diagnose`] runs the checks against a [`Probe`]: [`SystemProbe`] for the real machine, a fake
 //! in tests. The [`Report`] renders as text or as JSON with a [`SCHEMA_VERSION`] (it may be
@@ -39,8 +39,9 @@ mod system;
 
 pub use diagnose::{Options, PROBE_EXIT_CODE, Probe, diagnose};
 pub use facts::{
-    AccessDenied, BootFacts, CodeIntegrity, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, Os,
-    ProcessOutcome, RuntimeFacts, RuntimeState,
+    AccessDenied, BootFacts, CodeIntegrity, CodeIntegrityFacts, GsaFacts, HypervisorApi,
+    HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome, RuntimeFacts, RuntimeState,
+    ServiceState,
 };
 pub use launch::TAIL_LINES;
 pub use puddle_runtime::RuntimeError;

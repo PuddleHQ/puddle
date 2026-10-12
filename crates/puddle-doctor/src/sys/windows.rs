@@ -21,8 +21,8 @@ use windows_sys::Win32::System::LibraryLoader::{
     GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
 };
 use windows_sys::Win32::System::Services::{
-    CloseServiceHandle, OpenSCManagerW, OpenServiceW, QueryServiceStatus, SC_MANAGER_CONNECT,
-    SERVICE_QUERY_STATUS, SERVICE_RUNNING, SERVICE_STATUS,
+    CloseServiceHandle, OpenSCManagerW, OpenServiceW, QueryServiceStatus, SC_HANDLE,
+    SC_MANAGER_CONNECT, SERVICE_QUERY_STATUS, SERVICE_RUNNING, SERVICE_STATUS,
 };
 use windows_sys::Win32::System::Threading::{
     GetCurrentProcess, IsProcessorFeaturePresent, PF_VIRT_FIRMWARE_ENABLED,
@@ -33,7 +33,10 @@ use windows_sys::Win32::System::WindowsProgramming::{
     SYSTEM_CODEINTEGRITY_INFORMATION,
 };
 
-use crate::facts::{CodeIntegrity, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts};
+use crate::facts::{
+    CodeIntegrity, CodeIntegrityFacts, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts,
+    ServiceState,
+};
 
 /// The services of the Microsoft Entra Global Secure Access client.
 pub(crate) const GSA_SERVICES: [&str; 4] = [
@@ -134,9 +137,14 @@ fn hypervisor_present(first: u64) -> bool {
 }
 
 #[expect(unsafe_code, reason = "NtQuerySystemInformation")]
-pub(crate) fn code_integrity() -> Option<CodeIntegrity> {
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the same signature as the Unix probe, which reports nothing"
+)]
+pub(crate) fn code_integrity() -> Option<CodeIntegrityFacts> {
+    let size = size_of::<SYSTEM_CODEINTEGRITY_INFORMATION>();
     let mut info = SYSTEM_CODEINTEGRITY_INFORMATION {
-        Length: u32::try_from(size_of::<SYSTEM_CODEINTEGRITY_INFORMATION>()).ok()?,
+        Length: size.try_into().unwrap_or(u32::MAX),
         CodeIntegrityOptions: 0,
     };
     let mut len = 0_u32;
@@ -150,16 +158,16 @@ pub(crate) fn code_integrity() -> Option<CodeIntegrity> {
         )
     };
     if status < 0 {
-        return None;
+        return Some(CodeIntegrityFacts::query_failed(status));
     }
     let o = info.CodeIntegrityOptions;
-    Some(CodeIntegrity {
+    Some(CodeIntegrityFacts::Read(CodeIntegrity {
         hvci: o & CODEINTEGRITY_OPTION_HVCI_KMCI_ENABLED != 0,
         user_mode_enforced: o & CODEINTEGRITY_OPTION_UMCI_ENABLED != 0
             && o & CODEINTEGRITY_OPTION_UMCI_AUDITMODE_ENABLED == 0,
         user_mode_audit: o & CODEINTEGRITY_OPTION_UMCI_AUDITMODE_ENABLED != 0,
         test_signing: o & CODEINTEGRITY_OPTION_TESTSIGN != 0,
-    })
+    }))
 }
 
 #[expect(unsafe_code, reason = "IsProcessInJob and QueryInformationJobObject")]
@@ -195,46 +203,56 @@ pub(crate) fn job() -> Option<JobFacts> {
 }
 
 #[expect(unsafe_code, reason = "Service Control Manager queries")]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the same signature as the Unix probe, which reports nothing"
+)]
 pub(crate) fn global_secure_access() -> Option<GsaFacts> {
     // SAFETY: local machine, default database, connect right only (no admin needed).
     let scm = unsafe { OpenSCManagerW(std::ptr::null(), std::ptr::null(), SC_MANAGER_CONNECT) };
     if scm.is_null() {
-        return None;
+        return Some(GsaFacts::Unknown {
+            detail: format!("OpenSCManagerW: {}", io::Error::last_os_error()),
+        });
     }
-    let mut installed = false;
-    let mut running = false;
-    for name in GSA_SERVICES {
-        let w = wide(name);
-        // SAFETY: `scm` is open; `w` is NUL-terminated and outlives the call.
-        let svc = unsafe { OpenServiceW(scm, w.as_ptr(), SERVICE_QUERY_STATUS) };
-        if svc.is_null() {
-            // SAFETY: reads this thread's last error, set by OpenServiceW just above.
-            // Access denied: it exists, we just may not ask about it. Anything else (usually
-            // ERROR_SERVICE_DOES_NOT_EXIST): not installed.
-            if unsafe { GetLastError() } == ERROR_ACCESS_DENIED {
-                installed = true;
-            }
-            continue;
-        }
-        installed = true;
-        // SAFETY: all-zero is a valid value of this plain-data struct.
-        let mut status: SERVICE_STATUS = unsafe { std::mem::zeroed() };
-        // SAFETY: `svc` is open with SERVICE_QUERY_STATUS; `status` is a valid out pointer.
-        if unsafe { QueryServiceStatus(svc, &raw mut status) } != 0
-            && status.dwCurrentState == SERVICE_RUNNING
-        {
-            running = true;
-        }
-        // SAFETY: closes the handle opened above, once.
-        unsafe { CloseServiceHandle(svc) };
-    }
+    let states: Vec<ServiceState> = GSA_SERVICES
+        .iter()
+        .map(|name| service_state(scm, name))
+        .collect();
     // SAFETY: closes the manager handle opened above, once.
     unsafe { CloseServiceHandle(scm) };
-    Some(if installed {
-        GsaFacts::Installed { running }
+    Some(GsaFacts::from_services(states))
+}
+
+/// What the service `name` looks like through the open service manager `scm`.
+#[expect(unsafe_code, reason = "Service Control Manager queries")]
+fn service_state(scm: SC_HANDLE, name: &str) -> ServiceState {
+    let w = wide(name);
+    // SAFETY: `scm` is open; `w` is NUL-terminated and outlives the call.
+    let svc = unsafe { OpenServiceW(scm, w.as_ptr(), SERVICE_QUERY_STATUS) };
+    if svc.is_null() {
+        // SAFETY: reads this thread's last error, set by OpenServiceW just above.
+        // Access denied: it exists, we just may not ask about it. Anything else (usually
+        // ERROR_SERVICE_DOES_NOT_EXIST): not installed.
+        return if unsafe { GetLastError() } == ERROR_ACCESS_DENIED {
+            ServiceState::Unreadable
+        } else {
+            ServiceState::Missing
+        };
+    }
+    // SAFETY: all-zero is a valid value of this plain-data struct.
+    let mut status: SERVICE_STATUS = unsafe { std::mem::zeroed() };
+    // SAFETY: `svc` is open with SERVICE_QUERY_STATUS; `status` is a valid out pointer.
+    let queried = unsafe { QueryServiceStatus(svc, &raw mut status) } != 0;
+    // SAFETY: closes the handle opened above, once.
+    unsafe { CloseServiceHandle(svc) };
+    if !queried {
+        ServiceState::Unreadable
+    } else if status.dwCurrentState == SERVICE_RUNNING {
+        ServiceState::Running
     } else {
-        GsaFacts::NotInstalled
-    })
+        ServiceState::Stopped
+    }
 }
 
 /// Whether this user may read and run `path`: opens it with read-data and execute rights, which

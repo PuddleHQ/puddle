@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 use puddle_runtime::RuntimeError;
 
 use crate::facts::{
-    BootFacts, CodeIntegrity, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, Os,
-    ProcessOutcome, RuntimeFacts, RuntimeState,
+    BootFacts, CodeIntegrity, CodeIntegrityFacts, GsaFacts, HypervisorApi, HypervisorFacts,
+    JobFacts, KeptLogs, Os, ProcessOutcome, RuntimeFacts, RuntimeState,
 };
 use crate::report::{Check, CheckId, Finding, Report, SCHEMA_VERSION, Status};
 
@@ -24,8 +24,8 @@ pub trait Probe {
     fn arch(&self) -> String;
     /// Hardware virtualization and the hypervisor API.
     fn hypervisor(&self) -> HypervisorFacts;
-    /// Windows code integrity; `None` elsewhere or when it can't be read.
-    fn code_integrity(&self) -> Option<CodeIntegrity>;
+    /// Windows code integrity; `None` elsewhere.
+    fn code_integrity(&self) -> Option<CodeIntegrityFacts>;
     /// The bundled runtime.
     fn runtime(&self) -> RuntimeFacts;
     /// Runs `msb --version`, killed after `limit`. Called only when [`Probe::runtime`] was ready.
@@ -73,7 +73,7 @@ pub fn diagnose(probe: &dyn Probe, options: &Options, puddle_version: &str) -> R
     let hv = probe.hypervisor();
     let mut checks = vec![virtualization(os, &hv), hypervisor(os, &hv)];
     if let Some(ci) = probe.code_integrity() {
-        checks.push(code_integrity(ci));
+        checks.push(code_integrity(&ci));
     }
     let job = probe.job();
     if let Some(j) = job.filter(|j| !j.breakaway_allowed) {
@@ -111,7 +111,7 @@ pub fn diagnose(probe: &dyn Probe, options: &Options, puddle_version: &str) -> R
     });
 
     if let Some(gsa) = probe.global_secure_access() {
-        checks.push(global_secure_access(gsa));
+        checks.push(global_secure_access(&gsa));
     }
 
     Report {
@@ -274,7 +274,24 @@ report it."
 
 // ---- code integrity ----
 
-fn code_integrity(ci: CodeIntegrity) -> Check {
+fn code_integrity(facts: &CodeIntegrityFacts) -> Check {
+    match facts {
+        CodeIntegrityFacts::Read(ci) => code_integrity_state(*ci),
+        CodeIntegrityFacts::Unreadable { detail } => Check::new(
+            CheckId::CodeIntegrity,
+            Status::Info,
+            "could not be read; whether memory integrity (HVCI) or an App Control policy is on is unknown",
+        )
+        .finding(Finding::CodeIntegrityUnreadable)
+        .fix(
+            "puddle works without it. If \"Runtime starts\" or \"Test boot\" reports a blocked msb, that \
+check names the policy.",
+        )
+        .detail(detail.clone()),
+    }
+}
+
+fn code_integrity_state(ci: CodeIntegrity) -> Check {
     let hvci = if ci.hvci { "on" } else { "off" };
     let app = if ci.user_mode_enforced {
         "enforced"
@@ -626,6 +643,45 @@ const SLOW_FIX: &str = "Security software scanning a program it hasn't seen befo
 doctor again; if it keeps timing out, check your endpoint security's log for msb.";
 
 fn test_boot(os: Os, msb: &Path, dir: &Path, facts: &BootFacts, job: Option<JobFacts>) -> Check {
+    let check = test_boot_outcome(os, msb, dir, facts, job);
+    match facts {
+        BootFacts::Ran {
+            kept_logs: Some(kept),
+            ..
+        } => with_kept_logs(check, kept),
+        _ => check,
+    }
+}
+
+/// Adds where msb's logs of the failed boot went, or why they didn't, to the check's evidence: the
+/// logs were asked for, so a failure to keep them is said, not swallowed.
+fn with_kept_logs(mut check: Check, kept: &KeptLogs) -> Check {
+    let line = match kept {
+        KeptLogs::Kept { dir, failed } if failed.is_empty() => {
+            format!("msb's logs of this boot are kept in {}", dir.display())
+        }
+        KeptLogs::Kept { dir, failed } => format!(
+            "msb's logs of this boot are kept in {}, except {}",
+            dir.display(),
+            failed.join("; ")
+        ),
+        KeptLogs::NotKept { detail } => format!("msb's logs of this boot were not kept: {detail}"),
+    };
+    let detail = match check.detail.take() {
+        Some(detail) => format!("{detail}\n{line}"),
+        None => line,
+    };
+    check.detail = Some(detail);
+    check
+}
+
+fn test_boot_outcome(
+    os: Os,
+    msb: &Path,
+    dir: &Path,
+    facts: &BootFacts,
+    job: Option<JobFacts>,
+) -> Check {
     let id = CheckId::TestBoot;
     let outcome = match facts {
         BootFacts::UnsupportedArch { arch } => {
@@ -637,7 +693,7 @@ fn test_boot(os: Os, msb: &Path, dir: &Path, facts: &BootFacts, job: Option<JobF
                 .fix("Check that your temp folder (TEMP) exists, is writable and has free space.")
                 .detail(detail.clone());
         }
-        BootFacts::Ran { outcome } => outcome,
+        BootFacts::Ran { outcome, .. } => outcome,
     };
     match outcome {
         ProcessOutcome::Exited {
@@ -730,16 +786,32 @@ and run puddle doctor again, and include the lines below when you report it.";
 
 // ---- Global Secure Access ----
 
-fn global_secure_access(gsa: GsaFacts) -> Check {
+fn global_secure_access(gsa: &GsaFacts) -> Check {
     let id = CheckId::GlobalSecureAccess;
     match gsa {
         GsaFacts::NotInstalled => Check::new(id, Status::Ok, "client not installed"),
+        GsaFacts::Unknown { detail } => Check::new(
+            id,
+            Status::Info,
+            "could not check whether the client is installed",
+        )
+        .finding(Finding::GlobalSecureAccessUnknown)
+        .fix(
+            "puddle works without it. If company resources reached through Microsoft Entra Global Secure \
+Access don't work from a sandbox, see whether its client is installed on this PC: it doesn't \
+tunnel virtual machines' traffic.",
+        )
+        .detail(detail.clone()),
         GsaFacts::Installed { running } => Check::new(
             id,
             Status::Warn,
             format!(
                 "Microsoft Entra Global Secure Access client installed ({})",
-                if running { "running" } else { "not running" }
+                match running {
+                    Some(true) => "running",
+                    Some(false) => "not running",
+                    None => "running state unknown",
+                }
             ),
         )
         .finding(Finding::GlobalSecureAccessInstalled)

@@ -3807,30 +3807,13 @@ async fn what_reconcile_kept_removed_or_could_not_do_at_start_is_listed_with_the
     host.shutdown().await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn listing_the_repositories_of_an_identity_is_in_the_activity_log_as_puddles_own_request() {
-    use puddle_upstream::{Behaviour, FakeProxy, Hop};
-    let rig = Rig::new();
-    // The company proxy refuses every connection, so no request leaves the test.
-    let proxy = FakeProxy::start(Behaviour::Refuse(502)).await;
-    let os = FakeOs::new(ProxyConfig {
-        pac_url: Some("http://pac.corp/p.pac".into()),
-        ..ProxyConfig::default()
-    });
-    let hops = vec![Hop::Proxy(proxy.proxy_addr())];
-    os.set_pac(move |_| Ok(hops.clone()));
-    let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
-    let mut options = HostOptions::default();
-    options.secret_store = Some(rig.secrets.clone());
-    options.discovery = Some(Discovery::new(os, puddle_upstream::Config::default()));
-    let host = Host::start(prepared, &FakeFactory::new(&rig.runtime, &rig.log), options)
-        .await
-        .unwrap();
-    let api = api(&host);
+/// A GitHub identity with a stored token, so a repository listing makes one request to
+/// `api.github.com`.
+async fn add_github_identity(api: &Api, token: &str) {
     let stored = api
         .post(
             "/api/credentials/stored",
-            &json!({"host": "github.com", "token": "ghp_CANARY_listing_token"}).to_string(),
+            &json!({"host": "github.com", "token": token}).to_string(),
         )
         .await;
     assert_eq!(stored.status, 201, "{}", stored.body);
@@ -3851,6 +3834,132 @@ async fn listing_the_repositories_of_an_identity_is_in_the_activity_log_as_puddl
         )
         .await;
     assert_eq!(made.status, 201, "{}", made.body);
+}
+
+/// A host whose discovery answers a company proxy at `proxy` (a PAC says so), signing in with
+/// the Basic password `password`.
+async fn host_behind_proxy(
+    rig: &Rig,
+    proxy: &puddle_upstream::FakeProxy,
+    password: &str,
+) -> Host<FakeRuntime> {
+    let os = FakeOs::new(ProxyConfig {
+        pac_url: Some("http://pac.corp/p.pac".into()),
+        ..ProxyConfig::default()
+    });
+    let hops = vec![puddle_upstream::Hop::Proxy(proxy.proxy_addr())];
+    os.set_pac(move |_| Ok(hops.clone()));
+    let mut config = rig.config();
+    config.upstream.basic = Some(puddle_upstream::Credentials::new("svc", password));
+    let prepared = prepare(config, &FakePlatform::new(&rig.log)).unwrap();
+    let mut options = HostOptions::default();
+    options.secret_store = Some(rig.secrets.clone());
+    options.discovery = Some(Discovery::new(os, puddle_upstream::Config::default()));
+    Host::start(prepared, &FakeFactory::new(&rig.runtime, &rig.log), options)
+        .await
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sign_in_to_the_company_proxy_shows_in_the_served_network_health_report() {
+    use puddle_upstream::{Behaviour, FakeProxy};
+    let rig = Rig::new();
+    // The proxy asks for Basic once, then answers the CONNECT with "no such host": nothing
+    // leaves the test.
+    let proxy = FakeProxy::start(Behaviour::Basic {
+        user: "svc".into(),
+        password: "pw-right".into(),
+    })
+    .await;
+    let host = host_behind_proxy(&rig, &proxy, "pw-right").await;
+    let api = api(&host);
+
+    let before = api.get("/api/network-health").await.json();
+    assert_eq!(before["sign_in"]["attempts"], json!([]), "{before}");
+
+    add_github_identity(&api, "ghp_unused_token").await;
+    let listing = api.get("/api/repos").await.json();
+    assert_eq!(listing["sources"][0]["state"], "failed", "{listing}");
+
+    let reply = api.get("/api/network-health").await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert!(!reply.body.contains("pw-right"), "{}", reply.body);
+    let report = reply.json();
+    assert!(
+        report["sign_in"]["methods"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("basic")),
+        "{report}"
+    );
+    let attempts = report["sign_in"]["attempts"].as_array().unwrap();
+    assert_eq!(attempts.len(), 1, "{report}");
+    assert_eq!(attempts[0]["proxy"], proxy.proxy_addr().to_string());
+    assert_eq!(attempts[0]["scheme"], "Basic");
+    assert_eq!(attempts[0]["result"], "signed_in");
+    assert!(attempts[0]["at"].as_u64().unwrap() > 0, "{report}");
+    let methods: Vec<_> = proxy
+        .seen()
+        .iter()
+        .map(|seen| (seen.method.clone(), seen.proxy_authorization.is_some()))
+        .collect();
+    assert_eq!(
+        methods[..2],
+        [("CONNECT".to_owned(), false), ("CONNECT".to_owned(), true)],
+        "{methods:?}"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_sign_in_shows_as_failed_without_the_password() {
+    use puddle_upstream::{Behaviour, FakeProxy};
+    let rig = Rig::new();
+    let proxy = FakeProxy::start(Behaviour::Basic {
+        user: "svc".into(),
+        password: "pw-right".into(),
+    })
+    .await;
+    let host = host_behind_proxy(&rig, &proxy, "pw-wrong").await;
+    let api = api(&host);
+
+    add_github_identity(&api, "ghp_unused_token").await;
+    let listing = api.get("/api/repos").await.json();
+    assert_eq!(listing["sources"][0]["state"], "failed", "{listing}");
+
+    let reply = api.get("/api/network-health").await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert!(!reply.body.contains("pw-wrong"), "{}", reply.body);
+    let report = reply.json();
+    let attempts = report["sign_in"]["attempts"].as_array().unwrap();
+    assert_eq!(attempts.len(), 1, "{report}");
+    assert_eq!(attempts[0]["proxy"], proxy.proxy_addr().to_string());
+    assert_eq!(attempts[0]["scheme"], "Basic");
+    assert_eq!(attempts[0]["result"], "failed");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn listing_the_repositories_of_an_identity_is_in_the_activity_log_as_puddles_own_request() {
+    use puddle_upstream::{Behaviour, FakeProxy, Hop};
+    let rig = Rig::new();
+    // The company proxy refuses every connection, so no request leaves the test.
+    let proxy = FakeProxy::start(Behaviour::Refuse(502)).await;
+    let os = FakeOs::new(ProxyConfig {
+        pac_url: Some("http://pac.corp/p.pac".into()),
+        ..ProxyConfig::default()
+    });
+    let hops = vec![Hop::Proxy(proxy.proxy_addr())];
+    os.set_pac(move |_| Ok(hops.clone()));
+    let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
+    let mut options = HostOptions::default();
+    options.secret_store = Some(rig.secrets.clone());
+    options.discovery = Some(Discovery::new(os, puddle_upstream::Config::default()));
+    let host = Host::start(prepared, &FakeFactory::new(&rig.runtime, &rig.log), options)
+        .await
+        .unwrap();
+    let api = api(&host);
+    add_github_identity(&api, "ghp_CANARY_listing_token").await;
 
     let listing = api.get("/api/repos").await.json();
     assert_eq!(listing["sources"][0]["state"], "failed", "{listing}");

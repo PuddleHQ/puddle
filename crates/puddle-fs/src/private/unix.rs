@@ -18,15 +18,21 @@ pub(super) fn create_dir(dir: &Path) -> io::Result<()> {
 pub(super) fn create_new_dir(dir: &Path) -> io::Result<()> {
     // `mkdir` fails on an existing path and never follows a symlink in the last component.
     DirBuilder::new().mode(0o700).create(dir)?;
-    // The umask can only remove bits from 0700; set it exactly anyway, then check.
+    // The umask can only remove bits from 0700; set it exactly anyway, then check (a file system
+    // that ignores `chmod` would otherwise leave a folder that isn't what it claims to be).
     fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
-    let now = fs::symlink_metadata(dir)?.permissions().mode() & 0o7777;
-    if now == 0o700 {
+    expect_mode(dir, 0o700)
+}
+
+/// Fails unless `path` (not followed, if a symlink) has exactly `mode`.
+fn expect_mode(path: &Path, mode: u32) -> io::Result<()> {
+    let actual = fs::symlink_metadata(path)?.permissions().mode() & 0o7777;
+    if actual == mode {
         Ok(())
     } else {
         Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            format!("expected mode 700, found {now:o}"),
+            format!("expected mode {mode:o}, found {actual:o}"),
         ))
     }
 }
@@ -118,6 +124,15 @@ mod tests {
             fs::symlink_metadata(&sub).unwrap().permissions().mode() & 0o7777,
             0o700
         );
+    }
+
+    #[test]
+    fn a_folder_with_another_mode_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        expect_mode(dir.path(), mode(dir.path())).unwrap();
+        let err = expect_mode(dir.path(), 0o751).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        assert!(err.to_string().contains("expected mode 751"), "{err}");
     }
 
     #[test]

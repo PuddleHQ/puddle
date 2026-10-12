@@ -9829,7 +9829,8 @@
         "enum": [
           "system",
           "direct",
-          "manual"
+          "manual",
+          "unknown"
         ]
       },
       "ProxyProblem": {
@@ -11151,7 +11152,8 @@
           "signed_in",
           "not_required",
           "failed",
-          "unsupported"
+          "unsupported",
+          "unknown"
         ]
       },
       "SignInStarted": {

@@ -209,15 +209,17 @@ fn millis(time: std::time::SystemTime) -> u64 {
 fn proxy_report(health: &ProxyHealth) -> ProxyReport {
     ProxyReport {
         mode: match health.mode {
+            ModeKind::System => ProxyMode::System,
             ModeKind::Direct => ProxyMode::Direct,
             ModeKind::Manual => ProxyMode::Manual,
-            _ => ProxyMode::System,
+            _ => ProxyMode::Unknown,
         },
         detected: match health.detected {
             Detected::Pac => ProxyDetected::Pac,
             Detected::Wpad => ProxyDetected::Wpad,
             Detected::Static => ProxyDetected::Static,
             Detected::Env => ProxyDetected::Env,
+            Detected::Direct => ProxyDetected::Direct,
             _ => ProxyDetected::Unknown,
         },
         auto_detect: health.auto_detect,
@@ -265,8 +267,9 @@ fn attempt(sign_in: &SignIn) -> SignInAttempt {
         result: match sign_in.outcome {
             SignInOutcome::SignedIn => SignInResult::SignedIn,
             SignInOutcome::NotRequired => SignInResult::NotRequired,
+            SignInOutcome::Failed => SignInResult::Failed,
             SignInOutcome::Unsupported => SignInResult::Unsupported,
-            _ => SignInResult::Failed,
+            _ => SignInResult::Unknown,
         },
         detail: sign_in.detail.clone(),
         at: millis(sign_in.at),

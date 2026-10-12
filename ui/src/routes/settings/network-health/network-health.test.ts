@@ -141,6 +141,10 @@ describe("network health page", () => {
   it("says plainly when a state is one this version of puddle cannot name", () => {
     const r = report();
     r.proxy.detected = "unknown";
+    r.proxy.mode = "unknown";
+    r.sign_in.attempts = [
+      { proxy: "p:1", scheme: null, result: "unknown", detail: null, at: 1 },
+    ];
     r.roots.certificates = [
       {
         subject: "Odd",
@@ -164,6 +168,16 @@ describe("network health page", () => {
     expect(
       within(section("Proxy setup")).getByText(
         "A kind of setup this version of puddle doesn't recognise",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(section("Proxy setup")).getByText(
+        "A source this version of puddle doesn't recognise",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(section("Signing in to the proxy")).getByText(
+        "An ending this version of puddle doesn't recognise",
       ),
     ).toBeInTheDocument();
     expect(

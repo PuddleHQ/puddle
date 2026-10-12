@@ -14,7 +14,9 @@
 //!   command is refused to everyone until a capability names it. The ACL tests in `tests/acl.rs`
 //!   enforce all of this.
 //! * The window stays on the API's origin ([`navigation::OriginPolicy`]). Web addresses elsewhere
-//!   go to the default browser, called from Rust; everything else is dropped.
+//!   go to the default browser, called from Rust; everything else is dropped. A link that goes
+//!   nowhere (the opener failed, or the window refused it) is raised as a background problem
+//!   ([`links`]), which the page shows as a notice.
 //! * Tray, notifications, badges and close behaviour come later: they run in Rust, driven from
 //!   [`backend::Backend::events`]. The real backend and the workspace quit sequence come later.
 #![forbid(unsafe_code)]
@@ -22,6 +24,7 @@
 pub mod backend;
 #[cfg(feature = "fixture")]
 mod fixture;
+pub mod links;
 pub mod navigation;
 pub mod shell;
 pub mod window;

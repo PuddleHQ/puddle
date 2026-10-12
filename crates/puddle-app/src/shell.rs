@@ -4,12 +4,14 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use puddle_types::Problems;
 use tauri::{AppHandle, Manager, RunEvent, Runtime};
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
 use crate::backend::{Backend, BackendError};
-use crate::window::{MAIN_LABEL, OpenExternal, open_main};
+use crate::links;
+use crate::window::{MAIN_LABEL, OpenExternal, Refused, open_main};
 
 /// Why the shell didn't start or ended badly.
 #[derive(Debug, thiserror::Error)]
@@ -85,14 +87,23 @@ pub fn focus_main<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
-/// Hands an address to the default browser through the opener plugin.
-fn opener<R: Runtime>(app: &AppHandle<R>) -> OpenExternal {
-    let app = app.clone();
+/// Hands an address to the default browser through the opener plugin; a failure is raised as a
+/// problem the page shows.
+fn opener<R: Runtime>(app: &AppHandle<R>, problems: &Arc<Problems>) -> OpenExternal {
+    let (app, problems) = (app.clone(), problems.clone());
     Arc::new(move |url: &Url| {
-        if let Err(err) = app.opener().open_url(url.as_str(), None::<&str>) {
-            tracing::warn!(%err, "could not open the default browser");
-        }
+        links::open_and_report(&problems, url, |address| {
+            app.opener()
+                .open_url(address, None::<&str>)
+                .inspect_err(|err| tracing::warn!(%err, "could not open the default browser"))
+        });
     })
+}
+
+/// Tells the page about a link the window refused.
+fn refuser(problems: &Arc<Problems>) -> Refused {
+    let problems = problems.clone();
+    Arc::new(move |url: &Url| links::report_refused(&problems, url))
 }
 
 /// Starts the backend and opens the main window, then keeps the backend for the exit hook.
@@ -111,7 +122,8 @@ pub fn start<R: Runtime>(app: &AppHandle<R>, options: &Options) -> Result<(), Sh
         backend.token(),
         options.dev_url.as_ref(),
         options.debug_port,
-        opener(app),
+        opener(app, backend.problems()),
+        refuser(backend.problems()),
     )?;
     tracing::info!(url = %backend.url(), "main window open");
     app.manage(backend);
@@ -225,6 +237,22 @@ mod tests {
         assert!(matches!(err, ShellError::Backend(_)), "{err}");
         assert!(app.get_webview_window(MAIN_LABEL).is_none());
         tauri::async_runtime::block_on(taken.shutdown());
+    }
+
+    #[test]
+    fn a_refused_link_reaches_the_pages_problem_list() {
+        let app = app();
+        start(app.handle(), &Options::default()).unwrap();
+        let problems = app.state::<Backend>().problems().clone();
+        refuser(&problems)(&Url::parse("file:///etc/passwd").unwrap());
+        let listed: Vec<_> = problems
+            .list()
+            .into_iter()
+            .filter(|p| p.key == "app:link")
+            .collect();
+        assert_eq!(listed.len(), 1);
+        assert!(listed[0].title.contains("file:"), "{}", listed[0].title);
+        stop(app.handle());
     }
 
     #[test]

@@ -16,7 +16,7 @@ build = "build.rs"
 # lands (it will be replaced by the shared fixture backend). Without the feature the
 # shell refuses to start (there is nothing to show).
 default = ["fixture"]
-fixture = ["dep:puddle-store", "dep:puddle-types"]
+fixture = ["dep:puddle-store"]
 
 [lib]
 name = "puddle_app"
@@ -30,7 +30,7 @@ path = "src/main.rs"
 # `embedded-ui`: the SPA is part of the binary (build `ui/` first, `scripts/check.sh ui`).
 puddle-api = { workspace = true, features = ["embedded-ui"] }
 puddle-store = { workspace = true, optional = true }
-puddle-types = { workspace = true, optional = true }
+puddle-types = { workspace = true }
 serde_json = { workspace = true }
 tauri = { workspace = true }
 tauri-plugin-opener = { workspace = true }

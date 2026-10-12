@@ -4,8 +4,8 @@
 # GitHub). It runs on every pull request to develop (a required check), by hand on any branch
 # (`gh workflow run vm-windows.yml --ref <branch>`) and nightly on develop unless it already has a green run on that
 # commit. VM tests are never retried; a runner without a usable hypervisor
-# is reported as an infrastructure skip, not a test result.
-# On a pull request a runner without KVM/WHP fails the job (ci/vm-skip-policy.sh); nightly and dispatch runs skip with a warning.
+# is reported as an infrastructure skip, not a test result, except on a pull request, where it fails
+# the job (a required check must not pass without running VM tests; same policy as ci/vm-skip-policy.sh).
 # The test binaries are built once (`cargo nextest archive`) and the tests run in five partitions
 # on five runners at once; `vm-windows (WHP, msb microVMs)` is the one result of all of them.
 name: vm-windows
@@ -116,8 +116,13 @@ jobs:
           if ($cs.HypervisorPresent -and "$whp" -eq 'Enabled') {
             "ok=true" >> $env:GITHUB_OUTPUT
           } else {
-            bash ci/vm-skip-policy.sh vm-windows "Windows Hypervisor Platform is not usable on this runner (HypervisorPresent=$($cs.HypervisorPresent), HypervisorPlatform=$whp)"
-            if ($LASTEXITCODE -ne 0) { exit 1 }
+            # Same policy as ci/vm-skip-policy.sh (kept inline: plain `bash` from pwsh may be WSL).
+            $reason = "Windows Hypervisor Platform is not usable on this runner (HypervisorPresent=$($cs.HypervisorPresent), HypervisorPlatform=$whp)"
+            if ($env:GITHUB_EVENT_NAME -eq 'pull_request') {
+              "::error title=vm-windows cannot run::$reason; a required VM check must not pass without running VM tests"
+              exit 1
+            }
+            "::warning title=vm-windows skipped::$reason; VM tests did not run (infrastructure, not a test result)"
             "### vm-windows partition ${{ matrix.partition }}: SKIPPED, WHP not usable on the runner (infrastructure)" >> $env:GITHUB_STEP_SUMMARY
             "ok=false" >> $env:GITHUB_OUTPUT
           }

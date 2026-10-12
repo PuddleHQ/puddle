@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Called by the VM workflows when a runner has no hypervisor (no /dev/kvm, no WHP). On a pull
+# Called by vm-linux (vm-windows has the same policy inline in pwsh) when a runner has no hypervisor (no /dev/kvm, no WHP). On a pull
 # request that fails the job: a required check must not pass without running its tests. Other
 # events (the nightly, a dispatch) only warn, and the workflow skips the tests as before.
 # Usage: ci/vm-skip-policy.sh <job> <reason>. Reads GITHUB_EVENT_NAME (unset counts as not a PR).

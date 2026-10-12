@@ -563,20 +563,19 @@ async fn a_source_that_is_broken_is_a_502_without_a_sign_in_notice() {
 }
 
 #[tokio::test]
-async fn a_token_a_header_cannot_carry_is_a_502_that_names_the_identity() {
+async fn a_token_that_only_looks_like_an_entra_token_never_reaches_a_header_raw() {
     let w = World::new();
-    let made = w.identity("Odd", "github.com", &[], true, "ok");
-    // The base64 wrapper hides most bytes; a Bearer token on Azure DevOps shows them raw.
+    // Only a plain JWT goes as a Bearer, which shows the token raw; this one has a byte a header
+    // cannot carry and goes as a personal access token, wrapped in Basic's base64.
     let ado = w.identity("Ado", "dev.azure.com", &["contoso"], false, "x");
     w.credentials.give(&ado.source, "eyJa.b\u{7f}.c");
-    let (status, code, message) = refusal(
-        &w.decide("dev.azure.com", "GET", "/contoso/p/_git/r/info/refs", &[])
-            .await,
+    let decision = w
+        .decide("dev.azure.com", "GET", "/contoso/p/_git/r/info/refs", &[])
+        .await;
+    assert!(
+        injected(&decision, &basic("", "eyJa.b\u{7f}.c")),
+        "{decision:?}"
     );
-    assert_eq!((status, code), (502, "credential_unavailable"));
-    assert!(message.contains("not a usable header value"), "{message}");
-    assert!(!message.contains('\u{7f}'));
-    let _ = made;
 }
 
 #[tokio::test]

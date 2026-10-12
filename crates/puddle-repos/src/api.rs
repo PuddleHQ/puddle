@@ -84,6 +84,9 @@ pub struct ApiRequest {
     pub headers: &'static [(&'static str, &'static str)],
     /// The credential.
     pub authorization: Authorization,
+    /// The `ETag` of the copy already held, sent as `If-None-Match`: the host answers `304` with no
+    /// body when it is still current.
+    pub if_none_match: Option<String>,
 }
 
 /// A host's answer, headers lower-cased (the first value of a repeated header wins).

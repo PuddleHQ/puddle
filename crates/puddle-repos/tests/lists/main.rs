@@ -10,6 +10,7 @@
 mod azure;
 mod cache;
 mod common;
+mod etag;
 mod github;
 mod profile;
 mod route;

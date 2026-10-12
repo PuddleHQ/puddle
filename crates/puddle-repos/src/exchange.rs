@@ -149,6 +149,7 @@ mod tests {
             accept: "application/json",
             headers: &[],
             authorization: Authorization::Bearer(Arc::new(Secret::new("CANARY-t".to_owned()))),
+            if_none_match: None,
         }
     }
 

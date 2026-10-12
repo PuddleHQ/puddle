@@ -9,7 +9,7 @@
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use puddle_secrets::Secret;
+use puddle_secrets::{Secret, TokenScheme, azure_devops_scheme};
 use serde::Deserialize;
 
 use crate::api::{ApiRequest, Authorization};
@@ -21,27 +21,13 @@ pub(crate) const HOST: &str = "dev.azure.com";
 /// The most repositories one organisation's list keeps.
 const MAX_REPOS: usize = 5000;
 
-/// A personal access token goes as Basic, an Entra access token (a JWT, what Git Credential
-/// Manager signs in with) as Bearer.
+/// How `token` goes to Azure DevOps: the choice is [`azure_devops_scheme`], the same one the Git
+/// injector makes.
 pub(crate) fn authorization(token: Arc<Secret>) -> Authorization {
-    if looks_like_jwt(token.expose()) {
-        Authorization::Bearer(token)
-    } else {
-        Authorization::BasicPassword(token)
+    match azure_devops_scheme(token.expose()) {
+        TokenScheme::Bearer => Authorization::Bearer(token),
+        _ => Authorization::BasicPassword(token),
     }
-}
-
-/// Three base64url parts, the first a JSON header (`eyJ...`).
-fn looks_like_jwt(token: &str) -> bool {
-    let parts: Vec<&str> = token.split('.').collect();
-    parts.len() == 3
-        && parts.first().is_some_and(|head| head.starts_with("eyJ"))
-        && parts.iter().all(|part| {
-            !part.is_empty()
-                && part
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '='))
-        })
 }
 
 /// One path segment, with everything but the unreserved characters escaped.
@@ -94,6 +80,7 @@ pub(crate) async fn list(
             accept: "application/json",
             headers: &[],
             authorization: authorization.clone(),
+            if_none_match: None,
         })
         .await?;
     let list: ListJson = serde_json::from_slice(&reply.body).map_err(|_| {

@@ -21,6 +21,8 @@ pub struct Seen {
     pub token: String,
     /// Whether it went as `Bearer` (otherwise as the password of a Basic header).
     pub bearer: bool,
+    /// The `If-None-Match` it carried.
+    pub if_none_match: Option<String>,
 }
 
 #[derive(Default)]
@@ -100,6 +102,7 @@ impl Api for FakeApi {
                 path: request.path.clone(),
                 token: request.authorization.token().to_owned(),
                 bearer: request.authorization.is_bearer(),
+                if_none_match: request.if_none_match.clone(),
             });
             let key = (request.host.clone(), request.path.clone());
             let Some(queue) = state.script.get_mut(&key) else {
@@ -134,6 +137,7 @@ mod tests {
             accept: "application/json",
             headers: &[],
             authorization: Authorization::Bearer(Arc::new(Secret::new("CANARY-1".to_owned()))),
+            if_none_match: None,
         }
     }
 

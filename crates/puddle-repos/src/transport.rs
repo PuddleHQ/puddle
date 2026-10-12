@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use futures_util::future::BoxFuture;
-use http::header::{ACCEPT, AUTHORIZATION, CONNECTION, HOST, USER_AGENT};
+use http::header::{ACCEPT, AUTHORIZATION, CONNECTION, HOST, IF_NONE_MATCH, USER_AGENT};
 use http::{HeaderValue, Request};
 use http_body_util::{BodyExt, Empty, Limited};
 use hyper_util::rt::TokioIo;
@@ -185,6 +185,9 @@ where
         .header(CONNECTION, "close");
     for (name, value) in request.headers {
         builder = builder.header(*name, *value);
+    }
+    if let Some(etag) = &request.if_none_match {
+        builder = builder.header(IF_NONE_MATCH, etag);
     }
     let request = builder.body(Empty::<Bytes>::new()).map_err(protocol)?;
     tokio::pin!(connection);

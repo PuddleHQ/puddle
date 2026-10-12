@@ -37,7 +37,7 @@ use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tokio_yamux::{Session, StreamHandle};
 
-use crate::control::{self, AgentMessage, MAX_LINE};
+use crate::control::{self, AgentMessage, MAX_LINE, PROTOCOL_VERSION};
 use crate::kind::{MAX_PREAMBLE, StreamKind, parse_preamble};
 use crate::resolve::{self, ResolveAnswer, ResolveQuery};
 use crate::yamux::{VERSION_BYTE, server_config};
@@ -408,6 +408,9 @@ fn on_message<H>(msg: AgentMessage, shared: &Shared<H>) {
             protocol,
         } => {
             let version = clean(&agent_version, MAX_VERSION_CHARS);
+            if protocol != PROTOCOL_VERSION {
+                tracing::warn!(%workspace, agent_protocol = protocol, host_protocol = PROTOCOL_VERSION, "guest agent speaks another control protocol; connection kept");
+            }
             tracing::info!(%workspace, agent_version = %version, protocol, "guest agent connected");
         }
         AgentMessage::OomKill { pid, process } => {

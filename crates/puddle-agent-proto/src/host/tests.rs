@@ -8,7 +8,7 @@ use tokio::task::JoinHandle;
 use tokio_yamux::{Control, Session};
 
 use super::*;
-use crate::control::PREAMBLE;
+use crate::control::{PREAMBLE, PROTOCOL_VERSION};
 use crate::kind::StreamKind;
 use crate::resolve::{self, RecordType};
 use crate::yamux::client_config;
@@ -161,6 +161,40 @@ async fn unknown_and_invalid_messages_are_skipped_and_later_ones_still_count() {
     send(&mut c, &AgentMessage::oom_kill(Some(1), Some("a".into()))).await;
     assert_eq!(h.next_event().await, Event::oom_kill(name(), 1, "a"));
     h.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_guest_agent_on_another_protocol_is_logged_and_kept() {
+    let logs = Logs::default();
+    let _scope = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(logs.clone())
+            .finish(),
+    );
+    let mut h = start();
+    let mut c = h.control_stream().await;
+    let other = AgentMessage::Hello {
+        agent_version: "0.0.0".to_owned(),
+        protocol: PROTOCOL_VERSION + 1,
+    };
+    send(&mut c, &other).await;
+    send(&mut c, &AgentMessage::oom_kill(Some(1), Some("a".into()))).await;
+    assert_eq!(h.next_event().await, Event::oom_kill(name(), 1, "a"));
+    h.close().await.unwrap();
+    let text = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+    assert!(
+        text.contains("WARN") && text.contains("another control protocol"),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("agent_protocol={}", PROTOCOL_VERSION + 1)),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("host_protocol={PROTOCOL_VERSION}")),
+        "{text}"
+    );
 }
 
 #[tokio::test]

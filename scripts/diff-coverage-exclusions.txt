@@ -123,3 +123,4 @@ crates/xtask/src/source.rs | &[msb_target(os)], | the GitHub source clones the f
 crates/puddle-app/src/shell.rs | links::open_and_report(&problems, url, | the closure runs only on a click in a real webview, and its body would start the machine's default browser; `open_and_report` is tested with a fake opener (links.rs)
 crates/puddle-app/src/shell.rs | app.opener().open_url(address, None::<&str>) | the real opener plugin call: a test would launch the machine's default browser; the failure and success handling around it is tested in links.rs
 crates/puddle-app/src/window.rs | new_window_handler(&policy, &target, &on_new_window_open, &refused); | the window system calls this on a `target="_blank"` click, which the mock runtime never raises; `new_window_handler` is tested directly
+crates/puddle-app/src/shell.rs | }); | the end of the click-time opener closure listed above; it runs only in a real webview

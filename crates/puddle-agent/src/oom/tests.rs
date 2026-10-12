@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use proptest::prelude::*;
 
@@ -136,6 +137,69 @@ fn log_lines_ahead_of_the_counter_claim_later_increases() {
     c.on_logged();
     c.on_counted(3, t0);
     assert_eq!(c.due(t0), 1);
+}
+
+/// Collects what the tracing subscriber writes, so a test can count warnings.
+#[derive(Clone, Default)]
+struct Logs(Arc<Mutex<Vec<u8>>>);
+
+impl Logs {
+    fn subscriber(&self) -> impl tracing::Subscriber + Send + Sync {
+        tracing_subscriber::fmt()
+            .with_writer(self.clone())
+            .with_ansi(false)
+            .finish()
+    }
+
+    fn text(&self) -> String {
+        let bytes = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+}
+
+impl Write for Logs {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Logs {
+    type Writer = Self;
+
+    fn make_writer(&'a self) -> Self {
+        self.clone()
+    }
+}
+
+#[tokio::test]
+async fn a_counter_read_failure_is_warned_once_per_outage() {
+    let logs = Logs::default();
+    let _subscriber = tracing::subscriber::set_default(logs.subscriber());
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("vmstat");
+    let warning = "oom_kill counter read failed";
+    let mut failing = false;
+
+    std::fs::write(&path, "oom_kill 1\n").unwrap();
+    assert_eq!(read_counter(&path, &mut failing).await, Some(1));
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(read_counter(&path, &mut failing).await, None);
+    assert_eq!(read_counter(&path, &mut failing).await, None);
+    assert_eq!(logs.text().matches(warning).count(), 1);
+
+    std::fs::write(&path, "oom_kill 2\n").unwrap();
+    assert_eq!(read_counter(&path, &mut failing).await, Some(2));
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(read_counter(&path, &mut failing).await, None);
+    assert_eq!(logs.text().matches(warning).count(), 2);
 }
 
 /// A temp dir with a fake `vmstat` and `kmsg`, removed on drop.

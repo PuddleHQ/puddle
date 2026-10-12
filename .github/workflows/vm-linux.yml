@@ -91,6 +91,15 @@ jobs:
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q libcap-ng-dev
           MSB_BUILD_DIR="$RUNNER_TEMP/msb-build" ci/fetch-msb.sh "$RUNNER_TEMP/msb"
+      # The runtime folder the Linux packages will ship (msb, both firmware names, runtime.json),
+      # built by `cargo xtask runtime --msb` from this msb. The test jobs run on the msb folder, not
+      # on it; this only keeps the layout honest (ci/check-runtime-layout.sh). On a cache hit the
+      # step above did not run, so fetch-msb.sh runs here and reuses the cached binary.
+      - name: runtime folder layout (cargo xtask runtime --msb)
+        if: steps.changed.outputs.run == 'true'
+        run: |
+          [ -x "$RUNNER_TEMP/msb/msb" ] || MSB_BUILD_DIR="$RUNNER_TEMP/msb-build" ci/fetch-msb.sh "$RUNNER_TEMP/msb"
+          ci/check-runtime-layout.sh "$RUNNER_TEMP/msb" "$RUNNER_TEMP/runtime-layout"
       - name: guest agent (static musl build)
         if: steps.changed.outputs.run == 'true'
         run: |

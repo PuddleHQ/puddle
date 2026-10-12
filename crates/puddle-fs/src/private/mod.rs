@@ -13,6 +13,8 @@ use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
+use std::thread;
+use std::time::{Duration, Instant};
 
 #[cfg(unix)]
 mod unix;
@@ -120,16 +122,42 @@ pub fn tighten_dir(dir: &Path) -> io::Result<Option<Exposed>> {
 
 /// Makes the existing file `path` owner-only, like [`tighten_dir`]. A missing file is not an
 /// error and returns `None`, and neither is one that disappears while it is being looked at (a
-/// database's `-wal` file goes when its last connection closes); a file that isn't a regular
-/// file (a symlink, a folder) is refused.
+/// database's `-wal` and `-shm` files go when its last connection closes); a file that isn't a
+/// regular file (a symlink, a folder) is refused.
+///
+/// Windows reports a file whose deletion is under way (it is deleted, but a handle to it is
+/// still open) as "access denied" instead of "not found". A denial is therefore retried for up
+/// to two seconds: the file is gone by then (`None`), or the denial is real and is returned.
 ///
 /// # Errors
 ///
 /// Any file-system error, or `InvalidInput` if `path` is not a regular file.
 pub fn tighten_file(path: &Path) -> io::Result<Option<Exposed>> {
-    match platform::tighten_file(path) {
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
-        other => other,
+    tighten_file_within(DELETE_GRACE, || platform::tighten_file(path))
+}
+
+/// How long a denied file gets to finish being deleted before the denial counts.
+const DELETE_GRACE: Duration = Duration::from_secs(2);
+const DELETE_POLL: Duration = Duration::from_millis(10);
+
+/// Runs `attempt` (one tightening of one file) until it is not denied or `grace` has passed.
+/// A file that is gone, now or when retried, is nothing to tighten.
+fn tighten_file_within(
+    grace: Duration,
+    mut attempt: impl FnMut() -> io::Result<Option<Exposed>>,
+) -> io::Result<Option<Exposed>> {
+    let started = Instant::now();
+    loop {
+        match attempt() {
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(err) if err.kind() == io::ErrorKind::PermissionDenied => {
+                if started.elapsed() >= grace {
+                    return Err(err);
+                }
+                thread::sleep(DELETE_POLL);
+            }
+            other => return other,
+        }
     }
 }
 
@@ -177,6 +205,96 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn denied() -> io::Error {
+        io::Error::from(io::ErrorKind::PermissionDenied)
+    }
+
+    #[test]
+    fn a_denial_that_ends_with_the_file_gone_is_nothing_to_tighten() {
+        let mut calls = 0;
+        let result = tighten_file_within(Duration::from_secs(5), || {
+            calls += 1;
+            Err(if calls < 3 {
+                denied()
+            } else {
+                io::Error::from(io::ErrorKind::NotFound)
+            })
+        });
+        assert_eq!(result.unwrap(), None);
+        assert_eq!(calls, 3);
+    }
+
+    #[test]
+    fn a_file_deleted_by_another_thread_while_denied_is_nothing_to_tighten() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("puddle.db-wal");
+        fs::write(&path, b"x").unwrap();
+        let deleter = {
+            let path = path.clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(50));
+                fs::remove_file(path).unwrap();
+            })
+        };
+        // The file exists and is denied until it is deleted, then it is missing.
+        let result = tighten_file_within(Duration::from_secs(10), || {
+            Err(if path.exists() {
+                denied()
+            } else {
+                io::Error::from(io::ErrorKind::NotFound)
+            })
+        });
+        deleter.join().unwrap();
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[test]
+    fn a_denial_that_goes_away_with_the_file_still_there_is_tightened() {
+        let mut calls = 0;
+        let result = tighten_file_within(Duration::from_secs(5), || {
+            calls += 1;
+            if calls < 2 {
+                Err(denied())
+            } else {
+                Ok(Some(Exposed::Mode(0o644)))
+            }
+        });
+        assert_eq!(result.unwrap(), Some(Exposed::Mode(0o644)));
+    }
+
+    #[test]
+    fn a_denial_that_lasts_is_returned_after_the_grace_period() {
+        let grace = Duration::from_millis(60);
+        let started = Instant::now();
+        let mut calls = 0;
+        let err = tighten_file_within(grace, || {
+            calls += 1;
+            Err(denied())
+        })
+        .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        assert!(started.elapsed() >= grace);
+        assert!(calls > 1, "a denial is retried, not returned at once");
+    }
+
+    #[test]
+    fn other_errors_are_returned_at_once() {
+        let mut calls = 0;
+        let err = tighten_file_within(Duration::from_secs(5), || {
+            calls += 1;
+            Err(io::Error::from(io::ErrorKind::InvalidInput))
+        })
+        .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn a_missing_file_is_nothing_to_tighten() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(tighten_file(&dir.path().join("none")).unwrap(), None);
+    }
 
     #[test]
     fn write_atomic_creates_folders_replaces_and_leaves_no_temporary_file() {
@@ -264,14 +382,13 @@ mod tests {
     #[test]
     fn a_file_that_goes_away_while_it_is_tightened_is_skipped() {
         use std::sync::atomic::{AtomicBool, Ordering};
-        use std::time::{Duration, Instant};
 
         // SQLite deletes its `-wal` file when its last connection closes, which can happen between
         // the moment the file is seen and the moment it is opened.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("puddle.db-wal");
         let stop = AtomicBool::new(false);
-        std::thread::scope(|scope| {
+        thread::scope(|scope| {
             scope.spawn(|| {
                 while !stop.load(Ordering::Relaxed) {
                     drop(create_file(&path));
@@ -279,8 +396,8 @@ mod tests {
                 }
             });
             // Stop the churn before judging, so a failure ends the test instead of hanging it.
-            // Only `NotFound` is judged: Windows answers "access denied" for a file in the middle of
-            // being deleted, which is a different error.
+            // Only `NotFound` is judged here; the "access denied" Windows answers for a file in
+            // the middle of being deleted has its own tests.
             let deadline = Instant::now() + Duration::from_millis(500);
             let mut first_error = None;
             while first_error.is_none() && Instant::now() < deadline {

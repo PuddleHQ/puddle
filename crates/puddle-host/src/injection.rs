@@ -859,7 +859,8 @@ mod tests {
     }
 
     /// A credential store that does not answer for a while (a keyring waiting for the user to
-    /// unlock it), and says when it was asked.
+    /// unlock it) when asked for a secret, and says when it was asked. Saved logins are read
+    /// without delay: these tests are about secrets.
     struct SlowStore {
         inner: MemoryStore,
         delay: Duration,
@@ -868,8 +869,10 @@ mod tests {
 
     impl SecretStore for SlowStore {
         fn get(&self, id: &StoredId) -> Result<Option<Secret>, puddle_secrets::StoreError> {
-            self.asked.lock().unwrap().push(id.to_string());
-            std::thread::sleep(self.delay);
+            if !id.to_string().starts_with("login-") {
+                self.asked.lock().unwrap().push(id.to_string());
+                std::thread::sleep(self.delay);
+            }
             self.inner.get(id)
         }
 
@@ -903,7 +906,7 @@ mod tests {
 
         let waiting = injection.begin(&stuck, false);
         let others = async {
-            // A workspace without secrets never asks the store, so it is not held up.
+            // A workspace without secrets never asks the store for one, so it is not held up.
             let began = injection.begin(&free, false).await;
             assert!(began.is_ok());
         };
@@ -1286,18 +1289,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn with_capture_off_the_logins_kept_before_are_not_used_and_the_store_is_left_alone() {
+    async fn with_capture_off_the_logins_kept_before_are_not_used_and_the_user_is_told_why() {
         let store = store();
-        let (injection, terminations, vault) = injection_with_vault(&store);
+        let (injection, terminations, vault, events) = injection_with_events(&store);
         let ws = workspace("alpha");
         injection.begin(&ws, true).await.unwrap();
         claude_answer(&terminations, &ws).await.unwrap();
         injection.end(&ws);
+        assert!(events.0.lock().unwrap().is_empty());
 
-        // Even a credential store that is broken is not asked about: off means off.
-        vault.break_it();
         injection.begin(&ws, false).await.unwrap();
         assert_eq!(login_ids(&terminations, &ws).len(), 0);
+        assert_eq!(
+            *events.0.lock().unwrap(),
+            [Event::LoginProblem {
+                workspace: ws.clone(),
+                service: "Claude Code".into(),
+                kind: puddle_types::LoginProblemKind::CaptureOff,
+            }]
+        );
+
+        // A store that does not answer is not a reason to say anything with capture off.
+        injection.end(&ws);
+        vault.break_it();
+        injection.begin(&ws, false).await.unwrap();
+        assert_eq!(events.0.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

@@ -9359,7 +9359,9 @@
           "unexpected_answer",
           "unusable_token",
           "bound_token",
-          "unreadable"
+          "unreadable",
+          "capture_off",
+          "unknown"
         ]
       },
       "NetworkHealth": {

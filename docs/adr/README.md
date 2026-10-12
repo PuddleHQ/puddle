@@ -11,6 +11,7 @@ changes an earlier one says so at the top of both ("amended by" / "Amends").
 | [0004](0004-api-contract.md) | API contract: OpenAPI-first, not type-only | accepted |
 | [0005](0005-no-base-image.md) | No base image of our own: run the team's own devcontainer image | accepted |
 | [0006](0006-workspace-storage.md) | Workspace storage: a named msb disk volume per workspace | accepted |
+| [0007](0007-login-capture-fails-open.md) | Login capture fails open: when it cannot work, the login goes through and the user is told | accepted |
 
 ## Writing a new ADR
 

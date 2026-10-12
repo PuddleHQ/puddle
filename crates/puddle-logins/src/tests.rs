@@ -514,7 +514,7 @@ async fn a_restart_gets_the_stand_ins_the_workspace_still_holds() {
 }
 
 #[tokio::test]
-async fn with_capture_off_nothing_is_captured_loaded_or_decrypted_and_the_store_is_left_alone() {
+async fn with_capture_off_nothing_is_captured_loaded_or_decrypted_and_a_kept_login_is_said_once() {
     let on = rig();
     claude_login(&on, REAL_ACCESS, REAL_REFRESH).await;
 
@@ -525,10 +525,35 @@ async fn with_capture_off_nothing_is_captured_loaded_or_decrypted_and_the_store_
             .begin(&host("platform.claude.com"), "POST", "/v1/oauth/token")
             .is_none()
     );
-    // Not even a store that is broken is asked about: off means off.
-    on.store.break_it();
     off.logins.load().await;
     assert_eq!(off.registry.len(), 0, "a login kept before is not swapped");
+    // The stand-ins in the workspace are refused now, so the service that holds one is named,
+    // once even though it holds two tokens; GitHub holds none and is not named.
+    assert_eq!(
+        off.notices.seen(),
+        [("claude".to_owned(), Problem::CaptureOff)]
+    );
+    // What is kept stays kept: capture on again uses it.
+    let again = rig_on(&on.store, true);
+    again.logins.load().await;
+    assert_eq!(again.registry.len(), 2);
+}
+
+#[tokio::test]
+async fn with_capture_off_and_nothing_kept_there_is_nothing_to_say() {
+    let off = rig_on(&Arc::new(MemoryStore::new()), false);
+    off.logins.load().await;
+    assert_eq!(off.notices.seen(), []);
+}
+
+#[tokio::test]
+async fn with_capture_off_a_credential_store_that_does_not_answer_says_nothing() {
+    let on = rig();
+    claude_login(&on, REAL_ACCESS, REAL_REFRESH).await;
+    on.store.break_it();
+    let off = rig_on(&on.store, false);
+    off.logins.load().await;
+    assert_eq!(off.registry.len(), 0);
     assert_eq!(off.notices.seen(), []);
 }
 

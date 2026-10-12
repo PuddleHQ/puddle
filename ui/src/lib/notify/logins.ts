@@ -2,7 +2,9 @@
 // The notice for a login made inside a workspace that puddle could not capture, or could not
 // use after a restart. Capture is on by default and is meant to be invisible, so every case where
 // it does not work says so: the first four leave the real token in the workspace (the login still
-// works, it is just not protected), the last means the tool will ask for a new sign-in.
+// works, it is just not protected), the next two mean the login in the workspace does not work
+// (the tool will ask for a new sign-in, or its stand-in is refused), and an unnamed problem says
+// only that.
 import type { components } from "#lib/api/schema.d.ts";
 import type { Notifier } from "./notifier.ts";
 
@@ -16,6 +18,8 @@ const KINDS: readonly Kind[] = [
   "unusable_token",
   "bound_token",
   "unreadable",
+  "capture_off",
+  "unknown",
 ];
 
 const WHY: Record<Kind, string> = {
@@ -29,6 +33,10 @@ const WHY: Record<Kind, string> = {
     "the service ties its token to a key of the tool's own, which puddle cannot stand in for, so the workspace received the real token. The login works, but an agent in the workspace could copy it.",
   unreadable:
     "puddle could not read the login it kept for this workspace from the credential store, so the tool will ask you to sign in again. Sign in inside the workspace to keep a new login.",
+  capture_off:
+    "login capture is off for this workspace, but the login was made while it was on, so the workspace holds a stand-in that no service accepts. Turn login capture on in the workspace settings and restart the workspace to use it again, or sign in again inside the workspace.",
+  unknown:
+    "puddle ran into a problem with this login that this version cannot describe. The login may not work and may not be protected. Signing in again inside the workspace may help.",
 };
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
@@ -49,7 +57,15 @@ export function asLoginProblem(raw: unknown): LoginProblem | null {
 export const loginKey = (e: LoginProblem) =>
   `login:${e.workspace}:${e.service}:${e.kind}`;
 
-const keptLogin = (kind: Kind) => kind === "unreadable";
+const keptLogin = (kind: Kind) =>
+  kind === "unreadable" || kind === "capture_off";
+
+function titleFor(e: LoginProblem): string {
+  const login = `${e.service} login in ${e.workspace}`;
+  if (keptLogin(e.kind)) return `${login} can't be used.`;
+  if (e.kind === "unknown") return `${login} has a problem.`;
+  return `${login} is not protected.`;
+}
 
 export class LoginNotices {
   readonly #notifier: Notifier;
@@ -65,9 +81,7 @@ export class LoginNotices {
     this.#notifier.notify({
       key: loginKey(event),
       tone: "warning",
-      title: keptLogin(event.kind)
-        ? `${event.service} login in ${event.workspace} can't be used.`
-        : `${event.service} login in ${event.workspace} is not protected.`,
+      title: titleFor(event),
       detail: WHY[event.kind][0]!.toUpperCase() + WHY[event.kind].slice(1),
       link: {
         href: `/workspaces/${encodeURIComponent(event.workspace)}/settings`,

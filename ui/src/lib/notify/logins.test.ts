@@ -47,12 +47,34 @@ describe("a login puddle could not capture", () => {
   });
 });
 
+describe("a problem puddle has no name for", () => {
+  it("says there is a problem without claiming what it is", () => {
+    notices.handle(problem("unknown"));
+    const notice = center.items[0]!;
+    expect(notice.title).toBe("Claude Code login in web has a problem.");
+    expect(notice.detail).toContain("cannot describe");
+  });
+});
+
 describe("a login puddle kept and cannot use", () => {
   it("says the tool will ask for a new sign-in when a kept login cannot be read", () => {
     notices.handle(problem("unreadable", "GitHub"));
     const notice = center.items[0]!;
     expect(notice.title).toBe("GitHub login in web can't be used.");
     expect(notice.detail).toContain("ask you to sign in again");
+  });
+
+  it("says the stand-in is refused and the way out when capture was turned off after a login", () => {
+    notices.handle(problem("capture_off", "GitHub"));
+    const notice = center.items[0]!;
+    expect(notice).toMatchObject({
+      key: "login:web:GitHub:capture_off",
+      title: "GitHub login in web can't be used.",
+      link: { href: "/workspaces/web/settings", label: "Workspace settings" },
+    });
+    expect(notice.detail).toContain("capture is off");
+    expect(notice.detail).toContain("Turn login capture on");
+    expect(notice.detail).toContain("sign in again");
   });
 
   it("raises one notice for the same problem, not a pile", () => {

@@ -55,6 +55,9 @@ pub enum Problem {
     /// A login puddle kept earlier could not be read back at the workspace's start; the tool will
     /// ask for a new sign-in.
     Unreadable,
+    /// Capture is off for the workspace, but puddle still holds a login it kept while capture
+    /// was on: the stand-ins in the workspace are no longer swapped, so the services refuse them.
+    CaptureOff,
 }
 
 /// Where a [`Problem`] goes. Implementations must not block.
@@ -279,9 +282,11 @@ impl Logins {
     /// Reads the logins kept for the workspace and registers their stand-ins, at the workspace's
     /// start: the workspace's disk still holds the stand-ins its tool was given.
     pub async fn load(&self) {
-        // With capture off nothing is registered, and the credential store is not touched: off
-        // means off. A login kept before is not used until capture is on again.
+        // With capture off nothing is registered and a login kept before is not used until
+        // capture is on again. The store is only asked whether one is there, because the
+        // workspace's disk still holds its stand-ins, which are now refused: that is said once.
         if !self.inner.enabled {
+            self.tell_about_kept_logins().await;
             return;
         }
         let mut unreadable: Vec<&'static Profile> = Vec::new();
@@ -323,6 +328,24 @@ impl Logins {
                 if !seen.contains(&profile.id) {
                     seen.push(profile.id);
                     self.notify(profile, problem);
+                }
+            }
+        }
+    }
+
+    /// With capture off: tells the user, once per service, that puddle still holds a login it
+    /// kept earlier. A store that does not answer says nothing: with capture off there is nothing
+    /// to protect, and one call that did not answer is enough to know.
+    async fn tell_about_kept_logins(&self) {
+        for profile in self.inner.profiles {
+            for role in profile.roles() {
+                match self.store(move |vault| vault.holds(profile, role)).await {
+                    Ok(true) => {
+                        self.notify(profile, Problem::CaptureOff);
+                        break;
+                    }
+                    Ok(false) => {}
+                    Err(_) => return,
                 }
             }
         }

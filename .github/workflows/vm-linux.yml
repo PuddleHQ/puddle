@@ -4,6 +4,7 @@
 # by hand on any branch (`gh workflow run vm-linux.yml --ref <branch>`) and nightly on develop unless
 # it already has a green run on that commit. VM tests are never retried; a runner without
 # KVM is reported as an infrastructure skip, not a test result.
+# On a pull request a runner without KVM/WHP fails the job (ci/vm-skip-policy.sh); nightly and dispatch runs skip with a warning.
 # The test binaries are built once (`cargo nextest archive`) and the tests run in three partitions
 # on three runners at once; `vm-linux (KVM, msb microVMs)` is the one result of all of them.
 name: vm-linux
@@ -124,7 +125,7 @@ jobs:
         id: kvm
         run: |
           if [ ! -e /dev/kvm ]; then
-            echo "::warning title=vm-linux skipped::/dev/kvm is missing on this runner; VM tests did not run (infrastructure, not a test result)"
+            ci/vm-skip-policy.sh vm-linux "/dev/kvm is missing on this runner" || exit 1
             echo "### vm-linux partition ${{ matrix.partition }}: SKIPPED, no /dev/kvm on the runner (infrastructure)" >> "$GITHUB_STEP_SUMMARY"
             echo "ok=false" >> "$GITHUB_OUTPUT"; exit 0
           fi

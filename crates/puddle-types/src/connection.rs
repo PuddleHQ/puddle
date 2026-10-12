@@ -65,7 +65,7 @@ impl fmt::Display for ConnectionOrigin {
 
 /// Why the proxy decided as it did (R-24). Serialised as a string: `rule`, `no_rule`, a
 /// [`BlockReason::code`] (`toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`,
-/// `local_address`), `policy_unavailable`, `puddle_request`, `sni_mismatch`, `guest_tls_rejected`,
+/// `local_address`, `settings_unreadable`), `policy_unavailable`, `puddle_request`, `sni_mismatch`, `guest_tls_rejected`,
 /// `suppressed`, `puddle_request_failed:<code>` or, for a request the credential rules refused on a decrypted connection, the
 /// refusal's code (`push_denied`, `pull_denied`, `credential_unavailable`, ...).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -12,6 +12,7 @@ use puddle_types::{LocalCategory, WorkspaceName};
 pub struct LocalAccess {
     on: u8,
     wildcards_reach_local: bool,
+    unreadable: bool,
 }
 
 fn bit(category: LocalCategory) -> u8 {
@@ -26,6 +27,14 @@ impl LocalAccess {
     pub const NONE: Self = Self {
         on: 0,
         wildcards_reach_local: false,
+        unreadable: false,
+    };
+
+    /// [`Self::NONE`] because the settings could not be read, not because they say so: the guard
+    /// blocks the same destinations but its refusal names the unreadable settings.
+    pub const UNREADABLE: Self = Self {
+        unreadable: true,
+        ..Self::NONE
     };
 
     /// The values from resolved settings.
@@ -59,6 +68,13 @@ impl LocalAccess {
     #[must_use]
     pub fn is_on(self, category: LocalCategory) -> bool {
         bit(category) != 0 && self.on & bit(category) != 0
+    }
+
+    /// Whether this is [`Self::UNREADABLE`]: every toggle is off because the settings could not
+    /// be read.
+    #[must_use]
+    pub fn is_unreadable(self) -> bool {
+        self.unreadable
     }
 
     /// Whether a wildcard (suffix) allow may reach a local address whose toggle is on.
@@ -104,6 +120,17 @@ mod tests {
             assert!(!LocalAccess::NONE.is_on(c));
         }
         assert!(!LocalAccess::NONE.wildcards_reach_local());
+    }
+
+    #[test]
+    fn unreadable_settings_are_none_that_says_so() {
+        assert!(LocalAccess::UNREADABLE.is_unreadable());
+        assert!(!LocalAccess::NONE.is_unreadable());
+        assert_ne!(LocalAccess::UNREADABLE, LocalAccess::NONE);
+        for c in LocalCategory::ALL {
+            assert!(!LocalAccess::UNREADABLE.is_on(c));
+        }
+        assert!(!LocalAccess::UNREADABLE.wildcards_reach_local());
     }
 
     #[test]

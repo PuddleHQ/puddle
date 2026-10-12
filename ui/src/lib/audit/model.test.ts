@@ -178,6 +178,14 @@ describe("a record as a row", () => {
     expect(blocked.detail).toBe(
       "GET /x · because a local address · credential added",
     );
+    const unreadable = row(
+      connection(3, {
+        decision: "blocked",
+        reason: "settings_unreadable",
+        rule_id: null,
+      }).record,
+    );
+    expect(unreadable.detail).toBe("because unreadable settings");
     const waiting = row(
       connection(2, { decision: "pending", reason: "no_rule", rule_id: null })
         .record,

@@ -1048,11 +1048,17 @@ fn block(request: &EgressRequest, reasons: &[BlockReason]) -> Refusal {
     .header("x-puddle-blocked", reason.code())
 }
 
-/// The reason a block names: the first toggle if any (turning it on would help), else the first.
+/// The reason a block names: the first toggle or unreadable-settings reason if any (turning the
+/// toggle on or fixing the settings would help), else the first.
 fn shown_reason(reasons: &[BlockReason]) -> BlockReason {
     reasons
         .iter()
-        .find(|r| matches!(r, BlockReason::LocalToggle(_)))
+        .find(|r| {
+            matches!(
+                r,
+                BlockReason::LocalToggle(_) | BlockReason::SettingsUnreadable
+            )
+        })
         .or_else(|| reasons.first())
         .copied()
         .unwrap_or(BlockReason::LocalAddress)

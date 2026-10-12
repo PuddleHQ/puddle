@@ -14,7 +14,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use puddle_doctor::{CheckId, Finding, Options, Report, Status, SystemProbe, diagnose};
-use puddle_runtime::{DevOverride, HostOs, MSB_FILE_NAME, RUNTIME_DIR_NAME, RuntimeVersion};
+use puddle_runtime::{
+    DevOverride, HostOs, MSB_FILE_NAME, RUNTIME_DIR_NAME, RuntimeLayout, RuntimeVersion,
+};
 use puddle_vm_tests::{RuntimePair, Settings};
 
 /// The acceptance bar for a whole run.
@@ -48,7 +50,40 @@ fn runtime_copy(root: &Path) -> PathBuf {
             std::fs::copy(entry.path(), dir.join(&name)).unwrap();
         }
     }
+    assert_firmware_names(&dir);
     dir
+}
+
+/// The folder holds every firmware name msb can look for, so a runtime laid out without one
+/// (`libkrunfw.so.5` or, on Linux, the versioned copy) fails here and not as an "incomplete
+/// runtime" at the first boot. The names come from the runtime table, as the doctor's own check.
+fn assert_firmware_names(dir: &Path) {
+    let layout = RuntimeLayout::new(dir.to_owned(), dir.join("home")).unwrap();
+    for file in layout
+        .required_files()
+        .iter()
+        .chain([&layout.libkrunfw_path()])
+    {
+        assert!(file.is_file(), "{} is missing", file.display());
+    }
+    let os = HostOs::current();
+    // Only a platform with a versioned firmware name (Linux) has a second one to look for.
+    if os.libkrunfw_versioned("0").is_some() {
+        let installed = os.runtime_files().libkrunfw;
+        let prefix = format!("{}.", os.runtime_files().libkrunfw_prefix);
+        let versioned = std::fs::read_dir(dir).unwrap().flatten().any(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            name != installed
+                && name
+                    .strip_prefix(&prefix)
+                    .is_some_and(|version| os.libkrunfw_versioned(version) == Some(name.clone()))
+        });
+        assert!(
+            versioned,
+            "{} has no firmware under a versioned name ({prefix}<version>) beside {installed}",
+            dir.display()
+        );
+    }
 }
 
 fn run(dir: PathBuf, expected: RuntimeVersion, options: &Options) -> Report {

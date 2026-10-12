@@ -90,17 +90,13 @@ impl Root {
         let mut tasks = JoinSet::new();
         for server in idle {
             tasks.spawn(acceptor(
-                server,
+                Idle(server),
                 self.clone(),
                 path.to_path_buf(),
                 tx.clone(),
             ));
         }
-        Ok(Listener {
-            rx,
-            tasks,
-            path: path.to_path_buf(),
-        })
+        Ok(Listener { rx, tasks })
     }
 
     fn create(&self, path: &Path, first: bool) -> io::Result<NamedPipeServer> {
@@ -132,16 +128,25 @@ fn bind_error(path: &Path, source: io::Error) -> IpcError {
 
 type Accepted = io::Result<NamedPipeServer>;
 
+/// A pipe instance waiting for a client. Dropping a pipe server whose connect is pending only
+/// cancels the connect: mio keeps the handle open, and the instance listening, until the I/O
+/// driver dequeues the cancellation (mio issue 2003). Disconnecting first stops it listening at
+/// once. Remove this workaround, and the disconnect, once a mio release contains the fix.
+struct Idle(NamedPipeServer);
+
+impl Drop for Idle {
+    fn drop(&mut self) {
+        if let Err(err) = self.0.disconnect() {
+            tracing::debug!(%err, "pipe instance disconnect failed on close");
+        }
+    }
+}
+
 /// Waits for a client on `server`, hands it over, and arms the next instance; forever, until the
 /// listener goes away.
-async fn acceptor(
-    mut server: NamedPipeServer,
-    root: Root,
-    path: PathBuf,
-    tx: mpsc::Sender<Accepted>,
-) {
+async fn acceptor(mut server: Idle, root: Root, path: PathBuf, tx: mpsc::Sender<Accepted>) {
     loop {
-        let connected = server.connect().await;
+        let connected = server.0.connect().await;
         // Create the next instance while the current one still holds the name.
         let next = match root.create(&path, false) {
             Ok(next) => next,
@@ -151,7 +156,7 @@ async fn acceptor(
                 return;
             }
         };
-        let current = std::mem::replace(&mut server, next);
+        let current = std::mem::replace(&mut server.0, next);
         match connected {
             Ok(()) => {
                 if tx.send(Ok(current)).await.is_err() {
@@ -167,10 +172,9 @@ async fn acceptor(
 #[derive(Debug)]
 pub(crate) struct Listener {
     rx: mpsc::Receiver<Accepted>,
-    /// Dropping the set aborts the acceptors, which closes every idle instance once the runtime
-    /// gets to them; [`Listener::close`] waits for that.
+    /// Dropping the set aborts the acceptors, which stops every idle instance listening (see
+    /// [`Idle`]) and closes it once the runtime gets to them; [`Listener::close`] waits for that.
     tasks: JoinSet<()>,
-    path: PathBuf,
 }
 
 impl Listener {
@@ -179,7 +183,6 @@ impl Listener {
         self.tasks.shutdown().await;
         // Instances accepted but never handed out are connected, not listening; close them now.
         while self.rx.try_recv().is_ok() {}
-        drain_listening(&self.path);
     }
 
     pub(crate) async fn accept(&mut self, endpoint: &Path) -> Result<Stream, IpcError> {
@@ -216,27 +219,6 @@ pub(crate) async fn connect(path: &Path) -> Result<Stream, IpcError> {
             Err(err) => return Err(crate::client_error(path, err)),
         }
     }
-}
-
-/// An aborted acceptor's instance stays open, and listening, until the I/O driver dequeues its
-/// cancelled connect: mio keeps the handle alive for that pending overlapped operation. So
-/// connect to each such instance and hang up, until a client finds no listening instance
-/// (`NotFound` once every handle is closed, busy while one is still on its way out or a client
-/// still holds a connection). Bounded: aborted acceptors create no new instances.
-fn drain_listening(path: &Path) {
-    let mut options = ClientOptions::new();
-    options.security_qos_flags(SECURITY_IDENTIFICATION | SECURITY_SQOS_PRESENT);
-    for _ in 0..=PIPE_ACCEPTORS {
-        match options.open(path) {
-            Ok(client) => drop(client),
-            Err(err) if err.kind() == io::ErrorKind::NotFound || is_busy(&err) => return,
-            Err(err) => {
-                tracing::debug!(endpoint = %path.display(), %err, "pipe close probe failed");
-                return;
-            }
-        }
-    }
-    tracing::debug!(endpoint = %path.display(), "pipe still listening after close");
 }
 
 fn is_busy(err: &io::Error) -> bool {

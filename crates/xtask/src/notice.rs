@@ -4,15 +4,23 @@
 
 use std::fmt::Write as _;
 
+use puddle_runtime::HostOs;
+
 use crate::source::ForkFacts;
 
 /// Where source requests go (contact address).
 pub const SOURCE_REQUEST_CONTACT: &str = "puddle@tijsvankampen.be";
 
-/// The NOTICE text for a runtime built from `facts`.
+/// The NOTICE text for the runtime folder of `os` built from `facts`; `firmware_files` names the
+/// firmware files the folder holds.
 #[must_use]
-pub fn render(facts: &ForkFacts) -> String {
+pub fn render(facts: &ForkFacts, os: HostOs, firmware_files: &str) -> String {
     let fw = &facts.firmware;
+    let msb = os.runtime_files().msb;
+    let config = match os {
+        HostOs::Windows => "config-libkrunfw-windows_x86_64",
+        HostOs::Linux | HostOs::MacOs => "the kernel configuration of its Linux build",
+    };
     let kernel_series = fw.kernel_version.split('.').next().unwrap_or_default();
     let mut out = format!(
         "\
@@ -25,7 +33,7 @@ puddle's own source code and keeps its own licences. The licence texts are in th
 1. msb (microsandbox) - Apache-2.0 (Apache-2.0.txt)
 ---------------------------------------------------
 
-msb.exe is built from https://github.com/{fork} at tag {tag}, a fork of microsandbox
+{msb} is built from https://github.com/{fork} at tag {tag}, a fork of microsandbox
 (https://github.com/{upstream}, tag {upstream_tag}), by the microsandbox authors. microsandbox ships
 no NOTICE file of its own. \"microsandbox\" is its authors' name; puddle is not affiliated with them.
 
@@ -48,18 +56,18 @@ on top of {upstream_tag}, each viewable at https://github.com/{fork}/commit/<sha
     let _ = write!(
         out,
         "
-msb.exe statically links third-party Rust crates; their copyright notices and licence texts are
+{msb} statically links third-party Rust crates; their copyright notices and licence texts are
 in THIRD-PARTY-msb.txt.
 
 2. libkrunfw {lv} - LGPL-2.1-only (LGPL-2.1.txt), with Linux {kv} - GPL-2.0-only (GPL-2.0.txt)
 ----------------------------------------------------------------------------------------------
 
-libkrunfw.dll is libkrunfw {lv} as published by microsandbox's release {upstream_tag}, unchanged. The
+The firmware library in this folder ({firmware_files}) is libkrunfw {lv} as published by microsandbox's release {upstream_tag}, unchanged. The
 library code is LGPL-2.1-only; it contains a Linux {kv} kernel, with patches and a kernel
 configuration, which is GPL-2.0-only. msb loads it as a separate library, which you may replace.
 
 Source code: libkrunfw at {repo}/tree/{commit} (incl. its patches and
-config-libkrunfw-windows_x86_64), and the kernel at
+{config}), and the kernel at
 https://cdn.kernel.org/pub/linux/kernel/v{series}.x/linux-{kv}.tar.xz
 
 Written offer: for at least three years after we last distribute this version of the runtime, we
@@ -108,9 +116,17 @@ mod tests {
         }
     }
 
+    fn windows(commits: Vec<Commit>) -> String {
+        render(
+            &facts(commits),
+            HostOs::Windows,
+            HostOs::Windows.runtime_files().libkrunfw,
+        )
+    }
+
     #[test]
     fn lists_every_fork_commit_and_the_offer() {
-        let text = render(&facts(vec![
+        let text = windows(vec![
             Commit {
                 sha: "a".repeat(40),
                 subject: "fix(vsock): write queued bytes".into(),
@@ -119,7 +135,7 @@ mod tests {
                 sha: "b".repeat(40),
                 subject: "fix(ssh): signal exit".into(),
             },
-        ]));
+        ]);
         assert!(text.contains(&format!(
             "  {} fix(vsock): write queued bytes\n",
             "a".repeat(40)
@@ -139,6 +155,25 @@ mod tests {
 
     #[test]
     fn says_so_when_there_are_no_changes() {
-        assert!(render(&facts(vec![])).contains("(none: this build is upstream's code unchanged)"));
+        assert!(windows(vec![]).contains("(none: this build is upstream's code unchanged)"));
+    }
+
+    #[test]
+    fn names_the_files_of_the_runtime_it_describes() {
+        let win = windows(vec![]);
+        assert!(win.contains("msb.exe is built from") && win.contains("msb.exe statically links"));
+        assert!(win.contains("(libkrunfw.dll) is libkrunfw 5.6.1"));
+        assert!(win.contains("config-libkrunfw-windows_x86_64"));
+
+        let linux = render(
+            &facts(vec![]),
+            HostOs::Linux,
+            "libkrunfw.so.5 and its copy libkrunfw.so.5.6.1",
+        );
+        assert!(linux.contains("msb is built from") && linux.contains("msb statically links"));
+        assert!(!linux.contains(".exe") && !linux.contains("windows_x86_64"));
+        assert!(
+            linux.contains("(libkrunfw.so.5 and its copy libkrunfw.so.5.6.1) is libkrunfw 5.6.1")
+        );
     }
 }

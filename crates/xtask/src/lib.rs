@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Developer and release tasks, run as `cargo xtask <command>` (alias in `.cargo/config.toml`).
 //!
-//! - `runtime`: assembles the bundled msb runtime folder ([`assemble`]): the fork's `msb.exe` and
-//!   upstream's `libkrunfw.dll`, both checksum verified, the embedded msb version checked against
-//!   the tag, and `licenses/` with the licence texts, the NOTICE (fork commits, written offer) and
-//!   the third-party notices of msb's and puddle's dependency trees.
+//! - `runtime`: assembles the bundled msb runtime folder of this OS ([`assemble`]): on Windows the
+//!   fork's `msb.exe` and upstream's `libkrunfw.dll`; on Linux a given msb (the fork releases none)
+//!   and upstream's firmware under `libkrunfw.so.5` and the versioned name msb looks for. Downloads
+//!   are checksum verified, the embedded msb version is checked against the tag, and `licenses/`
+//!   holds the licence texts, the NOTICE (fork commits, written offer) and the third-party notices
+//!   of msb's and puddle's dependency trees.
 //! - `notices`: puddle's own third-party notices; `--check` only verifies that every shipped
 //!   dependency has a licence entry (a `scripts/check.sh` gate).
 //! - `openapi`: writes the API contract (`openapi.json`) and its TypeScript types
@@ -21,13 +23,14 @@ pub mod error;
 pub mod inventory;
 pub mod notice;
 pub mod openapi;
+pub mod pin;
 pub mod source;
 pub mod tools;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use puddle_runtime::{BUILT_FOR, RuntimeVersion};
+use puddle_runtime::{BUILT_FOR, HostOs, RuntimeVersion};
 
 pub use error::{Result, XtaskError};
 use inventory::{Inventory, shipped_packages};
@@ -41,6 +44,11 @@ usage: cargo xtask <command> [options]
 commands:
   runtime   assemble the bundled runtime folder
             --out <dir>            output folder (default: <target>/runtime); must not have content
+            --os <windows|linux>   OS the folder is for (default: this one)
+            --msb <file>           Linux only: the msb to ship, built from the fork tag
+                                   (ci/fetch-msb.sh builds it); the fork releases no Linux msb
+            --pins <file>          runtime pin list (default: ci/msb-runtime.sha256), where the Linux
+                                   firmware version comes from
             --tag <tag>            fork tag (default: v<BUILT_FOR>, the version this puddle runs)
             --upstream-tag <tag>   upstream base tag (default: derived from a -puddle.N tag)
             --fork <owner/name>    fork repository (default: TijsVK/microsandbox)
@@ -139,6 +147,9 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<String> {
             args,
             &[
                 "--out",
+                "--os",
+                "--msb",
+                "--pins",
                 "--tag",
                 "--upstream-tag",
                 "--fork",
@@ -232,6 +243,7 @@ fn runtime(opts: &Options) -> Result<String> {
         .value("--out")
         .map_or_else(|| target_dir().join("runtime"), PathBuf::from);
     let cargo = Cargo::from_env(opts.has("--offline"));
+    let target = runtime_target(opts, &tag)?;
 
     let (source, puddle): (Box<dyn ReleaseSource>, Inventory) = if let Some(dir) =
         opts.value("--from")
@@ -254,13 +266,53 @@ fn runtime(opts: &Options) -> Result<String> {
         };
         (Box::new(source), puddle_inventory(&cargo)?)
     };
-    let manifest = assemble::assemble(source.as_ref(), &expected, &puddle, &out)?;
+    let manifest = assemble::assemble(source.as_ref(), &expected, &puddle, &target, &out)?;
     Ok(format!(
-        "runtime {} assembled in {} (msb.exe sha256 {})",
+        "runtime {} assembled in {} ({} sha256 {})",
         manifest.version,
         out.display(),
+        target.os().runtime_files().msb,
         manifest.msb_sha256
     ))
+}
+
+/// The runtime folder the options ask for: this OS's unless `--os` says otherwise; Linux needs
+/// `--msb` and the firmware version pinned for `tag`.
+fn runtime_target(opts: &Options, tag: &str) -> Result<assemble::Target> {
+    let os = match opts.value("--os") {
+        Some(name) => HostOs::from_target_os(name),
+        None => Some(HostOs::current()),
+    };
+    match os {
+        Some(HostOs::Windows) => {
+            if opts.value("--msb").is_some() {
+                return Err(XtaskError::Usage(
+                    "--msb is for Linux; the Windows msb comes from the fork's release".into(),
+                ));
+            }
+            Ok(assemble::Target::Windows)
+        }
+        Some(HostOs::Linux) => {
+            let msb = opts.value("--msb").ok_or_else(|| {
+                XtaskError::Usage(
+                    "the fork releases no Linux msb: build one with ci/fetch-msb.sh and pass it with --msb"
+                        .into(),
+                )
+            })?;
+            let pins_path = opts
+                .value("--pins")
+                .map_or_else(|| workspace_root().join(pin::PIN_FILE), PathBuf::from);
+            let pins = std::fs::read_to_string(&pins_path)
+                .map_err(|e| XtaskError::io(format!("reading {}", pins_path.display()), e))?;
+            Ok(assemble::Target::Linux {
+                msb: PathBuf::from(msb),
+                libkrunfw_version: pin::libkrunfw_linux_version(&pins, tag)?,
+            })
+        }
+        Some(HostOs::MacOs) | None => Err(XtaskError::Usage(
+            "runtime folders are built for windows and linux only".into(),
+        )),
+    }
 }
 
 /// A fixture folder may carry puddle's inventory too (`puddle-about.json`, `puddle-tree.txt`),
@@ -287,6 +339,10 @@ mod tests {
             (vec!["runtime", "--out"], "--out needs a value"),
             (vec!["runtime", "--bogus"], "unknown argument --bogus"),
             (vec!["notices", "--tag", "x"], "unknown argument --tag"),
+            (
+                vec!["runtime", "--os", "linux", "--tag", "v0.7.7-puddle.1"],
+                "the fork releases no Linux msb",
+            ),
             (
                 vec!["runtime", "--tag", "v0.7.7", "--from", "/nonexistent"],
                 "pass --upstream-tag",

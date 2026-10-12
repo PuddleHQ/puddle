@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `cargo xtask runtime` against a fixture release: the folder it builds, and every check that
-//! must stop it (checksum, version, missing licence entry, existing output).
+//! `cargo xtask runtime` against a fixture release: the folder it builds for Windows and for Linux,
+//! and every check that must stop it (checksum, version, missing licence entry, existing output,
+//! no pinned firmware version).
 #![expect(
     clippy::unwrap_used,
     reason = "fixture helpers run outside #[test] but only in tests"
@@ -12,12 +13,18 @@ use object::write::{Object, StandardSection};
 use object::{Architecture, BinaryFormat, Endianness, SectionKind};
 use puddle_runtime::{HostOs, RuntimeFiles};
 use xtask::checksums::sha256_file;
-use xtask::source::{CHECKSUMS_ASSET, Commit, Firmware, ForkFacts, LIBKRUNFW_ASSET, MSB_ASSET};
+use xtask::source::{
+    CHECKSUMS_ASSET, Commit, Firmware, ForkFacts, LIBKRUNFW_ASSET, LIBKRUNFW_LINUX_ASSET, MSB_ASSET,
+};
 
 const VERSION: &str = "0.7.7-puddle.3";
 
-/// The assembled folder is the Windows runtime, whatever OS runs the test.
+/// The assembled folders are for either OS, whatever OS runs the test.
 const WIN: RuntimeFiles = HostOs::Windows.runtime_files();
+const LINUX: RuntimeFiles = HostOs::Linux.runtime_files();
+
+/// The firmware version the fixture's pin list gives `VERSION`'s tag.
+const FW_VERSION: &str = "5.6.1";
 
 struct TempDir(PathBuf);
 
@@ -42,7 +49,11 @@ impl Drop for TempDir {
 }
 
 fn fake_msb(version: &str) -> Vec<u8> {
-    let mut obj = Object::new(BinaryFormat::Coff, Architecture::X86_64, Endianness::Little);
+    fake_msb_in(BinaryFormat::Coff, version)
+}
+
+fn fake_msb_in(format: BinaryFormat, version: &str) -> Vec<u8> {
+    let mut obj = Object::new(format, Architecture::X86_64, Endianness::Little);
     let text = obj.section_id(StandardSection::Text);
     obj.append_section_data(text, &[0xc3], 1);
     let id = obj.add_section(Vec::new(), b".msbver".to_vec(), SectionKind::ReadOnlyData);
@@ -78,13 +89,26 @@ fn fixture(dir: &Path, embedded: &str) -> PathBuf {
     .unwrap();
     let fw = src.join("upstream").join(LIBKRUNFW_ASSET);
     std::fs::write(&fw, b"firmware bytes").unwrap();
+    let fw_linux = src.join("upstream").join(LIBKRUNFW_LINUX_ASSET);
+    std::fs::write(&fw_linux, b"linux firmware bytes").unwrap();
     std::fs::write(
         src.join("upstream").join(CHECKSUMS_ASSET),
         format!(
-            "{}  agentd-x86_64\n{}  {LIBKRUNFW_ASSET}\n",
+            "{}  agentd-x86_64\n{}  {LIBKRUNFW_ASSET}\n{}  {LIBKRUNFW_LINUX_ASSET}\n",
             "0".repeat(64),
-            sha256_file(&fw).unwrap()
+            sha256_file(&fw).unwrap(),
+            sha256_file(&fw_linux).unwrap()
         ),
+    )
+    .unwrap();
+    std::fs::write(
+        src.join("pins.sha256"),
+        format!("# fixture\nv{VERSION} libkrunfw-linux-version {FW_VERSION}\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        src.join("msb-linux"),
+        fake_msb_in(BinaryFormat::Elf, embedded),
     )
     .unwrap();
     let facts = ForkFacts {
@@ -122,19 +146,46 @@ fn fixture(dir: &Path, embedded: &str) -> PathBuf {
 }
 
 fn run(src: &Path, out: &Path) -> xtask::Result<String> {
-    xtask::run(
-        [
-            "runtime",
-            "--tag",
-            &format!("v{VERSION}"),
-            "--from",
-            src.to_str().unwrap(),
-            "--out",
-            out.to_str().unwrap(),
-            "--offline",
-        ]
-        .map(Into::into),
+    run_with(src, out, &["--os", "windows"])
+}
+
+fn run_linux(src: &Path, out: &Path) -> xtask::Result<String> {
+    run_with(
+        src,
+        out,
+        &[
+            "--os",
+            "linux",
+            "--msb",
+            src.join("msb-linux").to_str().unwrap(),
+            "--pins",
+            src.join("pins.sha256").to_str().unwrap(),
+        ],
     )
+}
+
+fn run_with(src: &Path, out: &Path, extra: &[&str]) -> xtask::Result<String> {
+    let tag = format!("v{VERSION}");
+    let args = [
+        "runtime",
+        "--tag",
+        &tag,
+        "--from",
+        src.to_str().unwrap(),
+        "--out",
+        out.to_str().unwrap(),
+        "--offline",
+    ];
+    xtask::run(args.iter().chain(extra).map(Into::into))
+}
+
+fn names(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    names
 }
 
 fn read(path: &Path) -> String {
@@ -149,19 +200,12 @@ fn builds_the_runtime_folder_with_licences() {
     let msg = run(&src, &out).unwrap();
     assert!(msg.contains(VERSION), "{msg}");
 
-    let mut names: Vec<String> = std::fs::read_dir(&out)
-        .unwrap()
-        .map(|e| e.unwrap().file_name().into_string().unwrap())
-        .collect();
-    names.sort();
-    assert_eq!(names, [WIN.libkrunfw, "licenses", WIN.msb, "runtime.json"]);
-    let mut licences: Vec<String> = std::fs::read_dir(out.join("licenses"))
-        .unwrap()
-        .map(|e| e.unwrap().file_name().into_string().unwrap())
-        .collect();
-    licences.sort();
     assert_eq!(
-        licences,
+        names(&out),
+        [WIN.libkrunfw, "licenses", WIN.msb, "runtime.json"]
+    );
+    assert_eq!(
+        names(&out.join("licenses")),
         [
             "Apache-2.0.txt",
             "GPL-2.0.txt",
@@ -184,6 +228,7 @@ fn builds_the_runtime_folder_with_licences() {
     assert_eq!(manifest["version"], VERSION);
     assert_eq!(manifest["fork_tag"], format!("v{VERSION}"));
     assert_eq!(manifest["upstream_tag"], "v0.7.7");
+    assert!(manifest.get("libkrunfw_version").is_none());
     assert_eq!(
         manifest["msb_sha256"],
         sha256_file(&out.join(WIN.msb)).unwrap()
@@ -319,4 +364,175 @@ fn a_missing_part_is_an_io_error() {
     let src = fixture(&dir.0, VERSION);
     std::fs::remove_file(src.join("facts.json")).unwrap();
     assert_fails_cleanly(&dir, &src, "facts.json");
+}
+
+/// Every name in a Linux runtime folder besides the licences and the manifest.
+fn linux_files(version: &str) -> Vec<String> {
+    let versioned = HostOs::Linux.libkrunfw_versioned(version).unwrap();
+    let mut files = vec![
+        LINUX.libkrunfw.to_owned(),
+        "licenses".to_owned(),
+        LINUX.msb.to_owned(),
+        "runtime.json".to_owned(),
+        versioned,
+    ];
+    files.sort();
+    files
+}
+
+#[test]
+fn builds_the_linux_runtime_folder_with_both_firmware_names() {
+    let dir = TempDir::new("linux");
+    let src = fixture(&dir.0, VERSION);
+    let out = dir.0.join("runtime");
+    let msg = run_linux(&src, &out).unwrap();
+    assert!(msg.contains(VERSION) && msg.contains("msb sha256"), "{msg}");
+
+    assert_eq!(names(&out), linux_files(FW_VERSION));
+    let firmware = std::fs::read(src.join("upstream").join(LIBKRUNFW_LINUX_ASSET)).unwrap();
+    for name in [LINUX.libkrunfw, "libkrunfw.so.5.6.1"] {
+        assert_eq!(std::fs::read(out.join(name)).unwrap(), firmware, "{name}");
+    }
+    assert_eq!(
+        std::fs::read(out.join(LINUX.msb)).unwrap(),
+        std::fs::read(src.join("msb-linux")).unwrap()
+    );
+    assert_eq!(
+        puddle_runtime::read_embedded_version(&out.join(LINUX.msb))
+            .unwrap()
+            .as_deref(),
+        Some(VERSION)
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(out.join(LINUX.msb))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o111, 0o111, "msb is not executable: {mode:o}");
+    }
+
+    let manifest: serde_json::Value =
+        serde_json::from_str(&read(&out.join("runtime.json"))).unwrap();
+    assert_eq!(manifest["version"], VERSION);
+    assert_eq!(manifest["libkrunfw_version"], FW_VERSION);
+    assert_eq!(
+        manifest["msb_sha256"],
+        sha256_file(&out.join(LINUX.msb)).unwrap()
+    );
+    assert_eq!(
+        manifest["libkrunfw_sha256"],
+        sha256_file(&out.join("libkrunfw.so.5.6.1")).unwrap()
+    );
+    assert_eq!(
+        manifest["libkrunfw_sha256"],
+        sha256_file(&out.join(LINUX.libkrunfw)).unwrap()
+    );
+    let notice = read(&out.join("licenses/NOTICE.txt"));
+    assert!(notice.contains("libkrunfw.so.5 and libkrunfw.so.5.6.1"));
+    assert!(!notice.contains(".exe"));
+    assert!(!dir.0.join("runtime.partial").exists());
+}
+
+#[test]
+fn a_pin_bump_changes_the_versioned_firmware_name() {
+    let dir = TempDir::new("bump");
+    let src = fixture(&dir.0, VERSION);
+    std::fs::write(
+        src.join("pins.sha256"),
+        format!("v{VERSION} libkrunfw-linux-version 5.7.0\n"),
+    )
+    .unwrap();
+    let out = dir.0.join("runtime");
+    run_linux(&src, &out).unwrap();
+    assert_eq!(names(&out), linux_files("5.7.0"));
+    assert!(!out.join("libkrunfw.so.5.6.1").exists());
+}
+
+#[test]
+fn a_linux_folder_needs_a_pinned_firmware_version() {
+    let dir = TempDir::new("nopin");
+    let src = fixture(&dir.0, VERSION);
+    std::fs::write(
+        src.join("pins.sha256"),
+        "v9.9.9-puddle.1 libkrunfw-linux-version 5.6.1\n",
+    )
+    .unwrap();
+    let err = run_linux(&src, &dir.0.join("runtime"))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("nothing pinned for") && err.contains(VERSION),
+        "{err}"
+    );
+    assert!(!dir.0.join("runtime").exists());
+}
+
+#[test]
+fn a_linux_folder_needs_the_msb_it_is_given() {
+    let dir = TempDir::new("nomsb");
+    let src = fixture(&dir.0, VERSION);
+    let out = dir.0.join("runtime");
+    let pins = src.join("pins.sha256");
+    let no_msb = ["--os", "linux", "--pins", pins.to_str().unwrap()];
+    let err = run_with(&src, &out, &no_msb).unwrap_err().to_string();
+    assert!(
+        err.contains("ci/fetch-msb.sh") && err.contains("--msb"),
+        "{err}"
+    );
+
+    std::fs::remove_file(src.join("msb-linux")).unwrap();
+    let err = run_linux(&src, &out).unwrap_err().to_string();
+    assert!(err.contains("msb-linux"), "{err}");
+    assert!(!out.exists());
+}
+
+#[test]
+fn a_linux_msb_of_another_version_is_refused() {
+    let dir = TempDir::new("linuxversion");
+    let src = fixture(&dir.0, "0.7.7");
+    let out = dir.0.join("runtime");
+    let err = run_linux(&src, &out).unwrap_err().to_string();
+    assert!(
+        err.contains(&format!(
+            "downloaded msb is version 0.7.7, but the runtime folder is for {VERSION}"
+        )),
+        "{err}"
+    );
+    assert!(!out.exists() && !dir.0.join("runtime.partial").exists());
+}
+
+#[test]
+fn a_corrupted_linux_firmware_is_refused() {
+    let dir = TempDir::new("linuxfw");
+    let src = fixture(&dir.0, VERSION);
+    std::fs::write(
+        src.join("upstream").join(LIBKRUNFW_LINUX_ASSET),
+        b"tampered",
+    )
+    .unwrap();
+    let out = dir.0.join("runtime");
+    let err = run_linux(&src, &out).unwrap_err().to_string();
+    assert!(
+        err.contains(&format!("checksum mismatch for {LIBKRUNFW_LINUX_ASSET}")),
+        "{err}"
+    );
+    assert!(!out.exists() && !dir.0.join("runtime.partial").exists());
+}
+
+#[test]
+fn the_options_of_the_other_os_are_refused() {
+    let dir = TempDir::new("options");
+    let src = fixture(&dir.0, VERSION);
+    let out = dir.0.join("runtime");
+    let err = run_with(&src, &out, &["--os", "windows", "--msb", "x"])
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("--msb is for Linux"), "{err}");
+    let err = run_with(&src, &out, &["--os", "macos"])
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("windows and linux only"), "{err}");
+    assert!(!out.exists());
 }

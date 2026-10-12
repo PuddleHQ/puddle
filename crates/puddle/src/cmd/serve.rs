@@ -6,6 +6,7 @@
 //! The work is in [`puddle_host`]; this file is the process around it: the Windows
 //! front/worker split, logging, the order "prepare before the first thread", and the exit code.
 
+use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -89,11 +90,21 @@ pub fn config(
     Ok(config)
 }
 
-fn log_level() -> LevelFilter {
-    std::env::var(LOG_VAR)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(LevelFilter::INFO)
+/// The level `PUDDLE_LOG` asks for, `info` when unset. Any other value is an error: a typo must
+/// not quietly give the default level.
+fn log_level(value: Option<&OsStr>) -> Result<LevelFilter, String> {
+    let Some(value) = value else {
+        return Ok(LevelFilter::INFO);
+    };
+    value
+        .to_str()
+        .and_then(|text| text.parse().ok())
+        .ok_or_else(|| {
+            format!(
+                "{LOG_VAR} has the invalid value {:?}: expected error, warn, info, debug or trace",
+                value.to_string_lossy()
+            )
+        })
 }
 
 /// Runs the host. Exit code 0 after a clean stop, 1 when it could not start or a workspace did
@@ -116,8 +127,15 @@ pub fn run(args: &ServeArgs) -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
+    let level = match log_level(std::env::var_os(LOG_VAR).as_deref()) {
+        Ok(level) => level,
+        Err(e) => {
+            eprintln!("puddle: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
     tracing_subscriber::fmt()
-        .with_max_level(log_level())
+        .with_max_level(level)
         .with_ansi(false)
         .with_writer(std::io::stderr)
         .init();
@@ -254,6 +272,15 @@ mod tests {
     }
 
     #[test]
+    fn the_log_level_is_info_unless_puddle_log_names_a_level() {
+        assert_eq!(log_level(None), Ok(LevelFilter::INFO));
+        assert_eq!(log_level(Some(OsStr::new("debug"))), Ok(LevelFilter::DEBUG));
+        let err = log_level(Some(OsStr::new("loud"))).unwrap_err();
+        assert!(err.starts_with("PUDDLE_LOG"), "{err}");
+        assert!(err.contains("\"loud\""), "{err}");
+    }
+
+    #[test]
     fn no_options_is_the_default() {
         assert_eq!(serve(&[]), Ok(ServeArgs::default()));
     }
@@ -289,11 +316,5 @@ mod tests {
                 Some(PathBuf::from("/x/api.json"))
             );
         }
-    }
-
-    #[test]
-    fn the_log_level_defaults_to_info() {
-        // The variable is not set by the test environment; an invalid value would also give info.
-        assert_eq!(log_level(), LevelFilter::INFO);
     }
 }

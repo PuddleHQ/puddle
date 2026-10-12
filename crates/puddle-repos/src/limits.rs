@@ -81,7 +81,8 @@ pub(crate) fn github_spent(reply: &ApiReply) -> Option<u64> {
 /// GitHub's answer to one request. `strikes` counts limits in a row, this one included.
 pub(crate) fn github(reply: &ApiReply, now_ms: u64, strikes: u32) -> Verdict {
     match reply.status {
-        200..=299 => Verdict::Ok,
+        // `304` answers a request that held a current copy; asking for one is the caller's doing.
+        200..=299 | 304 => Verdict::Ok,
         401 => Verdict::Rejected,
         404 => Verdict::NotFound,
         403 | 429 => {
@@ -171,6 +172,7 @@ mod tests {
     #[test]
     fn github_success_and_plain_errors() {
         assert_eq!(github(&reply(200, &[], "[]"), NOW, 1), Verdict::Ok);
+        assert_eq!(github(&reply(304, &[], ""), NOW, 1), Verdict::Ok);
         assert_eq!(github(&reply(401, &[], "{}"), NOW, 1), Verdict::Rejected);
         assert_eq!(github(&reply(404, &[], "{}"), NOW, 1), Verdict::NotFound);
         assert_eq!(github(&reply(500, &[], "{}"), NOW, 1), Verdict::Other(500));

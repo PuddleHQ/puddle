@@ -7,9 +7,11 @@
 //! granted. Paging follows the `Link` header the way GitHub asks, but only to the same host and
 //! path: a next page on another address is refused, because the token goes with the request.
 
+use std::collections::{HashMap, HashSet};
+
 use serde::Deserialize;
 
-use crate::api::{ApiRequest, Authorization};
+use crate::api::{ApiReply, ApiRequest, Authorization};
 use crate::exchange::Exchange;
 use crate::limits::github_spent;
 use crate::model::{
@@ -55,15 +57,43 @@ pub(crate) fn endpoint(host: &str, signed_in_with_gh: bool) -> Option<Endpoint> 
     })
 }
 
-fn request(endpoint: &Endpoint, path: &str, authorization: &Authorization) -> ApiRequest {
+fn request(
+    endpoint: &Endpoint,
+    path: &str,
+    authorization: &Authorization,
+    if_none_match: Option<String>,
+) -> ApiRequest {
     ApiRequest {
         host: endpoint.api_host.clone(),
         path: path.to_owned(),
         accept: ACCEPT,
         headers: HEADERS,
         authorization: authorization.clone(),
+        if_none_match,
     }
 }
+
+/// What one page of the repository list said.
+#[derive(Debug, Clone)]
+struct Page {
+    repos: Vec<Repository>,
+    /// The `Link` header, for the page after this one.
+    link: Option<String>,
+    sso_partial: bool,
+}
+
+/// A [`Page`] with the `ETag` it came with.
+#[derive(Debug, Clone)]
+struct CachedPage {
+    etag: String,
+    page: Page,
+}
+
+/// The pages of one credential's repository list as last read, by the path they were asked at.
+/// A page asked again with its `ETag` that the host says is unchanged (`304`) is not counted
+/// against the host's rate limit and costs no body, so the copy kept here stands in for it.
+#[derive(Debug, Default)]
+pub(crate) struct Pages(HashMap<String, CachedPage>);
 
 #[derive(Deserialize)]
 struct RepoJson {
@@ -177,11 +207,62 @@ fn next_target(link: &str) -> Option<&str> {
     })
 }
 
-/// Every repository the token reaches, in name order, up to 3000.
+/// The page `reply` answers for `path`: read from the body, or, for a `304`, what `pages` kept.
+fn read_page(
+    reply: &ApiReply,
+    endpoint: &Endpoint,
+    path: &str,
+    pages: &mut Pages,
+) -> Result<Page, Problem> {
+    if reply.status == 304 {
+        return pages
+            .0
+            .get(path)
+            .map(|kept| kept.page.clone())
+            .ok_or_else(|| {
+                Problem::bad_answer(
+                    "GitHub said a page is unchanged that puddle had not asked about",
+                )
+            });
+    }
+    let rows: Vec<RepoJson> = serde_json::from_slice(&reply.body).map_err(|_| {
+        Problem::bad_answer("the list of repositories is not what GitHub documents")
+    })?;
+    let repos = rows
+        .into_iter()
+        .map(|row| repository(row, endpoint))
+        .collect::<Result<Vec<_>, _>>()?;
+    let page = Page {
+        repos,
+        link: reply.header("link").map(str::to_owned),
+        sso_partial: reply
+            .header("x-github-sso")
+            .is_some_and(|v| v.trim_start().starts_with("partial-results")),
+    };
+    match reply.header("etag") {
+        Some(etag) => {
+            pages.0.insert(
+                path.to_owned(),
+                CachedPage {
+                    etag: etag.to_owned(),
+                    page: page.clone(),
+                },
+            );
+        }
+        None => {
+            pages.0.remove(path);
+        }
+    }
+    Ok(page)
+}
+
+/// Every repository the token reaches, in name order, up to 3000. Each page is asked with the
+/// `ETag` `pages` kept for it.
 pub(crate) async fn list(
     exchange: &Exchange<'_>,
     endpoint: &Endpoint,
     authorization: &Authorization,
+    pages: &mut Pages,
 ) -> Result<Listed, Problem> {
     const LISTING: &str = "/user/repos";
     let mut path = format!(
@@ -191,21 +272,18 @@ pub(crate) async fn list(
     let mut repos = Vec::new();
     let mut notes = Vec::new();
     let mut sso_partial = false;
+    let mut asked = HashSet::new();
     let mut page = 1;
     let spent_until = loop {
+        let etag = pages.0.get(&path).map(|kept| kept.etag.clone());
         let reply = exchange
-            .get(request(endpoint, &path, authorization))
+            .get(request(endpoint, &path, authorization, etag))
             .await?;
-        let rows: Vec<RepoJson> = serde_json::from_slice(&reply.body).map_err(|_| {
-            Problem::bad_answer("the list of repositories is not what GitHub documents")
-        })?;
-        for row in rows {
-            repos.push(repository(row, endpoint)?);
-        }
-        sso_partial |= reply
-            .header("x-github-sso")
-            .is_some_and(|v| v.trim_start().starts_with("partial-results"));
-        let Some(next) = next_page(reply.header("link"), endpoint, LISTING)? else {
+        let read = read_page(&reply, endpoint, &path, pages)?;
+        asked.insert(path.clone());
+        repos.extend(read.repos);
+        sso_partial |= read.sso_partial;
+        let Some(next) = next_page(read.link.as_deref(), endpoint, LISTING)? else {
             break github_spent(&reply);
         };
         if page == MAX_PAGES {
@@ -222,6 +300,8 @@ pub(crate) async fn list(
         page += 1;
         path = next;
     };
+    // Pages the list no longer has (it got shorter) are not asked about again.
+    pages.0.retain(|kept, _| asked.contains(kept));
     if sso_partial {
         notes.push(Note::new(
             NoteKind::SsoPartial,
@@ -266,6 +346,7 @@ pub(crate) async fn profile(
             endpoint,
             &format!("{}/user", endpoint.base),
             authorization,
+            None,
         ))
         .await?;
     let user: UserJson = serde_json::from_slice(&reply.body)
@@ -308,7 +389,7 @@ async fn organisations(
     let mut logins = Vec::new();
     for page in 1..=MAX_ORG_PAGES {
         let reply = exchange
-            .get(request(endpoint, &path, authorization))
+            .get(request(endpoint, &path, authorization, None))
             .await?;
         let rows: Vec<OrgJson> = serde_json::from_slice(&reply.body)
             .map_err(|_| Problem::bad_answer("the organisations are not what GitHub documents"))?;

@@ -3,6 +3,7 @@
 //! gets, and a credential that names no organisation.
 
 use puddle_repos::{ApiReply, Freshness, ListState, ProblemKind, Role, Visibility};
+use puddle_secrets::{TokenScheme, azure_devops_scheme};
 use puddle_store::RepoRef;
 
 use crate::common::{Rig, binding, data, gcm, identities, ok_json, stored};
@@ -131,6 +132,49 @@ async fn things_that_only_look_like_an_entra_token_stay_basic() {
         )]);
         rig.lists(&ids, Freshness::Cached).await;
         assert!(!rig.api.seen()[0].bearer, "{token}");
+    }
+}
+
+/// Every kind of token an Azure DevOps credential holds, and the scheme it goes under. The Git
+/// injector's tests walk the same table against the same function in `puddle-secrets`.
+const KINDS: [(&str, bool); 7] = [
+    ("plainpatwithnodots", false),
+    ("eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl", true),
+    ("eyJhbGciOiJSUzI1NiJ9.onlytwo", false),
+    ("notjwt.eyJzdWIiOiJ4In0.c2lnbmF0dXJl", false),
+    ("eyJhbGciOi.has space.c2ln", false),
+    ("eyJhbGciOi..c2ln", false),
+    ("eyJa.b\u{7f}.c", false),
+];
+
+#[tokio::test]
+async fn discovery_picks_the_scheme_puddle_secrets_picks_for_every_kind_of_token() {
+    for (token, bearer) in KINDS {
+        assert_eq!(
+            azure_devops_scheme(token) == TokenScheme::Bearer,
+            bearer,
+            "{token:?}"
+        );
+        for source in [
+            stored("tok-1", "dev.azure.com", Some("acme")),
+            gcm("dev.azure.com", "acme"),
+        ] {
+            let rig = Rig::new();
+            rig.api
+                .reply("dev.azure.com", LIST, json("azure_repositories.json"));
+            rig.tokens.set(&source, token);
+            let ids = identities(vec![(
+                "Work",
+                vec![binding("dev.azure.com", source, &["acme"], false)],
+            )]);
+
+            rig.lists(&ids, Freshness::Cached).await;
+
+            let seen = rig.api.seen();
+            assert_eq!(seen[0].bearer, bearer, "{token:?}");
+            // One call for the whole organisation: nothing to ask again.
+            assert_eq!(seen[0].if_none_match, None);
+        }
     }
 }
 

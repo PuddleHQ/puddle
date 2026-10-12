@@ -141,8 +141,9 @@ struct Entry {
 
 struct Slot {
     target: Target,
-    /// Held for the whole of a read: one read per credential at a time.
-    turn: AsyncMutex<()>,
+    /// Held for the whole of a read: one read per credential at a time. What it holds is what the
+    /// last read kept of the host's pages, to ask for them again with their `ETag`.
+    turn: AsyncMutex<github::Pages>,
     entry: Mutex<Entry>,
 }
 
@@ -150,7 +151,7 @@ impl Slot {
     fn new(target: Target) -> Self {
         Self {
             target,
-            turn: AsyncMutex::new(()),
+            turn: AsyncMutex::new(github::Pages::default()),
             entry: Mutex::new(Entry::default()),
         }
     }
@@ -434,7 +435,7 @@ impl Repos {
 
     async fn refresh(&self, slot: &Slot, force: bool) {
         let seen = slot.entry().generation;
-        let _turn = slot.turn.lock().await;
+        let mut pages = slot.turn.lock().await;
         let strikes = {
             let entry = slot.entry();
             // Another caller read it while this one waited its turn.
@@ -445,7 +446,11 @@ impl Repos {
         };
         let outcome = {
             let _permit = self.reads.acquire().await;
-            match tokio::time::timeout(self.config.deadline, self.read(&slot.target, strikes)).await
+            match tokio::time::timeout(
+                self.config.deadline,
+                self.read(&slot.target, strikes, &mut pages),
+            )
+            .await
             {
                 Ok(outcome) => outcome,
                 Err(_) => Err(self.too_slow()),
@@ -468,7 +473,12 @@ impl Repos {
     }
 
     /// One read of one credential's list.
-    async fn read(&self, target: &Target, strikes: u32) -> Result<Listed, Problem> {
+    async fn read(
+        &self,
+        target: &Target,
+        strikes: u32,
+        pages: &mut github::Pages,
+    ) -> Result<Listed, Problem> {
         let kind = kind_of(target.source.scope().host.as_str(), &target.source)?;
         let credential = self
             .secrets
@@ -483,6 +493,7 @@ impl Repos {
                     &exchange,
                     endpoint,
                     &Authorization::Bearer(credential.secret),
+                    pages,
                 )
                 .await
             }

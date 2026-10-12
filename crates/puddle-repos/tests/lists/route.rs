@@ -227,6 +227,7 @@ fn request(host: &str, path: &str) -> ApiRequest {
         accept: "application/vnd.github+json",
         headers: &[("x-github-api-version", "2022-11-28")],
         authorization: Authorization::Bearer(Arc::new(Secret::new(CANARY.to_owned()))),
+        if_none_match: None,
     }
 }
 
@@ -287,6 +288,47 @@ async fn a_request_goes_out_with_the_headers_a_git_host_expects_and_the_answer_c
     assert_eq!(seen[0].header("x-github-api-version"), Some("2022-11-28"));
     assert_eq!(seen[0].header("connection"), Some("close"));
     assert_eq!(seen[0].header("host"), Some(host.as_str()));
+}
+
+#[tokio::test]
+async fn a_validator_goes_out_as_if_none_match_and_a_304_comes_back_with_no_body() {
+    let pki = Pki::new("localhost");
+    let server = Server::start(
+        &pki,
+        Mode::Answer(Arc::new(|seen| {
+            if seen.header("if-none-match") == Some(r#"W/"abc""#) {
+                Reply {
+                    status: 304,
+                    headers: vec![("etag", r#"W/"abc""#), ("x-ratelimit-remaining", "4999")],
+                    raw_headers: Vec::new(),
+                    body: Vec::new(),
+                }
+            } else {
+                Reply::ok("[]")
+            }
+        })),
+    )
+    .await;
+    let host = format!("localhost:{}", server.addr.port());
+    let api = api(direct_chain(), &pki);
+
+    let plain = api.get(request(&host, "/user/repos")).await.unwrap();
+    let conditional = api
+        .get(ApiRequest {
+            if_none_match: Some(r#"W/"abc""#.to_owned()),
+            ..request(&host, "/user/repos")
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(plain.status, 200);
+    assert_eq!(conditional.status, 304);
+    assert_eq!(conditional.body.len(), 0);
+    assert_eq!(conditional.header("etag"), Some(r#"W/"abc""#));
+    assert_eq!(conditional.header("x-ratelimit-remaining"), Some("4999"));
+    let seen = server.seen();
+    assert_eq!(seen[0].header("if-none-match"), None);
+    assert_eq!(seen[1].header("if-none-match"), Some(r#"W/"abc""#));
 }
 
 #[tokio::test]

@@ -4,6 +4,7 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use puddle_proxy::SecretValue;
+use puddle_secrets::{TokenScheme, azure_devops_scheme};
 
 /// The user name GitHub documents for token authentication over HTTPS; the host looks at the
 /// token only.
@@ -17,20 +18,15 @@ const TOKEN_USER: &str = "x-access-token";
 /// accept for personal, OAuth and fine-grained tokens.
 pub(crate) fn authorization(credential_host: &str, token: &str) -> SecretValue {
     if credential_host == "dev.azure.com" {
-        if looks_like_jwt(token) {
-            return SecretValue::new(format!("Bearer {token}"));
-        }
-        return SecretValue::new(format!("Basic {}", STANDARD.encode(format!(":{token}"))));
+        return SecretValue::new(match azure_devops_scheme(token) {
+            TokenScheme::Bearer => format!("Bearer {token}"),
+            _ => format!("Basic {}", STANDARD.encode(format!(":{token}"))),
+        });
     }
     SecretValue::new(format!(
         "Basic {}",
         STANDARD.encode(format!("{TOKEN_USER}:{token}"))
     ))
-}
-
-/// Three dot-separated parts, the first the base64url of a JSON header (`{"`).
-fn looks_like_jwt(token: &str) -> bool {
-    token.starts_with("eyJ") && token.split('.').count() == 3
 }
 
 #[cfg(test)]
@@ -74,5 +70,37 @@ mod tests {
             &authorization("github.com", jwt),
             &format!("Basic {}", STANDARD.encode(format!("x-access-token:{jwt}")))
         ));
+    }
+
+    /// Every kind of token an Azure DevOps credential holds, and the scheme it goes under;
+    /// repository discovery's tests walk the same table against the same function.
+    const KINDS: [(&str, bool); 7] = [
+        ("plainpatwithnodots", false),
+        ("eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl", true),
+        ("eyJhbGciOiJSUzI1NiJ9.onlytwo", false),
+        ("notjwt.eyJzdWIiOiJ4In0.c2lnbmF0dXJl", false),
+        ("eyJhbGciOi.has space.c2ln", false),
+        ("eyJhbGciOi..c2ln", false),
+        ("eyJa.b\u{7f}.c", false),
+    ];
+
+    #[test]
+    fn the_injector_picks_the_scheme_puddle_secrets_picks_for_every_kind_of_token() {
+        for (token, bearer) in KINDS {
+            assert_eq!(
+                azure_devops_scheme(token) == TokenScheme::Bearer,
+                bearer,
+                "{token:?}"
+            );
+            let want = if bearer {
+                format!("Bearer {token}")
+            } else {
+                format!("Basic {}", STANDARD.encode(format!(":{token}")))
+            };
+            assert!(
+                text(&authorization("dev.azure.com", token), &want),
+                "{token:?}"
+            );
+        }
     }
 }

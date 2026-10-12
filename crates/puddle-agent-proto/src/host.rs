@@ -380,10 +380,10 @@ async fn serve_control<H>(mut reader: BufReader<Prefixed<StreamHandle>>, shared:
     loop {
         match control::read_line(&mut reader, &mut line, MAX_LINE).await {
             Ok(true) => {}
-            Ok(false) => return,
+            Ok(false) => break,
             Err(err) => {
                 tracing::warn!(%workspace, error = %err, "control stream ended");
-                return;
+                break;
             }
         }
         if !limit.allow(Instant::now()) {
@@ -397,6 +397,10 @@ async fn serve_control<H>(mut reader: BufReader<Prefixed<StreamHandle>>, shared:
             Ok(msg) => on_message(msg, shared),
             Err(err) => tracing::warn!(%workspace, error = %err, "invalid control message ignored"),
         }
+    }
+    // A flood that stops never gets a later message through to report its count.
+    if limit.suppressed > 0 {
+        tracing::warn!(%workspace, dropped = limit.suppressed, "control messages over the rate limit were dropped");
     }
 }
 

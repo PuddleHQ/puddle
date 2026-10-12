@@ -6,8 +6,8 @@
 use axum::Json;
 use axum::extract::State;
 use puddle_settings::{
-    GLOBAL_SCHEMA_VERSION, GlobalSettings, Loaded, WORKSPACE_SCHEMA_VERSION, WorkspaceSettings,
-    resolve,
+    GLOBAL_SCHEMA_VERSION, GlobalSettings, Loaded, SettingsError, WORKSPACE_SCHEMA_VERSION,
+    WorkspaceSettings, resolve,
 };
 use puddle_types::WorkspaceName;
 use serde_json::{Value, json};
@@ -27,11 +27,21 @@ fn empty(version: u32) -> Value {
     json!({ "schema_version": version })
 }
 
+/// A document that did not parse: a newer puddle's keeps its own refusal, anything else is damage.
+fn unreadable(what: &str, err: SettingsError) -> ApiError {
+    match err {
+        SettingsError::NewerSchema { .. } => err.into(),
+        _ => ApiError::settings_unreadable(what, &err),
+    }
+}
+
 pub(crate) fn load_global(repo: &dyn SettingsRepo) -> Result<Loaded<GlobalSettings>, ApiError> {
-    let loaded = GlobalSettings::from_document(
-        repo.load_global()?
-            .unwrap_or_else(|| empty(GLOBAL_SCHEMA_VERSION)),
-    )?;
+    const WHAT: &str = "the global settings";
+    let document = repo
+        .load_global()
+        .map_err(|e| ApiError::settings_unreadable(WHAT, &e))?
+        .unwrap_or_else(|| empty(GLOBAL_SCHEMA_VERSION));
+    let loaded = GlobalSettings::from_document(document).map_err(|e| unreadable(WHAT, e))?;
     if !loaded.unknown_fields.is_empty() {
         tracing::warn!(fields = ?loaded.unknown_fields, "global settings have fields this puddle doesn't know; kept");
     }
@@ -46,10 +56,12 @@ pub(crate) fn load_workspace(
     repo: &dyn SettingsRepo,
     workspace: &WorkspaceName,
 ) -> Result<Loaded<WorkspaceSettings>, ApiError> {
-    let loaded = WorkspaceSettings::from_document(
-        repo.load_workspace(workspace)?
-            .unwrap_or_else(|| empty(WORKSPACE_SCHEMA_VERSION)),
-    )?;
+    let what = format!("the settings of workspace {workspace}");
+    let document = repo
+        .load_workspace(workspace)
+        .map_err(|e| ApiError::settings_unreadable(&what, &e))?
+        .unwrap_or_else(|| empty(WORKSPACE_SCHEMA_VERSION));
+    let loaded = WorkspaceSettings::from_document(document).map_err(|e| unreadable(&what, e))?;
     if !loaded.unknown_fields.is_empty() {
         tracing::warn!(%workspace, fields = ?loaded.unknown_fields, "workspace settings have fields this puddle doesn't know; kept");
     }
@@ -80,7 +92,7 @@ fn workspace_view(
     tag = "settings",
     responses(
         (status = OK, description = "global settings", body = GlobalSettingsView),
-        (status = CONFLICT, description = "written by a newer puddle", body = ApiErrorBody)
+        (status = CONFLICT, description = "written by a newer puddle (newer_settings), or damaged (settings_unreadable)", body = ApiErrorBody)
     )
 )]
 pub(crate) async fn get_global(
@@ -100,7 +112,7 @@ pub(crate) async fn get_global(
     request_body = GlobalSettingsRequest,
     responses(
         (status = OK, description = "the new global settings", body = GlobalSettingsView),
-        (status = CONFLICT, description = "written by a newer puddle", body = ApiErrorBody),
+        (status = CONFLICT, description = "written by a newer puddle (newer_settings), or damaged (settings_unreadable)", body = ApiErrorBody),
         (status = UNPROCESSABLE_ENTITY, description = "a value out of range, or Microsoft's server chosen without consent", body = ApiErrorBody)
     )
 )]
@@ -150,7 +162,7 @@ pub(crate) async fn put_global(
     responses(
         (status = OK, description = "the workspace's settings", body = WorkspaceSettingsView),
         (status = BAD_REQUEST, description = "invalid workspace name", body = ApiErrorBody),
-        (status = CONFLICT, description = "written by a newer puddle", body = ApiErrorBody)
+        (status = CONFLICT, description = "written by a newer puddle (newer_settings), or damaged (settings_unreadable)", body = ApiErrorBody)
     )
 )]
 pub(crate) async fn get_workspace_settings(
@@ -178,7 +190,7 @@ pub(crate) async fn get_workspace_settings(
     responses(
         (status = OK, description = "the workspace's new settings", body = WorkspaceSettingsView),
         (status = BAD_REQUEST, description = "invalid workspace name", body = ApiErrorBody),
-        (status = CONFLICT, description = "written by a newer puddle", body = ApiErrorBody),
+        (status = CONFLICT, description = "written by a newer puddle (newer_settings), or damaged (settings_unreadable)", body = ApiErrorBody),
         (status = UNPROCESSABLE_ENTITY, description = "a value out of range", body = ApiErrorBody)
     )
 )]
@@ -213,7 +225,7 @@ pub(crate) async fn put_workspace_settings(
     tag = "consents",
     responses(
         (status = OK, description = "the consents", body = Consents),
-        (status = CONFLICT, description = "written by a newer puddle", body = ApiErrorBody)
+        (status = CONFLICT, description = "written by a newer puddle (newer_settings), or damaged (settings_unreadable)", body = ApiErrorBody)
     )
 )]
 pub(crate) async fn get_consents(
@@ -235,7 +247,7 @@ pub(crate) async fn get_consents(
     responses(
         (status = OK, description = "every consent, after the change", body = Consents),
         (status = BAD_REQUEST, description = "unknown consent kind", body = ApiErrorBody),
-        (status = CONFLICT, description = "written by a newer puddle", body = ApiErrorBody),
+        (status = CONFLICT, description = "written by a newer puddle (newer_settings), or damaged (settings_unreadable)", body = ApiErrorBody),
         (status = UNPROCESSABLE_ENTITY, description = "invalid terms version", body = ApiErrorBody)
     )
 )]
@@ -259,4 +271,59 @@ pub(crate) async fn put_consent(
     crate::system_managed::refresh(&after).await;
     tracing::info!(kind = ?kind, "consent recorded");
     Ok(Json(consents))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::error::ErrorCode;
+    use crate::settings::SettingsRepoError;
+
+    use super::*;
+
+    /// A repo whose reads fail, like a file that cannot be read.
+    struct Unreadable;
+
+    impl SettingsRepo for Unreadable {
+        fn load_global(&self) -> Result<Option<Value>, SettingsRepoError> {
+            Err(SettingsRepoError::new(
+                "/data/global.json is not valid JSON",
+            ))
+        }
+        fn save_global(&self, _: Value) -> Result<(), SettingsRepoError> {
+            Ok(())
+        }
+        fn load_workspace(&self, _: &WorkspaceName) -> Result<Option<Value>, SettingsRepoError> {
+            Err(SettingsRepoError::new("permission denied"))
+        }
+        fn save_workspace(&self, _: &WorkspaceName, _: Value) -> Result<(), SettingsRepoError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_repo_that_cannot_read_says_so_with_the_cause() {
+        let err = load_global(&Unreadable).unwrap_err();
+        assert_eq!(err.code(), ErrorCode::SettingsUnreadable);
+        assert!(
+            err.message().contains("the global settings"),
+            "{}",
+            err.message()
+        );
+        assert!(
+            err.message()
+                .contains("/data/global.json is not valid JSON")
+        );
+        // The bare cause is what other reports (the workspace record) wrap in their own words.
+        assert!(
+            !err.reason().contains("puddle cannot read"),
+            "{}",
+            err.reason()
+        );
+
+        let name = WorkspaceName::new("box").unwrap();
+        let err = load_workspace(&Unreadable, &name).unwrap_err();
+        assert_eq!(err.code(), ErrorCode::SettingsUnreadable);
+        assert!(err.message().contains("workspace box"), "{}", err.message());
+        assert!(err.message().contains("permission denied"));
+    }
 }

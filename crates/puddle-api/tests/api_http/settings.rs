@@ -214,11 +214,40 @@ async fn settings_from_a_newer_puddle_are_a_conflict_and_left_alone() {
         );
     }
     assert_eq!(api.settings.load_global().unwrap(), Some(newer));
-    // A stored document that isn't an object is puddle's problem, not the client's.
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn damaged_settings_are_a_conflict_that_says_what_is_wrong() {
+    let api = start().await;
+    // A stored document that isn't an object: the body carries the reason, not a bare 500.
     api.settings.save_global(json!([1, 2])).unwrap();
-    let reply = api.get("/api/settings").await;
-    assert_eq!(reply.status, 500);
-    assert_eq!(reply.error(), "internal");
+    for (method, path, body) in [
+        ("GET", "/api/settings", None),
+        ("PUT", "/api/settings", Some(json!({}))),
+        ("GET", "/api/consents", None),
+        ("GET", "/api/settings/workspaces/box", None),
+    ] {
+        let reply = api.send(method, path, body.as_ref()).await;
+        assert_eq!(reply.status, 409, "{method} {path}: {}", reply.body);
+        assert_eq!(reply.error(), "settings_unreadable");
+        let message = reply.json()["message"].as_str().unwrap().to_owned();
+        assert!(message.contains("the global settings"), "{message}");
+        assert!(message.contains("must be an object"), "{message}");
+    }
+    assert_eq!(api.settings.load_global().unwrap(), Some(json!([1, 2])));
+
+    // One workspace's damaged document names that workspace, and only its page fails.
+    api.settings.save_global(json!({})).unwrap();
+    api.settings
+        .save_workspace(&WorkspaceName::new("box").unwrap(), json!("x"))
+        .unwrap();
+    let reply = api.get("/api/settings/workspaces/box").await;
+    assert_eq!(reply.status, 409, "{}", reply.body);
+    assert_eq!(reply.error(), "settings_unreadable");
+    let message = reply.json()["message"].as_str().unwrap().to_owned();
+    assert!(message.contains("workspace box"), "{message}");
+    assert_eq!(api.get("/api/settings").await.status, 200);
     api.running.shutdown().await;
 }
 

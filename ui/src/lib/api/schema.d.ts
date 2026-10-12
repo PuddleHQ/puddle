@@ -1900,7 +1900,7 @@ export interface components {
          * @description What went wrong, as a stable code a client can switch on.
          * @enum {string}
          */
-        ErrorCode: "misdirected_host" | "forbidden_origin" | "unauthorized" | "bad_request" | "unsupported_media_type" | "payload_too_large" | "invalid" | "not_found" | "conflict" | "identity_collision" | "newer_settings" | "unavailable" | "internal";
+        ErrorCode: "misdirected_host" | "forbidden_origin" | "unauthorized" | "bad_request" | "unsupported_media_type" | "payload_too_large" | "invalid" | "not_found" | "conflict" | "identity_collision" | "newer_settings" | "settings_unreadable" | "unavailable" | "internal";
         /**
          * @description Something the user should hear about. Serialised as one internally tagged enum
          *     (`{"type":"oom_kill",...}`, ADR 0002).
@@ -3521,7 +3521,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description written by a newer puddle */
+            /** @description written by a newer puddle (newer_settings), or damaged (settings_unreadable) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3602,7 +3602,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description written by a newer puddle */
+            /** @description written by a newer puddle (newer_settings), or damaged (settings_unreadable) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -4485,7 +4485,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description settings written by a newer puddle */
+            /** @description settings written by a newer puddle (newer_settings), or damaged (settings_unreadable) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -4554,7 +4554,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description settings written by a newer puddle */
+            /** @description settings written by a newer puddle (newer_settings), or damaged (settings_unreadable) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6589,7 +6589,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description written by a newer puddle */
+            /** @description written by a newer puddle (newer_settings), or damaged (settings_unreadable) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6658,7 +6658,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description written by a newer puddle */
+            /** @description written by a newer puddle (newer_settings), or damaged (settings_unreadable) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6744,7 +6744,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description written by a newer puddle */
+            /** @description written by a newer puddle (newer_settings), or damaged (settings_unreadable) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6825,7 +6825,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description written by a newer puddle */
+            /** @description written by a newer puddle (newer_settings), or damaged (settings_unreadable) */
             409: {
                 headers: {
                     [name: string]: unknown;

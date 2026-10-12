@@ -141,10 +141,16 @@ pub async fn watch(sources: OomSources, out: mpsc::Sender<AgentMessage>) {
     let log_ok = match open_log(&sources.kmsg) {
         Ok(file) => {
             let poll = sources.poll;
-            std::thread::Builder::new()
+            match std::thread::Builder::new()
                 .name("puddle-agent-kmsg".into())
                 .spawn(move || read_log(file, poll, &kill_tx))
-                .is_ok()
+            {
+                Ok(_) => true,
+                Err(err) => {
+                    tracing::warn!(error = %err, "kernel log reader not started: OOM kills are reported without names");
+                    false
+                }
+            }
         }
         Err(err) => {
             tracing::warn!(path = %sources.kmsg.display(), error = %err, "kernel log unreadable: OOM kills are reported without names");

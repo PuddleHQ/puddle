@@ -33,6 +33,11 @@ pub(super) fn create_dir(dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
+pub(super) fn create_new_dir(dir: &Path) -> io::Result<()> {
+    // `CreateDirectoryW` fails with `AlreadyExists` on any existing path.
+    win::create_owner_only_dir(dir)
+}
+
 pub(super) fn create_file(path: &Path) -> io::Result<File> {
     win::create_owner_only_file(path)
 }

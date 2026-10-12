@@ -5,9 +5,9 @@
 //! on an existing path and never follows a symlink in the last component), so no other user can
 //! reach, replace or pre-create anything in it. The socket's own mode is defence in depth.
 
-use std::fs::{self, DirBuilder, Permissions};
+use std::fs::{self, Permissions};
 use std::io;
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -22,7 +22,6 @@ pub(crate) const MAX_SOCKET_PATH: usize = 107;
 #[cfg(not(target_os = "linux"))]
 pub(crate) const MAX_SOCKET_PATH: usize = 103;
 
-const DIR_MODE: u32 = 0o700;
 const SOCKET_MODE: u32 = 0o600;
 
 pub(crate) type Stream = UnixStream;
@@ -57,16 +56,10 @@ impl Root {
             path: path.clone(),
             source,
         };
-        DirBuilder::new()
-            .mode(DIR_MODE)
-            .create(&path)
-            .map_err(root_err)?;
-        // From here on the directory is ours; dropping `dir` removes it on any later error.
-        let dir = RootDir { path: path.clone() };
-        // The umask can only remove bits from 0700; set it exactly anyway, then check.
-        fs::set_permissions(&path, Permissions::from_mode(DIR_MODE)).map_err(root_err)?;
-        check_mode(&path, DIR_MODE, true).map_err(root_err)?;
-        Ok(Self { dir: Arc::new(dir) })
+        puddle_fs::private::create_new_dir(&path).map_err(root_err)?;
+        Ok(Self {
+            dir: Arc::new(RootDir { path }),
+        })
     }
 
     pub(crate) fn dir(&self) -> &Path {
@@ -139,22 +132,6 @@ fn check_length(path: &Path) -> Result<(), IpcError> {
     Ok(())
 }
 
-/// Checks that `path` (not followed if a symlink) has exactly `mode` and is a directory or not.
-fn check_mode(path: &Path, mode: u32, want_dir: bool) -> io::Result<()> {
-    let meta = fs::symlink_metadata(path)?;
-    let actual = meta.permissions().mode() & 0o7777;
-    if meta.is_dir() != want_dir || actual != mode {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            format!(
-                "expected mode {mode:o}, found {actual:o} (dir: {})",
-                meta.is_dir()
-            ),
-        ));
-    }
-    Ok(())
-}
-
 /// Removes the socket file when the listener goes.
 #[derive(Debug)]
 struct SocketFile {
@@ -215,14 +192,6 @@ mod tests {
     fn default_parent_is_an_existing_absolute_dir() {
         let p = default_parent();
         assert!(p.is_absolute() && p.is_dir(), "{}", p.display());
-    }
-
-    #[test]
-    fn check_mode_rejects_wrong_mode_and_wrong_kind() {
-        let root = Root::new_in(&std::env::temp_dir()).unwrap();
-        check_mode(root.dir(), DIR_MODE, true).unwrap();
-        assert!(check_mode(root.dir(), 0o755, true).is_err());
-        assert!(check_mode(root.dir(), DIR_MODE, false).is_err());
     }
 
     #[test]

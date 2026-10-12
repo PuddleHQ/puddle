@@ -15,6 +15,22 @@ pub(super) fn create_dir(dir: &Path) -> io::Result<()> {
     DirBuilder::new().recursive(true).mode(0o700).create(dir)
 }
 
+pub(super) fn create_new_dir(dir: &Path) -> io::Result<()> {
+    // `mkdir` fails on an existing path and never follows a symlink in the last component.
+    DirBuilder::new().mode(0o700).create(dir)?;
+    // The umask can only remove bits from 0700; set it exactly anyway, then check.
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+    let now = fs::symlink_metadata(dir)?.permissions().mode() & 0o7777;
+    if now == 0o700 {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("expected mode 700, found {now:o}"),
+        ))
+    }
+}
+
 pub(super) fn create_file(path: &Path) -> io::Result<File> {
     OpenOptions::new()
         .write(true)
@@ -91,6 +107,30 @@ mod tests {
         let file = sub.join("f");
         drop(create_file(&file).unwrap());
         assert_eq!(mode(&file), 0o600);
+    }
+
+    #[test]
+    fn a_new_single_folder_is_exactly_0700_whatever_the_umask() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("one");
+        create_new_dir(&sub).unwrap();
+        assert_eq!(
+            fs::symlink_metadata(&sub).unwrap().permissions().mode() & 0o7777,
+            0o700
+        );
+    }
+
+    #[test]
+    fn a_new_single_folder_is_refused_over_a_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target");
+        fs::create_dir(&target).unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert_eq!(
+            create_new_dir(&link).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
     }
 
     #[test]

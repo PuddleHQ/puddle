@@ -138,6 +138,44 @@ describe("network health page", () => {
     );
   });
 
+  it("says plainly when a state is one this version of puddle cannot name", () => {
+    const r = report();
+    r.proxy.detected = "unknown";
+    r.roots.certificates = [
+      {
+        subject: "Odd",
+        fingerprint: "ab".repeat(32),
+        kind: "unknown",
+        not_after: 4102444800000,
+        sources: [],
+      },
+    ];
+    r.routes = [
+      {
+        scheme: "https",
+        host: "github.com",
+        port: 443,
+        hops: ["DIRECT"],
+        source: "unknown",
+      },
+    ];
+    store.report = r;
+    render(Page);
+    expect(
+      within(section("Proxy setup")).getByText(
+        "A kind of setup this version of puddle doesn't recognise",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(section("Company certificates")).getByText("Unknown"),
+    ).toBeInTheDocument();
+    expect(
+      within(section("Routes chosen")).getByText(
+        "A way of choosing this version of puddle doesn't recognise",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("shows trouble with a fix for each item, and singular wording", () => {
     const r = report();
     r.proxy.mode = "direct";

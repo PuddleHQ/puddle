@@ -35,6 +35,8 @@ pub enum ProxyDetected {
     Env,
     /// No proxy anywhere.
     Direct,
+    /// A kind of setup this build cannot name; the report does not guess.
+    Unknown,
 }
 
 /// Whether the PAC script or WPAD answered.
@@ -174,6 +176,8 @@ pub enum RootKind {
     Root,
     /// An intermediate issued by a synced root.
     Intermediate,
+    /// A kind of certificate this build cannot name; the report does not guess.
+    Unknown,
 }
 
 /// A certificate copied into workspaces.
@@ -264,6 +268,8 @@ pub enum RouteSource {
     Bypass,
     /// No proxy configured anywhere.
     NoProxy,
+    /// A way of choosing this build cannot name; the report does not guess.
+    Unknown,
 }
 
 /// The route puddle chose for one destination in this network epoch.
@@ -341,5 +347,32 @@ impl NetworkHealth {
             },
             routes: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn the_values_for_a_state_this_build_cannot_name_are_called_unknown_on_the_wire() {
+        assert_eq!(
+            serde_json::to_value(ProxyDetected::Unknown).unwrap(),
+            json!("unknown")
+        );
+        assert_eq!(
+            serde_json::to_value(RouteSource::Unknown).unwrap(),
+            json!("unknown")
+        );
+        assert_eq!(
+            serde_json::to_value(RootKind::Unknown).unwrap(),
+            json!("unknown")
+        );
+        assert_eq!(
+            serde_json::from_value::<RootKind>(json!("unknown")).unwrap(),
+            RootKind::Unknown
+        );
     }
 }

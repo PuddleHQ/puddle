@@ -5,6 +5,7 @@
     DETECTED_LABEL,
     MODE_LABEL,
     PAC_STATE_LABEL,
+    ROOT_KIND_LABEL,
     ROUTE_SOURCE_LABEL,
     SIGN_IN_LABEL,
     attemptKey,
@@ -242,7 +243,7 @@
                   >{c.fingerprint.slice(0, 16)}</span
                 >
               </td>
-              <td>{c.kind === "root" ? "Root" : "Intermediate"}</td>
+              <td>{ROOT_KIND_LABEL[c.kind]}</td>
               <td>{expiryText(c.not_after, now)}</td>
               <td class="mono small wrap">{c.sources.join(", ")}</td>
             </tr>

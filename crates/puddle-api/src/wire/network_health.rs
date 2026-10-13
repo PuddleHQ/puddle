@@ -53,6 +53,8 @@ pub enum PacState {
     Answering,
     /// It could not be fetched; puddle uses the other settings and asks again later.
     Unreachable,
+    /// A setup this build cannot name, so whether a PAC is involved is not known; the report does not guess.
+    Unknown,
 }
 
 /// A proxy that did not answer and is tried last for a while.
@@ -364,6 +366,10 @@ mod tests {
     fn the_values_for_a_state_this_build_cannot_name_are_called_unknown_on_the_wire() {
         assert_eq!(
             serde_json::to_value(ProxyDetected::Unknown).unwrap(),
+            json!("unknown")
+        );
+        assert_eq!(
+            serde_json::to_value(PacState::Unknown).unwrap(),
             json!("unknown")
         );
         assert_eq!(

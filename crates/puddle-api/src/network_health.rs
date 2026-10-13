@@ -224,13 +224,7 @@ fn proxy_report(health: &ProxyHealth) -> ProxyReport {
         },
         auto_detect: health.auto_detect,
         pac_url: health.pac_url.clone(),
-        pac_state: match (health.detected, health.pac_reachable) {
-            (_, Some(false)) => PacState::Unreachable,
-            (_, Some(true)) => PacState::Answering,
-            (Detected::Pac | Detected::Wpad, None) => PacState::NotAsked,
-            _ if health.auto_detect => PacState::NotAsked,
-            _ => PacState::NotUsed,
-        },
+        pac_state: pac_state(health.detected, health.pac_reachable, health.auto_detect),
         http_proxy: health.http_proxy.as_ref().map(ToString::to_string),
         https_proxy: health.https_proxy.as_ref().map(ToString::to_string),
         bypass_entries: u32::try_from(health.bypass_entries).unwrap_or(u32::MAX),
@@ -250,6 +244,19 @@ fn problem(problem: &UpstreamProblem) -> ProxyProblem {
             _ => ProxyProblemKind::Other,
         },
         detail: problem.detail.clone(),
+    }
+}
+
+/// Whether the PAC or WPAD answered. A setup this build cannot name, with nothing asked and no
+/// automatic detection on, is `Unknown`: it may well use a PAC, so it must not read as "not used".
+fn pac_state(detected: Detected, pac_reachable: Option<bool>, auto_detect: bool) -> PacState {
+    match (detected, pac_reachable) {
+        (_, Some(false)) => PacState::Unreachable,
+        (_, Some(true)) => PacState::Answering,
+        (Detected::Pac | Detected::Wpad, None) => PacState::NotAsked,
+        (_, None) if auto_detect => PacState::NotAsked,
+        (Detected::Static | Detected::Env | Detected::Direct, None) => PacState::NotUsed,
+        _ => PacState::Unknown,
     }
 }
 
@@ -402,5 +409,47 @@ impl NetworkHealthService for FakeNetworkHealth {
             report.generated_at = self.clock.now_ms();
             Ok(report)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pac_that_answered_or_failed_is_reported_whatever_was_detected() {
+        for detected in [
+            Detected::Pac,
+            Detected::Wpad,
+            Detected::Static,
+            Detected::Direct,
+        ] {
+            for auto_detect in [false, true] {
+                assert_eq!(
+                    pac_state(detected, Some(false), auto_detect),
+                    PacState::Unreachable
+                );
+                assert_eq!(
+                    pac_state(detected, Some(true), auto_detect),
+                    PacState::Answering
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_configured_pac_nobody_asked_yet_is_not_asked() {
+        assert_eq!(pac_state(Detected::Pac, None, false), PacState::NotAsked);
+        assert_eq!(pac_state(Detected::Wpad, None, false), PacState::NotAsked);
+        assert_eq!(pac_state(Detected::Static, None, true), PacState::NotAsked);
+        assert_eq!(pac_state(Detected::Env, None, true), PacState::NotAsked);
+        assert_eq!(pac_state(Detected::Direct, None, true), PacState::NotAsked);
+    }
+
+    #[test]
+    fn a_fixed_or_absent_proxy_without_automatic_detection_does_not_use_a_pac() {
+        for detected in [Detected::Static, Detected::Env, Detected::Direct] {
+            assert_eq!(pac_state(detected, None, false), PacState::NotUsed);
+        }
     }
 }

@@ -673,4 +673,34 @@ mod tests {
         fs::create_dir_all(&r.file).unwrap();
         assert!(run(&r, docker().as_slice()).is_err());
     }
+
+    #[test]
+    fn an_ssh_config_that_cannot_be_replaced_is_left_as_it_was_with_a_notice() {
+        let d = Dir::new("ssh-write");
+        let r = ssh_request(&d);
+        fs::create_dir_all(r.file.parent().unwrap()).unwrap();
+        let image = "Host *\n    SendEnv LANG LC_*\n";
+        fs::write(&r.file, image).unwrap();
+        // The temporary file's name is taken by a directory, so the write fails whoever runs it
+        // (a read-only folder would not stop root).
+        let tmp = r
+            .file
+            .with_file_name(format!(".ssh_config.puddle-merge.{}", std::process::id()));
+        fs::create_dir(&tmp).unwrap();
+        let why = run(&r, ssh_include().as_slice()).unwrap().to_string();
+        assert!(why.starts_with("left: ") && why.contains("write"), "{why}");
+        assert_eq!(fs::read_to_string(&r.file).unwrap(), image);
+        // The failed write left no record, so a later boot starts clean.
+        assert!(!r.state_dir.exists() || fs::read_dir(&r.state_dir).unwrap().next().is_none());
+        // The same failure for the Docker config stays an error.
+        let r = req(&d, Action::Apply { mode: 0o640 });
+        fs::create_dir_all(r.file.parent().unwrap()).unwrap();
+        fs::write(&r.file, "{}").unwrap();
+        fs::create_dir(
+            r.file
+                .with_file_name(format!(".config.json.puddle-merge.{}", std::process::id())),
+        )
+        .unwrap();
+        assert!(run(&r, docker().as_slice()).is_err());
+    }
 }

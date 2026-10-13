@@ -158,13 +158,16 @@ pub fn system_lookup(
     port: u16,
     limit: Duration,
 ) -> Pin<Box<dyn Future<Output = Option<Vec<IpAddr>>> + Send>> {
-    Box::pin(async move {
-        let found = tokio::time::timeout(limit, tokio::net::lookup_host((host.as_str(), port)))
-            .await
-            .ok()?
-            .ok()?;
-        Some(found.map(|a| a.ip()).collect())
-    })
+    Box::pin(async move { within(limit, tokio::net::lookup_host((host.as_str(), port))).await })
+}
+
+/// The addresses `resolving` yields, or `None` when it fails or takes longer than `limit`.
+async fn within<A: Iterator<Item = SocketAddr>>(
+    limit: Duration,
+    resolving: impl Future<Output = io::Result<A>>,
+) -> Option<Vec<IpAddr>> {
+    let found = tokio::time::timeout(limit, resolving).await.ok()?.ok()?;
+    Some(found.map(|a| a.ip()).collect())
 }
 
 /// Where the proxy is and how long each step may take.
@@ -274,13 +277,22 @@ where
 
 /// The destination's addresses when every one of them is inside the workspace, else `None`.
 async fn inside_the_workspace(settings: &Settings, request: &Request) -> Option<Vec<IpAddr>> {
-    let addresses = match request.host.parse::<IpAddr>() {
-        Ok(ip) => vec![ip],
-        Err(_) => {
-            (settings.lookup)(request.host.clone(), request.port, settings.lookup_limit).await?
-        }
+    let addresses = if let Ok(ip) = request.host.parse::<IpAddr>() {
+        vec![ip]
+    } else {
+        let found =
+            (settings.lookup)(request.host.clone(), request.port, settings.lookup_limit).await;
+        let Some(found) = found else {
+            tracing::debug!(host = %request.host, "no answer from the resolver in time; using the proxy");
+            return None;
+        };
+        found
     };
-    (!addresses.is_empty() && addresses.iter().all(|ip| request.is_local(*ip))).then_some(addresses)
+    if addresses.is_empty() || !addresses.iter().all(|ip| request.is_local(*ip)) {
+        tracing::debug!(host = %request.host, ?addresses, "not every address is local; using the proxy");
+        return None;
+    }
+    Some(addresses)
 }
 
 /// Carries the connection to one of `addresses`, which were checked, without the proxy.
@@ -955,5 +967,48 @@ mod tests {
             system_lookup("bad host.invalid".to_owned(), 22, limit).await,
             None
         );
+    }
+
+    fn never_answers(
+        _: String,
+        _: u16,
+        limit: Duration,
+    ) -> Pin<Box<dyn Future<Output = Option<Vec<IpAddr>>> + Send>> {
+        Box::pin(within(
+            limit,
+            std::future::pending::<io::Result<std::vec::IntoIter<SocketAddr>>>(),
+        ))
+    }
+
+    #[tokio::test]
+    async fn a_resolver_that_never_answers_gives_up_at_the_limit_and_the_name_is_not_local() {
+        let limit = Duration::from_millis(50);
+        let started = std::time::Instant::now();
+        assert_eq!(never_answers(String::new(), 22, limit).await, None);
+        assert!(started.elapsed() >= limit);
+        // An answer that is in time is kept, a failed one is no answer.
+        let one: SocketAddr = "127.0.0.1:22".parse().unwrap();
+        let ready = std::future::ready(Ok(vec![one].into_iter()));
+        assert_eq!(
+            within(limit, ready).await,
+            Some(vec![IpAddr::from([127, 0, 0, 1])])
+        );
+        let failed = std::future::ready(Err::<std::vec::IntoIter<SocketAddr>, _>(
+            io::Error::other("no"),
+        ));
+        assert_eq!(within(limit, failed).await, None);
+        // The command asks with the limit the settings carry; without an answer the name is not local.
+        let config = Config::default();
+        assert_eq!(
+            Settings::from_config(&config).lookup_limit,
+            Duration::from_secs(2)
+        );
+        let hanging = Settings {
+            lookup_limit: limit,
+            lookup: never_answers,
+            ..settings(SocketAddr::from(([127, 0, 0, 1], 9)))
+        };
+        let request = bridge_request("slow.test", 22);
+        assert!(inside_the_workspace(&hanging, &request).await.is_none());
     }
 }

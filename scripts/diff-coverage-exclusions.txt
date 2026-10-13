@@ -124,3 +124,6 @@ crates/puddle-app/src/shell.rs | links::open_and_report(&problems, url, | the cl
 crates/puddle-app/src/shell.rs | app.opener().open_url(address, None::<&str>) | the real opener plugin call: a test would launch the machine's default browser; the failure and success handling around it is tested in links.rs
 crates/puddle-app/src/window.rs | new_window_handler(&policy, &target, &on_new_window_open, &refused); | the window system calls this on a `target="_blank"` click, which the mock runtime never raises; `new_window_handler` is tested directly
 crates/puddle-app/src/shell.rs | }); | the end of the click-time opener closure listed above; it runs only in a real webview
+crates/puddle-compute-msb/src/spec.rs | .ephemeral(false) | builder() runs only when a real sandbox is created (the VM tier); vm_guest_shell_starts_with_the_open_file_limits reads the limits it sets
+crates/puddle-compute-msb/src/spec.rs | .rlimit_range( | builder() runs only when a real sandbox is created (the VM tier); vm_guest_shell_starts_with_the_open_file_limits reads the limits it sets
+crates/puddle-compute-msb/src/spec.rs | RlimitResource::Nofile, | builder() runs only when a real sandbox is created (the VM tier); vm_guest_shell_starts_with_the_open_file_limits reads the limits it sets

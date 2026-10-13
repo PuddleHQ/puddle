@@ -71,6 +71,36 @@ const total = (page: Page, n: number) =>
 const toast = (page: Page) =>
   page.getByRole("region", { name: "Notifications" }).getByRole("status");
 
+/**
+ * Records every message the toast region shows from now on. A toast leaves after 5 s on the page's
+ * own clock, but Playwright's `download.path()` returns only when the browser has finished the
+ * download, which takes 0.4 s to over 20 s on a loaded Edge runner (it scans the file and opens its
+ * downloads window). A check made after that wait can find the region empty again. This asks
+ * "was it shown", which stays true however late the check runs.
+ */
+async function recordToasts(page: Page): Promise<() => Promise<string[]>> {
+  await page.evaluate(() => {
+    const seen: string[] = [];
+    (window as unknown as { __toasts: string[] }).__toasts = seen;
+    const list = document.querySelector('[aria-label="Notifications"]');
+    if (!list) throw new Error("no Notifications region on the page");
+    const note = () => {
+      for (const el of list.querySelectorAll(".message")) {
+        const text = el.textContent ?? "";
+        if (!seen.includes(text)) seen.push(text);
+      }
+    };
+    new MutationObserver(note).observe(list, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    note();
+  });
+  return () =>
+    page.evaluate(() => (window as unknown as { __toasts: string[] }).__toasts);
+}
+
 /** Scrolls the list down by `count` rows and waits until the table has moved there. */
 async function scrollDown(page: Page, count: number): Promise<void> {
   await region(page).evaluate((el, y) => {
@@ -519,6 +549,7 @@ test.describe("export", () => {
     expect(expected.length).toBeGreaterThan(3);
     await openActivity(page, backend, "?type=connection&outcome=allow");
     await total(page, expected.length);
+    const shown = await recordToasts(page);
     const lines = await download(page);
     const records = lines.map(
       (line) => JSON.parse(line) as Record<string, unknown>,
@@ -528,7 +559,11 @@ test.describe("export", () => {
     for (const record of records) {
       expect(record).toMatchObject({ type: "connection", decision: "allow" });
     }
-    await expect(toast(page)).toContainText(`Saved ${expected.length} records`);
+    await expect
+      .poll(shown)
+      .toContainEqual(
+        expect.stringMatching(new RegExp(`^Saved ${expected.length} records `)),
+      );
   });
 
   test("saves a log longer than a page, nothing missed or doubled", async ({

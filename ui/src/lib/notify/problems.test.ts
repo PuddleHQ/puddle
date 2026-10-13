@@ -74,6 +74,32 @@ describe("background problems", () => {
     expect(keys()).toEqual([]);
   });
 
+  it("keeps a dismissed notice dismissed until its problem changes or goes and comes back", async () => {
+    const notices = make();
+    listed = [problem("app:link"), problem("sweeper")];
+    await notices.refresh();
+    const link = center.items.find((n) => n.key === "problem:app:link");
+    center.dismiss(link!.id);
+    await notices.refresh();
+    listed = [problem("app:link"), problem("reconcile")];
+    await notices.refresh();
+    expect(keys()).toEqual(["problem:reconcile"]);
+
+    listed = [{ ...problem("app:link"), detail: "another reason" }];
+    await notices.refresh();
+    expect(center.items.at(-1)).toMatchObject({
+      key: "problem:app:link",
+      detail: "another reason",
+    });
+    center.dismiss(center.items.at(-1)!.id);
+
+    listed = [];
+    await notices.refresh();
+    listed = [{ ...problem("app:link"), detail: "another reason" }];
+    await notices.refresh();
+    expect(keys()).toEqual(["problem:app:link"]);
+  });
+
   it("keeps what it shows when the list cannot be read", async () => {
     const notices = make();
     listed = [problem("sweeper")];

@@ -2434,7 +2434,7 @@ export interface components {
          * @description Whether the PAC script or WPAD answered.
          * @enum {string}
          */
-        PacState: "not_used" | "not_asked" | "answering" | "unreachable";
+        PacState: "not_used" | "not_asked" | "answering" | "unreachable" | "unknown";
         /**
          * @description How a rule's pattern matches.
          * @enum {string}

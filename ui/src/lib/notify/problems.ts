@@ -13,8 +13,12 @@ const noticeKey = (key: string) => `problem:${key}`;
 export class ProblemNotices {
   readonly #notifier: Notifier;
   readonly #api: Pick<ApiClient, "GET">;
-  /** The keys whose notices stand, so one that left the list can be withdrawn. */
-  #raised = new Set<string>();
+  /**
+   * What each listed problem said when its notice was raised. A problem that has not changed is not
+   * raised again, so a notice the user dismissed stays dismissed; one that left the list can be
+   * withdrawn, and one that comes back or says something new is raised afresh.
+   */
+  #raised = new Map<string, string>();
 
   constructor(notifier: Notifier, api: Pick<ApiClient, "GET"> = defaultApi) {
     this.#notifier = notifier;
@@ -44,9 +48,15 @@ export class ProblemNotices {
     } catch {
       return;
     }
-    const now = new Set<string>();
+    const now = new Map<string, string>();
     for (const problem of problems) {
-      now.add(problem.key);
+      const said = JSON.stringify([
+        problem.title,
+        problem.detail,
+        problem.workspace,
+      ]);
+      now.set(problem.key, said);
+      if (this.#raised.get(problem.key) === said) continue;
       this.#notifier.notify({
         key: noticeKey(problem.key),
         tone: "warning",
@@ -62,7 +72,7 @@ export class ProblemNotices {
           : {}),
       });
     }
-    for (const key of this.#raised) {
+    for (const key of this.#raised.keys()) {
       if (!now.has(key)) this.#notifier.resolve(noticeKey(key));
     }
     this.#raised = now;

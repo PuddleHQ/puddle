@@ -51,8 +51,7 @@ fn where_to(url: &Url) -> String {
         .map_or_else(|| format!("{}:", url.scheme()), str::to_owned)
 }
 
-/// Raises the notice for a refused link. It is raised fresh each time, so a repeat of the same
-/// click is announced again.
+/// Raises the notice for a refused link.
 pub fn report_refused(problems: &Problems, url: &Url) {
     raise_fresh(problems, refused(url));
 }
@@ -70,8 +69,8 @@ pub fn open_and_report<E: Display>(
     }
 }
 
-/// [`Problems::raise`] says nothing when the list doesn't change, which would leave a second click
-/// on the same link unanswered after the first notice was dismissed.
+/// Withdraws the problem before raising it, so a page that read the list in between sees it go and
+/// come back. A page keeps a notice the user dismissed dismissed while the problem reads the same.
 fn raise_fresh(problems: &Problems, problem: Problem) {
     problems.clear(PROBLEM_KEY);
     problems.raise(problem);

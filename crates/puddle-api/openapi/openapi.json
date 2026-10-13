@@ -9541,7 +9541,8 @@
           "not_used",
           "not_asked",
           "answering",
-          "unreachable"
+          "unreachable",
+          "unknown"
         ]
       },
       "PatternKind": {

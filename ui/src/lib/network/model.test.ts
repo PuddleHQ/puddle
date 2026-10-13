@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DETECTED_LABEL,
   MODE_LABEL,
+  PAC_STATE_LABEL,
   ROOT_KIND_LABEL,
   ROUTE_SOURCE_LABEL,
   SIGN_IN_LABEL,
@@ -202,6 +203,7 @@ describe("findings", () => {
   it("has a label for every wire value, the unknown ones included", () => {
     expect(DETECTED_LABEL.unknown).toMatch(/doesn't recognise/);
     expect(ROUTE_SOURCE_LABEL.unknown).toMatch(/doesn't recognise/);
+    expect(PAC_STATE_LABEL.unknown).toMatch(/doesn't recognise/);
     expect(MODE_LABEL.unknown).toMatch(/doesn't recognise/);
     expect(SIGN_IN_LABEL.unknown).toMatch(/doesn't recognise/);
     expect(ROOT_KIND_LABEL.unknown).toBe("Unknown");

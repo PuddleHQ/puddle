@@ -43,6 +43,7 @@ export const PAC_STATE_LABEL: Record<S["PacState"], string> = {
   not_asked: "Not asked yet (no connection needed it)",
   answering: "Answering",
   unreachable: "Not answering",
+  unknown: "A setup this version of puddle doesn't recognise",
 };
 
 export const SIGN_IN_LABEL: Record<S["SignInResult"], string> = {

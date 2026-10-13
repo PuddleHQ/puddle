@@ -49,6 +49,8 @@ const only = (process.env["PUDDLE_E2E_PROJECTS"] ?? "")
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: true,
+  // Starts each browser once before the tests (e2e/warm-up.ts).
+  globalSetup: "./e2e/warm-up.ts",
   forbidOnly: !!process.env["CI"],
   retries: 0,
   reporter: process.env["CI"]

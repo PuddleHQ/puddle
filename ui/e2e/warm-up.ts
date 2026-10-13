@@ -15,6 +15,7 @@ import {
   type FullConfig,
   type FullProject,
 } from "@playwright/test";
+import { firstStart } from "../tools/first-start.ts";
 
 /** How long one try at the first page may take, and how many tries there are; the tests' own limit stays what it is. */
 export const WARM_UP_TIMEOUT_MS = 45_000;
@@ -40,10 +41,9 @@ async function within<T>(
 }
 
 /** Starts the project's browser as its tests do, opens `baseURL` in a page and closes both. */
-export async function warmUpProject(project: FullProject): Promise<number> {
+async function openOnce(project: FullProject): Promise<void> {
   const { defaultBrowserType, channel, launchOptions, baseURL } = project.use;
   const engine = engines[defaultBrowserType ?? "chromium"];
-  const started = Date.now();
   const browser = await engine.launch({
     ...launchOptions,
     ...(channel === undefined ? {} : { channel }),
@@ -57,18 +57,28 @@ export async function warmUpProject(project: FullProject): Promise<number> {
     );
     await page.goto("/", { timeout: WARM_UP_TIMEOUT_MS });
   } finally {
-    await browser.close();
+    // A stalled browser may not close either; the next try must still come.
+    await within(WARM_UP_TIMEOUT_MS, browser.close(), "closing it").catch(
+      (error: unknown) => {
+        console.warn(`warm-up: ${String(error)}`);
+      },
+    );
   }
-  return Date.now() - started;
 }
 
 export default async function warmUp(config: FullConfig): Promise<void> {
   for (const project of config.projects) {
-    const ms = await warmUpProject(project).catch((error: unknown) => {
-      throw new Error(
-        `warm-up of the ${project.name} browser failed: ${String(error)}`,
-      );
+    const started = Date.now();
+    await firstStart({
+      what: `the ${project.name} browser`,
+      tries: WARM_UP_TRIES,
+      attempt: () => openOnce(project),
+      log: (line) => {
+        console.warn(`warm-up: ${line}`);
+      },
     });
-    console.warn(`warm-up: ${project.name} opened the app in ${ms} ms`);
+    console.warn(
+      `warm-up: ${project.name} opened the app in ${Date.now() - started} ms`,
+    );
   }
 }

@@ -5993,6 +5993,7 @@ dependencies = [
  "puddle-runtime",
  "puddle-types",
  "puddle-vm-tests",
+ "rusqlite",
  "serde_json",
  "tokio",
  "tracing",

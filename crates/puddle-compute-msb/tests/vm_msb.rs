@@ -326,7 +326,7 @@ async fn vm_guest_shell_starts_with_the_open_file_limits() {
         "setpriv --reuid=65534 --regid=65534 --clear-groups sh -c 'echo \"$(ulimit -Sn) $(ulimit -Hn)\"'",
     )
     .await;
-    let raised = sh(&sb, "ulimit -Sn hard && ulimit -Sn").await;
+    let raised = sh(&sb, "ulimit -Sn 1048576 && ulimit -Sn").await;
     eprintln!("root: {}user: {}", root.stdout_text(), user.stdout_text());
     sb.stop().await.unwrap();
     cleanup(&rt, &[&n]).await;

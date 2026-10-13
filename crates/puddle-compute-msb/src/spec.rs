@@ -3,7 +3,9 @@
 //! puddle sets or leaves at its default ([`SDK_OPTIONS`], input for the escape-hardening review).
 
 use microsandbox::Sandbox;
-use microsandbox::sandbox::{DeploymentProfile, PullPolicy, SandboxBuilder, SecurityProfile};
+use microsandbox::sandbox::{
+    DeploymentProfile, PullPolicy, RlimitResource, SandboxBuilder, SecurityProfile,
+};
 use puddle_compute::{NetworkPolicy, SandboxSpec};
 
 use crate::{OWNER_LABEL, OWNER_LABEL_VALUE};
@@ -44,6 +46,13 @@ const fn default(option: &'static str, value: &'static str, why: &'static str) -
         why,
     }
 }
+
+/// Soft open-file limit every guest process starts with: enough for a package manager or a
+/// browser, and small enough that tools which close every descriptor at start stay fast.
+pub const GUEST_OPEN_FILES_SOFT: u64 = 65_536;
+
+/// Hard open-file limit in the guest; a process may raise its soft limit up to it.
+pub const GUEST_OPEN_FILES_HARD: u64 = 1_048_576;
 
 /// Every `SandboxBuilder` option of SDK 0.7.7 (and the mount, exec, SSH and backend options the
 /// adapter touches), with what puddle does. `SandboxBuilder` entries are kept in step with
@@ -110,6 +119,11 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
         "SandboxBuilder::ephemeral",
         "false",
         "the root disk survives stop/start; removal is explicit",
+    ),
+    set(
+        "SandboxBuilder::rlimit_range",
+        "RLIMIT_NOFILE soft 65 536, hard 1 048 576",
+        "every guest process inherits it, so the user's own tools get the headroom the agent has",
     ),
     // SandboxBuilder: left at the default
     default(
@@ -223,11 +237,6 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
         "env and label are set one by one",
     ),
     default(
-        "SandboxBuilder::rlimit / rlimit_range",
-        "msb defaults",
-        "not used yet",
-    ),
-    default(
         "SandboxBuilder::script / scripts / config_scripts",
         "none",
         "the boot hook is a mounted file",
@@ -316,7 +325,12 @@ pub fn builder(spec: &SandboxSpec) -> SandboxBuilder {
         .security(SecurityProfile::Default)
         .deployment_profile(DeploymentProfile::SingleTenant)
         .pull_policy(PullPolicy::IfMissing)
-        .ephemeral(false);
+        .ephemeral(false)
+        .rlimit_range(
+            RlimitResource::Nofile,
+            GUEST_OPEN_FILES_SOFT,
+            GUEST_OPEN_FILES_HARD,
+        );
     if let Some(cpus) = spec.cpus {
         b = b.cpus(cpus);
     }

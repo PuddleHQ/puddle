@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The adapter's own VM bars, beyond the contract suite: no direct network from
 //! the guest, only the routed vsock port reaching the host, ext4 volumes and owned disks,
-//! three sandboxes at once with their own routes, `--max-memory` never set, and (fork) SSH
-//! reporting a signal-killed command as a failure.
+//! three sandboxes at once with their own routes, `--max-memory` never set, the guest's open-file
+//! limits, and (fork) SSH reporting a signal-killed command as a failure.
 #![expect(
     clippy::expect_used,
     clippy::unwrap_used,
@@ -307,6 +307,46 @@ async fn vm_memory_is_set_and_max_memory_never() {
         lowered,
         (384, 384),
         "(memory, max memory) after lowering it"
+    );
+}
+
+/// A shell in the guest, as root and as an unprivileged user, starts with the open-file limits
+/// the adapter sets (soft 65 536, hard 1 048 576), and a process may raise its soft limit to
+/// the hard one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_guest_shell_starts_with_the_open_file_limits() {
+    let settings = support::settings();
+    let rt = support::runtime(&settings).await;
+    let s = spec(&settings, "nofile");
+    let n = s.name.clone();
+    let sb = rt.create(s).await.expect("create");
+    let root = sh(&sb, "echo \"$(ulimit -Sn) $(ulimit -Hn)\"").await;
+    let user = sh(
+        &sb,
+        "setpriv --reuid=65534 --regid=65534 --clear-groups sh -c 'echo \"$(ulimit -Sn) $(ulimit -Hn)\"'",
+    )
+    .await;
+    let raised = sh(&sb, "ulimit -Sn hard && ulimit -Sn").await;
+    eprintln!("root: {}user: {}", root.stdout_text(), user.stdout_text());
+    sb.stop().await.unwrap();
+    cleanup(&rt, &[&n]).await;
+    assert_eq!(
+        root.stdout_text().trim(),
+        "65536 1048576",
+        "{}",
+        root.stderr_text()
+    );
+    assert_eq!(
+        user.stdout_text().trim(),
+        "65536 1048576",
+        "{}",
+        user.stderr_text()
+    );
+    assert_eq!(
+        raised.stdout_text().trim(),
+        "1048576",
+        "{}",
+        raised.stderr_text()
     );
 }
 

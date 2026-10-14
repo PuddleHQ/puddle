@@ -203,7 +203,7 @@ describe("a record as a row", () => {
       }).record,
     );
     expect(merged.detail).toBe(
-      "because puddle merged the oldest records of waiting requests to keep the log small · 4200 records",
+      "because puddle merged the oldest records written while requests waited, to keep the log small (their hosts are not kept) · 4200 records",
     );
     const odd = row(
       connection(3, {

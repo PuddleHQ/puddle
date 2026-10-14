@@ -176,7 +176,7 @@ const REASONS: Record<string, string> = {
   no_rule: "no rule yet",
   suppressed: "more records came in one second than puddle writes",
   merged:
-    "puddle merged the oldest records of waiting requests to keep the log small",
+    "puddle merged the oldest records written while requests waited, to keep the log small (their hosts are not kept)",
   puddle_endpoint: "puddle's own address",
   ssh_unsupported: "SSH is not supported",
   local_address: "a local address",

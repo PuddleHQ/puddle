@@ -127,6 +127,7 @@ async function startBackend(scenario: string): Promise<Started> {
     ["--scenario", scenario, "--connection-file", file],
     { stdio: ["ignore", "ignore", "inherit"] },
   );
+  // The fixture renames `.control` into place whole, so once it exists it parses.
   for (let i = 0; i < 400 && !existsSync(`${file}.control`); i += 1) {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }

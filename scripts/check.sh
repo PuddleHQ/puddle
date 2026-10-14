@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
-#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, secrets, clippy, clippy-windows, deny, notices, openapi, test, doc, coverage,
+#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, secrets, clippy, clippy-windows, deny, notices, openapi, test, doc, coverage,
 #   coverage-ratchet, diff-coverage,
 #   ui, ui-licences, ui-audit, ui-e2e
-#   fast     = fmt typos spdx shellcheck hooks platform-literals standalone   (pre-commit hook)
+#   fast     = fmt typos spdx shellcheck hooks platform-literals standalone git-pins   (pre-commit hook)
 #   all      = fast git-env secrets clippy clippy-windows deny notices openapi ui ui-licences ui-audit ui-e2e doc coverage
 #              (CI, the nightly run, by hand; coverage runs the tests, and must follow `ui`: the embedded UI is built there)
 #   pre-push = every gate of `all` except ui-e2e, the slowest one (pre-push hook; CI still runs ui-e2e after the push)
@@ -152,6 +152,7 @@ run_gate() {
         fi
         ;;
     standalone) scripts/check-standalone.sh --self-test && scripts/check-standalone.sh ;;
+    git-pins) scripts/check-git-pins.sh --self-test && scripts/check-git-pins.sh ;;
     secrets)
         # gitleaks with the reviewed allowlist (.gitleaks.toml) over HEAD's commits its base lacks
         # (every ref when CI is set; scripts/check-secrets.sh has the scope rules); needs the pinned
@@ -303,7 +304,7 @@ run_gate() {
 }
 
 # The gate sets, in run order. `pre-push` is derived from `all`, so a gate added to `all` is in it too.
-fast_gates="fmt typos spdx shellcheck hooks platform-literals standalone"
+fast_gates="fmt typos spdx shellcheck hooks platform-literals standalone git-pins"
 all_gates="$fast_gates git-env secrets clippy clippy-windows deny notices openapi ui ui-licences ui-audit ui-e2e doc coverage"
 pre_push_gates=
 for g in $all_gates; do

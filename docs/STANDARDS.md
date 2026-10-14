@@ -387,7 +387,7 @@ nightly, a manual run, a PR to `main`, a failed or empty file list, 300 or more 
 in the always-run list (`Cargo.lock` and every manifest, `rust-toolchain.toml`, tool config, `.github/workflows/`, `ci/`,
 `scripts/` except the three gate-data files, `crates/puddle-vm-tests/`, the API contract and its TypeScript types, the
 notices inputs). The result jobs keep their names and accept a skip only when `scope` said so (`ci/scope.sh verdict`):
-a failed, cancelled or otherwise skipped job still fails them. `ci/scope-test.sh` (run by the `ci` Rust job) replays 58
+a failed, cancelled or otherwise skipped job still fails them. `ci/scope-test.sh` (the `hooks` gate, so every hook and CI run; the `ci` Rust job also runs it with the crate-set check) replays 58
 merged PRs from `ci/scope-prs.txt`, plants unknown paths, and checks the workflows against the verdict. When a crate
 dependency changes, its `Cargo.toml` change runs everything; the two crate sets in `ci/scope.sh` follow `cargo metadata`
 (the test checks them).

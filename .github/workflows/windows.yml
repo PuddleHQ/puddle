@@ -170,6 +170,16 @@ jobs:
       - name: UI end-to-end (Playwright on the installed Edge, axe)
         if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
         shell: bash
+        # Edge's profile, its downloads and Playwright's artifacts go to the temp folder, which is on
+        # the system disk (C:) by default. That disk takes a few hundred I/O operations a second and
+        # Edge, Defender and Windows Update together queue 20 to 40 of them (measured on windows-2025):
+        # a page load, a download or Edge's first start then stalls for 5 to 35 s while the CPU idles.
+        # The runner's temp folder is on the local temp disk (D:), which keeps up. A stopgap for the
+        # runner image: drop it when a run without it shows no stall (first start under 5 s, a download
+        # event under 1 s) after a windows-2025 image update.
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
         run: scripts/check.sh ui-e2e
       # The desktop shell starts on the installed WebView2 and its main window shows the SPA from
       # the in-process backend; driven over WebView2's DevTools Protocol, no extra tools.

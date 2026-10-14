@@ -8530,6 +8530,31 @@
           },
           {
             "type": "object",
+            "description": "A workspace's direct SSH did not work: its endpoint could not be opened or stopped\naccepting, or a client's session ended with an error. `reason` says what failed and may\nquote the runtime's error. The workspace keeps running; an `ssh` client that was refused\nis told why on its own terminal.",
+            "required": [
+              "workspace",
+              "reason",
+              "type"
+            ],
+            "properties": {
+              "reason": {
+                "type": "string",
+                "description": "What went wrong, for the user."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "workspace_ssh_failed"
+                ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace."
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "A workspace asked for a credential and the source of it cannot supply one (not signed in,\nor the sign-in ran out). The user signs in from puddle; a request never opens a sign-in\nwindow. Global: every subscriber gets it. Names only, never a value.",
             "required": [
               "host",

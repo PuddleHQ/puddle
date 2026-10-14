@@ -27,6 +27,7 @@ const RUNNING: readonly Status[] = ["starting", "running", "paused"];
 const NETWORK_KEY = "network";
 const stopKey = (name: string) => `stop:${name}`;
 const oomKey = (name: string) => `oom:${name}`;
+const sshKey = (name: string) => `ssh:${name}`;
 
 export interface WatcherDeps {
   source?: LiveSource;
@@ -85,6 +86,7 @@ export class NoticeWatcher {
     ) {
       return;
     }
+    if (this.#sshFailed(raw)) return;
     const event = asWorkspaceEvent(raw);
     if (!event) return;
     const name = event.workspace;
@@ -112,9 +114,41 @@ export class NoticeWatcher {
     }
   }
 
+  /** Direct SSH failed in a way the `ssh` client can't show; false when the event is not that. */
+  #sshFailed(raw: unknown): boolean {
+    if (
+      typeof raw !== "object" ||
+      raw === null ||
+      (raw as { type?: unknown }).type !== "workspace_ssh_failed"
+    ) {
+      return false;
+    }
+    const { workspace, reason } = raw as {
+      workspace?: unknown;
+      reason?: unknown;
+    };
+    if (typeof workspace !== "string" || typeof reason !== "string")
+      return true;
+    this.#notifier.notify({
+      key: sshKey(workspace),
+      tone: "warning",
+      title: `Direct SSH to ${workspace} failed.`,
+      detail: `${reason} The workspace itself keeps running.`,
+      link: {
+        href: `/workspaces/${encodeURIComponent(workspace)}`,
+        label: "Open workspace",
+      },
+    });
+    return true;
+  }
+
   #onStatus(name: string, status: Status): void {
     const before = this.#status.get(name);
     this.#status.set(name, status);
+    if (!RUNNING.includes(status) && status !== "draining") {
+      // The endpoint it reported on is gone; the next start opens a new one.
+      this.#notifier.resolve(sshKey(name));
+    }
     if (status === "draining") {
       this.#expected.add(name);
       return;

@@ -179,6 +179,16 @@ pub enum Event {
         /// What went wrong, for the user.
         reason: String,
     },
+    /// A workspace's direct SSH did not work: its endpoint could not be opened or stopped
+    /// accepting, or a client's session ended with an error. `reason` says what failed and may
+    /// quote the runtime's error. The workspace keeps running; an `ssh` client that was refused
+    /// is told why on its own terminal.
+    WorkspaceSshFailed {
+        /// The workspace.
+        workspace: WorkspaceName,
+        /// What went wrong, for the user.
+        reason: String,
+    },
     /// A workspace asked for a credential and the source of it cannot supply one (not signed in,
     /// or the sign-in ran out). The user signs in from puddle; a request never opens a sign-in
     /// window. Global: every subscriber gets it. Names only, never a value.
@@ -382,7 +392,8 @@ impl Event {
             | Self::LoginProblem { workspace, .. }
             | Self::WorkspaceGitChanged { workspace }
             | Self::WorkspaceEnvChanged { workspace }
-            | Self::WorkspaceEnvFailed { workspace, .. } => Some(workspace),
+            | Self::WorkspaceEnvFailed { workspace, .. }
+            | Self::WorkspaceSshFailed { workspace, .. } => Some(workspace),
             Self::PendingOpened { request } => Some(&request.workspace),
             Self::RulesChanged {}
             | Self::IdentitiesChanged {}
@@ -711,6 +722,14 @@ mod tests {
                 Some(WorkspaceName::new("box").unwrap()),
             ),
             (
+                Event::WorkspaceSshFailed {
+                    workspace: WorkspaceName::new("box").unwrap(),
+                    reason: "no SSH endpoint: the listener failed".into(),
+                },
+                r#"{"type":"workspace_ssh_failed","workspace":"box","reason":"no SSH endpoint: the listener failed"}"#,
+                Some(WorkspaceName::new("box").unwrap()),
+            ),
+            (
                 Event::CredentialSignInNeeded {
                     host: "github.com".into(),
                     source: "gh account me on github.com".into(),
@@ -818,6 +837,7 @@ mod tests {
                 "global_env_changed",
                 "workspace_env_changed",
                 "workspace_env_failed",
+                "workspace_ssh_failed",
                 "credential_sign_in_needed",
                 "git_access_denied",
                 "login_problem",

@@ -40,6 +40,7 @@ mod paths;
 mod platform;
 mod process_env;
 mod settings_read;
+mod ssh_target;
 mod workspaces;
 
 pub use config::{AGENT_FILE_NAME, ApiSettings, GuestSettings, HostConfig, UpstreamSettings};

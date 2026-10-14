@@ -39,6 +39,13 @@ pub trait SshTarget: Send + Sync + 'static {
     /// the reason the client is shown.
     fn admit(&self) -> impl Future<Output = Result<(), String>> + Send;
 
+    /// Tells the owner that the endpoint, or one client's session, failed in a way the client
+    /// can't be told about (the log has it too). `reason` is one sentence for the user. The
+    /// default does nothing.
+    fn failed(&self, reason: &str) {
+        let _ = reason;
+    }
+
     /// Serves one SSH connection on `stream` until it ends. Must not time out an idle session.
     ///
     /// # Errors
@@ -148,23 +155,31 @@ async fn accept_loop<T: SshTarget>(
     // Owns every session: dropping or shutting it down ends them.
     let mut sessions = JoinSet::new();
     let mut next_id = 0_u64;
+    let mut accept_failing = false;
     loop {
         tokio::select! {
             _ = &mut stopped => break,
             Some(_) = sessions.join_next(), if !sessions.is_empty() => {}
             accepted = listener.accept() => match accepted {
                 Ok(conn) => {
+                    accept_failing = false;
                     next_id += 1;
                     sessions.spawn(session(target.clone(), conn, next_id));
                 }
                 Err(e @ IpcError::Closed { .. }) => {
                     warn!(sandbox = %label, endpoint, error = %e, "ssh endpoint stopped accepting");
+                    target.failed(&format!("the SSH endpoint stopped accepting connections ({e}); restart the workspace to get direct SSH back"));
                     // Keep the sessions until the endpoint is closed.
                     let _stopped = stopped.await;
                     break;
                 }
                 Err(e) => {
                     warn!(sandbox = %label, endpoint, error = %e, "ssh endpoint accept failed");
+                    // Once per run of failures, so a persistent error is one notice.
+                    if !accept_failing {
+                        accept_failing = true;
+                        target.failed(&format!("the SSH endpoint could not accept a connection ({e}); it keeps trying"));
+                    }
                     tokio::time::sleep(ACCEPT_BACKOFF).await;
                 }
             },
@@ -207,6 +222,7 @@ async fn session<T: SshTarget>(target: Arc<T>, mut conn: Connection, id: u64) {
         Ok(()) => info!(sandbox = %label, session = id, "ssh session ended"),
         Err(e) => {
             warn!(sandbox = %label, session = id, error = %e, "ssh session ended with an error");
+            target.failed(&format!("an SSH session ended with an error: {e}"));
         }
     }
 }

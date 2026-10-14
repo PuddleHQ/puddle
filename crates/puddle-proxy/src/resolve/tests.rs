@@ -19,6 +19,7 @@ use puddle_upstream::{
 };
 
 use crate::destination::{BoxFuture, Resolver};
+use crate::records::{RecordError, RecordResolver, Records};
 use crate::testing::{AnyAddress, StaticPolicy, StaticRecords, StaticResolver};
 use crate::{Proxy, ProxyConfig, Upstream, WorkspaceHandler};
 
@@ -510,42 +511,131 @@ async fn a_lookup_that_times_out_is_unavailable_or_left_to_the_company_proxy() {
     );
 }
 
+/// A resolver that answers after `delay`, and records how many lookups ran at once.
+struct Delayed {
+    delay: Duration,
+    running: AtomicU64,
+    peak: AtomicU64,
+}
+
+impl Resolver for Delayed {
+    fn resolve<'a>(
+        &'a self,
+        _name: &'a DomainName,
+        port: u16,
+    ) -> BoxFuture<'a, io::Result<Vec<std::net::SocketAddr>>> {
+        Box::pin(async move {
+            let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(now, Ordering::SeqCst);
+            tokio::time::sleep(self.delay).await;
+            self.running.fetch_sub(1, Ordering::SeqCst);
+            Ok(vec![std::net::SocketAddr::new(ip("93.184.215.14"), port)])
+        })
+    }
+}
+
+/// A burst of names (a package manager's cold start) is normal traffic: lookups over the cap wait
+/// for a slot and are served, never more than the cap at once.
 #[tokio::test(start_paused = true)]
-async fn lookups_over_the_per_workspace_cap_are_unavailable_and_free_their_slot_when_done() {
-    let config = ProxyConfig::default().with_lookup_limits(Duration::from_secs(5), 2);
+async fn lookups_over_the_per_workspace_cap_wait_for_a_free_slot_and_are_all_served() {
+    let delayed = Arc::new(Delayed {
+        delay: Duration::from_secs(1),
+        running: AtomicU64::new(0),
+        peak: AtomicU64::new(0),
+    });
+    let policy = Arc::new(StaticPolicy::new());
+    let proxy = Proxy::new(policy.clone(), Arc::new(NullSink))
+        .with_resolver(delayed.clone())
+        .with_address_check(Arc::new(AnyAddress))
+        .with_config(ProxyConfig::default().with_lookup_limits(Duration::from_secs(5), 2));
+    let handler = Arc::new(proxy).handler(workspace());
+    let mut set = tokio::task::JoinSet::new();
+    for i in 0..6 {
+        let name = format!("n{i}.example");
+        policy.allow(&host(&name));
+        let handler = handler.clone();
+        set.spawn(async move { handler.resolve_name(a(&name)).await });
+    }
+    while let Some(answer) = set.join_next().await {
+        assert_eq!(answer.unwrap(), stand_in(StandInReason::Resolves));
+    }
+    assert_eq!(delayed.peak.load(Ordering::SeqCst), 2);
+}
+
+/// A lookup that finds no free slot within one lookup time gives up, and says so in the answer
+/// (unavailable, not "no such name").
+#[tokio::test(start_paused = true)]
+async fn a_lookup_that_waits_a_whole_lookup_time_for_a_slot_is_unavailable() {
+    let config = ProxyConfig::default().with_lookup_limits(Duration::from_secs(5), 1);
     let (policy, stuck, handler) = stuck_rig(config, None);
     for name in ["a.example", "b.example", "c.example"] {
         policy.allow(&host(name));
     }
-    let first = tokio::spawn({
+    let mut set = tokio::task::JoinSet::new();
+    for name in ["a.example", "b.example", "c.example"] {
         let handler = handler.clone();
-        async move { handler.resolve_name(a("a.example")).await }
-    });
-    let second = tokio::spawn({
-        let handler = handler.clone();
-        async move { handler.resolve_name(a("b.example")).await }
-    });
-    // Let both take their slot.
-    while stuck.started.load(Ordering::SeqCst) < 2 {
-        tokio::task::yield_now().await;
+        set.spawn(async move { handler.resolve_name(a(name)).await });
+        // Each starts a moment after the one before, so the queue order is the loop's.
+        tokio::time::sleep(Duration::from_millis(1)).await;
     }
+    while let Some(answer) = set.join_next().await {
+        assert_eq!(answer.unwrap(), ResolveAnswer::Unavailable);
+    }
+    // The first held the slot for its whole lookup time, the second got it when it freed, the
+    // third waited its own five seconds and never started.
+    assert_eq!(stuck.started.load(Ordering::SeqCst), 2);
+}
+
+/// More records than an answer may carry are cut, and the guest gets the first ones.
+#[tokio::test]
+async fn an_answer_with_more_records_than_it_may_carry_is_cut() {
+    let txt: Vec<Record> = (0..puddle_agent_proto::resolve::MAX_RECORDS + 4)
+        .map(|i| Record::Txt {
+            strings: vec![format!("v{i}")],
+        })
+        .collect();
+    let r = rig_with(
+        StaticResolver::new(),
+        StaticRecords::new().with("many.example.net", RecordType::Txt, txt),
+        |p| p,
+    );
+    r.policy.allow(&host("many.example.net"));
+    let ResolveAnswer::Records { records, .. } = r
+        .handler
+        .resolve_name(ResolveQuery::new("many.example.net", RecordType::Txt))
+        .await
+    else {
+        panic!("records expected");
+    };
+    assert_eq!(records.len(), puddle_agent_proto::resolve::MAX_RECORDS);
+}
+
+/// A record lookup that never answers is unavailable, not "no such name".
+#[tokio::test(start_paused = true)]
+async fn a_record_lookup_that_times_out_is_unavailable() {
+    struct Never;
+    impl RecordResolver for Never {
+        fn records<'a>(
+            &'a self,
+            _fqdn: &'a str,
+            _rtype: RecordType,
+        ) -> BoxFuture<'a, Result<Records, RecordError>> {
+            Box::pin(std::future::pending())
+        }
+    }
+    let policy = Arc::new(StaticPolicy::new());
+    policy.allow(&host("slow.example.net"));
+    let proxy = Proxy::new(policy, Arc::new(NullSink))
+        .with_record_resolver(Arc::new(Never))
+        .with_address_check(Arc::new(AnyAddress))
+        .with_config(ProxyConfig::default().with_lookup_limits(Duration::from_secs(1), 4));
+    let handler = Arc::new(proxy).handler(workspace());
     assert_eq!(
-        handler.resolve_name(a("c.example")).await,
+        handler
+            .resolve_name(ResolveQuery::new("slow.example.net", RecordType::Txt))
+            .await,
         ResolveAnswer::Unavailable
     );
-    assert_eq!(
-        stuck.started.load(Ordering::SeqCst),
-        2,
-        "the third never started a lookup"
-    );
-    // The two time out and free their slots.
-    assert_eq!(first.await.unwrap(), ResolveAnswer::Unavailable);
-    assert_eq!(second.await.unwrap(), ResolveAnswer::Unavailable);
-    assert_eq!(
-        handler.resolve_name(a("c.example")).await,
-        ResolveAnswer::Unavailable
-    );
-    assert_eq!(stuck.started.load(Ordering::SeqCst), 3);
 }
 
 #[tokio::test]

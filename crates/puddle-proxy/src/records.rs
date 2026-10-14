@@ -90,44 +90,7 @@ impl RecordResolver for SystemRecords {
                         RecordError::Failed(err.to_string())
                     }
                 })?;
-            let mut records = Vec::new();
-            let mut ttl = TTL_RANGE.1;
-            let mut txt_bytes = 0;
-            for answer in lookup.answers() {
-                if records.len() >= MAX_RECORDS {
-                    break;
-                }
-                let record = match &answer.data {
-                    RData::SRV(srv) => {
-                        target_name(&srv.target.to_ascii()).map(|target| Record::Srv {
-                            priority: srv.priority,
-                            weight: srv.weight,
-                            port: srv.port,
-                            target,
-                        })
-                    }
-                    RData::MX(mx) => {
-                        target_name(&mx.exchange.to_ascii()).map(|exchange| Record::Mx {
-                            preference: mx.preference,
-                            exchange,
-                        })
-                    }
-                    RData::TXT(txt) => {
-                        let strings: Vec<String> = txt
-                            .txt_data
-                            .iter()
-                            .map(|s| String::from_utf8_lossy(s).into_owned())
-                            .collect();
-                        txt_bytes += strings.iter().map(String::len).sum::<usize>();
-                        (txt_bytes <= MAX_TXT_BYTES).then_some(Record::Txt { strings })
-                    }
-                    _ => None,
-                };
-                if let Some(record) = record {
-                    ttl = ttl.min(answer.ttl);
-                    records.push(record);
-                }
-            }
+            let (records, ttl) = collect(fqdn, lookup.answers().iter().map(|a| (&a.data, a.ttl)));
             if records.is_empty() {
                 return Err(RecordError::NoData);
             }
@@ -138,6 +101,54 @@ impl RecordResolver for SystemRecords {
             })
         })
     }
+}
+
+/// The records of `answers` the stub can carry, and the smallest time to live among them. What is
+/// left out (another type, a target that is not a plain host name, TXT past its byte cap, more
+/// than [`MAX_RECORDS`]) is said in the log: the guest sees a shorter answer.
+fn collect<'a>(fqdn: &str, answers: impl Iterator<Item = (&'a RData, u32)>) -> (Vec<Record>, u32) {
+    let mut records = Vec::new();
+    let mut ttl = TTL_RANGE.1;
+    let mut txt_bytes = 0;
+    let (mut skipped, mut truncated) = (0_usize, 0_usize);
+    for (data, answer_ttl) in answers {
+        if records.len() >= MAX_RECORDS {
+            truncated += 1;
+            continue;
+        }
+        let record = match data {
+            RData::SRV(srv) => target_name(&srv.target.to_ascii()).map(|target| Record::Srv {
+                priority: srv.priority,
+                weight: srv.weight,
+                port: srv.port,
+                target,
+            }),
+            RData::MX(mx) => target_name(&mx.exchange.to_ascii()).map(|exchange| Record::Mx {
+                preference: mx.preference,
+                exchange,
+            }),
+            RData::TXT(txt) => {
+                let strings: Vec<String> = txt
+                    .txt_data
+                    .iter()
+                    .map(|s| String::from_utf8_lossy(s).into_owned())
+                    .collect();
+                txt_bytes += strings.iter().map(String::len).sum::<usize>();
+                (txt_bytes <= MAX_TXT_BYTES).then_some(Record::Txt { strings })
+            }
+            _ => None,
+        };
+        if let Some(record) = record {
+            ttl = ttl.min(answer_ttl);
+            records.push(record);
+        } else {
+            skipped += 1;
+        }
+    }
+    if skipped + truncated > 0 {
+        tracing::warn!(host = %fqdn, skipped, truncated, kept = records.len(), "some records of the answer were left out: an unsupported or oversized record, a target that is not a plain host name, or more than an answer may carry");
+    }
+    (records, ttl)
 }
 
 /// A record's target as the protocol carries it: lower case, no trailing dot. `None` for the root
@@ -209,6 +220,31 @@ mod tests {
         );
         assert_eq!(target_name("."), None);
         assert_eq!(target_name("bad name.example."), None);
+    }
+
+    #[test]
+    fn records_the_stub_cannot_carry_are_left_out_and_the_kept_ones_set_the_ttl() {
+        use hickory_resolver::proto::rr::rdata::{MX, SRV, TXT};
+        let name = |n: &str| hickory_resolver::proto::rr::Name::from_ascii(n).unwrap();
+        let answers = [
+            (
+                RData::SRV(SRV::new(0, 1, 27017, name("shard0.example.net."))),
+                60,
+            ),
+            // Not a name any client connects to: the root.
+            (RData::SRV(SRV::new(0, 1, 0, name("."))), 5),
+            (RData::MX(MX::new(10, name("mail.example.net."))), 30),
+            (RData::TXT(TXT::new(vec!["a=b".into()])), 90),
+            (RData::A(std::net::Ipv4Addr::LOCALHOST.into()), 1),
+        ];
+        let (records, ttl) = collect("example.net", answers.iter().map(|(d, t)| (d, *t)));
+        assert_eq!(records.len(), 3, "{records:?}");
+        assert_eq!(ttl, 30, "the root SRV and the A record set no ttl");
+        let many: Vec<_> = (0..MAX_RECORDS + 3)
+            .map(|_| (RData::TXT(TXT::new(vec!["x".into()])), 100))
+            .collect();
+        let (records, _) = collect("example.net", many.iter().map(|(d, t)| (d, *t)));
+        assert_eq!(records.len(), MAX_RECORDS);
     }
 
     #[tokio::test]

@@ -614,6 +614,80 @@ async fn a_guest_that_speaks_to_the_route_directly_gets_the_same_answers_and_no_
     driver.abort();
 }
 
+/// A cold `npm ci` or `cargo fetch` in a big tree can ask for hundreds of distinct names within
+/// moments, and a client that gets `SERVFAIL` fails its fetch. Every one of 500 names asked at
+/// once, each taking 150 ms on the host (a slow resolver), must end with its address for a client with
+/// glibc's defaults (two tries, five seconds each): queries wait for a lookup slot, they are not
+/// refused for want of one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_burst_of_five_hundred_distinct_names_all_resolve_for_a_client_with_glibc_defaults() {
+    struct Slow;
+    impl puddle_proxy::Resolver for Slow {
+        fn resolve<'a>(
+            &'a self,
+            _name: &'a puddle_types::DomainName,
+            port: u16,
+        ) -> puddle_proxy::BoxFuture<'a, std::io::Result<Vec<SocketAddr>>> {
+            Box::pin(async move {
+                tokio::time::sleep(Duration::from_millis(150)).await;
+                Ok(vec![SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::new(93, 184, 215, 14)),
+                    port,
+                )])
+            })
+        }
+    }
+    let store = Arc::new(Store::open_in_memory(Arc::new(SystemClock), Limits::default()).unwrap());
+    allow(&store, ".example.com");
+    let proxy = Proxy::new(store.clone(), Arc::new(NullSink))
+        .with_resolver(Arc::new(Slow))
+        .with_address_check(Arc::new(AnyAddress));
+    let root = IpcRoot::new().unwrap();
+    let route = Arc::new(proxy).serve_route(root.listen().unwrap(), workspace());
+    let agent = Agent::start(Config {
+        listen: SocketAddr::new(LOCAL, 0),
+        target: Target::Unix(route.endpoint().path().to_path_buf()),
+        oom: None,
+        bridge: None,
+        dns: Some(DnsConfig {
+            listen: "127.0.0.1:0".parse().unwrap(),
+            table: None,
+        }),
+        ..Config::default()
+    })
+    .await
+    .unwrap();
+    let (udp, _) = agent.dns_addrs().unwrap();
+    let started = std::time::Instant::now();
+    let mut set = tokio::task::JoinSet::new();
+    for i in 0..500u32 {
+        set.spawn(async move {
+            // A resolver with glibc's defaults: two attempts, five seconds each. A query the stub
+            // drops costs one attempt; a `SERVFAIL` ends the lookup.
+            let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            let name = format!("burst-{i}.example.com");
+            let mut buf = vec![0u8; 2048];
+            for _ in 0..2 {
+                socket.send_to(&query(1, &name, TYPE_A), udp).await.unwrap();
+                if let Ok(Ok((n, _))) =
+                    tokio::time::timeout(Duration::from_secs(5), socket.recv_from(&mut buf)).await
+                {
+                    return Some(parse(&buf[..n]));
+                }
+            }
+            None
+        });
+    }
+    let mut failed = 0;
+    while let Some(reply) = set.join_next().await {
+        if !matches!(reply.unwrap(), Some(r) if (r.rcode, r.answers) == (0, 1)) {
+            failed += 1;
+        }
+    }
+    println!("burst of 500: {failed} failed, {:?}", started.elapsed());
+    assert_eq!(failed, 0, "names answered SERVFAIL or without an address");
+}
+
 #[tokio::test]
 async fn a_guest_that_floods_lookups_of_an_allowed_name_over_a_stuck_resolver_hits_the_caps() {
     // A resolver that never answers: the workspace's lookup cap (32) and the session cap (64) hold.

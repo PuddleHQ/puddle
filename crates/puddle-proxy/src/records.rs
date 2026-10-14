@@ -240,6 +240,13 @@ mod tests {
         let (records, ttl) = collect("example.net", answers.iter().map(|(d, t)| (d, *t)));
         assert_eq!(records.len(), 3, "{records:?}");
         assert_eq!(ttl, 30, "the root SRV and the A record set no ttl");
+        let plain = [(RData::TXT(TXT::new(vec!["a=b".into()])), 20)];
+        let (records, ttl) = collect("example.net", plain.iter().map(|(d, t)| (d, *t)));
+        assert_eq!(
+            (records.len(), ttl),
+            (1, 20),
+            "nothing left out, nothing said"
+        );
         let many: Vec<_> = (0..MAX_RECORDS + 3)
             .map(|_| (RData::TXT(TXT::new(vec!["x".into()])), 100))
             .collect();

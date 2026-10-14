@@ -86,18 +86,13 @@ pub(super) fn tighten_file(path: &Path) -> io::Result<Option<Exposed>> {
 mod tests {
     //! The ACL as the OS reports it, and other principals trying to open the file.
 
-    use std::fmt::Write as _;
-    use std::process::Command;
-
     use windows_sys::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE};
     use windows_sys::Win32::Storage::FileSystem::FILE_ALL_ACCESS;
 
     use super::*;
     use crate::win::testing::{
-        assert_access_denied, assert_owner_only_dacl, logon_local_user, open_impersonating,
-        open_restricted,
+        SecondUser, SharedDir, assert_access_denied, assert_owner_only_dacl, open_restricted,
     };
-    use crate::win::wide_nul;
 
     #[test]
     fn a_new_file_has_one_protected_ace_for_the_owner() {
@@ -255,80 +250,23 @@ mod tests {
         assert_access_denied(open_restricted(&path, GENERIC_READ, false));
     }
 
-    /// A throwaway local account, deleted on drop.
-    struct LocalUser {
-        name: String,
-        password: String,
-    }
-
-    impl LocalUser {
-        /// `None` when the runner doesn't let this process create accounts.
-        fn create() -> Option<Self> {
-            let mut random = [0u8; 6];
-            getrandom::fill(&mut random).unwrap();
-            let tag = random.iter().fold(String::new(), |mut out, b| {
-                let _ = write!(out, "{b:02x}");
-                out
-            });
-            let user = Self {
-                name: format!("pdl{tag}"),
-                password: format!("Pd!{tag}aZ9"),
-            };
-            let made = Command::new("net")
-                .args(["user", &user.name, &user.password, "/add"])
-                .output()
-                .ok()?;
-            made.status.success().then_some(user)
-        }
-    }
-
-    impl Drop for LocalUser {
-        fn drop(&mut self) {
-            let _ = Command::new("net")
-                .args(["user", &self.name, "/delete"])
-                .output();
-        }
-    }
-
     #[test]
-    fn another_local_user_is_refused_when_the_runner_lets_us_make_one() {
-        let Some(user) = LocalUser::create() else {
-            eprintln!("skipped: this process can't create local accounts");
+    fn another_local_user_is_refused() {
+        // Fails instead of skipping where `PUDDLE_REQUIRE_SECOND_USER=1` (the Windows workflows).
+        let Some(user) = SecondUser::for_test() else {
             return;
         };
-        let Some(token) = logon_local_user(&user.name, &user.password) else {
-            eprintln!("skipped: the new account can't log on");
-            return;
-        };
-        // The folder must be one the new account can walk into, or every open fails for that
-        // reason alone: the public profile.
-        let Some(public) = std::env::var_os("PUBLIC") else {
-            eprintln!("skipped: no PUBLIC folder");
-            return;
-        };
-        let dir = tempfile::Builder::new()
-            .prefix("puddle-fs-")
-            .tempdir_in(public)
-            .unwrap();
+        let dir = SharedDir::new("puddle-fs");
         let plain = dir.path().join("plain");
         fs::write(&plain, b"x").unwrap();
         let private = dir.path().join("private");
         drop(create_file(&private).unwrap());
 
-        // Control: the account can read an ordinary file there.
-        if open_impersonating(&token, &wide_nul(plain.as_os_str()), GENERIC_READ).is_err() {
-            eprintln!("skipped: the new account can't read the control file either");
-            return;
-        }
-        assert_access_denied(open_impersonating(
-            &token,
-            &wide_nul(private.as_os_str()),
-            GENERIC_READ,
-        ));
-        assert_access_denied(open_impersonating(
-            &token,
-            &wide_nul(private.as_os_str()),
-            GENERIC_WRITE,
-        ));
+        // Control: the account can read an ordinary file there, so the refusals below come from
+        // the owner-only ACL and nothing else.
+        user.open(&plain, GENERIC_READ).unwrap();
+        assert_access_denied(user.open(&private, GENERIC_READ));
+        assert_access_denied(user.open(&private, GENERIC_WRITE));
+        assert_access_denied(user.open(&private, GENERIC_READ | GENERIC_WRITE));
     }
 }

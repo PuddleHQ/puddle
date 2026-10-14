@@ -34,5 +34,9 @@ puddle-vm-tests = { workspace = true }
 rusqlite = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "time"] }
 
+[target.'cfg(windows)'.dev-dependencies]
+puddle-fs = { workspace = true, features = ["testing"] }
+windows-sys = { workspace = true, features = ["Win32_Foundation"] }
+
 [lints]
 workspace = true

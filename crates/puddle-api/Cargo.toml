@@ -52,5 +52,9 @@ rustls = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time", "test-util"] }
 
+[target.'cfg(windows)'.dev-dependencies]
+puddle-fs = { workspace = true, features = ["testing"] }
+windows-sys = { workspace = true, features = ["Win32_Foundation"] }
+
 [lints]
 workspace = true

@@ -24,6 +24,8 @@ mod problems;
 mod repos;
 mod routes;
 mod rule_sets;
+#[cfg(windows)]
+mod second_user;
 mod settings;
 mod ui;
 mod workspaces;

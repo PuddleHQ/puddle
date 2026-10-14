@@ -194,14 +194,8 @@ fn host_rig(endpoints: PuddleEndpoints) -> HostRig {
     }
 }
 
-/// Self-approval through the real agent in a real guest: every listener puddle has bound (the API,
-/// the image-pull proxy and a stand-in for the listeners that come later) is refused as a puddle
-/// endpoint, in every loopback spelling, with every local toggle on and an allow rule for the
-/// literal address. Nothing is left pending for the user to approve.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn vm_hostile_hg04_hg05_a_guest_cannot_reach_puddles_own_listeners_through_the_agent() {
-    let settings = support::settings();
-    let endpoints = PuddleEndpoints::new();
+/// The real API on loopback, registered in `endpoints` as the product registers it.
+async fn start_api(endpoints: &PuddleEndpoints) -> puddle_api::RunningApi {
     let services = Services::new(
         Arc::new(
             Store::open_in_memory(Arc::new(ManualClock::new(NOW)), Limits::default()).unwrap(),
@@ -211,14 +205,25 @@ async fn vm_hostile_hg04_hg05_a_guest_cannot_reach_puddles_own_listeners_through
         Arc::new(ManualClock::new(NOW)),
     )
     .with_endpoints(endpoints.clone());
-    let api = ApiServer::bind(
+    ApiServer::bind(
         ApiConfig::default(),
         ApiToken::generate().unwrap(),
         services,
     )
     .await
     .unwrap()
-    .spawn();
+    .spawn()
+}
+
+/// Self-approval through the real agent in a real guest: every listener puddle has bound (the API,
+/// the image-pull proxy and a stand-in for the listeners that come later) is refused as a puddle
+/// endpoint, in every loopback spelling, with every local toggle on and an allow rule for the
+/// literal address. Nothing is left pending for the user to approve.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_hostile_hg04_hg05_a_guest_cannot_reach_puddles_own_listeners_through_the_agent() {
+    let settings = support::settings();
+    let endpoints = PuddleEndpoints::new();
+    let api = start_api(&endpoints).await;
     let pull = PullProxy::bind(&endpoints).unwrap().serve().unwrap();
     let other = TcpListener::bind("127.0.0.1:0").unwrap();
     let _other = endpoints.register(other.local_addr().unwrap(), EndpointKind::Other);
@@ -421,4 +426,131 @@ async fn vm_hostile_hg23_every_boot_mount_refuses_writes_and_no_data_folder_is_v
     );
     assert!(found.is_empty(), "the guest can see host files: {found}");
     assert!(changed.is_empty(), "host files changed: {changed:?}");
+}
+
+/// Tier W: what a second Windows user and a socket sweep say about a real sandbox's route and
+/// listeners. Both need Windows (named pipes, `netstat`, local accounts).
+#[cfg(windows)]
+mod windows {
+    use puddle_fs::win::testing::{SecondUser, assert_access_denied};
+    use puddle_vm_tests::sockets::{descendants, listening_sockets, process_table};
+    use tokio::net::windows::named_pipe::ServerOptions;
+    use windows_sys::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE};
+
+    use super::*;
+
+    /// Whether `name` is the msb runtime's own process.
+    fn is_msb(name: &str) -> bool {
+        let name = name.to_ascii_lowercase();
+        name == puddle_runtime::HostOs::Windows.runtime_files().msb
+            || name.starts_with("microsandbox")
+    }
+
+    /// A real second local user against the route of a live sandbox: it can't open the route's
+    /// pipe, can't add an instance to its name (a squatter among the listeners), and afterwards
+    /// the guest still reaches the host's proxy through that route.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn vm_hostile_hg24_a_second_user_cannot_use_or_squat_the_route_of_a_live_sandbox() {
+        let Some(user) = SecondUser::for_test() else {
+            return;
+        };
+        let settings = support::settings();
+        let endpoints = PuddleEndpoints::new();
+        let other = TcpListener::bind("127.0.0.1:0").unwrap();
+        let _other = endpoints.register(other.local_addr().unwrap(), EndpointKind::Other);
+        let rig = host_rig(endpoints);
+        let guest = boot(&settings, "hg24", Some(&rig.route_path)).await;
+        let authority = format!("127.0.0.1:{}", other.local_addr().unwrap().port());
+
+        // Before the attack the route carries the guest's request to puddle's proxy, which
+        // answers (a registered listener is refused with a reason).
+        let before = connect_through_the_agent(&guest, &authority).await;
+        assert!(before.status.contains(" 403"), "{:?}", before.status);
+
+        let route = rig.route_path.clone();
+        for access in [GENERIC_READ, GENERIC_WRITE, GENERIC_READ | GENERIC_WRITE] {
+            assert_access_denied(user.open(&route, access));
+        }
+        let runtime = tokio::runtime::Handle::current();
+        for first in [false, true] {
+            let (runtime, route) = (runtime.clone(), route.clone());
+            let attempt = user.run(move || {
+                let _enter = runtime.enter();
+                ServerOptions::new()
+                    .first_pipe_instance(first)
+                    .create(&route)
+                    .map(drop)
+            });
+            assert_access_denied(attempt);
+        }
+
+        // The attempts changed nothing: the same route still reaches the same proxy.
+        let after = connect_through_the_agent(&guest, &authority).await;
+        assert_eq!(after.status, before.status);
+        assert!(
+            after
+                .headers
+                .contains(&"x-puddle-blocked: puddle_endpoint".to_owned()),
+            "{:?}",
+            after.headers
+        );
+        guest.finish().await;
+    }
+
+    /// Every listening socket owned by this process or by the msb runtime it started (its child
+    /// processes and `msb.exe`) is bound to loopback, while a real sandbox runs. The sweep must
+    /// see the API and the pull proxy, so a pass is not a sweep that finds nothing.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn vm_hostile_hg26_no_listener_of_puddle_or_the_msb_runtime_is_open_beyond_loopback() {
+        let settings = support::settings();
+        let endpoints = PuddleEndpoints::new();
+        let api = start_api(&endpoints).await;
+        let pull = PullProxy::bind(&endpoints).unwrap().serve().unwrap();
+        let rig = host_rig(endpoints);
+        let guest = boot(&settings, "hg26", Some(&rig.route_path)).await;
+        // The agent is up: the guest's side of the route works.
+        let answer = connect_through_the_agent(&guest, &api.local_addr().to_string()).await;
+        assert!(answer.status.contains(" 403"), "{:?}", answer.status);
+
+        let table = process_table().unwrap();
+        let me = std::process::id();
+        let mut scope = descendants(&table, me);
+        scope.extend(table.iter().filter(|p| is_msb(&p.name)).map(|p| p.pid));
+        let named: Vec<String> = table
+            .iter()
+            .filter(|p| scope.contains(&p.pid))
+            .map(|p| format!("{} {}", p.pid, p.name))
+            .collect();
+        let swept: Vec<_> = listening_sockets()
+            .unwrap()
+            .into_iter()
+            .filter(|s| scope.contains(&s.pid))
+            .collect();
+        println!("processes swept: {named:?}");
+        for s in &swept {
+            println!("  {s}");
+        }
+        // Whether the runtime shows up as a process of its own is printed, not asserted: the log
+        // of the first run says what the sweep covered.
+        println!(
+            "runtime processes in scope: {}",
+            scope.iter().filter(|p| **p != me).count()
+        );
+        for known in [api.local_addr(), pull.local_addr()] {
+            assert!(
+                swept
+                    .iter()
+                    .any(|s| s.pid == me && (s.address, s.port) == (known.ip(), known.port())),
+                "the sweep does not list {known}"
+            );
+        }
+        let open: Vec<String> = swept
+            .iter()
+            .filter(|s| !s.is_loopback())
+            .map(ToString::to_string)
+            .collect();
+        guest.finish().await;
+        pull.shutdown().await;
+        assert!(open.is_empty(), "open beyond loopback: {open:#?}");
+    }
 }

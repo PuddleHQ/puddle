@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Weekly, grouped into one PR per ecosystem to save CI minutes. PRs go to develop.
+# Weekly, grouped into one PR per ecosystem to save CI minutes. PRs go to develop, labelled by ecosystem.
 version: 2
 updates:
   - package-ecosystem: cargo
     directory: /
     target-branch: develop
+    labels: ["dependencies", "rust"]
     schedule:
       interval: weekly
     groups:
@@ -13,6 +14,7 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     target-branch: develop
+    labels: ["dependencies", "github_actions"]
     schedule:
       interval: weekly
     groups:
@@ -21,6 +23,7 @@ updates:
   - package-ecosystem: npm
     directory: /ui
     target-branch: develop
+    labels: ["dependencies", "javascript"]
     schedule:
       interval: weekly
     groups:
@@ -38,6 +41,7 @@ updates:
   - package-ecosystem: npm
     directory: /crates/puddle-api/openapi
     target-branch: develop
+    labels: ["dependencies", "javascript"]
     schedule:
       interval: weekly
     groups:

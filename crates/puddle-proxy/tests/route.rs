@@ -640,6 +640,62 @@ async fn connections_over_the_workspace_limit_get_503_until_one_closes() {
     }
 }
 
+/// The refusal says why in its body and reaches the audit with its destination, so the user can
+/// see which connections the limit turned away. A connection that never says where it was going
+/// has no destination and leaves no record.
+#[tokio::test]
+async fn a_connection_over_the_limit_is_refused_with_its_reason_and_audited() {
+    let echo = echo_server().await;
+    let rig = Rig::new(
+        ProxyConfig::default()
+            .with_max_streams_per_workspace(1)
+            .with_head_timeout(Duration::from_millis(300)),
+    );
+    rig.policy.allow(&host("127.0.0.1"));
+    let mut guest = rig.guest().await;
+    let (code, _held) = guest.connect_to(&echo.to_string()).await;
+    assert_eq!(code, 200);
+
+    let (code, mut reader) = guest.connect_to("blocked.test:443").await;
+    assert_eq!(code, 503);
+    let body = String::from_utf8(read_all(&mut reader).await.unwrap()).unwrap();
+    assert!(
+        body.contains("too many open connections from this workspace (limit 1)"),
+        "{body:?}"
+    );
+
+    let mut silent = guest.stream().await;
+    silent
+        .write_all(b"CONNECT never.test:443 HTT")
+        .await
+        .unwrap();
+    let mut silent = BufReader::new(silent);
+    assert_eq!(status(&mut silent).await.unwrap(), 503);
+
+    let events = rig.events(1).await;
+    assert_eq!(events.len(), 1, "{events:?}");
+    let event = &events[0];
+    assert_eq!(
+        (
+            event.host.to_string(),
+            event.port,
+            event.decision,
+            event.reason.to_string()
+        ),
+        (
+            "blocked.test".to_owned(),
+            443,
+            ConnectionDecision::Blocked,
+            "connection_limit".to_owned()
+        )
+    );
+    assert_eq!(
+        (rig.policy.decisions(), rig.policy.pending().len()),
+        (1, 0),
+        "only the held connection was decided; the refused one never reached the rules"
+    );
+}
+
 #[tokio::test]
 async fn agent_connections_over_the_route_limit_are_dropped() {
     let rig = Rig::new(ProxyConfig::default().with_max_sessions_per_route(1));

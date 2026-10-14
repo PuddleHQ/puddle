@@ -1,18 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Test helpers for code that sets owner-only ACLs: read a handle's DACL back as the OS reports
-//! it, and open files from a thread impersonating a restricted copy of this process's token.
-//! Behind the `testing` feature; never in product code.
+//! it, open files from a thread impersonating a restricted copy of this process's token, and
+//! make a real second local user ([`SecondUser`]) to act as. Behind the `testing` feature; never
+//! in product code.
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::missing_panics_doc,
-    reason = "test helpers fail the test by panicking"
+    clippy::panic,
+    clippy::print_stderr,
+    reason = "test helpers fail the test by panicking and say what they did on stderr"
 )]
 
 use std::ffi::c_void;
+use std::fmt::Write as _;
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::Path;
+use std::process::Command;
 use std::ptr;
 
 use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, HANDLE, INVALID_HANDLE_VALUE};
@@ -227,9 +232,12 @@ pub fn assert_owner_only_dacl(object: &impl AsRawHandle, mask: u32) {
 }
 
 /// Logs the local account `name` on over the network (no "log on locally" right needed) and
-/// returns its token, or `None` if the logon fails.
-#[must_use]
-pub fn logon_local_user(name: &str, password: &str) -> Option<OwnedHandle> {
+/// returns its token.
+///
+/// # Errors
+///
+/// The OS error of the logon.
+pub fn logon_local_user(name: &str, password: &str) -> io::Result<OwnedHandle> {
     let (name, password) = (wide_nul(name.as_ref()), wide_nul(password.as_ref()));
     let local = wide_nul(".".as_ref());
     let mut raw: HANDLE = ptr::null_mut();
@@ -245,6 +253,202 @@ pub fn logon_local_user(name: &str, password: &str) -> Option<OwnedHandle> {
             &raw mut raw,
         )
     };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
     // SAFETY: on success `raw` is a fresh token handle that nothing else owns.
-    (ok != 0).then(|| unsafe { OwnedHandle::from_raw_handle(raw) })
+    Ok(unsafe { OwnedHandle::from_raw_handle(raw) })
+}
+
+/// Ends this thread's impersonation when dropped, also while a panic unwinds.
+struct Impersonation;
+
+impl Impersonation {
+    fn start(token: &OwnedHandle) -> io::Result<Self> {
+        // SAFETY: the token is a valid impersonation token; `Drop` undoes this on the same thread.
+        if unsafe { ImpersonateLoggedOnUser(token.as_raw_handle()) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Self)
+    }
+}
+
+impl Drop for Impersonation {
+    fn drop(&mut self) {
+        // SAFETY: ends this thread's impersonation; nothing else can fail here.
+        unsafe { RevertToSelf() };
+    }
+}
+
+/// Runs `f` on a new thread that impersonates `token`, so every file, pipe and registry call `f`
+/// makes is checked against that user. Sockets are not: a TCP peer's identity is not visible to
+/// the server.
+///
+/// # Errors
+///
+/// The OS error of the impersonation (`f` has not run then).
+pub fn run_as<T: Send>(token: &OwnedHandle, f: impl FnOnce() -> T + Send) -> io::Result<T> {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let _impersonating = Impersonation::start(token)?;
+                Ok::<T, io::Error>(f())
+            })
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    })
+}
+
+/// The environment variable that turns a missing second user into a failure: set it to `1` where
+/// the runner is known to let a test make local accounts (the Windows workflows set it).
+pub const REQUIRE_SECOND_USER: &str = "PUDDLE_REQUIRE_SECOND_USER";
+
+/// A throwaway local account, deleted on drop.
+pub struct LocalUser {
+    name: String,
+    password: String,
+}
+
+impl LocalUser {
+    /// Creates an account with a random name and password.
+    ///
+    /// # Errors
+    ///
+    /// Why the account could not be made (`net user` output): the process may not create accounts.
+    pub fn create() -> Result<Self, String> {
+        let mut random = [0u8; 6];
+        getrandom::fill(&mut random).map_err(|e| format!("no randomness: {e}"))?;
+        let tag = random.iter().fold(String::new(), |mut out, b| {
+            let _ = write!(out, "{b:02x}");
+            out
+        });
+        let user = Self {
+            name: format!("pdl{tag}"),
+            password: format!("Pd!{tag}aZ9"),
+        };
+        let made = Command::new("net")
+            .args(["user", &user.name, &user.password, "/add"])
+            .output()
+            .map_err(|e| format!("cannot run `net user`: {e}"))?;
+        if made.status.success() {
+            Ok(user)
+        } else {
+            // Never the password: `net` does not echo it, and the command line is not printed.
+            Err(format!(
+                "`net user <name> <password> /add` failed ({}): {} {}",
+                made.status,
+                String::from_utf8_lossy(&made.stdout).trim(),
+                String::from_utf8_lossy(&made.stderr).trim()
+            ))
+        }
+    }
+}
+
+impl Drop for LocalUser {
+    fn drop(&mut self) {
+        let _ = Command::new("net")
+            .args(["user", &self.name, "/delete"])
+            .output();
+    }
+}
+
+/// A real second local user and a logged-on token for it: what another person's process on the
+/// same machine can do. Every attack in the hostile-guest tier's second-user cases goes through
+/// [`SecondUser::open`] or [`SecondUser::run`], so the OS (not a mock) decides.
+pub struct SecondUser {
+    // Drop order: the token closes before the account is deleted.
+    token: OwnedHandle,
+    user: LocalUser,
+}
+
+impl SecondUser {
+    /// Makes the account and logs it on.
+    ///
+    /// # Errors
+    ///
+    /// Why this process can't: the account, or its logon, failed.
+    pub fn acquire() -> Result<Self, String> {
+        let user = LocalUser::create()?;
+        let token = logon_local_user(&user.name, &user.password)
+            .map_err(|e| format!("the new account `{}` cannot log on: {e}", user.name))?;
+        Ok(Self { token, user })
+    }
+
+    /// [`SecondUser::acquire`] for a test: `None` (after printing why) when the runner can't, or
+    /// a panic when [`REQUIRE_SECOND_USER`] is `1`, so a runner that stops allowing it turns the
+    /// tests red instead of silently skipping them.
+    #[must_use]
+    pub fn for_test() -> Option<Self> {
+        let outcome = Self::acquire();
+        let required = std::env::var_os(REQUIRE_SECOND_USER).is_some_and(|v| v == "1");
+        match outcome {
+            Ok(user) => {
+                eprintln!("second user `{}` made and logged on", user.name());
+                Some(user)
+            }
+            Err(why) if required => panic!("{REQUIRE_SECOND_USER}=1 but {why}"),
+            Err(why) => {
+                eprintln!("SKIPPED: no second user ({why}); set {REQUIRE_SECOND_USER}=1 to fail");
+                None
+            }
+        }
+    }
+
+    /// The account's name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.user.name
+    }
+
+    /// Opens `path` (a file, folder or pipe) with `access` as this user, then closes it.
+    ///
+    /// # Errors
+    ///
+    /// The OS error of the open.
+    pub fn open(&self, path: &Path, access: u32) -> io::Result<()> {
+        open_impersonating(&self.token, &wide_nul(path.as_os_str()), access)
+    }
+
+    /// Runs `f` on a thread acting as this user (see [`run_as`]).
+    ///
+    /// # Panics
+    ///
+    /// When the impersonation fails.
+    pub fn run<T: Send>(&self, f: impl FnOnce() -> T + Send) -> T {
+        run_as(&self.token, f).expect("impersonating the second user")
+    }
+}
+
+/// A folder every local user can walk into and read (under `%PUBLIC%`), removed on drop: a
+/// second user needs it, because a folder in the test's own profile is closed to them and every
+/// open would fail for that reason alone.
+pub struct SharedDir(std::path::PathBuf);
+
+impl SharedDir {
+    /// A new, empty folder named after `prefix`.
+    #[must_use]
+    pub fn new(prefix: &str) -> Self {
+        let public = std::env::var_os("PUBLIC").expect("%PUBLIC% is set on every Windows");
+        let mut random = [0u8; 6];
+        getrandom::fill(&mut random).unwrap();
+        let tag = random.iter().fold(String::new(), |mut out, b| {
+            let _ = write!(out, "{b:02x}");
+            out
+        });
+        let path = Path::new(&public).join(format!("{prefix}-{tag}"));
+        std::fs::create_dir(&path).unwrap();
+        Self(path)
+    }
+
+    /// The folder.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for SharedDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }

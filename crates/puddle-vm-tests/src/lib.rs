@@ -41,6 +41,7 @@ mod env;
 mod error;
 mod prefix;
 mod runtime;
+pub mod sockets;
 
 pub use env::{Settings, VmEnv, within};
 pub use error::HarnessError;

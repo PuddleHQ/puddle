@@ -5901,6 +5901,7 @@ dependencies = [
  "tracing",
  "utoipa",
  "utoipa-axum",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5990,6 +5991,7 @@ dependencies = [
  "puddle-api",
  "puddle-boot",
  "puddle-compute",
+ "puddle-fs",
  "puddle-ipc",
  "puddle-netpolicy",
  "puddle-proxy",
@@ -6002,6 +6004,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6040,6 +6043,7 @@ dependencies = [
  "puddle-store",
  "puddle-types",
  "puddle-upstream",
+ "puddle-vm-tests",
  "rcgen",
  "rustls",
  "serde",

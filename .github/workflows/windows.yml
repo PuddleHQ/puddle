@@ -101,6 +101,9 @@ jobs:
           # The nightly retries a failed test once, only to report flakes (below). The profile
           # keeps retries at 0 for every other run (docs/STANDARDS.md, "Flaky tests").
           RETRIES: ${{ github.event_name == 'schedule' && '1' || '0' }}
+          # The hostile-guest second-user tests make a local account; if the hosted runner stops
+          # allowing that, they fail here instead of skipping without a trace.
+          PUDDLE_REQUIRE_SECOND_USER: "1"
         run: cargo nextest run --workspace --all-features --locked --profile ci --retries "$RETRIES"
       - name: flaky tests (nightly report)
         if: ${{ github.event_name == 'schedule' && steps.changed.outputs.run == 'true' && !cancelled() }}

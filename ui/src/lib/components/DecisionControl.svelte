@@ -1,6 +1,5 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
-  import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import { narrowest, type Choice, type Target } from "#lib/decision/model.ts";
   import "#lib/theme/controls.css";
 
@@ -49,9 +48,7 @@
         aria-expanded={optionsOpen}
         title="More choices (Enter)"
         onclick={(event) => onMore(event.currentTarget)}
-      >
-        <ChevronDown aria-hidden="true" size={16} />
-      </button>
+      ></button>
     </div>
   {/if}
   <button
@@ -78,6 +75,15 @@
   .split .main {
     border-start-end-radius: 0;
     border-end-end-radius: 0;
+  }
+  /* The arrow is drawn here, not as an icon element: an inbox of 500 rows draws 500 of them. */
+  .chevron::after {
+    content: "";
+    width: 0.5rem;
+    height: 0.5rem;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: translateY(-25%) rotate(45deg);
   }
   .split .chevron {
     border-start-start-radius: 0;

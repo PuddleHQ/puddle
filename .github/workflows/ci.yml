@@ -74,6 +74,19 @@ jobs:
           # The package starts its own daemon; the test runs its own Squid on a free port.
           sudo systemctl stop squid || true
           test -x /usr/sbin/squid
+      # The login tests run the real Claude Code, `gh` (on the runner image) and Copilot CLI against fake
+      # servers. The two npm packages are pinned to exact versions, scripts off; bump them by hand.
+      - name: Real login tools (Claude Code and Copilot CLI) for the login tests
+        run: |
+          npm install --global --ignore-scripts --no-audit --no-fund @anthropic-ai/claude-code@2.1.299 @github/copilot@1.0.97
+          claude --version
+          copilot --version
+          gh --version
+          # The install step is what provides the tools, so it also turns "tool missing" into a failure.
+          {
+            echo "PUDDLE_COPILOT_BIN=$(command -v copilot)"
+            echo "PUDDLE_REQUIRE_LOGIN_TOOLS=1"
+          } >> "$GITHUB_ENV"
       - name: llvm-rc for the msvc cross-check (tauri-winres compiles the shell's Windows resources)
         run: |
           rc=$(ls /usr/lib/llvm-*/bin/llvm-rc 2>/dev/null | sort -V | tail -n 1 || true)

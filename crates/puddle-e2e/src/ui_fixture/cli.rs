@@ -5,7 +5,7 @@
     reason = "a command line tool: it reports on stdout"
 )]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::{
     Fixture, FixtureOptions, Step, built_in_names, control, load_scenario, watch_drop_dir,
@@ -135,12 +135,7 @@ pub async fn run(args: impl IntoIterator<Item = String>) -> Result<(), String> {
         .ok_or("the API did not start")?;
     match &args.connection_file {
         Some(file) => {
-            let control_file = PathBuf::from(format!("{}.control", file.display()));
-            std::fs::write(
-                &control_file,
-                format!("{{\"url\":\"http://{control_addr}\"}}\n"),
-            )
-            .map_err(|err| format!("cannot write {}: {err}", control_file.display()))?;
+            write_control_file(file, &control_addr.to_string())?;
         }
         None => println!("token {}", info.token.expose()),
     }
@@ -154,6 +149,17 @@ pub async fn run(args: impl IntoIterator<Item = String>) -> Result<(), String> {
         .map_err(|err| format!("cannot wait for ctrl-c: {err}"))?;
     fixture.shutdown().await;
     Ok(())
+}
+
+/// Writes `<connection file>.control` with the control server's address. A test reads the file as
+/// soon as it exists, so it is written whole under another name and renamed into place: a plain
+/// write creates the file empty first, and a reader in that moment fails to parse it.
+fn write_control_file(connection_file: &Path, control_addr: &str) -> Result<(), String> {
+    let control_file = PathBuf::from(format!("{}.control", connection_file.display()));
+    let partial = PathBuf::from(format!("{}.part", control_file.display()));
+    std::fs::write(&partial, format!("{{\"url\":\"http://{control_addr}\"}}\n"))
+        .and_then(|()| std::fs::rename(&partial, &control_file))
+        .map_err(|err| format!("cannot write {}: {err}", control_file.display()))
 }
 
 #[cfg(test)]
@@ -209,5 +215,26 @@ mod tests {
         ] {
             assert!(parsed(bad).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn the_control_file_appears_whole_and_leaves_nothing_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let connection = dir.path().join("connection.json");
+        write_control_file(&connection, "127.0.0.1:4000").unwrap();
+        let control = dir.path().join("connection.json.control");
+        assert_eq!(
+            std::fs::read_to_string(&control).unwrap(),
+            "{\"url\":\"http://127.0.0.1:4000\"}\n"
+        );
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, [std::ffi::OsString::from("connection.json.control")]);
+        // A directory that is gone is an error that names the file, not a panic.
+        let missing = dir.path().join("gone").join("connection.json");
+        let err = write_control_file(&missing, "127.0.0.1:4000").unwrap_err();
+        assert!(err.contains("connection.json.control"), "{err}");
     }
 }

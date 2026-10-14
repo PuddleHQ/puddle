@@ -598,6 +598,22 @@ mod tests {
     }
 
     #[test]
+    fn an_azure_devops_path_that_stops_at_git_names_no_repository() {
+        for (host, path) in [
+            ("dev.azure.com", "/org/proj/_git"),
+            ("dev.azure.com", "/org/_git"),
+            ("contoso.visualstudio.com", "/proj/_git"),
+            ("contoso.visualstudio.com", "/DefaultCollection/proj/_git"),
+        ] {
+            assert_eq!(
+                classify(host, "GET", path, None),
+                Classified::NotGit,
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
     fn azure_devops_paths_in_every_shape() {
         for (host, path, repo) in [
             (

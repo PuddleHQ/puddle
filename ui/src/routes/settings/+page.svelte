@@ -50,6 +50,7 @@
   const SECTIONS: [string, string][] = [
     ["s-app", "Appearance"],
     ["s-notify", "Notifications"],
+    ["s-inbox", "Inbox"],
     ["s-ws", "Workspaces"],
     ["s-net", "Network"],
     ["s-vsc", "Browser VS Code"],
@@ -157,6 +158,15 @@
     value: NonNullable<Layer[K]>,
     stored: NonNullable<Layer[K]>,
   ) => edit(setLayer(draft, key, value, stored));
+  /** The preferences that are plain on/off switches. */
+  type BoolPref =
+    | "notifications"
+    | "notify_only_unfocused"
+    | "sound"
+    | "badge"
+    | "notify_oom"
+    | "notify_unexpected_stop"
+    | "confirm_global_rules";
   /** What the control shows: the unsaved edit, else what is stored, else puddle's default. */
   const uiValue = <K extends keyof Ui>(key: K, fallback: NonNullable<Ui[K]>) =>
     (draft.ui[key] ?? store.view?.ui[key] ?? fallback) as NonNullable<Ui[K]>;
@@ -242,6 +252,32 @@
     new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(ms);
 </script>
 
+{#snippet uiToggle(
+  key: BoolPref,
+  id: string,
+  label: string,
+  desc: string,
+  fallback: boolean,
+  disabled = false,
+)}
+  <div class="setting">
+    <div class="grow">
+      <label for={id}>{label}</label>
+      <p class="desc" id="{id}-desc">{desc}</p>
+    </div>
+    <input
+      {id}
+      type="checkbox"
+      aria-describedby="{id}-desc"
+      {disabled}
+      checked={uiValue(key, fallback)}
+      onchange={(e) =>
+        store.view &&
+        editUi(key, e.currentTarget.checked, store.view.ui[key] ?? fallback)}
+    />
+  </div>
+{/snippet}
+
 <h1 tabindex="-1">Settings</h1>
 <p class="sub">
   Global values. A workspace can override most of them in its own Settings tab.
@@ -309,40 +345,50 @@
 
       <section class="card" id="s-notify" aria-labelledby="h-notify">
         <h2 id="h-notify">Notifications</h2>
-        <div class="setting">
-          <div class="grow">
-            <label for="set-notify">System notifications for new requests</label
-            >
-            <p class="desc">
-              One notification per host, at most one every 10 seconds per
-              workspace. Clicking it opens the request.
-            </p>
-          </div>
-          <input
-            id="set-notify"
-            type="checkbox"
-            checked={uiValue("notifications", true)}
-            onchange={(e) =>
-              editUi(
-                "notifications",
-                e.currentTarget.checked,
-                view.ui.notifications ?? true,
-              )}
-          />
-        </div>
-        <div class="setting">
-          <div class="grow">
-            <label for="set-sound">Sound</label>
-            <p class="desc">Play the system notification sound.</p>
-          </div>
-          <input
-            id="set-sound"
-            type="checkbox"
-            checked={uiValue("sound", false)}
-            onchange={(e) =>
-              editUi("sound", e.currentTarget.checked, view.ui.sound ?? false)}
-          />
-        </div>
+        {@render uiToggle(
+          "notifications",
+          "set-notify",
+          "System notifications for new requests",
+          "One notification per host, at most one every 10 seconds per workspace. Clicking it opens the request.",
+          true,
+        )}
+        {@render uiToggle(
+          "notify_only_unfocused",
+          "set-unfocused",
+          "Only when puddle is not the window in front",
+          "Off: a notification also shows while you are looking at puddle.",
+          true,
+          !uiValue("notifications", true),
+        )}
+        {@render uiToggle(
+          "sound",
+          "set-sound",
+          "Sound",
+          "Play the system notification sound.",
+          false,
+        )}
+        {@render uiToggle(
+          "badge",
+          "set-badge",
+          "Show the number of waiting requests",
+          "On the tray icon, the taskbar and the window title.",
+          true,
+        )}
+        <h3>Also notify when</h3>
+        {@render uiToggle(
+          "notify_oom",
+          "set-oom",
+          "A workspace runs out of memory",
+          "It was stopped because it used all the memory it was given.",
+          true,
+        )}
+        {@render uiToggle(
+          "notify_unexpected_stop",
+          "set-stopped",
+          "A workspace stops on its own",
+          "It stopped or crashed without you asking.",
+          true,
+        )}
         <div class="setting">
           <div class="grow">
             <label for="set-close">Closing the window</label>
@@ -366,6 +412,17 @@
             {/each}
           </select>
         </div>
+      </section>
+
+      <section class="card" id="s-inbox" aria-labelledby="h-inbox">
+        <h2 id="h-inbox">Inbox</h2>
+        {@render uiToggle(
+          "confirm_global_rules",
+          "set-confirm-global",
+          "Confirm before a rule affects every workspace",
+          "Allowing or denying for every workspace asks first. Turn this off to decide at once; you can still undo right after.",
+          true,
+        )}
       </section>
 
       <section class="card" id="s-ws" aria-labelledby="h-ws">

@@ -242,6 +242,69 @@ test("the Save bar stays on screen, its buttons are big enough, and the screen h
   expect(await axeViolations(page)).toEqual([]);
 });
 
+test("the notification and inbox switches start at puddle's defaults, are saved together and survive a reload", async ({
+  page,
+  backend,
+  request,
+}) => {
+  await openSettings(page, backend);
+  const labels = {
+    notify_only_unfocused: "Only when puddle is not the window in front",
+    badge: "Show the number of waiting requests",
+    notify_oom: "A workspace runs out of memory",
+    notify_unexpected_stop: "A workspace stops on its own",
+    confirm_global_rules: "Confirm before a rule affects every workspace",
+  } as const;
+  for (const label of Object.values(labels)) {
+    await expect(page.getByLabel(label)).toBeChecked();
+    await page.getByLabel(label).uncheck();
+  }
+  await pressSave(page);
+  const now = (await stored(request, backend)).ui;
+  for (const key of Object.keys(labels)) expect(now[key], key).toBe(false);
+  await page.reload();
+  for (const label of Object.values(labels)) {
+    await expect(page.getByLabel(label)).not.toBeChecked();
+  }
+  // With system notifications off the focus choice has nothing to decide.
+  await page.getByLabel("System notifications for new requests").uncheck();
+  await expect(page.getByLabel(labels.notify_only_unfocused)).toBeDisabled();
+});
+
+test("with the confirmation switched off, a decision for every workspace goes through at once", async ({
+  page,
+  backend,
+  request,
+}) => {
+  await openSettings(page, backend);
+  await page
+    .getByLabel("Confirm before a rule affects every workspace")
+    .uncheck();
+  await pressSave(page);
+  await backend.control.step({
+    do: "request",
+    workspace: "shop",
+    host: "global.example.com",
+  });
+  await page
+    .getByRole("navigation", { name: "Main" })
+    .getByRole("link", { name: /^Inbox/ })
+    .click();
+  const row = page.locator("li.req", { hasText: "global.example.com" });
+  await row.getByRole("button", { name: /^More choices for/ }).click();
+  const dialog = page.getByRole("dialog", { name: /^Choices for/ });
+  await dialog.getByRole("radio", { name: /^Every workspace/ }).check();
+  await dialog.getByRole("button", { name: "Allow", exact: true }).click();
+  await expect(row).toHaveCount(0);
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  const rules = (await (
+    await request.get("/api/rules", { headers: auth(backend) })
+  ).json()) as { rules: { pattern: string; scope: { type: string } }[] };
+  expect(
+    rules.rules.find((r) => r.pattern === "global.example.com"),
+  ).toMatchObject({ scope: { type: "global" } });
+});
+
 test("a reconnection grace outside the range is refused before anything is sent", async ({
   page,
   backend,

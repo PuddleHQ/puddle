@@ -24,6 +24,7 @@
     CLOSE_OPTIONS,
     LOCAL_EXPLAIN,
     memorySizes,
+    microsoftChosenToast,
     needsMicrosoftConsent,
     parseGrace,
     serverNote,
@@ -218,9 +219,7 @@
       // The popup saved the server and the telemetry choice itself: no draft of those remains.
       draft = { ...draft, server: {} };
       saved = "Microsoft's server chosen.";
-      toasts.push(
-        "Consent recorded. puddle downloads the server the next time you open browser VS Code.",
-      );
+      toasts.push(microsoftChosenToast(telemetry), { ms: 12_000 });
     } else {
       popupError = result.message;
     }

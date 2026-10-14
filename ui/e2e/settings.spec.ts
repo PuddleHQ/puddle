@@ -423,6 +423,10 @@ test.describe("Microsoft's VS Code server", () => {
       .getByRole("button", { name: "Accept and use Microsoft's server" })
       .click();
     await expect(dialog).toBeHidden();
+    // The toast says what happens next in plain words.
+    await expect(
+      page.getByText(/downloads the server from Microsoft the next time/),
+    ).toBeVisible();
     await expect(page.getByLabel("Server", { exact: true })).toHaveValue(
       "microsoft",
     );

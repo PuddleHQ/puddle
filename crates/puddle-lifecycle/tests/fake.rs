@@ -215,7 +215,10 @@ async fn a_stop_task_that_panics_is_reported_under_its_name_and_the_report_says_
     }
     let _trims = fstrim_ok(&rt);
     rt.on_exec(|ctx: &mut ExecContext<'_>, _req: &ExecRequest| {
-        assert_ne!(ctx.sandbox().as_str(), "panics", "the runtime panicked");
+        if ctx.sandbox().as_str() == "panics" {
+            // Unwinds without the panic hook: a backtrace written to a slow captured stderr would stall the stop task.
+            std::panic::resume_unwind(Box::new("the runtime panicked"));
+        }
         None
     });
 

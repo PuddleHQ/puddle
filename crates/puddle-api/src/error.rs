@@ -430,7 +430,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_panicking_blocking_task_is_a_500() {
-        let err = blocking::<(), _>(|| panic!("boom")).await.unwrap_err();
+        let err = blocking::<(), _>(|| std::panic::resume_unwind(Box::new("boom")))
+            .await
+            .unwrap_err();
         assert_eq!(err.status(), StatusCode::INTERNAL_SERVER_ERROR);
         let ok = blocking(|| Ok(7)).await.unwrap();
         assert_eq!(ok, 7);

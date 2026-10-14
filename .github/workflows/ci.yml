@@ -187,7 +187,15 @@ jobs:
         env:
           NEXTEST_PROFILE: ci
           PUDDLE_SQUID_BIN: /usr/sbin/squid
-          PUDDLE_SQUID_REQUIRED: "1"
+          # A test whose prerequisite is missing fails here instead of skipping (scripts/check-silent-skips.sh).
+          # Each flag names what this job provides: Squid and Node 24 above, `ssh`, `git` and `python3`
+          # from the runner image, AF_VSOCK from its kernel, and a non-root user.
+          PUDDLE_REQUIRE_SQUID: "1"
+          PUDDLE_REQUIRE_NODE: "1"
+          PUDDLE_REQUIRE_SSH_CLIENTS: "1"
+          PUDDLE_REQUIRE_TOOLS: "1"
+          PUDDLE_REQUIRE_VSOCK: "1"
+          PUDDLE_REQUIRE_NON_ROOT: "1"
         run: |
           scripts/check.sh coverage
           {

@@ -3,7 +3,7 @@
 //! (authority key identifier, critical basic constraints on the CA, a subject alternative name,
 //! `serverAuth`), which is what `pip` and `requests` run under.
 //!
-//! Needs `python3` on the path; without it the test skips unless `PUDDLE_TOOLS_REQUIRED` is set
+//! Needs `python3` on the path; without it the test skips unless `PUDDLE_REQUIRE_TOOLS` is set
 //! (CI sets it).
 #![expect(clippy::print_stderr, reason = "a skipped test says so")]
 mod terminate_support;
@@ -35,8 +35,8 @@ fn python() -> Option<String> {
     let found = Command::new("python3").arg("--version").output().is_ok();
     if !found {
         assert!(
-            std::env::var_os("PUDDLE_TOOLS_REQUIRED").is_none(),
-            "PUDDLE_TOOLS_REQUIRED is set but python3 is not on the path"
+            std::env::var_os("PUDDLE_REQUIRE_TOOLS").is_none(),
+            "PUDDLE_REQUIRE_TOOLS is set but python3 is not on the path"
         );
         eprintln!("skipped: python3 not found");
         return None;

@@ -273,6 +273,7 @@ async fn an_empty_volume_and_a_second_run_are_fine() {
 /// there turns that repository bare.
 #[test]
 fn fixtures_leave_the_repository_of_a_git_hook_alone() {
+    // skip-ok: the parent run starts this binary again as a child, and the child must not recurse.
     if common::is_hook_env_child() {
         return;
     }

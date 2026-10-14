@@ -5,8 +5,8 @@
 //! "SSH is not supported yet" on the client's own stderr; nothing reaches the rules, the inbox or
 //! the resolver; what is inside the workspace, decided by address, stays direct.
 //!
-//! Needs `ssh` and `git` on `PATH`. Without them the tests say so and pass locally; with `CI` set
-//! they fail instead.
+//! Needs `ssh` and `git` on `PATH`. Without them the tests say so and pass locally; with
+//! `PUDDLE_REQUIRE_SSH_CLIENTS` set (the Linux CI job sets it) they fail instead.
 #![cfg(unix)]
 #![expect(
     clippy::unwrap_used,
@@ -53,8 +53,8 @@ fn clients_available() -> bool {
         return true;
     }
     assert!(
-        std::env::var_os("CI").is_none(),
-        "CI needs {missing:?} on PATH for this test"
+        std::env::var_os("PUDDLE_REQUIRE_SSH_CLIENTS").is_none(),
+        "PUDDLE_REQUIRE_SSH_CLIENTS is set but {missing:?} is not on PATH"
     );
     eprintln!("skipped: {missing:?} not on PATH");
     false

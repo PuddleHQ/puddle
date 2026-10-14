@@ -435,7 +435,12 @@ fn outside_a_test_root_the_hook_needs_root() {
         .output()
         .is_ok_and(|o| o.stdout == b"0\n");
     if is_root {
-        return; // Can't test the refusal as root; CI runs as a normal user.
+        // The refusal can't be shown as root; the CI job runs as a normal user and says so.
+        assert!(
+            std::env::var_os("PUDDLE_REQUIRE_NON_ROOT").is_none(),
+            "PUDDLE_REQUIRE_NON_ROOT is set but the tests run as root"
+        );
+        return;
     }
     let fr = FakeRoot::new(&shells()[0]);
     let mut cmd = fr.command(&[], true);

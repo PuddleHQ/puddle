@@ -118,6 +118,7 @@ async fn vmm_pid(env: &VmEnv, name: &SandboxName) -> u32 {
 /// Plays the host when [`ROLE`] says so; as a normal test it does nothing.
 #[test]
 fn vm_role_host() {
+    // skip-ok: the other tests start this binary again with ROLE set; started on its own it is not a test.
     if std::env::var(ROLE).as_deref() != Ok("host") {
         return;
     }
@@ -535,6 +536,7 @@ fn signal_helper(role: &str, target: u32) {
 /// Plays a signalling helper when [`ROLE`] says so; as a normal test it does nothing.
 #[test]
 fn vm_role_signal() {
+    // skip-ok: the other tests start this binary again with ROLE set; started on its own it is not a test.
     let Ok(role) = std::env::var(ROLE) else {
         return;
     };

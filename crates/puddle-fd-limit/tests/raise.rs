@@ -13,9 +13,8 @@ fn a_low_soft_limit_is_raised_and_the_process_can_then_hold_that_many_sockets() 
         current: Some(1024),
         maximum: hard,
     };
-    if setrlimit(Resource::Nofile, low).is_err() {
-        return;
-    }
+    // Lowering a limit is always allowed, so a refusal here is a broken sandbox, not a reason to skip.
+    setrlimit(Resource::Nofile, low).expect("lower the soft open-file limit to 1024");
     let limit = puddle_fd_limit::raise_open_file_limit(Reach::Soft);
     assert_eq!(limit.before, Some(1024));
     assert_eq!(getrlimit(Resource::Nofile).current, limit.soft);
@@ -43,9 +42,7 @@ fn a_low_soft_limit_is_raised_and_the_process_can_then_hold_that_many_sockets() 
         current: Some(1024),
         maximum: Some(4096),
     };
-    if setrlimit(Resource::Nofile, default).is_err() {
-        return;
-    }
+    setrlimit(Resource::Nofile, default).expect("lower the hard open-file limit to 4096");
     let both = puddle_fd_limit::raise_open_file_limit(Reach::HardToo);
     assert_eq!(both.before, Some(1024));
     assert!(both.soft >= Some(4096), "{both}");

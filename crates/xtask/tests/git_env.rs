@@ -28,6 +28,7 @@ fn a_hooks_repository_variables_do_not_reach_git() {
             .output()
             .unwrap();
         assert!(out.status.success());
+        // skip-ok: the parent below starts this binary again as the child that just did the checking.
         return;
     }
     let dir = tempfile::tempdir().unwrap();

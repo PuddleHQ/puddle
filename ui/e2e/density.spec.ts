@@ -20,9 +20,14 @@ const saved = (page: Page) =>
   );
 
 async function setDensity(page: Page, value: string) {
-  const done = saved(page);
   await page.getByLabel("Density", { exact: true }).selectOption(value);
-  await done;
+  // Choosing what is already stored changes nothing, and Save stays off.
+  const save = page.getByRole("button", { name: "Save" });
+  if (await save.isEnabled()) {
+    const done = saved(page);
+    await save.click();
+    await done;
+  }
 }
 
 async function open(page: Page, backend: Backend, path: string) {

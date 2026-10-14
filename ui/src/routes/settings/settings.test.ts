@@ -14,6 +14,12 @@ const api = await vi.hoisted(async () => {
   return new mod.FakeSettings();
 });
 vi.mock("#lib/api/client.ts", () => ({ api }));
+const nav = vi.hoisted(() => ({
+  hooks: [] as ((n: { cancel: () => void; willUnload: boolean }) => void)[],
+}));
+vi.mock("$app/navigation", () => ({
+  beforeNavigate: (hook: (typeof nav.hooks)[number]) => nav.hooks.push(hook),
+}));
 
 import { MS_TERMS_VERSION } from "#lib/settings/model.ts";
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
@@ -23,6 +29,7 @@ import { theme } from "#lib/theme/theme.svelte.ts";
 import Page from "./+page.svelte";
 
 beforeEach(() => {
+  nav.hooks = [];
   api.reset();
   globalSettings.view = null;
   globalSettings.consents = null;
@@ -46,6 +53,12 @@ async function choose(label: string | RegExp, value: string) {
   const select = screen.getByLabelText(label) as HTMLSelectElement;
   select.value = value;
   await fireEvent.change(select);
+}
+
+/** Presses Save and waits for the answer. */
+async function save(says: string | RegExp = "Settings saved.") {
+  await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await screen.findByText(says);
 }
 
 const putBodies = () =>
@@ -175,17 +188,148 @@ describe("the screen", () => {
   });
 });
 
-describe("appearance and notifications", () => {
-  it("stores the theme in the settings, and keeps a hint for the first paint", async () => {
+describe("explicit Save", () => {
+  it("starts clean: Save and Discard are off and nothing is sent until Save", async () => {
     await open();
-    await choose("Theme", "dark");
-    await screen.findByText("Theme saved.");
-    expect(api.ui.theme).toBe("dark");
-    expect(document.documentElement.dataset["theme"]).toBe("dark");
-    expect(localStorage.getItem("puddle.theme")).toBe("dark");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Discard" })).toBeDisabled();
+    expect(screen.getByText("No unsaved changes.")).toBeInTheDocument();
+    await fireEvent.click(screen.getByLabelText("Sound"));
+    await choose("Default memory", "16384");
+    expect(screen.getByText(/You have unsaved changes/)).toBeInTheDocument();
+    expect(putBodies()).toHaveLength(0);
+    expect(api.ui.sound).toBeNull();
   });
 
-  it("says when the theme applied but could not be stored", async () => {
+  it("sends every edit as one change", async () => {
+    await open();
+    await fireEvent.click(screen.getByLabelText("Sound"));
+    await fireEvent.click(screen.getByLabelText("Private networks"));
+    await choose("Closing the window", "quit");
+    await save();
+    expect(putBodies()).toHaveLength(1);
+    expect(api.ui.sound).toBe(true);
+    expect(api.ui.close_behaviour).toBe("quit");
+    expect(api.layer.local_toggles.private).toBe(true);
+    expect(api.layer.local_toggles.loopback).toBeNull();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    // With nothing left in the draft, the controls show what was stored.
+    expect(screen.getByLabelText("Sound")).toBeChecked();
+    expect(screen.getByLabelText("Private networks")).toBeChecked();
+    expect(screen.getByLabelText("Closing the window")).toHaveValue("quit");
+  });
+
+  it("names the saved settings that apply at the next start", async () => {
+    await open();
+    expect(
+      screen.getAllByText("Applies when a workspace next starts."),
+    ).toHaveLength(2);
+    await choose("Default memory", "16384");
+    expect(
+      screen.getByText(/Default memory apply when a workspace next starts/),
+    ).toBeInTheDocument();
+    await fireEvent.click(screen.getByLabelText("Sound"));
+    await save(
+      "Settings saved. Default memory apply when a workspace next starts.",
+    );
+    expect(api.layer.memory).toBe(16_384);
+  });
+
+  it("says nothing about a restart for settings that apply at once", async () => {
+    await open();
+    await fireEvent.click(screen.getByLabelText("Sound"));
+    await save("Settings saved.");
+    expect(screen.queryByText(/next starts\.$/, { selector: "p" })).toBeNull();
+  });
+
+  it("drops an edit that puts a value back to what is stored", async () => {
+    await open();
+    await fireEvent.click(screen.getByLabelText("Sound"));
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    await fireEvent.click(screen.getByLabelText("Sound"));
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("Discard puts every control back to what is stored", async () => {
+    await open();
+    await fireEvent.click(screen.getByLabelText("Sound"));
+    await choose("Default memory", "16384");
+    await fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(screen.getByLabelText("Sound")).not.toBeChecked();
+    expect(screen.getByLabelText("Default memory")).toHaveValue("8192");
+    expect(screen.getByText("No unsaved changes.")).toBeInTheDocument();
+    expect(putBodies()).toHaveLength(0);
+  });
+
+  it("keeps the edits and says why when the save is refused", async () => {
+    await open();
+    api.refuse.set("PUT /api/settings", {
+      status: 422,
+      error: "invalid",
+      message: "no thanks",
+    });
+    await fireEvent.click(screen.getByLabelText("Sound"));
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("no thanks");
+    expect(screen.getByLabelText("Sound")).toBeChecked();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    expect(api.ui.sound).toBeNull();
+  });
+
+  it("blocks leaving with unsaved edits, and lets go once they are saved", async () => {
+    await open();
+    const leave = () => {
+      let cancelled = false;
+      for (const hook of nav.hooks)
+        hook({ cancel: () => (cancelled = true), willUnload: false });
+      return cancelled;
+    };
+    expect(leave()).toBe(false);
+    await fireEvent.click(screen.getByLabelText("Sound"));
+    expect(leave()).toBe(true);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Save or discard them first",
+    );
+    for (const hook of nav.hooks) {
+      let cancelled = false;
+      hook({ cancel: () => (cancelled = true), willUnload: true });
+      expect(cancelled).toBe(false);
+    }
+    await save();
+    expect(leave()).toBe(false);
+  });
+});
+
+describe("appearance and notifications", () => {
+  it("previews the theme at once and stores it, with a hint for the first paint, on Save", async () => {
+    await open();
+    await choose("Theme", "dark");
+    expect(document.documentElement.dataset["theme"]).toBe("dark");
+    expect(localStorage.getItem("puddle.theme")).toBe("dark");
+    expect(api.ui.theme).toBeNull();
+    await save();
+    expect(api.ui.theme).toBe("dark");
+  });
+
+  it("goes back to the stored theme and density on Discard", async () => {
+    await open();
+    await choose("Theme", "dark");
+    await choose("Density", "compact");
+    expect(document.documentElement.dataset["density"]).toBe("compact");
+    await fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(document.documentElement.dataset["theme"]).toBeUndefined();
+    expect(document.documentElement.dataset["density"]).toBeUndefined();
+    expect(screen.getByLabelText("Theme")).toHaveValue("system");
+  });
+
+  it("ends an unsaved preview when the screen is left", async () => {
+    await open();
+    await choose("Theme", "dark");
+    cleanup();
+    expect(document.documentElement.dataset["theme"]).toBeUndefined();
+  });
+
+  it("keeps the previewed theme when the save is refused", async () => {
     await open();
     api.refuse.set("PUT /api/settings", {
       status: 500,
@@ -193,39 +337,23 @@ describe("appearance and notifications", () => {
       message: "x",
     });
     await choose("Theme", "light");
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      /couldn't save it\. X\./,
-    );
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("x");
     expect(document.documentElement.dataset["theme"]).toBe("light");
   });
 
-  it("stores the density in the settings and applies it at once", async () => {
+  it("stores the density on Save", async () => {
     await open();
     expect(screen.getByLabelText("Density")).toHaveValue("comfortable");
     await choose("Density", "compact");
-    await screen.findByText("Density saved.");
+    expect(api.ui.density).toBeNull();
+    await save();
     expect(api.ui.density).toBe("compact");
-    expect(document.documentElement.dataset["density"]).toBe("compact");
     expect(localStorage.getItem("puddle.density")).toBe("compact");
     await choose("Density", "comfortable");
-    await waitFor(() =>
-      expect(document.documentElement.dataset["density"]).toBeUndefined(),
-    );
+    await save();
     expect(api.ui.density).toBe("comfortable");
-  });
-
-  it("says when the density applied but could not be stored", async () => {
-    await open();
-    api.refuse.set("PUT /api/settings", {
-      status: 500,
-      error: "internal",
-      message: "x",
-    });
-    await choose("Density", "compact");
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      /density changed here but puddle couldn't save it/,
-    );
-    expect(document.documentElement.dataset["density"]).toBe("compact");
+    expect(document.documentElement.dataset["density"]).toBeUndefined();
   });
 
   it("saves each notification setting", async () => {
@@ -233,26 +361,12 @@ describe("appearance and notifications", () => {
     await fireEvent.click(
       screen.getByLabelText("System notifications for new requests"),
     );
-    await screen.findByText("Notifications saved.");
-    expect(api.ui.notifications).toBe(false);
     await fireEvent.click(screen.getByLabelText("Sound"));
-    await waitFor(() => expect(api.ui.sound).toBe(true));
     await choose("Closing the window", "quit");
-    await waitFor(() => expect(api.ui.close_behaviour).toBe("quit"));
-  });
-
-  it("puts a control back when the save is refused", async () => {
-    await open();
-    api.refuse.set("PUT /api/settings", {
-      status: 422,
-      error: "invalid",
-      message: "no thanks",
-    });
-    const box = screen.getByLabelText("Sound");
-    await fireEvent.click(box);
-    expect(await screen.findByRole("alert")).toHaveTextContent("no thanks");
-    await waitFor(() => expect(box).not.toBeChecked());
-    expect(api.ui.sound).toBeNull();
+    await save();
+    expect(api.ui.notifications).toBe(false);
+    expect(api.ui.sound).toBe(true);
+    expect(api.ui.close_behaviour).toBe("quit");
   });
 });
 
@@ -260,18 +374,19 @@ describe("workspace defaults and the network", () => {
   it("changes the default memory", async () => {
     await open();
     await choose("Default memory", "16384");
-    await screen.findByText("Default memory saved.");
+    await save(/Default memory apply when a workspace next starts/);
     expect(api.layer.memory).toBe(16_384);
   });
 
   it("switches a local category on without touching the others", async () => {
     await open();
     await fireEvent.click(screen.getByLabelText("Private networks"));
-    await screen.findByText("Private networks saved.");
+    await save();
     expect(api.layer.local_toggles.private).toBe(true);
     expect(api.layer.local_toggles.loopback).toBeNull();
     await fireEvent.click(screen.getByLabelText("This computer (loopback)"));
-    await waitFor(() => expect(api.layer.local_toggles.loopback).toBe(true));
+    await save();
+    expect(api.layer.local_toggles.loopback).toBe(true);
     expect(api.layer.local_toggles.private).toBe(true);
   });
 
@@ -287,14 +402,15 @@ describe("workspace defaults and the network", () => {
     await fireEvent.click(
       screen.getByLabelText("Let suffix rules reach local addresses"),
     );
-    await waitFor(() => expect(api.layer.wildcards_reach_local).toBe(true));
     await fireEvent.click(screen.getByLabelText("Zoom shortcuts"));
-    await waitFor(() => expect(api.layer.zoom_hotkeys).toBe(false));
     await choose("Clipboard reads by pages", "deny");
-    await waitFor(() => expect(api.layer.clipboard_read).toBe("deny"));
+    await save();
+    expect(api.layer.wildcards_reach_local).toBe(true);
+    expect(api.layer.zoom_hotkeys).toBe(false);
+    expect(api.layer.clipboard_read).toBe("deny");
   });
 
-  it("turns the global direct SSH default on only after the trust text, and off at once", async () => {
+  it("turns the global direct SSH default on only after the trust text, then saves it with the rest", async () => {
     await open();
     const box = screen.getByLabelText("Allow direct SSH for new workspaces");
     expect(box).not.toBeChecked();
@@ -307,46 +423,34 @@ describe("workspace defaults and the network", () => {
     await fireEvent.click(
       within(dialog).getByRole("button", { name: "Allow for new workspaces" }),
     );
-    await waitFor(() => expect(api.layer.direct_ssh).toBe(true));
-    await screen.findByText("Allow direct SSH saved.");
+    expect(api.layer.direct_ssh).toBeNull();
+    expect(
+      screen.getByLabelText("Allow direct SSH for new workspaces"),
+    ).toBeChecked();
+    await save();
+    expect(api.layer.direct_ssh).toBe(true);
     await fireEvent.click(
       screen.getByLabelText("Allow direct SSH for new workspaces"),
     );
-    await waitFor(() => expect(api.layer.direct_ssh).toBe(false));
+    await save();
+    expect(api.layer.direct_ssh).toBe(false);
   });
 
-  it("keeps logins by default and turns the default off and back on at once", async () => {
+  it("keeps logins by default and turns the default off and back on", async () => {
     await open();
     const box = screen.getByLabelText("Keep logins made in workspaces");
     expect(box).toBeChecked();
     await fireEvent.click(box);
-    await waitFor(() => expect(api.layer.capture_logins).toBe(false));
-    await screen.findByText("Login capture saved.");
+    await save(/Login capture apply when a workspace next starts/);
+    expect(api.layer.capture_logins).toBe(false);
     expect(
       screen.getByLabelText("Keep logins made in workspaces"),
     ).not.toBeChecked();
     await fireEvent.click(
       screen.getByLabelText("Keep logins made in workspaces"),
     );
-    await waitFor(() => expect(api.layer.capture_logins).toBe(true));
-  });
-
-  it("puts the login capture box back when puddle cannot save the change", async () => {
-    await open();
-    api.refuse.set("PUT /api/settings", {
-      status: 500,
-      error: "internal",
-      message: "x",
-    });
-    await fireEvent.click(
-      screen.getByLabelText("Keep logins made in workspaces"),
-    );
-    await screen.findByRole("alert");
-    await waitFor(() =>
-      expect(
-        screen.getByLabelText("Keep logins made in workspaces"),
-      ).toBeChecked(),
-    );
+    await save(/Login capture apply/);
+    expect(api.layer.capture_logins).toBe(true);
   });
 
   it("cancelling the global trust text changes nothing", async () => {
@@ -369,9 +473,10 @@ describe("workspace defaults and the network", () => {
     expect(await screen.findByText(/Use between 30 and 86400/)).toBeVisible();
     expect(input).toHaveAttribute("aria-invalid", "true");
     expect(putBodies()).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     await fireEvent.input(input, { target: { value: "600" } });
     await fireEvent.change(input);
-    await screen.findByText("Grace saved.");
+    await save();
     expect(api.layer.reconnection_grace).toBe(600);
     expect(screen.queryByText(/Use between/)).toBeNull();
   });
@@ -493,13 +598,15 @@ describe("Microsoft's server", () => {
     };
     await open();
     await choose("Server", "microsoft");
-    await screen.findByText("Server saved.");
     expect(screen.queryByRole("dialog")).toBeNull();
+    await save();
     expect(api.vscode.server).toBe("microsoft");
     await fireEvent.click(screen.getByLabelText("Send Microsoft telemetry"));
-    await waitFor(() => expect(api.vscode.telemetry).toBe(true));
+    await save();
+    expect(api.vscode.telemetry).toBe(true);
     await choose("Server", "code_server");
-    await waitFor(() => expect(api.vscode.server).toBe("code_server"));
+    await save();
+    expect(api.vscode.server).toBe("code_server");
     expect(screen.queryByLabelText("Send Microsoft telemetry")).toBeNull();
     expect(api.consent.state).toBe("granted");
   });
@@ -516,6 +623,7 @@ describe("Microsoft's server", () => {
     await fireEvent.click(
       screen.getByLabelText("Update the server automatically"),
     );
-    await waitFor(() => expect(api.vscode.auto_update).toBe(false));
+    await save();
+    expect(api.vscode.auto_update).toBe(false);
   });
 });

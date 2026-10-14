@@ -56,6 +56,14 @@ const saved = (page: Page) =>
     (r) => r.request().method() === "PUT" && r.url().endsWith("/api/settings"),
   );
 
+/** Presses Save and waits until the API has stored the change. */
+async function pressSave(page: Page) {
+  const done = saved(page);
+  await page.getByRole("button", { name: "Save" }).click();
+  await done;
+  await expect(page.getByText(/Settings saved/)).toBeVisible();
+}
+
 test("shows every section with puddle's defaults, no CSP violations", async ({
   page,
   backend,
@@ -115,7 +123,8 @@ test("the global direct SSH default is off, asks the trust text, and is kept", a
   await expect(box).not.toBeChecked();
   await box.click();
   await trust.getByRole("button", { name: "Allow for new workspaces" }).click();
-  await expect(page.getByText("Allow direct SSH saved.")).toBeVisible();
+  await expect(box).toBeChecked();
+  await pressSave(page);
   await page.reload();
   await expect(box).toBeChecked();
 });
@@ -139,10 +148,11 @@ test("the theme is kept by puddle: it comes back after the page forgets everythi
   request,
 }) => {
   await openSettings(page, backend);
-  const done = saved(page);
   await page.getByLabel("Theme", { exact: true }).selectOption("dark");
-  await done;
+  // The theme shows at once and is stored only when Save is pressed.
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  expect((await stored(request, backend)).ui["theme"]).toBeNull();
+  await pressSave(page);
   expect((await stored(request, backend)).ui["theme"]).toBe("dark");
 
   // A new launch has a new origin: nothing in the page's storage survives.
@@ -152,25 +162,29 @@ test("the theme is kept by puddle: it comes back after the page forgets everythi
   await expect(page.getByLabel("Theme", { exact: true })).toHaveValue("dark");
 });
 
-test("changes are saved at once and survive a reload", async ({
+test("changes wait for Save, are sent together and survive a reload", async ({
   page,
   backend,
   request,
 }) => {
   await openSettings(page, backend);
-  let done = saved(page);
+  const save = page.getByRole("button", { name: "Save" });
+  await expect(save).toBeDisabled();
   await page.getByLabel("Default memory").selectOption("16384");
-  await done;
-  done = saved(page);
   await page.getByLabel("Private networks").check();
-  await done;
-  done = saved(page);
   await page.getByLabel("Sound").check();
-  await done;
-  done = saved(page);
   await page.getByLabel("Closing the window").selectOption("quit");
-  await done;
+  await expect(page.getByText(/You have unsaved changes/)).toBeVisible();
+  // Nothing is stored before Save.
+  const before = await stored(request, backend);
+  expect(before.workspace_defaults.memory).toBeNull();
+  expect(before.ui["sound"]).toBeNull();
 
+  await pressSave(page);
+  await expect(
+    page.getByText(/Default memory apply when a workspace next starts/),
+  ).toBeVisible();
+  await expect(save).toBeDisabled();
   const now = await stored(request, backend);
   expect(now.workspace_defaults.memory).toBe(16_384);
   expect(now.workspace_defaults.local_toggles["private"]).toBe(true);
@@ -183,6 +197,49 @@ test("changes are saved at once and survive a reload", async ({
   await expect(page.getByLabel("Private networks")).toBeChecked();
   await expect(page.getByLabel("Sound")).toBeChecked();
   await expect(page.getByLabel("Closing the window")).toHaveValue("quit");
+});
+
+test("Discard drops the edits, and leaving with edits is held back", async ({
+  page,
+  backend,
+  request,
+}) => {
+  await openSettings(page, backend);
+  await page.getByLabel("Sound").check();
+  await page
+    .getByRole("navigation", { name: "Main" })
+    .getByRole("link", { name: /^Rules/ })
+    .click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Save or discard them first",
+  );
+  await expect(page).toHaveURL(/\/settings$/);
+  await page.getByRole("button", { name: "Discard" }).click();
+  await expect(page.getByLabel("Sound")).not.toBeChecked();
+  expect((await stored(request, backend)).ui["sound"]).toBeNull();
+  await page
+    .getByRole("navigation", { name: "Main" })
+    .getByRole("link", { name: /^Rules/ })
+    .click();
+  await expect(page).toHaveURL(/\/rules$/);
+});
+
+test("the Save bar stays on screen, its buttons are big enough, and the screen has no axe findings with unsaved edits", async ({
+  page,
+  backend,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await openSettings(page, backend);
+  await page.getByLabel("Sound").check();
+  const save = page.getByRole("button", { name: "Save" });
+  // Scrolled to the top of a long page, the bar is still inside the window.
+  await expect(save).toBeInViewport();
+  for (const name of ["Save", "Discard"]) {
+    const box = await page.getByRole("button", { name }).boundingBox();
+    expect(box?.height ?? 0, `${name} height`).toBeGreaterThanOrEqual(24);
+    expect(box?.width ?? 0, `${name} width`).toBeGreaterThanOrEqual(24);
+  }
+  expect(await axeViolations(page)).toEqual([]);
 });
 
 test("a reconnection grace outside the range is refused before anything is sent", async ({
@@ -198,10 +255,9 @@ test("a reconnection grace outside the range is refused before anything is sent"
   expect(
     (await stored(request, backend)).workspace_defaults["reconnection_grace"],
   ).toBeNull();
-  const done = saved(page);
   await grace.fill("900");
   await grace.blur();
-  await done;
+  await pressSave(page);
   expect(
     (await stored(request, backend)).workspace_defaults["reconnection_grace"],
   ).toBe(900);
@@ -282,15 +338,13 @@ test.describe("Microsoft's VS Code server", () => {
       page.getByText(/You accepted Microsoft's terms on/),
     ).toBeVisible();
     // Switching back keeps the consent; switching again does not ask.
-    let done = saved(page);
     await page
       .getByLabel("Server", { exact: true })
       .selectOption("code_server");
-    await done;
-    done = saved(page);
+    await pressSave(page);
     await page.getByLabel("Server", { exact: true }).selectOption("microsoft");
-    await done;
     await expect(page.getByRole("dialog")).toHaveCount(0);
+    await pressSave(page);
   });
 
   test("telemetry is only on when the box was checked", async ({

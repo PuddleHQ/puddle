@@ -1,0 +1,23 @@
+tokio-yamux 0.3.20, modified by the Puddle project
+==================================================
+
+Original: https://github.com/nervosnetwork/tentacle (directory `yamux`), published on crates.io as
+`tokio-yamux`. Copyright (c) 2018 Nervos Foundation, MIT licence (the `LICENSE` file here).
+
+Changed by Puddle: `src/stream.rs` only. A stream whose peer has closed its sending half (a FIN)
+still handles the peer's window updates, so the half-closed connection can move more than one
+window of data in the other direction. The diff is `diff -u` of `src/stream.rs` against the 0.3.20
+release, and the two commits that vendored it show the same (the unchanged copy, then the fix).
+`Cargo.toml` is the upstream repository's manifest with dev-dependencies, benches and examples
+dropped, and the files carry an SPDX header line; nothing else differs.
+
+This copy is temporary. Remove it, and the `tokio-yamux` entry under `[patch.crates-io]` in the
+workspace `Cargo.toml`, when either of these is true:
+
+1. A tokio-yamux release newer than 0.3.20 handles window updates after the peer's FIN. Check: in
+   that release's `src/stream.rs`, `recv_frames` and `try_recv_frames` no longer return early for
+   `StreamState::RemoteClosing`, and `poll_write` wakes on a window update then. The three tests
+   named in `README.md` pass against the registry crate (delete the patch entry, run them).
+2. A fork pinned by `rev` replaces it (decided by the project owner).
+
+Until then, every tokio-yamux version bump re-applies the change to the new release's `stream.rs`.

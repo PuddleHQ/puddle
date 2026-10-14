@@ -159,6 +159,24 @@ pub struct UiPrefs {
     /// What closing the window does while a workspace runs; default keep running in the tray.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub close_behaviour: Option<CloseBehaviour>,
+    /// Raise the system notification only while puddle's window is not focused; default on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notify_only_unfocused: Option<bool>,
+    /// Show the waiting count on the tray, the taskbar and the window title; default on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub badge: Option<bool>,
+    /// Notify when a workspace is killed for running out of memory; default on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notify_oom: Option<bool>,
+    /// Notify when a workspace stops or crashes without being asked to; default on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notify_unexpected_stop: Option<bool>,
+    /// Ask for confirmation before a decision creates a rule for every workspace; default on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm_global_rules: Option<bool>,
+    /// The single-key shortcuts of the inbox (A, D, J, K); default off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inbox_shortcuts: Option<bool>,
     #[serde(flatten)]
     pub(crate) extra: BTreeMap<String, Value>,
 }
@@ -168,6 +186,18 @@ impl UiPrefs {
     pub const DEFAULT_NOTIFICATIONS: bool = true;
     /// puddle's default for [`UiPrefs::sound`].
     pub const DEFAULT_SOUND: bool = false;
+    /// puddle's default for [`UiPrefs::notify_only_unfocused`].
+    pub const DEFAULT_NOTIFY_ONLY_UNFOCUSED: bool = true;
+    /// puddle's default for [`UiPrefs::badge`].
+    pub const DEFAULT_BADGE: bool = true;
+    /// puddle's default for [`UiPrefs::notify_oom`].
+    pub const DEFAULT_NOTIFY_OOM: bool = true;
+    /// puddle's default for [`UiPrefs::notify_unexpected_stop`].
+    pub const DEFAULT_NOTIFY_UNEXPECTED_STOP: bool = true;
+    /// puddle's default for [`UiPrefs::confirm_global_rules`].
+    pub const DEFAULT_CONFIRM_GLOBAL_RULES: bool = true;
+    /// puddle's default for [`UiPrefs::inbox_shortcuts`].
+    pub const DEFAULT_INBOX_SHORTCUTS: bool = false;
 
     /// The theme in use.
     #[must_use]
@@ -197,6 +227,46 @@ impl UiPrefs {
     #[must_use]
     pub fn close_behaviour(&self) -> CloseBehaviour {
         self.close_behaviour.unwrap_or_default()
+    }
+
+    /// Whether a notification waits for the window to lose focus.
+    #[must_use]
+    pub fn notify_only_unfocused(&self) -> bool {
+        self.notify_only_unfocused
+            .unwrap_or(Self::DEFAULT_NOTIFY_ONLY_UNFOCUSED)
+    }
+
+    /// Whether the waiting count shows on the tray, taskbar and title.
+    #[must_use]
+    pub fn badge(&self) -> bool {
+        self.badge.unwrap_or(Self::DEFAULT_BADGE)
+    }
+
+    /// Whether an out-of-memory kill notifies.
+    #[must_use]
+    pub fn notify_oom(&self) -> bool {
+        self.notify_oom.unwrap_or(Self::DEFAULT_NOTIFY_OOM)
+    }
+
+    /// Whether an unexpected stop or crash notifies.
+    #[must_use]
+    pub fn notify_unexpected_stop(&self) -> bool {
+        self.notify_unexpected_stop
+            .unwrap_or(Self::DEFAULT_NOTIFY_UNEXPECTED_STOP)
+    }
+
+    /// Whether a decision for every workspace asks first.
+    #[must_use]
+    pub fn confirm_global_rules(&self) -> bool {
+        self.confirm_global_rules
+            .unwrap_or(Self::DEFAULT_CONFIRM_GLOBAL_RULES)
+    }
+
+    /// Whether the inbox answers to single keys.
+    #[must_use]
+    pub fn inbox_shortcuts(&self) -> bool {
+        self.inbox_shortcuts
+            .unwrap_or(Self::DEFAULT_INBOX_SHORTCUTS)
     }
 
     fn is_empty(&self) -> bool {
@@ -254,11 +324,19 @@ mod tests {
         assert!(ui.notifications());
         assert!(!ui.sound());
         assert_eq!(ui.close_behaviour(), CloseBehaviour::Tray);
+        assert!(ui.notify_only_unfocused());
+        assert!(ui.badge());
+        assert!(ui.notify_oom());
+        assert!(ui.notify_unexpected_stop());
+        assert!(ui.confirm_global_rules());
+        assert!(!ui.inbox_shortcuts());
 
         let doc = json!({
             "schema_version": 2,
             "vscode_server": { "server": "microsoft" },
-            "ui": { "theme": "dark", "density": "compact", "notifications": false, "sound": true, "close_behaviour": "quit" },
+            "ui": { "theme": "dark", "density": "compact", "notifications": false, "sound": true, "close_behaviour": "quit",
+                     "notify_only_unfocused": false, "badge": false, "notify_oom": false,
+                     "notify_unexpected_stop": false, "confirm_global_rules": false, "inbox_shortcuts": true },
         });
         let loaded = GlobalSettings::from_document(doc.clone()).unwrap();
         assert_eq!(loaded.unknown_fields, Vec::<String>::new());
@@ -271,6 +349,13 @@ mod tests {
         assert!(!loaded.settings.ui.notifications());
         assert!(loaded.settings.ui.sound());
         assert_eq!(loaded.settings.ui.close_behaviour(), CloseBehaviour::Quit);
+        let ui = &loaded.settings.ui;
+        assert!(!ui.notify_only_unfocused());
+        assert!(!ui.badge());
+        assert!(!ui.notify_oom());
+        assert!(!ui.notify_unexpected_stop());
+        assert!(!ui.confirm_global_rules());
+        assert!(ui.inbox_shortcuts());
         assert_eq!(loaded.settings.to_document(), doc);
     }
 

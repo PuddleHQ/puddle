@@ -3222,10 +3222,22 @@ export interface components {
         ThemeChoice: "system" | "light" | "dark";
         /** @description Preferences for puddle's own window. `null` means puddle's default. */
         UiPrefs: {
+            /** @description The waiting count on the tray, taskbar and window title (default on). */
+            badge: boolean | null;
             close_behaviour: components["schemas"]["CloseBehaviour"] | null;
+            /** @description Ask before a decision creates a rule for every workspace (default on). */
+            confirm_global_rules: boolean | null;
             density: components["schemas"]["DensityChoice"] | null;
+            /** @description The inbox's single-key shortcuts A, D, J and K (default off). */
+            inbox_shortcuts: boolean | null;
             /** @description A system notification for a new request (default on). */
             notifications: boolean | null;
+            /** @description Notify only while puddle's window is not focused (default on). */
+            notify_only_unfocused: boolean | null;
+            /** @description Notify when a workspace is killed for running out of memory (default on). */
+            notify_oom: boolean | null;
+            /** @description Notify when a workspace stops or crashes without being asked to (default on). */
+            notify_unexpected_stop: boolean | null;
             /** @description The system sound with a notification (default off). */
             sound: boolean | null;
             theme: components["schemas"]["ThemeChoice"] | null;

@@ -1683,6 +1683,30 @@ pub struct UiPrefs {
     #[serde(default)]
     #[schema(required = true)]
     pub close_behaviour: Option<CloseBehaviour>,
+    /// Notify only while puddle's window is not focused (default on).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub notify_only_unfocused: Option<bool>,
+    /// The waiting count on the tray, taskbar and window title (default on).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub badge: Option<bool>,
+    /// Notify when a workspace is killed for running out of memory (default on).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub notify_oom: Option<bool>,
+    /// Notify when a workspace stops or crashes without being asked to (default on).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub notify_unexpected_stop: Option<bool>,
+    /// Ask before a decision creates a rule for every workspace (default on).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub confirm_global_rules: Option<bool>,
+    /// The inbox's single-key shortcuts A, D, J and K (default off).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub inbox_shortcuts: Option<bool>,
 }
 
 impl From<&settings::UiPrefs> for UiPrefs {
@@ -1693,6 +1717,12 @@ impl From<&settings::UiPrefs> for UiPrefs {
             notifications: u.notifications,
             sound: u.sound,
             close_behaviour: u.close_behaviour.map(Into::into),
+            notify_only_unfocused: u.notify_only_unfocused,
+            badge: u.badge,
+            notify_oom: u.notify_oom,
+            notify_unexpected_stop: u.notify_unexpected_stop,
+            confirm_global_rules: u.confirm_global_rules,
+            inbox_shortcuts: u.inbox_shortcuts,
         }
     }
 }
@@ -1705,12 +1735,24 @@ impl UiPrefs {
             notifications,
             sound,
             close_behaviour,
+            notify_only_unfocused,
+            badge,
+            notify_oom,
+            notify_unexpected_stop,
+            confirm_global_rules,
+            inbox_shortcuts,
         } = self;
         prefs.theme = theme.map(Into::into);
         prefs.density = density.map(Into::into);
         prefs.notifications = notifications;
         prefs.sound = sound;
         prefs.close_behaviour = close_behaviour.map(Into::into);
+        prefs.notify_only_unfocused = notify_only_unfocused;
+        prefs.badge = badge;
+        prefs.notify_oom = notify_oom;
+        prefs.notify_unexpected_stop = notify_unexpected_stop;
+        prefs.confirm_global_rules = confirm_global_rules;
+        prefs.inbox_shortcuts = inbox_shortcuts;
     }
 }
 
@@ -2199,6 +2241,12 @@ mod tests {
                 notifications: Some(false),
                 sound: Some(true),
                 close_behaviour: Some(CloseBehaviour::Quit),
+                notify_only_unfocused: Some(false),
+                badge: Some(false),
+                notify_oom: Some(false),
+                notify_unexpected_stop: Some(false),
+                confirm_global_rules: Some(false),
+                inbox_shortcuts: Some(true),
             },
         }
         .apply_to(&mut g)
@@ -2209,6 +2257,12 @@ mod tests {
         assert!(!g.ui.notifications());
         assert!(g.ui.sound());
         assert_eq!(g.ui.close_behaviour(), settings::CloseBehaviour::Quit);
+        assert!(!g.ui.notify_only_unfocused());
+        assert!(!g.ui.badge());
+        assert!(!g.ui.notify_oom());
+        assert!(!g.ui.notify_unexpected_stop());
+        assert!(!g.ui.confirm_global_rules());
+        assert!(g.ui.inbox_shortcuts());
         assert!(g.vscode_server.telemetry());
         assert!(!g.vscode_server.auto_update());
         let view = GlobalSettingsView::new(&settings::Loaded {

@@ -33,7 +33,9 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
     );
     assert_eq!(
         view["ui"],
-        json!({"theme": null, "density": null, "notifications": null, "sound": null, "close_behaviour": null})
+        json!({"theme": null, "density": null, "notifications": null, "sound": null, "close_behaviour": null,
+               "notify_only_unfocused": null, "badge": null, "notify_oom": null, "notify_unexpected_stop": null,
+               "confirm_global_rules": null, "inbox_shortcuts": null})
     );
     assert_eq!(view["unknown_fields"], json!([]));
     let e = &view["effective"];
@@ -342,7 +344,9 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
         .await;
     let body = json!({
         "vscode_server": {"server": "microsoft", "telemetry": false},
-        "ui": {"theme": "dark", "density": "compact", "notifications": false, "sound": true, "close_behaviour": "quit"}
+        "ui": {"theme": "dark", "density": "compact", "notifications": false, "sound": true, "close_behaviour": "quit",
+                "notify_only_unfocused": false, "badge": false, "notify_oom": false, "notify_unexpected_stop": false,
+                "confirm_global_rules": false, "inbox_shortcuts": true}
     });
     let reply = api.send("PUT", "/api/settings", Some(&body)).await;
     assert_eq!(reply.status, 200, "{}", reply.body);
@@ -351,6 +355,16 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
     assert_eq!(view["ui"]["theme"], "dark");
     assert_eq!(view["ui"]["close_behaviour"], "quit");
     assert_eq!(view["ui"]["density"], "compact");
+    for key in [
+        "notify_only_unfocused",
+        "badge",
+        "notify_oom",
+        "notify_unexpected_stop",
+        "confirm_global_rules",
+    ] {
+        assert_eq!(view["ui"][key], false, "{key}");
+    }
+    assert_eq!(view["ui"]["inbox_shortcuts"], true);
     let stored = api.settings.load_global().unwrap().unwrap();
     assert_eq!(stored["ui"]["theme"], "dark");
     assert_eq!(stored["vscode_server"]["server"], "microsoft");

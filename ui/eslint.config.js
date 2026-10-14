@@ -39,6 +39,12 @@ export default ts.config(
     },
   },
   {
+    // The app is a static SPA served from the site root and never sets `paths.base`, so resolve()
+    // would return its input unchanged. eslint-plugin-svelte 3.23.1 turned this rule on for SvelteKit 3.
+    // Turn it back on if the UI is ever served from a sub-path.
+    rules: { "svelte/no-navigation-without-resolve": "off" },
+  },
+  {
     files: ["scripts/**", "tools/**", "*.config.*"],
     rules: { "no-console": "off" },
   },

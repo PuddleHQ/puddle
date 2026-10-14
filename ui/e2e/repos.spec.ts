@@ -271,13 +271,15 @@ test("keyboard only: from the repository row to the finished form", async ({
   await expect(search).toBeVisible();
   await search.focus();
   await page.keyboard.type("dotfiles");
+  // The list is read after the picker opens: until it arrives "no docs-site" is true of an empty
+  // list too, and a Tab then leaves the search for the next control. Wait for the match itself.
+  const dotfiles = form.getByRole("button", { name: /tijs-demo\/dotfiles/ });
+  await expect(dotfiles).toBeVisible();
   await expect(
     form.getByRole("button", { name: /tijs-demo\/docs-site/ }),
   ).toHaveCount(0);
   await page.keyboard.press("Tab");
-  await expect(
-    form.getByRole("button", { name: /tijs-demo\/dotfiles/ }),
-  ).toBeFocused();
+  await expect(dotfiles).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(form.getByLabel("Name")).toBeFocused();
   await expect(form.getByLabel("Git repository (HTTPS)")).toHaveValue(

@@ -226,6 +226,8 @@ impl StreamHandle {
             Type::WindowUpdate => {
                 self.handle_window_update(&frame)?;
             }
+            // puddle: the peer already closed its sending half; a data frame after that has no reader.
+            Type::Data if self.state == StreamState::RemoteClosing => {}
             Type::Data => {
                 self.handle_data(frame)?;
             }
@@ -272,14 +274,10 @@ impl StreamHandle {
         trace!("stream-handle({}) recv_frames", self.id);
         let mut has_new_frame = false;
         loop {
-            match self.state {
-                StreamState::RemoteClosing => {
-                    return Err(Error::SubStreamRemoteClosing);
-                }
-                StreamState::Reset | StreamState::Closed => {
-                    return Err(Error::SessionShutdown);
-                }
-                _ => {}
+            // puddle: no early return for `RemoteClosing`. The peer closed only its sending half, and
+            // its window updates for ours still have to be received.
+            if matches!(self.state, StreamState::Reset | StreamState::Closed) {
+                return Err(Error::SessionShutdown);
             }
 
             if self.frame_receiver.is_terminated() {
@@ -305,14 +303,10 @@ impl StreamHandle {
     fn try_recv_frames(&mut self) -> Result<bool, Error> {
         let mut has_new_frame = false;
         loop {
-            match self.state {
-                StreamState::RemoteClosing => {
-                    return Err(Error::SubStreamRemoteClosing);
-                }
-                StreamState::Reset | StreamState::Closed => {
-                    return Err(Error::SessionShutdown);
-                }
-                _ => {}
+            // puddle: no early return for `RemoteClosing`. The peer closed only its sending half, and
+            // its window updates for ours still have to be received.
+            if matches!(self.state, StreamState::Reset | StreamState::Closed) {
+                return Err(Error::SessionShutdown);
             }
 
             if self.frame_receiver.is_terminated() {
@@ -553,6 +547,15 @@ impl AsyncWrite for StreamHandle {
                 )));
             }
             _ => (),
+        }
+
+        // puddle: after the peer's FIN nobody polls this stream for reading, so nothing else would
+        // wake this writer when the peer opens the window again: listen for the update here.
+        if self.send_window == 0
+            && self.state == StreamState::RemoteClosing
+            && self.recv_frames(cx).is_err()
+        {
+            return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
         }
 
         if self.send_window == 0 {

@@ -269,3 +269,70 @@ async fn after_a_host_restart_new_connections_redial_and_work() {
         round_trip(agent, echo, i).await.unwrap();
     }
 }
+
+/// Bigger than one yamux stream window (16 MiB), so the bytes only pass if the window reopens.
+const OVER_A_WINDOW: usize = 40 * 1024 * 1024;
+
+/// Reads `conn` to its end and returns the byte count, failing the test if that takes over 20 s.
+async fn drain(conn: &mut (impl AsyncReadExt + Unpin), what: &str) -> usize {
+    let mut total = 0;
+    let mut buf = vec![0u8; 256 * 1024];
+    let read = tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let n = conn.read(&mut buf).await.unwrap();
+            if n == 0 {
+                break;
+            }
+            total += n;
+        }
+    })
+    .await;
+    assert!(read.is_ok(), "{what} stalled after {} MiB", total >> 20);
+    total
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_client_that_half_closes_still_gets_a_download_larger_than_the_stream_window() {
+    let rig = common::rig("halfdown", |_| None).await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (mut conn, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        conn.read_to_end(&mut request).await.unwrap();
+        let chunk = vec![b'x'; 256 * 1024];
+        for _ in 0..OVER_A_WINDOW / chunk.len() {
+            conn.write_all(&chunk).await.unwrap();
+        }
+        conn.shutdown().await.unwrap();
+    });
+    let mut conn = connect_via(rig.agent.local_addr(), target).await.unwrap();
+    conn.write_all(b"GET /big\r\n\r\n").await.unwrap();
+    conn.get_mut().shutdown().await.unwrap();
+    assert_eq!(drain(&mut conn, "the download").await, OVER_A_WINDOW);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_server_that_half_closes_still_gets_an_upload_larger_than_the_stream_window() {
+    let rig = common::rig("halfup", |_| None).await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut conn, _) = listener.accept().await.unwrap();
+        // An early answer, then the server's own end of stream, while the upload goes on.
+        conn.write_all(b"too big\r\n").await.unwrap();
+        conn.shutdown().await.unwrap();
+        drain(&mut conn, "the upload").await
+    });
+    let mut conn = connect_via(rig.agent.local_addr(), target).await.unwrap();
+    let chunk = vec![b'u'; 256 * 1024];
+    let sent = tokio::time::timeout(Duration::from_secs(20), async {
+        for _ in 0..OVER_A_WINDOW / chunk.len() {
+            conn.write_all(&chunk).await.unwrap();
+        }
+        conn.get_mut().shutdown().await.unwrap();
+    })
+    .await;
+    assert!(sent.is_ok(), "the upload stalled");
+    assert_eq!(server.await.unwrap(), OVER_A_WINDOW);
+}

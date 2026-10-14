@@ -234,7 +234,7 @@ the owner, then tagged `vX.Y.Z` on `main`.
 
 | Tier | What | Where it lives | Runs |
 |---|---|---|---|
-| L0 static | fmt, clippy (Linux + msvc), deny, typos, SPDX, shellcheck, secrets (gitleaks), standalone (no planning-note references), rustdoc, API contract | `scripts/check.sh` | every push, every PR |
+| L0 static | fmt, clippy (Linux + msvc), deny, typos, SPDX, shellcheck, secrets (gitleaks), standalone (no planning-note references), git-pins (no dependency pinned by a branch), rustdoc, API contract | `scripts/check.sh` | every push, every PR |
 | L1 unit | one module's logic: parsers, rules, state machines, address classifier, path handling | `#[cfg(test)] mod tests` in the same file | every push (Linux), nightly + PRs to `main` (Windows) |
 | L2 integration, no VM | real proxy + real agent over a Unix socket / named pipe, fake guest client, fake upstreams; API over loopback; the hostile-guest **tier P** | `crates/<crate>/tests/*.rs`; cross-crate ones in `crates/puddle-e2e/tests/` | every push |
 | L3 Linux KVM e2e (**K**) | a real msb microVM; the product's behaviours; hostile-guest **tier V** | `crates/puddle-vm-tests/tests/`, functions or files named `vm_*` | `vm-linux.yml`: every pull request to `develop`, by hand on any branch, nightly on `develop` |
@@ -317,7 +317,7 @@ the owner, then tagged `vX.Y.Z` on `main`.
 
 | Set | Gates | Runs |
 |---|---|---|
-| `fast` | fmt, typos, spdx, shellcheck, hooks, platform-literals, standalone | pre-commit hook |
+| `fast` | fmt, typos, spdx, shellcheck, hooks, platform-literals, standalone, git-pins | pre-commit hook |
 | `pre-push` | every gate of `all` except `ui-e2e` | pre-push hook |
 | `all` (the default) | every gate, `ui-e2e` included | `ci.yml` (on every push and PR), by hand |
 
@@ -388,6 +388,10 @@ workspace. `scripts/check-spdx.sh` enforces it. Details and third-party files:
   or transitive, or a yanked crate fails), bans (no wildcards) and sources (crates.io only;
   puddle's own forks on GitHub once added). An exception names the advisory or crate, the reason
   and a review date.
+- A git dependency is pinned by a tag or a full `rev`, never by `branch =`: a branch moves, and once its
+  owner rebases it the commit in `Cargo.lock` is off its history and every fresh fetch fails with
+  "revision not found". Gate `git-pins` (`scripts/check-git-pins.sh`) fails on a `branch =` key in
+  any `Cargo.toml` and on a `?branch=` source in `Cargo.lock`.
 - **Third-party notices:** `cargo xtask notices --check` (gate `notices`) fails when a shipped
   dependency has no licence entry in cargo-about's report (`about.toml`, whose `accepted` list
   mirrors `deny.toml`). Release notices for puddle and the bundled msb come from

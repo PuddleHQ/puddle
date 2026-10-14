@@ -387,6 +387,41 @@ describe("a record as a row", () => {
   });
 });
 
+describe("records and states this build doesn't know", () => {
+  it("describes an unknown record type by its name, so the row still reads", () => {
+    const view = row({
+      type: "quota_changed",
+      ts: 9,
+      workspace_id: "shop",
+    } as unknown as AuditRecord);
+    expect(view).toMatchObject({
+      ts: 9,
+      workspace: "shop",
+      type: "quota_changed",
+      outcome: null,
+    });
+    expect(view.detail).toContain('"quota_changed"');
+    expect(row({} as unknown as AuditRecord)).toMatchObject({
+      ts: 0,
+      workspace: null,
+      type: "unknown",
+    });
+  });
+
+  it("shows a decision or pending state it has no word for as it came", () => {
+    expect(
+      row(connection(1, { decision: "quarantine" } as never).record).outcome,
+    ).toEqual({ label: "quarantine", tone: "neutral" });
+    expect(
+      row({
+        type: "pending_decided",
+        ts: 1,
+        pending: { ...pending, state: "snoozed" },
+      } as unknown as AuditRecord).outcome,
+    ).toEqual({ label: "snoozed", tone: "neutral" });
+  });
+});
+
 describe("rule set records (R-43)", () => {
   const set = {
     id: 4,

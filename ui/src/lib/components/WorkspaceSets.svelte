@@ -11,6 +11,7 @@
     type RuleSetsStore,
   } from "#lib/stores/rule-sets.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
+  import LoadNotice from "./LoadNotice.svelte";
   import SystemManagedList from "./SystemManagedList.svelte";
   import "#lib/theme/controls.css";
 
@@ -47,7 +48,12 @@
   </div>
   {#if store.status === "loading"}
     <p class="muted pad">Loading rule sets&hellip;</p>
+  {:else if store.status === "failed"}
+    <LoadNotice what="the rule sets" message={store.loadError} padded />
   {:else}
+    {#if store.loadError}
+      <LoadNotice what="the rule sets" message={store.loadError} stale padded />
+    {/if}
     <ul>
       {#each store.sets as ruleSet (ruleSet.id)}
         <li>

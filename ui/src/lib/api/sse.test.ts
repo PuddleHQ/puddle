@@ -195,6 +195,24 @@ describe("eventStream", () => {
     expect(t.sleeps).toEqual([1000, 2000]);
   });
 
+  it("says why each attempt failed", async () => {
+    const reasons: string[] = [];
+    const t = setup([
+      () => new Response("nope", { status: 500 }),
+      () => new Response("no", { status: 401 }),
+      () => {
+        throw new TypeError("network down");
+      },
+      () => sse([status("ok")]),
+    ]);
+    await take(eventStream({ ...t.base, onError: (r) => reasons.push(r) }), 1);
+    expect(reasons).toEqual([
+      "the event stream answered 500",
+      "the event stream refused this app's key (status 401)",
+      "the connection to the event stream failed",
+    ]);
+  });
+
   it("uses the default schedule when given none or an empty one", async () => {
     const down = () => new Response("", { status: 500 });
     const t = setup([down, () => sse([status("a")])]);

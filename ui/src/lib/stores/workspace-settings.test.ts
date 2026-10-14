@@ -46,7 +46,7 @@ describe("loading", () => {
     expect(settings.reason).toBe(reason);
     api.refuse.set("GET /api/settings", { status: 500, message: "x" });
     await settings.load("demo");
-    expect(settings.reason).toBeNull();
+    expect(settings.reason).toBe("X.");
     await settings.load("demo");
     expect(settings.status).toBe("ready");
     expect(settings.reason).toBeNull();

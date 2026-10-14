@@ -102,14 +102,18 @@ describe("refresh", () => {
     inbox.down = true;
     await store.refresh();
     expect(store.status).toBe("failed");
+    expect(store.loadError).toBe("puddle's service isn't answering.");
     inbox.down = false;
     inbox.add(request(1));
     await store.refresh();
     expect(store.status).toBe("ready");
+    expect(store.loadError).toBeNull();
     inbox.down = true;
     await store.refresh();
     expect(store.status).toBe("ready");
     expect(store.count).toBe(1);
+    // The list is kept, but the screen is told it may be out of date.
+    expect(store.loadError).toBe("puddle's service isn't answering.");
   });
 
   it("treats a non-OK answer like a failure", async () => {
@@ -120,6 +124,7 @@ describe("refresh", () => {
     })) as never;
     await store.refresh();
     expect(store.status).toBe("failed");
+    expect(store.loadError).toBe("puddle's service hit an error (status 500).");
   });
 
   it("shares a run between concurrent calls and runs once more afterwards", async () => {

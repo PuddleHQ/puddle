@@ -8,9 +8,10 @@ import {
   type EventStreamOptions,
   type StreamState,
 } from "#lib/api/sse.ts";
+import { readFailure } from "./read-failure.ts";
 
 /** Why the count could not be read. */
-export type LiveProblem = "unauthorized" | "unreachable";
+export type LiveProblem = "unauthorized" | "unreachable" | "failing";
 
 /** What a screen hears from the shell's one event stream. */
 export interface LiveListener {
@@ -35,6 +36,10 @@ export class LiveState implements LiveSource {
   pending = $state(0);
   stream = $state<StreamState>("connecting");
   problem = $state<LiveProblem | null>(null);
+  /** For `failing`: what the service answered. */
+  problemDetail = $state<string | null>(null);
+  /** Why the event stream last failed to connect; `null` while it is connected. */
+  streamError = $state<string | null>(null);
 
   readonly #api: Pick<ApiClient, "GET">;
   readonly #events: (options: EventStreamOptions) => AsyncIterable<unknown>;
@@ -63,12 +68,16 @@ export class LiveState implements LiveSource {
   /** Reads the open-request count. Never throws: a failure sets `problem`. */
   async refresh(): Promise<void> {
     try {
-      const { data, response } = await this.#api.GET("/api/pending");
+      const { data, error, response } = await this.#api.GET("/api/pending");
       if (data) {
         this.pending = data.requests.length;
         this.problem = null;
+        this.problemDetail = null;
+      } else if (response.status === 401) {
+        this.problem = "unauthorized";
       } else {
-        this.problem = response.status === 401 ? "unauthorized" : "unreachable";
+        this.problem = "failing";
+        this.problemDetail = readFailure(error, response);
       }
     } catch {
       this.problem = "unreachable";
@@ -85,6 +94,10 @@ export class LiveState implements LiveSource {
         signal: controller.signal,
         onState: (state) => {
           this.stream = state;
+          if (state === "connected") this.streamError = null;
+        },
+        onError: (reason) => {
+          this.streamError = reason;
         },
         onResync: () => {
           void this.refresh();

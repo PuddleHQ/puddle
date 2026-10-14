@@ -16,6 +16,7 @@ import { localCategory, type LocalCategory } from "#lib/decision/local.ts";
 import type { Decided } from "#lib/decision/decided.ts";
 import { build, type Choice, type Target } from "#lib/decision/model.ts";
 import { live, type LiveSource } from "./live.svelte.ts";
+import { readFailure, SERVICE_DOWN } from "./read-failure.ts";
 
 export type PendingRequest = components["schemas"]["PendingRequest"];
 export type Suppression = components["schemas"]["Suppression"];
@@ -120,6 +121,8 @@ export class PendingStore {
   toggles = $state.raw<Record<string, Toggles | null>>({});
   decided = $state.raw<Decided[]>([]);
   status = $state<Status>("loading");
+  /** Why the last read of the inbox failed; `null` once a read works. */
+  loadError = $state<string | null>(null);
 
   readonly groups = $derived(groupRows(this.rows));
   readonly count = $derived(this.rows.length);
@@ -180,11 +183,13 @@ export class PendingStore {
 
   async #load(): Promise<void> {
     try {
-      const { data } = await this.#api.GET("/api/inbox");
+      const { data, error, response } = await this.#api.GET("/api/inbox");
       if (!data) {
+        this.loadError = readFailure(error, response);
         if (this.status === "loading") this.status = "failed";
         return;
       }
+      this.loadError = null;
       const rows: Row[] = data.groups.flatMap((g) =>
         g.requests.map((request) => ({
           request,
@@ -196,6 +201,7 @@ export class PendingStore {
       this.status = "ready";
       await Promise.all([this.#loadSuppression(), this.#loadToggles()]);
     } catch {
+      this.loadError = SERVICE_DOWN;
       if (this.status === "loading") this.status = "failed";
     }
   }

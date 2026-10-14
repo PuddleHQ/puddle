@@ -43,14 +43,17 @@ describe("the density and the settings", () => {
   });
 
   it("stores a new choice through the API, loading the settings first when needed", async () => {
-    expect(await density.set("compact")).toBe(true);
+    expect(await density.set("compact")).toEqual({ ok: true });
     expect(api.ui.density).toBe("compact");
     expect(density.choice).toBe("compact");
   });
 
   it("applies a choice even when it can't be stored", async () => {
     api.down = true;
-    expect(await density.set("compact")).toBe(false);
+    expect(await density.set("compact")).toEqual({
+      ok: false,
+      message: "puddle's service isn't answering.",
+    });
     expect(density.choice).toBe("compact");
     expect(document.documentElement.dataset["density"]).toBe("compact");
   });

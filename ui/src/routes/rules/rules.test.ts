@@ -118,8 +118,20 @@ describe("the list", () => {
     api.down = true;
     render(RulesPage);
     expect(
-      await screen.findByText(/couldn't read the rules/i),
+      await screen.findByText(
+        /Couldn't read the rules\. puddle's service isn't answering\./,
+      ),
     ).toBeInTheDocument();
+  });
+  it("keeps the table but says it may be out of date when a refresh fails", async () => {
+    seed();
+    await loaded();
+    api.down = true;
+    await rulesStore.refresh();
+    expect(
+      await screen.findByText(/Couldn't refresh the rules/),
+    ).toBeInTheDocument();
+    expect(hosts().length).toBeGreaterThan(0);
   });
   it("shows each rule's host, effect, workspace and expiry, newest first", async () => {
     seed();
@@ -618,6 +630,29 @@ describe("rule sets and System managed (rules spec §7)", () => {
       expect(setsApi.calls).toContain("PUT /api/rule-sets/{id}/switch"),
     );
     expect(setsApi.bodies.at(-1)).toEqual({ workspace: null, enabled: true });
+  });
+
+  it("refuses a rule into a set that was deleted while the form was open", async () => {
+    await withSets();
+    await fireEvent.click(
+      screen.getAllByRole("button", { name: "Add rule" })[0]!,
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Add a rule" });
+    await fireEvent.click(
+      within(dialog).getByRole("radio", { name: /In rule set Client X/ }),
+    );
+    setsApi.sets = [];
+    await ruleSets.refresh();
+    await fireEvent.input(within(dialog).getByLabelText("Host"), {
+      target: { value: "y.example" },
+    });
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Add rule" }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "That rule set no longer exists.",
+    );
+    expect(api.calls).not.toContain("POST /api/rules");
   });
 
   it("adds an entry into a set and deletes one", async () => {

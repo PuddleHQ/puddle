@@ -80,6 +80,34 @@ describe("OptionsPopover", () => {
     });
   });
 
+  it("refuses a rule set that was deleted while the popover was open", async () => {
+    const onDecide = vi.fn();
+    const anchor = document.createElement("button");
+    document.body.append(anchor);
+    const props = {
+      open: true,
+      target,
+      workspace: "demo",
+      anchor,
+      onDecide,
+      onClose: vi.fn(),
+      sets: [{ id: 4, name: "Client X", everywhere: true }],
+    };
+    const view = render(OptionsPopover, { props } as never);
+    const dialog = await show();
+    await fireEvent.click(
+      within(dialog).getByRole("radio", { name: /Into rule set Client X/ }),
+    );
+    await view.rerender({ ...props, sets: [] } as never);
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: /Allow/ }),
+    );
+    expect(onDecide).not.toHaveBeenCalled();
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+      "That rule set no longer exists. Choose again.",
+    );
+  });
+
   it("is a named dialog that starts at the narrowest choice and lists the durations", async () => {
     mount();
     const dialog = await show();

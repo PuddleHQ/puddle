@@ -47,13 +47,16 @@ describe("reading", () => {
     const store = make();
     await store.refresh();
     expect(store.status).toBe("failed");
+    expect(store.loadError).toBe("puddle's service isn't answering.");
     api.down = false;
     api.sets = [mine(1)];
     await store.refresh();
+    expect(store.loadError).toBeNull();
     api.down = true;
     await store.refresh();
     expect(store.status).toBe("ready");
     expect(store.sets).toHaveLength(1);
+    expect(store.loadError).toBe("puddle's service isn't answering.");
   });
 
   it("treats an error answer like a failure", async () => {
@@ -65,6 +68,7 @@ describe("reading", () => {
     const store = make();
     await store.refresh();
     expect(store.status).toBe("failed");
+    expect(store.loadError).toBe("X.");
   });
 
   it("refetches on rules_changed and on a resync, and polls", async () => {

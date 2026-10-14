@@ -43,6 +43,8 @@
   let who = $state("workspace");
   let match = $state<Match>("exact");
   let duration = $state("0");
+  /** Set when the chosen rule set was deleted while the popover was open. */
+  let stale = $state<string | null>(null);
 
   const suffix = $derived(exactOnly ? null : suffixFor(target));
   const durationSecs = $derived(duration === "0" ? null : Number(duration));
@@ -54,11 +56,17 @@
       who = "workspace";
       match = "exact";
       duration = "0";
+      stale = null;
     }
   });
 
   function decide(effect: Effect) {
     const ruleSet = sets.find((s) => `set:${s.id}` === who) ?? null;
+    if (ruleSet === null && who.startsWith("set:")) {
+      stale = "That rule set no longer exists. Choose again.";
+      return;
+    }
+    stale = null;
     const scope = who === "global" ? "global" : "workspace";
     onDecide({ effect, scope, ruleSet, match, durationSecs });
   }
@@ -162,6 +170,7 @@
           {/each}
         </select>
       </div>
+      {#if stale}<p class="error" role="alert">{stale}</p>{/if}
       <div class="actions">
         <Popover.Close class="btn">Cancel</Popover.Close>
         <button type="button" class="btn deny" onclick={() => decide("deny")}>

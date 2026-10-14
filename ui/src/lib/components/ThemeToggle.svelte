@@ -2,7 +2,22 @@
 <script lang="ts">
   import { ToggleGroup } from "bits-ui";
   import { theme } from "#lib/theme/theme.svelte.ts";
+  import { toasts } from "#lib/stores/toasts.svelte.ts";
   import { isThemeChoice } from "#lib/theme/theme.ts";
+
+  async function choose(value: string) {
+    if (!isThemeChoice(value)) return;
+    const result = await theme.set(value);
+    if (!result.ok) {
+      toasts.push(
+        `The theme changed here but wasn't saved. ${result.message}`,
+        {
+          tone: "error",
+          ms: 8000,
+        },
+      );
+    }
+  }
 
   const labels = { system: "System", light: "Light", dark: "Dark" } as const;
 </script>
@@ -12,9 +27,7 @@
   class="theme-toggle"
   aria-label="Colour theme"
   value={theme.choice}
-  onValueChange={(value) => {
-    if (isThemeChoice(value)) void theme.set(value);
-  }}
+  onValueChange={(value) => void choose(value)}
 >
   {#each Object.entries(labels) as [value, label] (value)}
     <ToggleGroup.Item {value} class="theme-item">{label}</ToggleGroup.Item>

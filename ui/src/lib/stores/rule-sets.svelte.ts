@@ -9,6 +9,7 @@ import { isRulesChanged } from "#lib/rules/events.ts";
 import { sentence } from "#lib/rules/model.ts";
 import type { RuleSet, SystemHost } from "#lib/rules/sets.ts";
 import { live, type LiveSource } from "./live.svelte.ts";
+import { readFailure, SERVICE_DOWN } from "./read-failure.ts";
 
 type StoreApi = Pick<ApiClient, "GET" | "POST" | "PUT" | "DELETE">;
 
@@ -31,6 +32,8 @@ export class RuleSetsStore {
   sets = $state.raw<RuleSet[]>([]);
   system = $state.raw<SystemHost[]>([]);
   status = $state<Status>("loading");
+  /** Why the last read failed; `null` once a read works. */
+  loadError = $state<string | null>(null);
 
   readonly #api: StoreApi;
   readonly #source: LiveSource | undefined;
@@ -47,15 +50,18 @@ export class RuleSetsStore {
   /** Reads the sets and the System managed hosts; never throws. */
   async refresh(): Promise<void> {
     try {
-      const { data } = await this.#api.GET("/api/rule-sets");
+      const { data, error, response } = await this.#api.GET("/api/rule-sets");
       if (data) {
         this.sets = data.sets;
         this.system = data.system_managed;
+        this.loadError = null;
         this.status = "ready";
-      } else if (this.status === "loading") {
-        this.status = "failed";
+      } else {
+        this.loadError = readFailure(error, response);
+        if (this.status === "loading") this.status = "failed";
       }
     } catch {
+      this.loadError = SERVICE_DOWN;
       if (this.status === "loading") this.status = "failed";
     }
   }

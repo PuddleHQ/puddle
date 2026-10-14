@@ -11,6 +11,7 @@ import {
   type GlobalBody,
   type GlobalView,
 } from "#lib/settings/model.ts";
+import { readFailure, SERVICE_DOWN } from "./read-failure.ts";
 
 type Consents = components["schemas"]["Consents"];
 type StoreApi = Pick<ApiClient, "GET" | "PUT">;
@@ -32,7 +33,7 @@ export class GlobalSettings {
     this.#api = api;
   }
 
-  /** Reads settings and consents. `quiet` keeps what is on screen if it fails. */
+  /** Reads settings and consents. `quiet` keeps what is on screen if it fails (with nothing on screen it records the failure). */
   async load(quiet = false): Promise<void> {
     if (!quiet) {
       this.status = "loading";
@@ -47,13 +48,20 @@ export class GlobalSettings {
         this.view = settings.data;
         this.consents = consents.data;
         this.status = "ready";
-      } else if (!quiet) {
+      } else if (!quiet || !this.view) {
         this.status =
           settings.error?.error === "newer_settings" ? "newer" : "failed";
-        this.reason = unreadableReason(settings.error, consents.error);
+        this.reason =
+          unreadableReason(settings.error, consents.error) ??
+          (settings.data
+            ? readFailure(consents.error, consents.response)
+            : readFailure(settings.error, settings.response));
       }
     } catch {
-      if (!quiet) this.status = "failed";
+      if (!quiet || !this.view) {
+        this.status = "failed";
+        this.reason = SERVICE_DOWN;
+      }
     }
   }
 

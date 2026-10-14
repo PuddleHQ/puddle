@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import LoadNotice from "#lib/components/LoadNotice.svelte";
   import { onMount, tick } from "svelte";
   import Plus from "@lucide/svelte/icons/plus";
   import AddRuleDialog from "#lib/components/AddRuleDialog.svelte";
@@ -253,10 +254,14 @@
   </button>
 </div>
 
+{#if store.status === "ready" && store.loadError}
+  <LoadNotice what="the rules" message={store.loadError} stale />
+{/if}
+
 {#if store.status === "loading"}
   <p class="muted">Loading rules&hellip;</p>
 {:else if store.status === "failed"}
-  <p class="muted">Couldn't read the rules yet. Trying again.</p>
+  <LoadNotice what="the rules" message={store.loadError} />
 {:else}
   {#if own.length > 0}
     <form

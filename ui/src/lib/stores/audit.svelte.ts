@@ -19,6 +19,7 @@ import {
   type Filter,
 } from "#lib/audit/model.ts";
 import { live, type LiveSource } from "./live.svelte.ts";
+import { readFailure, SERVICE_DOWN } from "./read-failure.ts";
 
 export type Status = "loading" | "ready" | "failed";
 
@@ -50,6 +51,8 @@ export class AuditStore {
   /** Newest first. */
   entries = $state.raw<AuditEntry[]>([]);
   status = $state<Status>("loading");
+  /** Why the last read of the log failed (first page, older page or catching up); `null` after a read works. */
+  loadError = $state<string | null>(null);
   /** Older records exist than the ones loaded. */
   hasMore = $state(false);
   loadingMore = $state(false);
@@ -95,15 +98,17 @@ export class AuditStore {
     if (this.status !== "ready") this.status = "loading";
     this.reloading = true;
     try {
-      const { data } = await this.#api.GET("/api/audit", {
+      const { data, error, response } = await this.#api.GET("/api/audit", {
         params: { query: { ...this.#query(), limit: PAGE_SIZE } },
       });
       if (generation !== this.#generation) return;
       this.reloading = false;
       if (!data) {
+        this.loadError = readFailure(error, response);
         this.status = "failed";
         return;
       }
+      this.loadError = null;
       this.entries = data.entries;
       this.epoch += 1;
       // A new list starts at the top.
@@ -115,6 +120,7 @@ export class AuditStore {
     } catch {
       if (generation === this.#generation) {
         this.reloading = false;
+        this.loadError = SERVICE_DOWN;
         this.status = "failed";
       }
     }
@@ -133,7 +139,7 @@ export class AuditStore {
     const generation = this.#generation;
     this.loadingMore = true;
     try {
-      const { data } = await this.#api.GET("/api/audit", {
+      const { data, error, response } = await this.#api.GET("/api/audit", {
         params: {
           query: {
             ...this.#query(),
@@ -142,12 +148,18 @@ export class AuditStore {
           },
         },
       });
-      if (generation !== this.#generation || !data) return;
+      if (generation !== this.#generation) return;
+      if (!data) {
+        this.loadError = readFailure(error, response);
+        return;
+      }
+      this.loadError = null;
       this.entries = [...this.entries, ...data.entries];
       this.#nextBefore = data.next_before;
       this.hasMore = data.next_before !== null;
     } catch {
-      // The next scroll tries again.
+      // The next scroll tries again; until then the screen says the older page didn't load.
+      if (generation === this.#generation) this.loadError = SERVICE_DOWN;
     } finally {
       if (generation === this.#generation) this.loadingMore = false;
     }
@@ -176,20 +188,25 @@ export class AuditStore {
     try {
       let cursor = this.#cursor;
       for (let page = 0; page < MAX_TAIL_PAGES; page += 1) {
-        const { data } = await this.#api.GET("/api/audit", {
+        const { data, error, response } = await this.#api.GET("/api/audit", {
           params: {
             query: { ...this.#query(), after: cursor, limit: EXPORT_PAGE_SIZE },
           },
         });
         if (generation !== this.#generation) return;
-        if (!data) break;
+        if (!data) {
+          this.loadError = readFailure(error, response);
+          break;
+        }
+        this.loadError = null;
         fresh.push(...data.entries);
         cursor = data.next_after;
         if (data.entries.length < EXPORT_PAGE_SIZE) break;
       }
       this.#cursor = cursor;
     } catch {
-      // The next event or resync tries again from the same place.
+      // The next event or resync tries again from the same place; the screen says it is behind.
+      if (generation === this.#generation) this.loadError = SERVICE_DOWN;
     }
     if (generation !== this.#generation || fresh.length === 0) return;
     this.held = [...fresh.reverse(), ...this.held];

@@ -5,6 +5,7 @@
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
 import { unreadableReason } from "#lib/settings/model.ts";
+import { readFailure, SERVICE_DOWN } from "./read-failure.ts";
 import type { Layer } from "#lib/workspaces/settings.ts";
 
 type Effective = components["schemas"]["EffectiveSettings"];
@@ -56,10 +57,17 @@ export class WorkspaceSettings {
         this.status = "ready";
       } else if (!quiet) {
         this.status = "failed";
-        this.reason = unreadableReason(mine.error, global.error);
+        this.reason =
+          unreadableReason(mine.error, global.error) ??
+          (mine.data
+            ? readFailure(global.error, global.response)
+            : readFailure(mine.error, mine.response));
       }
     } catch {
-      if (ticket === this.#ticket && !quiet) this.status = "failed";
+      if (ticket === this.#ticket && !quiet) {
+        this.status = "failed";
+        this.reason = SERVICE_DOWN;
+      }
     }
   }
 

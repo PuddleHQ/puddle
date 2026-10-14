@@ -110,8 +110,22 @@ describe("the workspace list", () => {
     api.down = true;
     await mount();
     expect(
-      await screen.findByText(/Couldn't read the workspaces/),
+      await screen.findByText(
+        /Couldn't read the workspaces\. puddle's service isn't answering\./,
+      ),
     ).toBeInTheDocument();
+  });
+
+  it("keeps the list but says it may be out of date when a refresh fails", async () => {
+    api.list = [workspace("a-shop")];
+    await mount();
+    await screen.findByText("1 workspace");
+    api.down = true;
+    await workspaces.refresh();
+    expect(
+      await screen.findByText(/Couldn't refresh the workspaces/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("1 workspace")).toBeInTheDocument();
   });
 
   it("explains what a workspace is when there is none, and offers to make one", async () => {

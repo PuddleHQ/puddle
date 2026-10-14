@@ -69,12 +69,21 @@
     if (patternProblem || workspaceProblem) return;
     const secs = duration === "0" ? null : Number(duration);
     const expires = expiryFrom(now(), secs);
+    const chosen = scopeOf(scope);
+    if (chosen === null) {
+      error = {
+        field: "form",
+        message:
+          "That rule set no longer exists. Choose where the rule applies again.",
+      };
+      return;
+    }
     busy = true;
     try {
       const refusal = await onSubmit({
         effect,
         pattern: pattern.trim(),
-        scope: scopeOf(scope),
+        scope: chosen,
         expires_at: expires,
       });
       if (refusal) error = refusal;
@@ -83,9 +92,11 @@
     }
   }
 
-  function scopeOf(choice: string): NewRule["scope"] {
+  /** The scope the form chose, or `null` when it names a rule set that no longer exists. */
+  function scopeOf(choice: string): NewRule["scope"] | null {
     const set = sets.find((s) => `set:${s.id}` === choice);
     if (set) return { type: "set", set: set.id };
+    if (choice.startsWith("set:")) return null;
     if (choice === "global") return { type: "global" };
     return { type: "workspace", workspace: workspace.trim() as never };
   }

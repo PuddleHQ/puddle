@@ -105,6 +105,8 @@ function reset() {
   inbox.rules = [];
   inbox.calls = [];
   inbox.toggles = {};
+  inbox.down = false;
+  rules.down = false;
   api.list = [workspace("demo", { status: "running" })];
   api.calls = [];
   api.bodies = [];
@@ -486,6 +488,57 @@ describe("the network tab", () => {
     expect(
       await screen.findByText("Nothing is waiting for demo."),
     ).toBeInTheDocument();
+  });
+
+  it("says a read failed instead of showing an empty list, and warns when a refresh failed", async () => {
+    await load();
+    render(Network);
+    await screen.findByText("Nothing is waiting for demo.");
+    inbox.down = true;
+    rules.down = true;
+    await pending.refresh();
+    await rulesStore.refresh();
+    await vi.waitFor(() =>
+      expect(
+        screen.getAllByText(/Couldn't refresh the (requests|rules)/),
+      ).toHaveLength(2),
+    );
+    pending.status = "failed";
+    rulesStore.status = "failed";
+    expect(
+      await screen.findByText(
+        /Couldn't read the requests\. puddle's service isn't answering\./,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Couldn't read the rules\. puddle's service isn't answering\./,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Nothing is waiting for demo.")).toBeNull();
+    expect(screen.queryByText(/No rule applies/)).toBeNull();
+  });
+
+  it("warns above the lists when a refresh failed after rows were read", async () => {
+    inbox.add(
+      request(1, { workspace: "demo" as never, host: "a.example.com" }),
+      "example.com",
+    );
+    rules.rules = [
+      rule(1, { scope: { type: "workspace", workspace: "demo" } }),
+    ];
+    await load();
+    render(Network);
+    await screen.findByText("a.example.com");
+    inbox.down = true;
+    rules.down = true;
+    await pending.refresh();
+    await rulesStore.refresh();
+    await vi.waitFor(() =>
+      expect(
+        screen.getAllByText(/Couldn't refresh the (requests|rules)/),
+      ).toHaveLength(2),
+    );
   });
 
   it("allows a request with one click, and the row leaves", async () => {

@@ -10,6 +10,7 @@ import type { components } from "#lib/api/schema.d.ts";
 import { isRulesChanged } from "#lib/rules/events.ts";
 import { sentence, type Rule } from "#lib/rules/model.ts";
 import { live, type LiveSource } from "./live.svelte.ts";
+import { readFailure, SERVICE_DOWN } from "./read-failure.ts";
 
 export type NewRule = components["schemas"]["NewRuleRequest"];
 export type Status = "loading" | "ready" | "failed";
@@ -43,6 +44,8 @@ const DOWN = "puddle's service isn't answering.";
 export class RulesStore {
   rules = $state.raw<Rule[]>([]);
   status = $state<Status>("loading");
+  /** Why the last read of the rules failed; `null` once a read works. */
+  loadError = $state<string | null>(null);
 
   readonly #api: StoreApi;
   readonly #source: LiveSource | undefined;
@@ -79,14 +82,17 @@ export class RulesStore {
 
   async #load(): Promise<void> {
     try {
-      const { data } = await this.#api.GET("/api/rules");
+      const { data, error, response } = await this.#api.GET("/api/rules");
       if (data) {
         this.rules = data.rules;
+        this.loadError = null;
         this.status = "ready";
-      } else if (this.status === "loading") {
-        this.status = "failed";
+      } else {
+        this.loadError = readFailure(error, response);
+        if (this.status === "loading") this.status = "failed";
       }
     } catch {
+      this.loadError = SERVICE_DOWN;
       if (this.status === "loading") this.status = "failed";
     }
   }

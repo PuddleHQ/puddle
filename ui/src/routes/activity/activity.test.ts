@@ -65,6 +65,7 @@ beforeEach(() => {
   replaceState.mockClear();
   window.history.replaceState({}, "", "/activity");
   auditStore.status = "loading";
+  auditStore.loadError = null;
   auditStore.entries = [];
   auditStore.held = [];
   auditStore.live = true;
@@ -207,10 +208,21 @@ describe("the activity page", () => {
       await screen.findByText("Nothing recorded yet");
       expect(screen.getByText(/0\s+records/)).toBeInTheDocument();
     });
+    it("keeps the records but says they may be out of date when a read fails", async () => {
+      await open();
+      api.down = true;
+      await auditStore.catchUp();
+      expect(
+        await screen.findByText(/Couldn't refresh the activity log/),
+      ).toBeInTheDocument();
+      expect(rows()).toHaveLength(3);
+    });
     it("offers to try again when the log can't be read", async () => {
       api.down = true;
       render(ActivityPage);
-      await screen.findByText(/Couldn't read the activity log/);
+      await screen.findByText(
+        /Couldn't read the activity log\. puddle's service isn't answering\./,
+      );
       api.down = false;
       await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
       await waitFor(() => expect(rows()).toHaveLength(3));

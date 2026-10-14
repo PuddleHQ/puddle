@@ -31,13 +31,15 @@ describe("LiveState.refresh", () => {
     expect(live.pending).toBe(2);
   });
 
-  it("names other failures and thrown errors as unreachable", async () => {
+  it("tells a failing service from an unreachable one", async () => {
     const live = new LiveState({
       api: fakeApi(() => ({ error: {}, response: { status: 500 } })),
     });
     await live.refresh();
-    expect(live.problem).toBe("unreachable");
-    live.problem = null;
+    expect(live.problem).toBe("failing");
+    expect(live.problemDetail).toBe(
+      "puddle's service hit an error (status 500).",
+    );
     const thrown = new LiveState({
       api: fakeApi(() => {
         throw new TypeError("down");
@@ -78,6 +80,10 @@ describe("LiveState.start", () => {
 
       options?.onState?.("reconnecting");
       expect(live.stream).toBe("reconnecting");
+      options?.onError?.("the event stream answered 500");
+      expect(live.streamError).toBe("the event stream answered 500");
+      options?.onState?.("connected");
+      expect(live.streamError).toBeNull();
       options?.onResync?.("lagged");
       await vi.advanceTimersByTimeAsync(0);
       expect(

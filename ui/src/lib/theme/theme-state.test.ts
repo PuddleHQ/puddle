@@ -43,14 +43,17 @@ describe("the theme and the settings", () => {
   });
 
   it("stores a new choice through the API, loading the settings first when needed", async () => {
-    expect(await theme.set("light")).toBe(true);
+    expect(await theme.set("light")).toEqual({ ok: true });
     expect(api.ui.theme).toBe("light");
     expect(theme.choice).toBe("light");
   });
 
   it("applies a choice even when it can't be stored", async () => {
     api.down = true;
-    expect(await theme.set("dark")).toBe(false);
+    expect(await theme.set("dark")).toEqual({
+      ok: false,
+      message: "puddle's service isn't answering.",
+    });
     expect(theme.choice).toBe("dark");
     expect(document.documentElement.dataset["theme"]).toBe("dark");
   });

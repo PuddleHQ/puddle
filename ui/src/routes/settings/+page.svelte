@@ -57,6 +57,7 @@
   let popupBusy = $state(false);
   let popupError = $state<string | null>(null);
   let version = $state<string | null>(null);
+  let versionAsked = $state(false);
   let notices = $state<string | null>(null);
   let noticesFailed = $state(false);
 
@@ -65,7 +66,8 @@
     void api
       .GET("/api/health")
       .then((r) => (version = r.data?.version ?? null))
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => (versionAsked = true));
   });
 
   /** Saves one change; when the API refuses it the control goes back to what is stored. */
@@ -93,8 +95,10 @@
     if (!isThemeChoice(value)) return;
     saved = null;
     problem = null;
-    if (await theme.set(value)) saved = "Theme saved.";
-    else problem = "The theme changed here but puddle couldn't save it.";
+    const result = await theme.set(value);
+    if (result.ok) saved = "Theme saved.";
+    else
+      problem = `The theme changed here but puddle couldn't save it. ${result.message}`;
   }
 
   async function chooseDensity(select: HTMLSelectElement) {
@@ -102,8 +106,10 @@
     if (!isDensityChoice(value)) return;
     saved = null;
     problem = null;
-    if (await density.set(value)) saved = "Density saved.";
-    else problem = "The density changed here but puddle couldn't save it.";
+    const result = await density.set(value);
+    if (result.ok) saved = "Density saved.";
+    else
+      problem = `The density changed here but puddle couldn't save it. ${result.message}`;
   }
 
   async function chooseServer(select: HTMLSelectElement) {
@@ -643,7 +649,11 @@
       <section class="card" id="s-about" aria-labelledby="h-about">
         <h2 id="h-about">About</h2>
         <p>
-          <b>puddle{version ? ` ${version}` : ""}</b>
+          <b>puddle{version ? ` ${version}` : ""}</b
+          >{#if versionAsked && !version}
+            <span class="muted">
+              (version unavailable: puddle's service didn't say)</span
+            >{/if}
           <span class="muted"> &middot; GPL-3.0-or-later</span>
         </p>
         <details ontoggle={() => void loadNotices()}>

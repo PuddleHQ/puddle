@@ -45,6 +45,20 @@ beforeEach(async () => {
 afterEach(cleanup);
 
 describe("a workspace's rule sets", () => {
+  it("says a read failed instead of showing an empty list, and warns about a stale one", async () => {
+    store.loadError = "Disk is full.";
+    store.status = "failed";
+    render(WorkspaceSets, { props: { store, workspace: "api" } } as never);
+    expect(
+      await screen.findByText(/Couldn't read the rule sets\. Disk is full\./),
+    ).toBeInTheDocument();
+    store.status = "ready";
+    expect(
+      await screen.findByText(/Couldn't refresh the rule sets/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Work")).toBeInTheDocument();
+  });
+
   it("shows each set's state there and only the System managed hosts that apply", () => {
     render(WorkspaceSets, { props: { store, workspace: "api" } } as never);
     expect(screen.getByText("Off, as for every workspace")).toBeInTheDocument();

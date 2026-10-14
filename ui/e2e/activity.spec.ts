@@ -5,7 +5,7 @@
 import { readFileSync } from "node:fs";
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeViolations, watchCsp } from "./support";
+import { axeStops, watchCsp } from "./support";
 
 test.beforeEach(async ({ backend }) => {
   await backend.control.reset("lived-in");
@@ -757,35 +757,44 @@ test.describe("keyboard only", () => {
 });
 
 test.describe("accessibility", () => {
+  // The states are scanned at most two to a test: a scan costs seconds on a loaded host.
+  const stops = axeStops([
+    ["list", "open record"],
+    ["toast", "no match"],
+  ]);
   for (const scheme of ["light", "dark"] as const) {
-    test(`axe finds nothing in ${scheme}: the list, an open record, the empty state`, async ({
-      page,
-      backend,
-    }) => {
-      await page.emulateMedia({ colorScheme: scheme });
-      const csp = await watchCsp(page);
-      await openActivity(page, backend, "?range=all");
-      expect(await axeViolations(page), "list").toEqual([]);
-      await rows(page).nth(1).getByRole("button").click();
-      expect(await axeViolations(page), "open record").toEqual([]);
-      // The toast leaves after 5 s on the page's clock, unless the pointer is on it. The page's clock
-      // stands still from the click until the pointer holds the toast, so a slow runner cannot let
-      // it leave in between; axe itself needs the clock (it uses timers), so it runs after.
-      await page.clock.pauseAt(
-        new Date((await page.evaluate(() => Date.now())) + 1000),
-      );
-      await page.getByRole("button", { name: "Export JSON lines" }).click();
-      await expect(toast(page)).toContainText("Saved");
-      await toast(page).getByText("Saved").hover();
-      await page.clock.resume();
-      expect(await axeViolations(page), "toast").toEqual([]);
-      await page.getByLabel("Host contains").fill("zzz-none");
-      await expect(
-        page.getByRole("heading", { name: "No records match" }),
-      ).toBeVisible();
-      expect(await axeViolations(page), "no match").toEqual([]);
-      expect(await csp()).toEqual([]);
-    });
+    for (const group of stops.groups) {
+      test(`axe finds nothing in ${scheme}: ${group.join(", ")}`, async ({
+        page,
+        backend,
+      }) => {
+        const scan = stops.scanner(group);
+        await page.emulateMedia({ colorScheme: scheme });
+        const csp = await watchCsp(page);
+        await openActivity(page, backend, "?range=all");
+        await scan(page, "list");
+        await rows(page).nth(1).getByRole("button").click();
+        await scan(page, "open record");
+        // The toast leaves after 5 s on the page's clock, unless the pointer is on it. The page's clock
+        // stands still from the click until the pointer holds the toast, so a slow runner cannot let
+        // it leave in between; axe itself needs the clock (it uses timers), so it runs after.
+        await page.clock.pauseAt(
+          new Date((await page.evaluate(() => Date.now())) + 1000),
+        );
+        await page.getByRole("button", { name: "Export JSON lines" }).click();
+        await expect(toast(page)).toContainText("Saved");
+        await toast(page).getByText("Saved").hover();
+        await page.clock.resume();
+        await scan(page, "toast");
+        await page.getByLabel("Host contains").fill("zzz-none");
+        await expect(
+          page.getByRole("heading", { name: "No records match" }),
+        ).toBeVisible();
+        await scan(page, "no match");
+        expect(await csp()).toEqual([]);
+        scan.done();
+      });
+    }
   }
 
   test("the buttons and controls are at least 24 by 24 CSS pixels (WCAG 2.5.8)", async ({

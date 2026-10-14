@@ -105,14 +105,18 @@ test.describe("the app shell, served by the real API", () => {
     expect(order[7]).toMatch(/^(System|Light|Dark)$/);
   });
 
+  // One test per route: a scan costs seconds on a loaded host, and seven in one test ran out of 30 s.
   for (const scheme of ["light", "dark"] as const) {
-    test(`axe finds nothing on any route in ${scheme}`, async ({ page }) => {
-      await page.emulateMedia({ colorScheme: scheme });
-      for (const { path } of sections) {
+    for (const { path } of sections) {
+      test(`axe finds nothing on ${path} in ${scheme}`, async ({ page }) => {
+        await page.emulateMedia({ colorScheme: scheme });
         await page.goto(path);
         await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
         expect(await axeViolations(page), `${path} (${scheme})`).toEqual([]);
-      }
+      });
+    }
+    test(`axe finds nothing on the 404 page in ${scheme}`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme: scheme });
       await page.goto("/no-such-page");
       await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
       expect(await axeViolations(page), `404 (${scheme})`).toEqual([]);

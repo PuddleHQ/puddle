@@ -6,7 +6,7 @@
 // backend of its own, reset before it. Waits are on conditions, never on time.
 import type { Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeViolations, watchCsp } from "./support";
+import { axeStops, watchCsp } from "./support";
 
 async function open(page: Page, backend: Backend, path = "/identities") {
   await backend.control.reset("git-identities");
@@ -302,54 +302,63 @@ test("keyboard only: add, move and delete without a pointer", async ({
   ).toBeFocused();
 });
 
+// The states are scanned at most two to a test: a scan costs seconds on a loaded host.
+const stops = axeStops([
+  ["list", "list with statuses"],
+  ["add identity with the editor", "add identity with an error"],
+  ["identity", "sign-in dialog"],
+  ["with the sign-in notice"],
+]);
 for (const scheme of ["light", "dark"] as const) {
-  test(`axe finds nothing in ${scheme}: the list, an identity, the dialogs and a notice`, async ({
-    page,
-    backend,
-  }) => {
-    await page.emulateMedia({ colorScheme: scheme });
-    const csp = await watchCsp(page);
-    await open(page, backend);
-    await expect(row(page, "Work")).toBeVisible();
-    expect(await axeViolations(page), "list").toEqual([]);
+  for (const group of stops.groups) {
+    test(`axe finds nothing in ${scheme}: ${group.join(", ")}`, async ({
+      page,
+      backend,
+    }) => {
+      const scan = stops.scanner(group);
+      await page.emulateMedia({ colorScheme: scheme });
+      const csp = await watchCsp(page);
+      await open(page, backend);
+      await expect(row(page, "Work")).toBeVisible();
+      await scan(page, "list");
 
-    await page.getByRole("button", { name: "Test all" }).click();
-    await expect(row(page, "Work")).toContainText("Sign in needed");
-    expect(await axeViolations(page), "list with statuses").toEqual([]);
+      await page.getByRole("button", { name: "Test all" }).click();
+      await expect(row(page, "Work")).toContainText("Sign in needed");
+      await scan(page, "list with statuses");
 
-    await page.getByRole("button", { name: "Add identity" }).first().click();
-    const dialog = page.getByRole("dialog", { name: "Add identity" });
-    await dialog.getByRole("button", { name: "Add a credential" }).click();
-    await expect(dialog.getByLabel(/tijs-demo/)).toBeVisible();
-    expect(await axeViolations(page), "add identity with the editor").toEqual(
-      [],
-    );
-    await dialog.getByLabel("Paste a token").check();
-    await dialog.getByRole("button", { name: "Add credential" }).click();
-    await expect(dialog.getByRole("alert")).toBeVisible();
-    expect(await axeViolations(page), "add identity with an error").toEqual([]);
-    await page.keyboard.press("Escape");
+      await page.getByRole("button", { name: "Add identity" }).first().click();
+      const dialog = page.getByRole("dialog", { name: "Add identity" });
+      await dialog.getByRole("button", { name: "Add a credential" }).click();
+      await expect(dialog.getByLabel(/tijs-demo/)).toBeVisible();
+      await scan(page, "add identity with the editor");
+      await dialog.getByLabel("Paste a token").check();
+      await dialog.getByRole("button", { name: "Add credential" }).click();
+      await expect(dialog.getByRole("alert")).toBeVisible();
+      await scan(page, "add identity with an error");
+      await page.keyboard.press("Escape");
 
-    await page.goto("/identities/1");
-    await expect(
-      page.getByRole("heading", { level: 1, name: "Work" }),
-    ).toBeVisible();
-    await page
-      .getByRole("button", { name: /^Test / })
-      .first()
-      .click();
-    expect(await axeViolations(page), "identity").toEqual([]);
-    const azure = page.locator(
-      '[data-credential^="Git credential for https://dev.azure.com"]',
-    );
-    await azure.getByRole("button", { name: /^Test / }).click();
-    await azure.getByRole("button", { name: /^Sign in to / }).click();
-    await expect(page.getByTestId("sign-in-code")).toBeVisible();
-    expect(await axeViolations(page), "sign-in dialog").toEqual([]);
-    await page.keyboard.press("Escape");
+      await page.goto("/identities/1");
+      await expect(
+        page.getByRole("heading", { level: 1, name: "Work" }),
+      ).toBeVisible();
+      await page
+        .getByRole("button", { name: /^Test / })
+        .first()
+        .click();
+      await scan(page, "identity");
+      const azure = page.locator(
+        '[data-credential^="Git credential for https://dev.azure.com"]',
+      );
+      await azure.getByRole("button", { name: /^Test / }).click();
+      await azure.getByRole("button", { name: /^Sign in to / }).click();
+      await expect(page.getByTestId("sign-in-code")).toBeVisible();
+      await scan(page, "sign-in dialog");
+      await page.keyboard.press("Escape");
 
-    await raise(backend, page, SIGN_IN_NEEDED, "Sign-in needed");
-    expect(await axeViolations(page), "with the sign-in notice").toEqual([]);
-    expect(await csp()).toEqual([]);
-  });
+      await raise(backend, page, SIGN_IN_NEEDED, "Sign-in needed");
+      await scan(page, "with the sign-in notice");
+      expect(await csp()).toEqual([]);
+      scan.done();
+    });
+  }
 }

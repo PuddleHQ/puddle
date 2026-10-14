@@ -38,11 +38,33 @@ export async function watchCsp(page: Page): Promise<() => Promise<string[]>> {
     page.evaluate(() => (window as unknown as { __csp: string[] }).__csp);
 }
 
-/** axe with the tags the project's bar names (WCAG 2.0 to 2.2, A and AA). */
+/**
+ * axe with the tags the project's bar names (WCAG 2.0 to 2.2, A and AA).
+ *
+ * A scan used to cost 1 to 2 s on an idle machine for a page of 200 to 400 elements and 3 to 5 s on the
+ * loaded CI host, and a test that scans five states spent most of its 30 s on it. Less than half of
+ * that was axe's rules: the builder's default run sends axe's 1.3 MB source to the page twice and
+ * opens a second browser page to merge the results. Here the source goes into a document at its
+ * first scan only, and the run stays in the page (the builder's legacy mode). The rule set is
+ * unchanged.
+ */
 export async function axeViolations(page: Page) {
-  const results = await new AxeBuilder({ page })
+  // Legacy mode does not look into cross-origin frames: the app has none, and a page that gains
+  // one must say so here instead of passing unscanned.
+  if (page.frames().length > 1)
+    throw new Error("a frame on the page: axeViolations does not scan frames");
+  // The first scan of a document brings axe in; later ones find it there, so the builder is given a
+  // script that does nothing instead of the 1.3 MB source.
+  const present = await page.evaluate(() => "axe" in window);
+  const results = await new AxeBuilder(
+    present ? { page, axeSource: "0" } : { page },
+  )
+    .setLegacyMode()
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
     .analyze();
+  // Nothing passed and nothing failed: axe looked at an empty page, which is not a clean scan.
+  if (results.passes.length + results.violations.length === 0)
+    throw new Error("axe ran no rules on the page");
   return results.violations.map(
     (v) =>
       `${v.id}: ${v.nodes
@@ -52,6 +74,38 @@ export async function axeViolations(page: Page) {
         )
         .join(", ")}`,
   );
+}
+
+/**
+ * A walk through states with a scan at some of them, one test for each group of stops.
+ *
+ * A scan costs seconds on a loaded host, so a test that scans five states runs out of its 30 s
+ * there. The walk stays whole (the clicks and page loads are cheap), but each test scans only its
+ * group's stops: `scan(page, "stop")` at every stop of the walk, and `scan.done()` at the end.
+ * A stop that no group names throws, and so does a group whose stops the walk never reached, so
+ * a renamed or dropped stop cannot leave a state unscanned.
+ */
+export function axeStops(groups: readonly (readonly string[])[]) {
+  const named = new Set(groups.flat());
+  return {
+    groups,
+    scanner(group: readonly string[]) {
+      const seen = new Set<string>();
+      const scan = async (page: Page, stop: string): Promise<void> => {
+        if (!named.has(stop))
+          throw new Error(`the stop "${stop}" is in no axeStops group`);
+        if (!group.includes(stop)) return;
+        seen.add(stop);
+        expect(await axeViolations(page), stop).toEqual([]);
+      };
+      scan.done = (): void => {
+        expect([...seen].sort(), "the stops the walk reached").toEqual(
+          [...group].sort(),
+        );
+      };
+      return scan;
+    },
+  };
 }
 
 export const test = base;

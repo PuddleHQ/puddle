@@ -4,7 +4,7 @@
 // registry.example.org) on its worker's own backend, so a test may decide anything it likes.
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeViolations, watchCsp } from "./support";
+import { axeStops, watchCsp } from "./support";
 
 interface Rule {
   id: number;
@@ -617,44 +617,60 @@ test.describe("keyboard only", () => {
 });
 
 test.describe("accessibility", () => {
+  // The states are scanned at most two to a test: a scan costs seconds on a loaded host.
+  const stops = axeStops([
+    ["list", "options"],
+    ["confirm", "toast and decided list"],
+    ["empty"],
+  ]);
   for (const scheme of ["light", "dark"] as const) {
-    test(`axe finds nothing in ${scheme}: the list, the options, the confirm, the empty state`, async ({
-      page,
-      backend,
-    }) => {
-      await ask(backend, "shop", "a.axe.example.com");
-      await ask(backend, "shop", "b.axe.example.com");
-      await ask(backend, "shop", "192.168.88.8");
-      await page.emulateMedia({ colorScheme: scheme });
-      const csp = await watchCsp(page);
-      await openInbox(page, backend);
-      const row = rowFor(page, "a.axe.example.com");
-      await expect(row).toBeVisible();
-      expect(await axeViolations(page), "list").toEqual([]);
+    for (const group of stops.groups) {
+      test(`axe finds nothing in ${scheme}: ${group.join(", ")}`, async ({
+        page,
+        backend,
+      }) => {
+        const scan = stops.scanner(group);
+        await ask(backend, "shop", "a.axe.example.com");
+        await ask(backend, "shop", "b.axe.example.com");
+        await ask(backend, "shop", "192.168.88.8");
+        await page.emulateMedia({ colorScheme: scheme });
+        const csp = await watchCsp(page);
+        await openInbox(page, backend);
+        const row = rowFor(page, "a.axe.example.com");
+        await expect(row).toBeVisible();
+        await scan(page, "list");
 
-      const dialog = await openOptions(row, page);
-      await dialog.getByRole("radio", { name: /^Every workspace/ }).check();
-      expect(await axeViolations(page), "options").toEqual([]);
+        const dialog = await openOptions(row, page);
+        await dialog.getByRole("radio", { name: /^Every workspace/ }).check();
+        await scan(page, "options");
 
-      await dialog.getByRole("button", { name: "Allow", exact: true }).click();
-      await expect(page.getByRole("alertdialog")).toBeVisible();
-      expect(await axeViolations(page), "confirm").toEqual([]);
-      await page.getByRole("button", { name: "Cancel" }).click();
+        await dialog
+          .getByRole("button", { name: "Allow", exact: true })
+          .click();
+        await expect(page.getByRole("alertdialog")).toBeVisible();
+        await scan(page, "confirm");
+        // The options dialog is still leaving while the confirm is up: name the confirm's button.
+        await page
+          .getByRole("alertdialog")
+          .getByRole("button", { name: "Cancel" })
+          .click();
 
-      await rowFor(page, "b.axe.example.com")
-        .getByRole("button", { name: /^Deny/ })
-        .click();
-      await expect(page.getByRole("status")).toContainText("Denied");
-      expect(await axeViolations(page), "toast and decided list").toEqual([]);
-      expect(await csp()).toEqual([]);
+        await rowFor(page, "b.axe.example.com")
+          .getByRole("button", { name: /^Deny/ })
+          .click();
+        await expect(page.getByRole("status")).toContainText("Denied");
+        await scan(page, "toast and decided list");
+        expect(await csp()).toEqual([]);
 
-      await backend.control.reset("empty");
-      await page.reload();
-      await expect(
-        page.getByRole("heading", { name: "All quiet" }),
-      ).toBeVisible();
-      expect(await axeViolations(page), "empty").toEqual([]);
-    });
+        await backend.control.reset("empty");
+        await page.reload();
+        await expect(
+          page.getByRole("heading", { name: "All quiet" }),
+        ).toBeVisible();
+        await scan(page, "empty");
+        scan.done();
+      });
+    }
   }
 
   test("the options cover the chevrons of the rows beside them completely, not all but a sliver", async ({

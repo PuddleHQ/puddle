@@ -263,14 +263,15 @@ test("Settings runs the system check again on its own page and leads back", asyn
   await expect(page).toHaveURL(/\/settings$/);
 });
 
+// One test per step: a scan costs seconds on a loaded host, and the steps together ran out of 30 s.
 for (const scheme of ["light", "dark"] as const) {
-  test(`every step passes the accessibility scan in the ${scheme} theme`, async ({
-    page,
-    backend,
-  }) => {
-    await page.emulateMedia({ colorScheme: scheme });
-    await freshInstall(page, backend);
-    for (const [path, title] of STEPS) {
+  for (const [path, title] of STEPS) {
+    test(`the ${title} step passes the accessibility scan in the ${scheme} theme`, async ({
+      page,
+      backend,
+    }) => {
+      await page.emulateMedia({ colorScheme: scheme });
+      await freshInstall(page, backend);
       await page.goto(path);
       await expect(heading(page, title)).toBeVisible();
       if (path === "/welcome/check") {
@@ -282,8 +283,8 @@ for (const scheme of ["light", "dark"] as const) {
         ).toBeVisible();
       }
       expect(await axeViolations(page), path).toEqual([]);
-    }
-  });
+    });
+  }
 }
 
 test("the blocked system check and the form dialog pass the accessibility scan", async ({

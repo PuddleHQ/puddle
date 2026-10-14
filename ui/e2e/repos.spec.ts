@@ -6,7 +6,7 @@
 // host showing an old list). Waits are on conditions, never on time.
 import type { Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeViolations, watchCsp } from "./support";
+import { axeStops, watchCsp } from "./support";
 
 const WORK = 1;
 const PERSONAL = 2;
@@ -285,34 +285,44 @@ test("keyboard only: from the repository row to the finished form", async ({
   );
 });
 
+// The states are scanned at most two to a test: a scan costs seconds on a loaded host.
+const stops = axeStops([
+  ["work", "rate limited"],
+  ["empty", "form with identities"],
+  ["form with the picker open"],
+]);
 for (const scheme of ["light", "dark"] as const) {
-  test(`axe finds nothing in ${scheme}: the lists, a rate-limited list, the form and its picker`, async ({
-    page,
-    backend,
-  }) => {
-    await page.emulateMedia({ colorScheme: scheme });
-    await open(page, backend, WORK);
-    await expect(rowOf(page, "acme/web-shop")).toBeVisible();
-    expect(await axeViolations(page), "work").toEqual([]);
+  for (const group of stops.groups) {
+    test(`axe finds nothing in ${scheme}: ${group.join(", ")}`, async ({
+      page,
+      backend,
+    }) => {
+      const scan = stops.scanner(group);
+      await page.emulateMedia({ colorScheme: scheme });
+      await open(page, backend, WORK);
+      await expect(rowOf(page, "acme/web-shop")).toBeVisible();
+      await scan(page, "work");
 
-    await page.goto(`/identities/${BUSY}`);
-    await expect(rowOf(page, "busy-org/queue")).toBeVisible();
-    expect(await axeViolations(page), "rate limited").toEqual([]);
+      await page.goto(`/identities/${BUSY}`);
+      await expect(rowOf(page, "busy-org/queue")).toBeVisible();
+      await scan(page, "rate limited");
 
-    await page.goto(`/identities/${FRESH}`);
-    await expect(repos(page).getByTestId("repo-empty")).toBeVisible();
-    expect(await axeViolations(page), "empty").toEqual([]);
+      await page.goto(`/identities/${FRESH}`);
+      await expect(repos(page).getByTestId("repo-empty")).toBeVisible();
+      await scan(page, "empty");
 
-    await page.goto(`/identities/${WORK}`);
-    await create(page, "acme/web-shop").click();
-    await expect(
-      dialog(page).getByRole("checkbox", { name: /Work/ }),
-    ).toBeChecked();
-    expect(await axeViolations(page), "form with identities").toEqual([]);
-    await dialog(page).getByText("Choose from your repositories").click();
-    await expect(
-      dialog(page).getByRole("button", { name: /northwind\/ledger/ }),
-    ).toBeVisible();
-    expect(await axeViolations(page), "form with the picker open").toEqual([]);
-  });
+      await page.goto(`/identities/${WORK}`);
+      await create(page, "acme/web-shop").click();
+      await expect(
+        dialog(page).getByRole("checkbox", { name: /Work/ }),
+      ).toBeChecked();
+      await scan(page, "form with identities");
+      await dialog(page).getByText("Choose from your repositories").click();
+      await expect(
+        dialog(page).getByRole("button", { name: /northwind\/ledger/ }),
+      ).toBeVisible();
+      await scan(page, "form with the picker open");
+      scan.done();
+    });
+  }
 }

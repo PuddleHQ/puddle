@@ -6,7 +6,7 @@
 // state; the page clock is the fixture's.
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeViolations, watchCsp } from "./support";
+import { axeStops, axeViolations, watchCsp } from "./support";
 
 const auth = (backend: Backend) => ({
   Authorization: `Bearer ${backend.token}`,
@@ -1056,48 +1056,61 @@ test.describe("keyboard only", () => {
 });
 
 test.describe("accessibility", () => {
-  // One scan costs about a second in WebKit and the whole walk used to be one test, close to
-  // its 30 s limit on a loaded host: each stop is a test of its own, so none is near it.
+  // A scan costs seconds on a loaded host: each test scans a group of at most two stops.
+  const stops = axeStops([
+    ["list", "create with errors"],
+    ["connect step", "direct SSH trust text"],
+    ["failure and toast"],
+  ]);
   for (const scheme of ["light", "dark"] as const) {
-    test(`axe finds nothing in ${scheme}: list, dialogs and failures`, async ({
-      page,
-      backend,
-    }) => {
-      await page.emulateMedia({ colorScheme: scheme });
-      const csp = await watchCsp(page);
-      await openList(page, backend);
-      expect(await axeViolations(page), "list").toEqual([]);
+    for (const group of stops.groups) {
+      test(`axe finds nothing in ${scheme}: ${group.join(", ")}`, async ({
+        page,
+        backend,
+      }) => {
+        const scan = stops.scanner(group);
+        await page.emulateMedia({ colorScheme: scheme });
+        const csp = await watchCsp(page);
+        await openList(page, backend);
+        await scan(page, "list");
 
-      await page.getByRole("button", { name: "New workspace" }).first().click();
-      const create = page.getByRole("dialog", { name: "New workspace" });
-      await create.getByRole("button", { name: "Create workspace" }).click();
-      await expect(create.getByRole("alert")).toHaveCount(2);
-      await create.getByText("Image and memory").click();
-      expect(await axeViolations(page), "create with errors").toEqual([]);
-      await create.getByRole("button", { name: "Cancel" }).click();
+        await page
+          .getByRole("button", { name: "New workspace" })
+          .first()
+          .click();
+        const create = page.getByRole("dialog", { name: "New workspace" });
+        await create.getByRole("button", { name: "Create workspace" }).click();
+        await expect(create.getByRole("alert")).toHaveCount(2);
+        await create.getByText("Image and memory").click();
+        await scan(page, "create with errors");
+        await create.getByRole("button", { name: "Cancel" }).click();
 
-      const docs = card(page, "docs-site");
-      await docs.getByRole("button", { name: "Start docs-site" }).click();
-      await expect(docs).toContainText("Running");
-      await docs.getByRole("button", { name: "Connect to docs-site" }).click();
-      expect(await axeViolations(page), "connect step").toEqual([]);
-      await page.getByRole("checkbox", { name: "Allow direct SSH" }).click();
-      expect(await axeViolations(page), "direct SSH trust text").toEqual([]);
-      await page.keyboard.press("Escape");
-      await page.keyboard.press("Escape");
+        const docs = card(page, "docs-site");
+        await docs.getByRole("button", { name: "Start docs-site" }).click();
+        await expect(docs).toContainText("Running");
+        await docs
+          .getByRole("button", { name: "Connect to docs-site" })
+          .click();
+        await scan(page, "connect step");
+        await page.getByRole("checkbox", { name: "Allow direct SSH" }).click();
+        await scan(page, "direct SSH trust text");
+        await page.keyboard.press("Escape");
+        await page.keyboard.press("Escape");
 
-      await backend.control.step({
-        do: "fail_workspace",
-        operation: "start",
-        reason: "boom",
+        await backend.control.step({
+          do: "fail_workspace",
+          operation: "start",
+          reason: "boom",
+        });
+        await card(page, "data-tools")
+          .getByRole("button", { name: "Start data-tools" })
+          .click();
+        await expect(card(page, "data-tools").getByRole("alert")).toBeVisible();
+        await scan(page, "failure and toast");
+        expect(await csp()).toEqual([]);
+        scan.done();
       });
-      await card(page, "data-tools")
-        .getByRole("button", { name: "Start data-tools" })
-        .click();
-      await expect(card(page, "data-tools").getByRole("alert")).toBeVisible();
-      expect(await axeViolations(page), "failure and toast").toEqual([]);
-      expect(await csp()).toEqual([]);
-    });
+    }
 
     test(`axe finds nothing in ${scheme}: the overview with a notice and the delete dialog`, async ({
       page,

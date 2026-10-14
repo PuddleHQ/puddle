@@ -4,7 +4,7 @@
 // Personal and Work and the push list off, data-tools has nothing. Waits are on conditions.
 import type { Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeViolations, watchCsp } from "./support";
+import { axeStops, watchCsp } from "./support";
 
 async function open(page: Page, backend: Backend, workspace = "web-shop") {
   await backend.control.reset("git-identities");
@@ -448,25 +448,34 @@ test("keyboard only: toggle a box, flip a switch and add a repository", async ({
   await expect(table(page)).toContainText("github.com/acme/keys");
 });
 
+// The states are scanned at most two to a test: a scan costs seconds on a loaded host.
+const stops = axeStops([
+  ["the tab", "with an error"],
+  ["with a notice", "no identities"],
+]);
 for (const scheme of ["light", "dark"] as const) {
-  test(`axe finds nothing in ${scheme}: the tab, its errors and a notice`, async ({
-    page,
-    backend,
-  }) => {
-    await page.emulateMedia({ colorScheme: scheme });
-    const csp = await watchCsp(page);
-    await open(page, backend);
-    await expect(table(page)).toBeVisible();
-    expect(await axeViolations(page), "the tab").toEqual([]);
-    await page.getByLabel("Add a repository").fill("nonsense");
-    await page.getByRole("button", { name: "Add repository" }).click();
-    await expect(page.getByRole("alert")).toBeVisible();
-    expect(await axeViolations(page), "with an error").toEqual([]);
-    await raise(backend, page, denied("pull"), "was refused");
-    expect(await axeViolations(page), "with a notice").toEqual([]);
-    await open(page, backend, "data-tools");
-    await expect(page.getByText(/No identity yet/)).toBeVisible();
-    expect(await axeViolations(page), "no identities").toEqual([]);
-    expect(await csp()).toEqual([]);
-  });
+  for (const group of stops.groups) {
+    test(`axe finds nothing in ${scheme}: ${group.join(", ")}`, async ({
+      page,
+      backend,
+    }) => {
+      const scan = stops.scanner(group);
+      await page.emulateMedia({ colorScheme: scheme });
+      const csp = await watchCsp(page);
+      await open(page, backend);
+      await expect(table(page)).toBeVisible();
+      await scan(page, "the tab");
+      await page.getByLabel("Add a repository").fill("nonsense");
+      await page.getByRole("button", { name: "Add repository" }).click();
+      await expect(page.getByRole("alert")).toBeVisible();
+      await scan(page, "with an error");
+      await raise(backend, page, denied("pull"), "was refused");
+      await scan(page, "with a notice");
+      await open(page, backend, "data-tools");
+      await expect(page.getByText(/No identity yet/)).toBeVisible();
+      await scan(page, "no identities");
+      expect(await csp()).toEqual([]);
+      scan.done();
+    });
+  }
 }

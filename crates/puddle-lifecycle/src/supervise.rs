@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The front/worker split on Windows (see the crate docs): the user's console never reaches
-//! the VMs.
+//! The front/worker split on Windows (see the crate docs): the worker is not on the user's
+//! console, so it survives the console's 5 s deadline and finishes stopping the VMs.
 
 use crate::LifecycleError;
 

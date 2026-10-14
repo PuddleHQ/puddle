@@ -94,8 +94,7 @@ pub(crate) async fn read_request<R: AsyncRead + Unpin>(control: R) -> ShutdownCa
 /// - Windows worker (under [`crate::supervise`]): the front's request on stdin, or the front
 ///   going away.
 /// - Windows otherwise: Ctrl-C, Ctrl-Break, console close, logoff, system shutdown. A console
-///   close leaves this process about 5 s, and VMs sharing its console get the event too; use
-///   [`crate::supervise`].
+///   close leaves this process about 5 s, too little to stop the VMs; use [`crate::supervise`].
 /// - Unix: `SIGINT`, `SIGTERM`, `SIGHUP`.
 #[derive(Debug)]
 pub struct ShutdownSignals(imp::Signals);

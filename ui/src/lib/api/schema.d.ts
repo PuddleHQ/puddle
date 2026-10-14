@@ -368,8 +368,10 @@ export interface paths {
         /** One identity. */
         get: operations["get_identity"];
         /**
-         * Replaces an identity's label, author and credentials. Refused with 409
-         *     `identity_collision` when the new coverage meets another identity on a workspace that has both.
+         * Replaces an identity's label, author and credentials. A pasted token it read before and no
+         *     longer does leaves the credential store too, unless another identity or an environment secret
+         *     still reads it. Refused with 409 `identity_collision` when the new coverage meets another
+         *     identity on a workspace that has both.
          */
         put: operations["update_identity"];
         post?: never;
@@ -377,7 +379,7 @@ export interface paths {
          * Deletes an identity and takes it off every workspace; the answer lists them.
          * @description A pasted token the identity read, and no other identity reads, leaves the credential store
          *     too. One that could not be removed (the store is locked) is left for the sweep at the next
-         *     start.
+         *     start, and the answer lists it in `tokens_left`.
          */
         delete: operations["delete_identity"];
         options?: never;
@@ -2236,6 +2238,12 @@ export interface components {
         IdentityDeleted: {
             /** @description The workspaces it was taken off. */
             detached_from: components["schemas"]["WorkspaceName"][];
+            /**
+             * @description The pasted tokens it read that no other identity reads and that the credential store would
+             *     not give up (it is locked or unreachable). They stay there until the sweep at the next
+             *     start; empty when every token went.
+             */
+            tokens_left: components["schemas"]["TokenLeft"][];
         };
         /** @description Every identity, in your order. */
         IdentityList: {
@@ -3225,6 +3233,15 @@ export interface components {
          * @enum {string}
          */
         ThemeChoice: "system" | "light" | "dark";
+        /** @description A pasted token that is still in the credential store. */
+        TokenLeft: {
+            /** @description The host the token is for. */
+            host: string;
+            /** @description The entry's id. */
+            id: string;
+            /** @description The organisation, for tokens that belong to one (Azure DevOps). */
+            org: string | null;
+        };
         /** @description Preferences for puddle's own window. `null` means puddle's default. */
         UiPrefs: {
             /** @description The waiting count on the tray, taskbar and window title (default on). */

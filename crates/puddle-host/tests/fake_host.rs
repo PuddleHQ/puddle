@@ -2561,12 +2561,14 @@ async fn the_commit_authors_in_the_running_guest_follow_the_identities() {
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(rig.guest.boots(), booted + 2);
 
-    // Taking both off removes the authors again.
-    for id in [personal, work] {
+    // Taking both off removes the authors again. One at a time, each seen in the guest: two
+    // changes made before the host looks at the first reach the guest as one run, and how many
+    // runs that is depends on timing, not on the contract.
+    for (n, id) in [personal, work].into_iter().enumerate() {
         api.delete(&format!("/api/workspaces/acme/identities/{id}"), None)
             .await;
+        rig.guest.boots_reach(booted + 3 + n).await;
     }
-    rig.guest.boots_reach(booted + 4).await;
     let files = rig.guest.plan_files(rig.guest.boots() - 1);
     assert!(!pem_of(&files, "/etc/puddle/gitconfig").contains("[user]"));
     assert!(!files.contains_key("/etc/puddle/git-author-1.gitconfig"));

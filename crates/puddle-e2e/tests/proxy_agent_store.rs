@@ -683,9 +683,16 @@ async fn ssh_is_refused_never_pending_and_audited_with_its_own_reason() {
     }
     let records = wait_for_records(&rig.store, destinations.len()).await;
     assert_eq!(records.len(), destinations.len(), "{records:?}");
-    for (record, (host, port)) in records.iter().zip(destinations) {
-        assert_eq!(record["host"], host, "{record}");
-        assert_eq!(record["port"], port, "{record}");
+    // Each record is written when its own connection ends, after the client has its answer, so
+    // two that follow each other can be stored in either order: find each by its destination.
+    for (host, port) in destinations {
+        let mut own = records
+            .iter()
+            .filter(|r| r["host"] == host && r["port"] == port);
+        let record = own
+            .next()
+            .unwrap_or_else(|| panic!("{host}:{port}: {records:?}"));
+        assert!(own.next().is_none(), "{host}:{port} twice: {records:?}");
         assert_eq!(record["decision"], "blocked", "{record}");
         assert_eq!(record["reason"], "ssh_unsupported", "{record}");
         assert!(record["pending_id"].is_null(), "{record}");

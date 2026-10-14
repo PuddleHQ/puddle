@@ -30,7 +30,7 @@ use puddle_proxy::{Proxy, ProxyUrl, PullProxy, PullRoute, Terminations, Upstream
 use puddle_repos::{HostApi, Repos};
 use puddle_secrets::{ChunkedStore, KeyringStore, SecretCache, SecretStore, Sources, ToolPaths};
 use puddle_settings::resolve;
-use puddle_store::{DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock};
+use puddle_store::{ConnectionRecorder, DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock};
 use puddle_types::{ConnectionLog, EventSink, Problem, Problems, WorkspaceName, WorkspaceStatus};
 use puddle_upstream::{AuthList, BasicAuth, Chain, Discovery, TlsClient, Watching, system_auth};
 use puddle_workspace::Workspaces;
@@ -439,6 +439,8 @@ impl<R: Runtime + Clone> Host<R> {
 
         // The way out: the company network (discovery, sign-in as the user, then Basic) for the
         // sandbox proxy and the pull proxy alike.
+        let connections: Arc<dyn ConnectionLog> =
+            Arc::new(ConnectionRecorder::new(store.clone(), problems.clone()));
         let egress = Egress::build(
             &config,
             &options,
@@ -446,6 +448,7 @@ impl<R: Runtime + Clone> Host<R> {
             &endpoints,
             &store,
             &events,
+            &connections,
             injecting.termination(),
         );
         let (proxy, upstream, discovery) = (egress.proxy, egress.upstream, egress.discovery);
@@ -455,7 +458,7 @@ impl<R: Runtime + Clone> Host<R> {
         // Image pulls are puddle's own traffic: audited with origin `puddle`, like sandbox traffic.
         let pull = pull
             .with_upstream(upstream)
-            .with_connection_log(store.clone());
+            .with_connection_log(connections.clone());
         steps.push(Step::UpstreamBuilt);
 
         let kit = BootKit::new(&config.paths.guest_share(), &config.guest, proxy, &roots)?;
@@ -520,7 +523,7 @@ impl<R: Runtime + Clone> Host<R> {
             .with_network_health(network_health)
             .with_secret_store(vault.clone())
             .with_credentials(Arc::new(HostCredentials::new(ToolPaths::resolve(), vault)))
-            .with_repos(injecting.repos(&egress.chain, &clock, store.clone()))
+            .with_repos(injecting.repos(&egress.chain, &clock, connections.clone()))
             .with_doctor(system_doctor(&config.layout, &config.expected_runtime))
             .with_endpoints(endpoints.clone());
         let served = serve_api(&config, services).await?;
@@ -820,6 +823,7 @@ impl Egress {
         endpoints: &PuddleEndpoints,
         store: &Arc<Store>,
         events: &Arc<EventHub>,
+        connections: &Arc<dyn ConnectionLog>,
         (terminations, tls): (Arc<Terminations>, TlsClient),
     ) -> Self {
         let discovery = options.discovery.clone().unwrap_or_else(|| {
@@ -841,7 +845,7 @@ impl Egress {
         .with_endpoints(endpoints.clone());
         let proxy = Arc::new(
             Proxy::new(store.clone(), events.clone() as Arc<dyn EventSink>)
-                .with_connection_log(store.clone())
+                .with_connection_log(connections.clone())
                 .with_address_check(Arc::new(guard))
                 .with_upstream(upstream.clone())
                 .with_termination(terminations, tls),

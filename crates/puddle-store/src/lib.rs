@@ -15,6 +15,7 @@ mod error;
 mod identity;
 mod pattern;
 mod pending;
+mod recorder;
 mod rule;
 mod schema;
 mod store;
@@ -43,6 +44,7 @@ pub use pattern::{Pattern, PatternError, SuffixPattern, registrable_domain};
 pub use pending::{
     Decided, InboxGroup, PatternChoice, PendingRow, PendingState, Resolution, ScopeChoice,
 };
+pub use recorder::{ConnectionRecorder, RECORD_PROBLEM};
 pub use rule::{Actor, Effect, NewRule, Rule, Scope};
 pub use schema::SCHEMA_VERSION;
 pub use store::{

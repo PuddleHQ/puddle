@@ -442,6 +442,15 @@ test.describe("what can't be approved, and a burst of new hosts", () => {
 });
 
 test.describe("keyboard only", () => {
+  // The single keys are a Settings switch, off by default: these tests turn it on first.
+  test.beforeEach(async ({ request, backend }) => {
+    const reply = await request.put("/api/settings", {
+      headers: auth(backend),
+      data: { ui: { inbox_shortcuts: true } },
+    });
+    expect(reply.ok()).toBe(true);
+  });
+
   /** J or K until the row for `host` is the current one. */
   async function moveTo(page: Page, host: string): Promise<void> {
     const rows = page.locator("li.req");

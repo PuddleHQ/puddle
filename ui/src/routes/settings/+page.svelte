@@ -166,7 +166,8 @@
     | "badge"
     | "notify_oom"
     | "notify_unexpected_stop"
-    | "confirm_global_rules";
+    | "confirm_global_rules"
+    | "inbox_shortcuts";
   /** What the control shows: the unsaved edit, else what is stored, else puddle's default. */
   const uiValue = <K extends keyof Ui>(key: K, fallback: NonNullable<Ui[K]>) =>
     (draft.ui[key] ?? store.view?.ui[key] ?? fallback) as NonNullable<Ui[K]>;
@@ -422,6 +423,13 @@
           "Confirm before a rule affects every workspace",
           "Allowing or denying for every workspace asks first. Turn this off to decide at once; you can still undo right after.",
           true,
+        )}
+        {@render uiToggle(
+          "inbox_shortcuts",
+          "set-inbox-keys",
+          "Keyboard shortcuts in the inbox",
+          "A allows, D denies, J and K move between requests. Off by default so a stray key press decides nothing; Tab, Enter and Space always work.",
+          false,
         )}
       </section>
 

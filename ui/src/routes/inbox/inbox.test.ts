@@ -45,6 +45,8 @@ vi.mock("#lib/stores/pending.svelte.ts", async (original) => {
   };
 });
 
+import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
+import { FakeSettings } from "#lib/testing/fake-settings.ts";
 import { pending } from "#lib/stores/pending.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import InboxPage from "./+page.svelte";
@@ -52,6 +54,7 @@ import InboxPage from "./+page.svelte";
 const { inbox, setsApi, source, request, mine } = h;
 
 function reset() {
+  globalSettings.view = null;
   inbox.open = [];
   inbox.rules = [];
   inbox.toggles = {};
@@ -146,7 +149,8 @@ describe("the inbox page", () => {
     expect(sub).not.toHaveTextContent(/workspace waits/);
   });
 
-  it("lists the shortcuts in words", async () => {
+  it("lists the shortcuts in words when they are on", async () => {
+    shortcuts(true);
     seed();
     await ready();
     expect(screen.getByText(/allow ·/)).toHaveTextContent(
@@ -486,7 +490,51 @@ describe("every workspace needs a confirm", () => {
   });
 });
 
+/** The settings as the API sends them, with the inbox keys switched on or off. */
+function shortcuts(on: boolean | null) {
+  const fake = new FakeSettings();
+  fake.ui.inbox_shortcuts = on;
+  globalSettings.view = {
+    effective: {} as never,
+    ui: fake.ui,
+    unknown_fields: [],
+    vscode_server: fake.vscode,
+    workspace_defaults: fake.layer,
+  };
+}
+
+describe("the keys while the setting is off", () => {
+  it("leave A, D, J and K alone, whether the switch is unset or off, and say where to turn them on", async () => {
+    for (const setting of [null, false]) {
+      cleanup();
+      reset();
+      shortcuts(setting);
+      seed();
+      await ready();
+      await press("a");
+      await press("d");
+      await press("j");
+      await press("k");
+      expect(inbox.calls.filter((c) => c.startsWith("POST"))).toEqual([]);
+      expect(rowOf("a.example.com")).not.toHaveFocus();
+      expect(
+        screen.getByRole("link", { name: /Turn on the A, D, J and K keys/ }),
+      ).toHaveAttribute("href", "/settings#s-inbox");
+      expect(screen.queryByText("allow")).toBeNull();
+    }
+  });
+
+  it("keep Enter opening the options of the current row", async () => {
+    shortcuts(false);
+    seed();
+    await ready();
+    await press("Enter", document.body);
+    expect(await showOptions()).toBeInTheDocument();
+  });
+});
+
 describe("keyboard", () => {
+  beforeEach(() => shortcuts(true));
   it("J and K move the current row and its focus, and stop at the ends", async () => {
     seed();
     await ready();
@@ -614,6 +662,8 @@ describe("keyboard", () => {
 });
 
 describe("local destinations", () => {
+  beforeEach(() => shortcuts(true));
+
   async function local(toggleOn: boolean) {
     inbox.add(request(1, { host: "192.168.1.10" }), "192.168.1.10");
     inbox.toggles["demo"] = { private: toggleOn };

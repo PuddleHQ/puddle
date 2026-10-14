@@ -386,6 +386,7 @@ describe("notification and inbox switches", () => {
       "confirm_global_rules",
       true,
     ],
+    ["Keyboard shortcuts in the inbox", "inbox_shortcuts", false],
   ];
 
   it("shows each switch at puddle's default and saves a change on Save", async () => {

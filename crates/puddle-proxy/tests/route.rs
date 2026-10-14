@@ -329,7 +329,10 @@ async fn an_unknown_host_is_refused_and_pending_then_passes_once_approved() {
     assert_eq!(code, 403);
     // `status` consumed the head; the body says what to do.
     let body = String::from_utf8(read_all(&mut reader).await.unwrap()).unwrap();
-    assert!(body.contains("new.test is not allowed yet"), "{body}");
+    assert!(
+        body.contains("new.test is waiting for approval in puddle"),
+        "{body}"
+    );
 
     let items = rig.policy.pending();
     assert_eq!(items.len(), 1);

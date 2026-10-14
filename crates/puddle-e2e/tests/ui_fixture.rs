@@ -210,7 +210,6 @@ async fn the_same_scenario_gives_byte_identical_responses() {
         "/api/inbox",
         "/api/rules",
         "/api/audit?limit=500",
-        "/api/workspaces/web-shop/suppression",
         "/api/workspaces",
         "/api/workspaces/docs-site/delete-check",
     ];

@@ -27,9 +27,7 @@ use crate::error::StoreError;
 use crate::pattern::{Pattern, SuffixPattern, registrable_domain};
 use crate::pending::{
     Decided, InboxGroup, PatternChoice, PendingRow, PendingState, Resolution, ScopeChoice,
-    Suppression,
 };
-use crate::ratelimit::TokenBucket;
 use crate::rule::{Actor, Effect, NewRule, Rule, Scope};
 use crate::schema;
 
@@ -42,16 +40,9 @@ pub use sets::{RuleSetEntryInfo, RuleSetInfo, SystemHost, SystemPlan, parse_rule
 /// Tunable limits. The defaults are the spec's *(default)* values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Limits {
-    /// New pending rows a workspace may open in a burst (R-13).
-    pub new_rows_burst: u32,
-    /// One more new row allowed per this many ms (R-13).
-    pub new_rows_refill_ms: u64,
-    /// Most open rows per workspace (R-13).
+    /// Most open pending rows per workspace (R-45). A request for a new host past it gets no
+    /// row of its own and is answered like any waiting one; it is listed once room is made.
     pub max_open_rows: u64,
-    /// A `pending_suppressed` record at most this often while suppression lasts (R-13).
-    pub suppressed_record_every_ms: u64,
-    /// Open rows with no repeat for this long expire (R-20).
-    pub pending_stale_after_ms: u64,
     /// The audit is trimmed when its lines exceed this many bytes (R-26).
     pub audit_max_bytes: u64,
     /// A trim deletes the oldest records until this many bytes remain.
@@ -64,11 +55,7 @@ impl Default for Limits {
     fn default() -> Self {
         const MIB: u64 = 1024 * 1024;
         Self {
-            new_rows_burst: 60,
-            new_rows_refill_ms: 1000,
-            max_open_rows: 500,
-            suppressed_record_every_ms: 60_000,
-            pending_stale_after_ms: 7 * 24 * 60 * 60 * 1000,
+            max_open_rows: 1000,
             audit_max_bytes: 256 * MIB,
             audit_trim_to_bytes: 230 * MIB,
             connection_records_per_second: 200,
@@ -105,13 +92,11 @@ pub enum AuditCursor {
     Before(Option<i64>),
 }
 
-/// What one sweep did (R-19 to R-22).
+/// What one sweep did (R-19, R-22).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SweepReport {
     /// Expired rules deleted.
     pub rules_expired: u64,
-    /// Stale pending rows expired.
-    pub pending_expired: u64,
     /// Audit records deleted by the size cap.
     pub audit_records_trimmed: u64,
 }
@@ -121,7 +106,7 @@ pub struct SweepReport {
 pub struct WorkspaceDeletion {
     /// Its rules, deleted.
     pub rules_deleted: u64,
-    /// Its open pending rows, expired.
+    /// Its open pending rows, closed as expired.
     pub pending_expired: u64,
     /// The secrets it had of its own, by name and by the id of the value in the operating
     /// system's credential store (the values are not in the database, so the caller removes them
@@ -129,84 +114,10 @@ pub struct WorkspaceDeletion {
     pub secrets: Vec<(crate::EnvName, puddle_secrets::StoredId)>,
 }
 
-/// The least time between two [`Event::SuppressionChanged`] for a growing count.
-const SUPPRESSION_EVENT_EVERY_MS: u64 = 500;
-
-/// Per-workspace in-memory limits state (R-13, R-26). Lost on restart, which only resets the
-/// limits.
-#[derive(Debug)]
+/// Per-workspace in-memory limits state (R-26). Lost on restart, which only resets the limits.
+#[derive(Debug, Default)]
 struct WorkspaceState {
-    bucket: TokenBucket,
-    suppressing: bool,
-    episode: u64,
-    unrecorded: u64,
-    last_record_at: u64,
-    last_event_at: u64,
     connections: ConnectionWindow,
-}
-
-/// What a failed audit write must put back: the suppression count that was taken out of memory
-/// for it, and the state it changed on the way.
-#[derive(Debug, Clone, Copy)]
-struct Taken {
-    count: u64,
-    last_record_at: u64,
-    was_suppressing: bool,
-}
-
-impl WorkspaceState {
-    /// Puts back what [`Taken`] took, so the count is written by the next record or sweep.
-    fn restore(&mut self, taken: Taken) {
-        self.unrecorded += taken.count;
-        self.last_record_at = taken.last_record_at;
-        self.suppressing = taken.was_suppressing;
-    }
-
-    fn new(limits: &Limits, now: u64) -> Self {
-        Self {
-            bucket: TokenBucket::new(limits.new_rows_burst, limits.new_rows_refill_ms, now),
-            suppressing: false,
-            episode: 0,
-            unrecorded: 0,
-            last_record_at: 0,
-            last_event_at: 0,
-            connections: ConnectionWindow::default(),
-        }
-    }
-
-    /// Counts one suppressed request; returns a count to record when suppression starts or the
-    /// record interval has passed.
-    fn suppress(&mut self, now: u64, every: u64) -> Option<u64> {
-        if !self.suppressing {
-            self.suppressing = true;
-            self.episode = 0;
-        }
-        self.episode += 1;
-        self.unrecorded += 1;
-        if self.episode == 1 || now.saturating_sub(self.last_record_at) >= every {
-            self.last_record_at = now;
-            return Some(std::mem::take(&mut self.unrecorded));
-        }
-        None
-    }
-
-    /// Ends a suppression episode; returns the count not yet recorded.
-    fn end_suppression(&mut self) -> Option<u64> {
-        if !self.suppressing {
-            return None;
-        }
-        self.suppressing = false;
-        Some(std::mem::take(&mut self.unrecorded)).filter(|n| *n > 0)
-    }
-
-    /// The count not yet recorded, if the record interval has passed.
-    fn flush_due(&mut self, now: u64, every: u64) -> Option<u64> {
-        if self.unrecorded > 0 && now.saturating_sub(self.last_record_at) >= every {
-            self.last_record_at = now;
-            return Some(std::mem::take(&mut self.unrecorded));
-        }
-        None
-    }
 }
 
 #[cfg(test)]
@@ -229,12 +140,9 @@ impl Store {
     }
 }
 
-/// A count [`Store::flush_limits`] took out of memory for one audit record.
-enum Flushed {
-    Suppressed(WorkspaceName, Taken),
-    /// A finished second's excess: the workspace (`None` for puddle's own), its start and count.
-    Connections(Option<WorkspaceName>, u64, u64),
-}
+/// A finished second's excess of `connection` records that [`Store::flush_limits`] took out of
+/// memory: the workspace (`None` for puddle's own), its start and count.
+struct Flushed(Option<WorkspaceName>, u64, u64);
 
 /// puddle's rules, pending requests and audit log, in one SQLite database.
 pub struct Store {
@@ -313,7 +221,7 @@ impl Store {
     }
 
     /// Sends the events of every change (pending requests opened, updated and closed, rules
-    /// changed, audit records appended, suppression changed) to `sink`, after the change has
+    /// changed, audit records appended) to `sink`, after the change has
     /// committed. Nothing is emitted by default. Events carry ids, not decisions: a client that
     /// misses one refetches.
     #[must_use]
@@ -333,7 +241,7 @@ impl Store {
         self.snapshot().rules().to_vec()
     }
 
-    /// Decides one request (R-5 to R-13): the deciding rule, or a pending outcome.
+    /// Decides one request (R-5 to R-12): the deciding rule, or a pending outcome.
     ///
     /// # Errors
     /// [`StoreError`] if the pending row can't be written. The caller fails closed.
@@ -355,23 +263,9 @@ impl Store {
         let tx = conn.transaction()?;
         let head = audit_head(&tx)?;
         let mut fx = Vec::new();
-        let mut taken = None;
-        let outcome = self
-            .record_pending(&tx, request, now, &mut fx, &mut taken)
-            .and_then(|outcome| self.commit(tx, head, fx).map(|()| outcome));
-        match outcome {
-            Ok(outcome) => Ok(Decision::Pending(outcome)),
-            Err(err) => {
-                // The transaction rolled back, so the count it carried is not in the audit:
-                // keep it for the next record instead of losing it.
-                if let Some(taken) = taken
-                    && let Some(state) = lock(&self.workspaces).get_mut(&request.workspace)
-                {
-                    state.restore(taken);
-                }
-                Err(err)
-            }
-        }
+        let outcome = self.record_pending(&tx, request, now, &mut fx)?;
+        self.commit(tx, head, fx)?;
+        Ok(Decision::Pending(outcome))
     }
 
     fn match_rules(
@@ -386,68 +280,12 @@ impl Store {
             .map(Hit::decision)
     }
 
-    /// Takes a token for a new row, or counts the request as suppressed. Returns whether the row
-    /// is admitted and the suppression count that is due in the audit; `taken` says what to put
-    /// back if that write fails.
-    fn admit_or_suppress(
-        &self,
-        request: &EgressRequest,
-        below_cap: bool,
-        now: u64,
-        fx: &mut Vec<Event>,
-        taken: &mut Option<Taken>,
-    ) -> (bool, Option<u64>) {
-        let mut workspaces = lock(&self.workspaces);
-        let state = workspaces
-            .entry(request.workspace.clone())
-            .or_insert_with(|| WorkspaceState::new(&self.limits, now));
-        let before = Taken {
-            count: 0,
-            last_record_at: state.last_record_at,
-            was_suppressing: state.suppressing,
-        };
-        if below_cap && state.bucket.try_take(now) {
-            if state.suppressing {
-                fx.push(Event::SuppressionChanged {
-                    workspace: request.workspace.clone(),
-                    active: false,
-                    count: state.episode,
-                });
-            }
-            let ended = state.end_suppression();
-            *taken = Some(Taken {
-                count: ended.unwrap_or(0),
-                ..before
-            });
-            (true, ended)
-        } else {
-            let every = self.limits.suppressed_record_every_ms;
-            let recorded = state.suppress(now, every);
-            *taken = Some(Taken {
-                count: recorded.unwrap_or(0),
-                ..before
-            });
-            if state.episode == 1
-                || now.saturating_sub(state.last_event_at) >= SUPPRESSION_EVENT_EVERY_MS
-            {
-                state.last_event_at = now;
-                fx.push(Event::SuppressionChanged {
-                    workspace: request.workspace.clone(),
-                    active: true,
-                    count: state.episode,
-                });
-            }
-            (false, recorded)
-        }
-    }
-
     fn record_pending(
         &self,
         tx: &Transaction<'_>,
         request: &EgressRequest,
         now: u64,
         fx: &mut Vec<Event>,
-        taken: &mut Option<Taken>,
     ) -> Result<PendingOutcome, StoreError> {
         let (workspace, host) = (request.workspace.as_str(), request.host.to_string());
         let existing: Option<i64> = tx
@@ -478,20 +316,13 @@ impl Store {
             [workspace],
             |row| row.get(0),
         )?;
-        let below_cap = u64::try_from(open).unwrap_or(u64::MAX) < self.limits.max_open_rows;
-        let (admitted, to_record) = self.admit_or_suppress(request, below_cap, now, fx, taken);
-        if let Some(count) = to_record {
-            append(
-                tx,
-                &AuditRecord::PendingSuppressed {
-                    ts: now,
-                    workspace_id: workspace.to_owned(),
-                    count,
-                },
-            )?;
-        }
-        if !admitted {
-            return Ok(PendingOutcome::Suppressed);
+        if u64::try_from(open).unwrap_or(u64::MAX) >= self.limits.max_open_rows {
+            tracing::debug!(
+                workspace = workspace,
+                open,
+                "open requests at the cap; this host gets no row until room is made"
+            );
+            return Ok(PendingOutcome::Unlisted);
         }
         tx.execute(
             "INSERT INTO pending (workspace_id, host, port, first_seen, last_seen)
@@ -757,18 +588,6 @@ impl Store {
         Ok(groups)
     }
 
-    /// A workspace's suppression state, for the inbox's "N requests suppressed" line (R-13).
-    #[must_use]
-    pub fn suppression(&self, workspace: &WorkspaceName) -> Suppression {
-        lock(&self.workspaces)
-            .get(workspace)
-            .map(|s| Suppression {
-                active: s.suppressing,
-                count: s.episode,
-            })
-            .unwrap_or_default()
-    }
-
     /// Writes a `connection` record (R-24), subject to the per-workspace limit (R-26).
     ///
     /// # Errors
@@ -779,7 +598,7 @@ impl Store {
         let (admitted, summary) = match &event.workspace {
             Some(workspace) => lock(&self.workspaces)
                 .entry(workspace.clone())
-                .or_insert_with(|| WorkspaceState::new(&self.limits, now))
+                .or_default()
                 .connections
                 .admit(now, limit),
             None => lock(&self.puddle_connections).admit(now, limit),
@@ -803,11 +622,7 @@ impl Store {
             self.commit(tx, head, Vec::new())
         })();
         if let (Err(_), Some((ts, count))) = (&written, summary) {
-            self.put_back(vec![Flushed::Connections(
-                event.workspace.clone(),
-                ts,
-                count,
-            )]);
+            self.put_back(vec![Flushed(event.workspace.clone(), ts, count)]);
         }
         written
     }
@@ -883,19 +698,12 @@ impl Store {
                 secrets,
             })
         })?;
-        let state = lock(&self.workspaces).remove(workspace);
-        if let Some(state) = state.filter(|s| s.suppressing) {
-            self.events.emit(Event::SuppressionChanged {
-                workspace: workspace.clone(),
-                active: false,
-                count: state.episode,
-            });
-        }
+        lock(&self.workspaces).remove(workspace);
         tracing::info!(workspace = %workspace, rules = deletion.rules_deleted, "workspace rules removed");
         Ok(deletion)
     }
 
-    /// One sweeper pass (R-19 to R-22), each step its own short transaction.
+    /// One sweeper pass (R-19, R-22), each step its own short transaction.
     ///
     /// # Errors
     /// The first failing step's error; earlier steps stay committed.
@@ -925,67 +733,31 @@ impl Store {
             }
             Ok(rules.len() as u64)
         })?;
-        let pending_expired = {
-            let mut conn = lock(&self.conn);
-            let now = self.clock.now_ms();
-            let cutoff = sql_ts(now.saturating_sub(self.limits.pending_stale_after_ms));
-            let tx = conn.transaction()?;
-            let head = audit_head(&tx)?;
-            let mut fx = Vec::new();
-            let n = expire_rows(
-                &tx,
-                "last_seen <= ?2",
-                &cutoff,
-                now,
-                PendingExpiryReason::Stale,
-                &mut fx,
-            )?;
-            self.commit(tx, head, fx)?;
-            n
-        };
         self.flush_limits()?;
         let audit_records_trimmed = self.trim_audit()?;
         Ok(SweepReport {
             rules_expired,
-            pending_expired,
             audit_records_trimmed,
         })
     }
 
-    /// Writes suppression counts and connection summaries that are due. They are taken out of
-    /// memory first; when the write fails they are put back, so the next sweep writes them.
+    /// Writes the summaries of `connection` records over the limit that are due. They are taken
+    /// out of memory first; when the write fails they are put back, so the next sweep writes them.
     fn flush_limits(&self) -> Result<(), StoreError> {
         let now = self.clock.now_ms();
-        let every = self.limits.suppressed_record_every_ms;
         let mut records = Vec::new();
         let mut taken = Vec::new();
         for (workspace, state) in lock(&self.workspaces).iter_mut() {
-            let last_record_at = state.last_record_at;
-            if let Some(count) = state.flush_due(now, every) {
-                records.push(AuditRecord::PendingSuppressed {
-                    ts: now,
-                    workspace_id: workspace.to_string(),
-                    count,
-                });
-                taken.push(Flushed::Suppressed(
-                    workspace.clone(),
-                    Taken {
-                        count,
-                        last_record_at,
-                        was_suppressing: state.suppressing,
-                    },
-                ));
-            }
             if let Some((ts, count)) = state.connections.roll(now) {
                 let record = ConnectionRecord::suppressed_summary(ts, Some(workspace), count);
                 records.push(AuditRecord::Connection(record));
-                taken.push(Flushed::Connections(Some(workspace.clone()), ts, count));
+                taken.push(Flushed(Some(workspace.clone()), ts, count));
             }
         }
         if let Some((ts, count)) = lock(&self.puddle_connections).roll(now) {
             let record = ConnectionRecord::suppressed_summary(ts, None, count);
             records.push(AuditRecord::Connection(record));
-            taken.push(Flushed::Connections(None, ts, count));
+            taken.push(Flushed(None, ts, count));
         }
         if records.is_empty() {
             return Ok(());
@@ -1010,21 +782,12 @@ impl Store {
         let mut workspaces = lock(&self.workspaces);
         for item in taken {
             match item {
-                Flushed::Suppressed(workspace, taken) => {
-                    if let Some(state) = workspaces.get_mut(&workspace) {
-                        // `suppressing` is whatever it is now: a request that ended the episode
-                        // in the meantime already wrote its own count.
-                        let suppressing = state.suppressing;
-                        state.restore(taken);
-                        state.suppressing = suppressing;
-                    }
-                }
-                Flushed::Connections(Some(workspace), ts, count) => {
+                Flushed(Some(workspace), ts, count) => {
                     if let Some(state) = workspaces.get_mut(&workspace) {
                         state.connections.owe(ts, count);
                     }
                 }
-                Flushed::Connections(None, ts, count) => {
+                Flushed(None, ts, count) => {
                     lock(&self.puddle_connections).owe(ts, count);
                 }
             }
@@ -1804,23 +1567,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn suppression_episode_records_start_interval_and_end() {
-        let limits = Limits::default();
-        let mut state = WorkspaceState::new(&limits, 0);
-        assert_eq!(state.end_suppression(), None);
-        assert_eq!(state.suppress(0, 60_000), Some(1));
-        assert_eq!(state.suppress(1_000, 60_000), None);
-        assert_eq!(state.flush_due(30_000, 60_000), None);
-        assert_eq!(state.suppress(60_000, 60_000), Some(2));
-        assert_eq!(state.suppress(61_000, 60_000), None);
-        assert_eq!(state.flush_due(120_000, 60_000), Some(1));
-        assert_eq!(state.end_suppression(), None);
-        assert_eq!(state.suppress(130_000, 60_000), Some(1));
-        assert_eq!(state.suppress(130_001, 60_000), None);
-        assert_eq!(state.end_suppression(), Some(1));
-    }
-
     /// The counts the audit holds, summed: what the user can read in the activity log.
     fn recorded_count(store: &Store, kind: &str, field: &str) -> u64 {
         store
@@ -1853,66 +1599,15 @@ mod tests {
         )
     }
 
-    fn one_row_a_burst() -> (Arc<ManualClock>, Store) {
+    fn fresh_store() -> (Arc<ManualClock>, Store) {
         let clock = Arc::new(ManualClock::new(1_000_000));
-        let limits = Limits {
-            new_rows_burst: 1,
-            new_rows_refill_ms: 1000,
-            ..Limits::default()
-        };
-        let store = Store::open_in_memory(clock.clone(), limits).unwrap();
+        let store = Store::open_in_memory(clock.clone(), Limits::default()).unwrap();
         (clock, store)
     }
 
     #[test]
-    fn a_failed_suppression_record_keeps_the_count_for_the_next_one() {
-        let (_, store) = one_row_a_burst();
-        let decide = |host: &str| store.decide(&request("a", host), SuffixAllows::Count);
-        decide("one.example").unwrap();
-        store.fail_audit_writes("pending_suppressed");
-        assert!(matches!(
-            decide("two.example"),
-            Err(StoreError::Database(_))
-        ));
-        store.audit_writes_work_again();
-        assert_eq!(
-            decide("three.example").unwrap(),
-            Decision::Pending(PendingOutcome::Suppressed)
-        );
-        // Both held-back requests are in the log, the failed one included.
-        assert_eq!(recorded_count(&store, "pending_suppressed", "count"), 2);
-    }
-
-    #[test]
-    fn a_failed_record_at_the_end_of_suppression_keeps_the_count_and_the_episode() {
-        let (clock, store) = one_row_a_burst();
-        let decide = |host: &str| store.decide(&request("a", host), SuffixAllows::Count);
-        decide("one.example").unwrap();
-        decide("two.example").unwrap();
-        decide("three.example").unwrap();
-        assert_eq!(recorded_count(&store, "pending_suppressed", "count"), 1);
-        store.fail_audit_writes("pending_suppressed");
-        clock.advance(1000);
-        assert!(decide("four.example").is_err());
-        assert!(
-            store.suppression(&WorkspaceName::new("a").unwrap()).active,
-            "the episode did not end"
-        );
-        store.audit_writes_work_again();
-        clock.advance(1000);
-        decide("five.example").unwrap();
-        assert!(!store.suppression(&WorkspaceName::new("a").unwrap()).active);
-        assert_eq!(recorded_count(&store, "pending_suppressed", "count"), 2);
-    }
-
-    #[test]
-    fn a_failed_sweep_flush_keeps_suppression_counts_and_connection_summaries() {
-        let (clock, store) = one_row_a_burst();
-        let decide = |host: &str| store.decide(&request("a", host), SuffixAllows::Count);
-        decide("one.example").unwrap();
-        decide("two.example").unwrap();
-        decide("three.example").unwrap();
-        decide("four.example").unwrap();
+    fn a_failed_sweep_flush_keeps_connection_summaries() {
+        let (clock, store) = fresh_store();
         let event = ConnectionEvent::new(
             &request("a", "x.example"),
             ConnectionDecision::Allow,
@@ -1922,12 +1617,11 @@ mod tests {
         for _ in 0..205 {
             store.record_connection(&event).unwrap();
         }
-        store.fail_audit_writes("pending_suppressed");
+        store.fail_audit_writes("connection");
         clock.advance(61_000);
         assert!(store.sweep().is_err());
         store.audit_writes_work_again();
         store.sweep().unwrap();
-        assert_eq!(recorded_count(&store, "pending_suppressed", "count"), 3);
         assert_eq!(
             summarised_connections(&store),
             5,
@@ -1937,7 +1631,7 @@ mod tests {
 
     #[test]
     fn a_failed_connection_summary_write_is_written_with_the_next_connection() {
-        let (clock, store) = one_row_a_burst();
+        let (clock, store) = fresh_store();
         let event = ConnectionEvent::new(
             &request("a", "x.example"),
             ConnectionDecision::Allow,

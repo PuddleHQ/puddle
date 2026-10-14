@@ -54,13 +54,11 @@ const { inbox, setsApi, source, request, mine } = h;
 function reset() {
   inbox.open = [];
   inbox.rules = [];
-  inbox.suppression = {};
   inbox.toggles = {};
   inbox.calls = [];
   inbox.down = false;
   pending.rows = [];
   pending.decided = [];
-  pending.suppression = {};
   pending.toggles = {};
   pending.status = "loading";
   setsApi.sets = [];
@@ -145,46 +143,15 @@ describe("the inbox page", () => {
     );
   });
 
-  it("shows the held-back line only while a workspace's requests are suppressed (R-13)", async () => {
-    const held = () => document.querySelector(".held");
-    seed();
-    inbox.suppression["demo"] = { active: true, count: 14 };
-    await ready();
-    await vi.waitFor(() =>
-      expect(held()).toHaveTextContent(
-        /14 more requests from demo were held back/,
-      ),
-    );
-    cleanup();
-    reset();
-    seed();
-    inbox.suppression["demo"] = { active: true, count: 1 };
-    await ready();
-    await vi.waitFor(() =>
-      expect(held()).toHaveTextContent(
-        /1 more request from demo was held back/,
-      ),
-    );
-    cleanup();
-    reset();
-    seed();
-    inbox.suppression["demo"] = { active: false, count: 14 };
-    await ready();
-    await vi.waitFor(() => expect(pending.suppression["demo"]).toBeDefined());
-    expect(held()).toBeNull();
-  });
-
-  it("lists the held-back workspaces by name", async () => {
-    inbox.add(request(1, { workspace: "zeta" as never }), "example.com");
-    inbox.add(request(2, { workspace: "alpha" as never }), "example.com");
-    inbox.suppression["zeta"] = { active: true, count: 2 };
-    inbox.suppression["alpha"] = { active: true, count: 3 };
-    await ready();
-    await vi.waitFor(() =>
-      expect(
-        [...document.querySelectorAll(".held .mono")].map((e) => e.textContent),
-      ).toEqual(["alpha", "zeta"]),
-    );
+  it("never holds a workspace's requests back: a long list has no held-back line (R-44)", async () => {
+    for (let n = 1; n <= 70; n++) {
+      inbox.add(request(n, { host: `h${n}.flood.example.net` }), "example.net");
+    }
+    render(InboxPage);
+    await screen.findByRole("heading", { name: "example.net" });
+    expect(document.querySelector(".held")).toBeNull();
+    expect(pending.count).toBe(70);
+    expect(inbox.calls.some((c) => c.includes("suppression"))).toBe(false);
   });
 
   it("updates live: a new row, an updated count, a closed row, without a refetch", async () => {

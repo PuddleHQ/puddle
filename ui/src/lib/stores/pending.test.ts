@@ -79,21 +79,15 @@ describe("limitGroups", () => {
 });
 
 describe("refresh", () => {
-  it("loads the groups, the held-back counters and tells the badge the count", async () => {
+  it("loads the groups and tells the badge the count", async () => {
     const { inbox, store, counts } = setup();
     inbox.add(request(1), "example.com");
     inbox.add(request(2, { workspace: "other" as never }), "example.com");
-    inbox.suppression["demo"] = { active: true, count: 12 };
     await store.refresh();
     expect(store.status).toBe("ready");
     expect(store.count).toBe(2);
     expect(store.groups).toHaveLength(1);
     expect(store.workspaces).toEqual(["demo", "other"]);
-    expect(store.suppression["demo"]).toMatchObject({
-      active: true,
-      count: 12,
-    });
-    expect(store.suppression["other"]).toMatchObject({ active: false });
     expect(counts).toEqual([2]);
   });
 
@@ -164,7 +158,7 @@ describe("refresh", () => {
     expect(store.blockedBy(rowOf(store, 1).request)).toBeNull();
   });
 
-  it("copes with a suppression or settings call that throws", async () => {
+  it("copes with a settings call that throws", async () => {
     const { inbox, store } = setup();
     inbox.add(request(1, { host: "192.168.1.10" }), "192.168.1.10");
     const get = inbox.GET;
@@ -174,7 +168,6 @@ describe("refresh", () => {
     }) as never;
     await store.refresh();
     expect(store.status).toBe("ready");
-    expect(store.suppression).toEqual({});
     expect(store.toggles["demo"]).toBeNull();
   });
 });
@@ -215,13 +208,6 @@ describe("events", () => {
     });
     expect(store.rows.map((r) => r.request.id)).toEqual([2]);
     source.emit({
-      type: "suppression_changed",
-      workspace: "demo",
-      active: true,
-      count: 3,
-    });
-    expect(store.suppression["demo"]).toMatchObject({ active: true, count: 3 });
-    source.emit({
       type: "status_changed",
       workspace: "demo",
       status: "running",
@@ -234,7 +220,7 @@ describe("events", () => {
     expect(store.count).toBe(1);
     expect(counts.at(-1)).toBe(1);
 
-    // Only the suppression lookup for a workspace not seen before is allowed to call out.
+    // Events change the list in place: no refetch.
     expect(
       inbox.calls.slice(before).filter((c) => c === "GET /api/inbox"),
     ).toEqual([]);

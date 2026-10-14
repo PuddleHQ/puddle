@@ -32,12 +32,6 @@
       ? currentId
       : (flat[0]?.request.id ?? null),
   );
-  const held = $derived(
-    Object.values(pending.suppression)
-      .filter((s) => s.active)
-      .sort((a, b) => a.workspace.localeCompare(b.workspace)),
-  );
-
   onMount(() => {
     const stop = pending.start();
     const stopSets = ruleSets.start();
@@ -172,17 +166,6 @@
   </p>
 </div>
 
-{#each held as s (s.workspace)}
-  <p class="held">
-    <b
-      >{s.count} more {s.count === 1 ? "request" : "requests"} from
-      <span class="mono">{s.workspace}</span>
-      {s.count === 1 ? "was" : "were"} held back</b
-    >
-    because it asked for many new hosts at once. They show up again when it retries.
-  </p>
-{/each}
-
 {#if pending.status === "ready" && pending.loadError}
   <LoadNotice what="the requests" message={pending.loadError} stale />
 {/if}
@@ -281,13 +264,6 @@
   }
   .keys {
     font-size: var(--text-sm);
-  }
-  .held {
-    margin: 0 0 var(--space-3);
-    padding: var(--space-3) var(--space-4);
-    background: var(--color-surface-raised);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-md);
   }
   .group,
   .decided,

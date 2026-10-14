@@ -274,17 +274,6 @@ pub struct Inbox {
     pub groups: Vec<InboxGroup>,
 }
 
-/// Whether a workspace's new pending requests are being suppressed (R-13).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct Suppression {
-    /// The workspace.
-    pub workspace: WorkspaceName,
-    /// Whether requests are being suppressed now.
-    pub active: bool,
-    /// Requests suppressed in the current (or last) episode.
-    pub count: u64,
-}
-
 /// Which workspaces a rule applies to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -797,7 +786,7 @@ impl From<ConnectionOrigin> for puddle_types::ConnectionOrigin {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PendingExpiryReason {
-    /// No repeat for the stale period.
+    /// No repeat for seven days. Only in records an earlier version wrote.
     Stale,
     /// Its workspace was deleted.
     WorkspaceDeleted,
@@ -910,13 +899,13 @@ pub enum AuditRecord {
         /// Why.
         reason: PendingExpiryReason,
     },
-    /// Requests over a workspace's limit, not written as rows.
+    /// Requests an earlier version held back over a workspace's limit. Only in old records.
     PendingSuppressed {
         /// Epoch ms.
         ts: u64,
         /// The workspace.
         workspace_id: String,
-        /// Requests suppressed since the previous record.
+        /// Requests held back since the previous record.
         count: u64,
     },
     /// A rule created.
@@ -1300,7 +1289,7 @@ pub enum AuditType {
     PendingDecided,
     /// A pending request expired.
     PendingExpired,
-    /// Requests suppressed over a workspace's limit.
+    /// Requests an earlier version held back over a workspace's limit. Only in old records.
     PendingSuppressed,
     /// A rule created.
     RuleCreated,

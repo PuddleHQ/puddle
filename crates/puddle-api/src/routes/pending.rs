@@ -18,7 +18,6 @@ use crate::routes::AppState;
 use crate::routes::settings::{load_global, load_workspace};
 use crate::wire::{
     DecisionOutcome, DecisionRequest, Effect, Inbox, InboxGroup, PendingList, PendingRequest,
-    Suppression,
 };
 
 /// Which open requests to list.
@@ -210,28 +209,4 @@ async fn decide(
     })
     .await?;
     Ok(Json(DecisionOutcome::from_store(decided)?))
-}
-
-/// Whether a workspace's new pending requests are being suppressed (R-13), for the inbox's
-/// "N requests suppressed" line.
-#[utoipa::path(
-    get,
-    path = "/api/workspaces/{workspace}/suppression",
-    tag = "pending",
-    params(("workspace" = WorkspaceName, Path, description = "workspace name")),
-    responses(
-        (status = OK, description = "the workspace's suppression state", body = Suppression),
-        (status = BAD_REQUEST, description = "invalid workspace name", body = ApiErrorBody)
-    )
-)]
-pub(crate) async fn suppression(
-    State(state): State<AppState>,
-    Path(workspace): Path<WorkspaceName>,
-) -> Json<Suppression> {
-    let s = state.store.suppression(&workspace);
-    Json(Suppression {
-        workspace,
-        active: s.active,
-        count: s.count,
-    })
 }

@@ -497,10 +497,9 @@ mod tests {
                 Some(RuleSetId::User(2))
             )
         );
-        let suppressed =
-            ConnectionEvent::decided(&r, &Decision::Pending(PendingOutcome::Suppressed));
+        let unlisted = ConnectionEvent::decided(&r, &Decision::Pending(PendingOutcome::Unlisted));
         assert_eq!(
-            (suppressed.decision, suppressed.pending_id),
+            (unlisted.decision, unlisted.pending_id),
             (ConnectionDecision::Pending, None)
         );
         let blocked = ConnectionEvent::decided(

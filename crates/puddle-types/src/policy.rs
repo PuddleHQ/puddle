@@ -69,15 +69,17 @@ pub enum PatternKind {
     Suffix,
 }
 
-/// What became of a request that matched no rule (R-10 to R-13).
+/// What became of a request that matched no rule (R-10, R-11, R-45).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PendingOutcome {
     /// A new pending row was written.
     New(PendingId),
     /// An open row for the same `(workspace, host, port)` already existed; it was updated.
     Repeat(PendingId),
-    /// The workspace is over its rate limit or open-row cap; no row was written.
-    Suppressed,
+    /// The workspace already holds as many waiting requests as the store keeps (R-45), so this
+    /// new host got no row of its own. It is answered like any waiting request, never denied,
+    /// and gets a row when it asks again with room made.
+    Unlisted,
 }
 
 impl PendingOutcome {
@@ -86,7 +88,7 @@ impl PendingOutcome {
     pub fn pending_id(self) -> Option<PendingId> {
         match self {
             Self::New(id) | Self::Repeat(id) => Some(id),
-            Self::Suppressed => None,
+            Self::Unlisted => None,
         }
     }
 }
@@ -325,7 +327,7 @@ mod tests {
             PendingOutcome::Repeat(PendingId(4)).pending_id(),
             Some(PendingId(4))
         );
-        assert_eq!(PendingOutcome::Suppressed.pending_id(), None);
+        assert_eq!(PendingOutcome::Unlisted.pending_id(), None);
     }
 
     #[test]
@@ -381,7 +383,7 @@ mod tests {
             }
             .is_allow()
         );
-        assert!(!Decision::Pending(PendingOutcome::Suppressed).is_allow());
+        assert!(!Decision::Pending(PendingOutcome::Unlisted).is_allow());
     }
 
     #[test]

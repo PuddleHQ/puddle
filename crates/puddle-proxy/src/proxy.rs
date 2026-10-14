@@ -1035,11 +1035,11 @@ fn allowed(
             let refusal = Refusal::new(
                 "403 Forbidden",
                 match outcome {
-                    PendingOutcome::Suppressed => format!(
-                        "{host} is not allowed; too many new requests from this workspace, so this one wasn't added to the inbox (retry later)"
+                    PendingOutcome::Unlisted => format!(
+                        "{host} is waiting for approval in puddle, but this workspace already has more waiting requests than puddle lists; answer some of them in puddle, then retry and this one is listed"
                     ),
                     _ => format!(
-                        "{host} is not allowed yet; approve it in puddle and retry"
+                        "{host} is waiting for approval in puddle; approve it there, then retry"
                     ),
                 },
             )

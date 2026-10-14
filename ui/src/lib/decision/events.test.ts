@@ -58,6 +58,7 @@ describe("asInboxEvent", () => {
     ).toMatchObject({
       rule_id: null,
     });
+    // The event of the removed "held back" state is not an inbox event any more.
     expect(
       asInboxEvent({
         type: "suppression_changed",
@@ -65,12 +66,7 @@ describe("asInboxEvent", () => {
         active: true,
         count: 12,
       }),
-    ).toEqual({
-      type: "suppression_changed",
-      workspace: "demo",
-      active: true,
-      count: 12,
-    });
+    ).toBeUndefined();
   });
 
   it("widens the API's short form of a request to an open one, with its domain", () => {
@@ -125,13 +121,6 @@ describe("asInboxEvent", () => {
       { type: "pending_updated", id: "7", attempts: 3, last_seen: 9 },
       { type: "pending_updated", id: 7, attempts: Number.NaN, last_seen: 9 },
       { type: "pending_closed", id: 7 },
-      {
-        type: "suppression_changed",
-        workspace: "demo",
-        active: "yes",
-        count: 1,
-      },
-      { type: "suppression_changed", workspace: 3, active: true, count: 1 },
     ]) {
       expect(asInboxEvent(bad)).toBeUndefined();
     }

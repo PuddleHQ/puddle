@@ -2,7 +2,7 @@
 //! The scenario file: what the fixture holds at start, and the named scripts a test can run.
 //!
 //! Everything a scenario names is applied through the same store calls the proxy and the API
-//! use, so the data has the shape real data has (ids, audit records, suppression, rate limits).
+//! use, so the data has the shape real data has (ids, audit records, rate limits).
 //! Fields are all optional; an unknown field is an error, so a typo in a scenario file fails at
 //! start instead of seeding nothing.
 

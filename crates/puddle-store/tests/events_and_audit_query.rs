@@ -73,7 +73,6 @@ fn kinds(events: &[Event]) -> Vec<&'static str> {
             Event::PendingOpened { .. } => "pending_opened",
             Event::PendingUpdated { .. } => "pending_updated",
             Event::PendingClosed { .. } => "pending_closed",
-            Event::SuppressionChanged { .. } => "suppression_changed",
             Event::RulesChanged {} => "rules_changed",
             Event::AuditAppended { .. } => "audit_appended",
             _ => "other",
@@ -262,25 +261,10 @@ fn a_change_that_fails_emits_nothing() {
 }
 
 #[test]
-fn stale_rows_and_deleted_workspaces_close_as_expired() {
-    let limits = Limits {
-        pending_stale_after_ms: 1000,
-        ..Limits::default()
-    };
-    let (clock, sink, store) = fixture(limits);
-    let stale = new_id(ask(&store, "a", "stale.example"));
-    clock.advance(2000);
+fn deleted_workspaces_close_their_rows_as_expired() {
+    let (_, sink, store) = fixture(Limits::default());
     let gone = new_id(ask(&store, "b", "gone.example"));
     drop(sink.take());
-    store.sweep().unwrap();
-    let events = sink.take();
-    assert!(events.contains(&Event::PendingClosed {
-        workspace: sb("a"),
-        id: stale.0,
-        state: PendingEnd::Expired,
-        rule_id: None,
-    }));
-    assert_eq!(kinds(&events).last(), Some(&"audit_appended"));
     store.delete_workspace(&sb("b")).unwrap();
     let events = sink.take();
     assert!(events.contains(&Event::PendingClosed {
@@ -311,65 +295,19 @@ fn deleting_a_workspace_with_rules_reports_rules_changed() {
 }
 
 #[test]
-fn suppression_starts_grows_at_a_throttled_pace_and_ends() {
+fn an_unlisted_request_opens_no_row_and_sends_no_event() {
     let limits = Limits {
-        new_rows_burst: 1,
-        new_rows_refill_ms: 10_000,
-        ..Limits::default()
-    };
-    let (clock, sink, store) = fixture(limits);
-    ask(&store, "a", "one.example");
-    drop(sink.take());
-    let suppression = |events: Vec<Event>| -> Vec<(bool, u64)> {
-        events
-            .into_iter()
-            .filter_map(|e| match e {
-                Event::SuppressionChanged { active, count, .. } => Some((active, count)),
-                _ => None,
-            })
-            .collect()
-    };
-    assert!(matches!(
-        ask(&store, "a", "two.example"),
-        PendingOutcome::Suppressed
-    ));
-    assert_eq!(suppression(sink.take()), [(true, 1)]);
-    // Within 500 ms the count grows silently.
-    for _ in 0..5 {
-        clock.advance(50);
-        ask(&store, "a", "two.example");
-    }
-    assert_eq!(suppression(sink.take()), []);
-    clock.advance(300);
-    ask(&store, "a", "three.example");
-    assert_eq!(suppression(sink.take()), [(true, 7)]);
-    // The bucket refills; the next admitted request ends the episode with its final count.
-    clock.advance(11000);
-    assert!(matches!(
-        ask(&store, "a", "four.example"),
-        PendingOutcome::New(_)
-    ));
-    assert_eq!(suppression(sink.take()), [(false, 7)]);
-    assert!(!store.suppression(&sb("a")).active);
-}
-
-#[test]
-fn deleting_a_suppressed_workspace_ends_its_suppression() {
-    let limits = Limits {
-        new_rows_burst: 1,
-        new_rows_refill_ms: 10_000,
+        max_open_rows: 1,
         ..Limits::default()
     };
     let (_, sink, store) = fixture(limits);
     ask(&store, "a", "one.example");
-    ask(&store, "a", "two.example");
     drop(sink.take());
-    store.delete_workspace(&sb("a")).unwrap();
-    assert!(sink.take().contains(&Event::SuppressionChanged {
-        workspace: sb("a"),
-        active: false,
-        count: 1,
-    }));
+    assert!(matches!(
+        ask(&store, "a", "two.example"),
+        PendingOutcome::Unlisted
+    ));
+    assert_eq!(sink.take(), []);
 }
 
 #[test]

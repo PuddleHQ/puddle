@@ -1018,26 +1018,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/workspaces/{workspace}/suppression": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Whether a workspace's new pending requests are being suppressed (R-13), for the inbox's
-         *     "N requests suppressed" line.
-         */
-        get: operations["suppression"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1306,7 +1286,7 @@ export interface components {
         } | {
             /**
              * Format: int64
-             * @description Requests suppressed since the previous record.
+             * @description Requests held back since the previous record.
              */
             count: number;
             /**
@@ -1980,18 +1960,6 @@ export interface components {
             state: components["schemas"]["PendingEnd"];
             /** @enum {string} */
             type: "pending_closed";
-            /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
-        } | {
-            /** @description Whether suppression is on. */
-            active: boolean;
-            /**
-             * Format: int64
-             * @description Requests held back in this episode so far.
-             */
-            count: number;
-            /** @enum {string} */
-            type: "suppression_changed";
             /** @description The workspace. */
             workspace: components["schemas"]["WorkspaceName"];
         } | {
@@ -3195,18 +3163,6 @@ export interface components {
         StoredToken: {
             /** @description A `stored` source naming the new entry. */
             source: components["schemas"]["CredentialSource"];
-        };
-        /** @description Whether a workspace's new pending requests are being suppressed (R-13). */
-        Suppression: {
-            /** @description Whether requests are being suppressed now. */
-            active: boolean;
-            /**
-             * Format: int64
-             * @description Requests suppressed in the current (or last) episode.
-             */
-            count: number;
-            /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
         };
         /** @description A certificate copied into workspaces. */
         SyncedRoot: {
@@ -8374,74 +8330,6 @@ export interface operations {
             };
             /** @description not running or busy */
             409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
-            /** @description Host is not the API's own address */
-            421: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
-            /** @description puddle failed; see its log */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
-        };
-    };
-    suppression: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description workspace name */
-                workspace: components["schemas"]["WorkspaceName"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description the workspace's suppression state */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Suppression"];
-                };
-            };
-            /** @description invalid workspace name */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
-            /** @description missing or wrong bearer token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
-            /** @description forbidden origin */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };

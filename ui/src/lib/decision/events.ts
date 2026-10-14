@@ -26,15 +26,7 @@ export interface PendingClosed {
   state: PendingState;
   rule_id: number | null;
 }
-export interface SuppressionChanged {
-  type: "suppression_changed";
-  workspace: string;
-  active: boolean;
-  count: number;
-}
-
-export type InboxEvent =
-  PendingOpened | PendingUpdated | PendingClosed | SuppressionChanged;
+export type InboxEvent = PendingOpened | PendingUpdated | PendingClosed;
 
 const isNum = (v: unknown): v is number =>
   typeof v === "number" && Number.isFinite(v);
@@ -114,20 +106,6 @@ export function asInboxEvent(value: unknown): InboxEvent | undefined {
         id: e["id"],
         state: e["state"] as PendingState,
         rule_id: isNum(e["rule_id"]) ? e["rule_id"] : null,
-      };
-    case "suppression_changed":
-      if (
-        !isStr(e["workspace"]) ||
-        typeof e["active"] !== "boolean" ||
-        !isNum(e["count"])
-      ) {
-        return undefined;
-      }
-      return {
-        type: "suppression_changed",
-        workspace: e["workspace"],
-        active: e["active"],
-        count: e["count"],
       };
     default:
       return undefined;

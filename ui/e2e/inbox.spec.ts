@@ -405,7 +405,7 @@ test.describe("live", () => {
   });
 });
 
-test.describe("what can't be approved, and what is held back", () => {
+test.describe("what can't be approved, and a burst of new hosts", () => {
   test("a local destination with its toggle off names the toggle and offers only Deny", async ({
     page,
     backend,
@@ -423,7 +423,7 @@ test.describe("what can't be approved, and what is held back", () => {
     await expect(row.getByRole("button", { name: /^Deny/ })).toBeVisible();
   });
 
-  test("requests over the rate limit are summarised as held back", async ({
+  test("a burst of new hosts from one workspace is all listed, none held back", async ({
     page,
     backend,
   }) => {
@@ -434,9 +434,10 @@ test.describe("what can't be approved, and what is held back", () => {
       domain: "flood.example.net",
     });
     await openInbox(page, backend);
-    const line = page.locator(".held", { hasText: "flood" });
-    await expect(line).toContainText(/\d+ more requests? from/);
-    await expect(line).toContainText("held back");
+    await expect(
+      page.locator("li.req", { hasText: ".flood.example.net" }),
+    ).toHaveCount(70);
+    await expect(page.locator(".held")).toHaveCount(0);
   });
 });
 

@@ -6,11 +6,13 @@ import { expect, test } from "./fixture";
 
 /** Data arrival to first paint, and to the last row painted, in the page just loaded. */
 async function timings(page: Page) {
-  await expect(page.locator("li.req")).toHaveCount(501);
+  // The rows are drawn in slices, and a host with every core busy takes seconds over them: wait for
+  // the state (all rows, their marks) as long as it takes; the time it took is what the bars below judge.
+  await expect(page.locator("li.req")).toHaveCount(501, { timeout: 30_000 });
   return page.evaluate(async () => {
     const at = (name: string) =>
       performance.getEntriesByName(name)[0]?.startTime ?? -1;
-    for (let i = 0; i < 100 && at("puddle:inbox-all-painted") < 0; i += 1) {
+    for (let i = 0; i < 1500 && at("puddle:inbox-all-painted") < 0; i += 1) {
       await new Promise((r) => setTimeout(r, 20));
     }
     const data = at("puddle:inbox-data");
@@ -64,7 +66,7 @@ test("a 500-row inbox is still driven by the keyboard", async ({
   });
   expect(reply.ok()).toBe(true);
   await page.goto("/inbox");
-  await expect(page.locator("li.req")).toHaveCount(501);
+  await expect(page.locator("li.req")).toHaveCount(501, { timeout: 30_000 });
   await page.locator("main").focus();
   await page.keyboard.press("j");
   await page.keyboard.press("j");

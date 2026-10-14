@@ -4,7 +4,7 @@
 //! roots that does not include the workspace's CA).
 //!
 //! The real-tool test needs `python3` on the path; without it the test skips unless
-//! `PUDDLE_TOOLS_REQUIRED` is set (CI sets it).
+//! `PUDDLE_REQUIRE_TOOLS` is set (the CI jobs set it).
 #![expect(clippy::print_stderr, reason = "a skipped test says so")]
 mod terminate_support;
 
@@ -137,8 +137,8 @@ fn python_available() -> bool {
         return true;
     }
     assert!(
-        std::env::var_os("PUDDLE_TOOLS_REQUIRED").is_none(),
-        "PUDDLE_TOOLS_REQUIRED is set but python3 is not on the path"
+        std::env::var_os("PUDDLE_REQUIRE_TOOLS").is_none(),
+        "PUDDLE_REQUIRE_TOOLS is set but python3 is not on the path"
     );
     eprintln!("skipped: python3 not found");
     false

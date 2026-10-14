@@ -340,6 +340,7 @@ fn connection_records(store: &Store, filter: &AuditFilter) -> Vec<puddle_store::
 
 #[test]
 fn image_pulls_go_through_the_pull_proxy_and_trust_only_the_given_roots() {
+    // skip-ok: DUMP_ENV makes this binary print its environment for the parent test, not run the test.
     if std::env::var_os(DUMP_ENV).is_some() {
         print_environment();
         return;

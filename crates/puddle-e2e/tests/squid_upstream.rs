@@ -7,7 +7,7 @@
 //!
 //! Squid is started from `PUDDLE_SQUID_BIN` (a `squid` binary, as on the CI runner) or
 //! `PUDDLE_SQUID_DOCKER` (an image such as `ubuntu/squid`, run with host networking, as in a
-//! local lab). With neither set the tests skip, unless `PUDDLE_SQUID_REQUIRED=1`, which makes a
+//! local lab). With neither set the tests skip, unless `PUDDLE_REQUIRE_SQUID=1`, which makes a
 //! missing Squid a failure (CI sets it).
 #![cfg(unix)]
 #![expect(
@@ -110,8 +110,8 @@ impl Squid {
         let image = std::env::var("PUDDLE_SQUID_DOCKER").ok();
         if bin.is_none() && image.is_none() {
             assert!(
-                std::env::var_os("PUDDLE_SQUID_REQUIRED").is_none(),
-                "PUDDLE_SQUID_REQUIRED is set but neither PUDDLE_SQUID_BIN nor PUDDLE_SQUID_DOCKER is"
+                std::env::var_os("PUDDLE_REQUIRE_SQUID").is_none(),
+                "PUDDLE_REQUIRE_SQUID is set but neither PUDDLE_SQUID_BIN nor PUDDLE_SQUID_DOCKER is"
             );
             eprintln!("skipped: set PUDDLE_SQUID_BIN or PUDDLE_SQUID_DOCKER to run against Squid");
             return None;

@@ -120,11 +120,15 @@ mod tests {
     use super::*;
 
     /// A vsock socket, or `None` where the kernel has no `AF_VSOCK` (the test then has nothing to
-    /// check; CI runners have it).
+    /// check). The Linux CI job sets `PUDDLE_REQUIRE_VSOCK`, which makes a missing `AF_VSOCK` a failure.
     fn vsock() -> Option<OwnedFd> {
         match socket() {
             Ok(fd) => Some(fd),
             Err(err) => {
+                assert!(
+                    std::env::var_os("PUDDLE_REQUIRE_VSOCK").is_none(),
+                    "PUDDLE_REQUIRE_VSOCK is set but this kernel has no AF_VSOCK ({err})"
+                );
                 eprintln!("skipped: no AF_VSOCK here ({err})");
                 None
             }

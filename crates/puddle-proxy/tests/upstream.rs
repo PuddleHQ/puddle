@@ -475,15 +475,15 @@ async fn hostile_a_literal_metadata_address_is_blocked_before_the_route_is_asked
     assert_eq!(os.pac_calls(), 0);
 }
 
+// macOS answers only 127.0.0.1 on its loopback; Linux and Windows answer all of 127.0.0.0/8.
+#[cfg(not(target_os = "macos"))]
 #[tokio::test]
 async fn hostile_an_ip_deny_rule_beats_the_proxy_the_proxy_never_gets_the_name_or_the_address() {
     // `mixed.test` resolves to a denied address (127.0.0.2, R-27) and an allowed one (127.0.0.1).
     // The company proxy would resolve the name to the denied one if it were told the name.
-    let secret = TcpListener::bind("127.0.0.2:0").await;
-    let Ok(secret) = secret else {
-        eprintln!("skipped: 127.0.0.2 is not available here");
-        return;
-    };
+    let secret = TcpListener::bind("127.0.0.2:0")
+        .await
+        .expect("127.0.0.2 is on the loopback of Linux and Windows");
     let secret_addr = secret.local_addr().unwrap();
     let hits = Arc::new(AtomicUsize::new(0));
     let count = Arc::clone(&hits);

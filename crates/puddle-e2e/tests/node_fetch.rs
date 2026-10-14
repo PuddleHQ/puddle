@@ -6,7 +6,7 @@
 //! audited with its method and path.
 //!
 //! Needs `node` 24 or newer on `PATH` (CI installs it for the openapi gate). Without it the tests
-//! say so and pass locally; with `CI` set they fail instead.
+//! say so and pass locally; with `PUDDLE_REQUIRE_NODE` set (the Linux CI job sets it) they fail instead.
 #![cfg(unix)]
 #![expect(
     clippy::unwrap_used,
@@ -72,7 +72,7 @@ async fn rig() -> Rig {
     }
 }
 
-/// Whether a `node` that honours `NODE_USE_ENV_PROXY` (24+) is on `PATH`. Panics in CI when not.
+/// Whether a `node` that honours `NODE_USE_ENV_PROXY` (24+) is on `PATH`. Panics when `PUDDLE_REQUIRE_NODE` is set and it is not.
 #[expect(
     clippy::print_stderr,
     reason = "a local run without node says that it skipped"
@@ -91,8 +91,8 @@ fn node_available() -> bool {
         return true;
     }
     assert!(
-        std::env::var_os("CI").is_none(),
-        "CI needs node 24+ on PATH for this test (found {version:?})"
+        std::env::var_os("PUDDLE_REQUIRE_NODE").is_none(),
+        "PUDDLE_REQUIRE_NODE is set but node 24+ is not on PATH (found {version:?})"
     );
     eprintln!("skipped: node 24+ not on PATH (found {version:?})");
     false

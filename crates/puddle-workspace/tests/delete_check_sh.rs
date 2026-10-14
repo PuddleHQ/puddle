@@ -281,6 +281,7 @@ async fn a_missing_volume_root_fails_closed() {
 /// there turns that repository bare.
 #[test]
 fn fixtures_leave_the_repository_of_a_git_hook_alone() {
+    // skip-ok: the parent run starts this binary again as a child, and the child must not recurse.
     if common::is_hook_env_child() {
         return;
     }

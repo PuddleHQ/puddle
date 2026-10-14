@@ -289,6 +289,7 @@ mod tests {
         /// is returned byte for byte.
         #[test]
         fn any_field_value_is_handled(bytes in proptest::collection::vec(any::<u8>(), 0..120)) {
+            // skip-ok: a random byte string that is not a header value has nothing to strip; proptest draws another.
             let Ok(value) = HeaderValue::from_bytes(&bytes) else { return Ok(()); };
             let mut headers = HeaderMap::new();
             headers.append(ALT_SVC, value.clone());

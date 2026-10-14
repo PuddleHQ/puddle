@@ -3,8 +3,8 @@
 //! the person at the terminal reads, and a request git sends with its own header behaves as it
 //! would without puddle.
 //!
-//! Needs `git` on the path; without it the tests skip unless `PUDDLE_TOOLS_REQUIRED` is set (CI
-//! sets it). Unix only: `git` on Windows verifies certificates with its own TLS backend, and the
+//! Needs `git` on the path; without it the tests skip unless `PUDDLE_REQUIRE_TOOLS` is set (the
+//! Linux CI job sets it). Unix only: `git` on Windows verifies certificates with its own TLS backend, and the
 //! Windows tier runs real `git` end to end.
 #![cfg(unix)]
 #![expect(
@@ -46,8 +46,8 @@ fn git_available() -> bool {
         .is_ok();
     if !found {
         assert!(
-            std::env::var_os("PUDDLE_TOOLS_REQUIRED").is_none(),
-            "PUDDLE_TOOLS_REQUIRED is set but git is not on the path"
+            std::env::var_os("PUDDLE_REQUIRE_TOOLS").is_none(),
+            "PUDDLE_REQUIRE_TOOLS is set but git is not on the path"
         );
         eprintln!("skipped: git not found");
     }
@@ -74,10 +74,7 @@ async fn proxy_port(guest: &Guest) -> (u16, JoinHandle<()>) {
 }
 
 impl Git {
-    async fn new() -> Option<Self> {
-        if !git_available() {
-            return None;
-        }
+    async fn new() -> Self {
         let t = GitRig::new().await;
         let guest = t.rig.guest().await;
         let (port, bridge) = proxy_port(&guest).await;
@@ -110,7 +107,7 @@ impl Git {
         ] {
             assert!(this.run(args).await.ok, "{args:?}");
         }
-        Some(this)
+        this
     }
 
     fn command(&self) -> Command {
@@ -159,7 +156,10 @@ impl Git {
 
 #[tokio::test]
 async fn a_fetch_from_a_covered_repository_works_and_git_sends_no_authorization_of_its_own() {
-    let Some(git) = Git::new().await else { return };
+    if !git_available() {
+        return;
+    }
+    let git = Git::new().await;
     let ran = git
         .run(&["ls-remote", "https://bound.test/acme/web.git"])
         .await;
@@ -189,7 +189,10 @@ async fn a_fetch_from_a_covered_repository_works_and_git_sends_no_authorization_
 
 #[tokio::test]
 async fn a_refused_push_is_readable_in_git_s_own_output_and_nothing_is_sent() {
-    let Some(git) = Git::new().await else { return };
+    if !git_available() {
+        return;
+    }
+    let git = Git::new().await;
     let ran = git
         .run(&[
             "-C",
@@ -229,7 +232,10 @@ async fn a_refused_push_is_readable_in_git_s_own_output_and_nothing_is_sent() {
 
 #[tokio::test]
 async fn a_refused_fetch_is_readable_when_the_pull_list_is_on() {
-    let Some(git) = Git::new().await else { return };
+    if !git_available() {
+        return;
+    }
+    let git = Git::new().await;
     git.t.world.switches(true, true);
     let ran = git
         .run(&["ls-remote", "https://bound.test/someone/else.git"])
@@ -248,7 +254,10 @@ async fn a_refused_fetch_is_readable_when_the_pull_list_is_on() {
 #[tokio::test]
 async fn a_repository_no_identity_covers_works_with_the_token_git_has_and_fails_as_it_would_without_one()
  {
-    let Some(git) = Git::new().await else { return };
+    if !git_available() {
+        return;
+    }
+    let git = Git::new().await;
     for identity in git.t.world.store.identities().unwrap() {
         git.t
             .world
@@ -284,7 +293,10 @@ async fn a_repository_no_identity_covers_works_with_the_token_git_has_and_fails_
 
 #[tokio::test]
 async fn git_s_own_header_goes_out_as_it_is_and_a_401_to_it_is_what_git_would_have_seen_anyway() {
-    let Some(git) = Git::new().await else { return };
+    if !git_available() {
+        return;
+    }
+    let git = Git::new().await;
     // The workspace's own token for a private repository the host accepts it for.
     let ran = git
         .run(&[

@@ -87,6 +87,49 @@ impl Settings {
         self.root.join(format!("{}-{tag}", self.prefix.as_str()))
     }
 
+    /// [`Self::scratch_home`] for the test `owner`, which must be the only one using `tag` in this
+    /// run: a note file beside the folder (`<root>/<prefix>-<tag>.owner`) records the first
+    /// owner, and a different one asking later fails here, at setup, instead of reading what the
+    /// first left in the folder. The same owner may ask again (a rerun). Tests run one per
+    /// process, so the note is how they see each other. Use [`test_owner`] for `owner`.
+    ///
+    /// # Errors
+    ///
+    /// [`HarnessError::ScratchTagTaken`] when another owner holds the tag,
+    /// [`HarnessError::Io`] when the note or the root can't be written.
+    pub fn claim_scratch_home(&self, tag: &str, owner: &str) -> Result<PathBuf, HarnessError> {
+        use std::io::Write as _;
+
+        std::fs::create_dir_all(&self.root)
+            .map_err(|e| HarnessError::io("create", &self.root, e))?;
+        let home = self.scratch_home(tag);
+        let mut note = home.clone().into_os_string();
+        note.push(".owner");
+        let note = PathBuf::from(note);
+        let created = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&note);
+        match created {
+            Ok(mut file) => file
+                .write_all(owner.as_bytes())
+                .map_err(|e| HarnessError::io("write", &note, e))?,
+            // Taken: by whom? (Unreadable means it was not an existing note.)
+            Err(e) => match std::fs::read_to_string(&note) {
+                Ok(first) if first == owner => {}
+                Ok(first) => {
+                    return Err(HarnessError::ScratchTagTaken {
+                        tag: tag.chars().take(64).collect(),
+                        first,
+                        second: owner.to_owned(),
+                    });
+                }
+                Err(_) => return Err(HarnessError::io("create", &note, e)),
+            },
+        }
+        Ok(home)
+    }
+
     /// Where [`VmEnv::cleanup`] keeps the logs of the sandboxes it removes:
     /// `<root>/<prefix>-kept/<sandbox>/logs/`. A sibling of [`Self::home`], so a later passing
     /// test's [`VmEnv::remove_home`] doesn't delete a failed test's evidence.
@@ -109,6 +152,15 @@ impl Settings {
             .map_err(|e| HarnessError::io("write", &config, e))?;
         Ok(pair)
     }
+}
+
+/// The name of the running test, for [`Settings::claim_scratch_home`]: libtest runs each test on
+/// a thread named after it (nextest runs one test per process, so this is its name). A test
+/// run on the main thread (`--test-threads=1` in plain `cargo test`) can't be told apart from
+/// another, so there the claim records `main` and catches nothing.
+#[must_use]
+pub fn test_owner() -> String {
+    std::thread::current().name().unwrap_or("main").to_owned()
 }
 
 fn config_path(home: &Path) -> PathBuf {
@@ -472,6 +524,69 @@ pub(crate) mod tests {
         assert_eq!(
             scratch.as_os_str().len(),
             settings.home().as_os_str().len() + 3
+        );
+    }
+
+    fn settings_in(root: &Path) -> Settings {
+        Settings::from_lookup(lookup(&[
+            (RUNTIME_DIR_VAR, "/rt"),
+            (PREFIX_VAR, "r9-1"),
+            (ROOT_VAR, root.to_str().unwrap()),
+        ]))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_second_test_cannot_claim_a_scratch_tag_the_first_holds() {
+        let dir = TempDir::new("claim");
+        let settings = settings_in(&dir.path().join("root"));
+        let home = settings.claim_scratch_home("hh", "first_test").unwrap();
+        assert_eq!(home, settings.scratch_home("hh"));
+        // The same test again (a rerun) is fine; another test, or another tag, is told apart.
+        settings.claim_scratch_home("hh", "first_test").unwrap();
+        settings.claim_scratch_home("h2", "second_test").unwrap();
+        let err = settings
+            .claim_scratch_home("hh", "second_test")
+            .unwrap_err();
+        assert!(
+            matches!(&err, HarnessError::ScratchTagTaken { first, second, .. }
+                if first == "first_test" && second == "second_test"),
+            "{err}"
+        );
+        assert!(err.to_string().contains("\"hh\""), "{err}");
+    }
+
+    #[test]
+    fn a_claim_whose_note_is_not_a_file_says_which_path() {
+        let dir = TempDir::new("claim-dir");
+        let settings = settings_in(dir.path());
+        std::fs::create_dir(dir.path().join("r9-1-hh.owner")).unwrap();
+        let err = settings.claim_scratch_home("hh", "t").unwrap_err();
+        assert!(
+            matches!(&err, HarnessError::Io { path, .. } if path.ends_with("r9-1-hh.owner")),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_claim_that_cannot_make_the_root_says_which_path() {
+        let dir = TempDir::new("claim-io");
+        // A file where the root folder should be.
+        let blocker = dir.path().join("root");
+        std::fs::write(&blocker, "").unwrap();
+        let err = settings_in(&blocker)
+            .claim_scratch_home("hh", "t")
+            .unwrap_err();
+        assert!(matches!(err, HarnessError::Io { .. }), "{err}");
+    }
+
+    #[test]
+    fn the_test_owner_is_the_running_tests_name() {
+        // libtest names the thread it runs the test on.
+        let owner = test_owner();
+        assert!(
+            owner.ends_with("the_test_owner_is_the_running_tests_name"),
+            "{owner}"
         );
     }
 

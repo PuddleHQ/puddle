@@ -1166,7 +1166,15 @@ test.describe("accessibility", () => {
     backend,
   }) => {
     await openList(page, backend);
-    const buttons = await card(page, "web-shop").getByRole("button").all();
+    // The heading comes before the list: `all()` counts what is there now and waits for nothing,
+    // so wait until the card has its buttons (and the header's) before taking them.
+    const shop = card(page, "web-shop");
+    await expect(shop).toBeVisible();
+    await expect(shop.getByRole("button")).not.toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "New workspace" }),
+    ).not.toHaveCount(0);
+    const buttons = await shop.getByRole("button").all();
     expect(buttons.length).toBeGreaterThanOrEqual(2);
     for (const button of [
       ...buttons,

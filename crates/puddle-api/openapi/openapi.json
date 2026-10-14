@@ -11309,9 +11309,22 @@
           "density",
           "notifications",
           "sound",
-          "close_behaviour"
+          "close_behaviour",
+          "notify_only_unfocused",
+          "badge",
+          "notify_oom",
+          "notify_unexpected_stop",
+          "confirm_global_rules",
+          "inbox_shortcuts"
         ],
         "properties": {
+          "badge": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "The waiting count on the tray, taskbar and window title (default on)."
+          },
           "close_behaviour": {
             "oneOf": [
               {
@@ -11322,6 +11335,13 @@
                 "type": "null"
               }
             ]
+          },
+          "confirm_global_rules": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Ask before a decision creates a rule for every workspace (default on)."
           },
           "density": {
             "oneOf": [
@@ -11334,12 +11354,40 @@
               }
             ]
           },
+          "inbox_shortcuts": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "The inbox's single-key shortcuts A, D, J and K (default off)."
+          },
           "notifications": {
             "type": [
               "boolean",
               "null"
             ],
             "description": "A system notification for a new request (default on)."
+          },
+          "notify_only_unfocused": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Notify only while puddle's window is not focused (default on)."
+          },
+          "notify_oom": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Notify when a workspace is killed for running out of memory (default on)."
+          },
+          "notify_unexpected_stop": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Notify when a workspace stops or crashes without being asked to (default on)."
           },
           "sound": {
             "type": [

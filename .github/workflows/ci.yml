@@ -75,10 +75,11 @@ jobs:
           sudo systemctl stop squid || true
           test -x /usr/sbin/squid
       # The login tests run the real Claude Code, `gh` (on the runner image) and Copilot CLI against fake
-      # servers. The two npm packages are pinned to exact versions, scripts off; bump them by hand.
+      # servers. The two npm packages are pinned to exact versions; bump them by hand. Scripts stay on:
+      # Claude Code's postinstall fetches its native binary, and without it `claude` does not start.
       - name: Real login tools (Claude Code and Copilot CLI) for the login tests
         run: |
-          npm install --global --ignore-scripts --no-audit --no-fund @anthropic-ai/claude-code@2.1.299 @github/copilot@1.0.97
+          npm install --global --no-audit --no-fund @anthropic-ai/claude-code@2.1.299 @github/copilot@1.0.97
           claude --version
           copilot --version
           gh --version

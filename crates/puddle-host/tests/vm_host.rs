@@ -1374,9 +1374,11 @@ async fn vm_host_a_second_process_on_the_same_data_folder_is_refused_and_the_vm_
         started.elapsed()
     );
     assert!(second.status.success(), "{stdout}{stderr}");
+    // libtest prints "test <name> ... " before the test's own output, so the refusal starts
+    // mid-line, not at a line start.
     let refusal = stdout
         .lines()
-        .find_map(|line| line.strip_prefix("refused: "))
+        .find_map(|line| line.split_once("refused: ").map(|(_, refusal)| refusal))
         .unwrap_or_else(|| panic!("the second process did not report a refusal: {stdout}{stderr}"));
     assert!(
         refusal.contains(&format!("process ID {}", std::process::id())),

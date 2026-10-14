@@ -5,7 +5,7 @@
 # longer on the branch's history and every fresh fetch fails with "revision not found" even though
 # the lock is right. A git dependency names a tag or a full `rev` instead, and Cargo.lock records
 # the same (`?tag=` or `?rev=`, never `?branch=`).
-#   scripts/check-git-pins.sh              checks every tracked Cargo.toml and Cargo.lock
+#   scripts/check-git-pins.sh              checks every tracked Cargo.toml, Cargo.lock and .cargo/config.toml
 #   scripts/check-git-pins.sh --self-test  checks the patterns against lines they must catch or pass
 set -eu
 cd "$(dirname "$0")/.."
@@ -16,8 +16,8 @@ cd "$(dirname "$0")/.."
 offences() {
     awk '
         /^[[:space:]]*#/ { next }
-        /^[[:space:]]*branch[[:space:]]*=/ { print NR ": " $0; next }
-        /[{,][[:space:]]*branch[[:space:]]*=/ { print NR ": " $0; next }
+        /^[[:space:]]*([A-Za-z0-9_-]+\.)?["\x27]?branch["\x27]?[[:space:]]*=/ { print NR ": " $0; next }
+        /[{,][[:space:]]*["\x27]?branch["\x27]?[[:space:]]*=/ { print NR ": " $0; next }
         /^source = "git\+[^"]*\?branch=/ { print NR ": " $0 }
     '
 }
@@ -28,6 +28,8 @@ if [ "${1:-}" = "--self-test" ]; then
 russh = { branch="puddle-0.63", git = "https://github.com/x/russh" }
 branch = "main"
   branch = "puddle"
+a = { git = "https://github.com/x/y", "branch" = "m" }
+dep.branch = "m"
 source = "git+https://github.com/x/libkrun?branch=puddle#daa5a6354a6e9bda6a9577dd1f13b33461763005"'
     must_pass='msb_krun = { git = "https://github.com/x/libkrun", rev = "bdf711f0c7ec5117b70c697282c61943fca36ee7" }
 sdk = { git = "https://github.com/x/microsandbox", tag = "v0.7.7-puddle.19" }
@@ -54,7 +56,7 @@ name = "branch-and-bound"
 fi
 
 bad=0
-for f in $(git ls-files -- 'Cargo.toml' '*/Cargo.toml' 'Cargo.lock'); do
+for f in $(git ls-files -- 'Cargo.toml' '*/Cargo.toml' 'Cargo.lock' '*/Cargo.lock' '.cargo/config.toml'); do
     [ -f "$f" ] || continue
     hits=$(offences <"$f")
     if [ -n "$hits" ]; then

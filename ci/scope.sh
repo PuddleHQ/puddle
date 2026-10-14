@@ -32,12 +32,13 @@
 #   docs     docs/, root Markdown, LICENSE, .gitignore, .github/ outside workflows/
 #
 # verdict: `ci/scope.sh verdict [--nightly-skips] <job>=<output> [<job>=!<output>]...` reads NEEDS (the result job's
-# `toJSON(needs)`, which must include `scope`). On a pull request a job may be skipped only when its
-# output is `false` (`!output`: only when it is not `false`, for the light twin of a full job); a
-# failed, cancelled or otherwise skipped job fails the verdict, so an infrastructure failure can
-# never pass as a scoped skip. Off a pull request nothing is scoped, so a skipped job fails the
-# verdict, except with --nightly-skips (the VM workflows, whose test jobs skip when the nightly's
-# commit already has a green run). Jobs not named are held to that rule too, and only the Windows
+# `toJSON(needs)`, which must include `scope`). A job may be skipped only when its output is
+# `false` (`!output`: only when it is not `false`, for the light twin of a full job, which is
+# skipped whenever the Rust gates run, so also on every push, nightly and dispatch, where scope
+# prints every output true); a failed, cancelled or otherwise skipped job fails the verdict, so an
+# infrastructure failure can never pass as a scoped skip. Off a pull request --nightly-skips also
+# accepts a skip (the VM workflows, whose test jobs skip when the nightly's commit already has a
+# green run). Jobs not named are held to that rule too, and only the Windows
 # release build, which has its own event rule, may be skipped.
 set -uo pipefail
 
@@ -169,12 +170,13 @@ verdict() {
         case $res in
         success) want=ok ;;
         skipped)
-            if [ "$event" != pull_request ]; then
-                want=BAD
-                [ "$nightly" = 1 ] && want=ok
-            elif [ "$neg" = 0 ] && [ "$out" = false ]; then
+            # Off a pull request scope prints every output true: a scoped job runs, and only the
+            # light twin (`!output`) is skipped, so one rule covers every event.
+            if [ "$neg" = 0 ] && [ "$out" = false ]; then
                 want=ok
             elif [ "$neg" = 1 ] && [ "$out" != false ]; then
+                want=ok
+            elif [ "$nightly" = 1 ] && [ "$event" != pull_request ]; then
                 want=ok
             else
                 want=BAD

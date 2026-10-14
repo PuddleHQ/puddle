@@ -208,6 +208,72 @@ verdict pull_request 1 "windows ui-only, ui failed" "$WIN_UI" clippy=win_rust te
     clippy=skipped tests=skipped ui=failure release=skipped
 verdict pull_request 1 "windows release failed" "$WIN_UI" clippy=win_rust tests=win_rust ui=ui -- \
     clippy=skipped tests=skipped ui=success release=failure
+# Every event x scope state x job x result, per result job. Off a pull request scope prints every
+# output true (a push, nightly or dispatch is never scoped); on one each output is true, false or
+# lost. The expectation is written out here, apart from the script: a job passes when it succeeded,
+# or was skipped with its output false (the light twin: with its output not false), or, with the
+# nightly flag, was skipped off a pull request. Each case changes one job's result, the rest succeed.
+matrix() { # matrix <label> <nightly flag or ""> <outputs: key,key> <job=key>...
+    local label=$1 flag=$2 keys=$3 spec job key neg res event st out sc want rc k i n=0
+    shift 3
+    local -a ks states
+    IFS=, read -r -a ks <<<"$keys"
+    for event in push schedule workflow_dispatch pull_request; do
+        # Scope states: one assignment of true/false/lost per output key (3^n on a pull request).
+        states=("")
+        if [ "$event" = pull_request ]; then
+            for k in "${ks[@]}"; do
+                local -a nx=()
+                for st in "${states[@]}"; do for out in true false lost; do nx+=("$st$k=$out;"); done; done
+                states=("${nx[@]}")
+            done
+        else
+            for k in "${ks[@]}"; do states[0]+="$k=true;"; done
+        fi
+        for st in "${states[@]}"; do
+            sc="{"
+            for i in ${st//;/ }; do
+                [ "${i#*=}" = lost ] || sc="$sc\"${i%%=*}\":\"${i#*=}\","
+            done
+            sc="${sc%,}}"
+            for spec in "$@"; do
+                job=${spec%%=*} key=${spec#*=} neg=0
+                case $key in '!'*) neg=1 key=${key#!} ;; esac
+                out=lost
+                for i in ${st//;/ }; do [ "${i%%=*}" = "$key" ] && out=${i#*=}; done
+                for res in success skipped failure cancelled; do
+                    case $res in
+                    success) want=0 ;;
+                    skipped)
+                        want=1
+                        [ "$neg" = 0 ] && [ "$out" = false ] && want=0
+                        [ "$neg" = 1 ] && [ "$out" != false ] && want=0
+                        [ -n "$flag" ] && [ "$event" != pull_request ] && want=0
+                        ;;
+                    *) want=1 ;;
+                    esac
+                    local results=() other
+                    for other in "$@"; do
+                        [ "${other%%=*}" = "$job" ] && results+=("$job=$res") || results+=("${other%%=*}=success")
+                    done
+                    rc=0
+                    NEEDS=$(needs "$sc" "${results[@]}") GITHUB_EVENT_NAME=$event "$scope" verdict ${flag:+"$flag"} "$@" \
+                        >/dev/null 2>&1 || rc=$?
+                    [ "$rc" = "$want" ] || bad "matrix $label: $event, scope $sc, $job $res: exit $rc, want $want"
+                    n=$((n + 1))
+                done
+            done
+        done
+    done
+    MATRIX_CASES=$((${MATRIX_CASES:-0} + n))
+}
+matrix ci "" ci_rust,ui rust=ci_rust 'light=!ci_rust' ui=ui
+matrix windows "" win_rust,ui clippy=win_rust tests=win_rust ui=ui
+matrix vm-linux --nightly-skips vm build=vm tests=vm
+verdict push 0 "ci push: light skipped because the Rust gates ran" "$CI_FULL" "${ci_specs[@]}" -- rust=success light=skipped ui=success
+verdict schedule 0 "ci nightly: light skipped" "$CI_FULL" "${ci_specs[@]}" -- rust=success light=skipped ui=success
+verdict workflow_dispatch 0 "ci dispatch: light skipped" "$CI_FULL" "${ci_specs[@]}" -- rust=success light=skipped ui=success
+verdict push 1 "ci push: light ran, rust skipped" "$CI_FULL" "${ci_specs[@]}" -- rust=skipped light=success ui=success
 [ "$(NEEDS='' GITHUB_EVENT_NAME=pull_request "$scope" verdict x=y >/dev/null 2>&1; echo $?)" = 1 ] || bad "verdict: empty NEEDS must fail"
 
 # 7. The workflows are wired to match their result job's verdict (needs PyYAML).

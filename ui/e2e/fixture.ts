@@ -10,7 +10,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildFixture } from "../scripts/fixture-binary.ts";
+import { FIXTURE_BIN_ENV } from "./fixture-build.ts";
 
 export interface Control {
   state(): Promise<{
@@ -122,8 +122,14 @@ interface Started {
 async function startBackend(scenario: string): Promise<Started> {
   const dir = mkdtempSync(join(tmpdir(), "puddle-fixture-"));
   const file = join(dir, "connection.json");
+  const executable = process.env[FIXTURE_BIN_ENV];
+  if (executable === undefined) {
+    throw new Error(
+      `${FIXTURE_BIN_ENV} is not set: e2e/fixture-build.ts did not run`,
+    );
+  }
   const child: ChildProcess = spawn(
-    buildFixture(),
+    executable,
     ["--scenario", scenario, "--connection-file", file],
     { stdio: ["ignore", "ignore", "inherit"] },
   );

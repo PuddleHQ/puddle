@@ -33,6 +33,16 @@ pub trait SecretStore: Send + Sync {
     /// # Errors
     /// [`StoreError`] when the store cannot be reached.
     fn delete(&self, id: &StoredId) -> Result<(), StoreError>;
+
+    /// Removes the values this store holds that `keep` refuses, and says how many went. A store
+    /// that does not know what it holds (it has no index) has nothing to sweep.
+    ///
+    /// # Errors
+    /// [`StoreError`] when the store cannot be reached; nothing is removed then.
+    fn sweep_orphans(&self, keep: &dyn Fn(&StoredId) -> bool) -> Result<usize, StoreError> {
+        let _ = keep;
+        Ok(0)
+    }
 }
 
 /// A store in memory: nothing persists, nothing leaves the process.

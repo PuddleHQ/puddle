@@ -438,3 +438,58 @@ fn the_default_switches_are_inherited_until_a_workspace_sets_its_own() {
         store.set_git_defaults(Some(false), Some(false)).unwrap()
     );
 }
+
+#[test]
+fn the_secret_ids_in_use_are_the_stored_tokens_of_identities_and_the_secrets_of_variables() {
+    use puddle_secrets::{StoredId, TokenScope};
+    use puddle_store::{EnvDraft, EnvName, EnvScope, SecretHost};
+
+    let (_sink, store) = fixture();
+    let id = |text: &str| StoredId::new(text).unwrap();
+    assert!(store.secret_ids_in_use().unwrap().is_empty());
+
+    let host = HostName::new("github.com").unwrap();
+    let pasted = SourceSpec::Stored {
+        id: id("tok-a"),
+        scope: TokenScope {
+            host: host.clone(),
+            org: None,
+        },
+    };
+    let mut with_token = draft("Pasted", "github.com", &[], true);
+    with_token.credentials = vec![
+        CredentialBinding::new(&host, pasted, Coverage::new(BTreeSet::new(), true).unwrap())
+            .unwrap(),
+    ];
+    let pasted = store.create_identity(with_token).unwrap().id;
+    // A `gh` credential holds no stored value.
+    make(&store, "Gh", &["acme"], false);
+    store
+        .set_env(
+            &EnvScope::Global,
+            &EnvName::new("TOKEN").unwrap(),
+            EnvDraft::secret(
+                id("env-1"),
+                vec![SecretHost::new("api.example.com").unwrap()],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    store
+        .set_env(
+            &EnvScope::Global,
+            &EnvName::new("PLAIN").unwrap(),
+            EnvDraft::plain("x").unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        store.secret_ids_in_use().unwrap(),
+        [id("tok-a"), id("env-1")].into_iter().collect()
+    );
+
+    store.delete_identity(pasted).unwrap();
+    assert_eq!(
+        store.secret_ids_in_use().unwrap(),
+        [id("env-1")].into_iter().collect()
+    );
+}

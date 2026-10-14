@@ -16,7 +16,7 @@
 // fails on a Playwright update).
 
 /** The version of Playwright whose list `PLAYWRIGHT_DISABLED_FEATURES` copies. */
-export const COPIED_FROM_PLAYWRIGHT = "1.63.0";
+export const COPIED_FROM_PLAYWRIGHT = "1.64.0";
 
 /** `disabledFeatures` in Playwright's `chromiumSwitches.ts`. */
 const PLAYWRIGHT_DISABLED_FEATURES = [
@@ -33,6 +33,8 @@ const PLAYWRIGHT_DISABLED_FEATURES = [
   "Translate",
   "AutoDeElevate",
   "OptimizationHints",
+  "NetworkTimeServiceQuerying",
+  "AimEnabled",
   "msForceBrowserSignIn",
   "msEdgeUpdateLaunchServicesPreferredVersion",
 ];

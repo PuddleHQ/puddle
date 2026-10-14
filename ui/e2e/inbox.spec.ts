@@ -321,7 +321,14 @@ test.describe("deciding", () => {
       data: {},
     });
     await row.getByRole("button", { name: /^Allow/ }).click();
-    await expect(page.getByRole("status")).toContainText("already decided");
+    // The aborted stream also puts the "Live updates paused" banner up, so
+    // look in the toast list only.
+    await expect(
+      page.getByRole("region", { name: "Notifications" }).getByRole("status"),
+    ).toContainText("already decided");
+    await expect(
+      page.getByRole("status").filter({ hasText: "Live updates paused" }),
+    ).toBeVisible();
     await expect(row).toHaveCount(0);
   });
 });

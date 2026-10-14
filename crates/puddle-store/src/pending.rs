@@ -8,6 +8,7 @@ use puddle_types::{Host, PendingId, RuleId, WorkspaceName};
 use crate::rule::{Actor, Effect, Rule};
 
 /// A pending row's state: `requested → allowed | denied | expired`; the end states are final.
+/// A row only expires when its workspace is deleted: waiting requests never lapse by age (R-46).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PendingState {
     /// Waiting for the user.
@@ -16,7 +17,7 @@ pub enum PendingState {
     Allowed,
     /// Denied; `rule_id` names the deny rule.
     Denied,
-    /// Closed without a decision: stale (R-20) or its workspace was deleted (R-21).
+    /// Closed without a decision because its workspace was deleted (R-21).
     Expired,
 }
 
@@ -158,15 +159,6 @@ pub struct InboxGroup {
     pub registrable_domain: String,
     /// Open rows, most recent first.
     pub rows: Vec<PendingRow>,
-}
-
-/// A workspace's pending-row suppression (R-13), for the inbox's "N suppressed" line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Suppression {
-    /// Whether requests are being suppressed now.
-    pub active: bool,
-    /// Requests suppressed in the current (or last) episode.
-    pub count: u64,
 }
 
 #[cfg(test)]

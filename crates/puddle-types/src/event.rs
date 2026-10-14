@@ -139,16 +139,6 @@ pub enum Event {
         #[cfg_attr(feature = "openapi", schema(required = true))]
         rule_id: Option<i64>,
     },
-    /// A workspace's "requests held back" state (R-13) changed. Sent when suppression starts or
-    /// ends, and at most twice a second while its count grows.
-    SuppressionChanged {
-        /// The workspace.
-        workspace: WorkspaceName,
-        /// Whether suppression is on.
-        active: bool,
-        /// Requests held back in this episode so far.
-        count: u64,
-    },
     /// Rules were created, changed, deleted or expired. Global: every subscriber gets it.
     RulesChanged {},
     /// The list of identities, their order, the default or an identity's author or credentials
@@ -316,7 +306,7 @@ pub enum PendingEnd {
     Allowed,
     /// Denied by a rule.
     Denied,
-    /// Expired without a decision.
+    /// Closed without a decision because its workspace was deleted.
     Expired,
 }
 
@@ -387,7 +377,6 @@ impl Event {
             | Self::WorkspaceProgress { workspace, .. }
             | Self::PendingUpdated { workspace, .. }
             | Self::PendingClosed { workspace, .. }
-            | Self::SuppressionChanged { workspace, .. }
             | Self::GitAccessDenied { workspace, .. }
             | Self::LoginProblem { workspace, .. }
             | Self::WorkspaceGitChanged { workspace }
@@ -653,15 +642,6 @@ mod tests {
                 r#"{"type":"pending_closed","workspace":"box","id":8,"state":"expired","rule_id":null}"#,
                 Some(name()),
             ),
-            (
-                Event::SuppressionChanged {
-                    workspace: name(),
-                    active: true,
-                    count: 12,
-                },
-                r#"{"type":"suppression_changed","workspace":"box","active":true,"count":12}"#,
-                Some(name()),
-            ),
             (Event::RulesChanged {}, r#"{"type":"rules_changed"}"#, None),
             (
                 Event::IdentitiesChanged {},
@@ -830,7 +810,6 @@ mod tests {
                 "pending_opened",
                 "pending_updated",
                 "pending_closed",
-                "suppression_changed",
                 "rules_changed",
                 "identities_changed",
                 "workspace_git_changed",

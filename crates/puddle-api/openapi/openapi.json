@@ -6062,88 +6062,6 @@
           }
         }
       }
-    },
-    "/api/workspaces/{workspace}/suppression": {
-      "get": {
-        "tags": [
-          "pending"
-        ],
-        "summary": "Whether a workspace's new pending requests are being suppressed (R-13), for the inbox's\n\"N requests suppressed\" line.",
-        "operationId": "suppression",
-        "parameters": [
-          {
-            "name": "workspace",
-            "in": "path",
-            "description": "workspace name",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/WorkspaceName"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "the workspace's suppression state",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Suppression"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "invalid workspace name",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorBody"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "forbidden origin",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorBody"
-                }
-              }
-            }
-          },
-          "421": {
-            "description": "Host is not the API's own address",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorBody"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "puddle failed; see its log",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorBody"
-                }
-              }
-            }
-          }
-        }
-      }
     }
   },
   "components": {
@@ -6742,7 +6660,7 @@
           },
           {
             "type": "object",
-            "description": "Requests over a workspace's limit, not written as rows.",
+            "description": "Requests an earlier version held back over a workspace's limit. Only in old records.",
             "required": [
               "ts",
               "workspace_id",
@@ -6753,7 +6671,7 @@
               "count": {
                 "type": "integer",
                 "format": "int64",
-                "description": "Requests suppressed since the previous record.",
+                "description": "Requests held back since the previous record.",
                 "minimum": 0
               },
               "ts": {
@@ -8378,38 +8296,6 @@
                 "type": "string",
                 "enum": [
                   "pending_closed"
-                ]
-              },
-              "workspace": {
-                "$ref": "#/components/schemas/WorkspaceName",
-                "description": "The workspace."
-              }
-            }
-          },
-          {
-            "type": "object",
-            "description": "A workspace's \"requests held back\" state (R-13) changed. Sent when suppression starts or\nends, and at most twice a second while its count grows.",
-            "required": [
-              "workspace",
-              "active",
-              "count",
-              "type"
-            ],
-            "properties": {
-              "active": {
-                "type": "boolean",
-                "description": "Whether suppression is on."
-              },
-              "count": {
-                "type": "integer",
-                "format": "int64",
-                "description": "Requests held back in this episode so far.",
-                "minimum": 0
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "suppression_changed"
                 ]
               },
               "workspace": {
@@ -11271,31 +11157,6 @@
           "source": {
             "$ref": "#/components/schemas/CredentialSource",
             "description": "A `stored` source naming the new entry."
-          }
-        }
-      },
-      "Suppression": {
-        "type": "object",
-        "description": "Whether a workspace's new pending requests are being suppressed (R-13).",
-        "required": [
-          "workspace",
-          "active",
-          "count"
-        ],
-        "properties": {
-          "active": {
-            "type": "boolean",
-            "description": "Whether requests are being suppressed now."
-          },
-          "count": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Requests suppressed in the current (or last) episode.",
-            "minimum": 0
-          },
-          "workspace": {
-            "$ref": "#/components/schemas/WorkspaceName",
-            "description": "The workspace."
           }
         }
       },

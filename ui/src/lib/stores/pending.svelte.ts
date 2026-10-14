@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /* eslint-disable svelte/prefer-svelte-reactivity -- the maps and sets here are bookkeeping that no template reads, so they need no reactivity */
-// The inbox's state: open requests (grouped by registrable domain, R-18), the "held back"
-// counters (R-13), the local toggles that decide whether a local destination can be approved
-// (R-14), and the "decided just now" list with its undo.
+// The inbox's state: open requests (grouped by registrable domain, R-18), the local toggles that
+// decide whether a local destination can be approved (R-14), and the "decided just now" list with
+// its undo.
 //
-// Live data: it listens to the shell's event stream and applies `pending_*` and
-// `suppression_changed` events in place. Until the API sends them it polls `/api/inbox`; the
+// Live data: it listens to the shell's event stream and applies `pending_*` events in place. Until the API sends them it polls `/api/inbox`; the
 // first pending event it sees turns the poll down to a slow safety refresh. Any resync
 // (`lagged`, reconnect) refetches, and events that arrive during a refetch are applied after it,
 // so the list always converges on the server's.
@@ -19,7 +18,6 @@ import { live, type LiveSource } from "./live.svelte.ts";
 import { readFailure, SERVICE_DOWN } from "./read-failure.ts";
 
 export type PendingRequest = components["schemas"]["PendingRequest"];
-export type Suppression = components["schemas"]["Suppression"];
 
 export interface Row {
   request: PendingRequest;
@@ -116,7 +114,6 @@ export function limitGroups(
 
 export class PendingStore {
   rows = $state.raw<Row[]>([]);
-  suppression = $state.raw<Record<string, Suppression>>({});
   /** `null` while unknown; a workspace whose settings could not be read is treated as approvable. */
   toggles = $state.raw<Record<string, Toggles | null>>({});
   decided = $state.raw<Decided[]>([]);
@@ -199,29 +196,11 @@ export class PendingStore {
       if (this.status !== "ready") markOnce("puddle:inbox-data");
       this.#setRows(rows);
       this.status = "ready";
-      await Promise.all([this.#loadSuppression(), this.#loadToggles()]);
+      await this.#loadToggles();
     } catch {
       this.loadError = SERVICE_DOWN;
       if (this.status === "loading") this.status = "failed";
     }
-  }
-
-  async #loadSuppression(): Promise<void> {
-    const next: Record<string, Suppression> = {};
-    await Promise.all(
-      this.workspaces.map(async (workspace) => {
-        try {
-          const { data } = await this.#api.GET(
-            "/api/workspaces/{workspace}/suppression",
-            { params: { path: { workspace } } },
-          );
-          if (data) next[workspace] = data;
-        } catch {
-          // The held-back line is a courtesy; the list stays usable without it.
-        }
-      }),
-    );
-    this.suppression = next;
   }
 
   async #loadToggles(): Promise<void> {
@@ -283,7 +262,6 @@ export class PendingStore {
         }
         this.#setRows([{ request, domain }, ...this.rows]);
         if (localCategory(request.host) !== null) void this.#loadToggles();
-        void this.#loadSuppressionFor(request.workspace);
         return;
       }
       case "pending_updated":
@@ -305,29 +283,6 @@ export class PendingStore {
       case "pending_closed":
         this.#setRows(this.rows.filter((r) => r.request.id !== event.id));
         return;
-      case "suppression_changed":
-        this.suppression = {
-          ...this.suppression,
-          [event.workspace]: {
-            workspace: event.workspace as Suppression["workspace"],
-            active: event.active,
-            count: event.count,
-          },
-        };
-        return;
-    }
-  }
-
-  async #loadSuppressionFor(workspace: string): Promise<void> {
-    if (this.suppression[workspace]) return;
-    try {
-      const { data } = await this.#api.GET(
-        "/api/workspaces/{workspace}/suppression",
-        { params: { path: { workspace } } },
-      );
-      if (data) this.suppression = { ...this.suppression, [workspace]: data };
-    } catch {
-      // see #loadSuppression
     }
   }
 

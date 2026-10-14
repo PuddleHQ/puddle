@@ -446,86 +446,85 @@ fn r12_pending_rows_are_immutable_and_ids_never_reused() {
 }
 
 #[test]
-fn r13_new_rows_are_rate_limited_per_workspace() {
-    let limits = Limits {
-        new_rows_burst: 3,
-        new_rows_refill_ms: 1000,
-        ..Limits::default()
-    };
-    let (clock, store) = fixture_with(limits);
-    for n in 0..3 {
+fn r44_a_workspace_asking_about_many_hosts_is_never_refused_for_the_volume() {
+    let (_, store) = fixture();
+    // Default limits, one instant: nothing slows or refuses a burst of new hosts.
+    for n in 0..300 {
         new_pending(decide(&store, "a", &format!("h{n}.example")));
     }
-    for n in 3..6 {
-        assert_eq!(
-            decide(&store, "a", &format!("h{n}.example")),
-            Decision::Pending(PendingOutcome::Suppressed)
-        );
-    }
-    // Other workspaces have their own bucket.
-    new_pending(decide(&store, "b", "h9.example"));
-    let suppression = store.suppression(&sb("a"));
-    assert!(suppression.active);
-    assert_eq!(suppression.count, 3);
-    // One record at the start of suppression; the rest wait for the 60 s interval.
-    let records = audit_of(&store, "pending_suppressed");
-    assert_eq!(records.len(), 1);
-    assert_eq!(
-        (
-            records[0]["workspace_id"].clone(),
-            records[0]["count"].clone()
-        ),
-        ("a".into(), 1.into())
-    );
-    clock.advance(1000);
-    new_pending(decide(&store, "a", "h7.example"));
-    assert!(!store.suppression(&sb("a")).active);
-    let records = audit_of(&store, "pending_suppressed");
-    assert_eq!(records.len(), 2);
-    assert_eq!(records[1]["count"], 2);
-    assert_eq!(store.open_pending(Some(&sb("a"))).unwrap().len(), 4);
+    new_pending(decide(&store, "b", "h0.example"));
+    assert_eq!(store.open_pending(Some(&sb("a"))).unwrap().len(), 300);
+    assert!(audit_of(&store, "pending_suppressed").is_empty());
 }
 
 #[test]
-fn r13_open_rows_are_capped_and_repeats_use_no_tokens() {
+fn r45_open_rows_are_capped_without_refusing_and_room_lists_the_next_request() {
     let limits = Limits {
         max_open_rows: 2,
-        new_rows_burst: 100,
         ..Limits::default()
     };
-    let (clock, store) = fixture_with(limits);
+    let (_, store) = fixture_with(limits);
     let first = new_pending(decide(&store, "a", "one.example"));
     new_pending(decide(&store, "a", "two.example"));
-    assert_eq!(
-        decide(&store, "a", "three.example"),
-        Decision::Pending(PendingOutcome::Suppressed)
-    );
+    // Past the cap a new host gets no row, and the answer is still "waiting", never a deny.
+    for host in ["three.example", "four.example"] {
+        assert_eq!(
+            decide(&store, "a", host),
+            Decision::Pending(PendingOutcome::Unlisted)
+        );
+    }
+    assert_eq!(store.open_pending(Some(&sb("a"))).unwrap().len(), 2);
+    // Another workspace has its own room.
+    new_pending(decide(&store, "b", "three.example"));
+    // A repeat of a listed row costs nothing at the cap.
     for _ in 0..200 {
         assert_eq!(
             decide(&store, "a", "one.example"),
             Decision::Pending(PendingOutcome::Repeat(first))
         );
     }
+    // Making room lists the next request that asks.
     store
         .resolve_pending(first, &Resolution::deny(), Actor::Ui)
         .unwrap();
     new_pending(decide(&store, "a", "three.example"));
-    // Suppression flushes from the sweeper too, once its interval passes.
     assert_eq!(
         decide(&store, "a", "four.example"),
-        Decision::Pending(PendingOutcome::Suppressed)
+        Decision::Pending(PendingOutcome::Unlisted)
     );
-    assert_eq!(
-        decide(&store, "a", "five.example"),
-        Decision::Pending(PendingOutcome::Suppressed)
+    assert!(audit_of(&store, "pending_suppressed").is_empty());
+}
+
+#[test]
+fn r45_a_hundred_thousand_new_hosts_keep_the_store_bounded_and_the_inbox_fast() {
+    let (_, store) = fixture();
+    let real = new_pending(decide(&store, "a", "registry.example"));
+    let mut listed = 1;
+    for n in 0..100_000 {
+        match decide(&store, "a", &format!("n{n}.flood.example")) {
+            Decision::Pending(PendingOutcome::New(_)) => listed += 1,
+            Decision::Pending(PendingOutcome::Unlisted) => {}
+            other => panic!("a host asked about for the first time got {other:?}"),
+        }
+    }
+    let cap = usize::try_from(Limits::default().max_open_rows).unwrap();
+    assert_eq!(listed, cap);
+    let started = std::time::Instant::now();
+    let rows = store.open_pending(Some(&sb("a"))).unwrap();
+    let groups = store.inbox().unwrap();
+    assert!(
+        started.elapsed() < Duration::from_millis(200),
+        "{:?}",
+        started.elapsed()
     );
-    clock.advance(60_000);
-    store.sweep().unwrap();
-    let counts: Vec<_> = audit_of(&store, "pending_suppressed")
-        .iter()
-        .map(|r| r["count"].as_u64().unwrap())
-        .collect();
-    assert_eq!(counts, [1, 1, 1]);
+    assert_eq!(rows.len(), cap);
+    assert_eq!(groups.iter().map(|g| g.rows.len()).sum::<usize>(), cap);
+    // The request that was there first is still waiting and still answerable.
+    assert_eq!(store.pending(real).unwrap().state, PendingState::Requested);
+    store
+        .resolve_pending(real, &Resolution::allow(), Actor::Ui)
+        .unwrap();
+    assert!(audit_of(&store, "pending_suppressed").is_empty());
 }
 
 #[test]
@@ -862,23 +861,21 @@ fn r19_sweeper_deletes_expired_rules_and_records_them_whole() {
 }
 
 #[test]
-fn r20_open_rows_expire_after_seven_days_without_a_repeat() {
+fn r46_open_rows_never_expire_by_age() {
     let (clock, store) = fixture();
     let old = new_pending(decide(&store, "a", "old.example"));
-    let busy = new_pending(decide(&store, "a", "busy.example"));
-    clock.advance(6 * DAY);
-    decide(&store, "a", "busy.example");
-    clock.advance(DAY);
-    let report = store.sweep().unwrap();
-    assert_eq!(report.pending_expired, 1);
-    let row = store.pending(old).unwrap();
+    clock.advance(400 * DAY);
+    store.sweep().unwrap();
+    assert_eq!(store.pending(old).unwrap().state, PendingState::Requested);
+    assert!(audit_of(&store, "pending_expired").is_empty());
+    // It still repeats onto the same row and can still be approved.
     assert_eq!(
-        (row.state, row.decided_by),
-        (PendingState::Expired, Some(Actor::System))
+        decide(&store, "a", "old.example"),
+        Decision::Pending(PendingOutcome::Repeat(old))
     );
-    assert_eq!(store.pending(busy).unwrap().state, PendingState::Requested);
-    let records = audit_of(&store, "pending_expired");
-    assert_eq!(records[0]["reason"], "stale");
+    store
+        .resolve_pending(old, &Resolution::allow(), Actor::Ui)
+        .unwrap();
 }
 
 #[test]
@@ -914,7 +911,6 @@ fn r22_sweeper_enforces_the_audit_cap() {
     let limits = Limits {
         audit_max_bytes: 20_000,
         audit_trim_to_bytes: 10_000,
-        new_rows_burst: 1000,
         ..Limits::default()
     };
     let (clock, store) = fixture_with(limits);
@@ -983,14 +979,12 @@ fn r23_every_stored_line_is_tagged_json_with_nulls_written() {
 #[test]
 fn r24_the_store_writes_each_record_type_it_owns() {
     let (clock, store) = fixture_with(Limits {
-        new_rows_burst: 2,
         audit_max_bytes: 1,
         audit_trim_to_bytes: 0,
         ..Limits::default()
     });
     let a = new_pending(decide(&store, "a", "a.example"));
     new_pending(decide(&store, "a", "b.example"));
-    decide(&store, "a", "c.example");
     let decided = store
         .resolve_pending(a, &Resolution::allow(), Actor::Ui)
         .unwrap();
@@ -1016,7 +1010,6 @@ fn r24_the_store_writes_each_record_type_it_owns() {
         "connection",
         "pending_created",
         "pending_decided",
-        "pending_suppressed",
         "rule_created",
         "rule_updated",
         "rule_deleted",

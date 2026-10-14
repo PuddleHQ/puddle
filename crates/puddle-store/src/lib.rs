@@ -15,7 +15,6 @@ mod error;
 mod identity;
 mod pattern;
 mod pending;
-mod ratelimit;
 mod rule;
 mod schema;
 mod store;
@@ -43,7 +42,6 @@ pub use identity::{
 pub use pattern::{Pattern, PatternError, SuffixPattern, registrable_domain};
 pub use pending::{
     Decided, InboxGroup, PatternChoice, PendingRow, PendingState, Resolution, ScopeChoice,
-    Suppression,
 };
 pub use rule::{Actor, Effect, NewRule, Rule, Scope};
 pub use schema::SCHEMA_VERSION;

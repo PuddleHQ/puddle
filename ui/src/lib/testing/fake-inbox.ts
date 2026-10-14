@@ -27,7 +27,6 @@ export function request(id: number, over: Partial<Req> = {}): Req {
 
 export class FakeInbox {
   open: { request: Req; domain: string }[] = [];
-  suppression: Record<string, { active: boolean; count: number }> = {};
   toggles: Record<string, Partial<Record<string, boolean>>> = {};
   calls: string[] = [];
   /** Set to make every call fail the way a stopped service does. */
@@ -73,11 +72,6 @@ export class FakeInbox {
           requests,
         })),
       });
-    }
-    if (path === "/api/workspaces/{workspace}/suppression") {
-      const workspace = String(init?.params?.path?.["workspace"]);
-      const s = this.suppression[workspace] ?? { active: false, count: 0 };
-      return this.reply(200, { workspace, ...s });
     }
     if (path === "/api/settings/workspaces/{workspace}") {
       const workspace = String(init?.params?.path?.["workspace"]);

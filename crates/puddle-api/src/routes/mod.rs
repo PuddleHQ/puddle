@@ -68,7 +68,6 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(pending::get_pending))
         .routes(routes!(pending::approve))
         .routes(routes!(pending::deny))
-        .routes(routes!(pending::suppression))
         .routes(routes!(rules::list_rules, rules::create_rule))
         .routes(routes!(rules::delete_rule))
         .routes(routes!(rules::set_rule_expiry))

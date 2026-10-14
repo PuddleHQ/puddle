@@ -117,7 +117,7 @@ async fn an_unmatched_name_is_pending_and_never_resolved() {
     assert_eq!(header(&first, "x-puddle-decision"), Some("pending"));
     assert_eq!(header(&first, "x-puddle-pending"), Some("1"));
     assert!(
-        first.message.contains("approve it in puddle"),
+        first.message.contains("waiting for approval in puddle"),
         "{}",
         first.message
     );
@@ -130,16 +130,18 @@ async fn an_unmatched_name_is_pending_and_never_resolved() {
 }
 
 #[tokio::test]
-async fn a_suppressed_request_says_it_was_not_recorded() {
+async fn an_unlisted_request_still_says_it_is_waiting() {
     let p = proxy(
-        FnPolicy::new(|_| Ok(Decision::Pending(PendingOutcome::Suppressed))),
+        FnPolicy::new(|_| Ok(Decision::Pending(PendingOutcome::Unlisted))),
         StaticResolver::new(),
     );
     let refusal = admit(&p, &request("a.example")).await.unwrap_err();
     assert_eq!(header(&refusal, "x-puddle-decision"), Some("pending"));
     assert_eq!(header(&refusal, "x-puddle-pending"), None);
     assert!(
-        refusal.message.contains("wasn't added"),
+        refusal.message.contains("waiting for approval")
+            && refusal.message.contains("retry")
+            && !refusal.message.contains("denied"),
         "{}",
         refusal.message
     );
@@ -1205,7 +1207,7 @@ mod guard {
                 (rule, pattern).prop_map(|(rule_id, pattern)| Decision::Deny { rule_id, pattern }),
                 (1i64..50).prop_map(|id| Decision::Pending(PendingOutcome::New(PendingId(id)))),
                 (1i64..50).prop_map(|id| Decision::Pending(PendingOutcome::Repeat(PendingId(id)))),
-                Just(Decision::Pending(PendingOutcome::Suppressed)),
+                Just(Decision::Pending(PendingOutcome::Unlisted)),
                 Just(Decision::Blocked {
                     reason: BlockReason::LocalAddress
                 }),

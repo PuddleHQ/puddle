@@ -277,7 +277,8 @@ impl From<&PendingRow> for PendingWire {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PendingExpiryReason {
-    /// No repeat for the stale period (R-20).
+    /// No repeat for seven days. Earlier versions wrote this; requests no longer expire by age
+    /// (R-46), so it only appears in old records.
     Stale,
     /// Its workspace was deleted (R-21).
     #[serde(alias = "sandbox_deleted")]
@@ -338,10 +339,11 @@ pub enum AuditRecord {
         ts: u64,
         /// The row as expired.
         pending: PendingWire,
-        /// Stale or workspace deleted.
+        /// Workspace deleted (or, in old records, stale).
         reason: PendingExpiryReason,
     },
-    /// Requests over a workspace's limit, not written as rows (R-13).
+    /// Requests an earlier version held back over a workspace's limit and wrote no row for.
+    /// Nothing writes this any more (R-44); it stays so old records still read.
     PendingSuppressed {
         /// Epoch ms.
         ts: u64,

@@ -60,16 +60,18 @@ a binding never allows a host, and a toggle never allows a destination (R-14).
   half-applied change. Connections already open when a rule is deleted or expires are not cut
   *(default)*; the next connection is decided anew.
 - **R-9 The decision says how it matched:** `allow { rule_id, pattern }`, `deny { rule_id }` or
-  `pending { pending_id, outcome }` (`outcome`: `new`, `repeat`, `suppressed`). The proxy needs the
+  `pending { pending_id, outcome }` (`outcome`: `new`, `repeat`, `unlisted`: R-45). The proxy needs the
   pattern kind for R-14. A rule set's entry decides as `set_allow { set, rule_id?, pattern }` or
   `set_deny { set, rule_id, pattern }` (§7).
 
 ## 3. Pending requests
 
-States: `requested → allowed | denied | expired`. The three end states are final.
+States: `requested → allowed | denied | expired`. The three end states are final. A row only
+expires when its workspace is deleted (R-21): a waiting request never lapses by age (R-46).
 
-- **R-10 Unmatched requests are denied and recorded.** The proxy answers 403 at once
-  (fail fast, the client retries); the row keeps `first_seen`/`last_seen` so
+- **R-10 Unmatched requests are refused for now and recorded.** The proxy answers 403 at once
+  (fail fast, the client retries), but the request is not denied: its row stays open until the user
+  decides (R-46), and the answer says so (R-47). The row keeps `first_seen`/`last_seen` so
   parking the connection can be added later without a schema change. The name is never resolved
   before a rule allows it.
 - **R-11 Dedupe on `(workspace_id, host, port)`:** at most one `requested` row per key (a partial unique
@@ -79,12 +81,20 @@ States: `requested → allowed | denied | expired`. The three end states are fin
 - **R-12 Pending rows are immutable:** `id`, `workspace_id`, `host`, `port` and
   `first_seen` never change after insert; ids are never reused. Only `last_seen`, `attempts`,
   `state`, `decided_at`, `decided_by` and `rule_id` change, and `state` only along the arrows above.
-- **R-13 Per-workspace rate limit on new rows:** a token bucket per workspace, 60 new rows
-  burst, refill 1 per second *(default)*, plus at most 500 open rows per workspace *(default)*. Over
-  the limit the request is still denied, no row is written, and the workspace's `suppressed` counter
-  goes up. One `pending_suppressed` audit record carries the count when suppression starts and
-  every 60 s while it lasts; the inbox shows "N requests from <workspace> suppressed". Repeats of an
-  open row (R-11) never consume tokens.
+- **R-44 Volume never refuses a request.** A request no rule matches is never denied, dropped or
+  hidden because its workspace asks about many hosts: no rate limit slows new rows, and nothing is
+  written to the audit as "held back". It is recorded and waits like any other.
+- **R-45 A flood is bounded without refusing.** A hostile workspace must not grow the store
+  without limit. A workspace has at most 1000 *(default)* open rows. A new host asked about past
+  that gets no row of its own (outcome `unlisted`), and is answered exactly like a waiting request
+  (R-47): it is never denied, and it gets a row when it asks again once the user has answered
+  some. Repeats of an open row (R-11) never count against the cap. Other workspaces have their own.
+- **R-47 The refusal says the request is waiting.** The 403 body says in words that the host is
+  waiting for approval in puddle and that the tool should retry once it is approved; the headers
+  keep `x-puddle-decision: pending` and, when a row exists, `x-puddle-pending: <id>`. For an
+  `unlisted` request (R-45) the body adds that puddle holds more waiting requests for the
+  workspace than it lists and that answering some lists this one on the next try. The connection
+  is not held open ("parked"); that stays a later option.
 - **R-14 Local destinations** (the proxy applies this after resolving an allowed name; the engine supplies
   the match): an address in a local category with its toggle off is blocked and the block names
   the toggle, with no pending row. With the toggle on, only an `exact` allow
@@ -129,11 +139,13 @@ States: `requested → allowed | denied | expired`. The three end states are fin
 
 ## 4. Sweeper
 
-One background task, every 60 s *(default)* and at startup:
+One background task, every 60 s *(default)* and at startup. (R-20 is retired: see R-46.)
 
 - **R-19** deletes rules with `expires_at <= now` and writes a `rule_expired` audit record holding
   the whole rule. Correctness never depends on it (R-7).
-- **R-20** moves `requested` rows whose `last_seen` is older than 7 days *(default)* to `expired`.
+- **R-46 Requests never expire.** The sweeper never closes a `requested` row: it waits until the
+  user approves or denies it. Rule expiry is separate and stays (R-7, R-19). A request after its
+  rule lapsed opens a new row (R-11).
 - **R-21** on workspace deletion (not stop), deletes that workspace's rules (`rule_deleted`, reason
   `workspace_deleted`) and expires its open rows, in the same transaction as the deletion.
 - **R-22** enforces the audit cap (R-26).
@@ -158,10 +170,12 @@ readable as JSONL (one record per line).
   `policy_unavailable`, `sni_mismatch`, `guest_tls_rejected`, `connection_limit`, `suppressed`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `pending_id`, `binding_id`, `injected`, `placeholder_unbound` (a secret stand-in went to a host outside
   its hosts and was sent unchanged),
   `method` and `path` on terminated hosts, plain-HTTP requests and `CONNECT` tunnels that carry
-  plain HTTP/1.x only, `bytes_up`, `bytes_down`), `pending_created`, `pending_decided`, `pending_expired`,
-  `pending_suppressed` (`workspace_id`, `count`), `rule_created`, `rule_updated`, `rule_deleted`,
+  plain HTTP/1.x only, `bytes_up`, `bytes_down`), `pending_created`, `pending_decided`, `pending_expired` (only when a workspace is deleted),
+  `rule_created`, `rule_updated`, `rule_deleted`,
   `rule_expired` (with the full rule), `audit_trimmed` (`deleted_records`, `oldest_ts_kept`), and
-  the rule set records of R-43. On a decrypted host whose client refuses puddle's certificate (it does not
+  the rule set records of R-43. Records written by earlier versions still read: `pending_suppressed`
+  (`workspace_id`, `count`) and `pending_expired` with reason `stale`; nothing writes them any more.
+  On a decrypted host whose client refuses puddle's certificate (it does not
   trust the workspace's CA) the decision stays what the rule said and the reason is `guest_tls_rejected`.
   The proxy writes one `connection` record per request whose destination it parsed, when the
   connection ends; a request refused before that (bad request, head too large or too slow) has no
@@ -210,8 +224,7 @@ readable as JSONL (one record per line).
   back with `before`, or oldest first from `after` to follow the tail.
 - **R-29 Events.** After each commit the store emits, per change: `pending_opened` (a new open
   row), `pending_updated` (a repeat: `attempts`, `last_seen`), `pending_closed` (decided by a user
-  or a rule, or expired: `state`, `rule_id`), `suppression_changed` (R-13: when it starts or ends,
-  and at most twice a second while the count grows), `rules_changed` (any rule created, changed,
+  or a rule, or expired with its workspace: `state`, `rule_id`), `rules_changed` (any rule created, changed,
   deleted or expired, any rule set made, renamed, deleted or switched, and any change of System
   managed) and `audit_appended` (once per commit that wrote audit records, with the
   newest id). Events carry ids and counts, not decisions: a client that missed some refetches.
@@ -269,7 +282,7 @@ store.
   connecting, so the user would never see them. The query `_mongodb._tcp.cluster.example.net`
   therefore opens one pending request for `cluster.example.net` (the leading service labels are
   stripped, as in R-34), with port 0 because the service's port is not known yet. It is
-  deduplicated, limited and shown like any other pending request (R-11, R-13), and the answer is
+  deduplicated, bounded and shown like any other pending request (R-11, R-45), and the answer is
   no data until the user decides; once the name is allowed the same query is looked up (R-34).
   It applies to `SRV` only: `TXT`, `MX` and address queries still raise nothing. A name a deny
   rule matches, a name blocked by itself (R-14) and a name that is not a plain host name raise

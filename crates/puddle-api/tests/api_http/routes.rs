@@ -625,19 +625,3 @@ async fn rule_input_is_normalised_not_refused() {
     );
     api.running.shutdown().await;
 }
-
-#[tokio::test]
-async fn suppression_reports_per_workspace() {
-    let api = start().await;
-    let reply = api.get("/api/workspaces/box/suppression").await;
-    assert_eq!(reply.status, 200);
-    assert_eq!(
-        reply.json(),
-        json!({"workspace": "box", "active": false, "count": 0})
-    );
-    assert_eq!(
-        api.get("/api/workspaces/Bad_Name/suppression").await.status,
-        400
-    );
-    api.running.shutdown().await;
-}

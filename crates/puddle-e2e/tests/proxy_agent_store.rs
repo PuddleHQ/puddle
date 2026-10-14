@@ -404,7 +404,7 @@ async fn an_unknown_host_is_pending_in_the_store_and_passes_after_approval() {
     assert_eq!(code, 403);
     let mut body = String::new();
     conn.read_to_string(&mut body).await.unwrap();
-    assert!(body.contains("approve it in puddle"), "{body}");
+    assert!(body.contains("waiting for approval in puddle"), "{body}");
 
     let open = rig.store.open_pending(Some(&workspace())).unwrap();
     assert_eq!(open.len(), 1);
@@ -698,4 +698,60 @@ async fn ssh_is_refused_never_pending_and_audited_with_its_own_reason() {
     );
     // No rule was made, and the one that allows echo.test still decides everything else.
     assert_eq!(rig.store.rules().len(), 1);
+}
+
+/// A guest that asks for 100 000 names nobody allowed is answered "waiting for approval" every
+/// time, none of them is denied for the volume, the store lists no more than its cap, and the
+/// request that was there first is still waiting and still answerable. Through the real agent,
+/// proxy and rules engine.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_hundred_thousand_unknown_names_are_all_told_to_wait_and_the_store_stays_bounded() {
+    const WORKERS: u32 = 16;
+    const PER_WORKER: u32 = 6_250;
+    let rig = Arc::new(rig().await);
+    let agent = rig.agent.local_addr();
+    let (code, _) = connect_via(agent, "first.test:443").await.unwrap();
+    assert_eq!(code, 403);
+    let first = rig.store.open_pending(Some(&workspace())).unwrap()[0].id;
+
+    let mut workers = Vec::new();
+    for worker in 0..WORKERS {
+        workers.push(tokio::spawn(async move {
+            let mut answers = std::collections::BTreeMap::<u16, u32>::new();
+            for i in 0..PER_WORKER {
+                let (code, mut conn) =
+                    connect_via(agent, &format!("f{worker:x}-{i:x}.flood.test:443"))
+                        .await
+                        .unwrap();
+                let mut body = String::new();
+                conn.read_to_string(&mut body).await.unwrap();
+                assert!(body.contains("waiting for approval in puddle"), "{body}");
+                assert!(!body.contains("denied"), "{body}");
+                *answers.entry(code).or_default() += 1;
+            }
+            answers
+        }));
+    }
+    let mut refused = 0;
+    for worker in workers {
+        for (code, n) in worker.await.unwrap() {
+            assert_eq!(code, 403, "only the waiting answer, never anything else");
+            refused += n;
+        }
+    }
+    assert_eq!(refused, WORKERS * PER_WORKER);
+
+    let cap = usize::try_from(Limits::default().max_open_rows).unwrap();
+    let started = Instant::now();
+    let open = rig.store.open_pending(Some(&workspace())).unwrap();
+    assert!(
+        started.elapsed() < Duration::from_millis(200),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(open.len(), cap);
+    assert!(open.iter().any(|row| row.id == first));
+    rig.store
+        .resolve_pending(first, &Resolution::allow(), Actor::Cli)
+        .unwrap();
 }

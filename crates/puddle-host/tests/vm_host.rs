@@ -1016,14 +1016,27 @@ async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_al
     assert!(!example.contains("puddle"), "{example}");
 
     // An ordinary request on a decrypted login host works, over HTTP/2 where the server speaks it.
-    let zen = guest(
+    // `/rate_limit` and not `/zen`: an unauthenticated address gets 60 API calls an hour and a
+    // hosted runner shares its address with other jobs, so `/zen` answers 403 once they used it
+    // up. GitHub does not count `/rate_limit` against that allowance and answers it while the
+    // allowance is spent. The whole answer is in the assert message, so a refusal says why.
+    let rate = guest(
         &runtime,
         &sandbox,
-        "curl -s -o /dev/null -w '%{http_code} %{http_version}' --max-time 60 https://api.github.com/zen",
+        "curl -si -w '\\n%{http_code} %{http_version}' --max-time 60 https://api.github.com/rate_limit",
     )
     .await;
-    assert!(zen.trim().starts_with("200 "), "{zen}");
-    eprintln!("api.github.com through the proxy: {zen}");
+    assert!(
+        rate.trim()
+            .lines()
+            .last()
+            .is_some_and(|l| l.starts_with("200 ")),
+        "{rate}"
+    );
+    eprintln!(
+        "api.github.com through the proxy: {}",
+        rate.trim().lines().last().unwrap_or_default()
+    );
 
     // A token endpoint: the real server refuses an unknown refresh token with its own error; the
     // request body went through the exchange path and the answer is not touched.

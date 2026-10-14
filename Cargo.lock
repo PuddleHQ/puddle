@@ -4013,8 +4013,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox"
-version = "0.7.7-puddle.19"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.19#84835e98cbe3b50e10d67635e23618dd90a63eda"
+version = "0.7.7-puddle.20"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.20#af3d6d04a3ed6e40600d784b3f6c1bce0c1333ef"
 dependencies = [
  "anyhow",
  "astral-tokio-tar",
@@ -4072,8 +4072,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-agent-client"
-version = "0.7.7-puddle.19"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.19#84835e98cbe3b50e10d67635e23618dd90a63eda"
+version = "0.7.7-puddle.20"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.20#af3d6d04a3ed6e40600d784b3f6c1bce0c1333ef"
 dependencies = [
  "bytes",
  "ciborium",
@@ -4091,8 +4091,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-control-client"
-version = "0.7.7-puddle.19"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.19#84835e98cbe3b50e10d67635e23618dd90a63eda"
+version = "0.7.7-puddle.20"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.20#af3d6d04a3ed6e40600d784b3f6c1bce0c1333ef"
 dependencies = [
  "microsandbox-protocol",
  "microsandbox-protocol-client",
@@ -4107,8 +4107,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-db"
-version = "0.7.7-puddle.19"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.19#84835e98cbe3b50e10d67635e23618dd90a63eda"
+version = "0.7.7-puddle.20"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.20#af3d6d04a3ed6e40600d784b3f6c1bce0c1333ef"
 dependencies = [
  "async-trait",
  "microsandbox-types",
@@ -4122,8 +4122,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-filesystem"
-version = "0.7.7-puddle.19"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.19#84835e98cbe3b50e10d67635e23618dd90a63eda"
+version = "0.7.7-puddle.20"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.20#af3d6d04a3ed6e40600d784b3f6c1bce0c1333ef"
 dependencies = [
  "bincode",
  "crossbeam-channel",
@@ -4143,8 +4143,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-image"
-version = "0.7.7-puddle.19"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.19#84835e98cbe3b50e10d67635e23618dd90a63eda"
+version = "0.7.7-puddle.20"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.20#af3d6d04a3ed6e40600d784b3f6c1bce0c1333ef"
 dependencies = [
  "astral-tokio-tar",
  "async-compression",
@@ -4174,8 +4174,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-metrics"
-version = "0.7.7-puddle.19"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.19#84835e98cbe3b50e10d67635e23618dd90a63eda"
+version = "0.7.7-puddle.20"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.20#af3d6d04a3ed6e40600d784b3f6c1bce0c1333ef"
 dependencies = [
  "chrono",
  "libc",
@@ -4185,8 +4185,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-migration"
-version = "0.7.7-puddle.19"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.19#84835e98cbe3b50e10d67635e23618dd90a63eda"
+version = "0.7.7-puddle.20"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.20#af3d6d04a3ed6e40600d784b3f6c1bce0c1333ef"
 dependencies = [
  "microsandbox-db",
  "sea-orm-migration",
@@ -4195,8 +4195,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-network"
-version = "0.7.7-puddle.19"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.19#84835e98cbe3b50e10d67635e23618dd90a63eda"
+version = "0.7.7-puddle.20"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.20#af3d6d04a3ed6e40600d784b3f6c1bce0c1333ef"
 dependencies = [
  "hickory-proto",
  "ipnetwork",
@@ -4211,8 +4211,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-protocol"
-version = "0.7.7-puddle.19"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.19#84835e98cbe3b50e10d67635e23618dd90a63eda"
+version = "0.7.7-puddle.20"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.20#af3d6d04a3ed6e40600d784b3f6c1bce0c1333ef"
 dependencies = [
  "bytes",
  "chrono",
@@ -4228,8 +4228,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-protocol-client"
-version = "0.7.7-puddle.19"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.19#84835e98cbe3b50e10d67635e23618dd90a63eda"
+version = "0.7.7-puddle.20"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.20#af3d6d04a3ed6e40600d784b3f6c1bce0c1333ef"
 dependencies = [
  "microsandbox-protocol",
  "serde",
@@ -4240,8 +4240,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-runtime"
-version = "0.7.7-puddle.19"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.19#84835e98cbe3b50e10d67635e23618dd90a63eda"
+version = "0.7.7-puddle.20"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.20#af3d6d04a3ed6e40600d784b3f6c1bce0c1333ef"
 dependencies = [
  "base64 0.23.1",
  "cap-primitives",
@@ -4273,8 +4273,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-types"
-version = "0.7.7-puddle.19"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.19#84835e98cbe3b50e10d67635e23618dd90a63eda"
+version = "0.7.7-puddle.20"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.20#af3d6d04a3ed6e40600d784b3f6c1bce0c1333ef"
 dependencies = [
  "chrono",
  "hex",
@@ -4290,8 +4290,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-types-macros"
-version = "0.7.7-puddle.19"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.19#84835e98cbe3b50e10d67635e23618dd90a63eda"
+version = "0.7.7-puddle.20"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.20#af3d6d04a3ed6e40600d784b3f6c1bce0c1333ef"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4300,8 +4300,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-utils"
-version = "0.7.7-puddle.19"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.19#84835e98cbe3b50e10d67635e23618dd90a63eda"
+version = "0.7.7-puddle.20"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.20#af3d6d04a3ed6e40600d784b3f6c1bce0c1333ef"
 dependencies = [
  "dirs",
  "libc",

@@ -750,8 +750,16 @@ test.describe("accessibility", () => {
       expect(await axeViolations(page), "list").toEqual([]);
       await rows(page).nth(1).getByRole("button").click();
       expect(await axeViolations(page), "open record").toEqual([]);
+      // The toast leaves after 5 s on the page's clock, unless the pointer is on it. The page's clock
+      // stands still from the click until the pointer holds the toast, so a slow runner cannot let
+      // it leave in between; axe itself needs the clock (it uses timers), so it runs after.
+      await page.clock.pauseAt(
+        new Date((await page.evaluate(() => Date.now())) + 1000),
+      );
       await page.getByRole("button", { name: "Export JSON lines" }).click();
       await expect(toast(page)).toContainText("Saved");
+      await toast(page).getByText("Saved").hover();
+      await page.clock.resume();
       expect(await axeViolations(page), "toast").toEqual([]);
       await page.getByLabel("Host contains").fill("zzz-none");
       await expect(

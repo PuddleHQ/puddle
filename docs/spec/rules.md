@@ -181,8 +181,9 @@ readable as JSONL (one record per line).
   the name (or this host could not resolve it). *Added 2026-10-07 (additive).*
   `origin` says whose connection it is: `workspace` (a workspace's, the default) or `puddle` (puddle's
   own, made on the host with no workspace: image pulls through the pull proxy). A `puddle` record has
-  `workspace_id: null`, `reason: puddle_request` when the address guard let it through (or a block
-  reason when it did not), no rule or pending row, and carries `upstream`, `resolved_ip` and the
+  `workspace_id: null`, `reason: puddle_request` when the address guard let it through and the pull connected
+  (`puddle_request_failed:unreachable` or `:timeout` when it could not resolve or connect; a block
+  reason when the guard refused it), no rule or pending row, and carries `upstream`, `resolved_ip` and the
   bytes like any other. The pull proxy writes one per pull whose destination it parsed; a request
   refused before that (no or wrong token) is only logged. Records written before `origin`
   existed have no such field and read as `workspace`. *Added 2026-10-07 (additive).*

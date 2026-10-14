@@ -96,12 +96,31 @@ fn rule(
         .unwrap()
 }
 
+/// Listeners on [`DENIED`] and [`ALLOWED`] with one port. The kernel picks the port for the first,
+/// and another process may hold it on the second address, so a taken port is retried with a fresh
+/// one rather than failing the test.
+async fn bind_pair() -> io::Result<(TcpListener, TcpListener)> {
+    const ATTEMPTS: usize = 256;
+    for _ in 0..ATTEMPTS {
+        let trap = TcpListener::bind((DENIED, 0)).await?;
+        let port = trap.local_addr()?.port();
+        match TcpListener::bind((ALLOWED, port)).await {
+            Ok(echo) => return Ok((trap, echo)),
+            Err(e) if e.kind() == io::ErrorKind::AddrInUse => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AddrInUse,
+        format!("no port free on both {DENIED} and {ALLOWED} in {ATTEMPTS} attempts"),
+    ))
+}
+
 /// Servers on the same port at both addresses: an echo on [`ALLOWED`], and on [`DENIED`] one
 /// that counts the connections it accepts (any is a failure unless the test expects it).
 async fn servers() -> (u16, Arc<AtomicUsize>) {
-    let trap = TcpListener::bind((DENIED, 0)).await.unwrap();
+    let (trap, echo) = bind_pair().await.unwrap();
     let port = trap.local_addr().unwrap().port();
-    let echo = TcpListener::bind((ALLOWED, port)).await.unwrap();
     let reached = Arc::new(AtomicUsize::new(0));
     let counter = reached.clone();
     tokio::spawn(async move {

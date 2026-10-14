@@ -5,6 +5,7 @@
   import { beforeNavigate } from "$app/navigation";
   import DirectSshDialog from "#lib/components/DirectSshDialog.svelte";
   import MicrosoftServerDialog from "#lib/components/MicrosoftServerDialog.svelte";
+  import Toast from "#lib/components/Toast.svelte";
   import { api } from "#lib/api/client.ts";
   import { LOCAL_LABELS, type LocalCategory } from "#lib/decision/local.ts";
   import {
@@ -816,6 +817,10 @@
     if (view) editLayer("direct_ssh", true, view.effective.direct_ssh.value);
   }}
 />
+
+<!-- Each page that pushes a toast draws the queue; this one never did, so the toast after
+     accepting Microsoft's terms was queued and never shown. -->
+<Toast />
 
 <MicrosoftServerDialog
   bind:open={popupOpen}

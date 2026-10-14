@@ -612,6 +612,10 @@ describe("Microsoft's server", () => {
     expect(screen.getByLabelText("Send Microsoft telemetry")).toBeChecked();
     expect(screen.getByText(/You accepted Microsoft's terms on/)).toBeVisible();
     expect(toasts.items[0]?.message).toBe(microsoftChosenToast(true));
+    // The page draws it: the queue alone showed nothing.
+    expect(
+      screen.getByText(/downloads the server from Microsoft the next time/),
+    ).toBeVisible();
     expect(toasts.items[0]?.message).toMatch(/telemetry is on/);
   });
 

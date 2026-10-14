@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Refreshes the `windows` Rust cache entry when develop's dependencies change. Pull requests only
+# restore that entry (windows.yml saves it only on the nightly), so after a change to a manifest, the
+# lockfile or the toolchain every pull request until the next nightly restored an older entry and
+# rebuilt what changed: a median of 13 minutes for the tests job (9.7 to 14.8) against 9.9 on the one
+# exact hit logged, and no entry at all in 4 of 11 recent runs. This builds the same test binaries as the tests job there
+# (same environment, so the same key) and saves the entry. It runs only for a push to develop that
+# touches those files, not for every merge.
+name: windows-cache
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - Cargo.lock
+      - "**/Cargo.toml"
+      - rust-toolchain.toml
+      - .cargo/config.toml
+      - .github/workflows/windows-cache.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer develop push has the key that matters; the run it replaces would save a superseded entry.
+concurrency:
+  group: windows-cache
+  cancel-in-progress: true
+
+# The same variables as windows.yml: rust-cache hashes them into the entry's key.
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  cache:
+    name: windows debug build cache
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (from rust-toolchain.toml)
+        shell: bash
+        run: rustup toolchain install && rustc --version
+      # Saves unless the restore was an exact hit; cache-gc.yml deletes the superseded entry.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: windows
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
+      # What `cargo nextest run` builds in windows.yml, without running the tests.
+      - name: build the test binaries
+        shell: bash
+        run: cargo test --workspace --all-features --locked --no-run

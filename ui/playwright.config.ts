@@ -46,9 +46,14 @@ const only = (process.env["PUDDLE_E2E_PROJECTS"] ?? "")
   .split(",")
   .filter(Boolean);
 
+// Playwright starts half the logical CPUs as workers. The Linux host shares its cores between
+// several runs at once, so it passes the share one run may use here (remote-check-host.sh).
+const workers = Number(process.env["PUDDLE_E2E_WORKERS"]);
+
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: true,
+  ...(Number.isInteger(workers) && workers > 0 ? { workers } : {}),
   // Builds the fixture backend once (e2e/fixture-build.ts), then starts each browser once before
   // the tests (e2e/warm-up.ts).
   globalSetup: ["./e2e/fixture-build.ts", "./e2e/warm-up.ts"],

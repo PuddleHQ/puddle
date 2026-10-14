@@ -9,7 +9,15 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import {
   cleanGitEnv,
   judge,
@@ -121,24 +129,21 @@ describe("judge", () => {
 });
 
 describe("run on a real git repository", () => {
-  const dirs: string[] = [];
-  afterEach(() => {
-    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
-    vi.restoreAllMocks();
-  });
-
-  function repo(): string {
+  // One repository for all three tests: `run` only reads it, and every git
+  // start-up is a process spawn that a loaded host schedules slowly, so
+  // building it per test put six spawns inside each 5 s test body.
+  let dir = "";
+  beforeAll(() => {
     // `.native` expands Windows 8.3 short names (RUNNER~1), which git reports in long form; the
     // JS realpath leaves them short, so the lcov paths would fall outside the repository.
-    const dir = realpathSync.native(
-      mkdtempSync(join(tmpdir(), "diff-coverage-")),
-    );
-    dirs.push(dir);
+    dir = realpathSync.native(mkdtempSync(join(tmpdir(), "diff-coverage-")));
     const g = (...a: string[]) =>
-      execFileSync("git", a, { cwd: dir, env: cleanGitEnv() });
+      execFileSync(
+        "git",
+        ["-c", "user.email=t@example.com", "-c", "user.name=t", ...a],
+        { cwd: dir, env: cleanGitEnv() },
+      );
     g("init", "-q");
-    g("config", "user.email", "t@example.com");
-    g("config", "user.name", "t");
     mkdirSync(join(dir, "src"));
     writeFileSync(join(dir, "src/a.rs"), "fn a() {\n    1;\n}\n");
     g("add", ".");
@@ -147,8 +152,10 @@ describe("run on a real git repository", () => {
       join(dir, "src/a.rs"),
       "fn a() {\n    1;\n    2;\n    3;\n}\n",
     );
-    return dir;
-  }
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => vi.restoreAllMocks());
+
   const opts = (lcov: string): Options => ({
     base: "HEAD",
     lcov,
@@ -158,7 +165,6 @@ describe("run on a real git repository", () => {
   });
 
   it("passes when every added executable line ran", () => {
-    const dir = repo();
     writeFileSync(
       join(dir, "l.info"),
       `SF:${dir}/src/a.rs\nDA:2,1\nDA:3,1\nDA:4,5\nend_of_record\n`,
@@ -172,7 +178,6 @@ describe("run on a real git repository", () => {
   });
 
   it("fails and names the file and line when one added line never ran", () => {
-    const dir = repo();
     writeFileSync(
       join(dir, "l.info"),
       `SF:${dir}/src/a.rs\nDA:2,1\nDA:3,1\nDA:4,0\nend_of_record\n`,
@@ -183,7 +188,6 @@ describe("run on a real git repository", () => {
   });
 
   it("fails when the coverage report is missing", () => {
-    const dir = repo();
     vi.spyOn(console, "error").mockImplementation(() => {});
     expect(run(opts(join(dir, "nope.info")), dir)).toBe(1);
   });

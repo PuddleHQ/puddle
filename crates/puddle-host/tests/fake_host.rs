@@ -1794,6 +1794,42 @@ async fn the_ssh_endpoint_exists_while_the_workspace_runs_with_direct_ssh_on() {
     host.shutdown().await;
 }
 
+/// A session the runtime cannot serve ends the client's `ssh` with nothing to read, so the user
+/// is told through the event stream.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_ssh_session_the_runtime_cannot_serve_reaches_the_user_as_an_event() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    allow_direct_ssh(&api, "acme", true).await;
+    create(&api, &mut events, "acme").await;
+    let name = WorkspaceName::new("acme").unwrap();
+    let endpoint: PathBuf = host.workspaces().ssh_endpoint(&name).await.unwrap();
+    rig.runtime.inject(
+        Op::ServeSsh,
+        Fault::once(puddle_compute::ComputeError::Runtime {
+            op: "serve ssh",
+            message: "the guest's sshd is gone".into(),
+        }),
+    );
+
+    let (_stdin, bridge_in) = tokio::io::duplex(1024);
+    let (bridge_out, _stdout) = tokio::io::duplex(1024);
+    let _ = puddle_ssh::bridge::run(&endpoint, bridge_in, bridge_out).await;
+
+    let event = events
+        .until(
+            |e| e["type"] == "workspace_ssh_failed",
+            Duration::from_secs(20),
+        )
+        .await;
+    assert_eq!(event["workspace"], "acme");
+    let reason = event["reason"].as_str().unwrap();
+    assert!(reason.contains("the guest's sshd is gone"), "{reason}");
+    host.shutdown().await;
+}
+
 async fn allow_direct_ssh(api: &Api, name: &str, on: bool) {
     let reply = api
         .put(

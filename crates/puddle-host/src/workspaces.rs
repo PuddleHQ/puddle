@@ -41,6 +41,8 @@ use puddle_types::{
     Event, EventSink, GuestEnv, ImageRef, MemoryMib, Problem, Problems, WorkspaceId, WorkspaceName,
     WorkspaceStatus, WorkspaceStep,
 };
+
+use crate::ssh_target::{ReportingTarget, report_failure};
 use puddle_workspace::{Findings, Layout, Workspaces};
 use tokio::sync::watch;
 use tokio::task::JoinSet;
@@ -955,21 +957,33 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Ok(resolve(&global, Some(&own)).direct_ssh.value)
     }
 
-    /// Opens the SSH endpoint of a running sandbox Failures are logged: the workspace
-    /// runs without direct SSH.
+    /// Opens the SSH endpoint of a running sandbox. A failure is reported to the user
+    /// ([`Event::WorkspaceSshFailed`]): the workspace runs without direct SSH.
     async fn open_ssh(&self, name: &WorkspaceName, gated: Arc<GatedSandbox<R::Sandbox>>) {
         let inner = &self.inner;
+        let no_endpoint = |e: &dyn std::fmt::Display| {
+            report_failure(
+                inner.events.as_ref(),
+                name,
+                format!("direct SSH has no endpoint ({e}); restart the workspace to try again"),
+            );
+        };
         let listener = match inner.kit.ipc().listen() {
             Ok(listener) => listener,
             Err(e) => {
-                tracing::warn!(workspace = %name, error = %e, "no SSH endpoint");
+                no_endpoint(&e);
                 return;
             }
         };
-        let ssh = match SshEndpoint::start(listener, gated) {
+        let target = Arc::new(ReportingTarget::new(
+            gated,
+            name.clone(),
+            Arc::clone(&inner.events),
+        ));
+        let ssh = match SshEndpoint::start(listener, target) {
             Ok(ssh) => ssh,
             Err(e) => {
-                tracing::warn!(workspace = %name, error = %e, "no SSH endpoint");
+                no_endpoint(&e);
                 return;
             }
         };

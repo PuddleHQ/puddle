@@ -531,6 +531,62 @@ async fn a_failed_session_closes_the_client_and_the_endpoint_keeps_serving() {
     endpoint.close().await;
 }
 
+/// Fails every session and records what the endpoint reported about it.
+struct Reporting {
+    reports: std::sync::Mutex<Vec<String>>,
+}
+
+impl SshTarget for Reporting {
+    type Error = std::io::Error;
+
+    fn label(&self) -> String {
+        "reporting".into()
+    }
+
+    fn admit(&self) -> impl Future<Output = Result<(), String>> {
+        std::future::ready(Ok(()))
+    }
+
+    fn failed(&self, reason: &str) {
+        self.reports.lock().unwrap().push(reason.to_owned());
+    }
+
+    async fn serve<S: SshStream>(&self, mut stream: S) -> Result<(), std::io::Error> {
+        stream.write_all(b"SSH-2.0-failing\r\n").await?;
+        Err(std::io::Error::other("runtime lost the VM"))
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_failed_session_is_reported_to_the_target_with_its_cause() {
+    let root = IpcRoot::new().unwrap();
+    let target = Arc::new(Reporting {
+        reports: std::sync::Mutex::default(),
+    });
+    let endpoint = SshEndpoint::start(root.listen().unwrap(), target.clone()).unwrap();
+    let mut client = bridge_to(endpoint.endpoint().path());
+    assert_eq!(read_line(&mut client.stdout).await, "SSH-2.0-failing\r\n");
+    timeout(WAIT, client.bridge)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    // The report follows the session's end; wait for it rather than race the close.
+    timeout(WAIT, async {
+        while target.reports.lock().unwrap().is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the failure was never reported");
+    endpoint.close().await;
+    let reports = target.reports.lock().unwrap();
+    assert_eq!(
+        reports.as_slice(),
+        ["an SSH session ended with an error: runtime lost the VM"]
+    );
+}
+
 /// Refuses, but only once the test lets it decide.
 struct SlowRefusal {
     decide: Semaphore,

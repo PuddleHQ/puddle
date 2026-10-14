@@ -106,6 +106,23 @@ describe("NoticeWatcher", () => {
     expect(n?.link?.href).toBe("/workspaces/my%20web/settings");
   });
 
+  it("says direct SSH failed with the reason, and withdraws that once the workspace stops", () => {
+    const w = make();
+    w.handle({
+      type: "workspace_ssh_failed",
+      workspace: "my web",
+      reason: "direct SSH has no endpoint (address in use).",
+    });
+    const [n] = center.items;
+    expect(n?.title).toBe("Direct SSH to my web failed.");
+    expect(n?.detail).toContain("address in use");
+    expect(n?.link?.href).toBe("/workspaces/my%20web");
+    w.handle({ type: "workspace_ssh_failed", workspace: "my web", reason: 4 });
+    expect(center.items).toHaveLength(1);
+    w.handle(status("my web", "stopped"));
+    expect(keys()).toEqual([]);
+  });
+
   it("calls a stop nobody asked for unexpected, from the seeded list", async () => {
     const w = make();
     w.start();

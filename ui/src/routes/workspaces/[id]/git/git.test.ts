@@ -220,7 +220,7 @@ describe("identities on a workspace", () => {
 
   it("says when the workspace's own address could not be read, so nothing was listed or chosen", async () => {
     workspaces.list = [
-      workspace("odd", { repo_url: "https://example.com/a/b/c" }),
+      workspace("odd", { repo_url: "https://github.com/a/b/c" }),
     ];
     api.git["odd"] = { ids: [], repos: [], push: true, pull: false };
     url.id = "odd";

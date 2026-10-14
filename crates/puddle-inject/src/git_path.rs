@@ -84,13 +84,17 @@ pub(crate) fn classify(host: &str, method: &str, path: &str, query: Option<&str>
         Err(why) if looks_like_git(path) => return Classified::Ambiguous(why),
         Err(_) => return Classified::NotGit,
     };
-    let Some(found) = locate(host, &segments) else {
-        return Classified::NotGit;
+    let service = service(query);
+    let has_service = !matches!(service, Ok(None));
+    let found = match locate(host, &segments, has_service) {
+        Ok(Some(found)) => found,
+        Ok(None) => return Classified::NotGit,
+        Err(why) => return Classified::Ambiguous(why),
     };
     let Some(endpoint) = Endpoint::of(&found.rest) else {
         return Classified::NotGit;
     };
-    let service = match service(query) {
+    let service = match service {
         Ok(service) => service,
         Err(why) => return Classified::Ambiguous(why),
     };
@@ -268,49 +272,124 @@ fn tail(segments: &[String], from: usize) -> Vec<String> {
         .collect()
 }
 
-/// Finds the owner and the repository in `segments` by what `host` is.
-fn locate(host: &str, segments: &[String]) -> Option<Located> {
+/// Finds the owner and the repository in `segments` by what `host` is. `has_service` says the
+/// query names a `service`, which an `info/refs` request of the smart protocol always does.
+///
+/// # Errors
+/// A reason, when the path could name more than one repository or one deeper than any host has.
+fn locate(
+    host: &str,
+    segments: &[String],
+    has_service: bool,
+) -> Result<Option<Located>, &'static str> {
     let segment = |i: usize| segments.get(i).map(String::as_str);
-    let lower = |i: usize| segment(i).map(str::to_ascii_lowercase);
+    let lower = |i: usize| segments.get(i).map(|s| s.to_ascii_lowercase());
     if host == "dev.azure.com" {
         let (project, repo, rest_from) = if segment(2).is_some_and(is_git_segment) {
-            (lower(1)?, repo_name(segment(3)?), 4)
+            (lower(1), segment(3).map(repo_name), 4)
         } else if segment(1).is_some_and(is_git_segment) {
-            let repo = repo_name(segment(2)?);
+            let repo = segment(2).map(repo_name);
             (repo.clone(), repo, 3)
         } else {
-            return None;
+            return Ok(None);
         };
-        return Some(Located {
+        let (Some(owner), Some(project), Some(repo)) = (lower(0), project, repo) else {
+            return Ok(None);
+        };
+        return Ok(Some(Located {
             credential_host: host.to_owned(),
-            owner: lower(0)?,
+            owner,
             repo: format!("{project}/{repo}"),
             rest: tail(segments, rest_from),
-        });
+        }));
     }
     if let Some(org) = host.strip_suffix(".visualstudio.com") {
         let (project, repo, rest_from) = if segment(1).is_some_and(is_git_segment) {
-            (lower(0)?, repo_name(segment(2)?), 3)
+            (lower(0), segment(2).map(repo_name), 3)
         } else if segment(0).is_some_and(|s| s.eq_ignore_ascii_case("DefaultCollection"))
             && segment(2).is_some_and(is_git_segment)
         {
-            (lower(1)?, repo_name(segment(3)?), 4)
+            (lower(1), segment(3).map(repo_name), 4)
         } else {
-            return None;
+            return Ok(None);
         };
-        return Some(Located {
+        let (Some(project), Some(repo)) = (project, repo) else {
+            return Ok(None);
+        };
+        return Ok(Some(Located {
             credential_host: "dev.azure.com".to_owned(),
             owner: org.to_ascii_lowercase(),
             repo: format!("{project}/{repo}"),
             rest: tail(segments, rest_from),
-        });
+        }));
     }
-    Some(Located {
+    let Some(owner) = lower(0) else {
+        return Ok(None);
+    };
+    let flat = |rest_from: usize| -> Option<Located> {
+        Some(Located {
+            credential_host: host.to_owned(),
+            owner: owner.clone(),
+            repo: repo_name(segment(1)?),
+            rest: tail(segments, rest_from),
+        })
+    };
+    if RepoRef::max_segments(host) == 1 {
+        return Ok(flat(2));
+    }
+    nested(host, segments, has_service, &owner).unwrap_or_else(|| Ok(flat(2)))
+}
+
+/// The Git endpoint of a request whose repository sits in nested groups
+/// (`/group/subgroup/project.git/info/refs`), if its path says so: the words of a Git service
+/// after at least two names. Only the services' own words count: a bare `info/refs` with no
+/// `service` is a file of that name on the host's web pages, and anything under a `/-/` is
+/// a page too. `None` means no such reading: the caller reads the flat shape.
+///
+/// `Some(Err(_))` is a path that could be read as two repositories, or one deeper than a host
+/// has: refused rather than guessed.
+fn nested(
+    host: &str,
+    segments: &[String],
+    has_service: bool,
+    owner: &str,
+) -> Option<Result<Option<Located>, &'static str>> {
+    let ends: Vec<usize> = (3..segments.len())
+        .filter(|&at| {
+            let rest = tail(segments, at);
+            match Endpoint::of(&rest) {
+                Some(Endpoint::InfoRefs) => has_service,
+                Some(_) => true,
+                None => false,
+            }
+        })
+        .collect();
+    let flat_read = Endpoint::of(&tail(segments, 2)).is_some();
+    let at = match (ends.as_slice(), flat_read) {
+        ([], _) => return None,
+        ([at], false) => *at,
+        _ => return Some(Err("the path could name more than one repository")),
+    };
+    let names = segments.get(1..at)?;
+    if names.iter().any(|name| name == "-") {
+        return None;
+    }
+    if names.len() > RepoRef::max_segments(host) {
+        return Some(Err("a repository path deeper than any Git host has"));
+    }
+    let last = repo_name(names.last()?);
+    let mut repo: Vec<String> = names
+        .iter()
+        .take(names.len() - 1)
+        .map(|name| name.to_ascii_lowercase())
+        .collect();
+    repo.push(last);
+    Some(Ok(Some(Located {
         credential_host: host.to_owned(),
-        owner: lower(0)?,
-        repo: repo_name(segment(1)?),
-        rest: tail(segments, 2),
-    })
+        owner: owner.to_owned(),
+        repo: repo.join("/"),
+        rest: tail(segments, at),
+    })))
 }
 
 /// The service a request reaches.
@@ -438,6 +517,83 @@ mod tests {
             ("/acme/web.git.git/info/refs", "github.com/acme/web.git"),
         ] {
             assert_eq!(ref_of("github.com", path), repo, "{path}");
+        }
+    }
+
+    #[test]
+    fn nested_groups_are_part_of_the_repository_on_a_host_that_has_them() {
+        for (path, query, repo, access) in [
+            (
+                "/Group/Sub/Proj.git/info/refs",
+                Some("service=git-receive-pack"),
+                "gitlab.example/group/sub/proj",
+                Access::Push,
+            ),
+            (
+                "/g/s1/s2/s3/p/git-upload-pack",
+                None,
+                "gitlab.example/g/s1/s2/s3/p",
+                Access::Pull,
+            ),
+            (
+                "/g/s/p/info/lfs/objects/batch",
+                None,
+                "gitlab.example/g/s/p",
+                Access::Batch,
+            ),
+        ] {
+            let method = if path.ends_with("info/refs") {
+                "GET"
+            } else {
+                "POST"
+            };
+            let found = git("gitlab.example", method, path, query);
+            assert_eq!(found.describe(), repo, "{path}");
+            assert_eq!(found.access, access, "{path}");
+            assert_eq!(found.owner, repo.split('/').nth(1).unwrap());
+        }
+        // A project directly under a top group is the flat shape, as before.
+        assert_eq!(
+            ref_of("gitlab.example", "/g/p/info/refs"),
+            "gitlab.example/g/p"
+        );
+    }
+
+    #[test]
+    fn a_nested_read_needs_the_services_own_words() {
+        for path in [
+            "/g/s/p/info/refs",
+            "/g/s/p/blob/main/info/refs",
+            "/g/s/-/blob/main/git-upload-pack",
+            "/g/s/-/info/lfs/objects/batch",
+            "/g/s/p/info",
+        ] {
+            assert_eq!(
+                classify("gitlab.example", "GET", path, None),
+                Classified::NotGit,
+                "{path}"
+            );
+        }
+        // github.com has no groups: the flat shape only.
+        assert_eq!(
+            classify("github.com", "POST", "/acme/web/more/git-upload-pack", None),
+            Classified::NotGit
+        );
+    }
+
+    #[test]
+    fn a_nested_path_with_two_readings_or_too_many_names_is_ambiguous() {
+        for path in [
+            "/g/p/info/lfs/info/refs",
+            "/g/a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p/q/r/s/t/u/v/git-upload-pack",
+        ] {
+            let got = classify(
+                "gitlab.example",
+                "GET",
+                path,
+                Some("service=git-upload-pack"),
+            );
+            assert!(matches!(got, Classified::Ambiguous(_)), "{path}: {got:?}");
         }
     }
 
@@ -783,7 +939,7 @@ mod tests {
     }
 
     #[test]
-    fn a_canonical_escape_for_a_byte_that_needs_one_is_read_and_a_name_the_table_cannot_hold_has_no_repo_ref()
+    fn a_canonical_escape_for_a_byte_that_needs_one_is_read_into_the_table_spelling_and_a_name_the_table_cannot_hold_has_no_repo_ref()
      {
         let found = git(
             "dev.azure.com",
@@ -792,6 +948,13 @@ mod tests {
             None,
         );
         assert_eq!(found.repo, "my project/repo");
-        assert!(found.repo_ref().is_none());
+        assert_eq!(
+            found.repo_ref().unwrap().to_string(),
+            "dev.azure.com/org/my project/repo"
+        );
+        // A name no host has (a character the table's alphabet leaves out) has no spelling.
+        let odd = git("github.com", "GET", "/acme/a%2Bb/info/refs", None);
+        assert_eq!(odd.repo, "a+b");
+        assert!(odd.repo_ref().is_none());
     }
 }

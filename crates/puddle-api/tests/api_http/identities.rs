@@ -548,7 +548,7 @@ async fn a_repository_address_puddle_cannot_read_still_makes_the_workspace_with_
         .send(
             "POST",
             "/api/workspaces",
-            Some(&json!({"name": "odd", "repo_url": "https://example.com/a/b/c"})),
+            Some(&json!({"name": "odd", "repo_url": "https://github.com/a/b/c"})),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);

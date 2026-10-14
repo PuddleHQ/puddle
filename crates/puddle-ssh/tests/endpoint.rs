@@ -583,7 +583,9 @@ async fn a_failed_session_is_reported_to_the_target_with_its_cause() {
     let reports = target.reports.lock().unwrap();
     assert_eq!(
         reports.as_slice(),
-        ["an SSH session ended with an error: runtime lost the VM"]
+        [
+            "an SSH session ended with an error: runtime lost the VM; connect again, and restart the workspace if it keeps happening"
+        ]
     );
 }
 

@@ -313,11 +313,16 @@ async fn refused_pulls_are_recorded_and_unauthorised_ones_are_not() {
         ConnectionReason::Blocked(BlockReason::LocalToggle(LocalCategory::Metadata))
     );
     assert_eq!(blocked.resolved_ip, None);
-    // A name that doesn't resolve: allowed by puddle, nothing connected.
+    // A name that doesn't resolve: puddle allowed it, nothing connected, and the record says so.
     let failed = events
         .iter()
         .find(|e| e.decision == ConnectionDecision::Allow)
         .unwrap();
     assert_eq!(failed.resolved_ip, None);
     assert_eq!(failed.host.to_string(), "registry.test");
+    assert_eq!(
+        failed.reason,
+        ConnectionReason::PuddleRequestFailed("unreachable"),
+        "a pull that got nowhere must not read as one that went through"
+    );
 }

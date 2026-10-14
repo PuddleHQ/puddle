@@ -479,6 +479,7 @@ async fn relay(
     let admitted = match admit(shared, target, event).await {
         Ok(admitted) => admitted,
         Err(refusal) => {
+            note_failure(event, &refusal);
             refuse(reader.get_mut(), &refusal).await;
             return;
         }
@@ -494,6 +495,7 @@ async fn relay(
     {
         Ok(out) => out,
         Err(refusal) => {
+            note_failure(event, &refusal);
             refuse(reader.get_mut(), &refusal).await;
             return;
         }
@@ -518,6 +520,21 @@ async fn relay(
             .await;
         }
     }
+}
+
+/// Marks a pull that puddle allowed but could not carry out (no address, nothing to connect to,
+/// a company proxy that refused): the record says it failed instead of reading as a pull that
+/// went through. A refusal that already decided the record (a blocked address) is left alone.
+fn note_failure(event: &mut ConnectionEvent, refusal: &Refusal) {
+    if event.decision != ConnectionDecision::Allow {
+        return;
+    }
+    let code = if refusal.status.starts_with("504") {
+        "timeout"
+    } else {
+        "unreachable"
+    };
+    event.reason = ConnectionReason::PuddleRequestFailed(code);
 }
 
 /// The verdict on one address a pull would connect to.
@@ -667,6 +684,31 @@ mod tests {
 
     fn token() -> PullToken {
         PullToken("ab".repeat(TOKEN_BYTES))
+    }
+
+    #[test]
+    fn a_failed_pull_is_marked_unless_something_already_decided_it() {
+        let event = || {
+            ConnectionEvent::puddle(
+                Host::parse_normalised("registry.test").unwrap(),
+                443,
+                ConnectionDecision::Allow,
+                ConnectionReason::PuddleRequest,
+            )
+        };
+        for (status, code) in [
+            ("504 Gateway Timeout", "timeout"),
+            ("502 Bad Gateway", "unreachable"),
+        ] {
+            let mut failed = event();
+            note_failure(&mut failed, &Refusal::new(status, "no"));
+            assert_eq!(failed.reason, ConnectionReason::PuddleRequestFailed(code));
+        }
+        let mut blocked = event();
+        blocked.decision = ConnectionDecision::Blocked;
+        let before = blocked.reason;
+        note_failure(&mut blocked, &Refusal::new("403 Forbidden", "no"));
+        assert_eq!(blocked.reason, before);
     }
 
     #[test]

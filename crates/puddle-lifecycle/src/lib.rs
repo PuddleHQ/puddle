@@ -19,13 +19,16 @@
 //!
 //! # Windows consoles: why puddle runs as two processes
 //!
-//! msb starts each VMM as a child of puddle that shares puddle's console and installs no console
-//! handler. A Ctrl-C or a closed console window therefore reaches every VMM directly and kills it
-//! before puddle can stop it (`Crashed`). [`supervise`] avoids that: the process the user started
-//! (the *front*) creates the job, then starts itself again as the *worker* with
-//! `CREATE_NO_WINDOW`, so the worker and its VMMs get a hidden console of their own that no
-//! keypress or window close reaches. The front relays the worker's output and turns console
-//! events into a shutdown request on the worker's stdin.
+//! Windows ends every process on a closed console, logoff or system shutdown about 5 s after the
+//! event, and a graceful shutdown (`fstrim`, then stop, per VM) can take well over 5 s
+//! ([`ShutdownConfig`]: up to 30 s trim and 45 s stop per VM). [`supervise`] avoids the
+//! deadline: the process the user started (the
+//! *front*) creates the job, then starts itself again as the *worker* with `CREATE_NO_WINDOW`,
+//! on a hidden console of its own, so the worker outlives the front and finishes stopping the
+//! VMs. The front relays the worker's output and turns console events into a shutdown request
+//! on the worker's stdin. (msb's VMMs no longer share puddle's console either: the msb fork starts
+//! each with no console, in its own process group, so a keypress or a closed window doesn't
+//! reach them. The deadline is why the split stays.)
 //!
 //! ```no_run
 //! # fn run_puddle() -> i32 { 0 }

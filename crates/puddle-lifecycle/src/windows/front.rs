@@ -40,8 +40,9 @@ pub(crate) fn run() -> Result<Role, LifecycleError> {
     let mut child = Command::new(exe)
         .args(std::env::args_os().skip(1))
         .env(ROLE_VAR, "worker")
-        // A console of its own that has no window: no keypress or window close reaches the
-        // worker or the VMs it starts.
+        // A console of its own that has no window: Windows ends every process on a closed
+        // console about 5 s later, and stopping the VMs takes longer. The worker must not be
+        // on the user's console, so it outlives the front.
         .creation_flags(CREATE_NO_WINDOW)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

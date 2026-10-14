@@ -845,6 +845,29 @@ mod tests {
     }
 
     #[test]
+    fn the_ids_in_use_are_not_listed_when_a_secret_row_is_damaged() {
+        let store = store();
+        store
+            .set_env(
+                &EnvScope::Global,
+                &name("TOKEN"),
+                secret("env-1", &["a.example.com"]),
+            )
+            .unwrap();
+        lock(&store.conn)
+            .execute("UPDATE env_vars SET secret_id = 'has space'", [])
+            .unwrap();
+        // A caller that removes what is not listed must see an error, not a short list.
+        assert!(matches!(
+            store.secret_ids_in_use(),
+            Err(StoreError::Corrupt {
+                table: "env_vars",
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn a_row_of_the_wrong_shape_is_reported_even_if_the_table_checks_were_bypassed() {
         let store = store();
         let scope = EnvScope::Workspace(ws("a"));

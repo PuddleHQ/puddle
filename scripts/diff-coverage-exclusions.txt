@@ -134,3 +134,6 @@ crates/puddle-proxy/src/records.rs | let (records, ttl) = collect(fqdn, lookup.a
 crates/puddle-e2e/src/ui_fixture/cli.rs | write_control_file(file, &control_addr.to_string())?; | the call sits in `run`, the serve loop that no Rust test starts; every Playwright worker starts the binary and reads the file this call writes, and `write_control_file` has its own unit test
 crates/puddle-agent/src/vsock.rs | assert! | the failure branch runs only on a kernel without AF_VSOCK, which the CI runner has; the panic message names the variable that makes the missing feature a failure
 crates/puddle-agent/src/vsock.rs | std::env::var_os("PUDDLE_REQUIRE_VSOCK").is_none(), | same branch: the check of the variable runs only where AF_VSOCK is missing
+crates/puddle-api/src/routes/identities.rs | Err(err) => { | a damaged environment-secret row makes the list of ids in use unreadable; the API cannot damage a row, and the store's own test (`the_ids_in_use_are_not_listed_when_a_secret_row_is_damaged`) covers the error it returns
+crates/puddle-api/src/routes/identities.rs | tracing::warn!(%err, "a deleted identity's pasted tokens are left for the sweep at the next start"); | same row: the log line of that unreachable arm
+crates/puddle-api/src/routes/identities.rs | Vec::new() | same row: the empty list of that unreachable arm

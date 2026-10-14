@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use futures_util::future::BoxFuture;
 use puddle_secrets::{
-    ChunkedStore, Discovery, Fetch, KeyringStore, SecretStore, SignInError, SignInStart, SignIns,
-    SourceError, SourceSpec, Sources, StoredId, TokenScope, ToolPaths, discover, pasted_token,
+    Discovery, Fetch, Secret, SecretStore, SignInError, SignInStart, SignIns, SourceError,
+    SourceSpec, Sources, StoredId, TokenScope, ToolPaths, discover, pasted_token,
 };
 
 /// Why a call could not be answered.
@@ -49,11 +49,12 @@ pub trait CredentialService: Send + Sync {
     /// Reads the credential once and says whether that worked. Never interactive.
     fn check(&self, source: SourceSpec) -> BoxFuture<'_, Result<Check, CredentialsError>>;
 
-    /// Keeps a pasted token in the OS credential store and returns the source that names it.
+    /// Keeps a pasted token in the OS credential store and returns the source that names it. The
+    /// token is wiped when the call is done with it.
     fn store_token(
         &self,
         scope: TokenScope,
-        token: String,
+        token: Secret,
     ) -> BoxFuture<'_, Result<SourceSpec, CredentialsError>>;
 
     /// Removes a pasted token; one that is already gone counts as removed.
@@ -81,7 +82,7 @@ impl CredentialService for NoCredentials {
     fn store_token(
         &self,
         _scope: TokenScope,
-        _token: String,
+        _token: Secret,
     ) -> BoxFuture<'_, Result<SourceSpec, CredentialsError>> {
         Box::pin(async { Err(not_wired()) })
     }
@@ -99,18 +100,11 @@ impl CredentialService for NoCredentials {
 pub struct NoSecretStore;
 
 impl SecretStore for NoSecretStore {
-    fn get(
-        &self,
-        _: &StoredId,
-    ) -> Result<Option<puddle_secrets::Secret>, puddle_secrets::StoreError> {
+    fn get(&self, _: &StoredId) -> Result<Option<Secret>, puddle_secrets::StoreError> {
         Err(puddle_secrets::StoreError)
     }
 
-    fn set(
-        &self,
-        _: &StoredId,
-        _: &puddle_secrets::Secret,
-    ) -> Result<(), puddle_secrets::StoreError> {
+    fn set(&self, _: &StoredId, _: &Secret) -> Result<(), puddle_secrets::StoreError> {
         Err(puddle_secrets::StoreError)
     }
 
@@ -175,16 +169,6 @@ impl HostCredentials {
         }
     }
 
-    /// The sources of this computer: `gh` and `git` found on `PATH`, pasted tokens in the
-    /// operating system's credential store.
-    #[must_use]
-    pub fn on_this_computer() -> Self {
-        Self::new(
-            ToolPaths::resolve(),
-            Arc::new(ChunkedStore::new(KeyringStore)),
-        )
-    }
-
     /// The same with these sign-ins (to change how long one stays open).
     #[must_use]
     pub fn with_sign_ins(mut self, sign_ins: SignIns) -> Self {
@@ -210,10 +194,10 @@ impl CredentialService for HostCredentials {
     fn store_token(
         &self,
         scope: TokenScope,
-        token: String,
+        token: Secret,
     ) -> BoxFuture<'_, Result<SourceSpec, CredentialsError>> {
         Box::pin(async move {
-            let secret = pasted_token(&token).map_err(|_| {
+            let secret = pasted_token(token.expose()).map_err(|_| {
                 CredentialsError::Invalid(
                     "that is not a usable token: it is empty or has spaces or control characters"
                         .into(),
@@ -339,10 +323,10 @@ impl CredentialService for FakeCredentials {
     fn store_token(
         &self,
         scope: TokenScope,
-        token: String,
+        token: Secret,
     ) -> BoxFuture<'_, Result<SourceSpec, CredentialsError>> {
         Box::pin(async move {
-            pasted_token(&token)
+            pasted_token(token.expose())
                 .map_err(|_| CredentialsError::Invalid("that is not a usable token".into()))?;
             let mut state = self.state();
             state.next_token += 1;
@@ -407,10 +391,7 @@ mod tests {
         let id = StoredId::new("env-1").unwrap();
         let none = NoSecretStore;
         assert!(none.get(&id).is_err());
-        assert!(
-            none.set(&id, &puddle_secrets::Secret::new("v".into()))
-                .is_err()
-        );
+        assert!(none.set(&id, &Secret::new("v".into())).is_err());
         assert!(none.delete(&id).is_err());
     }
 
@@ -439,11 +420,6 @@ mod tests {
         )
         .with_sign_ins(SignIns::new(ToolPaths::new(None, None)));
         assert_eq!(format!("{real:?}"), "HostCredentials { .. }");
-        // The computer's own sources are built without touching the credential store.
-        assert_eq!(
-            format!("{:?}", HostCredentials::on_this_computer()),
-            "HostCredentials { .. }"
-        );
         assert_eq!(
             format!("{:?}", FakeCredentials::new()),
             "FakeCredentials { .. }"

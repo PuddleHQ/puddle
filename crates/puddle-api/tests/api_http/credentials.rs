@@ -330,3 +330,112 @@ async fn the_real_service_keeps_a_pasted_token_in_its_store_and_reads_it_back_fo
         .await;
     assert_eq!(broken_delete.status, 503);
 }
+
+/// A POST to the stored-token route with exactly these bytes as the head's extras and body.
+async fn post_stored(
+    api: &crate::common::Api,
+    extra_headers: &str,
+    body: &[u8],
+) -> crate::common::Reply {
+    let mut request = format!(
+        "POST /api/credentials/stored HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nConnection: close\r\n{extra_headers}\r\n",
+        api.host(),
+        api.token
+    )
+    .into_bytes();
+    request.extend_from_slice(body);
+    crate::common::raw(api.addr, &request).await
+}
+
+#[tokio::test]
+async fn a_token_split_over_several_chunks_is_read_whole_and_never_echoed() {
+    let api = start().await;
+    let body = format!(r#"{{"host":"github.com","token":"{CANARY}"}}"#);
+    let (first, rest) = body.split_at(20);
+    let (second, third) = rest.split_at(15);
+    let chunked = format!(
+        "{:x}\r\n{first}\r\n{:x}\r\n{second}\r\n{:x}\r\n{third}\r\n0\r\n\r\n",
+        first.len(),
+        second.len(),
+        third.len()
+    );
+    let reply = post_stored(
+        &api,
+        "Content-Type: application/json; charset=utf-8\r\nTransfer-Encoding: chunked\r\n",
+        chunked.as_bytes(),
+    )
+    .await;
+    assert_eq!(reply.status, 201, "{}", reply.body);
+    assert!(!reply.body.contains(CANARY));
+    assert_eq!(api.credentials.tokens().len(), 1);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_token_route_refuses_what_the_other_routes_refuse_without_quoting_the_token() {
+    let api = start().await;
+    let post = |content_type: &'static str, body: String| {
+        let api = &api;
+        async move {
+            post_stored(
+                api,
+                &format!(
+                    "Content-Type: {content_type}\r\nContent-Length: {}\r\n",
+                    body.len()
+                ),
+                body.as_bytes(),
+            )
+            .await
+        }
+    };
+    let text = post(
+        "text/plain",
+        format!(r#"{{"host":"h","token":"{CANARY}"}}"#),
+    )
+    .await;
+    assert_eq!(
+        (text.status, text.error().as_str()),
+        (415, "unsupported_media_type")
+    );
+    let vendor = post(
+        "application/vnd.puddle+json",
+        format!(r#"{{"host":"github.com","token":"{CANARY}"}}"#),
+    )
+    .await;
+    assert_eq!(vendor.status, 201, "{}", vendor.body);
+
+    let list = post("application/json", format!(r#"["{CANARY}"]"#)).await;
+    assert_eq!(list.status, 422, "{}", list.body);
+    let broken = post(
+        "application/json",
+        format!(r#"{{"host":"github.com","token":"{CANARY}"#),
+    )
+    .await;
+    assert_eq!(broken.status, 400, "{}", broken.body);
+    let number = post(
+        "application/json",
+        r#"{"host":"github.com","token":123456}"#.into(),
+    )
+    .await;
+    assert_eq!(number.status, 422, "{}", number.body);
+    assert!(!number.body.contains("123456"), "{}", number.body);
+    for reply in [&text, &list, &broken] {
+        assert!(!reply.body.contains(CANARY), "{}", reply.body);
+    }
+
+    let big = post(
+        "application/json",
+        format!(
+            r#"{{"host":"github.com","token":"{}"}}"#,
+            "a".repeat(70 * 1024)
+        ),
+    )
+    .await;
+    assert_eq!(
+        (big.status, big.error().as_str()),
+        (413, "payload_too_large")
+    );
+    // Only the vendor-typed request above stored anything.
+    assert_eq!(api.credentials.tokens().len(), 1);
+    api.running.shutdown().await;
+}

@@ -192,6 +192,19 @@ describe("a record as a row", () => {
     );
     expect(waiting.outcome).toEqual({ label: "Waiting", tone: "warn" });
     expect(waiting.detail).toBe("because no rule yet");
+    const merged = row(
+      connection(4, {
+        decision: null,
+        reason: "merged",
+        rule_id: null,
+        host: null,
+        port: null,
+        count: 4200,
+      }).record,
+    );
+    expect(merged.detail).toBe(
+      "because puddle merged the oldest records of waiting requests to keep the log small · 4200 records",
+    );
     const odd = row(
       connection(3, {
         reason: "something_new",

@@ -49,6 +49,9 @@ pub struct Limits {
     pub audit_trim_to_bytes: u64,
     /// `connection` records per workspace per second (R-26).
     pub connection_records_per_second: u32,
+    /// Most `connection` records of waiting requests (decision `pending`) kept per workspace;
+    /// the sweeper merges the oldest ones past it into one summary record (R-26).
+    pub max_waiting_connection_records: u64,
 }
 
 impl Default for Limits {
@@ -59,6 +62,7 @@ impl Default for Limits {
             audit_max_bytes: 256 * MIB,
             audit_trim_to_bytes: 230 * MIB,
             connection_records_per_second: 200,
+            max_waiting_connection_records: 5000,
         }
     }
 }
@@ -99,6 +103,8 @@ pub struct SweepReport {
     pub rules_expired: u64,
     /// Audit records deleted by the size cap.
     pub audit_records_trimmed: u64,
+    /// Records of waiting requests merged into summaries by the per-workspace cap.
+    pub waiting_records_merged: u64,
 }
 
 /// What deleting a workspace removed (R-21).
@@ -740,11 +746,66 @@ impl Store {
             Ok(rules.len() as u64)
         })?;
         self.flush_limits()?;
+        let waiting_records_merged = self.merge_waiting_connections()?;
         let audit_records_trimmed = self.trim_audit()?;
         Ok(SweepReport {
             rules_expired,
             audit_records_trimmed,
+            waiting_records_merged,
         })
+    }
+
+    /// Merges each workspace's oldest `connection` records of waiting requests past the cap into
+    /// one `merged` summary, so a flood of requests nobody has answered cannot fill the audit
+    /// and push out real history. Nothing is refused; other records are never touched.
+    fn merge_waiting_connections(&self) -> Result<u64, StoreError> {
+        let cap = i64::try_from(self.limits.max_waiting_connection_records).unwrap_or(i64::MAX);
+        let mut conn = lock(&self.conn);
+        let tx = conn.transaction()?;
+        let head = audit_head(&tx)?;
+        let over: Vec<(String, i64)> = {
+            let mut stmt = tx.prepare(
+                "SELECT workspace_id, count(*) FROM audit
+                 WHERE type = 'connection' AND outcome = 'pending' AND workspace_id IS NOT NULL
+                 GROUP BY workspace_id HAVING count(*) > ?1",
+            )?;
+            stmt.query_map([cap], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<Result<_, _>>()?
+        };
+        let mut merged = 0u64;
+        for (workspace, count) in over {
+            let name = WorkspaceName::new(&workspace)
+                .map_err(|_| corrupt("audit", 0, "invalid workspace name"))?;
+            let mut stmt = tx.prepare(
+                "DELETE FROM audit WHERE id IN (
+                     SELECT id FROM audit
+                     WHERE type = 'connection' AND outcome = 'pending' AND workspace_id = ?1
+                     ORDER BY id LIMIT ?2)
+                 RETURNING ts",
+            )?;
+            let mut newest = 0;
+            let mut deleted = 0u64;
+            for ts in stmt.query_map(params![workspace, count - cap], |row| row.get::<_, i64>(0))? {
+                newest = newest.max(ts?);
+                deleted += 1;
+            }
+            drop(stmt);
+            let ts = stored_ts("audit", 0, newest)?;
+            append(
+                &tx,
+                &AuditRecord::Connection(ConnectionRecord::merged_summary(ts, &name, deleted)),
+            )?;
+            merged += deleted;
+        }
+        if merged == 0 {
+            return Ok(0);
+        }
+        self.commit(tx, head, Vec::new())?;
+        tracing::info!(
+            merged,
+            "records of waiting requests merged to bound the audit"
+        );
+        Ok(merged)
     }
 
     /// Writes the summaries of `connection` records over the limit that are due. They are taken

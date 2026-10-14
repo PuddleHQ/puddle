@@ -174,6 +174,9 @@ export interface RowView {
 const REASONS: Record<string, string> = {
   rule: "a rule",
   no_rule: "no rule yet",
+  suppressed: "more records came in one second than puddle writes",
+  merged:
+    "puddle merged the oldest records of waiting requests to keep the log small",
   puddle_endpoint: "puddle's own address",
   ssh_unsupported: "SSH is not supported",
   local_address: "a local address",
@@ -322,6 +325,9 @@ function connectionDetail(
   if (record.rule_id !== null) parts.push(`rule ${record.rule_id}`);
   else if (set === null && note === undefined) parts.push(`because ${reason}`);
   if (note !== undefined) parts.push(note);
+  if (record.count !== null) {
+    parts.push(`${record.count} ${record.count === 1 ? "record" : "records"}`);
+  }
   if (record.bytes_up > 0 || record.bytes_down > 0) {
     parts.push(
       `${bytesLabel(record.bytes_up)} up, ${bytesLabel(record.bytes_down)} down`,

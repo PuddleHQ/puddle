@@ -170,7 +170,7 @@ readable as JSONL (one record per line).
 - **R-24 Record types** in `puddle-store`: `connection` (written by the proxy: `workspace_id`, `host`, `port`,
   `resolved_ip`, `decision` (`allow`, `deny`, `pending`, `blocked`), `reason` (`rule`, `no_rule`,
   `toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `local_address`, `settings_unreadable`,
-  `policy_unavailable`, `sni_mismatch`, `guest_tls_rejected`, `connection_limit`, `suppressed`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `pending_id`, `binding_id`, `injected`, `placeholder_unbound` (a secret stand-in went to a host outside
+  `policy_unavailable`, `sni_mismatch`, `guest_tls_rejected`, `connection_limit`, `suppressed`, `merged`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `pending_id`, `binding_id`, `injected`, `placeholder_unbound` (a secret stand-in went to a host outside
   its hosts and was sent unchanged),
   `method` and `path` on terminated hosts, plain-HTTP requests and `CONNECT` tunnels that carry
   plain HTTP/1.x only, `bytes_up`, `bytes_down`), `pending_created`, `pending_decided`, `pending_expired` (only when a workspace is deleted),
@@ -214,6 +214,10 @@ readable as JSONL (one record per line).
   `audit_trimmed` record per trim. Per workspace, `connection` records are limited to 200 per second
   *(default)*; the excess is counted and written as one `connection` record with
   `reason: suppressed` and a `count` per second. puddle's own connections (`origin: puddle`) share one limit of the same size.
+  Per workspace, the `connection` records of waiting requests (decision `pending`) are also capped at
+  5000 *(default)*: the sweeper deletes the oldest ones past it and writes one `connection` record
+  with `reason: merged` and the number deleted as `count`. A flood of requests nobody answers cannot
+  fill the audit and push real history out, and nothing is refused (R-44, R-45).
 
 - **R-28 Reading the audit with filters.** The API filters on the server, on stored columns and
   indexes (never by parsing JSON): `workspace`, `type`, `outcome`, `host_contains` (case-folded

@@ -129,6 +129,20 @@ impl ConnectionRecord {
         workspace: Option<&WorkspaceName>,
         count: u64,
     ) -> Self {
+        Self::summary(ts, workspace, ConnectionReason::Suppressed, count)
+    }
+
+    /// The `merged` summary of the oldest records of waiting requests a workspace had too many of.
+    pub(crate) fn merged_summary(ts: u64, workspace: &WorkspaceName, count: u64) -> Self {
+        Self::summary(ts, Some(workspace), ConnectionReason::Merged, count)
+    }
+
+    fn summary(
+        ts: u64,
+        workspace: Option<&WorkspaceName>,
+        reason: ConnectionReason,
+        count: u64,
+    ) -> Self {
         Self {
             ts,
             workspace_id: workspace.map(ToString::to_string),
@@ -142,7 +156,7 @@ impl ConnectionRecord {
             resolved_ip: None,
             upstream: None,
             decision: None,
-            reason: ConnectionReason::Suppressed.to_string(),
+            reason: reason.to_string(),
             rule_id: None,
             rule_set: None,
             pending_id: None,

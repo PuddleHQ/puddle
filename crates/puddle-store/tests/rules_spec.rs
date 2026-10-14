@@ -1037,6 +1037,113 @@ fn connection(workspace: &str) -> ConnectionEvent {
     event
 }
 
+/// A request nobody has answered: no rule matched, the proxy wrote its `connection` record.
+fn waiting_connection(workspace: &str, host: &str) -> ConnectionEvent {
+    let request = EgressRequest::new(sb(workspace), Host::parse_normalised(host).unwrap(), 443);
+    ConnectionEvent::new(
+        &request,
+        ConnectionDecision::Pending,
+        ConnectionReason::NoRule,
+    )
+}
+
+#[test]
+fn r26_a_flood_of_waiting_requests_cannot_push_real_history_out_of_the_audit() {
+    const CAP: u64 = 5000;
+    let (clock, store) = fixture();
+    // Real history written before the flood: a rule, an allowed connection, an answered request.
+    let rule = add(&store, Some("a"), "real.example", Effect::Allow);
+    store.record_connection(&connection("a")).unwrap();
+    let answered = new_pending(decide(&store, "a", "answered.example"));
+    store
+        .resolve_pending(answered, &Resolution::deny(), Actor::Ui)
+        .unwrap();
+    let before = audit(&store).len();
+    // 100 000 requests for new names, at the connection record limit (200 a second), with the
+    // sweeper's minute passing now and then.
+    for n in 0..100_000_u32 {
+        let host = format!("n{n}.flood.example");
+        decide(&store, "a", &host);
+        store
+            .record_connection(&waiting_connection("a", &host))
+            .unwrap();
+        if n % 200 == 199 {
+            clock.advance(1000);
+        }
+        if n % 12_000 == 11_999 {
+            store.sweep().unwrap();
+        }
+    }
+    store.sweep().unwrap();
+    let waiting = |records: &[Value]| {
+        records
+            .iter()
+            .filter(|r| r["type"] == "connection" && r["decision"] == "pending")
+            .count()
+    };
+    let records = audit(&store);
+    assert_eq!(waiting(&records), usize::try_from(CAP).unwrap());
+    // What is kept is the newest.
+    assert!(
+        records
+            .iter()
+            .any(|r| r["host"] == "n99999.flood.example" && r["type"] == "connection")
+    );
+    // The merged ones are counted, so nothing is silently lost.
+    let merged: u64 = records
+        .iter()
+        .filter(|r| r["reason"] == "merged")
+        .map(|r| r["count"].as_u64().unwrap())
+        .sum();
+    assert!(merged > 0 && merged + CAP <= 100_000, "{merged}");
+    assert!(
+        records
+            .iter()
+            .filter(|r| r["reason"] == "merged")
+            .all(|r| r["workspace_id"] == "a" && r["host"].is_null() && r["decision"].is_null())
+    );
+    // Real history is all still there, and the audit holds a few MB, far under its cap.
+    assert!(
+        audit_of(&store, "rule_created")
+            .iter()
+            .any(|r| r["rule"]["id"] == rule.0)
+    );
+    assert_eq!(audit_of(&store, "pending_decided").len(), 1);
+    assert!(
+        records
+            .iter()
+            .any(|r| r["type"] == "connection" && r["reason"] == "rule")
+    );
+    assert!(records.len() > before);
+    assert!(store.audit_bytes().unwrap() < 8 * 1024 * 1024);
+    // A second sweep has nothing more to merge.
+    assert_eq!(store.sweep().unwrap().waiting_records_merged, 0);
+}
+
+#[test]
+fn r26_waiting_records_are_capped_per_workspace() {
+    let (_, store) = fixture_with(Limits {
+        max_waiting_connection_records: 3,
+        ..Limits::default()
+    });
+    for n in 0..5 {
+        store
+            .record_connection(&waiting_connection("a", &format!("a{n}.example")))
+            .unwrap();
+    }
+    store
+        .record_connection(&waiting_connection("b", "b0.example"))
+        .unwrap();
+    let report = store.sweep().unwrap();
+    assert_eq!(report.waiting_records_merged, 2);
+    let records = audit_of(&store, "connection");
+    let hosts: Vec<_> = records.iter().filter_map(|r| r["host"].as_str()).collect();
+    assert!(!hosts.contains(&"a0.example") && !hosts.contains(&"a1.example"));
+    assert!(hosts.contains(&"a4.example") && hosts.contains(&"b0.example"));
+    let merged: Vec<_> = records.iter().filter(|r| r["reason"] == "merged").collect();
+    assert_eq!((merged.len(), merged[0]["count"].as_u64()), (1, Some(2)));
+}
+
 #[test]
 fn r25_no_secret_reaches_the_audit() {
     const CANARY: &str = "CANARY-r25-9d1e";

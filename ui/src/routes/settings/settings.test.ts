@@ -474,6 +474,12 @@ describe("workspace defaults and the network", () => {
     expect(input).toHaveAttribute("aria-invalid", "true");
     expect(putBodies()).toHaveLength(0);
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    // With another edit waiting, the bar says why Save is off.
+    await fireEvent.click(screen.getByLabelText("Sound"));
+    expect(
+      screen.getByText("Fix the reconnection grace to save."),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     await fireEvent.input(input, { target: { value: "600" } });
     await fireEvent.change(input);
     await save();

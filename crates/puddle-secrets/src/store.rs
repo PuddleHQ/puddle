@@ -34,15 +34,26 @@ pub trait SecretStore: Send + Sync {
     /// [`StoreError`] when the store cannot be reached.
     fn delete(&self, id: &StoredId) -> Result<(), StoreError>;
 
-    /// Removes the values this store holds that `keep` refuses, and says how many went. A store
-    /// that does not know what it holds (it has no index) has nothing to sweep.
+    /// Removes the values this store holds that `keep` refuses, and says how many went and how
+    /// many it tried and could not remove. A store that does not know what it holds (it has no
+    /// index) has nothing to sweep.
     ///
     /// # Errors
     /// [`StoreError`] when the store cannot be reached; nothing is removed then.
-    fn sweep_orphans(&self, keep: &dyn Fn(&StoredId) -> bool) -> Result<usize, StoreError> {
+    fn sweep_orphans(&self, keep: &dyn Fn(&StoredId) -> bool) -> Result<Sweep, StoreError> {
         let _ = keep;
-        Ok(0)
+        Ok(Sweep::default())
     }
+}
+
+/// What [`SecretStore::sweep_orphans`] did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Sweep {
+    /// Values removed.
+    pub removed: usize,
+    /// Values the sweep tried to remove and the store would not give up. They stay listed, so the
+    /// next sweep tries again.
+    pub stuck: usize,
 }
 
 /// A store in memory: nothing persists, nothing leaves the process.

@@ -51,4 +51,4 @@ pub use secret::Secret;
 pub use signin::{SignInError, SignInStart, SignIns};
 pub use sources::{Credential, Fetch, Fetched, Sources, pasted_token};
 pub use spec::{SourceSpec, TokenScope};
-pub use store::{MemoryStore, SecretStore, StoreError};
+pub use store::{MemoryStore, SecretStore, StoreError, Sweep};

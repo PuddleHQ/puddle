@@ -435,7 +435,7 @@ impl<R: Runtime + Clone> Host<R> {
             .secret_store
             .clone()
             .unwrap_or_else(crate::vault::os_vault);
-        crate::vault::sweep_in_background(vault.clone(), store.clone());
+        crate::vault::sweep_in_background(vault.clone(), store.clone(), problems.clone());
         let injecting = Injecting::build(&options, &vault, &store, &events, &roots)?;
 
         // The way out: the company network (discovery, sign-in as the user, then Basic) for the

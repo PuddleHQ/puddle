@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Nightly performance bars: the six `#[ignore]`d tests in crates/puddle-proxy/tests/terminate_perf.rs
+# (terminating next to splicing, HTTP/2 next to HTTP/1.1, resident memory of an idle connection),
+# built in release mode, because a debug build says nothing about throughput or memory. Each test
+# prints what it measured and asserts a ceiling set well above a workstation's number (see the
+# constants in the test file), so a collapse fails the run and a drift shows in the log.
+# Not a pull request check: shared-runner wall times are too noisy to gate a merge. By hand:
+# `gh workflow run perf.yml --ref <branch>`. Nothing is cached: a release build shares nothing with
+# the `linux` entry, and the repo's cache budget (cache-gc.yml) has no room for another one.
+name: perf
+
+on:
+  schedule:
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  terminate-perf:
+    name: perf (release-build throughput and memory)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
+      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+        with:
+          tool: cargo-nextest@0.9.146
+      # Each test in its own process (nextest), one at a time: the memory tests read the whole process's
+      # resident size, and the throughput tests want the machine to themselves.
+      - name: terminate_perf, ignored tests only
+        run: cargo nextest run --release -p puddle-proxy --test terminate_perf --run-ignored only --no-capture --test-threads 1

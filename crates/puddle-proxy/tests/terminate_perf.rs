@@ -2,16 +2,19 @@
 //! Throughput of a terminated connection against a spliced one: a 256 MiB upload and a 256 MiB
 //! download of the same server, once decrypted by the proxy and once passed through.
 //!
-//! Slow and only meaningful in a release build, so it is ignored by default:
+//! Slow and only meaningful in a release build, so they are ignored by default. The nightly `perf`
+//! workflow runs them; by hand:
 //!
 //! ```text
 //! cargo nextest run --release -p puddle-proxy --test terminate_perf --run-ignored only --no-capture
 //! ```
 //!
-//! It reports the ratio and asserts only that both finish and the bytes arrive intact. The goal
-//! (decrypting costs at most ten percent more than splicing) is for a quiet machine, not for a
-//! shared runner. Wall times move a lot with other load on the machine, so every measured
-//! transfer also prints the CPU time the whole process used (user and system), which moves less.
+//! Each test prints what it measured and then asserts a ceiling. The goal (decrypting costs at most
+//! ten percent more than splicing) is for a quiet machine, not for a shared runner, where wall times
+//! move a lot with other load, so the ceilings sit well above what a release build measured on a
+//! workstation (the number is in each constant's comment). They catch a collapse, not a drift: raise
+//! one only with a new measurement. Every measured transfer also prints the CPU time the whole
+//! process used (user and system), which moves less than the wall time.
 //!
 //! The rig captures every log line at TRACE level into memory; these tests turn that off first
 //! ([`silence_logs`]), because formatting each HTTP/2 and yamux frame event roughly doubled the
@@ -29,6 +32,19 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
 const MIB: usize = 1024 * 1024;
+
+/// Terminated over spliced wall time for the same HTTP/1.1 transfer: 1.27 measured, goal 1.1.
+const MAX_TERMINATED_TO_SPLICED: f64 = 2.0;
+/// HTTP/2 terminated over HTTP/2 spliced: 0.92 measured.
+const MAX_H2_TERMINATED_TO_SPLICED: f64 = 2.0;
+/// Resident KiB one idle connection adds to the whole test process, per kind (measured 84, 114,
+/// 119 and 161: the ceilings are twice that, rounded).
+const MAX_IDLE_KIB: [(&str, usize); 4] = [
+    ("spliced", 170),
+    ("spliced-h2", 230),
+    ("h1", 240),
+    ("h2", 320),
+];
 
 /// Installs a global subscriber that drops every event, so the rig's own log capture, which
 /// would format each event, fails to install and costs nothing. Call it before the first rig.
@@ -164,7 +180,7 @@ async fn transfer(client: &mut Client, host: &str, mib: usize) -> Duration {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "a 256 MiB transfer, meaningful only in a release build; run it by hand"]
+#[ignore = "a 256 MiB transfer, meaningful only in a release build; run by the nightly perf workflow or by hand"]
 async fn terminating_costs_little_next_to_splicing() {
     silence_logs();
     let pki = Pki::new();
@@ -200,6 +216,10 @@ async fn terminating_costs_little_next_to_splicing() {
     let ratio = best_terminated.as_secs_f64() / best_spliced.as_secs_f64();
     eprintln!(
         "256 MiB up and 256 MiB down: terminated {best_terminated:.2?}, spliced {best_spliced:.2?}, ratio {ratio:.2}"
+    );
+    assert!(
+        ratio <= MAX_TERMINATED_TO_SPLICED,
+        "terminating cost {ratio:.2} times splicing, above {MAX_TERMINATED_TO_SPLICED}"
     );
     let _ = Arc::strong_count(&rig.ca);
 }
@@ -319,7 +339,7 @@ mod h2_perf {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "a 256 MiB transfer, meaningful only in a release build; run it by hand"]
+#[ignore = "a 256 MiB transfer, meaningful only in a release build; run by the nightly perf workflow or by hand"]
 async fn http2_costs_little_next_to_http11() {
     use h2_perf::{bulk_h2_server, transfer_h2};
     silence_logs();
@@ -387,6 +407,11 @@ async fn http2_costs_little_next_to_http11() {
         best[1],
         best[1].as_secs_f64() / best[3].as_secs_f64(),
         best[2],
+    );
+    let ratio = best[1].as_secs_f64() / best[3].as_secs_f64();
+    assert!(
+        ratio <= MAX_H2_TERMINATED_TO_SPLICED,
+        "terminated HTTP/2 cost {ratio:.2} times spliced HTTP/2, above {MAX_H2_TERMINATED_TO_SPLICED}"
     );
 }
 
@@ -502,29 +527,35 @@ async fn idle_memory(kind: &str) {
         "{kind}: {} KiB per idle connection ({N} connections, whole test process: proxy, guest and server)",
         grown / N
     );
+    let ceiling = MAX_IDLE_KIB.iter().find(|(k, _)| *k == kind).unwrap().1;
+    assert!(
+        grown / N <= ceiling,
+        "{kind}: {} KiB per idle connection, above {ceiling}",
+        grown / N
+    );
     drop((held_h1, held_h2));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "measures resident memory of the whole test process; run it by hand in a release build"]
+#[ignore = "measures resident memory of the whole test process; run by the nightly perf workflow or by hand in a release build"]
 async fn memory_of_an_idle_spliced_connection() {
     idle_memory("spliced").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "measures resident memory of the whole test process; run it by hand in a release build"]
+#[ignore = "measures resident memory of the whole test process; run by the nightly perf workflow or by hand in a release build"]
 async fn memory_of_an_idle_spliced_http2_connection() {
     idle_memory("spliced-h2").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "measures resident memory of the whole test process; run it by hand in a release build"]
+#[ignore = "measures resident memory of the whole test process; run by the nightly perf workflow or by hand in a release build"]
 async fn memory_of_an_idle_terminated_http11_connection() {
     idle_memory("h1").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "measures resident memory of the whole test process; run it by hand in a release build"]
+#[ignore = "measures resident memory of the whole test process; run by the nightly perf workflow or by hand in a release build"]
 async fn memory_of_an_idle_terminated_http2_connection() {
     idle_memory("h2").await;
 }

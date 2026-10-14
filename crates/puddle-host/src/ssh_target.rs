@@ -19,6 +19,19 @@ pub(crate) fn report_failure(events: &dyn EventSink, workspace: &WorkspaceName, 
     });
 }
 
+/// Tells the user, and the log, that `workspace` got no SSH endpoint because of `error`.
+pub(crate) fn report_no_endpoint(
+    events: &dyn EventSink,
+    workspace: &WorkspaceName,
+    error: &dyn std::fmt::Display,
+) {
+    report_failure(
+        events,
+        workspace,
+        format!("direct SSH has no endpoint ({error}); restart the workspace to try again"),
+    );
+}
+
 /// A workspace's [`GatedSandbox`] as an SSH target whose failures become
 /// [`Event::WorkspaceSshFailed`].
 pub(crate) struct ReportingTarget<S: Sandbox> {
@@ -75,12 +88,20 @@ mod tests {
         let sink = CollectingSink::default();
         let workspace = WorkspaceName::new("box").unwrap();
         report_failure(&sink, &workspace, "the endpoint died".into());
+        report_no_endpoint(&sink, &workspace, &"address in use");
         assert_eq!(
             sink.take(),
-            [Event::WorkspaceSshFailed {
-                workspace,
-                reason: "the endpoint died".into(),
-            }]
+            [
+                Event::WorkspaceSshFailed {
+                    workspace: workspace.clone(),
+                    reason: "the endpoint died".into(),
+                },
+                Event::WorkspaceSshFailed {
+                    workspace,
+                    reason: "direct SSH has no endpoint (address in use); restart the workspace to try again"
+                        .into(),
+                },
+            ]
         );
     }
 }

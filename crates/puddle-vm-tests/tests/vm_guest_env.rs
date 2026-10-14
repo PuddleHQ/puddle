@@ -75,7 +75,7 @@ const SETUP_STEPS: &[(&str, &str)] = &[
     ),
     (
         "gradle unpack",
-        "unzip -q /tmp/gradle.zip -d /opt && ln -sf \"/opt/gradle-$GRADLE_VERSION/bin/gradle\" /usr/local/bin/gradle",
+        "unzip -oq /tmp/gradle.zip -d /opt && ln -sf \"/opt/gradle-$GRADLE_VERSION/bin/gradle\" /usr/local/bin/gradle",
     ),
     (
         "corepack pnpm",

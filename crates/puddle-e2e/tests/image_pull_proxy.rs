@@ -27,81 +27,25 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::io::{self, Write};
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_compute::{ComputeError, Runtime};
 use puddle_compute_msb::{MsbConfig, MsbRuntime};
 use puddle_netpolicy::PuddleEndpoints;
-use puddle_proxy::{BoxFuture, PullProxy, Resolver};
+use puddle_proxy::PullProxy;
 use puddle_store::{AuditCursor, AuditFilter, AuditRecord, Clock, Limits, Store, SystemClock};
-use puddle_types::{ConnectionDecision, ConnectionOrigin, DomainName, ImageRef};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
-use sha2::{Digest, Sha256};
+use puddle_types::{ConnectionDecision, ConnectionOrigin, ImageRef};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
-/// The registry's name; only the pull proxy's resolver knows it.
-const REGISTRY: &str = "registry.lab.test";
+mod lab;
+
+use lab::{REGISTRY, sha256};
+
 const REPO: &str = "puddle/hello";
-
-/// Resolves [`REGISTRY`] to the local lab registry, whatever port was asked for.
-struct LabResolver(SocketAddr);
-
-impl Resolver for LabResolver {
-    fn resolve<'a>(
-        &'a self,
-        name: &'a DomainName,
-        _port: u16,
-    ) -> BoxFuture<'a, io::Result<Vec<SocketAddr>>> {
-        let found = (name.as_str() == REGISTRY).then_some(vec![self.0]);
-        Box::pin(async move {
-            found.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "unknown lab name"))
-        })
-    }
-}
-
-/// The lab root (PEM) and the registry's server config, its leaf signed by that root.
-fn lab_pki() -> (String, Arc<rustls::ServerConfig>) {
-    let ca_key = rcgen::KeyPair::generate().unwrap();
-    let mut ca_params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
-    ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
-    ca_params
-        .distinguished_name
-        .push(rcgen::DnType::CommonName, "puddle lab interceptor root");
-    let ca = ca_params.self_signed(&ca_key).unwrap();
-    let issuer = rcgen::Issuer::new(ca_params, ca_key);
-    let leaf_key = rcgen::KeyPair::generate().unwrap();
-    let leaf = rcgen::CertificateParams::new(vec![REGISTRY.to_owned()])
-        .unwrap()
-        .signed_by(&leaf_key, &issuer)
-        .unwrap();
-    let config = rustls::ServerConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .unwrap()
-    .with_no_client_auth()
-    .with_single_cert(
-        vec![
-            CertificateDer::from(leaf.der().to_vec()),
-            CertificateDer::from(ca.der().to_vec()),
-        ],
-        PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(leaf_key.serialize_der())),
-    )
-    .unwrap();
-    (ca.pem(), Arc::new(config))
-}
-
-fn sha256(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    digest.iter().fold(String::from("sha256:"), |mut out, b| {
-        let _ = write!(out, "{b:02x}");
-        out
-    })
-}
 
 /// A one-file image: (manifest, blobs by digest). The layer is an uncompressed tar.
 fn image() -> (Vec<u8>, BTreeMap<String, Vec<u8>>) {
@@ -420,12 +364,13 @@ fn image_pulls_go_through_the_pull_proxy_and_trust_only_the_given_roots() {
     );
     let proxy = PullProxy::bind(&endpoints)
         .unwrap()
-        .with_resolver(Arc::new(LabResolver(registry_addr)))
+        .with_resolver(Arc::new(lab::LabResolver(registry_addr)))
         .with_connection_log(store.clone());
     let token = proxy.token().expose().to_owned();
     let proxy_url = proxy.proxy_url().expose().to_owned();
 
-    let (root, tls) = lab_pki();
+    let (root, tls) = lab::lab_pki();
+    let tls = Arc::new(tls);
     let home = tempfile::tempdir().unwrap();
     let seen = Arc::new(Seen::default());
     let rt = tokio::runtime::Builder::new_multi_thread()

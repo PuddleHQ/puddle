@@ -49,8 +49,8 @@ pub struct Limits {
     pub audit_trim_to_bytes: u64,
     /// `connection` records per workspace per second (R-26).
     pub connection_records_per_second: u32,
-    /// Most `connection` records of waiting requests (decision `pending`) kept per workspace;
-    /// the sweeper merges the oldest ones past it into one summary record (R-26).
+    /// Most `connection` records written while a request waited (decision `pending`) kept per
+    /// workspace; the sweeper merges the oldest ones past it into one summary record (R-26).
     pub max_waiting_connection_records: u64,
 }
 

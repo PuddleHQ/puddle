@@ -214,9 +214,9 @@ readable as JSONL (one record per line).
   `audit_trimmed` record per trim. Per workspace, `connection` records are limited to 200 per second
   *(default)*; the excess is counted and written as one `connection` record with
   `reason: suppressed` and a `count` per second. puddle's own connections (`origin: puddle`) share one limit of the same size.
-  Per workspace, the `connection` records of waiting requests (decision `pending`) are also capped at
-  5000 *(default)*: the sweeper deletes the oldest ones past it and writes one `connection` record
-  with `reason: merged` and the number deleted as `count`. A flood of requests nobody answers cannot
+  Per workspace, the `connection` records written while a request waited (decision `pending`) are also
+  capped at 5000 *(default)*: the sweeper deletes the oldest ones past it, hosts and all, and writes one
+  `connection` record with `reason: merged` and the number deleted as `count`. A flood of requests nobody answers cannot
   fill the audit and push real history out, and nothing is refused (R-44, R-45).
 
 - **R-28 Reading the audit with filters.** The API filters on the server, on stored columns and

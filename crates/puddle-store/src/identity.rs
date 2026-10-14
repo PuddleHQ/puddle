@@ -11,7 +11,7 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use puddle_secrets::{HostName, OrgName, SourceSpec};
+use puddle_secrets::{HostName, OrgName, SourceSpec, StoredId};
 use serde::{Deserialize, Serialize};
 
 use crate::error::StoreError;
@@ -193,6 +193,15 @@ fn same_host(a: &HostName, b: &HostName) -> bool {
 }
 
 impl CredentialBinding {
+    /// The id of the pasted token this binding reads, when its source is one.
+    #[must_use]
+    pub fn stored_id(&self) -> Option<&StoredId> {
+        match &self.source {
+            SourceSpec::Stored { id, .. } => Some(id),
+            _ => None,
+        }
+    }
+
     /// Checks a binding: the source is for the same host, and a token that belongs to one
     /// organisation covers only that organisation.
     ///

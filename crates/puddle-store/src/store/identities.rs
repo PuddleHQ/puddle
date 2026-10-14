@@ -2,6 +2,9 @@
 //! Identities and each workspace's Git settings in the store (`docs/arch/spec/credentials.md`
 //! §7 and §8). Credentials are stored as references to their sources; no value passes through.
 
+use std::collections::HashSet;
+
+use puddle_secrets::StoredId;
 use puddle_types::{Event, WorkspaceName};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
@@ -194,6 +197,36 @@ fn changed_for(fx: &mut Vec<Event>, workspaces: Vec<WorkspaceName>) {
 }
 
 impl Store {
+    /// Every id a value in the credential store may still be kept under: the pasted tokens the
+    /// identities read and the values of environment secrets. A value under any other id has
+    /// nothing that names it.
+    ///
+    /// # Errors
+    /// A database error, or a stored row that doesn't parse: a caller that removes what is not
+    /// listed must not go on then.
+    pub fn secret_ids_in_use(&self) -> Result<HashSet<StoredId>, StoreError> {
+        let conn = lock(&self.conn);
+        let mut ids: HashSet<StoredId> = all(&conn)?
+            .iter()
+            .flat_map(|identity| &identity.credentials)
+            .filter_map(|binding| binding.stored_id().cloned())
+            .collect();
+        let mut stmt =
+            conn.prepare("SELECT id, secret_id FROM env_vars WHERE secret_id IS NOT NULL")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (row_id, secret_id) = row?;
+            ids.insert(StoredId::new(secret_id).map_err(|e| StoreError::Corrupt {
+                table: "env_vars",
+                id: row_id,
+                reason: e.to_string(),
+            })?);
+        }
+        Ok(ids)
+    }
+
     /// Every identity, in the order the user keeps them.
     ///
     /// # Errors

@@ -373,7 +373,12 @@ export interface paths {
          */
         put: operations["update_identity"];
         post?: never;
-        /** Deletes an identity and takes it off every workspace; the answer lists them. */
+        /**
+         * Deletes an identity and takes it off every workspace; the answer lists them.
+         * @description A pasted token the identity read, and no other identity reads, leaves the credential store
+         *     too. One that could not be removed (the store is locked) is left for the sweep at the next
+         *     start.
+         */
         delete: operations["delete_identity"];
         options?: never;
         head?: never;

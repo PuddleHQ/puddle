@@ -2,9 +2,12 @@
 //! Git identities and each workspace's Git settings (credentials spec §7, §8). Credentials are
 //! references to sources: nothing here reads, takes or returns a secret value.
 
+use std::sync::Arc;
+
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
+use puddle_secrets::StoredId;
 use puddle_store::{IdentityId, Store};
 use puddle_types::{WorkspaceId, WorkspaceName};
 
@@ -149,6 +152,10 @@ pub(crate) async fn update_identity(
 }
 
 /// Deletes an identity and takes it off every workspace; the answer lists them.
+///
+/// A pasted token the identity read, and no other identity reads, leaves the credential store
+/// too. One that could not be removed (the store is locked) is left for the sweep at the next
+/// start.
 #[utoipa::path(
     delete,
     path = "/api/identities/{id}",
@@ -163,7 +170,34 @@ pub(crate) async fn delete_identity(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<IdentityDeleted>, ApiError> {
-    let detached_from = blocking(move || Ok(state.store.delete_identity(IdentityId(id))?)).await?;
+    let store = Arc::clone(&state.store);
+    let (detached_from, tokens) = blocking(move || {
+        let gone = store.identity(IdentityId(id))?;
+        let detached = store.delete_identity(IdentityId(id))?;
+        // The row is gone, so a failed read here only leaves tokens for the sweep.
+        let tokens: Vec<StoredId> = match store.secret_ids_in_use() {
+            Ok(in_use) => gone
+                .credentials
+                .iter()
+                .filter_map(|binding| binding.stored_id())
+                .filter(|token| !in_use.contains(*token))
+                .cloned()
+                .collect(),
+            Err(err) => {
+                tracing::warn!(%err, "a deleted identity's pasted tokens are left for the sweep at the next start");
+                Vec::new()
+            }
+        };
+        Ok((detached, tokens))
+    })
+    .await?;
+    for token in tokens {
+        if state.credentials.forget_token(token).await.is_err() {
+            tracing::warn!(
+                "a deleted identity's pasted token could not be removed from the credential store"
+            );
+        }
+    }
     Ok(Json(IdentityDeleted { detached_from }))
 }
 

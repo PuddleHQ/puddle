@@ -291,7 +291,7 @@ fn the_os_store_round_trips_a_test_owned_entry() {
         eprintln!("no OS credential store here; skipped");
         return;
     }
-    let store = puddle_secrets::KeyringStore;
+    let store = puddle_secrets::KeyringStore::new();
     let id = StoredId::new(format!("selftest-{}", std::process::id())).unwrap();
     store.set(&id, &Secret::new(CANARY.to_owned())).unwrap();
     assert_eq!(store.get(&id).unwrap().unwrap().expose(), CANARY);

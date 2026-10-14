@@ -15,7 +15,7 @@ use std::sync::{Mutex, PoisonError};
 
 use crate::name::StoredId;
 use crate::secret::Secret;
-use crate::store::{SecretStore, StoreError};
+use crate::store::{SecretStore, StoreError, Sweep};
 
 /// The id the list is kept under. It is not a credential and is never offered as one.
 const INDEX_ID: &str = "puddle-index";
@@ -101,21 +101,24 @@ impl<S: SecretStore> SecretStore for IndexedStore<S> {
         Ok(())
     }
 
-    fn sweep_orphans(&self, keep: &dyn Fn(&StoredId) -> bool) -> Result<usize, StoreError> {
+    fn sweep_orphans(&self, keep: &dyn Fn(&StoredId) -> bool) -> Result<Sweep, StoreError> {
         let written = self.written.lock().unwrap_or_else(PoisonError::into_inner);
         let mut left = Vec::new();
-        let mut removed = 0;
+        let mut sweep = Sweep::default();
         for id in self.listed()? {
-            if !written.contains(&id) && !keep(&id) && self.inner.delete(&id).is_ok() {
-                removed += 1;
+            if written.contains(&id) || keep(&id) {
+                left.push(id);
+            } else if self.inner.delete(&id).is_ok() {
+                sweep.removed += 1;
             } else {
+                sweep.stuck += 1;
                 left.push(id);
             }
         }
-        if removed > 0 {
+        if sweep.removed > 0 {
             self.write_list(&left)?;
         }
-        Ok(removed)
+        Ok(sweep)
     }
 }
 
@@ -128,6 +131,13 @@ mod tests {
 
     fn id(text: &str) -> StoredId {
         StoredId::new(text).unwrap()
+    }
+
+    fn removed_one() -> Sweep {
+        Sweep {
+            removed: 1,
+            stuck: 0,
+        }
     }
 
     fn secret(text: &str) -> Secret {
@@ -187,7 +197,13 @@ mod tests {
         let removed = second
             .sweep_orphans(&|id| id.as_str() == "tok-used")
             .unwrap();
-        assert_eq!(removed, 2);
+        assert_eq!(
+            removed,
+            Sweep {
+                removed: 2,
+                stuck: 0
+            }
+        );
         assert!(second.get(&id("tok-used")).unwrap().is_some());
         assert!(second.get(&id("tok-orphan")).unwrap().is_none());
         assert!(second.get(&id("env-orphan")).unwrap().is_none());
@@ -195,15 +211,15 @@ mod tests {
             disk.get(&id(INDEX_ID)).unwrap().unwrap().expose(),
             "tok-used"
         );
-        assert_eq!(second.sweep_orphans(&|_| false).unwrap(), 1);
-        assert_eq!(second.sweep_orphans(&|_| false).unwrap(), 0);
+        assert_eq!(second.sweep_orphans(&|_| false).unwrap(), removed_one());
+        assert_eq!(second.sweep_orphans(&|_| false).unwrap(), Sweep::default());
     }
 
     #[test]
     fn a_value_this_run_wrote_is_not_swept_before_its_row_exists() {
         let store = IndexedStore::new(MemoryStore::new());
         store.set(&id("tok-new"), &secret("a")).unwrap();
-        assert_eq!(store.sweep_orphans(&|_| false).unwrap(), 0);
+        assert_eq!(store.sweep_orphans(&|_| false).unwrap(), Sweep::default());
         assert!(store.get(&id("tok-new")).unwrap().is_some());
     }
 
@@ -216,7 +232,7 @@ mod tests {
         assert_eq!(first.delete(&id("tok-a")), Err(StoreError));
         disk.0.heal();
         let second = IndexedStore::new(disk.clone());
-        assert_eq!(second.sweep_orphans(&|_| false).unwrap(), 1);
+        assert_eq!(second.sweep_orphans(&|_| false).unwrap(), removed_one());
         assert!(second.get(&id("tok-a")).unwrap().is_none());
     }
 
@@ -229,7 +245,7 @@ mod tests {
         first.set(&id("tok-crashed"), &secret("a")).unwrap();
         drop(first);
         let second = IndexedStore::new(disk.clone());
-        assert_eq!(second.sweep_orphans(&|_| false).unwrap(), 1);
+        assert_eq!(second.sweep_orphans(&|_| false).unwrap(), removed_one());
         assert!(disk.get(&id("tok-crashed")).unwrap().is_none());
     }
 
@@ -245,7 +261,7 @@ mod tests {
         disk.0.heal();
         assert!(store.get(&id("tok-b")).unwrap().is_none());
         let fresh = IndexedStore::new(disk.clone());
-        assert_eq!(fresh.sweep_orphans(&|_| true).unwrap(), 0);
+        assert_eq!(fresh.sweep_orphans(&|_| true).unwrap(), Sweep::default());
         assert!(fresh.get(&id("tok-a")).unwrap().is_some());
     }
 
@@ -258,7 +274,7 @@ mod tests {
         let store = IndexedStore::new(disk);
         assert_eq!(
             store.sweep_orphans(&|id| id.as_str() == "tok-b").unwrap(),
-            1
+            removed_one()
         );
     }
 
@@ -298,12 +314,18 @@ mod tests {
             written: Mutex::new(HashSet::new()),
         };
         again.inner.stuck.lock().unwrap().insert("tok-stuck".into());
-        assert_eq!(again.sweep_orphans(&|_| false).unwrap(), 1);
+        assert_eq!(
+            again.sweep_orphans(&|_| false).unwrap(),
+            Sweep {
+                removed: 1,
+                stuck: 1
+            }
+        );
         assert!(again.get(&id("tok-stuck")).unwrap().is_some());
         assert!(again.get(&id("tok-gone")).unwrap().is_none());
         // Still listed: the next sweep tries it again, and removes it once the store lets it.
         again.inner.stuck.lock().unwrap().clear();
-        assert_eq!(again.sweep_orphans(&|_| false).unwrap(), 1);
+        assert_eq!(again.sweep_orphans(&|_| false).unwrap(), removed_one());
         assert!(again.get(&id("tok-stuck")).unwrap().is_none());
     }
 

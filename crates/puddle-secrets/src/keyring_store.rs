@@ -9,17 +9,41 @@ use crate::store::{SecretStore, StoreError};
 /// Service name every puddle entry is filed under; the entry's user is `credential:<id>`.
 const SERVICE: &str = "puddle";
 
-/// The platform's credential store, under puddle's own name.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct KeyringStore;
+/// The platform's credential store, under puddle's own name or, for a test, one of its own.
+#[derive(Debug, Default, Clone)]
+pub struct KeyringStore {
+    /// `None` is puddle's own [`SERVICE`].
+    service: Option<String>,
+}
 
-fn entry(id: &StoredId) -> Result<keyring::Entry, StoreError> {
-    keyring::Entry::new(SERVICE, &format!("credential:{id}")).map_err(|_| StoreError)
+impl KeyringStore {
+    /// The store under puddle's own service name.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The store under `service` instead, so a test that writes real entries (an index, a long
+    /// value) never meets the ones the user's puddle keeps.
+    #[must_use]
+    pub fn named(service: impl Into<String>) -> Self {
+        Self {
+            service: Some(service.into()),
+        }
+    }
+
+    fn entry(&self, id: &StoredId) -> Result<keyring::Entry, StoreError> {
+        keyring::Entry::new(
+            self.service.as_deref().unwrap_or(SERVICE),
+            &format!("credential:{id}"),
+        )
+        .map_err(|_| StoreError)
+    }
 }
 
 impl SecretStore for KeyringStore {
     fn get(&self, id: &StoredId) -> Result<Option<Secret>, StoreError> {
-        match entry(id)?.get_password() {
+        match self.entry(id)?.get_password() {
             Ok(value) => Ok(Some(Secret::new(value))),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(_) => Err(StoreError),
@@ -27,13 +51,13 @@ impl SecretStore for KeyringStore {
     }
 
     fn set(&self, id: &StoredId, secret: &Secret) -> Result<(), StoreError> {
-        entry(id)?
+        self.entry(id)?
             .set_password(secret.expose())
             .map_err(|_| StoreError)
     }
 
     fn delete(&self, id: &StoredId) -> Result<(), StoreError> {
-        match entry(id)?.delete_credential() {
+        match self.entry(id)?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(_) => Err(StoreError),
         }

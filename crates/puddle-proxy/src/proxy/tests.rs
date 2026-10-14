@@ -232,7 +232,8 @@ async fn a_rule_set_allow_reaches_public_addresses_but_counts_as_a_wildcard_for_
 #[tokio::test]
 async fn a_panicking_policy_fails_closed_with_503() {
     let p = proxy(
-        FnPolicy::new(|_| panic!("policy bug")),
+        // Unwinds without the panic hook: a backtrace written to a slow captured stderr would stall the task.
+        FnPolicy::new(|_| std::panic::resume_unwind(Box::new("policy bug"))),
         StaticResolver::new(),
     );
     let refusal = admit(&p, &request("example.com")).await.unwrap_err();

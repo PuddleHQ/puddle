@@ -225,7 +225,10 @@ mod tests {
     #[tokio::test]
     async fn a_check_that_panics_is_an_error_not_a_dead_server() {
         let doctor = HostDoctor::new(Arc::new(|boot| {
-            assert!(!boot, "probe blew up");
+            if boot {
+                // Unwinds without the panic hook: a backtrace written to a slow captured stderr would stall the probe.
+                std::panic::resume_unwind(Box::new("probe blew up"));
+            }
             canned(boot)
         }));
         let err = doctor.run(true).await.unwrap_err();

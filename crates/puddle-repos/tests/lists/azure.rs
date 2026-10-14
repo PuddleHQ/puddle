@@ -80,14 +80,17 @@ async fn a_pasted_token_lists_its_organisation_in_one_call_with_addresses_that_c
     );
 
     // What is listed is what the create form takes: the table's own parser reads these
-    // addresses, except a project with a space, which the table cannot hold.
+    // addresses, a project with a space included.
     assert_eq!(
         RepoRef::from_https_url(&list.repos[2].url)
             .unwrap()
             .to_string(),
         "dev.azure.com/acme/web/tools"
     );
-    assert!(RepoRef::from_https_url(&another.url).is_err());
+    assert_eq!(
+        RepoRef::from_https_url(&another.url).unwrap().to_string(),
+        "dev.azure.com/acme/fabrikam fiber/anotherrepository"
+    );
 }
 
 #[tokio::test]

@@ -208,12 +208,7 @@ async fn turning_off_the_push_list_lets_any_push_through_and_a_name_the_table_ca
     // On again: a name the table has no spelling for can only be allowed by the switch.
     w.switches(true, false);
     let odd = w
-        .decide(
-            "dev.azure.com",
-            "POST",
-            "/org/My%20Project/_git/repo/git-receive-pack",
-            &[],
-        )
+        .decide("github.com", "POST", "/acme/a+b.git/git-receive-pack", &[])
         .await;
     let (status, code, message) = refusal(&odd);
     assert_eq!((status, code), (403, "push_denied"));
@@ -223,6 +218,134 @@ async fn turning_off_the_push_list_lets_any_push_through_and_a_name_the_table_ca
         w.events.take().is_empty(),
         "there is no row to add, so no notice"
     );
+}
+
+#[tokio::test]
+async fn an_azure_devops_project_with_a_space_can_be_listed_and_is_refused_with_the_add_it_notice_until_it_is()
+ {
+    let w = world();
+    let target = "/org/My%20Project/_git/The%20Repo/git-receive-pack";
+    let refused = w.decide("dev.azure.com", "POST", target, &[]).await;
+    let (status, code, message) = refusal(&refused);
+    assert_eq!((status, code), (403, "push_denied"));
+    assert!(
+        message.contains("dev.azure.com/org/my project/the repo"),
+        "{message}"
+    );
+    assert!(message.contains("add it"), "{message}");
+    assert_eq!(
+        w.events.take(),
+        [Event::GitAccessDenied {
+            workspace: w.workspace.clone(),
+            host: "dev.azure.com".into(),
+            owner: "org".into(),
+            repo: "my project/the repo".into(),
+            access: GitAccess::Push,
+        }]
+    );
+    // Listed with Push on, in the spelling the proxy reads: the same request is not refused.
+    w.list("dev.azure.com/org/my project/the repo", true, true);
+    for spelled in [
+        target,
+        "/org/my%20project/_git/The%20Repo.git/git-receive-pack",
+        "/org/My%20project/_git/The%20repo/git-receive-pack",
+    ] {
+        let decision = w.decide("dev.azure.com", "POST", spelled, &[]).await;
+        assert!(
+            !matches!(decision, InjectDecision::Refuse(_)),
+            "{spelled}: {decision:?}"
+        );
+    }
+    // A `+` is a plus on a path, not a space: another name, not listed.
+    let plus = w
+        .decide(
+            "dev.azure.com",
+            "POST",
+            "/org/My+Project/_git/The%20Repo/git-receive-pack",
+            &[],
+        )
+        .await;
+    assert_eq!(refusal(&plus).1, "push_denied");
+}
+
+#[tokio::test]
+async fn a_repository_in_nested_groups_is_listed_and_credentialed_by_its_top_group() {
+    let w = World::new();
+    w.identity("Lab", "gitlab.example", &["group"], false, "CANARY-LAB");
+    let push = "/Group/Sub/Proj.git/info/refs?service=git-receive-pack";
+    let refused = w.decide("gitlab.example", "GET", push, &[]).await;
+    let (status, code, message) = refusal(&refused);
+    assert_eq!((status, code), (403, "push_denied"));
+    assert!(
+        message.contains("gitlab.example/group/sub/proj"),
+        "{message}"
+    );
+    assert_eq!(
+        w.events.take(),
+        [Event::GitAccessDenied {
+            workspace: w.workspace.clone(),
+            host: "gitlab.example".into(),
+            owner: "group".into(),
+            repo: "sub/proj".into(),
+            access: GitAccess::Push,
+        }]
+    );
+    // A fetch is not held by the push list and gets the credential of the owner `group`.
+    let fetch = w
+        .decide(
+            "gitlab.example",
+            "POST",
+            "/group/sub/proj.git/git-upload-pack",
+            &[],
+        )
+        .await;
+    assert!(injected(&fetch, &token_header("CANARY-LAB")), "{fetch:?}");
+    // Listed, the push goes out; the owner's other repositories stay off the list.
+    w.list("gitlab.example/group/sub/proj", true, true);
+    let pushed = w.decide("gitlab.example", "GET", push, &[]).await;
+    assert!(injected(&pushed, &token_header("CANARY-LAB")), "{pushed:?}");
+    let other = w
+        .decide(
+            "gitlab.example",
+            "POST",
+            "/group/sub/other/git-receive-pack",
+            &[],
+        )
+        .await;
+    assert_eq!(refusal(&other).1, "push_denied");
+    // The workspace's own header does not get it past the list.
+    let own = w
+        .decide(
+            "gitlab.example",
+            "POST",
+            "/group/sub/deeper/other/git-receive-pack",
+            &[OWN],
+        )
+        .await;
+    assert_eq!(refusal(&own).1, "push_denied");
+}
+
+#[tokio::test]
+async fn a_path_that_could_be_two_nested_repositories_or_is_too_deep_is_refused_not_guessed() {
+    let w = World::new();
+    w.identity("Lab", "gitlab.example", &["group"], false, "CANARY-LAB");
+    w.switches(false, false);
+    for target in [
+        "/group/proj/info/lfs/info/refs?service=git-upload-pack",
+        "/group/a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p/q/r/s/t/u/v/git-upload-pack",
+    ] {
+        let decision = w.decide("gitlab.example", "POST", target, &[]).await;
+        let (status, code, _) = refusal(&decision);
+        assert_eq!((status, code), (400, "bad_git_path"), "{target}");
+    }
+    // A page of the host that happens to end in a Git word is not a Git request.
+    for target in [
+        "/group/proj/-/blob/main/info/refs",
+        "/group/sub/proj/blob/main/info/refs",
+    ] {
+        let decision = w.decide("gitlab.example", "GET", target, &[]).await;
+        assert_eq!(decision, InjectDecision::PassThrough, "{target}");
+    }
 }
 
 #[tokio::test]

@@ -139,7 +139,9 @@ async fn an_unlisted_request_still_says_it_is_waiting() {
     assert_eq!(header(&refusal, "x-puddle-decision"), Some("pending"));
     assert_eq!(header(&refusal, "x-puddle-pending"), None);
     assert!(
-        refusal.message.contains("waiting for approval")
+        refusal
+            .message
+            .contains("not listed for approval in puddle yet")
             && refusal.message.contains("retry")
             && !refusal.message.contains("denied"),
         "{}",

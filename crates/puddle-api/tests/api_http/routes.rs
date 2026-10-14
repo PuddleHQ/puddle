@@ -52,6 +52,8 @@ async fn a_pending_request_is_listed_approved_and_then_allowed() {
         .collect();
     assert_eq!(domains.len(), 2);
     assert!(domains.contains(&"example.com") && domains.contains(&"example.org"));
+    // The most open requests listed per workspace, so the inbox can say when a list is full.
+    assert_eq!(inbox["open_limit"], 1000);
 
     let reply = api
         .send(

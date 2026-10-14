@@ -114,6 +114,8 @@ export function limitGroups(
 
 export class PendingStore {
   rows = $state.raw<Row[]>([]);
+  /** The most open requests the service lists per workspace (R-45); a workspace at it has a full list. */
+  openLimit = $state(Number.POSITIVE_INFINITY);
   /** `null` while unknown; a workspace whose settings could not be read is treated as approvable. */
   toggles = $state.raw<Record<string, Toggles | null>>({});
   decided = $state.raw<Decided[]>([]);
@@ -123,6 +125,17 @@ export class PendingStore {
 
   readonly groups = $derived(groupRows(this.rows));
   readonly count = $derived(this.rows.length);
+  /** The workspaces whose list is full: a new host they ask about is not listed until some are answered. */
+  readonly full = $derived.by(() => {
+    const open = new Map<string, number>();
+    for (const { request } of this.rows) {
+      open.set(request.workspace, (open.get(request.workspace) ?? 0) + 1);
+    }
+    return [...open]
+      .filter(([, n]) => n >= this.openLimit)
+      .map(([workspace]) => workspace)
+      .sort();
+  });
 
   readonly #api: StoreApi;
   readonly #source: LiveSource | undefined;
@@ -187,6 +200,7 @@ export class PendingStore {
         return;
       }
       this.loadError = null;
+      this.openLimit = data.open_limit;
       const rows: Row[] = data.groups.flatMap((g) =>
         g.requests.map((request) => ({
           request,

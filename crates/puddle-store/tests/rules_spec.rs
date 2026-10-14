@@ -454,7 +454,7 @@ fn r44_a_workspace_asking_about_many_hosts_is_never_refused_for_the_volume() {
     }
     new_pending(decide(&store, "b", "h0.example"));
     assert_eq!(store.open_pending(Some(&sb("a"))).unwrap().len(), 300);
-    assert!(audit_of(&store, "pending_suppressed").is_empty());
+    assert_eq!(audit_of(&store, "pending_suppressed"), Vec::<Value>::new());
 }
 
 #[test]
@@ -492,7 +492,7 @@ fn r45_open_rows_are_capped_without_refusing_and_room_lists_the_next_request() {
         decide(&store, "a", "four.example"),
         Decision::Pending(PendingOutcome::Unlisted)
     );
-    assert!(audit_of(&store, "pending_suppressed").is_empty());
+    assert_eq!(audit_of(&store, "pending_suppressed"), Vec::<Value>::new());
 }
 
 #[test]
@@ -524,7 +524,7 @@ fn r45_a_hundred_thousand_new_hosts_keep_the_store_bounded_and_the_inbox_fast() 
     store
         .resolve_pending(real, &Resolution::allow(), Actor::Ui)
         .unwrap();
-    assert!(audit_of(&store, "pending_suppressed").is_empty());
+    assert_eq!(audit_of(&store, "pending_suppressed"), Vec::<Value>::new());
 }
 
 #[test]
@@ -867,7 +867,7 @@ fn r46_open_rows_never_expire_by_age() {
     clock.advance(400 * DAY);
     store.sweep().unwrap();
     assert_eq!(store.pending(old).unwrap().state, PendingState::Requested);
-    assert!(audit_of(&store, "pending_expired").is_empty());
+    assert_eq!(audit_of(&store, "pending_expired"), Vec::<Value>::new());
     // It still repeats onto the same row and can still be approved.
     assert_eq!(
         decide(&store, "a", "old.example"),

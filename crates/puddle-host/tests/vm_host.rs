@@ -1298,6 +1298,7 @@ const SECOND_PROCESS_FOLDER_VAR: &str = "PUDDLE_VM_SECOND_PROCESS_FOLDER";
 /// (and the test below checks that it doesn't).
 #[test]
 fn vm_host_second_process_probe() {
+    // skip-ok: the refusal test starts this binary again with the folder variable set; started on its own it is not a test.
     let Some(folder) = std::env::var_os(SECOND_PROCESS_FOLDER_VAR) else {
         return;
     };

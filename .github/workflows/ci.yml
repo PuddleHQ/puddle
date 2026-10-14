@@ -153,6 +153,9 @@ jobs:
       - name: standalone (no planning-note references)
         if: ${{ !cancelled() }}
         run: scripts/check.sh standalone
+      - name: silent skips (a test that returns early must fail in the job that provides its prerequisite)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh silent-skips
       - name: secret scanning (gitleaks, pinned and checksummed in ci/gitleaks.sha256)
         if: ${{ !cancelled() }}
         run: |

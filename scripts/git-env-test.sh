@@ -5,7 +5,7 @@
 # `git config`, `git add`) without stripping them rewrites that repository. This runs the gates
 # that spawn git under those variables, pointed at throwaway repositories, and asserts each victim's
 # config, index and HEAD are byte-identical afterwards:
-#   - `scripts/check.sh fast` (fmt typos spdx shellcheck hooks platform-literals standalone), which
+#   - `scripts/check.sh fast` (fmt typos spdx shellcheck hooks platform-literals standalone git-pins silent-skips), which
 #     covers every git-touching gate of the pre-commit list and the cheap ones of the pre-push list.
 #     The `fast` run before this gate had no hook variables, so it proves nothing here; this one is
 #     the pre-commit hook's situation. It runs beside the tests below, on its own victim;

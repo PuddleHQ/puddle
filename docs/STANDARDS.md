@@ -234,7 +234,7 @@ the owner, then tagged `vX.Y.Z` on `main`.
 
 | Tier | What | Where it lives | Runs |
 |---|---|---|---|
-| L0 static | fmt, clippy (Linux + msvc), deny, typos, SPDX, shellcheck, secrets (gitleaks), standalone (no planning-note references), git-pins (no dependency pinned by a branch), rustdoc, API contract | `scripts/check.sh` | every push, every PR |
+| L0 static | fmt, clippy (Linux + msvc), deny, typos, SPDX, shellcheck, secrets (gitleaks), standalone (no planning-note references), git-pins (no dependency pinned by a branch), silent skips, rustdoc, API contract | `scripts/check.sh` | every push, every PR |
 | L1 unit | one module's logic: parsers, rules, state machines, address classifier, path handling | `#[cfg(test)] mod tests` in the same file | every push (Linux), nightly + PRs to `main` (Windows) |
 | L2 integration, no VM | real proxy + real agent over a Unix socket / named pipe, fake guest client, fake upstreams; API over loopback; the hostile-guest **tier P** | `crates/<crate>/tests/*.rs`; cross-crate ones in `crates/puddle-e2e/tests/` | every push |
 | L3 Linux KVM e2e (**K**) | a real msb microVM; the product's behaviours; hostile-guest **tier V** | `crates/puddle-vm-tests/tests/`, functions or files named `vm_*` | `vm-linux.yml`: every pull request to `develop`, by hand on any branch, nightly on `develop` |
@@ -266,6 +266,20 @@ the owner, then tagged `vX.Y.Z` on `main`.
 - **Flaky tests:** nextest never retries (`retries = 0`); only the Windows nightly retries once, to list flakes. A test that fails without a code change
   is fixed or quarantined within a day (still runs, doesn't gate, linked issue, max 14 days).
   Proxy, transparency and security tests can't be quarantined: a flaky one is the bug.
+- **Skipped tests:** a test that returns early because something is missing passes without testing
+  anything (the old second-user test did so on every run, unseen). A missing prerequisite takes one of
+  three forms, and `scripts/check.sh silent-skips` fails the rest:
+  - a tool or service a CI job provides: the test checks `PUDDLE_REQUIRE_<WHAT>`, panics when it is set
+    and the prerequisite is missing, and skips with a message when it is not (a developer's machine).
+    The workflow job that provides the prerequisite sets the variable; the gate fails a variable no
+    workflow sets;
+  - a platform fact: `#[cfg(...)]` on the test, or Playwright's `test.skip(condition, "reason")`;
+  - not a skip (a test that plays a role for another test, a hand-run measurement): a
+    `skip-ok: <reason>` comment on or above the line. `#[ignore = "reason"]` always carries its reason.
+
+  The gate's header lists what it cannot see (a skip deeper than 30 lines into a test, a helper that
+  returns `None` without printing, a flag set in a job that does not run the test). A new skip still
+  needs the review to ask whether CI runs the test.
 - Test names say the behaviour: `denied_request_is_held_until_approved`, not `test_pending_2`.
 
 ## 9. Coverage
@@ -317,7 +331,7 @@ the owner, then tagged `vX.Y.Z` on `main`.
 
 | Set | Gates | Runs |
 |---|---|---|
-| `fast` | fmt, typos, spdx, shellcheck, hooks, platform-literals, standalone, git-pins | pre-commit hook |
+| `fast` | fmt, typos, spdx, shellcheck, hooks, platform-literals, standalone, git-pins, silent-skips | pre-commit hook |
 | `pre-push` | every gate of `all` except `ui-e2e` | pre-push hook |
 | `all` (the default) | every gate, `ui-e2e` included | `ci.yml` (on every push and PR), by hand |
 

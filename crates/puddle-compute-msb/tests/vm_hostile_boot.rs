@@ -278,6 +278,11 @@ async fn vm_hostile_hg04_hg05_a_guest_cannot_reach_puddles_own_listeners_through
 }
 
 /// Root's attempts to change the mounted file `target`, then whether anything changed.
+///
+/// The remount succeeds in the guest (root may clear the guest's `ro` flag) but the host's share
+/// stays read-only, which is what protects the host. A write-open of a running binary says
+/// "Text file busy" before the host is asked, so it proves nothing; the chmod after the remount
+/// (an attribute change, sent to the host on every mount) is the write that does.
 const WRITE_ATTACK: &str = r#"
 f=$1
 before=$(sha256sum "$f" | cut -d' ' -f1)$(stat -c ' %a %U' "$f")
@@ -290,6 +295,7 @@ echo "chmod: $(chmod 777 "$f" 2>&1)"
 echo "remount: $(mount -o remount,rw "$f" 2>&1)"
 echo "append after remount: $(sh -c 'echo x >> "$0"' "$f" 2>&1)"
 echo "truncate after remount: $(truncate -s 0 "$f" 2>&1)"
+echo "chmod after remount: $(chmod 777 "$f" 2>&1)"
 after=$(sha256sum "$f" | cut -d' ' -f1)$(stat -c ' %a %U' "$f")
 [ "$before" = "$after" ] && echo "unchanged" || echo "CHANGED: $before -> $after"
 [ -e "$f.moved" ] && echo "MOVED"
@@ -318,9 +324,14 @@ async fn write_attack(guest: &Booted, target: &str) -> (String, Vec<String>) {
         "truncate",
         "append after remount",
         "truncate after remount",
+        "chmod after remount",
     ] {
         let l = line(step);
-        if !(l.contains("Read-only file system") || l.contains("Permission denied")) {
+        let refused_by_host =
+            l.contains("Read-only file system") || l.contains("Permission denied");
+        let busy = l.contains("Text file busy")
+            && line("chmod after remount").contains("Read-only file system");
+        if !(refused_by_host || busy) {
             failures.push(format!("{target}: {step} was not refused: {l:?}"));
         }
     }

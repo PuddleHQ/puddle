@@ -5,11 +5,12 @@
 //! that carries one never echoes it.
 
 use puddle_secrets::{
-    DiscoveredAccount, HostName, Listing, OrgName, SignInStart, SourceError, TokenScope,
+    DiscoveredAccount, HostName, Listing, OrgName, Secret, SignInStart, SourceError, TokenScope,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::environment::SecretText;
 use super::identities::CredentialSource;
 use crate::error::ApiError;
 
@@ -134,7 +135,7 @@ pub(crate) fn source_problem(err: &SourceError) -> String {
 
 /// A token the user pasted. It is kept in the operating system's credential store under puddle's
 /// own name and never read back through the API.
-#[derive(Clone, Deserialize, ToSchema)]
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StoreTokenRequest {
     /// The Git host the token is for.
@@ -144,20 +145,20 @@ pub struct StoreTokenRequest {
     #[schema(required = false)]
     pub org: Option<String>,
     /// The token. Write-only.
-    #[schema(format = Password, write_only)]
-    pub token: String,
+    #[schema(value_type = String, format = Password, write_only)]
+    pub token: SecretText,
 }
 
 impl StoreTokenRequest {
     /// What the token is for, and the token.
-    pub(crate) fn into_parts(self) -> Result<(TokenScope, String), ApiError> {
+    pub(crate) fn into_parts(self) -> Result<(TokenScope, Secret), ApiError> {
         let host = HostName::new(self.host).map_err(|_| ApiError::invalid("not a valid host"))?;
         let org = self
             .org
             .map(OrgName::new)
             .transpose()
             .map_err(|_| ApiError::invalid("not a valid organisation"))?;
-        Ok((TokenScope { host, org }, self.token))
+        Ok((TokenScope { host, org }, self.token.0))
     }
 }
 

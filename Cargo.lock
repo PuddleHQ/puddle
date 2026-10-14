@@ -5874,6 +5874,7 @@ dependencies = [
  "base64 0.23.1",
  "futures-util",
  "getrandom 0.4.3",
+ "http-body-util",
  "hyper",
  "hyper-util",
  "proptest",
@@ -5901,6 +5902,7 @@ dependencies = [
  "tracing",
  "utoipa",
  "utoipa-axum",
+ "zeroize",
 ]
 
 [[package]]

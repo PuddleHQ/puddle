@@ -3,6 +3,10 @@
 # Two jobs run side by side: the Rust and repository gates, and the UI gates (the browser tests are
 # the longest step). A third job, `linux (all gates)`, waits for both and is the one result to
 # require. Every gate runs even when an earlier one fails, so one run shows every problem.
+# A pull request to develop runs only the jobs its changed files can affect (ci/scope.sh, the `scope`
+# job): a docs-only or UI-only change runs a light job (typos, spdx, shellcheck, standalone, secrets)
+# instead of the Rust gates, and a change with no UI-relevant path skips the UI job. Every other
+# event, and any doubt, runs everything. `linux (all gates)` accepts a skip only when `scope` said so.
 name: ci
 
 on:
@@ -35,8 +39,35 @@ env:
   DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
 
 jobs:
+  # Which jobs this pull request needs (ci/scope.sh; it falls open to "all" on any doubt). Checks out
+  # only ci/, so it costs a few seconds.
+  scope:
+    name: scope (changed files)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      ci_rust: ${{ steps.scope.outputs.ci_rust }}
+      ui: ${{ steps.scope.outputs.ui }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: ci
+      - name: which jobs does this change need?
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: ci/scope.sh
+
   rust:
     name: linux (Rust and repository gates)
+    needs: scope
+    if: ${{ !cancelled() && needs.scope.outputs.ci_rust != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -104,6 +135,12 @@ jobs:
           # A miss costs a 14-minute MSVC CRT download; cache-gc.yml never deletes this entry.
       - name: fmt
         run: scripts/check.sh fmt
+      # ci/ is an always-run path, so a change to the scoping rules or this test runs this job.
+      - name: path scoping (fixture of merged pull requests, fail-open cases, crate sets against cargo metadata)
+        if: ${{ !cancelled() }}
+        env:
+          SCOPE_TEST_METADATA: "1"
+        run: ci/scope-test.sh
       - name: typos
         if: ${{ !cancelled() }}
         run: scripts/check.sh typos
@@ -170,8 +207,43 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
+  # The gates a change without Rust, fixtures or gate data can still break. It runs instead of `rust`
+  # when ci/scope.sh says no Rust gate is needed (a docs-only or UI-only pull request).
+  light:
+    name: linux (repository gates, light)
+    needs: scope
+    if: ${{ !cancelled() && needs.scope.outputs.ci_rust == 'false' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the secrets gate scans the pull request's commits
+      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+        with:
+          tool: typos@1.50.3,shellcheck@0.11.0
+      - name: typos
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh typos
+      - name: spdx headers
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh spdx
+      - name: shellcheck
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh shellcheck
+      - name: standalone (no planning-note references)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh standalone
+      - name: secret scanning (gitleaks, pinned and checksummed in ci/gitleaks.sha256)
+        if: ${{ !cancelled() }}
+        run: |
+          ci/fetch-gitleaks.sh "$HOME/gitleaks-bin"
+          PATH="$HOME/gitleaks-bin:$PATH" scripts/check.sh secrets
+
   ui:
     name: linux (UI gates)
+    needs: scope
+    if: ${{ !cancelled() && needs.scope.outputs.ui != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -237,18 +309,21 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
-  # One stable result for both jobs above.
+  # One stable result for the jobs above.
   # The develop ruleset requires it by this name: a rename changes the ruleset in the same change.
+  # On a pull request a job may be skipped only when `scope` said it was not needed (ci/scope.sh
+  # verdict); a failed `scope` job leaves its outputs empty, which runs everything.
   linux:
     name: linux (all gates)
-    needs: [rust, ui]
+    needs: [scope, rust, light, ui]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: both jobs passed
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: ci
+      - name: every needed job passed
         env:
           NEEDS: ${{ toJSON(needs) }}
-        run: |
-          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          echo "$NEEDS" | jq -e 'all(.[]; .result == "success")' >/dev/null
+        run: ci/scope.sh verdict rust=ci_rust light='!ci_rust' ui=ui

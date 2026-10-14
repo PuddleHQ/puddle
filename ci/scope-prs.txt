@@ -1,0 +1,530 @@
+# Merged pull requests into develop (the first 58 of the PR flow, 2026-10-10 to 2026-10-14), trimmed to
+# paths: ci/scope-test.sh replays each through ci/scope.sh and checks the line after `@`:
+#   @<pr> <class> <ci_rust> <win_rust> <ui> <vm>
+# followed by the pull request's changed paths. The expected values are a reviewed snapshot of the
+# rules in ci/scope.sh: when a rule changes on purpose, update the affected lines by hand.
+@7 full true true true true
+.github/workflows/ci.yml
+.github/workflows/vm-linux.yml
+.github/workflows/vm-windows.yml
+.github/workflows/windows.yml
+docs/STANDARDS.md
+@8 ui false false true false
+ui/e2e/density.spec.ts
+ui/src/lib/theme/base.css
+@9 full true true true true
+crates/puddle-api/tests/api_http/common.rs
+crates/puddle-api/tests/api_http/credentials.rs
+crates/puddle-api/tests/api_http/doctor.rs
+crates/puddle-api/tests/api_http/endpoints.rs
+crates/puddle-api/tests/api_http/environment.rs
+crates/puddle-api/tests/api_http/events.rs
+crates/puddle-api/tests/api_http/first_run.rs
+crates/puddle-api/tests/api_http/guard.rs
+crates/puddle-api/tests/api_http/identities.rs
+crates/puddle-api/tests/api_http/main.rs
+crates/puddle-api/tests/api_http/network_health.rs
+crates/puddle-api/tests/api_http/problems.rs
+crates/puddle-api/tests/api_http/repos.rs
+crates/puddle-api/tests/api_http/routes.rs
+crates/puddle-api/tests/api_http/rule_sets.rs
+crates/puddle-api/tests/api_http/settings.rs
+crates/puddle-api/tests/api_http/ui.rs
+crates/puddle-api/tests/api_http/workspaces.rs
+docs/STANDARDS.md
+scripts/check-sets-test.sh
+scripts/check.sh
+scripts/gate-sched-test.sh
+scripts/gate-sched.sh
+scripts/git-env-test.sh
+scripts/target-names-test.sh
+@10 full true true true true
+Cargo.lock
+Cargo.toml
+crates/puddle-agent/Cargo.toml
+crates/puddle-agent/src/main.rs
+crates/puddle-e2e/Cargo.toml
+crates/puddle-e2e/tests/proxy_agent_store.rs
+crates/puddle-fd-limit/Cargo.toml
+crates/puddle-fd-limit/src/lib.rs
+crates/puddle-fd-limit/tests/raise.rs
+crates/puddle-host/Cargo.toml
+crates/puddle-host/src/host.rs
+crates/puddle-host/tests/vm_host.rs
+docs/STANDARDS.md
+@11 full true true true true
+Cargo.lock
+crates/puddle-api/openapi/openapi.json
+crates/puddle-api/openapi/schema.d.ts
+crates/puddle-api/src/openapi.rs
+crates/puddle-api/src/routes/mod.rs
+crates/puddle-api/src/routes/problems.rs
+crates/puddle-api/src/server.rs
+crates/puddle-api/src/system_managed.rs
+crates/puddle-api/src/wire.rs
+crates/puddle-api/tests/http/main.rs
+crates/puddle-api/tests/http/problems.rs
+crates/puddle-boot/src/hook.rs
+crates/puddle-boot/tests/gate_fake.rs
+crates/puddle-compute-msb/src/sandbox.rs
+crates/puddle-compute/src/fake/mod.rs
+crates/puddle-compute/src/runtime.rs
+crates/puddle-host/src/host.rs
+crates/puddle-host/src/workspaces.rs
+crates/puddle-host/tests/fake_host.rs
+crates/puddle-lifecycle/src/reconcile.rs
+crates/puddle-lifecycle/src/shutdown.rs
+crates/puddle-lifecycle/src/trim.rs
+crates/puddle-lifecycle/tests/fake.rs
+crates/puddle-repos/Cargo.toml
+crates/puddle-repos/src/transport.rs
+crates/puddle-repos/tests/lists/route.rs
+crates/puddle-store/src/audit.rs
+crates/puddle-store/src/lib.rs
+crates/puddle-store/src/store.rs
+crates/puddle-store/src/sweeper.rs
+crates/puddle-types/Cargo.toml
+crates/puddle-types/src/connection.rs
+crates/puddle-types/src/event.rs
+crates/puddle-types/src/lib.rs
+crates/puddle-types/src/problems.rs
+crates/puddle-workspace/src/error.rs
+crates/puddle-workspace/src/lib.rs
+crates/puddle-workspace/src/locks.rs
+crates/puddle-workspace/src/workspaces.rs
+crates/puddle-workspace/tests/lifecycle.rs
+crates/puddle/src/cmd/serve.rs
+scripts/diff-coverage-exclusions.txt
+ui/src/lib/api/schema.d.ts
+ui/src/lib/audit/model.test.ts
+ui/src/lib/audit/model.ts
+ui/src/lib/notify/problems.test.ts
+ui/src/lib/notify/problems.ts
+ui/src/lib/notify/watcher.ts
+@12 docs false false false false
+CONTRIBUTING.md
+docs/STANDARDS.md
+@13 full true true true true
+.github/workflows/windows.yml
+ci/cache-gc.sh
+@15 rust true true true true
+crates/puddle-agent/tests/ssh_refusal.rs
+@16 rust true true true true
+crates/puddle-upstream/tests/windows_pac.rs
+@17 full true true true true
+.github/workflows/vm-linux.yml
+.github/workflows/vm-windows.yml
+ci/test-vm-skip-policy.sh
+ci/vm-skip-policy.sh
+scripts/coverage-baseline.json
+@18 rust true true true true
+crates/puddle-agent/src/capture/table.rs
+crates/puddle-agent/src/capture/table/tests.rs
+crates/puddle-agent/src/oom.rs
+crates/puddle-agent/src/oom/tests.rs
+scripts/coverage-baseline.json
+scripts/diff-coverage-exclusions.txt
+@19 rust true true true true
+crates/puddle-host/src/process_env.rs
+crates/puddle-netpolicy/src/endpoints.rs
+@20 rust true true true true
+crates/puddle-agent-proto/src/host.rs
+crates/puddle-agent-proto/src/host/tests.rs
+@21 rust true true true true
+crates/puddle-api/src/routes/rule_sets.rs
+crates/puddle/src/cmd/serve.rs
+scripts/diff-coverage-exclusions.txt
+@22 full true true true true
+crates/puddle-fs/src/private/mod.rs
+crates/puddle-fs/src/private/unix.rs
+crates/puddle-fs/src/private/windows.rs
+crates/puddle-ipc/Cargo.toml
+crates/puddle-ipc/src/unix.rs
+@23 full true true true true
+crates/puddle-api/openapi/openapi.json
+crates/puddle-api/openapi/schema.d.ts
+crates/puddle-host/src/injection.rs
+crates/puddle-host/src/logins.rs
+crates/puddle-logins/src/logins.rs
+crates/puddle-logins/src/tests.rs
+crates/puddle-logins/src/vault.rs
+crates/puddle-types/src/event.rs
+docs/adr/0007-login-capture-fails-open.md
+docs/adr/README.md
+scripts/diff-coverage-exclusions.txt
+ui/src/lib/api/schema.d.ts
+ui/src/lib/notify/logins.test.ts
+ui/src/lib/notify/logins.ts
+@24 full true true true true
+crates/puddle-api/openapi/openapi.json
+crates/puddle-api/openapi/schema.d.ts
+crates/puddle-api/src/error.rs
+crates/puddle-api/src/routes/first_run.rs
+crates/puddle-api/src/routes/settings.rs
+crates/puddle-api/tests/api_http/settings.rs
+crates/puddle-host/src/host.rs
+crates/puddle-host/tests/fake_host.rs
+crates/puddle-netpolicy/src/access.rs
+crates/puddle-netpolicy/src/guard.rs
+crates/puddle-proxy/src/proxy.rs
+crates/puddle-types/src/connection.rs
+crates/puddle-types/src/policy.rs
+docs/spec/rules.md
+ui/src/lib/api/schema.d.ts
+ui/src/lib/audit/model.test.ts
+ui/src/lib/audit/model.ts
+ui/src/lib/stores/global-settings.svelte.ts
+ui/src/lib/stores/global-settings.test.ts
+ui/src/routes/settings/+page.svelte
+ui/src/routes/settings/settings.test.ts
+@25 rust true true false true
+crates/puddle-host/tests/fake_host.rs
+@26 full true true true true
+crates/puddle-doctor/src/boot.rs
+crates/puddle-doctor/src/diagnose.rs
+crates/puddle-doctor/src/facts.rs
+crates/puddle-doctor/src/lib.rs
+crates/puddle-doctor/src/report.rs
+crates/puddle-doctor/src/sys/unix.rs
+crates/puddle-doctor/src/sys/windows.rs
+crates/puddle-doctor/src/system.rs
+crates/puddle-doctor/tests/boot_unix.rs
+crates/puddle-doctor/tests/snapshots.rs
+crates/puddle-doctor/tests/snapshots/linux_boot_logs_kept.snap
+crates/puddle-doctor/tests/snapshots/linux_boot_logs_not_kept.snap
+crates/puddle-doctor/tests/snapshots/windows_code_integrity_unreadable.snap
+crates/puddle-doctor/tests/snapshots/windows_gsa_running_unknown.snap
+crates/puddle-doctor/tests/snapshots/windows_gsa_unknown.snap
+crates/puddle-doctor/tests/system_probe.rs
+crates/puddle-vm-tests/tests/vm_doctor.rs
+crates/puddle/src/cmd/doctor.rs
+@27 rust true true true true
+crates/puddle-upstream/tests/windows_pac.rs
+@28 rust true true true true
+crates/puddle-ipc/src/windows/mod.rs
+@29 full true true true true
+crates/puddle-api/openapi/openapi.json
+crates/puddle-api/openapi/schema.d.ts
+crates/puddle-api/src/network_health.rs
+crates/puddle-api/src/wire/network_health.rs
+crates/puddle-api/tests/api_http/network_health.rs
+scripts/diff-coverage-exclusions.txt
+ui/src/lib/api/schema.d.ts
+ui/src/lib/network/model.test.ts
+ui/src/lib/network/model.ts
+ui/src/routes/settings/network-health/+page.svelte
+ui/src/routes/settings/network-health/network-health.test.ts
+@30 full true true true true
+ci/fetch-msb.sh
+crates/puddle-runtime/src/layout.rs
+crates/puddle-runtime/src/platform.rs
+crates/xtask/src/assemble.rs
+crates/xtask/src/lib.rs
+crates/xtask/src/notice.rs
+crates/xtask/src/pin.rs
+crates/xtask/src/source.rs
+crates/xtask/tests/runtime.rs
+docs/STANDARDS.md
+scripts/diff-coverage-exclusions.txt
+@31 ui false false true false
+ui/src/lib/settings/model.ts
+ui/src/lib/stores/global-settings.svelte.ts
+ui/src/lib/stores/workspace-settings.svelte.ts
+ui/src/lib/stores/workspace-settings.test.ts
+ui/src/lib/testing/fake-workspaces.ts
+ui/src/routes/workspaces/[id]/detail.test.ts
+ui/src/routes/workspaces/[id]/settings/+page.svelte
+@32 full true true true true
+crates/puddle-api/openapi/openapi.json
+crates/puddle-api/openapi/schema.d.ts
+crates/puddle-api/src/network_health.rs
+crates/puddle-api/src/wire/network_health.rs
+crates/puddle-api/tests/api_http/network_health.rs
+scripts/diff-coverage-exclusions.txt
+ui/src/lib/api/schema.d.ts
+ui/src/lib/network/model.test.ts
+ui/src/lib/network/model.ts
+ui/src/routes/settings/network-health/network-health.test.ts
+@33 rust true true true true
+crates/puddle-inject/src/header.rs
+crates/puddle-inject/tests/decisions.rs
+crates/puddle-repos/src/api.rs
+crates/puddle-repos/src/azure.rs
+crates/puddle-repos/src/engine.rs
+crates/puddle-repos/src/exchange.rs
+crates/puddle-repos/src/fake.rs
+crates/puddle-repos/src/github.rs
+crates/puddle-repos/src/limits.rs
+crates/puddle-repos/src/transport.rs
+crates/puddle-repos/tests/lists/azure.rs
+crates/puddle-repos/tests/lists/etag.rs
+crates/puddle-repos/tests/lists/main.rs
+crates/puddle-repos/tests/lists/route.rs
+crates/puddle-secrets/src/lib.rs
+crates/puddle-secrets/src/scheme.rs
+@34 full true true true true
+.github/workflows/vm-linux.yml
+ci/check-runtime-layout-test.sh
+ci/check-runtime-layout.sh
+crates/puddle-vm-tests/tests/vm_doctor.rs
+scripts/check.sh
+@35 full true true true true
+crates/puddle-app/Cargo.toml
+crates/puddle-app/src/backend.rs
+crates/puddle-app/src/fixture.rs
+crates/puddle-app/src/lib.rs
+crates/puddle-app/src/links.rs
+crates/puddle-app/src/shell.rs
+crates/puddle-app/src/window.rs
+crates/puddle-app/tests/acl.rs
+scripts/diff-coverage-exclusions.txt
+@36 rust true true true true
+crates/puddle-agent/src/config.rs
+crates/puddle-agent/src/upstream.rs
+crates/puddle-e2e/tests/api_unreachable.rs
+@37 rust true true true true
+crates/puddle-fs/src/private/mod.rs
+crates/puddle-fs/src/private/windows.rs
+@38 full true true true true
+crates/puddle-api/openapi/openapi.json
+crates/puddle-api/openapi/schema.d.ts
+crates/puddle-api/src/network_health.rs
+crates/puddle-api/src/wire/network_health.rs
+crates/puddle-app/src/links.rs
+scripts/diff-coverage-exclusions.txt
+ui/src/lib/api/schema.d.ts
+ui/src/lib/network/model.test.ts
+ui/src/lib/network/model.ts
+ui/src/lib/notify/problems.test.ts
+ui/src/lib/notify/problems.ts
+@39 rust true true true true
+crates/puddle-compute-msb/src/spec.rs
+crates/puddle-compute-msb/tests/vm_msb.rs
+scripts/diff-coverage-exclusions.txt
+@40 rust true true true true
+crates/puddle-agent/src/connect.rs
+crates/puddle-agent/src/merge_file.rs
+@41 full true true true true
+Cargo.lock
+crates/puddle-compute-msb/Cargo.toml
+crates/puddle-compute-msb/tests/vm_unreadable_config.rs
+@42 ui false false true false
+ui/e2e/warm-up.ts
+ui/playwright.config.ts
+ui/tools/first-start.test.ts
+ui/tools/first-start.ts
+@43 ui false false true false
+ui/e2e/activity.spec.ts
+@46 rust true true false true
+crates/puddle-lifecycle/src/lib.rs
+crates/puddle-lifecycle/src/signal.rs
+crates/puddle-lifecycle/src/supervise.rs
+crates/puddle-lifecycle/src/windows/front.rs
+@47 full true true true true
+Cargo.lock
+crates/puddle-compute-msb/Cargo.toml
+crates/puddle-compute-msb/tests/support/mod.rs
+crates/puddle-compute-msb/tests/vm_hostile.rs
+crates/puddle-compute-msb/tests/vm_hostile_boot.rs
+crates/puddle-compute-msb/tests/vm_msb.rs
+@48 ui false false true false
+ui/e2e/inbox.spec.ts
+ui/src/lib/api/sse.test.ts
+ui/src/lib/api/sse.ts
+ui/src/lib/audit/model.test.ts
+ui/src/lib/audit/model.ts
+ui/src/lib/components/AddRuleDialog.svelte
+ui/src/lib/components/LoadNotice.svelte
+ui/src/lib/components/LoadNotice.test.ts
+ui/src/lib/components/OptionsPopover.svelte
+ui/src/lib/components/OptionsPopover.test.ts
+ui/src/lib/components/RuleSetsSection.svelte
+ui/src/lib/components/RuleSetsSection.test.ts
+ui/src/lib/components/ThemeToggle.svelte
+ui/src/lib/components/WorkspaceSets.svelte
+ui/src/lib/components/WorkspaceSets.test.ts
+ui/src/lib/components/shell.test.ts
+ui/src/lib/stores/audit.svelte.ts
+ui/src/lib/stores/audit.test.ts
+ui/src/lib/stores/global-settings.svelte.ts
+ui/src/lib/stores/global-settings.test.ts
+ui/src/lib/stores/live.svelte.ts
+ui/src/lib/stores/live.test.ts
+ui/src/lib/stores/pending.svelte.ts
+ui/src/lib/stores/pending.test.ts
+ui/src/lib/stores/read-failure.test.ts
+ui/src/lib/stores/read-failure.ts
+ui/src/lib/stores/rule-sets.svelte.ts
+ui/src/lib/stores/rule-sets.test.ts
+ui/src/lib/stores/rules.svelte.ts
+ui/src/lib/stores/rules.test.ts
+ui/src/lib/stores/workspace-settings.svelte.ts
+ui/src/lib/stores/workspace-settings.test.ts
+ui/src/lib/stores/workspaces.svelte.ts
+ui/src/lib/stores/workspaces.test.ts
+ui/src/lib/theme/density-state.test.ts
+ui/src/lib/theme/density.svelte.ts
+ui/src/lib/theme/theme-state.test.ts
+ui/src/lib/theme/theme.svelte.ts
+ui/src/routes/+layout.svelte
+ui/src/routes/activity/+page.svelte
+ui/src/routes/activity/activity.test.ts
+ui/src/routes/inbox/+page.svelte
+ui/src/routes/inbox/inbox.test.ts
+ui/src/routes/rules/+page.svelte
+ui/src/routes/rules/rules.test.ts
+ui/src/routes/settings/+page.svelte
+ui/src/routes/settings/settings.test.ts
+ui/src/routes/welcome/look/+page.svelte
+ui/src/routes/welcome/welcome.test.ts
+ui/src/routes/workspaces/+page.svelte
+ui/src/routes/workspaces/[id]/+layout.svelte
+ui/src/routes/workspaces/[id]/detail.test.ts
+ui/src/routes/workspaces/[id]/network/+page.svelte
+ui/src/routes/workspaces/workspaces.test.ts
+@49 full true true true true
+Cargo.lock
+Cargo.toml
+ci/msb-runtime.sha256
+ci/msb-tag.sh
+ci/windows-e2e.ps1
+crates/puddle-e2e/Cargo.toml
+crates/puddle-e2e/tests/image_pull_proxy.rs
+crates/puddle-e2e/tests/image_pull_resume.rs
+crates/puddle-e2e/tests/lab/mod.rs
+crates/puddle-runtime/src/version.rs
+deny.toml
+@50 ui false false true false
+ui/scripts/diff-coverage.test.ts
+@51 full true true true true
+.github/dependabot.yml
+.github/workflows/ci.yml
+.github/workflows/vm-linux.yml
+.github/workflows/vm-windows.yml
+.github/workflows/windows.yml
+Cargo.lock
+ui/THIRD-PARTY-NOTICES.txt
+ui/eslint.config.js
+ui/package-lock.json
+ui/package.json
+ui/scripts/edge-launch-args.ts
+@52 rust true true true true
+crates/puddle-proxy/src/proxy.rs
+crates/puddle-proxy/tests/route.rs
+crates/puddle-types/src/connection.rs
+docs/spec/rules.md
+@53 rust true true true true
+crates/puddle-proxy/src/pull.rs
+crates/puddle-proxy/tests/pull.rs
+docs/spec/rules.md
+@55 full true true true true
+crates/puddle-api/openapi/openapi.json
+crates/puddle-api/openapi/schema.d.ts
+crates/puddle-host/src/lib.rs
+crates/puddle-host/src/ssh_target.rs
+crates/puddle-host/src/workspaces.rs
+crates/puddle-host/tests/fake_host.rs
+crates/puddle-ssh/src/endpoint.rs
+crates/puddle-ssh/tests/endpoint.rs
+crates/puddle-types/src/event.rs
+scripts/diff-coverage-exclusions.txt
+ui/src/lib/api/schema.d.ts
+ui/src/lib/notify/notify.test.ts
+ui/src/lib/notify/watcher.ts
+@57 rust true true true true
+crates/puddle-agent/src/capture/dns.rs
+crates/puddle-agent/src/capture/dns/tests.rs
+crates/puddle-e2e/tests/stub_dns.rs
+crates/puddle-proxy/src/proxy.rs
+crates/puddle-proxy/src/records.rs
+crates/puddle-proxy/src/resolve.rs
+crates/puddle-proxy/src/resolve/tests.rs
+docs/spec/rules.md
+scripts/coverage-baseline.json
+scripts/diff-coverage-exclusions.txt
+@58 rust true true true true
+crates/puddle-host/src/host.rs
+crates/puddle-store/src/lib.rs
+crates/puddle-store/src/recorder.rs
+@59 ui false false true false
+ui/e2e/warm-up.ts
+ui/tools/first-start.test.ts
+ui/tools/first-start.ts
+@61 full true true true true
+.github/workflows/cache-gc.yml
+.github/workflows/ci.yml
+@62 full true true true true
+.github/workflows/windows.yml
+docs/STANDARDS.md
+@63 rust true true true false
+crates/puddle-e2e/tests/ip_deny.rs
+@64 ui false false true false
+ui/src/lib/audit/model.test.ts
+ui/src/lib/audit/model.ts
+ui/src/routes/inbox/+page.svelte
+ui/src/routes/inbox/inbox.test.ts
+@65 rust true true false true
+crates/puddle-host/tests/vm_host.rs
+@66 full true true true true
+.github/workflows/windows.yml
+crates/puddle-e2e/src/ui_fixture/cli.rs
+scripts/diff-coverage-exclusions.txt
+ui/e2e/activity.spec.ts
+ui/e2e/fixture.ts
+@68 full true true true true
+crates/puddle-api/openapi/openapi.json
+crates/puddle-api/openapi/schema.d.ts
+crates/puddle-api/src/openapi.rs
+crates/puddle-api/src/routes/mod.rs
+crates/puddle-api/src/routes/pending.rs
+crates/puddle-api/src/wire.rs
+crates/puddle-api/tests/api_http/routes.rs
+crates/puddle-e2e/src/ui_fixture/scenario.rs
+crates/puddle-e2e/tests/proxy_agent_store.rs
+crates/puddle-e2e/tests/stub_dns.rs
+crates/puddle-e2e/tests/ui_fixture.rs
+crates/puddle-proxy/src/proxy.rs
+crates/puddle-proxy/src/proxy/tests.rs
+crates/puddle-proxy/tests/route.rs
+crates/puddle-store/src/audit.rs
+crates/puddle-store/src/lib.rs
+crates/puddle-store/src/pending.rs
+crates/puddle-store/src/ratelimit.rs
+crates/puddle-store/src/store.rs
+crates/puddle-store/tests/events_and_audit_query.rs
+crates/puddle-store/tests/rules_spec.rs
+crates/puddle-types/src/connection.rs
+crates/puddle-types/src/event.rs
+crates/puddle-types/src/policy.rs
+docs/spec/rules.md
+ui/e2e/inbox.spec.ts
+ui/src/lib/api/schema.d.ts
+ui/src/lib/decision/events.test.ts
+ui/src/lib/decision/events.ts
+ui/src/lib/stores/pending.svelte.ts
+ui/src/lib/stores/pending.test.ts
+ui/src/lib/testing/fake-inbox.ts
+ui/src/routes/inbox/+page.svelte
+ui/src/routes/inbox/inbox.test.ts
+@69 mixed true true true true
+crates/puddle-host/src/injection.rs
+crates/puddle-proxy/src/proxy.rs
+crates/puddle-proxy/src/terminate/h2.rs
+crates/puddle-proxy/src/terminate/inject.rs
+crates/puddle-proxy/src/terminate/request.rs
+crates/puddle-proxy/src/terminate/session.rs
+crates/puddle-proxy/tests/terminate_h2.rs
+crates/puddle-proxy/tests/terminate_hostile.rs
+ui/src/lib/audit/model.test.ts
+ui/src/lib/audit/model.ts
+@71 rust true true true true
+crates/puddle-proxy/tests/terminate_perf.rs
+@72 ui false false true false
+ui/e2e/density.spec.ts
+ui/e2e/settings.spec.ts
+ui/src/lib/settings/draft.test.ts
+ui/src/lib/settings/draft.ts
+ui/src/lib/theme/density.svelte.ts
+ui/src/lib/theme/theme.svelte.ts
+ui/src/routes/settings/+page.svelte
+ui/src/routes/settings/settings.test.ts

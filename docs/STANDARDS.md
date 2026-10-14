@@ -362,6 +362,21 @@ four workflows, about 19 jobs at once, just under the shared limit, so a second 
 Each workflow has one result job (`linux (all gates)`, `windows-msvc (build, clippy, tests)`, `vm-linux (KVM, msb
 microVMs)`, `vm-windows (WHP, msb microVMs)`): those names are what `develop` requires, so partitions and jobs can change
 freely, and renaming a result job means changing the requirement in the same change.
+
+**Path scoping (`ci/scope.sh`).** A pull request to `develop` runs only the jobs its changed files can affect. Each workflow
+starts with a short `scope` job that reads the PR's file list from the GitHub API and sets `ci_rust`, `win_rust`, `ui`
+and `vm`; the heavy jobs skip on an explicit `false`. A docs-only or UI-only PR runs the light `ci` job (typos, spdx,
+shellcheck, standalone, secrets) instead of the Rust gates; a UI-only PR also skips the Windows Rust jobs and both VM
+workflows and keeps the UI gates on both systems; a Rust-only PR skips the UI jobs when every changed crate is outside
+the closure of `puddle-e2e` and `puddle-app`, and the VM jobs when none is in the VM set. Everything runs for a push, the
+nightly, a manual run, a PR to `main`, a failed or empty file list, 300 or more files, a path no rule names, and any path
+in the always-run list (`Cargo.lock` and every manifest, `rust-toolchain.toml`, tool config, `.github/workflows/`, `ci/`,
+`scripts/` except the three gate-data files, `crates/puddle-vm-tests/`, the API contract and its TypeScript types, the
+notices inputs). The result jobs keep their names and accept a skip only when `scope` said so (`ci/scope.sh verdict`):
+a failed, cancelled or otherwise skipped job still fails them. `ci/scope-test.sh` (run by the `ci` Rust job) replays 58
+merged PRs from `ci/scope-prs.txt`, plants unknown paths, and checks the workflows against the verdict. When a crate
+dependency changes, its `Cargo.toml` change runs everything; the two crate sets in `ci/scope.sh` follow `cargo metadata`
+(the test checks them).
 Actions are pinned to commit SHAs and must be GitHub-owned or on the repo's allow-list (selected
 actions, SHA pinning required; an unpinned `uses:` ends as a `startup_failure` with no jobs).
 Workflows get `contents: read` unless they need more.

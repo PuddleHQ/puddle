@@ -440,6 +440,18 @@ impl SharedDir {
         });
         let path = Path::new(&public).join(format!("{prefix}-{tag}"));
         std::fs::create_dir(&path).unwrap();
+        // Read for Everyone (S-1-1-0), inherited by what the test puts in: the profile's own
+        // default is not something to rely on.
+        let granted = Command::new("icacls")
+            .arg(&path)
+            .args(["/grant", "*S-1-1-0:(OI)(CI)RX"])
+            .output()
+            .expect("run icacls");
+        assert!(
+            granted.status.success(),
+            "icacls: {}",
+            String::from_utf8_lossy(&granted.stdout)
+        );
         Self(path)
     }
 

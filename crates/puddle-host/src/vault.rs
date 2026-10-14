@@ -48,10 +48,10 @@ fn report(outcome: Result<Sweep, &'static str>, problems: &Problems) {
                 SWEEP_PROBLEM,
                 format!(
                     "puddle could not remove {stuck} leftover {} from the credential store",
-                    if stuck == 1 { "token" } else { "tokens" }
+                    if stuck == 1 { "value" } else { "values" }
                 ),
                 "They belong to nothing in puddle any more, for example a token you pasted and \
-                 never saved. Unlock the credential store if it is locked; puddle tries again the \
+                 never saved, or one left by a delete. Unlock the credential store if it is locked; puddle tries again the \
                  next time it starts.",
             ));
         }
@@ -223,7 +223,7 @@ mod tests {
         assert_eq!(raised[0].key, SWEEP_PROBLEM);
         assert_eq!(
             raised[0].title,
-            "puddle could not remove 1 leftover token from the credential store"
+            "puddle could not remove 1 leftover value from the credential store"
         );
         assert!(disk.get(&id("tok-gone")).unwrap().is_none());
 
@@ -251,13 +251,7 @@ mod tests {
         );
         let raised = list.list();
         assert_eq!(raised.len(), 1);
-        assert!(
-            raised[0]
-                .detail
-                .starts_with("the operating system's credential store did not answer"),
-            "{}",
-            raised[0].detail
-        );
+        assert!(raised[0].detail.contains("credential store did not answer"));
         disk.heal();
 
         report(

@@ -62,6 +62,7 @@ beforeEach(() => {
   api.queries = [];
   api.down = false;
   api.failNext = null;
+  api.pageRows = null;
   replaceState.mockClear();
   window.history.replaceState({}, "", "/activity");
   auditStore.status = "loading";
@@ -342,6 +343,8 @@ describe("the activity page", () => {
       api.entries = Array.from({ length: 1500 }, (_, i) =>
         connection(i + 1, { ts: Date.now() }),
       );
+      // The export needs a long log; the page does not need to draw 200 rows of it.
+      api.pageRows = 5;
       render(ActivityPage);
       await waitFor(() => expect(rows().length).toBeGreaterThan(0));
       const button = screen.getByRole("button", { name: "Export JSON lines" });

@@ -11,7 +11,7 @@
   import { narrowest, type Effect } from "#lib/decision/model.ts";
   import { relativeTime } from "#lib/format/relative-time.ts";
   import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
-  import { limitGroups, pending } from "#lib/stores/pending.svelte.ts";
+  import { limitGroups, pending, slices } from "#lib/stores/pending.svelte.ts";
   import { ruleSets } from "#lib/stores/rule-sets.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
   import "#lib/theme/controls.css";
@@ -24,9 +24,7 @@
   // A long list is drawn in slices, so the first rows are on screen at once: the first slice,
   // then the rest a slice per frame, each after the paint of the one before. Every frame costs a style, layout and paint pass besides the
   // rows themselves, so the later slices are big: 500 rows draw in three frames, none over 150 ms.
-  const FIRST_SLICE = 60;
-  const NEXT_SLICE = 250;
-  let limit = $state(FIRST_SLICE);
+  let limit = $state(slices.first);
   /** The A, D, J and K keys: a Settings switch, off until the user turns it on. */
   const shortcuts = $derived(globalSettings.view?.ui.inbox_shortcuts ?? false);
   const shownGroups = $derived(limitGroups(pending.groups, limit));
@@ -67,7 +65,7 @@
       let timer: ReturnType<typeof setTimeout> | undefined;
       const frame = requestAnimationFrame(() => {
         timer = setTimeout(() => {
-          limit += NEXT_SLICE;
+          limit += slices.next;
         }, 0);
       });
       return () => {

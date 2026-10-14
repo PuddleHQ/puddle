@@ -47,7 +47,7 @@ vi.mock("#lib/stores/pending.svelte.ts", async (original) => {
 
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
 import { FakeSettings } from "#lib/testing/fake-settings.ts";
-import { pending } from "#lib/stores/pending.svelte.ts";
+import { pending, slices } from "#lib/stores/pending.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import InboxPage from "./+page.svelte";
 
@@ -70,8 +70,16 @@ function reset() {
   for (const t of [...toasts.items]) toasts.dismiss(t.id);
 }
 
+/**
+ * Draws a long list in slices of 3 and 4 rows: the real sixty rows cost seconds on a busy host,
+ * and no test here is about how many rows a slice holds.
+ */
+const realSlices = { ...slices };
+const shrinkSlices = () => Object.assign(slices, { first: 3, next: 4 });
+
 beforeEach(reset);
 afterEach(() => {
+  Object.assign(slices, realSlices);
   cleanup();
   vi.useRealTimers();
 });
@@ -159,6 +167,7 @@ describe("the inbox page", () => {
   });
 
   it("never holds a workspace's requests back: a long list has no held-back line (R-44)", async () => {
+    shrinkSlices();
     for (let n = 1; n <= 70; n++) {
       inbox.add(request(n, { host: `h${n}.flood.example.net` }), "example.net");
     }
@@ -744,7 +753,9 @@ describe("the page measures itself", () => {
 
 describe("a long list is drawn in slices", () => {
   it("shows the first rows at once, then all of them, and counts every row in the group", async () => {
-    for (let i = 1; i <= 150; i += 1) {
+    shrinkSlices();
+    const rows = 9;
+    for (let i = 1; i <= rows; i += 1) {
       inbox.add(
         request(i, { host: `h${i}.example.com`, first_seen: i }),
         "example.com",
@@ -752,10 +763,10 @@ describe("a long list is drawn in slices", () => {
     }
     render(InboxPage);
     await screen.findByRole("heading", { name: "example.com" });
-    expect(screen.getByText("150 waiting")).toBeInTheDocument();
-    expect(screen.getAllByRole("listitem").length).toBeLessThan(150);
+    expect(screen.getByText(`${rows} waiting`)).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem")).toHaveLength(3);
     await vi.waitFor(() =>
-      expect(screen.getAllByRole("listitem")).toHaveLength(150),
+      expect(screen.getAllByRole("listitem")).toHaveLength(rows),
     );
   });
 });

@@ -86,6 +86,11 @@ export class FakeAudit {
   failNext: number | null = null;
   /** Audit reads wait for this before they answer. */
   gate: Promise<void> | null = null;
+  /**
+   * Newest-first reads (the page) answer at most this many rows, however many the query asks for;
+   * reads by cursor (the export) keep their size. Lets a test hold a long log without drawing it.
+   */
+  pageRows: number | null = null;
 
   private reply(status: number, data?: unknown) {
     const response = { status, ok: status < 400 } as Response;
@@ -142,8 +147,9 @@ export class FakeAudit {
       query.before === undefined
         ? matches
         : matches.filter((e) => e.id < (query.before as number));
-    const entries = older.slice(-limit).reverse();
-    const full = older.length > limit;
+    const shown = Math.min(limit, this.pageRows ?? limit);
+    const entries = older.slice(-shown).reverse();
+    const full = older.length > shown;
     return this.reply(200, {
       entries,
       next_after: matches.at(-1)?.id ?? 0,

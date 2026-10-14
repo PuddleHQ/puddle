@@ -91,6 +91,18 @@ describe("refresh", () => {
     expect(counts).toEqual([2]);
   });
 
+  it("names the workspaces whose list is full, from the limit the service reports", async () => {
+    const { inbox, store } = setup();
+    inbox.openLimit = 2;
+    inbox.add(request(1), "example.com");
+    inbox.add(request(2), "example.com");
+    inbox.add(request(3, { workspace: "other" as never }), "example.com");
+    expect(store.full).toEqual([]);
+    await store.refresh();
+    expect(store.openLimit).toBe(2);
+    expect(store.full).toEqual(["demo"]);
+  });
+
   it("says it failed on the first failure, and keeps what it has after a later one", async () => {
     const { inbox, store } = setup();
     inbox.down = true;

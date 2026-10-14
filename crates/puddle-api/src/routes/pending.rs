@@ -126,7 +126,10 @@ pub(crate) async fn inbox(State(state): State<AppState>) -> Result<Json<Inbox>, 
             requests: present(&state, group.rows).await?,
         });
     }
-    Ok(Json(Inbox { groups: out }))
+    Ok(Json(Inbox {
+        groups: out,
+        open_limit: state.store.max_open_rows(),
+    }))
 }
 
 /// One pending request, in any state.

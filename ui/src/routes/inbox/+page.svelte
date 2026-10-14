@@ -167,6 +167,16 @@
   </p>
 </div>
 
+{#each pending.full as workspace (workspace)}
+  <p class="full" role="status">
+    <b
+      ><span class="mono">{workspace}</span> has {pending.openLimit} waiting requests</b
+    >, the most puddle lists. If it asks about more hosts, they are listed once
+    you answer some. Allowing or denying a domain with its subdomains clears
+    many at once.
+  </p>
+{/each}
+
 {#if pending.status === "ready" && pending.loadError}
   <LoadNotice what="the requests" message={pending.loadError} stale />
 {/if}
@@ -265,6 +275,13 @@
   }
   .keys {
     font-size: var(--text-sm);
+  }
+  .full {
+    margin: 0 0 var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    background: var(--color-surface-raised);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-md);
   }
   .group,
   .decided,

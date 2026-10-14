@@ -2279,6 +2279,13 @@ export interface components {
         Inbox: {
             /** @description The groups. */
             groups: components["schemas"]["InboxGroup"][];
+            /**
+             * Format: int64
+             * @description The most open requests puddle lists for one workspace. A workspace with this many has a
+             *     full list: a new host it asks about is answered as waiting but gets no row until the user
+             *     answers some (rules spec R-45).
+             */
+            open_limit: number;
         };
         /** @description Open requests that share a registrable domain (R-18). Grouping is for display only. */
         InboxGroup: {

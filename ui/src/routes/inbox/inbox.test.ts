@@ -57,7 +57,9 @@ function reset() {
   inbox.toggles = {};
   inbox.calls = [];
   inbox.down = false;
+  inbox.openLimit = 1000;
   pending.rows = [];
+  pending.openLimit = Number.POSITIVE_INFINITY;
   pending.decided = [];
   pending.toggles = {};
   pending.status = "loading";
@@ -161,6 +163,26 @@ describe("the inbox page", () => {
     expect(document.querySelector(".held")).toBeNull();
     expect(pending.count).toBe(70);
     expect(inbox.calls.some((c) => c.includes("suppression"))).toBe(false);
+  });
+
+  it("says when a workspace's list is full, and stops saying it once some are answered (R-45)", async () => {
+    inbox.openLimit = 3;
+    inbox.add(request(1, { host: "a.one.test" }), "one.test");
+    inbox.add(request(2, { host: "b.one.test" }), "one.test");
+    inbox.add(request(3, { host: "c.one.test" }), "one.test");
+    inbox.add(request(4, { workspace: "other" as never }), "other.test");
+    render(InboxPage);
+    await vi.waitFor(() =>
+      expect(document.querySelector(".full")).not.toBeNull(),
+    );
+    const notice = document.querySelector(".full");
+    expect(notice).toHaveTextContent(
+      "demo has 3 waiting requests, the most puddle lists.",
+    );
+    expect(notice).toHaveTextContent("listed once you answer some");
+    expect(notice).not.toHaveTextContent("other");
+    source.emit({ type: "pending_closed", id: 1, state: "denied", rule_id: 9 });
+    await vi.waitFor(() => expect(document.querySelector(".full")).toBeNull());
   });
 
   it("updates live: a new row, an updated count, a closed row, without a refetch", async () => {

@@ -272,6 +272,10 @@ pub struct InboxGroup {
 pub struct Inbox {
     /// The groups.
     pub groups: Vec<InboxGroup>,
+    /// The most open requests puddle lists for one workspace. A workspace with this many has a
+    /// full list: a new host it asks about is answered as waiting but gets no row until the user
+    /// answers some (rules spec R-45).
+    pub open_limit: u64,
 }
 
 /// Which workspaces a rule applies to.

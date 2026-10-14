@@ -241,6 +241,12 @@ impl Store {
         self.snapshot().rules().to_vec()
     }
 
+    /// The most open rows kept per workspace (R-45).
+    #[must_use]
+    pub fn max_open_rows(&self) -> u64 {
+        self.limits.max_open_rows
+    }
+
     /// Decides one request (R-5 to R-12): the deciding rule, or a pending outcome.
     ///
     /// # Errors

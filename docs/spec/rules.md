@@ -89,11 +89,14 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   that gets no row of its own (outcome `unlisted`), and is answered exactly like a waiting request
   (R-47): it is never denied, and it gets a row when it asks again once the user has answered
   some. Repeats of an open row (R-11) never count against the cap. Other workspaces have their own.
+  `GET /api/inbox` reports the cap (`open_limit`), and the inbox says when a workspace has that many
+  waiting, so a host that is not listed is never a silent one.
 - **R-47 The refusal says the request is waiting.** The 403 body says in words that the host is
   waiting for approval in puddle and that the tool should retry once it is approved; the headers
   keep `x-puddle-decision: pending` and, when a row exists, `x-puddle-pending: <id>`. For an
-  `unlisted` request (R-45) the body adds that puddle holds more waiting requests for the
-  workspace than it lists and that answering some lists this one on the next try. The connection
+  `unlisted` request (R-45) the body says instead that the host is not listed for approval yet
+  because puddle holds more waiting requests for the workspace than it lists, and that answering some
+  lists this one on the next try. The connection
   is not held open ("parked"); that stays a later option.
 - **R-14 Local destinations** (the proxy applies this after resolving an allowed name; the engine supplies
   the match): an address in a local category with its toggle off is blocked and the block names

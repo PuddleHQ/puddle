@@ -31,6 +31,8 @@ export class FakeInbox {
   calls: string[] = [];
   /** Set to make every call fail the way a stopped service does. */
   down = false;
+  /** What the service says about its per-workspace list limit. */
+  openLimit = 1000;
   /** Status for the next decision (`approve`/`deny`), then back to success. */
   nextDecisionStatus: number | null = null;
   rules: components["schemas"]["Rule"][] = [];
@@ -71,6 +73,7 @@ export class FakeInbox {
           registrable_domain,
           requests,
         })),
+        open_limit: this.openLimit,
       });
     }
     if (path === "/api/settings/workspaces/{workspace}") {

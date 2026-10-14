@@ -1036,7 +1036,7 @@ fn allowed(
                 "403 Forbidden",
                 match outcome {
                     PendingOutcome::Unlisted => format!(
-                        "{host} is waiting for approval in puddle, but this workspace already has more waiting requests than puddle lists; answer some of them in puddle, then retry and this one is listed"
+                        "{host} is not listed for approval in puddle yet: this workspace already has more waiting requests than puddle lists. Answer some of them in puddle, then retry and this one is listed"
                     ),
                     _ => format!(
                         "{host} is waiting for approval in puddle; approve it there, then retry"

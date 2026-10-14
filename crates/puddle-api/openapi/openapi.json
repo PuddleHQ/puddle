@@ -9155,7 +9155,8 @@
         "type": "object",
         "description": "The inbox: open requests grouped by registrable domain, most recent group first.",
         "required": [
-          "groups"
+          "groups",
+          "open_limit"
         ],
         "properties": {
           "groups": {
@@ -9164,6 +9165,12 @@
               "$ref": "#/components/schemas/InboxGroup"
             },
             "description": "The groups."
+          },
+          "open_limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The most open requests puddle lists for one workspace. A workspace with this many has a\nfull list: a new host it asks about is answered as waiting but gets no row until the user\nanswers some (rules spec R-45).",
+            "minimum": 0
           }
         }
       },

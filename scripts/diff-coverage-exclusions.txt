@@ -136,3 +136,6 @@ crates/puddle-agent/src/vsock.rs | assert! | the failure branch runs only on a k
 crates/puddle-agent/src/vsock.rs | std::env::var_os("PUDDLE_REQUIRE_VSOCK").is_none(), | same branch: the check of the variable runs only where AF_VSOCK is missing
 crates/puddle-api/src/routes/identities.rs | .inspect_err(|err| tracing::warn!(%err, "the pasted tokens in use could not be listed")) | a damaged environment-secret row makes the list of ids in use unreadable; the API cannot damage a row, and the store's own test (`the_ids_in_use_are_not_listed_when_a_secret_row_is_damaged`) covers the error it returns
 crates/puddle-api/src/routes/identities.rs | None => true, | same row: every token is reported as left when the list of ids in use cannot be read
+crates/puddle-host/src/vault.rs | tracing::warn!(%err, "credential store sweep skipped: the rows could not be read"); | a damaged environment-secret row makes the list of ids in use unreadable; only the store's own test can damage one (`the_ids_in_use_are_not_listed_when_a_secret_row_is_damaged`), and the arm only names the cause for the problem the user sees
+crates/puddle-host/src/vault.rs | "puddle could not read which tokens and secrets it still uses" | same arm: the cause it reports
+crates/puddle-host/src/vault.rs | })?; | same arm: the closing line of the call that returns early

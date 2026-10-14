@@ -43,7 +43,7 @@ mod prefix;
 mod runtime;
 pub mod sockets;
 
-pub use env::{Settings, VmEnv, within};
+pub use env::{Settings, VmEnv, test_owner, within};
 pub use error::HarnessError;
 pub use prefix::RunPrefix;
 pub use runtime::{AMBIENT_MSB_VARS, RuntimePair, refuse_ambient_msb_vars};

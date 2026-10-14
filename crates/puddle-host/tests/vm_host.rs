@@ -32,7 +32,7 @@ use puddle_store::{
 };
 use puddle_types::{WorkspaceName, WorkspaceStatus};
 use puddle_upstream::Mode;
-use puddle_vm_tests::Settings;
+use puddle_vm_tests::{RuntimePair, Settings, test_owner};
 use serde_json::json;
 use support::{Api, ended};
 
@@ -90,8 +90,26 @@ struct VmHost {
     host: Host<MsbRuntime>,
     runtime: MsbRuntime,
     settings: Settings,
+    /// The host's data folder.
+    root: std::path::PathBuf,
     /// Where the host keeps the values of secrets: never the machine's own credential store.
     secrets: std::sync::Arc<MemoryStore>,
+}
+
+/// The host configuration over `root`: what [`start_vm_host_with`] and the second process of the
+/// refusal test both build, so they name the same data folder the same way.
+fn harness_config(
+    settings: &Settings,
+    pair: &RuntimePair,
+    root: &std::path::Path,
+    agent: std::path::PathBuf,
+) -> HostConfig {
+    let layout =
+        RuntimeLayout::new(pair.msb.parent().unwrap().to_path_buf(), settings.home()).unwrap();
+    let mut config = HostConfig::new(HostPaths::new(root), layout, GuestSettings::new(agent));
+    config.upstream.discovery.mode = Mode::Direct;
+    config.runtime_log_level.clone_from(&settings.msb_log_level);
+    config
 }
 
 /// Starts a host over its own store and workspace folder, named by `tag` (a few characters), so
@@ -109,17 +127,15 @@ async fn start_vm_host_with(tag: &str, options: HostOptions) -> VmHost {
         .try_init();
     let settings = Settings::from_lookup(|var| std::env::var(var).ok()).expect("VM test settings");
     let pair = settings.prepare().expect("msb runtime pair");
-    let root = settings.scratch_home(tag);
+    let root = settings
+        .claim_scratch_home(tag, &test_owner())
+        .expect("one scratch home tag per test");
     std::fs::create_dir_all(&root).unwrap();
     let agent = std::path::PathBuf::from(
         std::env::var_os("PUDDLE_AGENT_BIN")
             .expect("PUDDLE_AGENT_BIN: the static puddle-agent (ci/build-agent.sh)"),
     );
-    let layout =
-        RuntimeLayout::new(pair.msb.parent().unwrap().to_path_buf(), settings.home()).unwrap();
-    let mut config = HostConfig::new(HostPaths::new(&root), layout, GuestSettings::new(agent));
-    config.upstream.discovery.mode = Mode::Direct;
-    config.runtime_log_level = settings.msb_log_level.clone();
+    let config = harness_config(&settings, &pair, &root, agent);
     let factory = HarnessFactory {
         settings: settings.clone(),
         msb: pair.msb.clone(),
@@ -139,6 +155,7 @@ async fn start_vm_host_with(tag: &str, options: HostOptions) -> VmHost {
         host,
         runtime,
         settings,
+        root,
         secrets,
     }
 }
@@ -738,6 +755,7 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
         runtime,
         settings,
         secrets,
+        root: _,
     } = start_vm_host("env").await;
     let name = format!("{}-env", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
@@ -971,6 +989,7 @@ async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_al
         runtime,
         settings,
         secrets: _,
+        root: _,
     } = start_vm_host("login").await;
     let name = format!("{}-login", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
@@ -1267,4 +1286,143 @@ async fn vm_host_carries_2000_concurrent_guest_connections_through_agent_and_pro
     assert_eq!(end["step"], "done", "{end}");
     let down = host.shutdown().await;
     assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
+/// The variable that turns [`vm_host_second_process_probe`] from a no-op into the second
+/// `puddle serve`: it names the data folder the first process holds.
+const SECOND_PROCESS_FOLDER_VAR: &str = "PUDDLE_VM_SECOND_PROCESS_FOLDER";
+
+/// The second process of the refusal test (a copy of this test binary): does what
+/// `puddle serve` does first, `prepare` on the data folder, and reports the refusal. It starts
+/// no runtime and opens no store, so it can only fail the first process by taking its lock
+/// (and the test below checks that it doesn't).
+#[test]
+fn vm_host_second_process_probe() {
+    let Some(folder) = std::env::var_os(SECOND_PROCESS_FOLDER_VAR) else {
+        return;
+    };
+    let settings = Settings::from_lookup(|var| std::env::var(var).ok()).expect("VM test settings");
+    // Not `settings.prepare()`: that rewrites the msb home's config while the first process
+    // runs on it.
+    let pair = RuntimePair::find_in(&settings.runtime_dir).expect("msb runtime pair");
+    let agent = std::path::PathBuf::from(std::env::var_os("PUDDLE_AGENT_BIN").expect("agent"));
+    let config = harness_config(&settings, &pair, std::path::Path::new(&folder), agent);
+    match prepare(config, &HarnessPlatform) {
+        Ok(_) => panic!("the second process took the first one's data folder"),
+        Err(error) => println!("refused: {error}"),
+    }
+}
+
+/// A second host process on a data folder a running host holds is refused, and the first one's
+/// sandbox keeps running: same boot, same API, and it still stops cleanly at the end. The
+/// second process is a copy of this test binary that calls `prepare`, `puddle serve`'s first
+/// step; the real executable's own argument handling is not part of it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_a_second_process_on_the_same_data_folder_is_refused_and_the_vm_keeps_running() {
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        root,
+        ..
+    } = start_vm_host("twice").await;
+    let name = format!("{}-twice", settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    host.store()
+        .add_rule(&NewRule {
+            scope: Scope::Workspace(sandbox.clone()),
+            pattern: Pattern::parse(REPO_HOST).unwrap(),
+            effect: Effect::Allow,
+            expires_at: None,
+            created_by: Actor::Cli,
+        })
+        .unwrap();
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "repo_url": REPO, "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+
+    // What identifies this boot of this guest: its boot id, and an uptime that only grows.
+    let probe = "cat /proc/sys/kernel/random/boot_id; cut -d' ' -f1 /proc/uptime";
+    let before = guest(&runtime, &sandbox, probe).await;
+
+    let started = std::time::Instant::now();
+    let second = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+        .args([
+            "--exact",
+            "vm_host_second_process_probe",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(SECOND_PROCESS_FOLDER_VAR, &root)
+        .output()
+        .expect("start the second process");
+    let stdout = String::from_utf8_lossy(&second.stdout);
+    let stderr = String::from_utf8_lossy(&second.stderr);
+    eprintln!(
+        "second process took {:?}\n{stdout}{stderr}",
+        started.elapsed()
+    );
+    assert!(second.status.success(), "{stdout}{stderr}");
+    let refusal = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("refused: "))
+        .unwrap_or_else(|| panic!("the second process did not report a refusal: {stdout}{stderr}"));
+    assert!(
+        refusal.contains(&format!("process ID {}", std::process::id())),
+        "{refusal}"
+    );
+    assert!(refusal.contains("data folder"), "{refusal}");
+
+    // The first host did not notice: the workspace still runs the same boot, the API answers,
+    // and the sandbox is the one it created.
+    let after = guest(&runtime, &sandbox, probe).await;
+    let (boot_before, up_before) = before.split_once('\n').expect("boot id and uptime");
+    let (boot_after, up_after) = after.split_once('\n').expect("boot id and uptime");
+    assert_eq!(boot_before, boot_after, "the guest rebooted");
+    let (up_before, up_after): (f64, f64) = (
+        up_before.trim().parse().expect("uptime"),
+        up_after.trim().parse().expect("uptime"),
+    );
+    assert!(up_after > up_before, "{up_before} then {up_after}");
+    let workspace = api.get(&format!("/api/workspaces/{name}")).await.json();
+    assert_eq!(workspace["status"], "running", "{workspace}");
+    let running = runtime
+        .list()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|s| !s.status.is_down())
+        .count();
+    assert_eq!(running, 1);
+
+    // It still stops cleanly, and once it is gone the folder is free for the next process.
+    let stop = api.post(&format!("/api/workspaces/{name}/stop"), "").await;
+    assert_eq!(stop.status, 202, "{}", stop.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(120))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let down = host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+    drop(host);
+    let agent = std::path::PathBuf::from(std::env::var_os("PUDDLE_AGENT_BIN").expect("agent"));
+    let pair = RuntimePair::find_in(&settings.runtime_dir).expect("msb runtime pair");
+    drop(
+        prepare(
+            harness_config(&settings, &pair, &root, agent),
+            &HarnessPlatform,
+        )
+        .unwrap(),
+    );
 }

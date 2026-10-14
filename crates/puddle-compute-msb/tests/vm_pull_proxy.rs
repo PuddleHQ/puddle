@@ -65,7 +65,9 @@ fn vm_image_pulls_through_the_pull_proxy_from_docker_hub_and_mcr() {
     rt.block_on(async {
         let route = proxy.serve().unwrap();
         let pair = settings.prepare().expect("msb runtime pair");
-        let home = settings.scratch_home("pp");
+        let home = settings
+            .claim_scratch_home("pp", &puddle_vm_tests::test_owner())
+            .expect("one scratch home tag per test");
         let _ = std::fs::remove_dir_all(&home);
         let msb = MsbRuntime::open(
             MsbConfig::new(&home, pair.msb, pair.libkrunfw, home.join("guest-share"))

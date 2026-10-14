@@ -61,6 +61,19 @@ pub enum HarnessError {
         /// `std::env::consts::OS`.
         os: &'static str,
     },
+    /// Two tests asked for the same scratch home tag. They would share one store, so what one
+    /// creates (an identity, a rule, a workspace) would show up in the other.
+    #[error(
+        "scratch home tag {tag:?} is already used by test {first:?}; {second:?} must take its own tag"
+    )]
+    ScratchTagTaken {
+        /// The tag both asked for.
+        tag: String,
+        /// The test that claimed it first.
+        first: String,
+        /// The test that asked second.
+        second: String,
+    },
     /// A filesystem step failed.
     #[error("{action} {path}: {source}")]
     Io {

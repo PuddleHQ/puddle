@@ -365,7 +365,8 @@ before pushing a change that touches the UI's behaviour, routes or accessibility
 | `vm-windows.yml` | every PR to `develop` (a newer push to the PR cancels the run in flight), manual on any branch, nightly 03:15 UTC on `develop` (skipped if it already has a green run on that commit) | `windows-2025` (WHP) | VM tests, tier W: built once and run in 5 hash partitions on 5 runners; `vm-windows (WHP, msb microVMs)` is the one result. No WHP ⇒ warning, infrastructure skip |
 | `msb-cache.yml` | every push to `develop`, manual | `ubuntu-24.04` | looks up the `msb-linux-<hash>` cache (no download); on a miss builds msb from source and saves it under `develop`, where every pull request restores it. Seconds on a hit, about 11 minutes once per change to `ci/msb-runtime.sha256`, `ci/fetch-msb.sh` or `rust-toolchain.toml` |
 | `cache-gc.yml` | nightly 03:45 UTC, manual | `ubuntu-24.04` | deletes superseded rust-cache entries and stale branch caches (`ci/cache-gc.sh`) |
-| Dependabot | weekly, grouped | — | opens PRs to `develop` |
+| `perf.yml` | nightly 03:30 UTC, manual | `ubuntu-24.04` | the six `#[ignore]`d `terminate_perf` tests in a release build (`--run-ignored only`): each prints its measurement and asserts a ceiling well above a workstation's number. Not a PR check, and nothing is cached |
+| Dependabot | weekly, grouped | — | opens PRs to `develop`; its `/ci/login-tools` entry bumps the Claude Code and Copilot CLI versions the login tests run against (`ci/login-tools/package.json` and lockfile), and the bump PR's `linux` job runs those tests against the new release |
 
 The repo is public, so standard hosted runners are free with no minute quota. They are still
 shared (20 concurrent jobs), and the Actions cache is capped at 10 GB for the whole repo: only

@@ -735,12 +735,11 @@ async fn deleting_an_identity_removes_its_pasted_token_unless_another_identity_r
     );
     assert_eq!(api.credentials.tokens(), std::slice::from_ref(&shared));
     // The other identity still reads the shared one.
-    assert_eq!(
-        api.send("DELETE", &format!("/api/identities/{}", ids[1]), None)
-            .await
-            .status,
-        200
-    );
+    let second = api
+        .send("DELETE", &format!("/api/identities/{}", ids[1]), None)
+        .await;
+    assert_eq!(second.status, 200);
+    assert_eq!(second.json()["tokens_left"], json!([]));
     assert_eq!(api.credentials.tokens(), std::slice::from_ref(&shared));
     assert_eq!(
         api.send("DELETE", &format!("/api/identities/{}", ids[2]), None)
@@ -779,6 +778,12 @@ async fn an_identity_is_deleted_even_when_the_credential_store_will_not_give_up_
         .send("DELETE", &format!("/api/identities/{id}"), None)
         .await;
     assert_eq!(gone.status, 200, "{}", gone.body);
+    // The answer says which token stayed, by the id and what it is for, never its value.
+    assert_eq!(
+        gone.json()["tokens_left"],
+        json!([{"id": token, "host": "github.com", "org": null}])
+    );
+    assert!(!gone.body.contains("CANARY"));
     assert_eq!(api.get(&format!("/api/identities/{id}")).await.status, 404);
     vault.heal();
     // The token is still there: nothing but the sweep at the next start will find it.
@@ -790,4 +795,140 @@ async fn an_identity_is_deleted_even_when_the_credential_store_will_not_give_up_
         .await;
     assert_eq!(forget.status, 204);
     assert_eq!(vault.ids().len(), 0);
+}
+
+/// The body of a `PUT` that keeps `old`'s label and gives it a `gh` credential instead.
+fn without_token(label: &str, owners: &[&str]) -> Value {
+    body(label, owners, false)
+}
+
+#[tokio::test]
+async fn changing_an_identity_removes_a_pasted_token_it_stops_reading_unless_another_reads_it() {
+    let api = start().await;
+    let (alone, shared, kept) = (paste(&api).await, paste(&api).await, paste(&api).await);
+    let one = api
+        .send(
+            "POST",
+            "/api/identities",
+            Some(&pasted("One", &alone, &["a"], false)),
+        )
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+    let two = api
+        .send(
+            "POST",
+            "/api/identities",
+            Some(&pasted("Two", &shared, &["b"], false)),
+        )
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+    let three = api
+        .send(
+            "POST",
+            "/api/identities",
+            Some(&pasted("Three", &shared, &["c"], false)),
+        )
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+    let four = api
+        .send(
+            "POST",
+            "/api/identities",
+            Some(&pasted("Four", &kept, &["d"], false)),
+        )
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(api.credentials.tokens().len(), 3);
+
+    // Renaming an identity that keeps its token removes nothing.
+    let renamed = api
+        .send(
+            "PUT",
+            &format!("/api/identities/{four}"),
+            Some(&pasted("Fourth", &kept, &["d"], false)),
+        )
+        .await;
+    assert_eq!(renamed.status, 200, "{}", renamed.body);
+    assert_eq!(api.credentials.tokens().len(), 3);
+
+    // A change the store refuses (a label that is taken) removes nothing either.
+    let refused = api
+        .send(
+            "PUT",
+            &format!("/api/identities/{one}"),
+            Some(&without_token("Two", &["a"])),
+        )
+        .await;
+    assert_eq!(refused.status, 409, "{}", refused.body);
+    assert_eq!(api.credentials.tokens().len(), 3);
+
+    // Dropping the token that only this identity read removes it, in the same call.
+    let dropped = api
+        .send(
+            "PUT",
+            &format!("/api/identities/{one}"),
+            Some(&without_token("One", &["a"])),
+        )
+        .await;
+    assert_eq!(dropped.status, 200, "{}", dropped.body);
+    let mut left = api.credentials.tokens();
+    left.sort();
+    let mut want = vec![shared.clone(), kept.clone()];
+    want.sort();
+    assert_eq!(left, want);
+
+    // A token another identity still reads stays; the last reader's change removes it.
+    for (id, label, owner) in [(two, "Two", "b"), (three, "Three", "c")] {
+        let reply = api
+            .send(
+                "PUT",
+                &format!("/api/identities/{id}"),
+                Some(&without_token(label, &[owner])),
+            )
+            .await;
+        assert_eq!(reply.status, 200, "{}", reply.body);
+        let expected = if id == two { 2 } else { 1 };
+        assert_eq!(api.credentials.tokens().len(), expected);
+    }
+    assert_eq!(api.credentials.tokens(), std::slice::from_ref(&kept));
+}
+
+#[tokio::test]
+async fn changing_an_identity_succeeds_when_the_credential_store_will_not_give_up_the_token() {
+    let vault = std::sync::Arc::new(puddle_secrets::MemoryStore::new());
+    let real =
+        puddle_api::HostCredentials::new(puddle_secrets::ToolPaths::new(None, None), vault.clone());
+    let api = crate::common::start_with_credentials(std::sync::Arc::new(real)).await;
+    let token = paste(&api).await;
+    let id = api
+        .send(
+            "POST",
+            "/api/identities",
+            Some(&pasted("One", &token, &["a"], false)),
+        )
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+
+    vault.break_it();
+    let changed = api
+        .send(
+            "PUT",
+            &format!("/api/identities/{id}"),
+            Some(&without_token("One", &["a"])),
+        )
+        .await;
+    vault.heal();
+    assert_eq!(changed.status, 200, "{}", changed.body);
+    // The row changed; the token waits for the sweep at the next start.
+    assert_eq!(vault.ids(), std::slice::from_ref(&token));
 }

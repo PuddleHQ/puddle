@@ -7,8 +7,8 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use puddle_secrets::StoredId;
-use puddle_store::{IdentityId, Store};
+use puddle_secrets::{SourceSpec, StoredId, TokenScope};
+use puddle_store::{CredentialBinding, IdentityId, Store};
 use puddle_types::{WorkspaceId, WorkspaceName};
 
 use crate::ApiErrorBody;
@@ -18,7 +18,7 @@ use crate::routes::AppState;
 use crate::wire::{
     AttachIdentityRequest, GitDefaultsView, GitRepoRequest, GitRepoToggles, GitRepoView,
     GitSwitchesRequest, IdentityDeleted, IdentityList, IdentityOrderRequest, IdentityRequest,
-    IdentityView, WorkspaceGitView, WorkspaceIdentitiesRequest,
+    IdentityView, TokenLeft, WorkspaceGitView, WorkspaceIdentitiesRequest,
 };
 
 fn view(store: &Store, identity: puddle_store::Identity) -> Result<IdentityView, ApiError> {
@@ -49,6 +49,47 @@ pub(super) async fn workspace(state: &AppState, raw: &str) -> Result<WorkspaceNa
     let id =
         WorkspaceId::new(raw).map_err(|_| ApiError::not_found(format!("no workspace {raw:?}")))?;
     Ok(state.workspaces.get(&id).await?.name)
+}
+
+/// Removes the pasted tokens in `before` that no identity and no environment secret reads now, and
+/// returns the ones the credential store would not give up. They stay for the sweep at the next
+/// start, so a failure here never fails the request that caused it. Call it after the row has
+/// changed: what the rows name then is what must stay.
+async fn forget_unclaimed_tokens(state: &AppState, before: &[CredentialBinding]) -> Vec<TokenLeft> {
+    let mut pasted: Vec<(StoredId, TokenScope)> = Vec::new();
+    for binding in before {
+        if let SourceSpec::Stored { id, scope } = &binding.source
+            && !pasted.iter().any(|(seen, _)| seen == id)
+        {
+            pasted.push((id.clone(), scope.clone()));
+        }
+    }
+    if pasted.is_empty() {
+        return Vec::new();
+    }
+    let store = Arc::clone(&state.store);
+    // `None`: the rows could not be read, so nothing may be removed and every token is left.
+    let in_use = blocking(move || {
+        Ok(store
+            .secret_ids_in_use()
+            .inspect_err(|err| tracing::warn!(%err, "the pasted tokens in use could not be listed"))
+            .ok())
+    })
+    .await
+    .unwrap_or(None);
+    let mut left = Vec::new();
+    for (id, scope) in pasted {
+        let kept = match &in_use {
+            Some(in_use) if in_use.contains(&id) => continue,
+            Some(_) => state.credentials.forget_token(id.clone()).await.is_err(),
+            None => true,
+        };
+        if kept {
+            tracing::warn!("a pasted token could not be removed from the credential store");
+            left.push(TokenLeft::new(&id, &scope));
+        }
+    }
+    left
 }
 
 /// Every identity, in your order.
@@ -122,8 +163,10 @@ pub(crate) async fn get_identity(
     Ok(Json(found))
 }
 
-/// Replaces an identity's label, author and credentials. Refused with 409
-/// `identity_collision` when the new coverage meets another identity on a workspace that has both.
+/// Replaces an identity's label, author and credentials. A pasted token it read before and no
+/// longer does leaves the credential store too, unless another identity or an environment secret
+/// still reads it. Refused with 409 `identity_collision` when the new coverage meets another
+/// identity on a workspace that has both.
 #[utoipa::path(
     put,
     path = "/api/identities/{id}",
@@ -143,11 +186,16 @@ pub(crate) async fn update_identity(
     crate::extract::Json(body): crate::extract::Json<IdentityRequest>,
 ) -> Result<Json<IdentityView>, ApiError> {
     let draft = body.into_draft()?;
-    let updated = blocking(move || {
-        let identity = state.store.update_identity(IdentityId(id), draft)?;
-        view(&state.store, identity)
+    let store = Arc::clone(&state.store);
+    let (updated, before) = blocking(move || {
+        let before = store.identity(IdentityId(id))?.credentials;
+        let identity = store.update_identity(IdentityId(id), draft)?;
+        Ok((view(&store, identity)?, before))
     })
     .await?;
+    // A token the identity read before and no longer does goes now, not at the next start. A
+    // token that stays is still there for the sweep.
+    forget_unclaimed_tokens(&state, &before).await;
     Ok(Json(updated))
 }
 
@@ -155,7 +203,7 @@ pub(crate) async fn update_identity(
 ///
 /// A pasted token the identity read, and no other identity reads, leaves the credential store
 /// too. One that could not be removed (the store is locked) is left for the sweep at the next
-/// start.
+/// start, and the answer lists it in `tokens_left`.
 #[utoipa::path(
     delete,
     path = "/api/identities/{id}",
@@ -171,34 +219,16 @@ pub(crate) async fn delete_identity(
     Path(id): Path<i64>,
 ) -> Result<Json<IdentityDeleted>, ApiError> {
     let store = Arc::clone(&state.store);
-    let (detached_from, tokens) = blocking(move || {
+    let (detached_from, before) = blocking(move || {
         let gone = store.identity(IdentityId(id))?;
-        let detached = store.delete_identity(IdentityId(id))?;
-        // The row is gone, so a failed read here only leaves tokens for the sweep.
-        let tokens: Vec<StoredId> = match store.secret_ids_in_use() {
-            Ok(in_use) => gone
-                .credentials
-                .iter()
-                .filter_map(|binding| binding.stored_id())
-                .filter(|token| !in_use.contains(*token))
-                .cloned()
-                .collect(),
-            Err(err) => {
-                tracing::warn!(%err, "a deleted identity's pasted tokens are left for the sweep at the next start");
-                Vec::new()
-            }
-        };
-        Ok((detached, tokens))
+        Ok((store.delete_identity(IdentityId(id))?, gone.credentials))
     })
     .await?;
-    for token in tokens {
-        if state.credentials.forget_token(token).await.is_err() {
-            tracing::warn!(
-                "a deleted identity's pasted token could not be removed from the credential store"
-            );
-        }
-    }
-    Ok(Json(IdentityDeleted { detached_from }))
+    let tokens_left = forget_unclaimed_tokens(&state, &before).await;
+    Ok(Json(IdentityDeleted {
+        detached_from,
+        tokens_left,
+    }))
 }
 
 /// Makes an identity the default.

@@ -366,7 +366,7 @@ export class FakeIdentities {
           .map(([name]) => name);
         for (const g of Object.values(this.git))
           g.ids = g.ids.filter((i) => i !== id);
-        return this.reply(200, { detached_from: detached });
+        return this.reply(200, { detached_from: detached, tokens_left: [] });
       }
       case "/api/credentials/stored/{id}": {
         this.tokens = this.tokens.filter((t) => t !== init.params?.path["id"]);

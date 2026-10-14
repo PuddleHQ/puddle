@@ -289,6 +289,32 @@ pub struct IdentityOrderRequest {
 pub struct IdentityDeleted {
     /// The workspaces it was taken off.
     pub detached_from: Vec<WorkspaceName>,
+    /// The pasted tokens it read that no other identity reads and that the credential store would
+    /// not give up (it is locked or unreachable). They stay there until the sweep at the next
+    /// start; empty when every token went.
+    pub tokens_left: Vec<TokenLeft>,
+}
+
+/// A pasted token that is still in the credential store.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct TokenLeft {
+    /// The entry's id.
+    pub id: String,
+    /// The host the token is for.
+    pub host: String,
+    /// The organisation, for tokens that belong to one (Azure DevOps).
+    #[schema(required = true)]
+    pub org: Option<String>,
+}
+
+impl TokenLeft {
+    pub(crate) fn new(id: &StoredId, scope: &TokenScope) -> Self {
+        Self {
+            id: id.to_string(),
+            host: scope.host.to_string(),
+            org: scope.org.as_ref().map(ToString::to_string),
+        }
+    }
 }
 
 /// One row of a workspace's repository table.

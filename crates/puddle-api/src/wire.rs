@@ -47,7 +47,7 @@ pub use identities::{
     AttachIdentityRequest, CredentialCoverage, CredentialSource, GitDefaultsView, GitRepoRequest,
     GitRepoToggles, GitRepoView, GitSwitchesRequest, IdentityAuthor, IdentityCredential,
     IdentityDeleted, IdentityList, IdentityOrderRequest, IdentityRequest, IdentitySigning,
-    IdentityView, NewWorkspaceIdentity, NewWorkspaceIdentityBasis, WorkspaceGitView,
+    IdentityView, NewWorkspaceIdentity, NewWorkspaceIdentityBasis, TokenLeft, WorkspaceGitView,
     WorkspaceIdentitiesRequest,
 };
 pub use network_health::{

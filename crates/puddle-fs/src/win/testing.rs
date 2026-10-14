@@ -324,7 +324,10 @@ impl LocalUser {
         });
         let user = Self {
             name: format!("pdl{tag}"),
-            password: format!("Pd!{tag}aZ9"),
+            // At most 14 characters: `net user` asks a yes/no question about older Windows for a
+            // longer one, and without a console that fails the command. Upper, lower, digit and
+            // symbol keep it inside the usual complexity rule.
+            password: format!("Pd!{}aZ9", &tag[..8]),
         };
         let made = Command::new("net")
             .args(["user", &user.name, &user.password, "/add"])

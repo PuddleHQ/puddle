@@ -199,6 +199,11 @@ russh = { git = "https://github.com/TijsVK/russh", rev = "b7e6012432378bf7662167
 # host journal for the image mtime).
 msb-imago = { git = "https://github.com/TijsVK/imago", rev = "e528d65caf49ed0e117eb29ffae1d9e6efc95d25" }
 
+# tokio-yamux 0.3.20 with one fix (vendor/tokio-yamux): a stream whose peer has closed its sending
+# half still receives the peer's window updates, so a half-closed connection can move more than one
+# window of data the other way.
+tokio-yamux = { path = "vendor/tokio-yamux" }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

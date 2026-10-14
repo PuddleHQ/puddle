@@ -236,7 +236,9 @@ async fn session<T: SshTarget>(target: Arc<T>, mut conn: Connection, id: u64) {
         Ok(()) => info!(sandbox = %label, session = id, "ssh session ended"),
         Err(e) => {
             warn!(sandbox = %label, session = id, error = %e, "ssh session ended with an error");
-            target.failed(&format!("an SSH session ended with an error: {e}"));
+            target.failed(&format!(
+                "an SSH session ended with an error: {e}; connect again, and restart the workspace if it keeps happening"
+            ));
         }
     }
 }

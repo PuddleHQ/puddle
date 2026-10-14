@@ -2,9 +2,11 @@
 # Native Windows MSVC build and tests. It runs on every pull request to develop and main (a
 # required check on develop), nightly (skipped when this workflow already has a green run on
 # develop's head), and by hand. Linux CI already cross-checks clippy for the msvc target.
-# Four jobs run side by side (clippy, tests, UI, release build), so the run takes as long as the
-# slowest one instead of the sum. Two cache entries (debug builds, release build); only develop saves
-# them. Clippy has none: its check builds were no faster with one.
+# Clippy, tests and UI run on every trigger; the release build runs only on the nightly, on pull
+# requests to main and on manual runs from develop, so a pull request to develop skips it. The jobs
+# run side by side, so the run takes as long as the slowest one instead of the sum. Two cache entries
+# (debug builds, release build); only runs on develop save them. Clippy has none: its check builds
+# were no faster with one.
 # The nightly also reruns each failed test once and lists the ones that pass only on retry
 # (ci/flaky-report.py); it never turns the run red.
 name: windows
@@ -189,11 +191,15 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
-  # Nightly, PRs to main and develop dispatches only (it compiles everything a second time, and
-  # a develop cache save should hold it so the nightly isn't cold).
+  # Nightly, pull requests to main and manual runs from develop only: it compiles everything a
+  # second time, which a pull request to develop does not need. Only the nightly and a manual run
+  # from develop save its cache (`save-if` below), so the nightly starts warm.
   release:
     name: windows release build
-    if: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/develop' }}
+    if: >-
+      ${{ github.event_name == 'schedule'
+      || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main')
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/develop') }}
     runs-on: windows-2025
     timeout-minutes: 45
     # `actions: read` for ci/should-run.sh (a separate gate job would be billed a full minute).
@@ -234,9 +240,10 @@ jobs:
         shell: bash
         run: cargo build --workspace --release --locked
 
-  # One stable result for the four jobs above; the release build is skipped
-  # on a dispatch from a task branch. The develop ruleset requires it by this name: a rename changes the
-  # ruleset in the same change.
+  # One stable result for the four jobs above. The release build is skipped on a pull request to
+  # develop and on a manual run from a task branch; a skipped job counts as passed below, and
+  # `always()` makes this job report even then. The develop ruleset requires it by this name: a
+  # rename changes the ruleset in the same change.
   windows:
     name: windows-msvc (build, clippy, tests)
     needs: [clippy, tests, ui, release]

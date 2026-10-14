@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use http_body_util::BodyExt as _;
 use puddle_proxy::ProxyConfig;
+use puddle_types::{ConnectionDecision, ConnectionReason};
 use terminate_support::h2_rig::{H2Server, Script, full, reply};
 use terminate_support::{CANARY, FakeServer, Flaw, Pki, Reply, RigBuilder, TestInjector, refuse};
 
@@ -303,6 +304,39 @@ async fn a_request_that_is_not_for_the_connection_host_or_not_valid_h2_is_refuse
     assert_eq!(mixed.status, 421);
     assert!(server.recorded().is_empty());
     assert_eq!(client.get("bound.test", "/ok").await.status, 200);
+}
+
+#[tokio::test]
+async fn an_h2_request_puddle_refuses_on_its_own_is_recorded_blocked_with_a_reason() {
+    let pki = Pki::new();
+    let server = H2Server::recording(&pki, "bound.test", ok("fine")).await;
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .build();
+    let mut guest = rig.guest().await;
+    let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
+    let odd = client
+        .request(
+            "GET",
+            "bound.test",
+            "/",
+            &[("expect", "200-ok")],
+            full(bytes::Bytes::new()),
+        )
+        .await;
+    assert_eq!(odd.status, 417);
+    assert_eq!(
+        odd.header("x-puddle-blocked"),
+        Some("expectation_unsupported")
+    );
+    client.close().await;
+    let events = rig.events(1).await;
+    assert_eq!(events[0].decision, ConnectionDecision::Blocked);
+    assert_eq!(
+        events[0].reason,
+        ConnectionReason::Refused("expectation_unsupported")
+    );
+    assert!(server.recorded().is_empty());
 }
 
 #[tokio::test]

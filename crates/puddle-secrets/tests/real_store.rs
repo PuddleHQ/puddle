@@ -2,7 +2,9 @@
 //! The operating system's own credential store, where the computer has one that works (a Windows
 //! runner, a desktop): a value much longer than one entry holds round-trips through
 //! [`ChunkedStore`], and what it writes is gone after the delete. A computer with no usable store
-//! (a Linux runner without a Secret Service) skips, and says so.
+//! (a Linux runner without a Secret Service) skips and says so, unless
+//! `PUDDLE_REQUIRE_OS_CREDENTIAL_STORE` is set: the Windows job sets it, so a runner without a working
+//! store fails the test instead.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -36,6 +38,10 @@ fn fresh_id() -> StoredId {
 #[test]
 fn a_value_longer_than_one_entry_round_trips_through_the_real_credential_store() {
     if !keyring_available() {
+        assert!(
+            std::env::var_os("PUDDLE_REQUIRE_OS_CREDENTIAL_STORE").is_none(),
+            "PUDDLE_REQUIRE_OS_CREDENTIAL_STORE is set but this computer has no credential store that works"
+        );
         eprintln!("skipped: this computer has no credential store that works");
         return;
     }

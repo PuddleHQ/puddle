@@ -208,6 +208,12 @@ fn exclusive() -> std::fs::File {
 /// otherwise the exclusive lock, held until the test returns.
 fn registry_test() -> Option<std::fs::File> {
     if std::env::var_os("GITHUB_ACTIONS").is_none() {
+        // The tests rewrite the user's own Internet Settings, so they run only on a CI runner; the
+        // Windows job sets PUDDLE_REQUIRE_REGISTRY_TESTS to fail if it ever stops qualifying.
+        assert!(
+            std::env::var_os("PUDDLE_REQUIRE_REGISTRY_TESTS").is_none(),
+            "PUDDLE_REQUIRE_REGISTRY_TESTS is set but this is not a CI runner (GITHUB_ACTIONS)"
+        );
         eprintln!(
             "skipped: edits HKCU Internet Settings, only run on a CI runner (GITHUB_ACTIONS)"
         );

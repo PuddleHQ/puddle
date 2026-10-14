@@ -10,10 +10,16 @@
 //!
 //! It reports the ratio and asserts only that both finish and the bytes arrive intact. The goal
 //! (decrypting costs at most ten percent more than splicing) is for a quiet machine, not for a
-//! shared runner.
+//! shared runner. Wall times move a lot with other load on the machine, so every measured
+//! transfer also prints the CPU time the whole process used (user and system), which moves less.
+//!
+//! The rig captures every log line at TRACE level into memory; these tests turn that off first
+//! ([`silence_logs`]), because formatting each HTTP/2 and yamux frame event roughly doubled the
+//! CPU of an HTTP/2 transfer and added about 90 KiB per idle HTTP/2 connection.
 #![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
 mod terminate_support;
 
+use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -23,6 +29,47 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
 const MIB: usize = 1024 * 1024;
+
+/// Installs a global subscriber that drops every event, so the rig's own log capture, which
+/// would format each event, fails to install and costs nothing. Call it before the first rig.
+fn silence_logs() {
+    let _ = tracing::subscriber::set_global_default(tracing::subscriber::NoSubscriber::default());
+}
+
+/// The (user, system) CPU seconds this process has used so far, from `/proc` (so Linux only:
+/// elsewhere there is no CPU figure and the wall time stands alone). The clock tick is 100 Hz on
+/// every Linux the project runs on.
+fn cpu_seconds() -> Option<(f64, f64)> {
+    let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
+    // Fields 14 and 15 (utime, stime), counted after the parenthesised name.
+    let mut ticks = stat
+        .rsplit_once(')')?
+        .1
+        .split_whitespace()
+        .skip(11)
+        .map(|field| field.parse::<f64>().ok().map(|t| t / 100.0));
+    Some((ticks.next()??, ticks.next()??))
+}
+
+/// Runs a transfer and prints its wall time and, where the platform tells, the CPU it used.
+#[expect(
+    clippy::print_stderr,
+    reason = "a measurement for the person running it by hand"
+)]
+async fn measured(label: &str, transfer: impl Future<Output = Duration>) -> Duration {
+    let before = cpu_seconds();
+    let took = transfer.await;
+    let cpu = match (before, cpu_seconds()) {
+        (Some((user, system)), Some((user_after, system_after))) => format!(
+            "user {:.3} system {:.3}",
+            user_after - user,
+            system_after - system
+        ),
+        _ => "cpu unknown".to_owned(),
+    };
+    eprintln!("M {label} wall {:.3} {cpu}", took.as_secs_f64());
+    took
+}
 
 /// A server that drains `Content-Length` bytes of a POST and answers with that many bytes of
 /// `x`: the same work for both paths, with no per-request allocation of the body.
@@ -119,6 +166,7 @@ async fn transfer(client: &mut Client, host: &str, mib: usize) -> Duration {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "a 256 MiB transfer, meaningful only in a release build; run it by hand"]
 async fn terminating_costs_little_next_to_splicing() {
+    silence_logs();
     let pki = Pki::new();
     let bound = bulk_server(&pki, "bound.test").await;
     let spliced = bulk_server(&pki, "unbound.test").await;
@@ -144,8 +192,10 @@ async fn terminating_costs_little_next_to_splicing() {
     let mut best_terminated = Duration::MAX;
     let mut best_spliced = Duration::MAX;
     for _ in 0..2 {
-        best_spliced = best_spliced.min(transfer(&mut passed, "unbound.test", 256).await);
-        best_terminated = best_terminated.min(transfer(&mut decrypted, "bound.test", 256).await);
+        best_spliced =
+            best_spliced.min(measured("spliced", transfer(&mut passed, "unbound.test", 256)).await);
+        best_terminated = best_terminated
+            .min(measured("terminated", transfer(&mut decrypted, "bound.test", 256)).await);
     }
     let ratio = best_terminated.as_secs_f64() / best_spliced.as_secs_f64();
     eprintln!(
@@ -272,6 +322,7 @@ mod h2_perf {
 #[ignore = "a 256 MiB transfer, meaningful only in a release build; run it by hand"]
 async fn http2_costs_little_next_to_http11() {
     use h2_perf::{bulk_h2_server, transfer_h2};
+    silence_logs();
     let pki = Pki::new();
     let h1 = bulk_server(&pki, "bound.test").await;
     let h2 = bulk_h2_server(&pki, "bound.test").await;
@@ -315,10 +366,19 @@ async fn http2_costs_little_next_to_http11() {
     transfer_h2(&mut passed, "unbound.test", 16).await;
     let mut best = [Duration::MAX; 4];
     for _ in 0..3 {
-        best[0] = best[0].min(transfer(&mut http11, "bound.test", 256).await);
-        best[1] = best[1].min(transfer_h2(&mut http2, "bound.test", 256).await);
-        best[2] = best[2].min(transfer_h2(&mut translated, "bound.test", 256).await);
-        best[3] = best[3].min(transfer_h2(&mut passed, "unbound.test", 256).await);
+        best[0] =
+            best[0].min(measured("h1 terminated", transfer(&mut http11, "bound.test", 256)).await);
+        best[1] = best[1]
+            .min(measured("h2 terminated", transfer_h2(&mut http2, "bound.test", 256)).await);
+        best[2] = best[2].min(
+            measured(
+                "h2 translated",
+                transfer_h2(&mut translated, "bound.test", 256),
+            )
+            .await,
+        );
+        best[3] = best[3]
+            .min(measured("h2 spliced", transfer_h2(&mut passed, "unbound.test", 256)).await);
     }
     eprintln!(
         "256 MiB up and 256 MiB down: HTTP/1.1 terminated {:.2?}; HTTP/2 spliced {:.2?}, terminated {:.2?} (ratio {:.2}), terminated to an HTTP/1.1 server {:.2?}",
@@ -362,6 +422,7 @@ async fn spliced_h2(
 async fn idle_memory(kind: &str) {
     use h2_perf::{bulk_h2_server, rss_kib};
     const N: usize = 400;
+    silence_logs();
     let pki = Pki::new();
     let h1 = bulk_server(&pki, "bound.test").await;
     let spliced = bulk_server(&pki, "unbound.test").await;

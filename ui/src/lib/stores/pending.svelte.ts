@@ -93,6 +93,13 @@ export interface ShownGroup extends Group {
   total: number;
 }
 
+/**
+ * How many rows a long inbox draws first, and how many more a frame later. The numbers are a
+ * paint-speed choice; a unit test shrinks them so the slicing is checked on a handful of rows
+ * instead of the cost of drawing sixty.
+ */
+export const slices = { first: 60, next: 250 };
+
 /** The first `limit` rows of the groups, in order; groups with no row left are dropped. */
 export function limitGroups(
   groups: readonly Group[],

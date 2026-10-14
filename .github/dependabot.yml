@@ -47,3 +47,12 @@ updates:
     groups:
       openapi-codegen:
         patterns: ["*"]
+  - package-ecosystem: npm
+    directory: /ci/login-tools
+    target-branch: develop
+    labels: ["dependencies", "javascript"]
+    schedule:
+      interval: weekly
+    groups:
+      login-tools:
+        patterns: ["*"]

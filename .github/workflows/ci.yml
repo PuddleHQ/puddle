@@ -106,17 +106,22 @@ jobs:
           sudo systemctl stop squid || true
           test -x /usr/sbin/squid
       # The login tests run the real Claude Code, `gh` (on the runner image) and Copilot CLI against fake
-      # servers. The two npm packages are pinned to exact versions; bump them by hand. Scripts stay on:
+      # servers. The two npm packages are pinned in ci/login-tools/package.json and its lockfile, which
+      # Dependabot bumps weekly (the npm entry for /ci/login-tools in .github/dependabot.yml): a bump PR
+      # runs these tests against the new release, so a changed login flow fails there. Scripts stay on:
       # Claude Code's postinstall fetches its native binary, and without it `claude` does not start.
       - name: Real login tools (Claude Code and Copilot CLI) for the login tests
         run: |
-          npm install --global --no-audit --no-fund @anthropic-ai/claude-code@2.1.299 @github/copilot@1.0.97
+          npm ci --prefix ci/login-tools --no-audit --no-fund
+          tools="$GITHUB_WORKSPACE/ci/login-tools/node_modules/.bin"
+          export PATH="$tools:$PATH"
           claude --version
           copilot --version
           gh --version
           # The install step is what provides the tools, so it also turns "tool missing" into a failure.
+          echo "$tools" >> "$GITHUB_PATH"
           {
-            echo "PUDDLE_COPILOT_BIN=$(command -v copilot)"
+            echo "PUDDLE_COPILOT_BIN=$tools/copilot"
             echo "PUDDLE_REQUIRE_LOGIN_TOOLS=1"
           } >> "$GITHUB_ENV"
       - name: llvm-rc for the msvc cross-check (tauri-winres compiles the shell's Windows resources)

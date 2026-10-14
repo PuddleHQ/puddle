@@ -47,8 +47,8 @@ export const TYPES: readonly { value: AuditType; label: string }[] = [
   { value: "connection", label: "Connection" },
   { value: "pending_created", label: "Request opened" },
   { value: "pending_decided", label: "Request decided" },
-  { value: "pending_expired", label: "Request expired" },
-  { value: "pending_suppressed", label: "Requests held back" },
+  { value: "pending_expired", label: "Request closed" },
+  { value: "pending_suppressed", label: "Requests refused for volume" },
   { value: "rule_created", label: "Rule added" },
   { value: "rule_updated", label: "Rule changed" },
   { value: "rule_deleted", label: "Rule deleted" },
@@ -67,7 +67,7 @@ export const OUTCOMES: readonly { value: AuditOutcome; label: string }[] = [
   { value: "deny", label: "Denied" },
   { value: "pending", label: "Waiting" },
   { value: "blocked", label: "Blocked" },
-  { value: "expired", label: "Expired" },
+  { value: "expired", label: "Closed" },
 ];
 
 const typeLabels = new Map(TYPES.map((t) => [t.value, t.label]));
@@ -265,10 +265,20 @@ function switchLabel(enabled: boolean | null): string {
   return enabled ? "on" : "off";
 }
 
+/** Why a request was closed without an answer. Puddle closes one only with its workspace; the
+ * seven-day reason is in records an earlier version wrote. */
+function closedDetail(reason: string): string {
+  if (reason === "workspace_deleted")
+    return "closed: its workspace was deleted";
+  if (reason === "stale")
+    return "closed: not repeated for 7 days (puddle no longer does this)";
+  return `closed: ${reason}`;
+}
+
 function pendingOutcome(state: string): RowView["outcome"] {
   if (state === "allowed") return decisionOutcome("allow");
   if (state === "denied") return decisionOutcome("deny");
-  if (state === "expired") return { label: "Expired", tone: "neutral" };
+  if (state === "expired") return { label: "Closed", tone: "neutral" };
   if (state === "requested" || state === "pending") {
     return decisionOutcome("pending");
   }
@@ -337,7 +347,7 @@ export function describe(record: AuditRecord): RowView {
       const p = record.pending;
       const detail =
         record.type === "pending_expired"
-          ? `expired: ${record.reason}`
+          ? closedDetail(record.reason)
           : record.type === "pending_decided"
             ? `by ${p.decided_by ?? "unknown"}${p.rule_id === null ? "" : `, rule ${p.rule_id}`}${setLabel(p.rule_set) === null ? "" : `, ${setLabel(p.rule_set)}`}`
             : p.attempts > 1
@@ -364,7 +374,7 @@ export function describe(record: AuditRecord): RowView {
         type,
         destination: null,
         outcome: null,
-        detail: `${record.count} requests held back`,
+        detail: `${record.count} ${record.count === 1 ? "request" : "requests"} refused for volume (puddle no longer does this)`,
       };
     case "rule_created":
     case "rule_expired":

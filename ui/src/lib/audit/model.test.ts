@@ -321,9 +321,22 @@ describe("a record as a row", () => {
       reason: "timeout",
     } as unknown as AuditRecord);
     expect(expired).toMatchObject({
-      outcome: { label: "Expired", tone: "neutral" },
-      detail: "expired: timeout",
+      outcome: { label: "Closed", tone: "neutral" },
+      detail: "closed: timeout",
     });
+    for (const [reason, detail] of [
+      ["workspace_deleted", "closed: its workspace was deleted"],
+      ["stale", "closed: not repeated for 7 days (puddle no longer does this)"],
+    ] as const) {
+      expect(
+        row({
+          type: "pending_expired",
+          ts: 1,
+          pending,
+          reason,
+        } as unknown as AuditRecord),
+      ).toMatchObject({ detail });
+    }
   });
   it("shows rule changes by pattern and scope, with no outcome", () => {
     const base = { ts: 1, rule };
@@ -374,8 +387,16 @@ describe("a record as a row", () => {
     ).toMatchObject({
       workspace: "shop",
       destination: null,
-      detail: "40 requests held back",
+      detail: "40 requests refused for volume (puddle no longer does this)",
     });
+    expect(
+      row({
+        type: "pending_suppressed",
+        ts: 1,
+        workspace_id: "shop",
+        count: 1,
+      } as AuditRecord).detail,
+    ).toBe("1 request refused for volume (puddle no longer does this)");
     expect(
       row({
         type: "audit_trimmed",

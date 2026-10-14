@@ -279,10 +279,15 @@ fn a_file_without_the_execute_bit_is_not_a_tool() {
 }
 
 /// The real OS store, through a target no real credential uses. It runs where a store exists (the
-/// Windows job, a desktop session) and says so where it does not.
+/// Windows job, a desktop session) and says so where it does not, unless
+/// `PUDDLE_REQUIRE_OS_CREDENTIAL_STORE` is set (the Windows job sets it): then a missing store fails.
 #[test]
 fn the_os_store_round_trips_a_test_owned_entry() {
     if !puddle_secrets::keyring_available() {
+        assert!(
+            std::env::var_os("PUDDLE_REQUIRE_OS_CREDENTIAL_STORE").is_none(),
+            "PUDDLE_REQUIRE_OS_CREDENTIAL_STORE is set but this computer has no credential store that works"
+        );
         eprintln!("no OS credential store here; skipped");
         return;
     }

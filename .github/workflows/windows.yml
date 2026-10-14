@@ -104,6 +104,13 @@ jobs:
           # The hostile-guest second-user tests make a local account; if the hosted runner stops
           # allowing that, they fail here instead of skipping without a trace.
           PUDDLE_REQUIRE_SECOND_USER: "1"
+          # A test whose prerequisite is missing fails here instead of skipping (scripts/check-silent-skips.sh).
+          # Each flag names what this runner provides: the Windows credential store, python3, and the
+          # machine-editing tests' own opt-in (CI is set, GITHUB_ACTIONS is set).
+          PUDDLE_REQUIRE_OS_CREDENTIAL_STORE: "1"
+          PUDDLE_REQUIRE_TOOLS: "1"
+          PUDDLE_REQUIRE_STORE_TESTS: "1"
+          PUDDLE_REQUIRE_REGISTRY_TESTS: "1"
         run: cargo nextest run --workspace --all-features --locked --profile ci --retries "$RETRIES"
       - name: flaky tests (nightly report)
         if: ${{ github.event_name == 'schedule' && steps.changed.outputs.run == 'true' && !cancelled() }}

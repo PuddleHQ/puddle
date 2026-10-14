@@ -40,6 +40,13 @@ const POWERSHELL_LIMIT: Duration = Duration::from_secs(90);
 fn enabled() -> bool {
     let on = std::env::var_os("CI").is_some() || std::env::var_os("PUDDLE_STORE_TESTS").is_some();
     if !on {
+        // The tests edit the machine's certificate stores, so they run where CI is set or where the
+        // person asked with PUDDLE_STORE_TESTS=1; the Windows job sets PUDDLE_REQUIRE_STORE_TESTS to
+        // fail if it ever stops qualifying.
+        assert!(
+            std::env::var_os("PUDDLE_REQUIRE_STORE_TESTS").is_none(),
+            "PUDDLE_REQUIRE_STORE_TESTS is set but the store tests are not enabled (set CI or PUDDLE_STORE_TESTS)"
+        );
         eprintln!("skipped: changes the certificate stores; set PUDDLE_STORE_TESTS=1 to run");
     }
     on
@@ -201,23 +208,19 @@ const LM_GP_ROOT_KEY: &str = "HKLM:\\SOFTWARE\\Policies\\Microsoft\\SystemCertif
 
 /// `CurrentUser\\Root` needs the user to confirm each added root in a dialog; a non-interactive
 /// session (the hosted runner) gets "UI is not allowed in this operation", and a root written to
-/// the store's registry key directly is not enumerated. So the
-/// export half runs where the import succeeds (an interactive session, e.g. a workstation, where
-/// someone clicks Yes) and is reported as skipped otherwise.
+/// the store's registry key directly is not enumerated. So this test cannot run on a runner: it is
+/// ignored, and a person on a workstation runs it by hand (someone clicks Yes), where a refused
+/// import fails it.
 #[test]
+#[ignore = "adding a root to CurrentUser\\Root asks for confirmation in a dialog, which a hosted runner refuses; run it by hand on a workstation with --run-ignored"]
 fn a_current_user_root_is_exported_when_one_can_be_added() {
     if !enabled() {
         return;
     }
     let trusted = test_root("user");
     let _cleanup = Cleanup(vec![(&trusted, vec!["Cert:\\CurrentUser\\Root"], vec![])]);
-    if let Err(e) = try_add(&trusted, "Cert:\\CurrentUser\\Root") {
-        eprintln!(
-            "skipped: CurrentUser\\Root refused the import here: {}",
-            e.trim()
-        );
-        return;
-    }
+    try_add(&trusted, "Cert:\\CurrentUser\\Root")
+        .unwrap_or_else(|e| panic!("CurrentUser\\Root refused the import: {}", e.trim()));
     assert_eq!(
         synced_sources(&select(), &trusted.der),
         Some(vec![CU_ROOT]),
@@ -260,7 +263,7 @@ fn a_root_in_current_user_disallowed_is_not_exported() {
         .expect("the Disallowed root is listed as skipped");
     assert_eq!(skipped.reason, SkipReason::Disallowed);
     eprintln!(
-        "{} certificates synced, {} skipped",
+        "{} certificates synced, {} left out",
         roots.certificates().len(),
         roots.skipped().len()
     );

@@ -14,8 +14,12 @@
 #   Playwright browsers                          a push (ci)                        0.39
 #   cargo-xwin CRT and SDK (never deleted here)  a push (ci)                        0.14
 #   npm caches, Linux and Windows                a push; pull refs 2-day cleanup    0.09
-#   msb runtime binary                           nightly (vm-linux)                 0.02
+#   msb runtime binary                           a develop push (msb-cache)         0.02
 #   total wanted                                                                    11.1
+#
+# The msb entry is 19 MB. Each pull request that misses it saves another copy under its own ref (15 of
+# them on 2026-10-14, 0.29 GB until the two-day cleanup); msb-cache.yml saves it under develop so they
+# restore it instead.
 #
 # The wanted set is over the cap by about 1.1 GB before any entry is replaced, and a replacement
 # briefly holds the old and the new entry together (the `linux` one alone is 4.4 GB). GitHub then

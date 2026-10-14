@@ -5,6 +5,7 @@ import {
   bodyFrom,
   CODE_SERVER_NOTE,
   MICROSOFT_NOTE,
+  microsoftChosenToast,
   MS_POPUP,
   MS_TERMS_URL,
   MS_TERMS_VERSION,
@@ -56,6 +57,20 @@ describe("the consent wording", () => {
     expect(serverNote("code_server")).toBe(CODE_SERVER_NOTE);
     expect(CODE_SERVER_NOTE).toMatch(/Open VSX/);
     expect(serverNote("microsoft")).toBe(MICROSOFT_NOTE);
+  });
+});
+
+describe("the toast after accepting Microsoft's server", () => {
+  it("says what was chosen, the telemetry answer, when the download happens and how to go back", () => {
+    for (const on of [true, false]) {
+      const text = microsoftChosenToast(on);
+      expect(text).toContain("Microsoft's VS Code server is on");
+      expect(text).toContain(`telemetry is ${on ? "on" : "off"}`);
+      expect(text).toContain(
+        "downloads the server from Microsoft the next time",
+      );
+      expect(text).toContain("go back to code-server in Settings");
+    }
   });
 });
 

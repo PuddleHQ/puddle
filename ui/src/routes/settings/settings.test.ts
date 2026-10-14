@@ -21,7 +21,7 @@ vi.mock("$app/navigation", () => ({
   beforeNavigate: (hook: (typeof nav.hooks)[number]) => nav.hooks.push(hook),
 }));
 
-import { MS_TERMS_VERSION } from "#lib/settings/model.ts";
+import { microsoftChosenToast, MS_TERMS_VERSION } from "#lib/settings/model.ts";
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import { density } from "#lib/theme/density.svelte.ts";
@@ -611,7 +611,8 @@ describe("Microsoft's server", () => {
     expect(screen.getByLabelText("Server")).toHaveValue("microsoft");
     expect(screen.getByLabelText("Send Microsoft telemetry")).toBeChecked();
     expect(screen.getByText(/You accepted Microsoft's terms on/)).toBeVisible();
-    expect(toasts.items[0]?.message).toMatch(/Consent recorded/);
+    expect(toasts.items[0]?.message).toBe(microsoftChosenToast(true));
+    expect(toasts.items[0]?.message).toMatch(/telemetry is on/);
   });
 
   it("starts every popup with telemetry off", async () => {

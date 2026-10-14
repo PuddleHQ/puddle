@@ -42,7 +42,7 @@ use puddle_types::{
     WorkspaceStatus, WorkspaceStep,
 };
 
-use crate::ssh_target::{ReportingTarget, report_failure};
+use crate::ssh_target::{ReportingTarget, report_no_endpoint};
 use puddle_workspace::{Findings, Layout, Workspaces};
 use tokio::sync::watch;
 use tokio::task::JoinSet;
@@ -961,17 +961,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// ([`Event::WorkspaceSshFailed`]): the workspace runs without direct SSH.
     async fn open_ssh(&self, name: &WorkspaceName, gated: Arc<GatedSandbox<R::Sandbox>>) {
         let inner = &self.inner;
-        let no_endpoint = |e: &dyn std::fmt::Display| {
-            report_failure(
-                inner.events.as_ref(),
-                name,
-                format!("direct SSH has no endpoint ({e}); restart the workspace to try again"),
-            );
-        };
         let listener = match inner.kit.ipc().listen() {
             Ok(listener) => listener,
             Err(e) => {
-                no_endpoint(&e);
+                report_no_endpoint(inner.events.as_ref(), name, &e);
                 return;
             }
         };
@@ -983,7 +976,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let ssh = match SshEndpoint::start(listener, target) {
             Ok(ssh) => ssh,
             Err(e) => {
-                no_endpoint(&e);
+                report_no_endpoint(inner.events.as_ref(), name, &e);
                 return;
             }
         };

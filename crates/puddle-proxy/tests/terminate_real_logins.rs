@@ -6,7 +6,7 @@
 //! These prove what the tests with hand-written requests cannot: that each tool accepts the
 //! stand-ins it is given, keeps working with them (an API call, a refresh, Git's credential
 //! helper) and never holds a real token. The tools are the user's own installs: a test skips when
-//! its tool is not found, unless `PUDDLE_LOGIN_TOOLS_REQUIRED` is set. `claude` and `gh` come from
+//! its tool is not found, unless `PUDDLE_REQUIRE_LOGIN_TOOLS` is set. `claude` and `gh` come from
 //! the path, Copilot CLI from `PUDDLE_COPILOT_BIN` (its VS Code shim installs the real program on
 //! first use, so the path alone is not enough). Unix only.
 #![cfg(unix)]
@@ -72,8 +72,8 @@ impl LoginNotices for Notices {
 
 fn tool_missing(what: &str) -> bool {
     assert!(
-        std::env::var_os("PUDDLE_LOGIN_TOOLS_REQUIRED").is_none(),
-        "PUDDLE_LOGIN_TOOLS_REQUIRED is set but {what} was not found"
+        std::env::var_os("PUDDLE_REQUIRE_LOGIN_TOOLS").is_none(),
+        "PUDDLE_REQUIRE_LOGIN_TOOLS is set but {what} was not found"
     );
     eprintln!("skipped: {what} not found");
     true

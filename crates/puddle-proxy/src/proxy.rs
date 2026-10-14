@@ -427,6 +427,9 @@ pub(crate) struct Refusal {
     pub(crate) status: std::borrow::Cow<'static, str>,
     pub(crate) headers: Vec<(&'static str, String)>,
     pub(crate) message: String,
+    /// The reason the connection record carries, for a refusal puddle made on purpose (not an
+    /// upstream failure): also sent as `x-puddle-blocked`.
+    pub(crate) code: Option<&'static str>,
 }
 
 impl Refusal {
@@ -438,7 +441,15 @@ impl Refusal {
             status: status.into(),
             headers: Vec::new(),
             message: message.into(),
+            code: None,
         }
+    }
+
+    /// Marks this refusal as one puddle made on purpose: the connection record gets `code` as its
+    /// reason, and the guest reads it in `x-puddle-blocked`.
+    pub(crate) fn coded(mut self, code: &'static str) -> Self {
+        self.code = Some(code);
+        self.header("x-puddle-blocked", code)
     }
 
     pub(crate) fn header(mut self, name: &'static str, value: impl Into<String>) -> Self {

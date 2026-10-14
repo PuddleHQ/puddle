@@ -14,7 +14,7 @@
 //! long as it runs; a change to its environment brings the registry and the decrypted hosts up to
 //! date, while the guest's own environment is read at its next start.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -23,10 +23,11 @@ use puddle_inject::{CredentialSource, GitInjector, StoreSettings};
 use puddle_proxy::{
     Injector, StandInOrigin, StandIns, Termination, TerminationSet, TerminationSource, Terminations,
 };
-use puddle_secrets::{Fetch, SecretCache, SecretStore, Sources};
+use puddle_secrets::{Fetch, SecretCache, SecretStore, SourceSpec, Sources};
 use puddle_store::{Store, WorkspaceGit};
 use puddle_types::{Event, EventSink, GuestEnv, WorkspaceName};
 use tokio::task::JoinHandle;
+use tokio::time::Instant;
 
 use puddle_logins::Logins;
 
@@ -410,20 +411,47 @@ impl Injection {
     }
 }
 
-/// Sends [`Event::CredentialSignInNeeded`] for each read of a source that needs the user to sign
-/// in, until the returned task is aborted. The sign-in itself starts only on the user's click.
+/// One sign-in notice for a source is sent at most this often, however many reads fail (a Git
+/// client retries).
+const SIGN_IN_NOTICE_EVERY: Duration = Duration::from_secs(10);
+
+/// Most sources remembered as lately noticed.
+const MAX_SIGN_IN_SOURCES: usize = 256;
+
+/// Sends [`Event::CredentialSignInNeeded`] for a read of a source that needs the user to sign in,
+/// at most once per source in [`SIGN_IN_NOTICE_EVERY`], until the returned task is aborted. The
+/// sign-in itself starts only on the user's click.
 pub(crate) fn forward_sign_in_needed<F: Fetch + 'static>(
     secrets: &Arc<SecretCache<F>>,
     sink: Arc<dyn EventSink>,
 ) -> JoinHandle<()> {
     let mut notices = secrets.subscribe();
     tokio::spawn(async move {
+        let mut last: HashMap<SourceSpec, Instant> = HashMap::new();
         loop {
             match notices.recv().await {
-                Ok(notice) => sink.emit(Event::CredentialSignInNeeded {
-                    host: notice.source.scope().host.to_string(),
-                    source: notice.source.describe(),
-                }),
+                Ok(notice) => {
+                    let now = Instant::now();
+                    if last.len() >= MAX_SIGN_IN_SOURCES {
+                        last.retain(|_, at| now.duration_since(*at) < SIGN_IN_NOTICE_EVERY);
+                    }
+                    let recent = last
+                        .get(&notice.source)
+                        .is_some_and(|at| now.duration_since(*at) < SIGN_IN_NOTICE_EVERY);
+                    if recent {
+                        continue;
+                    }
+                    // A flood of different sources past the cap is not a flood of events.
+                    if last.len() >= MAX_SIGN_IN_SOURCES {
+                        tracing::warn!(source = %notice.source.describe(), "too many sources need a sign-in at once; this notice is not shown");
+                        continue;
+                    }
+                    sink.emit(Event::CredentialSignInNeeded {
+                        host: notice.source.scope().host.to_string(),
+                        source: notice.source.describe(),
+                    });
+                    last.insert(notice.source, now);
+                }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
@@ -1013,6 +1041,55 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_retrying_client_is_one_sign_in_notice_per_source_per_interval() {
+        let secrets = Arc::new(SecretCache::new(NotSignedIn(Mutex::new(0))));
+        let events = Arc::new(Events::default());
+        let task = forward_sign_in_needed(&secrets, events.clone());
+        let spec = |host: &str| SourceSpec::Gh {
+            host: HostName::new(host).unwrap(),
+            account: AccountName::new("me").unwrap(),
+        };
+        for _ in 0..5 {
+            assert!(secrets.get(&spec("github.com")).await.is_err());
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert_eq!(
+            events.0.lock().unwrap().len(),
+            1,
+            "five failed reads, one notice"
+        );
+        // Another source is its own notice.
+        assert!(secrets.get(&spec("ghe.example")).await.is_err());
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert_eq!(events.0.lock().unwrap().len(), 2);
+        // Once the interval is over the same source is noticed again.
+        tokio::time::sleep(SIGN_IN_NOTICE_EVERY).await;
+        assert!(secrets.get(&spec("github.com")).await.is_err());
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert_eq!(events.0.lock().unwrap().len(), 3);
+        task.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn more_sources_than_the_cap_in_one_interval_are_not_all_noticed() {
+        let secrets = Arc::new(SecretCache::new(NotSignedIn(Mutex::new(0))));
+        let events = Arc::new(Events::default());
+        let task = forward_sign_in_needed(&secrets, events.clone());
+        let total = MAX_SIGN_IN_SOURCES + 10;
+        for i in 0..total {
+            let spec = SourceSpec::Gh {
+                host: HostName::new(format!("host{i}.example")).unwrap(),
+                account: AccountName::new("me").unwrap(),
+            };
+            assert!(secrets.get(&spec).await.is_err());
+            // Let the forwarder keep up: the cache's buffer is smaller than the flood.
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        assert_eq!(events.0.lock().unwrap().len(), MAX_SIGN_IN_SOURCES);
+        task.abort();
     }
 
     #[tokio::test]

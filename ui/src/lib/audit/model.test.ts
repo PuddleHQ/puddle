@@ -246,6 +246,34 @@ describe("a record as a row", () => {
       "because puddle's own request · 0 B up, 2.0 KB down",
     );
   });
+  it("words the reasons the proxy refuses a Git request or a request on its own", () => {
+    const detail = (reason: string) =>
+      row(connection(1, { reason, rule_id: null }).record).detail;
+    expect(detail("push_denied")).toBe(
+      'because the push is not on the workspace\'s push list (add it on its Git tab, or turn off "Only push to listed repos")',
+    );
+    for (const reason of [
+      "push_denied",
+      "pull_denied",
+      "bad_git_path",
+      "credential_rejected",
+      "credential_unavailable",
+      "credential_ambiguous",
+      "git_settings_unavailable",
+      "body_too_large",
+      "bad_request",
+      "misdirected_host",
+      "expectation_unsupported",
+      "head_too_large",
+      "request_timeout",
+      "protocol_unsupported",
+    ]) {
+      expect(detail(reason), reason).not.toContain(reason);
+    }
+    expect(detail("a_code_from_a_newer_puddle")).toBe(
+      "because a_code_from_a_newer_puddle",
+    );
+  });
   it("shows a listing request of puddle's that failed as failed, with why", () => {
     const view = row(
       connection(1, {

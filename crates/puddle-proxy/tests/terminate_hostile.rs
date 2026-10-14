@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use puddle_proxy::ProxyConfig;
+use puddle_types::{ConnectionDecision, ConnectionReason};
 use rustls::pki_types::ServerName;
 use std::fmt::Write as _;
 use terminate_support::{
@@ -330,6 +331,52 @@ async fn hostile_hg16_pipelined_requests_are_each_decided_on_their_own() {
     assert_eq!(client.response("POST").await.status, 200);
     assert_eq!(client.response("GET").await.status, 403);
     assert_eq!(server.recorded().len(), 2);
+}
+
+#[tokio::test]
+async fn a_request_puddle_refuses_on_its_own_is_recorded_blocked_with_a_reason() {
+    let pki = Pki::new();
+    let server = upstream(&pki, ok_handler()).await;
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .config(quick())
+        .build();
+    let big = format!(
+        "GET /x HTTP/1.1\r\nHost: bound.test\r\nX-Big: {}\r\n\r\n",
+        "a".repeat(70 * 1024)
+    );
+    let cases: [(&str, u16, &str); 5] = [
+        (
+            "GET /x HTTP/1.1\r\nHost: evil.example\r\n\r\n",
+            421,
+            "misdirected_host",
+        ),
+        (
+            "GET /x HTTP/1.1\r\nHost: bound.test\r\nExpect: 200-ok\r\n\r\n",
+            417,
+            "expectation_unsupported",
+        ),
+        ("GET /x HTTP/1.1\r\n\r\n", 400, "bad_request"),
+        (&big, 431, "head_too_large"),
+        (
+            "GET /x HTTP/1.1\r\nHost: bound.test\r\nX-Slow: a",
+            408,
+            "request_timeout",
+        ),
+    ];
+    for (round, (request, status, code)) in cases.iter().enumerate() {
+        let mut guest = rig.guest().await;
+        let mut client = guest.tls("bound.test:443", None).await.unwrap();
+        client.send(request.as_bytes()).await;
+        let answer = client.response("GET").await;
+        assert_eq!(answer.status, *status, "{code}");
+        assert_eq!(answer.header("x-puddle-blocked"), Some(*code));
+        let events = rig.events(round + 1).await;
+        let event = &events[round];
+        assert_eq!(event.decision, ConnectionDecision::Blocked, "{code}");
+        assert_eq!(event.reason, ConnectionReason::Refused(code), "{code}");
+    }
+    assert!(server.recorded().is_empty());
 }
 
 #[tokio::test]

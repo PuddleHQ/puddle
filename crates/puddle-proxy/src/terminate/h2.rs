@@ -252,7 +252,17 @@ async fn handle(
     let guard = StreamGuard::new(&shared.open_streams);
     Ok(match exchange(&shared, request, guard).await {
         Ok(response) => response,
-        Err(refusal) => refusal_response(&refusal),
+        Err(refusal) => {
+            if let Some(code) = refusal.code {
+                shared
+                    .outcome
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .refused
+                    .get_or_insert(code);
+            }
+            refusal_response(&refusal)
+        }
     })
 }
 
@@ -383,7 +393,8 @@ pub(crate) fn check<B>(
             return Err(Refusal::new(
                 "417 Expectation Failed",
                 "only Expect: 100-continue is supported",
-            ));
+            )
+            .coded("expectation_unsupported"));
         }
     }
     Ok(Checked {
@@ -436,7 +447,8 @@ async fn exchange(
         return Err(Refusal::new(
             "501 Not Implemented",
             format!("the :protocol {} is not supported", protocol.as_str()),
-        ));
+        )
+        .coded("protocol_unsupported"));
     }
     let mut route = shared.route().await?;
     let version = route.version();
@@ -633,12 +645,6 @@ async fn decide(
     };
     decision.into_forwarding().map_err(|refusal| {
         tracing::info!(host = %cx.target.host, code = refusal.code(), "request refused by the credential rules");
-        shared
-            .outcome
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .refused
-            .get_or_insert(refusal.code());
         refusal.to_refusal()
     })
 }
@@ -687,15 +693,7 @@ async fn read_whole_body(
     body: &mut Incoming,
     limit: usize,
 ) -> Result<Bytes, Refusal> {
-    let too_large = || {
-        shared
-            .outcome
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .refused
-            .get_or_insert("body_too_large");
-        body_too_large(limit)
-    };
+    let too_large = || body_too_large(limit);
     let declared = body.size_hint().exact();
     if declared.is_some_and(|n| n > limit as u64) {
         return Err(too_large());
@@ -705,10 +703,10 @@ async fn read_whole_body(
     loop {
         match tokio::time::timeout(idle, body.frame()).await {
             Err(_) => {
-                return Err(Refusal::new(
-                    "408 Request Timeout",
-                    "the request body did not arrive",
-                ));
+                return Err(
+                    Refusal::new("408 Request Timeout", "the request body did not arrive")
+                        .coded("request_timeout"),
+                );
             }
             Ok(None) => break,
             Ok(Some(Err(err))) => {
@@ -744,12 +742,6 @@ fn unauthorized_answer<B>(
     }
     let refusal = unauthorized?.refusal();
     tracing::info!(host = %shared.cx.target.host, code = refusal.code(), "401 replaced: the credential for this request was puddle's to choose");
-    shared
-        .outcome
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .refused
-        .get_or_insert(refusal.code());
     Some(refusal.to_refusal())
 }
 

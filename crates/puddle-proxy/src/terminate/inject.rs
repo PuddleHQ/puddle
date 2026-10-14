@@ -237,7 +237,7 @@ impl InjectRefusal {
             status.as_str(),
             status.canonical_reason().unwrap_or("")
         );
-        Refusal::new(line, self.message.clone()).header("x-puddle-blocked", self.code)
+        Refusal::new(line, self.message.clone()).coded(self.code)
     }
 }
 
@@ -262,7 +262,7 @@ pub(crate) fn body_too_large(limit: usize) -> Refusal {
             "this request's body is over {limit} bytes, more than puddle reads before it decides; send smaller requests"
         ),
     )
-    .header("x-puddle-blocked", "body_too_large")
+    .coded("body_too_large")
 }
 
 /// What the proxy does with a request after the injector decided.

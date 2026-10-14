@@ -179,6 +179,23 @@ const REASONS: Record<string, string> = {
   local_address: "a local address",
   settings_unreadable: "unreadable settings",
   puddle_request: "puddle's own request",
+  push_denied:
+    'the push is not on the workspace\'s push list (add it on its Git tab, or turn off "Only push to listed repos")',
+  pull_denied:
+    'the fetch is not on the workspace\'s pull list (add it on its Git tab, or turn off "Only pull from listed repos")',
+  bad_git_path: "the Git address names the repository in more than one way",
+  credential_rejected:
+    "the Git host did not accept the credential puddle added",
+  credential_unavailable: "the Git credential could not be read",
+  credential_ambiguous: "two identities cover the repository",
+  git_settings_unavailable: "the workspace's Git settings could not be read",
+  body_too_large: "the request body was too large for puddle to read",
+  bad_request: "the request was malformed",
+  misdirected_host: "the request was for another host than its connection",
+  expectation_unsupported: "the request asked for more than puddle supports",
+  head_too_large: "the request head was too large",
+  request_timeout: "the request did not arrive in time",
+  protocol_unsupported: "the request used a protocol puddle does not support",
 };
 
 /** Why one of puddle's own requests (listing repositories) did not work: the code after

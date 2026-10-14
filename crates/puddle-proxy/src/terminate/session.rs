@@ -257,6 +257,9 @@ where
     }
 
     async fn refuse(&mut self, refusal: &Refusal) -> Flow {
+        if let Some(code) = refusal.code {
+            self.outcome.refused.get_or_insert(code);
+        }
         refuse(&mut self.writer, refusal).await;
         Flow::Abort
     }
@@ -287,13 +290,16 @@ where
         {
             Err(_) => {
                 return self
-                    .refuse(&Refusal::new(
-                        "408 Request Timeout",
-                        format!(
-                            "request head not received within {}s",
-                            config.head_timeout.as_secs()
-                        ),
-                    ))
+                    .refuse(
+                        &Refusal::new(
+                            "408 Request Timeout",
+                            format!(
+                                "request head not received within {}s",
+                                config.head_timeout.as_secs()
+                            ),
+                        )
+                        .coded("request_timeout"),
+                    )
                     .await;
             }
             Ok(Err(err)) => {
@@ -303,14 +309,17 @@ where
             Ok(Ok(Err(HeadError::Empty))) => return Flow::Close,
             Ok(Ok(Err(HeadError::TooLarge))) => {
                 return self
-                    .refuse(&Refusal::new(
-                        "431 Request Header Fields Too Large",
-                        format!("request head over {} KiB", http::MAX_HEAD / 1024),
-                    ))
+                    .refuse(
+                        &Refusal::new(
+                            "431 Request Header Fields Too Large",
+                            format!("request head over {} KiB", http::MAX_HEAD / 1024),
+                        )
+                        .coded("head_too_large"),
+                    )
                     .await;
             }
             Ok(Ok(Err(HeadError::Bad(why)))) => {
-                return self.refuse(&Refusal::new("400 Bad Request", why)).await;
+                return self.refuse(&request::bad(why)).await;
             }
             Ok(Ok(Ok(head))) => head,
         };
@@ -387,7 +396,6 @@ where
             Ok(forwarding) => Ok((forwarding, prefetched)),
             Err(refusal) => {
                 tracing::info!(host = %self.cx.target.host, code = refusal.code(), "request refused by the credential rules");
-                self.outcome.refused.get_or_insert(refusal.code());
                 Err(self.refuse(&refusal.to_refusal()).await)
             }
         }
@@ -508,7 +516,6 @@ where
 
     /// Answers a body over `limit` with `413` and records it.
     async fn refuse_too_large(&mut self, limit: usize) -> Flow {
-        self.outcome.refused.get_or_insert("body_too_large");
         self.refuse(&body_too_large(limit)).await
     }
 
@@ -545,18 +552,15 @@ where
                 Ok(Err(err)) => {
                     tracing::info!(host = %self.cx.target.host, error = %err, "request body failed");
                     return Err(self
-                        .refuse(&Refusal::new(
-                            "400 Bad Request",
-                            "the request body could not be read",
-                        ))
+                        .refuse(&request::bad("the request body could not be read"))
                         .await);
                 }
                 Err(_) => {
                     return Err(self
-                        .refuse(&Refusal::new(
-                            "408 Request Timeout",
-                            "the request body did not arrive",
-                        ))
+                        .refuse(
+                            &Refusal::new("408 Request Timeout", "the request body did not arrive")
+                                .coded("request_timeout"),
+                        )
                         .await);
                 }
             }

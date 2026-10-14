@@ -16,7 +16,9 @@ use std::io;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 
-/// Copies both ways between `tcp` and `other` until both sides are done. Returns the bytes
+/// Copies both ways between `tcp` and `other` until both sides are done. A side that half-closes
+/// (sends its request and shuts down its write half) still gets a response of any size: the
+/// vendored yamux keeps receiving window updates after the peer's end of stream. Returns the bytes
 /// copied `(tcp → other, other → tcp)`.
 ///
 /// # Errors

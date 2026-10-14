@@ -97,6 +97,7 @@ describe("the screen", () => {
     expect(names).toEqual([
       "Appearance",
       "Notifications",
+      "Inbox",
       "Workspaces",
       "Network",
       "Browser VS Code",
@@ -367,6 +368,61 @@ describe("appearance and notifications", () => {
     expect(api.ui.notifications).toBe(false);
     expect(api.ui.sound).toBe(true);
     expect(api.ui.close_behaviour).toBe("quit");
+  });
+});
+
+describe("notification and inbox switches", () => {
+  const rows: [string, keyof typeof api.ui, boolean][] = [
+    [
+      "Only when puddle is not the window in front",
+      "notify_only_unfocused",
+      true,
+    ],
+    ["Show the number of waiting requests", "badge", true],
+    ["A workspace runs out of memory", "notify_oom", true],
+    ["A workspace stops on its own", "notify_unexpected_stop", true],
+    [
+      "Confirm before a rule affects every workspace",
+      "confirm_global_rules",
+      true,
+    ],
+  ];
+
+  it("shows each switch at puddle's default and saves a change on Save", async () => {
+    await open();
+    for (const [label, , on] of rows) {
+      const box = screen.getByLabelText(label);
+      if (on) expect(box).toBeChecked();
+      else expect(box).not.toBeChecked();
+      await fireEvent.click(box);
+    }
+    expect(putBodies()).toHaveLength(0);
+    await save();
+    for (const [, key, on] of rows) expect(api.ui[key]).toBe(!on);
+  });
+
+  it("shows what is stored", async () => {
+    api.ui.badge = false;
+    api.ui.confirm_global_rules = false;
+    await open();
+    expect(
+      screen.getByLabelText("Show the number of waiting requests"),
+    ).not.toBeChecked();
+    expect(
+      screen.getByLabelText("Confirm before a rule affects every workspace"),
+    ).not.toBeChecked();
+  });
+
+  it("switches off the focus choice while system notifications are off", async () => {
+    await open();
+    const only = screen.getByLabelText(
+      "Only when puddle is not the window in front",
+    );
+    expect(only).toBeEnabled();
+    await fireEvent.click(
+      screen.getByLabelText("System notifications for new requests"),
+    );
+    expect(only).toBeDisabled();
   });
 });
 

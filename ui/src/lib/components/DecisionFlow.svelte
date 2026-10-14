@@ -6,6 +6,7 @@
   import { decidedSentence, type Decided } from "#lib/decision/decided.ts";
   import { localCategory } from "#lib/decision/local.ts";
   import { describe, needsConfirm, type Choice } from "#lib/decision/model.ts";
+  import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
   import { pending as defaultStore } from "#lib/stores/pending.svelte.ts";
   import { isOn, setsOnFor, userSetNumber } from "#lib/rules/sets.ts";
   import {
@@ -131,12 +132,14 @@
   /** Decides now, or asks first when the choice covers every workspace. */
   export function decide(row: Row, choice: Choice) {
     optionsOpen = false;
-    if (needsConfirm(choice)) {
+    const global = needsConfirm(choice);
+    if (global && (globalSettings.view?.ui.confirm_global_rules ?? true)) {
       confirming = { row, choice };
       confirmOpen = true;
       return;
     }
-    void submit(row, choice, false);
+    // With the Settings switch off the user has chosen not to be asked; the API still gets the confirmation flag.
+    void submit(row, choice, global);
   }
 
   function confirmed() {

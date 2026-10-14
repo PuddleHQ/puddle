@@ -24,6 +24,20 @@ const noLayer = (): S["SettingsLayer"] => ({
   capture_logins: null,
 });
 
+const noUi = (): S["UiPrefs"] => ({
+  theme: null,
+  density: null,
+  notifications: null,
+  sound: null,
+  close_behaviour: null,
+  notify_only_unfocused: null,
+  badge: null,
+  notify_oom: null,
+  notify_unexpected_stop: null,
+  confirm_global_rules: null,
+  inbox_shortcuts: null,
+});
+
 export class FakeSettings {
   layer = noLayer();
   /** Fields the stored document has that puddle doesn't know. */
@@ -33,13 +47,7 @@ export class FakeSettings {
     telemetry: null,
     auto_update: null,
   };
-  ui: S["UiPrefs"] = {
-    theme: null,
-    density: null,
-    notifications: null,
-    sound: null,
-    close_behaviour: null,
-  };
+  ui: S["UiPrefs"] = noUi();
   consent: S["Consent"] = { state: "not_asked" };
   calls: string[] = [];
   bodies: unknown[] = [];
@@ -194,14 +202,7 @@ export class FakeSettings {
       auto_update: null,
       ...b.vscode_server,
     };
-    this.ui = {
-      theme: null,
-      density: null,
-      notifications: null,
-      sound: null,
-      close_behaviour: null,
-      ...b.ui,
-    };
+    this.ui = { ...noUi(), ...b.ui };
     return this.reply(200, this.view());
   };
 }

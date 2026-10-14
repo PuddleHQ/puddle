@@ -5,6 +5,8 @@
 # it already has a green run on that commit. VM tests are never retried; a runner without
 # KVM is reported as an infrastructure skip, not a test result, except on a pull request, where it
 # fails the job (a required check must not pass without running VM tests; ci/vm-skip-policy.sh).
+# A pull request whose changed files cannot reach a VM test skips every job here (ci/scope.sh, the
+# `scope` job); the result job accepts that skip only when `scope` said so.
 # The test binaries are built once (`cargo nextest archive`) and the tests run in three partitions
 # on three runners at once; `vm-linux (KVM, msb microVMs)` is the one result of all of them.
 name: vm-linux
@@ -45,8 +47,34 @@ env:
   PUDDLE_VM_MSB_LOG_LEVEL: debug
 
 jobs:
+  # Which jobs this pull request needs (ci/scope.sh; it falls open to "all" on any doubt). Checks out
+  # only ci/, so it costs a few seconds.
+  scope:
+    name: scope (changed files)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      vm: ${{ steps.scope.outputs.vm }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: ci
+      - name: which jobs does this change need?
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: ci/scope.sh
+
   build:
     name: vm-linux build (test archive, guest agent)
+    needs: scope
+    if: ${{ !cancelled() && needs.scope.outputs.vm != 'false' }}
     # `actions: read` for ci/should-run.sh (a separate gate job would be billed a full minute).
     permissions:
       contents: read
@@ -222,16 +250,19 @@ jobs:
 
   # One stable result for the build and every partition.
   # The develop ruleset requires it by this name: a rename changes the ruleset in the same change.
+  # A pull request may skip them all only when `scope` said so (ci/scope.sh verdict); the
+  # KVM/WHP infrastructure skip is a skipped step inside a passing job, not a skipped job.
   vm-linux:
     name: vm-linux (KVM, msb microVMs)
-    needs: [build, tests]
+    needs: [scope, build, tests]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: build and every partition passed (or were skipped on purpose)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: ci
+      - name: every needed job passed
         env:
           NEEDS: ${{ toJSON(needs) }}
-        run: |
-          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          echo "$NEEDS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")' >/dev/null
+        run: ci/scope.sh verdict --nightly-skips build=vm tests=vm

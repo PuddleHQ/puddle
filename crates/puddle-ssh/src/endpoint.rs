@@ -168,14 +168,14 @@ async fn accept_loop<T: SshTarget>(
                 }
                 Err(e @ IpcError::Closed { .. }) => {
                     warn!(sandbox = %label, endpoint, error = %e, "ssh endpoint stopped accepting");
-                    accept_stopped(&*target, &e);
+                    accept_stopped(|reason| target.failed(&reason), &e);
                     // Keep the sessions until the endpoint is closed.
                     let _stopped = stopped.await;
                     break;
                 }
                 Err(e) => {
                     warn!(sandbox = %label, endpoint, error = %e, "ssh endpoint accept failed");
-                    accept_failed(&*target, &mut accept_failing, &e);
+                    accept_failed(|reason| target.failed(&reason), &mut accept_failing, &e);
                     tokio::time::sleep(ACCEPT_BACKOFF).await;
                 }
             },
@@ -186,19 +186,19 @@ async fn accept_loop<T: SshTarget>(
     listener
 }
 
-/// Tells the target its endpoint stopped for good.
-fn accept_stopped<T: SshTarget>(target: &T, error: &IpcError) {
-    target.failed(&format!(
+/// Reports that the endpoint stopped for good.
+fn accept_stopped(report: impl FnOnce(String), error: &IpcError) {
+    report(format!(
         "the SSH endpoint stopped accepting connections ({error}); restart the workspace to get direct SSH back"
     ));
 }
 
-/// Tells the target accepting failed, once per run of failures, so a persistent error is one
-/// notice and not one per retry.
-fn accept_failed<T: SshTarget>(target: &T, failing: &mut bool, error: &IpcError) {
+/// Reports that accepting failed, once per run of failures, so a persistent error is one notice
+/// and not one per retry.
+fn accept_failed(report: impl FnOnce(String), failing: &mut bool, error: &IpcError) {
     if !*failing {
         *failing = true;
-        target.failed(&format!(
+        report(format!(
             "the SSH endpoint could not accept a connection ({error}); it keeps trying"
         ));
     }
@@ -247,40 +247,16 @@ async fn session<T: SshTarget>(target: Arc<T>, mut conn: Connection, id: u64) {
 mod tests {
     use super::*;
 
-    /// Records what the endpoint reports.
-    #[derive(Default)]
-    struct Recorder(std::sync::Mutex<Vec<String>>);
-
-    impl SshTarget for Recorder {
-        type Error = std::io::Error;
-        fn label(&self) -> String {
-            "recorder".into()
-        }
-        fn admit(&self) -> impl Future<Output = Result<(), String>> {
-            std::future::ready(Ok(()))
-        }
-        fn failed(&self, reason: &str) {
-            self.0.lock().unwrap().push(reason.to_owned());
-        }
-        fn serve<S: SshStream>(
-            &self,
-            _stream: S,
-        ) -> impl Future<Output = Result<(), std::io::Error>> + Send {
-            std::future::ready(Ok(()))
-        }
-    }
-
     #[test]
     fn accept_failures_are_reported_once_per_run_and_a_stop_always() {
-        let target = Recorder::default();
         let error = IpcError::NoRuntime;
+        let mut reports = Vec::new();
         let mut failing = false;
-        accept_failed(&target, &mut failing, &error);
-        accept_failed(&target, &mut failing, &error);
+        accept_failed(|r| reports.push(r), &mut failing, &error);
+        accept_failed(|r| reports.push(r), &mut failing, &error);
         failing = false;
-        accept_failed(&target, &mut failing, &error);
-        accept_stopped(&target, &error);
-        let reports = target.0.lock().unwrap();
+        accept_failed(|r| reports.push(r), &mut failing, &error);
+        accept_stopped(|r| reports.push(r), &error);
         assert_eq!(reports.len(), 3, "{reports:?}");
         assert!(reports[0].starts_with("the SSH endpoint could not accept a connection ("));
         assert!(reports[2].starts_with("the SSH endpoint stopped accepting connections ("));

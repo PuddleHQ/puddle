@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import LoadNotice from "#lib/components/LoadNotice.svelte";
   import { onMount } from "svelte";
   import Undo2 from "@lucide/svelte/icons/undo-2";
   import DecisionFlow from "#lib/components/DecisionFlow.svelte";
@@ -182,10 +183,14 @@
   </p>
 {/each}
 
+{#if pending.status === "ready" && pending.loadError}
+  <LoadNotice what="the requests" message={pending.loadError} stale />
+{/if}
+
 {#if pending.status === "loading"}
   <p class="muted">Loading requests&hellip;</p>
 {:else if pending.status === "failed"}
-  <p class="muted">Couldn't read the requests yet. Trying again.</p>
+  <LoadNotice what="the requests" message={pending.loadError} />
 {:else if pending.groups.length === 0}
   <section class="empty">
     <h2>All quiet</h2>

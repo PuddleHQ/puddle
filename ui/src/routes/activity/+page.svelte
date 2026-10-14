@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import LoadNotice from "#lib/components/LoadNotice.svelte";
   import { onMount } from "svelte";
   import { replaceState } from "$app/navigation";
   import Download from "@lucide/svelte/icons/download";
@@ -237,13 +238,16 @@
   {/if}
 </div>
 
+{#if store.status === "ready" && store.loadError}
+  <LoadNotice what="the activity log" message={store.loadError} stale />
+{/if}
+
 {#if store.status === "loading"}
   <p class="muted">Loading activity&hellip;</p>
 {:else if store.status === "failed"}
-  <p class="muted">
-    Couldn't read the activity log.
+  <LoadNotice what="the activity log" message={store.loadError}>
     <button type="button" class="btn" onclick={apply}>Try again</button>
-  </p>
+  </LoadNotice>
 {:else if total === 0}
   <section class="empty">
     {#if narrowed}

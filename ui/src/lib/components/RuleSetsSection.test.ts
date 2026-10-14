@@ -171,7 +171,7 @@ describe("making, renaming and deleting", () => {
 });
 
 describe("loading", () => {
-  it("says when it is loading or can't read the sets", () => {
+  it("says when it is loading or can't read the sets", async () => {
     const fresh = new RuleSetsStore({ api: api as never });
     render(RuleSetsSection, {
       props: {
@@ -182,6 +182,14 @@ describe("loading", () => {
       },
     } as never);
     expect(screen.getByText(/Loading rule sets/)).toBeInTheDocument();
+    fresh.loadError = "Disk is full.";
     fresh.status = "failed";
+    expect(
+      await screen.findByText(/Couldn't read the rule sets\. Disk is full\./),
+    ).toBeInTheDocument();
+    fresh.status = "ready";
+    expect(
+      await screen.findByText(/Couldn't refresh the rule sets/),
+    ).toBeInTheDocument();
   });
 });

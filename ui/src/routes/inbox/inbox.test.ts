@@ -117,11 +117,24 @@ describe("the inbox page", () => {
   it("says so when the service didn't answer, and shows an empty state when nothing waits", async () => {
     inbox.down = true;
     const view = render(InboxPage);
-    await screen.findByText(/Couldn't read the requests/);
+    await screen.findByText(
+      /Couldn't read the requests\. puddle's service isn't answering\./,
+    );
     view.unmount();
     reset();
     render(InboxPage);
     await screen.findByRole("heading", { name: "All quiet" });
+  });
+
+  it("keeps the list but says it may be out of date when a refresh fails", async () => {
+    seed();
+    await ready();
+    inbox.down = true;
+    await pending.refresh();
+    expect(
+      await screen.findByText(/Couldn't refresh the requests/),
+    ).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem").length).toBeGreaterThan(0);
   });
 
   it("lists the shortcuts in words", async () => {

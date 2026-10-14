@@ -209,6 +209,11 @@ const DECISIONS: Record<string, { label: string; tone: Tone }> = {
   blocked: { label: "Blocked", tone: "deny" },
 };
 
+/** A decision this build has no word for: shown as it came, never as "no outcome". */
+function decisionOutcome(decision: string): { label: string; tone: Tone } {
+  return DECISIONS[decision] ?? { label: decision, tone: "neutral" };
+}
+
 /** `1.5 MB`, in powers of 1024 as file sizes read. */
 export function bytesLabel(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -261,10 +266,13 @@ function switchLabel(enabled: boolean | null): string {
 }
 
 function pendingOutcome(state: string): RowView["outcome"] {
-  if (state === "allowed") return DECISIONS["allow"] ?? null;
-  if (state === "denied") return DECISIONS["deny"] ?? null;
+  if (state === "allowed") return decisionOutcome("allow");
+  if (state === "denied") return decisionOutcome("deny");
   if (state === "expired") return { label: "Expired", tone: "neutral" };
-  return DECISIONS["pending"] ?? null;
+  if (state === "requested" || state === "pending") {
+    return decisionOutcome("pending");
+  }
+  return { label: state, tone: "neutral" };
 }
 
 function connectionDetail(
@@ -307,7 +315,7 @@ function connectionOutcome(
   if (record.reason.startsWith(FAILED_PREFIX)) {
     return { label: "Failed", tone: "warn" };
   }
-  return record.decision === null ? null : (DECISIONS[record.decision] ?? null);
+  return record.decision === null ? null : decisionOutcome(record.decision);
 }
 
 /** How a record reads as a row. */
@@ -438,7 +446,28 @@ export function describe(record: AuditRecord): RowView {
         outcome: null,
         detail: `${record.deleted_records} older records deleted`,
       };
+    default:
+      return unknownRecord(record);
   }
+}
+
+/** A record type this build doesn't know (puddle is newer than the app): the row says so, and its
+ * raw record is in the expanded view. */
+function unknownRecord(record: never): RowView {
+  const raw = record as {
+    type?: unknown;
+    ts?: unknown;
+    workspace_id?: unknown;
+  };
+  const type = typeof raw.type === "string" ? raw.type : "unknown";
+  return {
+    ts: typeof raw.ts === "number" ? raw.ts : 0,
+    workspace: typeof raw.workspace_id === "string" ? raw.workspace_id : null,
+    type,
+    destination: null,
+    outcome: null,
+    detail: `a record of type "${type}" that this version of puddle's app can't describe; open the row to see it as it was written`,
+  };
 }
 
 /** The record as the API sent it, indented, for the row's expanded view. */

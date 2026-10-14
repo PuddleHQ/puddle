@@ -60,11 +60,11 @@ describe("loading", () => {
     });
     await store.load();
     expect(store.reason).toBe(reason);
-    // An ordinary failure has no reason to show, and a good read clears the old one.
+    // An ordinary failure shows its own reason, and a good read clears the old one.
     api.refuse.clear();
     api.down = true;
     await store.load();
-    expect(store.reason).toBeNull();
+    expect(store.reason).toBe("puddle's service isn't answering.");
     api.down = false;
     await store.load();
     expect(store.status).toBe("ready");

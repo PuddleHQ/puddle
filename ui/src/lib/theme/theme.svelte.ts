@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
+import { sentence } from "#lib/rules/model.ts";
+import {
+  globalSettings,
+  type SaveResult,
+} from "#lib/stores/global-settings.svelte.ts";
 import {
   applyTheme,
   browserStorage,
@@ -31,12 +35,20 @@ class ThemeState {
     if (isThemeChoice(stored)) this.#apply(stored);
   }
 
-  /** Applies a choice at once and stores it in the settings; on failure it still applies this time. */
-  async set(choice: ThemeChoice): Promise<boolean> {
+  /** Applies a choice at once and stores it in the settings; on failure it still applies this time and the result says why it was not saved. */
+  async set(choice: ThemeChoice): Promise<SaveResult> {
     this.#apply(choice);
     if (!globalSettings.view) await globalSettings.load(true);
+    if (!globalSettings.view) {
+      return {
+        ok: false,
+        message: globalSettings.reason ?? "Settings aren't loaded.",
+      };
+    }
     const result = await globalSettings.save({ ui: { theme: choice } });
-    return result.ok;
+    return result.ok
+      ? result
+      : { ok: false, message: sentence(result.message) };
   }
 
   #apply(choice: ThemeChoice): void {

@@ -268,7 +268,7 @@ describe("look step", () => {
     });
     await fireEvent.click(radio("Light"));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "The theme changed here but puddle couldn't save it.",
+      "The theme changed here but puddle couldn't save it. No.",
     );
     h.prefs.refuse.set("PUT /api/settings", {
       status: 422,

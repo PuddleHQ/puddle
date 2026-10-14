@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import LoadNotice from "#lib/components/LoadNotice.svelte";
   import { onMount } from "svelte";
   import Plus from "@lucide/svelte/icons/plus";
   import PendingStrip from "#lib/components/PendingStrip.svelte";
@@ -51,10 +52,14 @@
   </button>
 </div>
 
+{#if workspaces.status === "ready" && workspaces.loadError}
+  <LoadNotice what="the workspaces" message={workspaces.loadError} stale />
+{/if}
+
 {#if workspaces.status === "loading"}
   <p class="muted">Loading workspaces&hellip;</p>
 {:else if workspaces.status === "failed"}
-  <p class="muted">Couldn't read the workspaces yet. Trying again.</p>
+  <LoadNotice what="the workspaces" message={workspaces.loadError} />
 {:else if workspaces.list.length === 0}
   <section class="empty">
     <h2>No workspaces yet</h2>

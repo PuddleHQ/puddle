@@ -52,6 +52,15 @@
       <p class="banner" role="status">
         puddle's service isn't answering. Retrying.
       </p>
+    {:else if live.problem === "failing"}
+      <p class="banner" role="status">
+        {live.problemDetail} Retrying.
+      </p>
+    {:else if live.streamError}
+      <p class="banner" role="status">
+        Live updates paused: {live.streamError}. puddle keeps trying and
+        refreshes every few seconds meanwhile.
+      </p>
     {/if}
     <Notices />
     <main id="main" tabindex="-1">

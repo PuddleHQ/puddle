@@ -91,13 +91,16 @@ describe("reading the log", () => {
     await store.load(ALL);
     expect(store.status).toBe("failed");
     expect(store.reloading).toBe(false);
+    expect(store.loadError).toBe("puddle's service isn't answering.");
     api.down = false;
     fill(3);
     await store.load(ALL);
     expect(store.status).toBe("ready");
+    expect(store.loadError).toBeNull();
     api.failNext = 500;
     await store.load(ALL);
     expect(store.status).toBe("failed");
+    expect(store.loadError).toBe("Refused.");
     api.down = true;
     await store.load(ALL);
     expect(store.status).toBe("failed");
@@ -131,11 +134,14 @@ describe("reading the log", () => {
     await store.loadMore();
     expect(store.entries).toHaveLength(200);
     expect(store.loadingMore).toBe(false);
+    expect(store.loadError).toBe("Refused.");
     api.down = true;
     await store.loadMore();
+    expect(store.loadError).toBe("puddle's service isn't answering.");
     api.down = false;
     await store.loadMore();
     expect(store.entries).toHaveLength(400);
+    expect(store.loadError).toBeNull();
   });
   it("reads the workspace names for the filter, sorted, and keeps them on failure", async () => {
     api.workspaces = ["web-shop", "api"];

@@ -58,19 +58,23 @@ describe("reading the list", () => {
     api.down = true;
     await store.refresh();
     expect(store.status).toBe("failed");
+    expect(store.loadError).toBe("puddle's service isn't answering.");
     api.down = false;
     await store.refresh();
     expect(store.status).toBe("ready");
+    expect(store.loadError).toBeNull();
     api.down = true;
     await store.refresh();
     expect(store.status).toBe("ready");
     expect(store.list).toHaveLength(2);
+    expect(store.loadError).toBe("puddle's service isn't answering.");
   });
 
   it("fails on a refusal as well as on a dead service", async () => {
     api.refuse.set("GET /api/workspaces", { status: 500, message: "broken" });
     await store.refresh();
     expect(store.status).toBe("failed");
+    expect(store.loadError).toBe("Broken.");
     await store.refresh();
     api.refuse.set("GET /api/workspaces", { status: 500, message: "broken" });
     await store.refresh();

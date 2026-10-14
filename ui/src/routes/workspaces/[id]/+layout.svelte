@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import LoadNotice from "#lib/components/LoadNotice.svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import AttachButtons from "#lib/components/AttachButtons.svelte";
@@ -80,7 +81,7 @@
     <a href="/workspaces">Back to the workspaces</a>.
   </p>
 {:else if workspaces.status === "failed"}
-  <p class="muted">Couldn't read the workspace yet. Trying again.</p>
+  <LoadNotice what="the workspace" message={workspaces.loadError} />
 {:else}
   <p class="muted">Loading workspace&hellip;</p>
 {/if}

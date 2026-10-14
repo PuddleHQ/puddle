@@ -23,6 +23,8 @@ export interface EventStreamOptions {
   onResync?: (reason: "lagged" | "reconnect", lagged?: Lagged) => void;
   /** Called on every connection state change, for a "reconnecting" hint. */
   onState?: (state: StreamState) => void;
+  /** Called when an attempt failed, with why in words ("the event stream answered 500"); not called after a clean close or an abort. */
+  onError?: (reason: string) => void;
   /** Wait times between attempts; the last repeats. */
   backoffMs?: readonly number[];
   /** For tests. */
@@ -83,6 +85,7 @@ export async function* eventStream(
   options.onState?.("connecting");
 
   while (!signal.aborted) {
+    let failure = "the connection to the event stream failed";
     try {
       const response = await doFetch(streamUrl(options), {
         signal,
@@ -92,6 +95,10 @@ export async function* eventStream(
         },
       });
       if (!response.ok || response.body === null) {
+        failure =
+          response.status === 401 || response.status === 403
+            ? `the event stream refused this app's key (status ${response.status})`
+            : `the event stream answered ${response.status}`;
         throw new Error(`event stream answered ${response.status}`);
       }
       if (everConnected) options.onResync?.("reconnect");
@@ -131,6 +138,7 @@ export async function* eventStream(
       }
     } catch {
       if (signal.aborted) break;
+      options.onError?.(failure);
     }
     if (signal.aborted) break;
     options.onState?.("reconnecting");

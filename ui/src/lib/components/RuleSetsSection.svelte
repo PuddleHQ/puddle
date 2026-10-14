@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import LoadNotice from "./LoadNotice.svelte";
   import Plus from "@lucide/svelte/icons/plus";
   import {
     SETS_INTRO,
@@ -126,10 +127,13 @@
       }}><Plus aria-hidden="true" size={16} />New rule set</button
     >
   </div>
+  {#if store.status === "ready" && store.loadError}
+    <LoadNotice what="the rule sets" message={store.loadError} stale />
+  {/if}
   {#if store.status === "loading"}
     <p class="sub">Loading rule sets&hellip;</p>
   {:else if store.status === "failed"}
-    <p class="sub">Couldn't read the rule sets yet. Trying again.</p>
+    <LoadNotice what="the rule sets" message={store.loadError} />
   {:else}
     {#each store.sets as set (set.id)}
       <RuleSetCard

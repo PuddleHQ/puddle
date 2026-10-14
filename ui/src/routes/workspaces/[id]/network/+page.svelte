@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import { page } from "$app/state";
   import DecisionFlow from "#lib/components/DecisionFlow.svelte";
+  import LoadNotice from "#lib/components/LoadNotice.svelte";
   import RequestRow from "#lib/components/RequestRow.svelte";
   import RuleTable from "#lib/components/RuleTable.svelte";
   import WorkspaceSets from "#lib/components/WorkspaceSets.svelte";
@@ -65,9 +66,27 @@
     </h2>
     {#if pending.status === "loading"}
       <p class="muted pad">Loading requests&hellip;</p>
+    {:else if pending.status === "failed"}
+      <LoadNotice what="the requests" message={pending.loadError} padded />
     {:else if rows.length === 0}
+      {#if pending.loadError}
+        <LoadNotice
+          what="the requests"
+          message={pending.loadError}
+          stale
+          padded
+        />
+      {/if}
       <p class="muted pad">Nothing is waiting for {workspace.name}.</p>
     {:else}
+      {#if pending.loadError}
+        <LoadNotice
+          what="the requests"
+          message={pending.loadError}
+          stale
+          padded
+        />
+      {/if}
       <ul>
         {#each rows as row (row.request.id)}
           <RequestRow
@@ -94,11 +113,29 @@
     </div>
     {#if rulesStore.status === "loading"}
       <p class="muted pad">Loading rules&hellip;</p>
+    {:else if rulesStore.status === "failed"}
+      <LoadNotice what="the rules" message={rulesStore.loadError} padded />
     {:else if rules.length === 0}
+      {#if rulesStore.loadError}
+        <LoadNotice
+          what="the rules"
+          message={rulesStore.loadError}
+          stale
+          padded
+        />
+      {/if}
       <p class="muted pad">
         No rule applies to {workspace.name} yet. Requests wait here until you decide.
       </p>
     {:else}
+      {#if rulesStore.loadError}
+        <LoadNotice
+          what="the rules"
+          message={rulesStore.loadError}
+          stale
+          padded
+        />
+      {/if}
       <RuleTable {rules} sort={DEFAULT_SORT} {now} />
       <p class="muted note">
         Change or delete a rule on the <a href="/rules">Rules page</a>.

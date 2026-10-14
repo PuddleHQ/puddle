@@ -15,7 +15,9 @@ vi.mock("$app/state", () => ({
 
 const live = vi.hoisted(() => ({
   pending: 0,
-  problem: null as null | "unauthorized" | "unreachable",
+  problem: null as null | "unauthorized" | "unreachable" | "failing",
+  problemDetail: null as string | null,
+  streamError: null as string | null,
   start: vi.fn(() => () => undefined),
   subscribe: vi.fn(() => () => undefined),
 }));
@@ -34,11 +36,14 @@ import ErrorPage from "../../routes/+error.svelte";
 import { ssr, prerender } from "../../routes/+layout.ts";
 import Sidebar from "./Sidebar.svelte";
 import { theme } from "../theme/theme.svelte.ts";
+import { toasts } from "#lib/stores/toasts.svelte.ts";
 
 beforeEach(() => {
   url.pathname = "/inbox";
   live.pending = 0;
   live.problem = null;
+  live.problemDetail = null;
+  live.streamError = null;
   live.start.mockClear();
   live.subscribe.mockClear();
   health.start.mockClear();
@@ -97,6 +102,21 @@ describe("Sidebar", () => {
     await fireEvent.click(screen.getByText("System"));
     expect(document.documentElement.dataset["theme"]).toBeUndefined();
   });
+
+  it("says why a theme choice wasn't saved", async () => {
+    vi.spyOn(theme, "set").mockResolvedValue({
+      ok: false,
+      message: "Settings file is damaged.",
+    });
+    render(Sidebar);
+    await fireEvent.click(screen.getByText("Dark"));
+    await vi.waitFor(() =>
+      expect(toasts.items.map((t) => t.message)).toContain(
+        "The theme changed here but wasn't saved. Settings file is damaged.",
+      ),
+    );
+    vi.restoreAllMocks();
+  });
 });
 
 describe("root layout", () => {
@@ -125,6 +145,22 @@ describe("root layout", () => {
     live.problem = "unreachable";
     render(Layout, { children: (() => {}) as never });
     expect(screen.getByRole("status")).toHaveTextContent(/isn't answering/);
+  });
+
+  it("names an erroring service and a paused event stream", () => {
+    live.problem = "failing";
+    live.problemDetail = "puddle's service hit an error (status 500).";
+    const { unmount } = render(Layout, { children: (() => {}) as never });
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "puddle's service hit an error (status 500). Retrying.",
+    );
+    unmount();
+    live.problem = null;
+    live.streamError = "the event stream answered 500";
+    render(Layout, { children: (() => {}) as never });
+    expect(screen.getByRole("status")).toHaveTextContent(
+      /Live updates paused: the event stream answered 500/,
+    );
   });
 
   it("leaves the sidebar out of the first-run flow and names its step in the title", () => {

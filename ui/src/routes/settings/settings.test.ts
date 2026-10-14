@@ -61,6 +61,19 @@ describe("the screen", () => {
     ).toHaveAttribute("href", "/welcome/check?from=settings");
   });
 
+  it("says when the version could not be read", async () => {
+    await open();
+    expect(screen.queryByText(/version unavailable/)).toBeNull();
+    cleanup();
+    api.refuse.set("GET /api/health", {
+      status: 500,
+      error: "internal",
+      message: "broken",
+    });
+    await open();
+    expect(await screen.findByText(/version unavailable/)).toBeInTheDocument();
+  });
+
   it("has one h1, every section and the stored values", async () => {
     api.layer.memory = 4096;
     await open();
@@ -181,7 +194,7 @@ describe("appearance and notifications", () => {
     });
     await choose("Theme", "light");
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /couldn't save it/,
+      /couldn't save it\. X\./,
     );
     expect(document.documentElement.dataset["theme"]).toBe("light");
   });

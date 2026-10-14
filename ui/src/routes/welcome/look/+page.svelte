@@ -17,16 +17,20 @@
     if (!isThemeChoice(value)) return;
     saved = null;
     problem = null;
-    if (await theme.set(value)) saved = "Theme saved.";
-    else problem = "The theme changed here but puddle couldn't save it.";
+    const result = await theme.set(value);
+    if (result.ok) saved = "Theme saved.";
+    else
+      problem = `The theme changed here but puddle couldn't save it. ${result.message}`;
   }
 
   async function chooseDensity(value: string) {
     if (!isDensityChoice(value)) return;
     saved = null;
     problem = null;
-    if (await density.set(value)) saved = "Density saved.";
-    else problem = "The density changed here but puddle couldn't save it.";
+    const result = await density.set(value);
+    if (result.ok) saved = "Density saved.";
+    else
+      problem = `The density changed here but puddle couldn't save it. ${result.message}`;
   }
 </script>
 

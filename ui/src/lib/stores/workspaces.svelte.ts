@@ -22,6 +22,7 @@ import {
   type Workspace,
 } from "#lib/workspaces/model.ts";
 import { live, type LiveSource } from "./live.svelte.ts";
+import { readFailure, SERVICE_DOWN } from "./read-failure.ts";
 
 export type NewWorkspace = components["schemas"]["NewWorkspaceRequest"];
 export type AttachMode = components["schemas"]["AttachMode"];
@@ -85,6 +86,8 @@ export function fieldOf(message: string): Field {
 export class WorkspaceStore {
   list = $state.raw<Workspace[]>([]);
   status = $state<Status>("loading");
+  /** Why the last read of the list failed; `null` once a read works. */
+  loadError = $state<string | null>(null);
   progress = $state.raw<Record<string, Progress>>({});
   oom = $state.raw<Record<string, OomEvent>>({});
 
@@ -133,14 +136,17 @@ export class WorkspaceStore {
 
   async #load(): Promise<void> {
     try {
-      const { data } = await this.#api.GET("/api/workspaces");
+      const { data, error, response } = await this.#api.GET("/api/workspaces");
       if (data) {
         this.list = sortWorkspaces(data.workspaces);
+        this.loadError = null;
         this.status = "ready";
-      } else if (this.status === "loading") {
-        this.status = "failed";
+      } else {
+        this.loadError = readFailure(error, response);
+        if (this.status === "loading") this.status = "failed";
       }
     } catch {
+      this.loadError = SERVICE_DOWN;
       if (this.status === "loading") this.status = "failed";
     }
   }

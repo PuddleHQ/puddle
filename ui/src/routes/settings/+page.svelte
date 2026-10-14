@@ -1,11 +1,25 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
   import UnknownFields from "#lib/components/UnknownFields.svelte";
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
+  import { beforeNavigate } from "$app/navigation";
   import DirectSshDialog from "#lib/components/DirectSshDialog.svelte";
   import MicrosoftServerDialog from "#lib/components/MicrosoftServerDialog.svelte";
   import { api } from "#lib/api/client.ts";
   import { LOCAL_LABELS, type LocalCategory } from "#lib/decision/local.ts";
+  import {
+    EMPTY_DRAFT,
+    isDirty,
+    restartNames,
+    RESTART_NOTE,
+    savePatch,
+    setLayer,
+    setServer,
+    setToggle,
+    setUi,
+    type Draft,
+    type LayerKey,
+  } from "#lib/settings/draft.ts";
   import {
     CLOSE_OPTIONS,
     LOCAL_EXPLAIN,
@@ -15,8 +29,10 @@
     serverNote,
     serverOf,
     type CloseBehaviour,
+    type GlobalView,
     type Layer,
     type ServerChoice,
+    type Ui,
   } from "#lib/settings/model.ts";
   import { globalSettings as store } from "#lib/stores/global-settings.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
@@ -70,62 +86,115 @@
       .finally(() => (versionAsked = true));
   });
 
-  /** Saves one change; when the API refuses it the control goes back to what is stored. */
-  async function save(
-    patch: Parameters<typeof store.save>[0],
-    what: string,
-    undo: () => void,
-  ): Promise<void> {
+  /** The edits not saved yet; Save sends them as one change, Discard drops them. */
+  let draft = $state.raw<Draft>(EMPTY_DRAFT);
+  const dirty = $derived(isDirty(draft));
+  let saving = $state(false);
+
+  /** Replaces the draft after an edit; any earlier "saved" or "refused" line is no longer true. */
+  function edit(next: Draft) {
+    draft = next;
     saved = null;
     problem = null;
-    const result = await store.save(patch);
+  }
+
+  /** Puts the theme and density the settings hold back on screen (an unsaved preview ends). */
+  function showStored() {
+    const view = store.view;
+    if (!view) return;
+    const stored = view.ui.theme ?? "system";
+    if (isThemeChoice(stored)) theme.preview(stored);
+    const density_ = view.ui.density ?? "comfortable";
+    if (isDensityChoice(density_)) density.preview(density_);
+  }
+
+  function discard() {
+    draft = EMPTY_DRAFT;
+    graceError = null;
+    saved = null;
+    problem = null;
+    showStored();
+  }
+
+  async function saveAll() {
+    const view = store.view;
+    if (!view || !dirty || graceError || saving) return;
+    saving = true;
+    saved = null;
+    problem = null;
+    const names = restartNames(draft);
+    const result = await store.save(savePatch(view, draft));
+    saving = false;
     if (result.ok) {
-      saved = `${what} saved.`;
+      draft = EMPTY_DRAFT;
+      saved =
+        names.length > 0
+          ? `Settings saved. ${names.join(" and ")} apply when a workspace next starts.`
+          : "Settings saved.";
     } else {
+      // The draft stays, so nothing typed is lost; Discard goes back to what is stored.
       problem = result.message;
-      undo();
     }
   }
 
-  const layerPatch = (patch: Partial<Layer>, what: string, undo: () => void) =>
-    save({ layer: patch }, what, undo);
+  beforeNavigate((navigation) => {
+    if (!dirty || navigation.willUnload) return;
+    navigation.cancel();
+    problem = "You have unsaved changes. Save or discard them first.";
+  });
 
-  async function chooseTheme(select: HTMLSelectElement) {
+  onDestroy(() => {
+    // Leaving with a previewed theme must not leave it on screen.
+    if (isDirty(draft)) showStored();
+  });
+
+  const layerValue = <K extends LayerKey>(
+    key: K,
+    stored: NonNullable<Layer[K]>,
+  ) => (draft.layer[key] ?? stored) as NonNullable<Layer[K]>;
+  const editLayer = <K extends LayerKey>(
+    key: K,
+    value: NonNullable<Layer[K]>,
+    stored: NonNullable<Layer[K]>,
+  ) => edit(setLayer(draft, key, value, stored));
+  /** What the control shows: the unsaved edit, else what is stored, else puddle's default. */
+  const uiValue = <K extends keyof Ui>(key: K, fallback: NonNullable<Ui[K]>) =>
+    (draft.ui[key] ?? store.view?.ui[key] ?? fallback) as NonNullable<Ui[K]>;
+
+  const editUi = <K extends keyof Ui>(
+    key: K,
+    value: NonNullable<Ui[K]>,
+    stored: NonNullable<Ui[K]>,
+  ) => edit(setUi(draft, key, value, stored));
+
+  function chooseTheme(select: HTMLSelectElement) {
     const value = select.value;
-    if (!isThemeChoice(value)) return;
-    saved = null;
-    problem = null;
-    const result = await theme.set(value);
-    if (result.ok) saved = "Theme saved.";
-    else
-      problem = `The theme changed here but puddle couldn't save it. ${result.message}`;
+    const view = store.view;
+    if (!isThemeChoice(value) || !view) return;
+    theme.preview(value);
+    edit(setUi(draft, "theme", value, view.ui.theme ?? "system"));
   }
 
-  async function chooseDensity(select: HTMLSelectElement) {
+  function chooseDensity(select: HTMLSelectElement) {
     const value = select.value;
-    if (!isDensityChoice(value)) return;
-    saved = null;
-    problem = null;
-    const result = await density.set(value);
-    if (result.ok) saved = "Density saved.";
-    else
-      problem = `The density changed here but puddle couldn't save it. ${result.message}`;
+    const view = store.view;
+    if (!isDensityChoice(value) || !view) return;
+    density.preview(value);
+    edit(setUi(draft, "density", value, view.ui.density ?? "comfortable"));
   }
 
-  async function chooseServer(select: HTMLSelectElement) {
+  function chooseServer(select: HTMLSelectElement) {
     const view = store.view;
     const consent = store.consents?.vscode_server;
     if (!view || !consent) return;
     const choice = select.value as ServerChoice;
     if (choice === "microsoft" && needsMicrosoftConsent(consent)) {
-      select.value = serverOf(view);
+      select.value = shownServer(view);
       popupError = null;
       popupOpen = true;
       return;
     }
-    await save({ server: { server: choice } }, "Server", () => {
-      select.value = serverOf(view);
-    });
+    edit(setServer(draft, "server", choice, serverOf(view)));
   }
 
   async function accept(telemetry: boolean) {
@@ -135,6 +204,8 @@
     popupBusy = false;
     if (result.ok) {
       popupOpen = false;
+      // The popup saved the server and the telemetry choice itself: no draft of those remains.
+      draft = { ...draft, server: {} };
       saved = "Microsoft's server chosen.";
       toasts.push(
         "Consent recorded. puddle downloads the server the next time you open browser VS Code.",
@@ -144,17 +215,19 @@
     }
   }
 
-  async function saveGrace(input: HTMLInputElement) {
+  function editGrace(input: HTMLInputElement, stored: number) {
     const parsed = parseGrace(input.value);
     if (!parsed.ok) {
       graceError = parsed.message;
       return;
     }
     graceError = null;
-    await layerPatch({ reconnection_grace: parsed.secs }, "Grace", () => {
-      input.value = String(store.view?.effective.reconnection_grace.value);
-    });
+    editLayer("reconnection_grace", parsed.secs, stored);
   }
+
+  /** The server the select shows: the draft's choice, else the stored one. */
+  const shownServer = (view: GlobalView): ServerChoice =>
+    draft.server.server ?? serverOf(view);
 
   async function loadNotices() {
     if (notices !== null || noticesFailed) return;
@@ -174,11 +247,6 @@
   Global values. A workspace can override most of them in its own Settings tab.
 </p>
 
-<div class="status" aria-live="polite">
-  {#if saved}<p class="saved">{saved}</p>{/if}
-  {#if problem}<p class="error" role="alert">{problem}</p>{/if}
-</div>
-
 {#if store.status === "loading" && !store.view}
   <p class="muted">Loading settings&hellip;</p>
 {:else if store.status === "newer"}
@@ -193,7 +261,7 @@
 {:else}
   {@const view = store.view}
   {@const eff = view.effective}
-  {@const server = serverOf(view)}
+  {@const server = shownServer(view)}
   {@const consent = store.consents.vscode_server}
   <UnknownFields fields={view.unknown_fields} />
   <div class="layout">
@@ -213,7 +281,7 @@
           <select
             id="set-theme"
             value={theme.choice}
-            onchange={(e) => void chooseTheme(e.currentTarget)}
+            onchange={(e) => chooseTheme(e.currentTarget)}
           >
             <option value="system">System</option>
             <option value="light">Light</option>
@@ -231,7 +299,7 @@
           <select
             id="set-density"
             value={density.choice}
-            onchange={(e) => void chooseDensity(e.currentTarget)}
+            onchange={(e) => chooseDensity(e.currentTarget)}
           >
             <option value="comfortable">Comfortable</option>
             <option value="compact">Compact</option>
@@ -253,17 +321,13 @@
           <input
             id="set-notify"
             type="checkbox"
-            checked={view.ui.notifications ?? true}
-            onchange={(e) => {
-              const box = e.currentTarget;
-              void save(
-                { ui: { notifications: box.checked } },
-                "Notifications",
-                () => {
-                  box.checked = view.ui.notifications ?? true;
-                },
-              );
-            }}
+            checked={uiValue("notifications", true)}
+            onchange={(e) =>
+              editUi(
+                "notifications",
+                e.currentTarget.checked,
+                view.ui.notifications ?? true,
+              )}
           />
         </div>
         <div class="setting">
@@ -274,13 +338,9 @@
           <input
             id="set-sound"
             type="checkbox"
-            checked={view.ui.sound ?? false}
-            onchange={(e) => {
-              const box = e.currentTarget;
-              void save({ ui: { sound: box.checked } }, "Sound", () => {
-                box.checked = view.ui.sound ?? false;
-              });
-            }}
+            checked={uiValue("sound", false)}
+            onchange={(e) =>
+              editUi("sound", e.currentTarget.checked, view.ui.sound ?? false)}
           />
         </div>
         <div class="setting">
@@ -293,17 +353,13 @@
           </div>
           <select
             id="set-close"
-            value={view.ui.close_behaviour ?? "tray"}
-            onchange={(e) => {
-              const select = e.currentTarget;
-              void save(
-                { ui: { close_behaviour: select.value as CloseBehaviour } },
-                "Closing the window",
-                () => {
-                  select.value = view.ui.close_behaviour ?? "tray";
-                },
-              );
-            }}
+            value={uiValue("close_behaviour", "tray")}
+            onchange={(e) =>
+              editUi(
+                "close_behaviour",
+                e.currentTarget.value as CloseBehaviour,
+                view.ui.close_behaviour ?? "tray",
+              )}
           >
             {#each CLOSE_OPTIONS as option (option.value)}
               <option value={option.value}>{option.label}</option>
@@ -317,23 +373,20 @@
         <div class="setting">
           <div class="grow">
             <label for="set-memory">Default memory</label>
+            <span class="restart">{RESTART_NOTE}</span>
             <p class="desc">
-              Applies the next time a workspace without its own value starts.
+              Used by every workspace that has no value of its own.
             </p>
           </div>
           <select
             id="set-memory"
-            value={String(eff.memory.value)}
-            onchange={(e) => {
-              const select = e.currentTarget;
-              void layerPatch(
-                { memory: Number(select.value) },
-                "Default memory",
-                () => {
-                  select.value = String(eff.memory.value);
-                },
-              );
-            }}
+            value={String(layerValue("memory", eff.memory.value))}
+            onchange={(e) =>
+              editLayer(
+                "memory",
+                Number(e.currentTarget.value),
+                eff.memory.value,
+              )}
           >
             {#each memorySizes(eff.memory.value) as size (size.value)}
               <option value={String(size.value)}>{size.label}</option>
@@ -353,24 +406,23 @@
             id="set-direct-ssh"
             type="checkbox"
             aria-describedby="set-direct-ssh-desc"
-            checked={eff.direct_ssh.value}
+            checked={layerValue("direct_ssh", eff.direct_ssh.value)}
             onchange={(e) => {
               const box = e.currentTarget;
               if (box.checked) {
-                // Turning it on says the trust text first; the dialog saves.
-                box.checked = eff.direct_ssh.value;
+                // Turning it on says the trust text first; the dialog's button sets the draft.
+                box.checked = layerValue("direct_ssh", eff.direct_ssh.value);
                 trustOpen = true;
                 return;
               }
-              void layerPatch({ direct_ssh: false }, DIRECT_SSH_LABEL, () => {
-                box.checked = eff.direct_ssh.value;
-              });
+              editLayer("direct_ssh", false, eff.direct_ssh.value);
             }}
           />
         </div>
         <div class="setting">
           <div class="grow">
             <label for="set-capture">Keep logins made in workspaces</label>
+            <span class="restart">{RESTART_NOTE}</span>
             <p class="desc" id="set-capture-desc">
               When you sign in to Claude Code, GitHub or Copilot inside a
               workspace, puddle keeps the real token on this computer and the
@@ -384,17 +436,13 @@
             id="set-capture"
             type="checkbox"
             aria-describedby="set-capture-desc"
-            checked={eff.capture_logins.value}
-            onchange={(e) => {
-              const box = e.currentTarget;
-              void layerPatch(
-                { capture_logins: box.checked },
-                "Login capture",
-                () => {
-                  box.checked = eff.capture_logins.value;
-                },
-              );
-            }}
+            checked={layerValue("capture_logins", eff.capture_logins.value)}
+            onchange={(e) =>
+              editLayer(
+                "capture_logins",
+                e.currentTarget.checked,
+                eff.capture_logins.value,
+              )}
           />
         </div>
       </section>
@@ -442,22 +490,17 @@
             <input
               id="set-local-{category}"
               type="checkbox"
-              checked={eff.local_toggles[category].value}
-              onchange={(e) => {
-                const box = e.currentTarget;
-                void layerPatch(
-                  {
-                    local_toggles: {
-                      ...view.workspace_defaults.local_toggles,
-                      [category]: box.checked,
-                    },
-                  },
-                  LOCAL_LABELS[category],
-                  () => {
-                    box.checked = eff.local_toggles[category].value;
-                  },
-                );
-              }}
+              checked={draft.toggles[category] ??
+                eff.local_toggles[category].value}
+              onchange={(e) =>
+                edit(
+                  setToggle(
+                    draft,
+                    category,
+                    e.currentTarget.checked,
+                    eff.local_toggles[category].value,
+                  ),
+                )}
             />
           </div>
         {/each}
@@ -472,17 +515,16 @@
           <input
             id="set-wild"
             type="checkbox"
-            checked={eff.wildcards_reach_local.value}
-            onchange={(e) => {
-              const box = e.currentTarget;
-              void layerPatch(
-                { wildcards_reach_local: box.checked },
-                "Suffix rules",
-                () => {
-                  box.checked = eff.wildcards_reach_local.value;
-                },
-              );
-            }}
+            checked={layerValue(
+              "wildcards_reach_local",
+              eff.wildcards_reach_local.value,
+            )}
+            onchange={(e) =>
+              editLayer(
+                "wildcards_reach_local",
+                e.currentTarget.checked,
+                eff.wildcards_reach_local.value,
+              )}
           />
         </div>
       </section>
@@ -503,7 +545,7 @@
             id="set-server"
             aria-describedby="set-server-note"
             value={server}
-            onchange={(e) => void chooseServer(e.currentTarget)}
+            onchange={(e) => chooseServer(e.currentTarget)}
           >
             <option value="code_server">code-server (bundled)</option>
             <option value="microsoft">Microsoft's VS Code server</option>
@@ -520,17 +562,18 @@
             <input
               id="set-ms-telemetry"
               type="checkbox"
-              checked={view.vscode_server.telemetry ?? false}
-              onchange={(e) => {
-                const box = e.currentTarget;
-                void save(
-                  { server: { telemetry: box.checked } },
-                  "Telemetry",
-                  () => {
-                    box.checked = view.vscode_server.telemetry ?? false;
-                  },
-                );
-              }}
+              checked={draft.server.telemetry ??
+                view.vscode_server.telemetry ??
+                false}
+              onchange={(e) =>
+                edit(
+                  setServer(
+                    draft,
+                    "telemetry",
+                    e.currentTarget.checked,
+                    view.vscode_server.telemetry ?? false,
+                  ),
+                )}
             />
           </div>
         {/if}
@@ -544,17 +587,18 @@
           <input
             id="set-update"
             type="checkbox"
-            checked={view.vscode_server.auto_update ?? true}
-            onchange={(e) => {
-              const box = e.currentTarget;
-              void save(
-                { server: { auto_update: box.checked } },
-                "Updates",
-                () => {
-                  box.checked = view.vscode_server.auto_update ?? true;
-                },
-              );
-            }}
+            checked={draft.server.auto_update ??
+              view.vscode_server.auto_update ??
+              true}
+            onchange={(e) =>
+              edit(
+                setServer(
+                  draft,
+                  "auto_update",
+                  e.currentTarget.checked,
+                  view.vscode_server.auto_update ?? true,
+                ),
+              )}
           />
         </div>
         <div class="setting">
@@ -574,8 +618,11 @@
             class="narrow"
             aria-describedby="set-grace-desc"
             aria-invalid={graceError ? "true" : undefined}
-            value={String(eff.reconnection_grace.value)}
-            onchange={(e) => void saveGrace(e.currentTarget)}
+            value={String(
+              layerValue("reconnection_grace", eff.reconnection_grace.value),
+            )}
+            onchange={(e) =>
+              editGrace(e.currentTarget, eff.reconnection_grace.value)}
           />
         </div>
         <div class="setting">
@@ -586,13 +633,13 @@
           <input
             id="set-zoom"
             type="checkbox"
-            checked={eff.zoom_hotkeys.value}
-            onchange={(e) => {
-              const box = e.currentTarget;
-              void layerPatch({ zoom_hotkeys: box.checked }, "Zoom", () => {
-                box.checked = eff.zoom_hotkeys.value;
-              });
-            }}
+            checked={layerValue("zoom_hotkeys", eff.zoom_hotkeys.value)}
+            onchange={(e) =>
+              editLayer(
+                "zoom_hotkeys",
+                e.currentTarget.checked,
+                eff.zoom_hotkeys.value,
+              )}
           />
         </div>
         <div class="setting">
@@ -605,17 +652,13 @@
           </div>
           <select
             id="set-clip"
-            value={eff.clipboard_read.value}
-            onchange={(e) => {
-              const select = e.currentTarget;
-              void layerPatch(
-                { clipboard_read: select.value as "ask" | "allow" | "deny" },
-                "Clipboard",
-                () => {
-                  select.value = eff.clipboard_read.value;
-                },
-              );
-            }}
+            value={layerValue("clipboard_read", eff.clipboard_read.value)}
+            onchange={(e) =>
+              editLayer(
+                "clipboard_read",
+                e.currentTarget.value as "ask" | "allow" | "deny",
+                eff.clipboard_read.value,
+              )}
           >
             <option value="ask">Ask once per workspace</option>
             <option value="allow">Always allow</option>
@@ -672,6 +715,39 @@
           {/if}
         </details>
       </section>
+
+      <div class="savebar" role="group" aria-label="Save settings">
+        <div class="status" aria-live="polite">
+          {#if problem}
+            <p class="error" role="alert">{problem}</p>
+          {:else if graceError && dirty}
+            <p class="error">Fix the reconnection grace to save.</p>
+          {:else if saved}
+            <p class="saved">{saved}</p>
+          {:else if dirty}
+            <p>
+              You have unsaved changes.
+              {#if restartNames(draft).length > 0}{restartNames(draft).join(
+                  " and ",
+                )} apply when a workspace next starts.{/if}
+            </p>
+          {:else}
+            <p class="muted">No unsaved changes.</p>
+          {/if}
+        </div>
+        <button
+          type="button"
+          class="btn"
+          disabled={!dirty || saving}
+          onclick={discard}>Discard</button
+        >
+        <button
+          type="button"
+          class="btn primary"
+          disabled={!dirty || saving || graceError !== null}
+          onclick={() => void saveAll()}>Save</button
+        >
+      </div>
     </div>
   </div>
 {/if}
@@ -679,8 +755,10 @@
 <DirectSshDialog
   bind:open={trustOpen}
   words={TRUST_WORDS_GLOBAL}
-  onConfirm={() =>
-    void layerPatch({ direct_ssh: true }, DIRECT_SSH_LABEL, () => undefined)}
+  onConfirm={() => {
+    const view = store.view;
+    if (view) editLayer("direct_ssh", true, view.effective.direct_ssh.value);
+  }}
 />
 
 <MicrosoftServerDialog
@@ -703,12 +781,28 @@
     margin: 0 0 var(--space-3);
   }
   .status {
-    min-height: 1.5rem;
-    margin-bottom: var(--space-2);
+    flex: 1;
+    min-width: 0;
   }
   .status p,
   .desc {
     margin: 0;
+  }
+  .savebar {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    background: var(--color-surface-raised);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+  }
+  .restart {
+    margin-left: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
   }
   .desc {
     font-size: var(--text-sm);

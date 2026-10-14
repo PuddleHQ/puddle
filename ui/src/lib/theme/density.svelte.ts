@@ -51,6 +51,11 @@ class DensityState {
       : { ok: false, message: sentence(result.message) };
   }
 
+  /** Applies a choice without storing it: the Settings screen shows it until Save or Discard. */
+  preview(choice: DensityChoice): void {
+    this.#apply(choice);
+  }
+
   #apply(choice: DensityChoice): void {
     this.choice = choice;
     saveDensity(browserStorage(), choice);

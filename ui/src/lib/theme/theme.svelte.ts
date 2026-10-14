@@ -51,6 +51,11 @@ class ThemeState {
       : { ok: false, message: sentence(result.message) };
   }
 
+  /** Applies a choice without storing it: the Settings screen shows it until Save or Discard. */
+  preview(choice: ThemeChoice): void {
+    this.#apply(choice);
+  }
+
   #apply(choice: ThemeChoice): void {
     this.choice = choice;
     saveTheme(browserStorage(), choice);

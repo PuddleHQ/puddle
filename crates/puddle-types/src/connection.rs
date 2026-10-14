@@ -66,7 +66,7 @@ impl fmt::Display for ConnectionOrigin {
 /// Why the proxy decided as it did (R-24). Serialised as a string: `rule`, `no_rule`, a
 /// [`BlockReason::code`] (`toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`,
 /// `local_address`, `settings_unreadable`), `policy_unavailable`, `puddle_request`, `sni_mismatch`, `guest_tls_rejected`,
-/// `suppressed`, `puddle_request_failed:<code>` or, for a request the credential rules refused on a decrypted connection, the
+/// `connection_limit`, `suppressed`, `puddle_request_failed:<code>` or, for a request the credential rules refused on a decrypted connection, the
 /// refusal's code (`push_denied`, `pull_denied`, `credential_unavailable`, ...).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -87,6 +87,9 @@ pub enum ConnectionReason {
     /// A terminated TLS connection's client refused puddle's certificate for the host (it does not
     /// trust the workspace's CA). Nothing is blocked: the decision of the rule stands.
     GuestTlsRejected,
+    /// The workspace already had its limit of open connections, so this one was refused with a
+    /// `503` before the rules were asked.
+    ConnectionLimit,
     /// Summary of connection records over the per-workspace limit (R-26).
     Suppressed,
     /// On a decrypted connection the credential rules refused a request, or the server's `401`
@@ -109,6 +112,7 @@ impl fmt::Display for ConnectionReason {
             Self::PolicyUnavailable => f.write_str("policy_unavailable"),
             Self::PuddleRequest => f.write_str("puddle_request"),
             Self::SniMismatch => f.write_str("sni_mismatch"),
+            Self::ConnectionLimit => f.write_str("connection_limit"),
             Self::GuestTlsRejected => f.write_str("guest_tls_rejected"),
             Self::Suppressed => f.write_str("suppressed"),
             Self::Refused(code) => f.write_str(code),
@@ -401,6 +405,7 @@ mod tests {
             ),
             (ConnectionReason::PolicyUnavailable, "policy_unavailable"),
             (ConnectionReason::SniMismatch, "sni_mismatch"),
+            (ConnectionReason::ConnectionLimit, "connection_limit"),
             (ConnectionReason::GuestTlsRejected, "guest_tls_rejected"),
             (ConnectionReason::Suppressed, "suppressed"),
             (ConnectionReason::Refused("push_denied"), "push_denied"),

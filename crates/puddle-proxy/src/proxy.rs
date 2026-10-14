@@ -482,16 +482,7 @@ async fn serve(handler: &WorkspaceHandler, stream: GuestStream) {
     let (stream, counts) = Counted::new(stream);
     let mut reader = BufReader::new(stream);
     let Ok(_permit) = Arc::clone(&handler.streams).try_acquire_owned() else {
-        tracing::warn!(
-            limit = proxy.config.max_streams_per_workspace,
-            "connection refused: workspace over its connection limit"
-        );
-        let limit = proxy.config.max_streams_per_workspace;
-        let refusal = Refusal::new(
-            "503 Service Unavailable",
-            format!("too many open connections from this workspace (limit {limit})"),
-        );
-        refuse(reader.get_mut(), &refusal).await;
+        refuse_over_limit(handler, reader).await;
         return;
     };
     let head = match read_request(&mut reader, proxy.config.head_timeout).await {
@@ -520,6 +511,45 @@ async fn serve(handler: &WorkspaceHandler, stream: GuestStream) {
     event.bytes_up = counts.read();
     event.bytes_down = counts.written();
     proxy.record(event).await;
+}
+
+/// How long a connection over the workspace's limit may take to say where it was going. Short:
+/// it holds a task and a descriptor but no slot.
+const OVER_LIMIT_HEAD_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Refuses a connection over the workspace's limit with a `503` that says why. The head is read
+/// first (briefly) so the refusal reaches the audit with its destination: the user then sees
+/// which connections were turned away, not just a warning in the log.
+async fn refuse_over_limit(handler: &WorkspaceHandler, mut reader: GuestReader) {
+    let proxy = &handler.proxy;
+    let limit = proxy.config.max_streams_per_workspace;
+    tracing::warn!(
+        limit,
+        workspace = %handler.workspace,
+        "connection refused: workspace over its connection limit"
+    );
+    let wait = proxy.config.head_timeout.min(OVER_LIMIT_HEAD_TIMEOUT);
+    let target = match read_request(&mut reader, wait).await {
+        Ok(head) => parse_request(&head).ok().map(|(target, ..)| target),
+        Err(_) => None,
+    };
+    let refusal = Refusal::new(
+        "503 Service Unavailable",
+        format!(
+            "too many open connections from this workspace (limit {limit}); \
+             retry when some have closed"
+        ),
+    );
+    refuse(reader.get_mut(), &refusal).await;
+    if let Some(Target { host, port }) = target {
+        let request = EgressRequest::new(handler.workspace.clone(), host, port);
+        let event = ConnectionEvent::new(
+            &request,
+            ConnectionDecision::Blocked,
+            ConnectionReason::ConnectionLimit,
+        );
+        proxy.record(event).await;
+    }
 }
 
 /// Decides, connects and relays one request whose destination is known; returns what the audit

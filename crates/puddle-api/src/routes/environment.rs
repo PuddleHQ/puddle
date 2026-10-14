@@ -189,7 +189,7 @@ pub(crate) async fn list_global_env(
 pub(crate) async fn put_global_env(
     State(state): State<AppState>,
     Path(name): Path<String>,
-    crate::extract::Json(body): crate::extract::Json<EnvSetRequest>,
+    crate::extract::SecretJson(body): crate::extract::SecretJson<EnvSetRequest>,
 ) -> Result<Json<EnvVariable>, ApiError> {
     Ok(Json(set(&state, EnvScope::Global, &name, body).await?))
 }
@@ -269,7 +269,7 @@ pub(crate) async fn list_workspace_env(
 pub(crate) async fn put_workspace_env(
     State(state): State<AppState>,
     Path((id, name)): Path<(String, String)>,
-    crate::extract::Json(body): crate::extract::Json<EnvSetRequest>,
+    crate::extract::SecretJson(body): crate::extract::SecretJson<EnvSetRequest>,
 ) -> Result<Json<EnvVariable>, ApiError> {
     let workspace = workspace(&state, &id).await?;
     Ok(Json(

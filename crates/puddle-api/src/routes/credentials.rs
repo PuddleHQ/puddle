@@ -88,7 +88,7 @@ pub(crate) async fn check_credential(
 )]
 pub(crate) async fn store_token(
     State(state): State<AppState>,
-    crate::extract::Json(body): crate::extract::Json<StoreTokenRequest>,
+    crate::extract::SecretJson(body): crate::extract::SecretJson<StoreTokenRequest>,
 ) -> Result<(StatusCode, Json<StoredToken>), ApiError> {
     let (scope, token) = body.into_parts()?;
     let source = state.credentials.store_token(scope, token).await?;

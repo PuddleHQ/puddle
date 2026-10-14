@@ -39,5 +39,11 @@ for g in $all; do
         [ "$(printf '%s\n' "$all" | grep -nx "$need" | cut -d: -f1)" -lt "$(printf '%s\n' "$all" | grep -nx "$g" | cut -d: -f1)" ] ||
         fail "$g waits for $need later in its own stream"
 done
+# The path-scoping self-test is part of `hooks`, which `fast` and so every set holds: a change to
+# ci/scope.sh or a result job cannot reach develop untested.
+grep -qx hooks <<EOF || fail "fast lacks hooks"
+$fast
+EOF
+grep -q 'ci/scope-test.sh' "$here/scripts/check.sh" || fail "the hooks gate does not run ci/scope-test.sh"
 # The fast gates run first and alone, so none of them may need a stream (they are the serial prefix).
 echo "check-sets-test: ok"

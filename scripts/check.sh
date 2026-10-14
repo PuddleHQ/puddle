@@ -134,7 +134,7 @@ run_gate() {
     hooks)
         scripts/pre-push-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
             scripts/target-names-test.sh --self-test && scripts/target-names-test.sh &&
-            ci/fetch-msb-test.sh && ci/check-runtime-layout-test.sh
+            ci/fetch-msb-test.sh && ci/check-runtime-layout-test.sh && ci/scope-test.sh
         ;;
     git-env)
         # Through the coverage gate's build (same arguments), so it compiles no test binary of its own.

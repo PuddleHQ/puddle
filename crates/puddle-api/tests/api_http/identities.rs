@@ -666,3 +666,128 @@ async fn the_default_switches_are_read_changed_inherited_and_overridden_per_work
     assert_eq!(bad.status, 422, "{}", bad.body);
     api.running.shutdown().await;
 }
+
+fn pasted(label: &str, id: &str, owners: &[&str], rest: bool) -> Value {
+    let mut body = body(label, owners, rest);
+    body["credentials"][0]["source"] =
+        json!({"kind": "stored", "id": id, "host": "github.com", "org": null});
+    body
+}
+
+async fn paste(api: &Api) -> String {
+    let reply = api
+        .send(
+            "POST",
+            "/api/credentials/stored",
+            Some(&json!({"host": "github.com", "token": "CANARY-token-1"})),
+        )
+        .await;
+    assert_eq!(reply.status, 201, "{}", reply.body);
+    reply.json()["source"]["id"].as_str().unwrap().to_owned()
+}
+
+#[tokio::test]
+async fn deleting_an_identity_removes_its_pasted_token_unless_another_identity_reads_it() {
+    let api = start().await;
+    let (alone, shared) = (paste(&api).await, paste(&api).await);
+    let one = api
+        .send(
+            "POST",
+            "/api/identities",
+            Some(&pasted("One", &alone, &["a"], false)),
+        )
+        .await;
+    let two = api
+        .send(
+            "POST",
+            "/api/identities",
+            Some(&pasted("Two", &shared, &["b"], false)),
+        )
+        .await;
+    let three = api
+        .send(
+            "POST",
+            "/api/identities",
+            Some(&pasted("Three", &shared, &["c"], false)),
+        )
+        .await;
+    let ids: Vec<i64> = [&one, &two, &three]
+        .iter()
+        .map(|r| r.json()["id"].as_i64().unwrap())
+        .collect();
+    let gh = make(&api, "Gh", &["d"], false).await;
+    assert_eq!(api.credentials.tokens().len(), 2);
+
+    // A `gh` identity holds no token; deleting it touches none.
+    assert_eq!(
+        api.send("DELETE", &format!("/api/identities/{gh}"), None)
+            .await
+            .status,
+        200
+    );
+    assert_eq!(api.credentials.tokens().len(), 2);
+
+    assert_eq!(
+        api.send("DELETE", &format!("/api/identities/{}", ids[0]), None)
+            .await
+            .status,
+        200
+    );
+    assert_eq!(api.credentials.tokens(), std::slice::from_ref(&shared));
+    // The other identity still reads the shared one.
+    assert_eq!(
+        api.send("DELETE", &format!("/api/identities/{}", ids[1]), None)
+            .await
+            .status,
+        200
+    );
+    assert_eq!(api.credentials.tokens(), std::slice::from_ref(&shared));
+    assert_eq!(
+        api.send("DELETE", &format!("/api/identities/{}", ids[2]), None)
+            .await
+            .status,
+        200
+    );
+    assert_eq!(api.credentials.tokens().len(), 0);
+    // An identity that is not there removes nothing and says so.
+    assert_eq!(
+        api.send("DELETE", &format!("/api/identities/{}", ids[2]), None)
+            .await
+            .status,
+        404
+    );
+}
+
+#[tokio::test]
+async fn an_identity_is_deleted_even_when_the_credential_store_will_not_give_up_its_token() {
+    let vault = std::sync::Arc::new(puddle_secrets::MemoryStore::new());
+    let real =
+        puddle_api::HostCredentials::new(puddle_secrets::ToolPaths::new(None, None), vault.clone());
+    let api = crate::common::start_with_credentials(std::sync::Arc::new(real)).await;
+    let token = paste(&api).await;
+    let made = api
+        .send(
+            "POST",
+            "/api/identities",
+            Some(&pasted("One", &token, &["a"], false)),
+        )
+        .await;
+    let id = made.json()["id"].as_i64().unwrap();
+
+    vault.break_it();
+    let gone = api
+        .send("DELETE", &format!("/api/identities/{id}"), None)
+        .await;
+    assert_eq!(gone.status, 200, "{}", gone.body);
+    assert_eq!(api.get(&format!("/api/identities/{id}")).await.status, 404);
+    vault.heal();
+    // The token is still there: nothing but the sweep at the next start will find it.
+    assert_eq!(vault.ids(), std::slice::from_ref(&token));
+
+    // Removing it through the credentials route works once the store answers.
+    let forget = api
+        .send("DELETE", &format!("/api/credentials/stored/{token}"), None)
+        .await;
+    assert_eq!(forget.status, 204);
+    assert_eq!(vault.ids().len(), 0);
+}

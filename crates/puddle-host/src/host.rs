@@ -28,7 +28,7 @@ use puddle_lifecycle::{Inventory, Lifecycle, ShutdownReport, adopt_workspaces, r
 use puddle_netpolicy::{LocalAccess, NetPolicy, PuddleEndpoints};
 use puddle_proxy::{Proxy, ProxyUrl, PullProxy, PullRoute, Terminations, Upstream};
 use puddle_repos::{HostApi, Repos};
-use puddle_secrets::{ChunkedStore, KeyringStore, SecretCache, SecretStore, Sources, ToolPaths};
+use puddle_secrets::{SecretCache, SecretStore, Sources, ToolPaths};
 use puddle_settings::resolve;
 use puddle_store::{DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock};
 use puddle_types::{ConnectionLog, EventSink, Problem, Problems, WorkspaceName, WorkspaceStatus};
@@ -434,7 +434,8 @@ impl<R: Runtime + Clone> Host<R> {
         let vault: Arc<dyn SecretStore> = options
             .secret_store
             .clone()
-            .unwrap_or_else(|| Arc::new(ChunkedStore::new(KeyringStore)));
+            .unwrap_or_else(crate::vault::os_vault);
+        crate::vault::sweep_in_background(vault.clone(), store.clone());
         let injecting = Injecting::build(&options, &vault, &store, &events, &roots)?;
 
         // The way out: the company network (discovery, sign-in as the user, then Basic) for the

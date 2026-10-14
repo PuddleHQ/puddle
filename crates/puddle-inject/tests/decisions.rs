@@ -505,7 +505,7 @@ async fn a_request_no_identity_covers_goes_out_as_the_workspace_sent_it() {
         )
         .await;
     assert!(
-        matches!(decision, InjectDecision::PassThrough),
+        matches!(decision, InjectDecision::PassThroughNoting(_)),
         "{decision:?}"
     );
     assert_eq!(w.credentials.reads(), 0);
@@ -518,7 +518,130 @@ async fn a_request_no_identity_covers_goes_out_as_the_workspace_sent_it() {
             &[],
         )
         .await;
-    assert!(matches!(other, InjectDecision::PassThrough));
+    assert!(matches!(other, InjectDecision::PassThroughNoting(_)));
+}
+
+const PRIVATE: &str = "/someone/private.git/info/refs?service=git-upload-pack";
+
+/// Lets `by` pass in half-second steps, so the notice tasks that were due run in their turn.
+async fn later(by: Duration) {
+    for _ in 0..by.as_millis() / 500 {
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_millis(500)).await;
+        tokio::task::yield_now().await;
+    }
+}
+
+/// The server answers the request `decision` stands for with `401`.
+fn answered_401(decision: &InjectDecision) {
+    let InjectDecision::PassThroughNoting(unauthorized) = decision else {
+        unreachable!("{decision:?} does not note a 401");
+    };
+    assert!(
+        unauthorized.refusal().is_none(),
+        "the server's answer stands"
+    );
+}
+
+#[tokio::test]
+async fn a_401_nobody_answers_tells_the_user_no_identity_covers_the_owner() {
+    tokio::time::pause();
+    let w = World::new();
+    w.identity("Work", "github.com", &["acme"], false, "CANARY-WORK");
+    let decision = w.decide("github.com", "GET", PRIVATE, &[]).await;
+    answered_401(&decision);
+    // The tool may still retry with a credential of its own: nothing yet.
+    later(Duration::from_secs(1)).await;
+    assert_eq!(w.events.take(), []);
+    later(Duration::from_secs(4)).await;
+    assert_eq!(
+        w.events.take(),
+        [Event::GitNoIdentity {
+            workspace: w.workspace.clone(),
+            host: "github.com".into(),
+            owner: "someone".into(),
+            repo: "private".into(),
+        }]
+    );
+    // The same host again is the same notice (whatever the owner), and a later one is a new one.
+    for _ in 0..3 {
+        answered_401(&w.decide("github.com", "GET", PRIVATE, &[]).await);
+    }
+    later(Duration::from_secs(4)).await;
+    assert_eq!(w.events.take(), []);
+    later(Duration::from_secs(11)).await;
+    answered_401(&w.decide("github.com", "GET", PRIVATE, &[]).await);
+    later(Duration::from_secs(4)).await;
+    assert_eq!(w.events.take().len(), 1);
+}
+
+#[test]
+fn a_401_noted_outside_any_runtime_cannot_start_the_timer_and_says_nothing() {
+    let w = World::new();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    let decision = runtime.block_on(w.decide("github.com", "GET", PRIVATE, &[]));
+    // The proxy always runs inside one; with none, the note is dropped rather than a panic.
+    answered_401(&decision);
+    assert_eq!(w.events.take(), []);
+}
+
+#[tokio::test]
+async fn a_flood_of_owners_with_their_own_credential_is_remembered_in_bounded_memory() {
+    tokio::time::pause();
+    let w = World::new();
+    for i in 0..600 {
+        let target = format!("/owner{i}/repo.git/info/refs?service=git-upload-pack");
+        let decision = w.decide("github.com", "GET", &target, &[OWN]).await;
+        assert_eq!(decision, InjectDecision::PassThrough);
+        if i % 100 == 0 {
+            later(Duration::from_secs(5)).await;
+        }
+    }
+    // A tool that did retry lately is still told apart from one that did not.
+    answered_401(&w.decide("github.com", "GET", PRIVATE, &[]).await);
+    later(Duration::from_secs(4)).await;
+    assert_eq!(w.events.take().len(), 1);
+}
+
+#[tokio::test]
+async fn a_workspace_cycling_through_owners_is_one_notice_per_host() {
+    tokio::time::pause();
+    let w = World::new();
+    for owner in ["a", "b", "c", "d"] {
+        let target = format!("/{owner}/repo.git/info/refs?service=git-upload-pack");
+        answered_401(&w.decide("github.com", "GET", &target, &[]).await);
+    }
+    later(Duration::from_secs(5)).await;
+    assert_eq!(w.events.take().len(), 1);
+}
+
+#[tokio::test]
+async fn a_tool_that_retries_with_its_own_credential_is_not_told_off() {
+    tokio::time::pause();
+    let w = World::new();
+    answered_401(&w.decide("github.com", "GET", PRIVATE, &[]).await);
+    later(Duration::from_millis(50)).await;
+    // A token from a credential helper, `.netrc` or the address goes out as the tool sent it.
+    let retry = w.decide("github.com", "GET", PRIVATE, &[OWN]).await;
+    assert_eq!(retry, InjectDecision::PassThrough);
+    later(Duration::from_secs(10)).await;
+    assert_eq!(w.events.take(), []);
+    // Another owner's retry does not cover this one.
+    answered_401(
+        &w.decide(
+            "github.com",
+            "GET",
+            "/other/repo.git/info/refs?service=git-upload-pack",
+            &[],
+        )
+        .await,
+    );
+    let _ = w.decide("github.com", "GET", PRIVATE, &[OWN]).await;
+    later(Duration::from_secs(10)).await;
+    assert_eq!(w.events.take().len(), 1);
 }
 
 #[tokio::test]
@@ -542,7 +665,7 @@ async fn an_identity_is_picked_by_owner_and_changes_apply_at_the_next_request() 
     assert!(matches!(
         w.decide("github.com", "GET", "/acme/x.git/info/refs", &[])
             .await,
-        InjectDecision::PassThrough
+        InjectDecision::PassThroughNoting(_)
     ));
 }
 
@@ -642,7 +765,7 @@ async fn azure_devops_takes_a_pat_as_basic_an_entra_token_as_a_bearer_and_every_
             &[],
         )
         .await;
-    assert!(matches!(elsewhere, InjectDecision::PassThrough));
+    assert!(matches!(elsewhere, InjectDecision::PassThroughNoting(_)));
 }
 
 // A source that cannot supply its secret.
@@ -855,7 +978,10 @@ async fn settings_a_test_changes_by_hand_apply_to_the_next_request() {
     git.only_push_listed = false;
     settings.set(git);
     let second = injector.decide(&context, &view).await;
-    assert!(matches!(second, InjectDecision::PassThrough), "{second:?}");
+    assert!(
+        matches!(second, InjectDecision::PassThroughNoting(_)),
+        "{second:?}"
+    );
 }
 
 /// A source that answers one token and counts its reads, behind the real cache.
@@ -953,7 +1079,7 @@ async fn a_workspace_that_never_set_a_switch_is_held_to_the_global_default_live(
     assert!(
         matches!(
             injector.decide(&context, &push).await,
-            InjectDecision::PassThrough | InjectDecision::Inject { .. }
+            InjectDecision::PassThroughNoting(_) | InjectDecision::Inject { .. }
         ),
         "push list off by default"
     );

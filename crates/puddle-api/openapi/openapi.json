@@ -8506,6 +8506,41 @@
           },
           {
             "type": "object",
+            "description": "A Git host answered a workspace's request with `401` and no identity covers the owner, so\npuddle added no credential and the server's answer reached the workspace as it is. Sent\nonly when the workspace's own tool did not retry with a credential of its own soon after.\n`repo` is the table's spelling, as in [`Event::GitAccessDenied`].",
+            "required": [
+              "workspace",
+              "host",
+              "owner",
+              "repo",
+              "type"
+            ],
+            "properties": {
+              "host": {
+                "type": "string",
+                "description": "The Git host."
+              },
+              "owner": {
+                "type": "string",
+                "description": "The user or organisation no identity covers."
+              },
+              "repo": {
+                "type": "string",
+                "description": "`repo`, or `project/repo` on Azure DevOps."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "git_no_identity"
+                ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace that asked."
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "A login made inside a workspace could not be captured, or one puddle kept could not be\nused (`kind` says which). The service is one of puddle's built-in login profiles, never\nanything the guest sent. Names only, never a value.",
             "required": [
               "workspace",

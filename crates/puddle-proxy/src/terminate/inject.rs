@@ -150,20 +150,41 @@ impl Injection {
 /// does not hold. Any other request, one that carried the guest's own credentials included, gets
 /// the server's `401` as it is: it is the tool's to handle.
 #[derive(Clone)]
-pub struct Unauthorized(Arc<dyn Fn() -> InjectRefusal + Send + Sync>);
+pub struct Unauthorized(Reaction);
+
+#[derive(Clone)]
+enum Reaction {
+    Replace(Arc<dyn Fn() -> InjectRefusal + Send + Sync>),
+    Note(Arc<dyn Fn() + Send + Sync>),
+}
 
 impl Unauthorized {
     /// `answer` runs each time a `401` is replaced, so it can also forget what it cached.
     #[must_use]
     pub fn new(answer: impl Fn() -> InjectRefusal + Send + Sync + 'static) -> Self {
-        Self(Arc::new(answer))
+        Self(Reaction::Replace(Arc::new(answer)))
     }
 
-    /// The refusal to answer with now. The proxy calls it when the server's `401` arrives; so may
-    /// a test.
+    /// For a request that goes out as the guest sent it ([`InjectDecision::PassThroughNoting`]):
+    /// `note` runs each time the server answers it with `401`, and the answer reaches the guest as
+    /// it is.
     #[must_use]
-    pub fn refusal(&self) -> InjectRefusal {
-        (self.0)()
+    pub fn noting(note: impl Fn() + Send + Sync + 'static) -> Self {
+        Self(Reaction::Note(Arc::new(note)))
+    }
+
+    /// The refusal to answer with now, for an [`Unauthorized::new`]. The proxy calls it when the
+    /// server's `401` arrives; so may a test. `None` for an [`Unauthorized::noting`], after it has
+    /// run its note: the server's answer stands.
+    #[must_use]
+    pub fn refusal(&self) -> Option<InjectRefusal> {
+        match &self.0 {
+            Reaction::Replace(answer) => Some(answer()),
+            Reaction::Note(note) => {
+                note();
+                None
+            }
+        }
     }
 }
 
@@ -175,7 +196,11 @@ impl fmt::Debug for Unauthorized {
 
 impl PartialEq for Unauthorized {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+        match (&self.0, &other.0) {
+            (Reaction::Replace(a), Reaction::Replace(b)) => Arc::ptr_eq(a, b),
+            (Reaction::Note(a), Reaction::Note(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
     }
 }
 
@@ -250,6 +275,9 @@ pub enum InjectDecision {
     Inject(Injection),
     /// Forward it as the guest sent it (no credential applies to it).
     PassThrough,
+    /// As [`InjectDecision::PassThrough`], and tell `Unauthorized::noting`'s callback if the
+    /// server answers `401`. The answer is still the server's.
+    PassThroughNoting(Unauthorized),
     /// Answer the guest with this error; nothing is sent upstream.
     Refuse(InjectRefusal),
 }
@@ -282,6 +310,10 @@ impl InjectDecision {
             Self::PassThrough => Ok(Forwarding {
                 injection: None,
                 unauthorized: None,
+            }),
+            Self::PassThroughNoting(unauthorized) => Ok(Forwarding {
+                injection: None,
+                unauthorized: Some(unauthorized),
             }),
             Self::Refuse(refusal) => Err(refusal),
         }

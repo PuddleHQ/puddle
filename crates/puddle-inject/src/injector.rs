@@ -11,7 +11,9 @@
 //! 3. A request that carries its own `Authorization` goes out as it is: never replaced, never
 //!    dropped, and a `401` to it is the server's answer.
 //! 4. Otherwise the identity that covers the repository's owner supplies the credential. No
-//!    covering identity: the request goes out without one and the server's `401` is its answer. A
+//!    covering identity: the request goes out without one and the server's `401` is its answer (an
+//!    event tells the user no identity covers the owner, once the workspace's own tool has had a
+//!    moment to retry with a credential it holds). A
 //!    source that cannot supply the secret: `502` (the cache the secret is read through raises the
 //!    sign-in notice). A `401` to the credential puddle added becomes a `403` and a sign-in notice:
 //!    the workspace holds no credential to answer it with.
@@ -48,6 +50,11 @@ const NOTICE_EVERY: Duration = Duration::from_secs(10);
 /// Most notices remembered.
 const MAX_NOTICES: usize = 256;
 
+/// After the server answers a request that no identity covers with `401`, the workspace's own
+/// tool gets this long to retry with a credential it holds (a credential helper, `.netrc`, the
+/// address's user name and password) before the user is told no identity covers the owner.
+const NO_IDENTITY_GRACE: Duration = Duration::from_secs(3);
+
 /// The injector of one workspace.
 pub struct GitInjector {
     workspace: WorkspaceName,
@@ -55,6 +62,8 @@ pub struct GitInjector {
     credentials: Arc<dyn CredentialSource>,
     events: Arc<dyn EventSink>,
     notices: Arc<Notices>,
+    /// When a request of the workspace's own carrying an `Authorization` last went to each owner.
+    authed: Arc<Notices>,
 }
 
 impl fmt::Debug for GitInjector {
@@ -81,6 +90,7 @@ impl GitInjector {
             credentials,
             events,
             notices: Arc::new(Notices::default()),
+            authed: Arc::new(Notices::default()),
         }
     }
 
@@ -125,6 +135,7 @@ impl GitInjector {
             return InjectDecision::Refuse(refusal);
         }
         if request.header("authorization").is_some() {
+            self.authed.mark(owner_key(&path));
             return InjectDecision::PassThrough;
         }
         match covering(&git, &path) {
@@ -136,7 +147,9 @@ impl GitInjector {
             // name and password) is used as it would be without puddle.
             CredentialChoice::Uncovered => {
                 tracing::info!(workspace = %self.workspace, host = %path.host, owner = %path.owner, "no identity covers this owner; the request goes out without a credential");
-                InjectDecision::PassThrough
+                // A private repository answers `401`; if the tool then has no credential either,
+                // the user is told why (a public one never does).
+                InjectDecision::PassThroughNoting(self.unanswered(&path))
             }
             CredentialChoice::Ambiguous(ids) => {
                 let labels = git
@@ -286,6 +299,48 @@ impl GitInjector {
         InjectDecision::Inject(injection.on_unauthorized(self.rejected(identity, source, path)))
     }
 
+    /// What a `401` to a request no identity covers does: after [`NO_IDENTITY_GRACE`] without the
+    /// workspace's own tool retrying with a credential, an event says no identity covers the
+    /// owner. The server's answer reaches the workspace as it is.
+    fn unanswered(&self, path: &GitPath) -> Unauthorized {
+        let events = Arc::clone(&self.events);
+        let notices = Arc::clone(&self.notices);
+        let authed = Arc::clone(&self.authed);
+        let workspace = self.workspace.clone();
+        let (host, owner, repo) = (path.host.clone(), path.owner.clone(), path.repo.clone());
+        let key = owner_key(path);
+        Unauthorized::noting(move || {
+            let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+                return;
+            };
+            let asked = Instant::now();
+            let (events, notices, authed) = (
+                Arc::clone(&events),
+                Arc::clone(&notices),
+                Arc::clone(&authed),
+            );
+            let (workspace, host, owner, repo, key) = (
+                workspace.clone(),
+                host.clone(),
+                owner.clone(),
+                repo.clone(),
+                key.clone(),
+            );
+            runtime.spawn(async move {
+                tokio::time::sleep(NO_IDENTITY_GRACE).await;
+                if !authed.marked_since(&key, asked) && notices.first(format!("no_identity:{host}"))
+                {
+                    events.emit(Event::GitNoIdentity {
+                        workspace,
+                        host,
+                        owner,
+                        repo,
+                    });
+                }
+            });
+        })
+    }
+
     /// What a `401` to the credential puddle added becomes.
     fn rejected(&self, identity: &Identity, source: &SourceSpec, path: &GitPath) -> Unauthorized {
         let credentials = Arc::clone(&self.credentials);
@@ -368,6 +423,12 @@ fn covering<'a>(git: &'a WorkspaceGit, path: &GitPath) -> CredentialChoice<'a> {
     choice
 }
 
+/// `host/owner`: what a credential is chosen for. The notice that none covers it is per host: the
+/// workspace picks the owners it asks for.
+fn owner_key(path: &GitPath) -> String {
+    format!("{}/{}", path.host, path.owner)
+}
+
 /// Which notices were raised lately.
 #[derive(Debug, Default)]
 struct Notices {
@@ -375,6 +436,24 @@ struct Notices {
 }
 
 impl Notices {
+    /// Remembers that `key` happened now.
+    fn mark(&self, key: String) {
+        let now = Instant::now();
+        let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
+        if last.len() >= MAX_NOTICES {
+            last.retain(|_, at| now.duration_since(*at) < NOTICE_EVERY.max(NO_IDENTITY_GRACE));
+        }
+        if last.len() < MAX_NOTICES {
+            last.insert(key, now);
+        }
+    }
+
+    /// Whether `key` happened after `since`.
+    fn marked_since(&self, key: &str, since: Instant) -> bool {
+        let last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
+        last.get(key).is_some_and(|at| *at >= since)
+    }
+
     /// Whether `key` has not been raised in the last [`NOTICE_EVERY`]; counts it as raised.
     fn first(&self, key: String) -> bool {
         let now = Instant::now();

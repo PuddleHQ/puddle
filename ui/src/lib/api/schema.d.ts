@@ -2016,6 +2016,17 @@ export interface components {
             /** @description The workspace that tried. */
             workspace: components["schemas"]["WorkspaceName"];
         } | {
+            /** @description The Git host. */
+            host: string;
+            /** @description The user or organisation no identity covers. */
+            owner: string;
+            /** @description `repo`, or `project/repo` on Azure DevOps. */
+            repo: string;
+            /** @enum {string} */
+            type: "git_no_identity";
+            /** @description The workspace that asked. */
+            workspace: components["schemas"]["WorkspaceName"];
+        } | {
             /** @description What is wrong. */
             kind: components["schemas"]["LoginProblemKind"];
             /** @description The service as the user knows it (`Claude Code`, `GitHub`). */

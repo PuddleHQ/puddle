@@ -108,6 +108,40 @@ describe("a credential that cannot be read", () => {
   });
 });
 
+describe("a Git host's 401 no identity could answer", () => {
+  const noIdentity = {
+    type: "git_no_identity",
+    workspace: "web",
+    host: "gitlab.com",
+    owner: "group",
+    repo: "sub/billing",
+  } as const;
+
+  it("says no identity covers the owner and links to the workspace's Git tab", () => {
+    expect(notices.handle(noIdentity)).toBe(true);
+    const notice = only();
+    expect(notice.key).toBe("git-no-identity:web:gitlab.com");
+    expect(notice.tone).toBe("warning");
+    expect(notice.title).toBe(
+      "web: gitlab.com/group/sub/billing answered 401, and no identity covers group.",
+    );
+    expect(notice.detail).toContain("attach an identity that covers group");
+    expect(notice.action).toBeUndefined();
+    expect(notice.link).toEqual({
+      href: "/workspaces/web/git",
+      label: "Git tab",
+    });
+    // Another owner on the same host replaces it: the workspace picks the owners it asks for.
+    notices.handle({ ...noIdentity, owner: "other", repo: "x" });
+    expect(center.items).toHaveLength(1);
+  });
+
+  it("ignores one with a field of the wrong type", () => {
+    expect(notices.handle({ ...noIdentity, owner: 4 })).toBe(false);
+    expect(center.items).toHaveLength(0);
+  });
+});
+
 describe("a push or fetch the table refused", () => {
   it("raises a notice naming the repository, with one button for the access refused", () => {
     notices.handle(denied("push"));

@@ -1,6 +1,31 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Keeps the Actions caches under the repo's 10 GB cap (ci/cache-gc.sh): drops superseded rust-cache
 # entries on develop and stale task-branch caches, so the cargo-xwin cache is never evicted.
+#
+# What the repo keeps (compressed sizes as GitHub reports them, 2026-10-14; the Rust entries grow and
+# shrink with the dependency tree). Only develop saves them, pull requests restore:
+#
+#   entry                                        saved by (develop only)              GB
+#   rust-cache `linux`                           every push (ci)                    4.37
+#   rust-cache `windows`                         nightly (windows)                  1.71
+#   rust-cache `windows-release`                 nightly (windows)                  1.57
+#   rust-cache `vm-build`, Windows               nightly (vm-windows)               1.50
+#   rust-cache `vm-build`, Linux                 nightly (vm-linux)                 1.30
+#   Playwright browsers                          a push (ci)                        0.39
+#   cargo-xwin CRT and SDK (never deleted here)  a push (ci)                        0.14
+#   npm caches, Linux and Windows                a push; pull refs 2-day cleanup    0.09
+#   msb runtime binary                           nightly (vm-linux)                 0.02
+#   total wanted                                                                    11.1
+#
+# The wanted set is over the cap by about 1.1 GB before any entry is replaced, and a replacement
+# briefly holds the old and the new entry together (the `linux` one alone is 4.4 GB). GitHub then
+# evicts entries to get back under the cap, and it does not pick the ones this file would. Between
+# 2026-10-09 and 2026-10-14, 30 of 73 runs of this workflow found the repo above the cap, and the
+# `linux` entry vanished between 10:12 and 10:19 UTC on 2026-10-12, after a run read 11.9 GB at
+# 10:06. Nothing proves the eviction caused that loss (GitHub publishes no eviction log). ci.yml now saves the `linux`
+# entry whenever its restore was not an exact hit, so a lost one costs the next develop run, not
+# every pull request until the next dependency change. Getting the set under 10 GB needs one of
+# the entries above to go or shrink.
 name: cache-gc
 
 on:

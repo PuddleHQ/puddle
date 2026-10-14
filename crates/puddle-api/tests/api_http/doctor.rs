@@ -142,7 +142,10 @@ async fn a_check_that_crashes_is_an_internal_error_and_the_api_goes_on() {
     let seen = crashed.clone();
     let run = Arc::new(move |_boot: bool| -> Report {
         seen.store(true, Ordering::SeqCst);
-        panic!("probe blew up")
+        // Unwinds without the panic hook, so no backtrace is written to the captured stderr: on
+        // Windows that pipe holds 4 KiB, and a runner that is slow to drain it would stall the
+        // probe, and the reply, past the step timeout. The service sees the same `JoinError`.
+        std::panic::resume_unwind(Box::new("probe blew up"))
     });
     let api = start_with_doctor(Arc::new(HostDoctor::new(run))).await;
     let reply = api.get("/api/doctor").await;

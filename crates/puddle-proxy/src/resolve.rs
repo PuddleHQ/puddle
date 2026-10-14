@@ -79,8 +79,11 @@ impl WorkspaceHandler {
             Allowed::Yes => {}
         }
         // Only a name the rules allow gets here: bound how many lookups one workspace runs at once.
-        let Ok(_permit) = self.lookups.try_acquire() else {
-            tracing::warn!(workspace = %self.workspace, limit = proxy.config().max_lookups_per_workspace, "too many name lookups at once; answered unavailable");
+        // A lookup over the bound waits for a free slot (a burst of names from a package manager
+        // is normal traffic) and gives up after one lookup's time.
+        let waited = tokio::time::timeout(proxy.config().lookup_timeout, self.lookups.acquire());
+        let Ok(Ok(_permit)) = waited.await else {
+            tracing::warn!(workspace = %self.workspace, limit = proxy.config().max_lookups_per_workspace, "no free name lookup slot in time; answered unavailable");
             return ResolveAnswer::Unavailable;
         };
         match query.rtype {
@@ -225,7 +228,10 @@ async fn records_answer(proxy: &Proxy, fqdn: &str, rtype: RecordType) -> Resolve
     match found {
         Ok(Ok(found)) => {
             let mut records = found.records;
-            records.truncate(MAX_RECORDS);
+            if records.len() > MAX_RECORDS {
+                tracing::warn!(host = %fqdn, ?rtype, found = records.len(), kept = MAX_RECORDS, "more records than an answer may carry; the rest were left out");
+                records.truncate(MAX_RECORDS);
+            }
             ResolveAnswer::Records {
                 records,
                 ttl: u32::try_from(found.ttl.as_secs()).unwrap_or(POSITIVE_TTL),
@@ -237,7 +243,10 @@ async fn records_answer(proxy: &Proxy, fqdn: &str, rtype: RecordType) -> Resolve
             tracing::info!(host = %fqdn, error = %why, "record lookup failed");
             ResolveAnswer::Unavailable
         }
-        Err(_) => ResolveAnswer::Unavailable,
+        Err(_) => {
+            tracing::warn!(host = %fqdn, ?rtype, "record lookup timed out");
+            ResolveAnswer::Unavailable
+        }
     }
 }
 

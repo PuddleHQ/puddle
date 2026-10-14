@@ -254,12 +254,16 @@ store.
   without its leading service labels (`_mongodb._tcp.db.example.net` is decided as
   `db.example.net`), since a service label is not part of a host the user approves. The targets of
   `SRV` and `MX` records get stand-ins of their own in the answer. At most 16 records and 8 KiB of
-  text are passed on.
+  text are passed on; records left out (another type, a target that is not a plain host name, more
+  than the cap) are said in the log.
 - **R-35 A lookup is bounded.** The name must be a plain host name (labels of letters, digits, `-`
   and `_`, at most 253 characters) or the answer is "no such name" without a lookup. A workspace runs
-  at most 32 host lookups at once and one agent session has at most 64 lookups open; over the cap
-  the answer is "unavailable" (`SERVFAIL` in the guest). Each lookup has a timeout. An unreadable
-  rules engine is "unavailable", never "not allowed".
+  at most 128 host lookups at once; one over that waits up to one lookup time (3 s) for a free slot
+  and is then "unavailable" (`SERVFAIL` in the guest). One agent session has at most 64 lookups
+  open (the agent keeps four sessions, so its 128 lookups in flight fit). Each lookup has a
+  timeout. An unreadable rules engine is "unavailable", never "not allowed". A burst of 500 distinct
+  names asked at once, as a package manager's cold start can, must all be answered (standing test
+  `a_burst_of_five_hundred_distinct_names_all_resolve_for_a_client_with_glibc_defaults`).
 - **R-36 An `SRV` query for a name no rule matches raises one request for its base name.** Clients
   such as `mongodb+srv://` ask for `SRV` first and give up on "no records" without ever
   connecting, so the user would never see them. The query `_mongodb._tcp.cluster.example.net`

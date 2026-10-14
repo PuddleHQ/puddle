@@ -69,9 +69,9 @@ impl Default for Limits {
     fn default() -> Self {
         Self {
             ask_timeout: Duration::from_secs(5),
-            max_asks: 64,
+            max_asks: 128,
             cache_entries: 4096,
-            max_udp_queries: 256,
+            max_udp_queries: 1024,
             max_tcp_connections: 64,
             tcp_idle: Duration::from_secs(10),
         }
@@ -255,8 +255,10 @@ impl<A: Ask> Stub<A> {
             ResolveAnswer::Records { records, ttl } => {
                 let mut answers = Vec::new();
                 let mut additional: Vec<Record> = Vec::new();
+                let mut left_out = 0_usize;
                 for record in records {
                     let Some((data, target)) = convert(rtype, record) else {
+                        left_out += 1;
                         continue;
                     };
                     answers.push(Record {
@@ -276,6 +278,9 @@ impl<A: Ask> Stub<A> {
                     {
                         additional.push(stand_in_record(Some(target), ip, ttl));
                     }
+                }
+                if left_out > 0 {
+                    tracing::warn!(%name, ?rtype, left_out, "records the stub cannot carry (other types, or a target that is not a plain host name) were left out of the answer");
                 }
                 if answers.is_empty() {
                     (Rcode::NoError, vec![], vec![])
@@ -336,18 +341,18 @@ impl<A: Ask> State<A> {
     async fn ask_host(&self, key: Key) -> ResolveAnswer {
         let limit = self.limits.ask_timeout;
         let Ok(Ok(_slot)) = tokio::time::timeout(limit, self.asks.acquire()).await else {
-            tracing::debug!(name = %key.0, "too many lookups waiting; answered unavailable");
+            tracing::warn!(name = %key.0, "no free lookup slot in time; answered SERVFAIL");
             return ResolveAnswer::Unavailable;
         };
         let query = ResolveQuery::new(key.0.clone(), key.1);
         let answer = match tokio::time::timeout(limit, self.ask.ask(query)).await {
             Ok(Ok(answer)) => answer,
             Ok(Err(err)) => {
-                tracing::debug!(name = %key.0, error = %err, "lookup on the host failed");
+                tracing::warn!(name = %key.0, error = %err, "lookup on the host failed; answered SERVFAIL");
                 return ResolveAnswer::Unavailable;
             }
             Err(_) => {
-                tracing::debug!(name = %key.0, "lookup on the host timed out");
+                tracing::warn!(name = %key.0, "lookup on the host timed out; answered SERVFAIL");
                 return ResolveAnswer::Unavailable;
             }
         };
@@ -500,9 +505,49 @@ pub async fn bind_when_ready<A: Ask>(stub: Stub<A>, listen: SocketAddr) {
     }
 }
 
+/// Counts what the stub turns away and says so in the log, at most once every ten seconds with
+/// the number since the last line: a flood is one line, not one per packet.
+struct DropNotice {
+    what: &'static str,
+    since: Option<Instant>,
+    count: u64,
+}
+
+impl DropNotice {
+    const EVERY: Duration = Duration::from_secs(10);
+
+    fn new(what: &'static str) -> Self {
+        Self {
+            what,
+            since: None,
+            count: 0,
+        }
+    }
+
+    /// Counts one; the number to report when a line is due now.
+    fn count_one(&mut self, now: Instant) -> Option<u64> {
+        self.count += 1;
+        if self
+            .since
+            .is_some_and(|at| now.duration_since(at) < Self::EVERY)
+        {
+            return None;
+        }
+        self.since = Some(now);
+        Some(std::mem::take(&mut self.count))
+    }
+
+    fn note(&mut self, now: Instant) {
+        if let Some(count) = self.count_one(now) {
+            tracing::warn!(count, "stub DNS: {}", self.what);
+        }
+    }
+}
+
 async fn serve_udp<A: Ask>(socket: UdpSocket, stub: Stub<A>, limits: Limits) {
     let socket = Arc::new(socket);
     let slots = Arc::new(Semaphore::new(limits.max_udp_queries.max(1)));
+    let mut dropped = DropNotice::new("queries dropped: too many at once (the client asks again)");
     let mut tasks = JoinSet::new();
     let mut buf = vec![0u8; MAX_QUERY];
     loop {
@@ -516,7 +561,7 @@ async fn serve_udp<A: Ask>(socket: UdpSocket, stub: Stub<A>, limits: Limits) {
             }
         };
         let Ok(slot) = Arc::clone(&slots).try_acquire_owned() else {
-            tracing::debug!("too many queries at once; one dropped");
+            dropped.note(Instant::now());
             continue;
         };
         let message = buf.get(..n).unwrap_or_default().to_vec();
@@ -534,6 +579,7 @@ async fn serve_udp<A: Ask>(socket: UdpSocket, stub: Stub<A>, limits: Limits) {
 
 async fn serve_tcp<A: Ask>(listener: TcpListener, stub: Stub<A>, limits: Limits) {
     let slots = Arc::new(Semaphore::new(limits.max_tcp_connections.max(1)));
+    let mut dropped = DropNotice::new("connections closed: too many open at once");
     let mut conns = JoinSet::new();
     loop {
         while conns.try_join_next().is_some() {}
@@ -546,7 +592,7 @@ async fn serve_tcp<A: Ask>(listener: TcpListener, stub: Stub<A>, limits: Limits)
             }
         };
         let Ok(slot) = Arc::clone(&slots).try_acquire_owned() else {
-            tracing::debug!("too many tcp connections; one closed");
+            dropped.note(Instant::now());
             continue;
         };
         let stub = stub.clone();

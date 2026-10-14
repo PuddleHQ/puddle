@@ -68,8 +68,8 @@ pub struct ProxyConfig {
     /// How long one name lookup for the guest's stub DNS may take. Over it, the stub gets
     /// `SERVFAIL` (or, with a company proxy in the route, a stand-in address).
     pub lookup_timeout: Duration,
-    /// Name lookups (of allowed names) one workspace may run at once. Over it, the stub gets
-    /// `SERVFAIL` and its client retries.
+    /// Name lookups (of allowed names) one workspace may run at once. A lookup over it waits up
+    /// to `lookup_timeout` for a free slot; after that the stub gets `SERVFAIL`.
     pub max_lookups_per_workspace: usize,
 }
 
@@ -87,7 +87,7 @@ impl Default for ProxyConfig {
             upstream_head_timeout: Duration::from_secs(300),
             body_idle_timeout: Duration::from_secs(120),
             lookup_timeout: Duration::from_secs(3),
-            max_lookups_per_workspace: 32,
+            max_lookups_per_workspace: 128,
         }
     }
 }

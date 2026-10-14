@@ -729,6 +729,53 @@ async fn tcp_connections_over_the_limit_are_closed() {
     );
 }
 
+#[tokio::test]
+async fn udp_queries_over_the_limit_are_dropped_and_the_stub_carries_on() {
+    let (server, _) = serve(
+        |_| async {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            Ok(stand_in())
+        },
+        Limits {
+            max_udp_queries: 1,
+            ..Limits::default()
+        },
+    )
+    .await;
+    let message = query_bytes(1, "a.example.com", TYPE_A, None);
+    let (first, second) = tokio::join!(udp_query(&server, &message), async {
+        // Arrives while the first is still being answered.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        udp_query(&server, &message).await
+    });
+    assert!(first.is_some(), "the query that fit is answered");
+    assert!(second.is_none(), "the one over the limit is dropped");
+    assert!(
+        udp_query(&server, &message).await.is_some(),
+        "the stub still answers afterwards"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_flood_of_drops_is_one_log_line_every_ten_seconds_with_the_count() {
+    let mut notice = DropNotice::new("queries dropped");
+    let start = Instant::now();
+    assert_eq!(
+        notice.count_one(start),
+        Some(1),
+        "the first is said at once"
+    );
+    for _ in 0..99 {
+        assert_eq!(notice.count_one(start + Duration::from_secs(1)), None);
+    }
+    assert_eq!(
+        notice.count_one(start + Duration::from_secs(10)),
+        Some(100),
+        "ten seconds later: the count since the last line"
+    );
+    notice.note(start + Duration::from_secs(11));
+}
+
 /// A loopback port held on both UDP and TCP, below the range the OS picks from for port 0 and for
 /// outgoing connections (Linux 32768-60999, Windows and macOS 49152-65535). A port 0 address is
 /// only UDP's: its TCP side may be in use elsewhere, and another process asking for any port can

@@ -462,14 +462,17 @@ async fn an_srv_query_for_an_unmatched_name_raises_one_request_for_its_base_name
 }
 
 #[tokio::test]
-async fn a_flood_of_srv_queries_for_random_names_is_rate_limited_like_connects() {
+async fn a_flood_of_srv_queries_for_random_names_opens_one_row_each_up_to_the_cap() {
     let rig = rig().await;
     let (udp, _) = rig.agent.dns_addrs().unwrap();
     for i in 0..400 {
         dns(udp, &format!("_x._tcp.flood-{i}.example.net"), TYPE_SRV).await;
     }
     let open = rig.store.open_pending(None).unwrap().len();
-    assert!(open > 0 && open < 100, "{open} open rows");
+    assert_eq!(
+        open, 400,
+        "every name waits, none is refused for the volume"
+    );
     assert_eq!(rig.counted.records.lookups(), 0);
 }
 

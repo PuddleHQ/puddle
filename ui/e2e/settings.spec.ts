@@ -305,6 +305,47 @@ test("with the confirmation switched off, a decision for every workspace goes th
   ).toMatchObject({ scope: { type: "global" } });
 });
 
+test("the inbox keys do nothing until the switch is on, then A decides the current request", async ({
+  page,
+  backend,
+  request,
+}) => {
+  await backend.signIn(page);
+  await page.goto("/inbox");
+  const row = page.locator("li.req").first();
+  await expect(row).toBeVisible();
+  const hint = page.getByRole("link", {
+    name: /Turn on the A, D, J and K keys in Settings/,
+  });
+  await expect(hint).toBeVisible();
+  expect(await axeViolations(page), "inbox with the keys off").toEqual([]);
+  await page.locator("main").focus();
+  await page.keyboard.press("a");
+  await expect(row).toBeVisible();
+  const open = async () =>
+    (
+      (await (
+        await request.get("/api/rules", { headers: auth(backend) })
+      ).json()) as { rules: unknown[] }
+    ).rules.length;
+  expect(await open()).toBe(0);
+
+  await hint.click();
+  await expect(page).toHaveURL(/\/settings#s-inbox$/);
+  await page.getByLabel("Keyboard shortcuts in the inbox").check();
+  await pressSave(page);
+  await page
+    .getByRole("navigation", { name: "Main" })
+    .getByRole("link", { name: /^Inbox/ })
+    .click();
+  await expect(page.locator("li.req").first()).toBeVisible();
+  await expect(page.getByText("allow ·")).toBeVisible();
+  await page.locator("main").focus();
+  await page.keyboard.press("a");
+  await expect(page.locator("li.req")).toHaveCount(0);
+  expect(await open()).toBe(1);
+});
+
 test("a reconnection grace outside the range is refused before anything is sent", async ({
   page,
   backend,

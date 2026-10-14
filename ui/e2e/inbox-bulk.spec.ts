@@ -52,7 +52,17 @@ test("500 open requests: the first rows paint soon after their data arrives, all
   expect(all, "data to all 501 rows painted").toBeLessThan(2000);
 });
 
-test("a 500-row inbox is still driven by the keyboard", async ({ page }) => {
+test("a 500-row inbox is still driven by the keyboard", async ({
+  page,
+  request,
+  backend,
+}) => {
+  // The J and K keys are a Settings switch, off by default.
+  const reply = await request.put("/api/settings", {
+    headers: { Authorization: `Bearer ${backend.token}` },
+    data: { ui: { inbox_shortcuts: true } },
+  });
+  expect(reply.ok()).toBe(true);
   await page.goto("/inbox");
   await expect(page.locator("li.req")).toHaveCount(501);
   await page.locator("main").focus();

@@ -10,6 +10,7 @@
   import { LOCAL_LABELS } from "#lib/decision/local.ts";
   import { narrowest, type Effect } from "#lib/decision/model.ts";
   import { relativeTime } from "#lib/format/relative-time.ts";
+  import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
   import { limitGroups, pending } from "#lib/stores/pending.svelte.ts";
   import { ruleSets } from "#lib/stores/rule-sets.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
@@ -25,6 +26,8 @@
   const FIRST_SLICE = 60;
   const NEXT_SLICE = 120;
   let limit = $state(FIRST_SLICE);
+  /** The A, D, J and K keys: a Settings switch, off until the user turns it on. */
+  const shortcuts = $derived(globalSettings.view?.ui.inbox_shortcuts ?? false);
   const shownGroups = $derived(limitGroups(pending.groups, limit));
   const flat = $derived(shownGroups.flatMap((g) => g.rows));
   const activeId = $derived(
@@ -111,6 +114,8 @@
     if (target?.closest("input, textarea, select, [contenteditable='true']"))
       return;
     if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return;
+    // The single letters are a Settings switch, off by default; Enter on a row is plain keyboard use.
+    if (event.key !== "Enter" && !shortcuts) return;
     switch (event.key) {
       case "a":
       case "A":
@@ -160,11 +165,20 @@
     Requests that matched no rule. Each stays here until you decide. Meanwhile
     the tool that asked is told the host is waiting for approval, and can retry.
   </p>
-  <p class="keys">
-    <span class="kbd">A</span> allow · <span class="kbd">D</span> deny ·
-    <span class="kbd">J</span>/<span class="kbd">K</span> move ·
-    <span class="kbd">Enter</span> more choices
-  </p>
+  {#if shortcuts}
+    <p class="keys">
+      <span class="kbd">A</span> allow · <span class="kbd">D</span> deny ·
+      <span class="kbd">J</span>/<span class="kbd">K</span> move ·
+      <span class="kbd">Enter</span> more choices
+    </p>
+  {:else}
+    <p class="keys">
+      Tab to a request and press <span class="kbd">Enter</span> for more
+      choices.
+      <a href="/settings#s-inbox">Turn on the A, D, J and K keys in Settings</a
+      >.
+    </p>
+  {/if}
 </div>
 
 {#each pending.full as workspace (workspace)}

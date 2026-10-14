@@ -36,8 +36,11 @@ export async function firstStart<T>(start: FirstStart<T>): Promise<T> {
  */
 export class PhaseTimer {
   private readonly spent: [string, number][] = [];
+  private readonly now: () => number;
 
-  constructor(private readonly now: () => number = Date.now) {}
+  constructor(now: () => number = Date.now) {
+    this.now = now;
+  }
 
   /** Runs `work` and records its duration, also when it fails. */
   async run<T>(phase: string, work: () => Promise<T>): Promise<T> {

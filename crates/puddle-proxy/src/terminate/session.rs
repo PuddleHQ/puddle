@@ -16,7 +16,7 @@ use super::body::{Abort, BodyReader, ChannelBody, pump};
 use super::exchange::{AnswerBody, Exchange, MAX_EXCHANGE_BODY, read_answer, swap_request_body};
 use super::guest::{ALPN_HTTP11, Prefixed, Proto, read_hello, server_config};
 use super::inject::{
-    Forwarding, InjectContext, Injection, RequestView, Unauthorized, body_too_large,
+    Forwarding, InjectContext, InjectRefusal, Injection, RequestView, Unauthorized, body_too_large,
 };
 use super::leg::{self, BoxError, Connected, H1Conn, UpBody};
 use super::request::{self, Parsed};
@@ -624,10 +624,9 @@ where
         piped.map_or(Flow::Abort, |()| Flow::Close)
     }
 
-    /// Answers the guest with `unauthorized`'s refusal in place of the server's `401`. The server's
-    /// answer is left unread, so the upstream connection is not used again.
-    async fn replace_unauthorized(&mut self, unauthorized: &Unauthorized) -> Flow {
-        let refusal = unauthorized.refusal();
+    /// Answers the guest with `refusal` in place of the server's `401`. The server's answer is
+    /// left unread, so the upstream connection is not used again.
+    async fn replace_unauthorized(&mut self, refusal: InjectRefusal) -> Flow {
         tracing::info!(host = %self.cx.target.host, code = refusal.code(), "401 replaced: the credential for this request was puddle's to choose");
         self.upstream = None;
         self.outcome.refused.get_or_insert(refusal.code());
@@ -724,9 +723,9 @@ where
             Err(flow) => return flow,
         };
         if response.status() == ::http::StatusCode::UNAUTHORIZED
-            && let Some(unauthorized) = unauthorized
+            && let Some(refusal) = unauthorized.and_then(Unauthorized::refusal)
         {
-            return self.replace_unauthorized(unauthorized).await;
+            return self.replace_unauthorized(refusal).await;
         }
         let mut response = response;
         if parsed.upgrade && response.status() == ::http::StatusCode::SWITCHING_PROTOCOLS {

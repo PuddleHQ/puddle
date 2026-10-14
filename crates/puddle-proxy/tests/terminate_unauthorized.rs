@@ -9,6 +9,7 @@
 mod terminate_support;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use bytes::Bytes;
 use http::Response;
@@ -204,11 +205,69 @@ async fn over_http2_a_401_to_a_request_puddle_added_nothing_to_is_the_servers_ow
     assert_eq!(own.text(), "server says no");
 }
 
+fn noting(counter: &Arc<AtomicUsize>) -> InjectDecision {
+    let counter = Arc::clone(counter);
+    InjectDecision::PassThroughNoting(Unauthorized::noting(move || {
+        counter.fetch_add(1, Ordering::SeqCst);
+    }))
+}
+
+#[tokio::test]
+async fn a_401_to_a_request_that_is_only_noted_reaches_the_guest_unchanged_and_is_noted() {
+    let noted = Arc::new(AtomicUsize::new(0));
+    let again = Arc::clone(&noted);
+    let (server, rig, _) = h1_rig(Box::new(move || noting(&again))).await;
+    let mut guest = rig.guest().await;
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    let ok = client.get("bound.test", "/acme/web.git/info/refs?ok").await;
+    assert_eq!(ok.status, 200);
+    assert_eq!(noted.load(Ordering::SeqCst), 0, "no 401, nothing to note");
+    let answer = client.get("bound.test", "/acme/web.git/info/refs").await;
+    assert_eq!(answer.status, 401);
+    assert_eq!(
+        answer.header("www-authenticate"),
+        Some("Basic realm=\"upstream\"")
+    );
+    assert_eq!(answer.text(), "server says no");
+    assert_eq!(answer.header("x-puddle-blocked"), None);
+    assert_eq!(noted.load(Ordering::SeqCst), 1);
+    // The guest's connection goes on: the server's answer was passed on, not replaced.
+    let more = client.get("bound.test", "/acme/web.git/info/refs?ok").await;
+    assert_eq!(more.status, 200);
+    assert_eq!(server.recorded().len(), 3);
+}
+
+#[tokio::test]
+async fn over_http2_a_401_to_a_noted_request_is_noted_and_the_servers_own() {
+    let noted = Arc::new(AtomicUsize::new(0));
+    let again = Arc::clone(&noted);
+    let (_server, rig) = h2_rig(Box::new(move || noting(&again))).await;
+    let mut guest = rig.guest().await;
+    let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
+    let answer = client.get("bound.test", "/x").await;
+    assert_eq!(answer.status, 401);
+    assert_eq!(answer.text(), "server says no");
+    assert_eq!(noted.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn a_noting_unauthorized_runs_its_note_and_answers_nothing() {
+    let noted = Arc::new(AtomicUsize::new(0));
+    let again = Arc::clone(&noted);
+    let note = Unauthorized::noting(move || {
+        again.fetch_add(1, Ordering::SeqCst);
+    });
+    assert!(note.refusal().is_none());
+    assert_eq!(noted.load(Ordering::SeqCst), 1);
+    assert_eq!(note, note.clone());
+    assert_ne!(note, rejected());
+}
+
 #[test]
 fn an_injection_compares_by_what_it_would_answer_with() {
     let guard = rejected();
     assert_eq!(guard, guard.clone());
     assert_ne!(guard, rejected());
     assert_eq!(format!("{guard:?}"), "Unauthorized");
-    assert_eq!(guard.refusal().code(), "credential_rejected");
+    assert_eq!(guard.refusal().unwrap().code(), "credential_rejected");
 }

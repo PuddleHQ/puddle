@@ -15,6 +15,7 @@ export type CredentialSignInNeeded = Extract<
   { type: "credential_sign_in_needed" }
 >;
 export type GitAccessDenied = Extract<Event, { type: "git_access_denied" }>;
+export type GitNoIdentity = Extract<Event, { type: "git_no_identity" }>;
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null;
@@ -38,14 +39,22 @@ export function isWorkspaceGitChanged(
 
 const str = (v: unknown) => typeof v === "string";
 
-/** The two events that become notices, when their fields have the right types. */
+/** The events that become notices, when their fields have the right types. */
 export function asCredentialEvent(
   raw: unknown,
-): CredentialSignInNeeded | GitAccessDenied | null {
+): CredentialSignInNeeded | GitAccessDenied | GitNoIdentity | null {
   if (!isObject(raw)) return null;
   if (raw["type"] === "credential_sign_in_needed") {
     return str(raw["host"]) && str(raw["source"])
       ? (raw as CredentialSignInNeeded)
+      : null;
+  }
+  if (raw["type"] === "git_no_identity") {
+    return str(raw["workspace"]) &&
+      str(raw["host"]) &&
+      str(raw["owner"]) &&
+      str(raw["repo"])
+      ? (raw as GitNoIdentity)
       : null;
   }
   if (raw["type"] === "git_access_denied") {

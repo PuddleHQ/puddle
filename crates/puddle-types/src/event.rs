@@ -203,6 +203,20 @@ pub enum Event {
         /// What was refused.
         access: GitAccess,
     },
+    /// A Git host answered a workspace's request with `401` and no identity covers the owner, so
+    /// puddle added no credential and the server's answer reached the workspace as it is. Sent
+    /// only when the workspace's own tool did not retry with a credential of its own soon after.
+    /// `repo` is the table's spelling, as in [`Event::GitAccessDenied`].
+    GitNoIdentity {
+        /// The workspace that asked.
+        workspace: WorkspaceName,
+        /// The Git host.
+        host: String,
+        /// The user or organisation no identity covers.
+        owner: String,
+        /// `repo`, or `project/repo` on Azure DevOps.
+        repo: String,
+    },
     /// A login made inside a workspace could not be captured, or one puddle kept could not be
     /// used (`kind` says which). The service is one of puddle's built-in login profiles, never
     /// anything the guest sent. Names only, never a value.
@@ -378,6 +392,7 @@ impl Event {
             | Self::PendingUpdated { workspace, .. }
             | Self::PendingClosed { workspace, .. }
             | Self::GitAccessDenied { workspace, .. }
+            | Self::GitNoIdentity { workspace, .. }
             | Self::LoginProblem { workspace, .. }
             | Self::WorkspaceGitChanged { workspace }
             | Self::WorkspaceEnvChanged { workspace }
@@ -740,6 +755,16 @@ mod tests {
                 Some(name()),
             ),
             (
+                Event::GitNoIdentity {
+                    workspace: name(),
+                    host: "gitlab.com".into(),
+                    owner: "group".into(),
+                    repo: "sub/web".into(),
+                },
+                r#"{"type":"git_no_identity","workspace":"box","host":"gitlab.com","owner":"group","repo":"sub/web"}"#,
+                Some(name()),
+            ),
+            (
                 Event::LoginProblem {
                     workspace: name(),
                     service: "Claude Code".into(),
@@ -819,6 +844,7 @@ mod tests {
                 "workspace_ssh_failed",
                 "credential_sign_in_needed",
                 "git_access_denied",
+                "git_no_identity",
                 "login_problem",
                 "audit_appended",
                 "network_changed",

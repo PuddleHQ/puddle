@@ -740,7 +740,7 @@ fn unauthorized_answer<B>(
     if response.status() != StatusCode::UNAUTHORIZED {
         return None;
     }
-    let refusal = unauthorized?.refusal();
+    let refusal = unauthorized?.refusal()?;
     tracing::info!(host = %shared.cx.target.host, code = refusal.code(), "401 replaced: the credential for this request was puddle's to choose");
     Some(refusal.to_refusal())
 }

@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Two stream events become notices: a credential a workspace asked for that puddle can't read
-// ("sign in"), and a push or fetch the workspace's repository table refused ("allow it").
-// Neither opens a window or changes a list by itself: the sign-in is a link to the page with its
+// Three stream events become notices: a credential a workspace asked for that puddle can't read
+// ("sign in"), a push or fetch the workspace's repository table refused ("allow it"), and a Git
+// host's `401` that no identity could answer ("attach an identity"). None opens a window or
+// changes a list by itself: the sign-in is a link to the page with its
 // button, and the table changes only when the user clicks the notice's action.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import {
   asCredentialEvent,
   type CredentialSignInNeeded,
   type GitAccessDenied,
+  type GitNoIdentity,
 } from "#lib/identities/events.ts";
 import { repoName } from "#lib/identities/repo.ts";
 import { sentence } from "#lib/rules/model.ts";
@@ -30,6 +32,8 @@ export interface CredentialNoticeDeps {
 }
 
 const signInKey = (source: string) => `sign-in:${source}`;
+const noIdentityKey = (e: GitNoIdentity) =>
+  `git-no-identity:${e.workspace}:${e.host}`;
 const deniedKey = (e: GitAccessDenied) =>
   `git-denied:${e.workspace}:${e.access}:${e.host}/${e.owner}/${e.repo}`;
 
@@ -49,6 +53,7 @@ export class CredentialNotices {
     const event = asCredentialEvent(raw);
     if (!event) return false;
     if (event.type === "credential_sign_in_needed") void this.#signIn(event);
+    else if (event.type === "git_no_identity") this.#noIdentity(event);
     else this.#denied(event);
     return true;
   }
@@ -72,6 +77,19 @@ export class CredentialNotices {
       link: {
         href: identity ? `/identities/${identity.id}` : "/identities",
         label: "Sign in",
+      },
+    });
+  }
+
+  #noIdentity(event: GitNoIdentity): void {
+    this.#notifier.notify({
+      key: noIdentityKey(event),
+      tone: "warning",
+      title: `${event.workspace}: ${repoName(event)} answered 401, and no identity covers ${event.owner}.`,
+      detail: `If it is a private repository, attach an identity that covers ${event.owner} on ${event.host} to the workspace; puddle adds no credential on its own. A public repository answers without one.`,
+      link: {
+        href: `/workspaces/${encodeURIComponent(event.workspace)}/git`,
+        label: "Git tab",
       },
     });
   }

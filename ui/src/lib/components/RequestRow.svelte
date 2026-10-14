@@ -40,46 +40,34 @@
   tabindex="-1"
   onfocusin={() => onFocusRow(row)}
 >
-  <div class="what">
-    <p class="dest">
-      <span class="host">{request.host}</span><span class="port"
-        >:{request.port}</span
-      >
-    </p>
-    <p class="facts">
-      <span>Workspace <b class="mono">{request.workspace}</b></span>
-      <span
-        >{request.attempts}
-        {request.attempts === 1 ? "attempt" : "attempts"}</span
-      >
-      <span>
-        First seen
-        <time
-          datetime={new Date(request.first_seen).toISOString()}
-          title={absoluteTime(request.first_seen)}
-          >{relativeTime(request.first_seen, now)}</time
-        >
-      </span>
-      <span>
-        Last seen
-        <time
-          datetime={new Date(request.last_seen).toISOString()}
-          title={absoluteTime(request.last_seen)}
-          >{relativeTime(request.last_seen, now)}</time
-        >
-      </span>
-    </p>
-  </div>
-  <div class="acts">
-    <DecisionControl
-      target={{ host: request.host, registrableDomain: row.domain }}
-      workspace={request.workspace}
-      {optionsOpen}
-      denyOnly={blockedBy !== null}
-      onDecide={(choice) => onDecide(row, choice)}
-      onMore={(anchor) => onMore(row, anchor)}
-    />
-  </div>
+  <p class="dest">
+    <span class="host">{request.host}</span><span class="port"
+      >:{request.port}</span
+    >
+  </p>
+  <p class="facts">
+    Workspace <b class="mono">{request.workspace}</b> · {request.attempts}
+    {request.attempts === 1 ? "attempt" : "attempts"} · First seen
+    <time
+      datetime={new Date(request.first_seen).toISOString()}
+      title={absoluteTime(request.first_seen)}
+      >{relativeTime(request.first_seen, now)}</time
+    >
+    · Last seen
+    <time
+      datetime={new Date(request.last_seen).toISOString()}
+      title={absoluteTime(request.last_seen)}
+      >{relativeTime(request.last_seen, now)}</time
+    >
+  </p>
+  <DecisionControl
+    target={{ host: request.host, registrableDomain: row.domain }}
+    workspace={request.workspace}
+    {optionsOpen}
+    denyOnly={blockedBy !== null}
+    onDecide={(choice) => onDecide(row, choice)}
+    onMore={(anchor) => onMore(row, anchor)}
+  />
   {#if blockedBy}
     <p class="blocked">
       <b>{LOCAL_LABELS[blockedBy]}</b> destinations are switched off, so this
@@ -94,7 +82,7 @@
   .req {
     display: grid;
     grid-template-columns: 1fr auto;
-    gap: var(--space-2) var(--space-4);
+    column-gap: var(--space-4);
     align-items: center;
     padding: var(--space-3) var(--space-4);
     border-bottom: 1px solid var(--color-border-subtle);
@@ -114,8 +102,14 @@
     outline: var(--focus-ring);
     outline-offset: -2px;
   }
-  .what {
+  .dest,
+  .facts {
+    grid-column: 1;
     min-width: 0;
+  }
+  .req > :global(.control) {
+    grid-column: 2;
+    grid-row: 1 / span 2;
   }
   p {
     margin: 0;
@@ -132,14 +126,12 @@
     color: var(--color-text-muted);
   }
   .facts {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-1) var(--space-4);
     font-size: var(--text-sm);
     color: var(--color-text-muted);
   }
   .blocked {
     grid-column: 1 / -1;
+    margin-top: var(--space-2);
     padding: var(--space-2) var(--space-3);
     background: var(--color-surface-raised);
     border-radius: var(--radius-sm);
@@ -148,6 +140,11 @@
   @media (max-width: 760px) {
     .req {
       grid-template-columns: 1fr;
+    }
+    .req > :global(.control) {
+      grid-column: 1;
+      grid-row: auto;
+      margin-top: var(--space-2);
     }
   }
 </style>

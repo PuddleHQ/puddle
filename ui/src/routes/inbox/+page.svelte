@@ -22,9 +22,10 @@
   let heading = $state<HTMLElement>();
 
   // A long list is drawn in slices, so the first rows are on screen at once: the first slice,
-  // then the rest a frame at a time.
+  // then the rest a slice per frame, each after the paint of the one before. Every frame costs a style, layout and paint pass besides the
+  // rows themselves, so the later slices are big: 500 rows draw in three frames, none over 150 ms.
   const FIRST_SLICE = 60;
-  const NEXT_SLICE = 120;
+  const NEXT_SLICE = 250;
   let limit = $state(FIRST_SLICE);
   /** The A, D, J and K keys: a Settings switch, off until the user turns it on. */
   const shortcuts = $derived(globalSettings.view?.ui.inbox_shortcuts ?? false);
@@ -61,10 +62,18 @@
       afterPaint(() => performance.mark("puddle:inbox-painted"));
     }
     if (limit < pending.count) {
+      // The next slice waits for the paint of the rows already drawn, so a big slice never
+      // delays the first paint.
+      let timer: ReturnType<typeof setTimeout> | undefined;
       const frame = requestAnimationFrame(() => {
-        limit += NEXT_SLICE;
+        timer = setTimeout(() => {
+          limit += NEXT_SLICE;
+        }, 0);
       });
-      return () => cancelAnimationFrame(frame);
+      return () => {
+        cancelAnimationFrame(frame);
+        clearTimeout(timer);
+      };
     }
     if (!markedAll) {
       markedAll = true;

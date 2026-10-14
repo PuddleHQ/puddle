@@ -137,6 +137,15 @@ describe("the inbox page", () => {
     expect(screen.getAllByRole("listitem").length).toBeGreaterThan(0);
   });
 
+  it("says a request stays until the user decides, and what the tool is told meanwhile", async () => {
+    seed();
+    await ready();
+    const sub = document.querySelector(".sub");
+    expect(sub).toHaveTextContent(/stays here until you decide/);
+    expect(sub).toHaveTextContent(/waiting for approval/);
+    expect(sub).not.toHaveTextContent(/workspace waits/);
+  });
+
   it("lists the shortcuts in words", async () => {
     seed();
     await ready();

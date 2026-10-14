@@ -163,7 +163,8 @@
 <div class="head">
   <h1 tabindex="-1" bind:this={heading}>Inbox</h1>
   <p class="sub">
-    Requests that matched no rule. The workspace waits until you decide.
+    Requests that matched no rule. Each stays here until you decide. Meanwhile
+    the tool that asked is told the host is waiting for approval, and can retry.
   </p>
   <p class="keys">
     <span class="kbd">A</span> allow · <span class="kbd">D</span> deny ·

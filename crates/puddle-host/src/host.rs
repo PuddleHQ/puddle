@@ -439,16 +439,14 @@ impl<R: Runtime + Clone> Host<R> {
 
         // The way out: the company network (discovery, sign-in as the user, then Basic) for the
         // sandbox proxy and the pull proxy alike.
-        let connections: Arc<dyn ConnectionLog> =
-            Arc::new(ConnectionRecorder::new(store.clone(), problems.clone()));
+        let connections = Arc::new(ConnectionRecorder::new(store.clone(), problems.clone()));
         let egress = Egress::build(
             &config,
             &options,
             &settings,
             &endpoints,
-            &store,
-            &events,
             &connections,
+            &events,
             injecting.termination(),
         );
         let (proxy, upstream, discovery) = (egress.proxy, egress.upstream, egress.discovery);
@@ -821,9 +819,8 @@ impl Egress {
         options: &HostOptions,
         settings: &Arc<dyn SettingsRepo>,
         endpoints: &PuddleEndpoints,
-        store: &Arc<Store>,
+        connections: &Arc<ConnectionRecorder>,
         events: &Arc<EventHub>,
-        connections: &Arc<dyn ConnectionLog>,
         (terminations, tls): (Arc<Terminations>, TlsClient),
     ) -> Self {
         let discovery = options.discovery.clone().unwrap_or_else(|| {
@@ -844,11 +841,14 @@ impl Egress {
         }))
         .with_endpoints(endpoints.clone());
         let proxy = Arc::new(
-            Proxy::new(store.clone(), events.clone() as Arc<dyn EventSink>)
-                .with_connection_log(connections.clone())
-                .with_address_check(Arc::new(guard))
-                .with_upstream(upstream.clone())
-                .with_termination(terminations, tls),
+            Proxy::new(
+                connections.store().clone(),
+                events.clone() as Arc<dyn EventSink>,
+            )
+            .with_connection_log(connections.clone())
+            .with_address_check(Arc::new(guard))
+            .with_upstream(upstream.clone())
+            .with_termination(terminations, tls),
         );
         Self {
             proxy,

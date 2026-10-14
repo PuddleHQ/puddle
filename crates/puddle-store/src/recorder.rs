@@ -42,6 +42,12 @@ impl ConnectionRecorder {
             failing: AtomicBool::new(false),
         }
     }
+
+    /// The store it records into.
+    #[must_use]
+    pub fn store(&self) -> &Arc<Store> {
+        &self.store
+    }
 }
 
 impl ConnectionLog for ConnectionRecorder {

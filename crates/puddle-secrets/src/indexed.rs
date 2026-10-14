@@ -27,7 +27,7 @@ pub struct IndexedStore<S> {
     /// The ids this process wrote, and the lock that keeps one change of the list at a time. A
     /// sweep leaves those ids alone: the row that names a value comes after the value, so a value
     /// written a moment ago may be about to be named.
-    written: Mutex<HashSet<String>>,
+    written: Mutex<HashSet<StoredId>>,
 }
 
 impl<S: SecretStore> IndexedStore<S> {
@@ -45,21 +45,24 @@ impl<S: SecretStore> IndexedStore<S> {
     }
 
     /// The listed ids, in order. A line that is not an id is dropped.
-    fn listed(&self) -> Result<Vec<String>, StoreError> {
+    fn listed(&self) -> Result<Vec<StoredId>, StoreError> {
         let Some(text) = self.inner.get(&Self::index_id()?)? else {
             return Ok(Vec::new());
         };
         Ok(text
             .expose()
             .lines()
-            .filter(|line| StoredId::new(*line).is_ok())
-            .map(str::to_owned)
+            .filter_map(|line| StoredId::new(line).ok())
             .collect())
     }
 
-    fn write_list(&self, ids: &[String]) -> Result<(), StoreError> {
-        self.inner
-            .set(&Self::index_id()?, &Secret::new(ids.join("\n")))
+    fn write_list(&self, ids: &[StoredId]) -> Result<(), StoreError> {
+        let text = ids
+            .iter()
+            .map(StoredId::as_str)
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.inner.set(&Self::index_id()?, &Secret::new(text))
     }
 }
 
@@ -74,12 +77,12 @@ impl<S: SecretStore> SecretStore for IndexedStore<S> {
         }
         let mut written = self.written.lock().unwrap_or_else(PoisonError::into_inner);
         let mut ids = self.listed()?;
-        if !ids.iter().any(|listed| listed == id.as_str()) {
-            ids.push(id.as_str().to_owned());
+        if !ids.contains(id) {
+            ids.push(id.clone());
             // A value nobody can find again is worse than one refused now.
             self.write_list(&ids)?;
         }
-        written.insert(id.as_str().to_owned());
+        written.insert(id.clone());
         self.inner.set(id, secret)
     }
 
@@ -92,30 +95,21 @@ impl<S: SecretStore> SecretStore for IndexedStore<S> {
         // The value is gone. A list that cannot be changed now only keeps an id that a sweep
         // finds nothing under.
         if let Ok(mut ids) = self.listed() {
-            let before = ids.len();
-            ids.retain(|listed| listed != id.as_str());
-            if ids.len() != before {
-                let _ = self.write_list(&ids);
-            }
+            ids.retain(|listed| listed != id);
+            let _ = self.write_list(&ids);
         }
         Ok(())
     }
 
     fn sweep_orphans(&self, keep: &dyn Fn(&StoredId) -> bool) -> Result<usize, StoreError> {
         let written = self.written.lock().unwrap_or_else(PoisonError::into_inner);
-        let ids = self.listed()?;
-        let mut left = Vec::with_capacity(ids.len());
+        let mut left = Vec::new();
         let mut removed = 0;
-        for text in ids {
-            let Ok(id) = StoredId::new(&text) else {
-                continue;
-            };
-            if written.contains(&text) || keep(&id) {
-                left.push(text);
-            } else if self.inner.delete(&id).is_ok() {
+        for id in self.listed()? {
+            if !written.contains(&id) && !keep(&id) && self.inner.delete(&id).is_ok() {
                 removed += 1;
             } else {
-                left.push(text);
+                left.push(id);
             }
         }
         if removed > 0 {
@@ -266,5 +260,59 @@ mod tests {
             store.sweep_orphans(&|id| id.as_str() == "tok-b").unwrap(),
             1
         );
+    }
+
+    /// A store that refuses to delete some ids and can lose its index.
+    #[derive(Default)]
+    struct Fussy {
+        inner: MemoryStore,
+        stuck: Mutex<HashSet<String>>,
+        index_down: Mutex<bool>,
+    }
+
+    impl SecretStore for Fussy {
+        fn get(&self, id: &StoredId) -> Result<Option<Secret>, StoreError> {
+            if id.as_str() == INDEX_ID && *self.index_down.lock().unwrap() {
+                return Err(StoreError);
+            }
+            self.inner.get(id)
+        }
+        fn set(&self, id: &StoredId, secret: &Secret) -> Result<(), StoreError> {
+            self.inner.set(id, secret)
+        }
+        fn delete(&self, id: &StoredId) -> Result<(), StoreError> {
+            if self.stuck.lock().unwrap().contains(id.as_str()) {
+                return Err(StoreError);
+            }
+            self.inner.delete(id)
+        }
+    }
+
+    #[test]
+    fn a_value_that_will_not_go_stays_listed_while_the_others_are_swept() {
+        let store = IndexedStore::new(Fussy::default());
+        store.set(&id("tok-stuck"), &secret("a")).unwrap();
+        store.set(&id("tok-gone"), &secret("b")).unwrap();
+        let again = IndexedStore {
+            inner: store.inner,
+            written: Mutex::new(HashSet::new()),
+        };
+        again.inner.stuck.lock().unwrap().insert("tok-stuck".into());
+        assert_eq!(again.sweep_orphans(&|_| false).unwrap(), 1);
+        assert!(again.get(&id("tok-stuck")).unwrap().is_some());
+        assert!(again.get(&id("tok-gone")).unwrap().is_none());
+        // Still listed: the next sweep tries it again, and removes it once the store lets it.
+        again.inner.stuck.lock().unwrap().clear();
+        assert_eq!(again.sweep_orphans(&|_| false).unwrap(), 1);
+        assert!(again.get(&id("tok-stuck")).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_delete_goes_through_when_only_the_index_cannot_be_read() {
+        let store = IndexedStore::new(Fussy::default());
+        store.set(&id("tok-a"), &secret("a")).unwrap();
+        *store.inner.index_down.lock().unwrap() = true;
+        store.delete(&id("tok-a")).unwrap();
+        assert!(store.get(&id("tok-a")).unwrap().is_none());
     }
 }

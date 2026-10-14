@@ -165,13 +165,7 @@ async fn unknown_and_invalid_messages_are_skipped_and_later_ones_still_count() {
 
 #[tokio::test]
 async fn a_guest_agent_on_another_protocol_is_logged_and_kept() {
-    let logs = Logs::default();
-    let _scope = tracing::subscriber::set_default(
-        tracing_subscriber::fmt()
-            .with_ansi(false)
-            .with_writer(logs.clone())
-            .finish(),
-    );
+    Logs::capture();
     let mut h = start();
     let mut c = h.control_stream().await;
     let other = AgentMessage::Hello {
@@ -182,7 +176,7 @@ async fn a_guest_agent_on_another_protocol_is_logged_and_kept() {
     send(&mut c, &AgentMessage::oom_kill(Some(1), Some("a".into()))).await;
     assert_eq!(h.next_event().await, Event::oom_kill(name(), 1, "a"));
     h.close().await.unwrap();
-    let text = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+    let text = Logs::text();
     assert!(
         text.contains("WARN") && text.contains("another control protocol"),
         "{text}"
@@ -306,13 +300,7 @@ async fn control_messages_over_the_rate_limit_are_dropped() {
 
 #[tokio::test]
 async fn drops_still_pending_when_the_control_stream_closes_are_logged() {
-    let logs = Logs::default();
-    let _scope = tracing::subscriber::set_default(
-        tracing_subscriber::fmt()
-            .with_ansi(false)
-            .with_writer(logs.clone())
-            .finish(),
-    );
+    Logs::capture();
     // No refill, so nothing gets through after the burst and no later message reports the count.
     let mut h = start_with(HostConfig {
         control_burst: 5,
@@ -328,7 +316,7 @@ async fn drops_still_pending_when_the_control_stream_closes_are_logged() {
     {
     }
     h.close().await.unwrap();
-    let text = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+    let text = Logs::text();
     assert!(text.contains("dropped=45"), "{text}");
 }
 
@@ -521,13 +509,45 @@ async fn a_lookup_that_takes_too_long_is_answered_unavailable() {
     h.close().await.unwrap();
 }
 
-/// Collects what a scoped subscriber logs.
-#[derive(Clone, Default)]
-struct Logs(Arc<std::sync::Mutex<Vec<u8>>>);
+thread_local! {
+    static CAPTURED: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
 
-impl io::Write for Logs {
+/// What this test's thread logged since [`Logs::capture`].
+///
+/// One global subscriber writes every thread's log into that thread's own buffer. A subscriber set
+/// per test with `set_default` lost events when tests ran in parallel (the last "dropped" warning
+/// was missing in about a quarter of runs, never when the test ran alone or with one test thread;
+/// the likely cause is tracing's per-call-site cache of whether anyone wants the event). A global
+/// subscriber wants every call site. These tests run on a current-thread runtime, so everything a
+/// test logs lands in its own thread's buffer.
+struct Logs;
+
+impl Logs {
+    fn capture() {
+        static INSTALL: std::sync::Once = std::sync::Once::new();
+        INSTALL.call_once(|| {
+            tracing::subscriber::set_global_default(
+                tracing_subscriber::fmt()
+                    .with_ansi(false)
+                    .with_writer(ThreadBuffer)
+                    .finish(),
+            )
+            .expect("no other test installs a global subscriber");
+        });
+        CAPTURED.with_borrow_mut(Vec::clear);
+    }
+
+    fn text() -> String {
+        CAPTURED.with_borrow(|buffer| String::from_utf8(buffer.clone()).unwrap())
+    }
+}
+
+struct ThreadBuffer;
+
+impl io::Write for ThreadBuffer {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
+        CAPTURED.with_borrow_mut(|buffer| buffer.extend_from_slice(buf));
         Ok(buf.len())
     }
 
@@ -536,23 +556,17 @@ impl io::Write for Logs {
     }
 }
 
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Logs {
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for ThreadBuffer {
     type Writer = Self;
 
     fn make_writer(&'a self) -> Self::Writer {
-        self.clone()
+        Self
     }
 }
 
 #[tokio::test(start_paused = true)]
 async fn a_lookup_that_takes_too_long_is_logged_with_the_workspace_and_the_limit() {
-    let logs = Logs::default();
-    let _scope = tracing::subscriber::set_default(
-        tracing_subscriber::fmt()
-            .with_ansi(false)
-            .with_writer(logs.clone())
-            .finish(),
-    );
+    Logs::capture();
     let mut h = start_with(HostConfig {
         resolve_timeout: Duration::from_secs(2),
         ..HostConfig::default()
@@ -562,7 +576,7 @@ async fn a_lookup_that_takes_too_long_is_logged_with_the_workspace_and_the_limit
         ResolveAnswer::Unavailable
     );
     h.close().await.unwrap();
-    let text = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+    let text = Logs::text();
     assert!(
         text.contains("WARN") && text.contains("did not answer in time"),
         "{text}"

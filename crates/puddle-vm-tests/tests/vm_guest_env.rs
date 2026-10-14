@@ -569,9 +569,15 @@ async fn fixture_log(sb: &Sandbox) -> Vec<String> {
 /// fails or exceeds [`SETUP_STEP_BUDGET`].
 async fn setup_step(sb: &Sandbox, name: &str, script: &str) {
     let guest_limit = SETUP_STEP_BUDGET.as_secs() - 10;
+    // Every step downloads from a public registry or mirror through msb's default network, where one
+    // request can fail on its own (a corepack fetch of the pnpm manifest died after 3.8 s while the
+    // steps before it, on the same network, passed). Each step is idempotent, so a failed one is run
+    // again, up to three times inside the one guest time limit; the log keeps every attempt.
     let wrapped = format!(
         "export DEBIAN_FRONTEND=noninteractive; \
-         timeout -k 5 {guest_limit} sh -c {} >/tmp/setup-step.log 2>&1; rc=$?; \
+         timeout -k 5 {guest_limit} sh -c 'for n in 1 2 3; do \
+           echo \"-- attempt $n\"; sh -c \"$1\" && exit 0; sleep 5; done; exit 1' sh {} \
+         >/tmp/setup-step.log 2>&1; rc=$?; \
          tail -n 40 /tmp/setup-step.log; exit $rc",
         sh_quote(&format!("set -eu; {script}"))
     );

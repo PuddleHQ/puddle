@@ -26,7 +26,7 @@ use puddle_agent::config::Target;
 use puddle_agent::{Agent, Config};
 use puddle_ipc::IpcRoot;
 use puddle_netpolicy::{LocalAccess, NetPolicy, PuddleEndpoints};
-use puddle_ports::{Pin, Pins, PinsError, Ports};
+use puddle_ports::{MemoryPins, Ports};
 use puddle_proxy::testing::StaticResolver;
 use puddle_proxy::{Proxy, Route};
 use puddle_store::{Limits, ManualClock, Store};
@@ -35,24 +35,6 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
 const NOW: u64 = 1_800_000_000_000;
-
-/// No pins are kept in this rig.
-struct NoPins;
-
-impl Pins for NoPins {
-    fn pinned(&self, _: &WorkspaceName) -> Result<Vec<Pin>, PinsError> {
-        Ok(Vec::new())
-    }
-    fn all(&self) -> Result<Vec<(WorkspaceName, Pin)>, PinsError> {
-        Ok(Vec::new())
-    }
-    fn pin(&self, _: &WorkspaceName, _: Pin) -> Result<(), PinsError> {
-        Ok(())
-    }
-    fn unpin(&self, _: &WorkspaceName, _: u16) -> Result<bool, PinsError> {
-        Ok(false)
-    }
-}
 
 struct Rig {
     agent: Agent,
@@ -70,7 +52,11 @@ async fn rig() -> Rig {
     let clock = Arc::new(ManualClock::new(NOW));
     let store = Arc::new(Store::open_in_memory(clock, Limits::default()).unwrap());
     let endpoints = PuddleEndpoints::new();
-    let ports = Ports::new(endpoints.clone(), Arc::new(NoPins), Arc::new(NullSink));
+    let ports = Ports::new(
+        endpoints.clone(),
+        Arc::new(MemoryPins::default()),
+        Arc::new(NullSink),
+    );
     let access = LocalCategory::ALL
         .into_iter()
         .fold(LocalAccess::NONE, |a, c| a.with_toggle(c, true))

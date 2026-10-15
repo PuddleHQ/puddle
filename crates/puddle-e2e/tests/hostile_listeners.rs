@@ -23,6 +23,7 @@ use puddle_api::{
 };
 use puddle_ipc::IpcRoot;
 use puddle_netpolicy::{EndpointKind, LocalAccess, NetPolicy, PuddleEndpoints};
+use puddle_ports::{MemoryPins, Ports};
 use puddle_proxy::testing::StaticResolver;
 use puddle_proxy::{Proxy, PullProxy};
 use puddle_store::{Limits, ManualClock, Store};
@@ -91,11 +92,30 @@ async fn hostile_hg26_every_listener_the_host_side_opens_is_loopback_and_registe
     let root = IpcRoot::new().unwrap();
     let _route = proxy.serve_route(root.listen().unwrap(), WorkspaceName::new("hg26").unwrap());
 
+    // A forward of a workspace's port to this computer: loopback, and registered like the rest.
+    let workspace = WorkspaceName::new("hg26-fwd").unwrap();
+    let ports = Ports::new(
+        endpoints.clone(),
+        Arc::new(MemoryPins::default()),
+        Arc::new(NullSink),
+    );
+    ports.started(&workspace).await;
+    let forward_port = {
+        let probe = TcpListener::bind("127.0.0.1:0").unwrap();
+        probe.local_addr().unwrap().port()
+    };
+    ports
+        .forward(&workspace, 8080, Some(forward_port), false)
+        .await
+        .unwrap();
+
     let registered: BTreeSet<SocketAddr> = endpoints.list().into_iter().map(|(a, _)| a).collect();
     let kinds: Vec<EndpointKind> = endpoints.list().into_iter().map(|(_, k)| k).collect();
     assert!(
-        kinds.contains(&EndpointKind::Api) && kinds.contains(&EndpointKind::PullProxy),
-        "the rig must register the API and the pull proxy: {kinds:?}"
+        kinds.contains(&EndpointKind::Api)
+            && kinds.contains(&EndpointKind::PullProxy)
+            && kinds.contains(&EndpointKind::PinnedForward),
+        "the rig must register the API, the pull proxy and a forward: {kinds:?}"
     );
 
     let sweep = own_sockets();
@@ -104,7 +124,11 @@ async fn hostile_hg26_every_listener_the_host_side_opens_is_loopback_and_registe
         println!("  {socket}");
     }
     // Not vacuous: the sweep sees the two listeners we know are there.
-    for known in [api.local_addr(), pull.local_addr()] {
+    for known in [
+        api.local_addr(),
+        pull.local_addr(),
+        SocketAddr::from(([127, 0, 0, 1], forward_port)),
+    ] {
         assert!(
             sweep
                 .iter()
@@ -132,5 +156,6 @@ async fn hostile_hg26_every_listener_the_host_side_opens_is_loopback_and_registe
         );
     }
     drop((loose, wide, datagrams));
+    drop(ports);
     api.shutdown().await;
 }

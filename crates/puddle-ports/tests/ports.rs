@@ -21,11 +21,12 @@ use puddle_agent_proto::forward::GuestLink;
 use puddle_agent_proto::host::{
     GuestStream, GuestWatcher, HostConfig, StreamHandler, serve_session,
 };
+use puddle_ipc::IpcRoot;
 use puddle_netpolicy::{EndpointKind, OwnAddresses, PuddleEndpoints};
 use puddle_ports::{Pin, Pins, PinsError, PortOwner, PortRow, Ports, PortsError, ProgramLookup};
 use puddle_types::{CollectingSink, Event, WorkspaceName};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream, UnixListener};
+use tokio::net::{TcpListener, TcpStream};
 
 fn name(text: &str) -> WorkspaceName {
     WorkspaceName::new(text).unwrap()
@@ -135,6 +136,7 @@ struct Rig {
     workspace: WorkspaceName,
     socket: PathBuf,
     tables: PathBuf,
+    _root: IpcRoot,
     agent: Option<Agent>,
     dir: PathBuf,
 }
@@ -157,7 +159,7 @@ async fn rig_with(tag: &str, tweak: impl FnOnce(Ports) -> Ports) -> Rig {
         N.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    let (socket, tables) = (dir.join("route.sock"), dir.join("net"));
+    let tables = dir.join("net");
     std::fs::create_dir_all(&tables).unwrap();
     let pins = Arc::new(MemoryPins::default());
     let events = Arc::new(CollectingSink::default());
@@ -169,14 +171,16 @@ async fn rig_with(tag: &str, tweak: impl FnOnce(Ports) -> Ports) -> Rig {
         Arc::new(Named(Some("someserver"))),
     ));
     let workspace = name("shop");
-    let listener = UnixListener::bind(&socket).unwrap();
+    let root = IpcRoot::new().unwrap();
+    let mut listener = root.listen().unwrap();
+    let socket = listener.endpoint().path().to_path_buf();
     let route = Route {
         ports: ports.clone(),
         workspace: workspace.clone(),
     };
     tokio::spawn(async move {
         loop {
-            let (conn, _) = listener.accept().await.unwrap();
+            let conn = listener.accept().await.unwrap();
             let route = route.clone();
             tokio::spawn(async move {
                 let sink = Arc::new(CollectingSink::default());
@@ -199,6 +203,7 @@ async fn rig_with(tag: &str, tweak: impl FnOnce(Ports) -> Ports) -> Rig {
         workspace,
         socket,
         tables,
+        _root: root,
         agent: None,
         dir,
     };

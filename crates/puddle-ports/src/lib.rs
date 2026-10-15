@@ -27,5 +27,5 @@ mod ports;
 
 pub use forward::MAX_CONNECTIONS;
 pub use owner::{PortOwner, ProgramLookup, SystemPrograms};
-pub use pins::{Pin, Pins, PinsError};
+pub use pins::{MemoryPins, Pin, Pins, PinsError};
 pub use ports::{PortRow, Ports, PortsError, PortsView};

@@ -55,14 +55,27 @@ impl Root {
     }
 }
 
-/// The split-DNS addon for `names`.
-fn split_dns(names: &[&str]) -> String {
+/// The split-DNS addon for `names`, each with the port that replaces the one asked for (`None`
+/// keeps it).
+fn split_dns(names: &[(&str, Option<u16>)]) -> String {
     let set = names
         .iter()
-        .map(|n| format!("\"{n}\""))
+        .map(|(n, port)| {
+            let port = port.map_or_else(|| "None".to_owned(), |p| p.to_string());
+            format!("\"{n}\": {port}")
+        })
         .collect::<Vec<_>>()
         .join(", ");
     include_str!("split_dns_addon.py").replace("{__NAMES__}", &format!("{{{set}}}"))
+}
+
+/// Names without a port of their own.
+fn plain(names: &[&str]) -> Vec<(String, Option<u16>)> {
+    names.iter().map(|n| ((*n).to_owned(), None)).collect()
+}
+
+fn borrowed(names: &[(String, Option<u16>)]) -> Vec<(&str, Option<u16>)> {
+    names.iter().map(|(n, p)| (n.as_str(), *p)).collect()
 }
 
 /// A running `mitmdump`; stopped on drop.
@@ -169,8 +182,24 @@ impl Interceptor {
     /// When mitmproxy is required but missing, or does not start.
     #[must_use]
     pub fn start(names: &[&str]) -> Option<Self> {
+        Self::start_on_ports(&plain(names))
+    }
+
+    /// As [`Self::start`], with a port for each name: the interceptor connects the name there
+    /// whatever port the client asked for (a decrypted Git host is always on 443, which a lab
+    /// cannot bind).
+    ///
+    /// # Panics
+    /// When mitmproxy is required but missing, or does not start.
+    #[must_use]
+    pub fn start_on_ports(names: &[(String, Option<u16>)]) -> Option<Self> {
         let root = Root::generate(&Prefix::new("root"));
-        let mitm = Mitm::spawn("interceptor", Some(&root), &[], &[split_dns(names)])?;
+        let mitm = Mitm::spawn(
+            "interceptor",
+            Some(&root),
+            &[],
+            &[split_dns(&borrowed(names))],
+        )?;
         Some(Self { mitm, root })
     }
 
@@ -243,11 +272,23 @@ impl NtlmProxy {
     /// When mitmproxy is required but missing, or does not start.
     #[must_use]
     pub fn start(names: &[&str]) -> Option<Self> {
+        Self::start_on_ports(&plain(names))
+    }
+
+    /// As [`Self::start`], with a port for each name (see [`Interceptor::start_on_ports`]).
+    ///
+    /// # Panics
+    /// When mitmproxy is required but missing, or does not start.
+    #[must_use]
+    pub fn start_on_ports(names: &[(String, Option<u16>)]) -> Option<Self> {
         Mitm::spawn(
             "ntlm",
             None,
             &["--ignore-hosts".into(), ".*".into()],
-            &[include_str!("ntlm_proxy_addon.py").into(), split_dns(names)],
+            &[
+                include_str!("ntlm_proxy_addon.py").into(),
+                split_dns(&borrowed(names)),
+            ],
         )
         .map(|mitm| Self { mitm })
     }

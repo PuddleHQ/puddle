@@ -751,3 +751,92 @@ fn the_error_of_a_failing_export_names_the_cause_never_a_key() {
     let text = report.skipped[0].reason.to_string();
     assert!(text.contains("exporting the key failed") && text.contains("0x8009000b"));
 }
+
+// ---- the shape gate ---------------------------------------------------------------------------
+
+#[test]
+fn only_a_marked_loopback_leaf_passes_the_trust_shape_check() {
+    use puddle_certs::devcert::leaf::{ShapeError, check_trust_shape};
+    let shape = |spec: Spec| check_trust_shape(&spec.build().der).map(|_| ());
+
+    assert_eq!(shape(Spec::good()), Ok(()));
+    assert_eq!(
+        shape(Spec {
+            ca: true,
+            ..Spec::good()
+        }),
+        Err(ShapeError::NotALeaf)
+    );
+    assert_eq!(
+        shape(Spec {
+            marker: None,
+            ..Spec::good()
+        }),
+        Err(ShapeError::NoMarker)
+    );
+    assert_eq!(
+        shape(Spec {
+            names: vec!["localhost", "login.example.com"],
+            ..Spec::good()
+        }),
+        Err(ShapeError::ForeignName("login.example.com".into()))
+    );
+    assert_eq!(
+        shape(Spec {
+            names: vec![],
+            ..Spec::good()
+        }),
+        Err(ShapeError::ForeignName("(none)".into()))
+    );
+
+    // A certificate that does not say it is not a CA is not trusted either, and neither is one
+    // that is not a certificate.
+    let mut params = CertificateParams::default();
+    params.is_ca = IsCa::NoCa;
+    params.subject_alt_names = vec![SanType::DnsName("localhost".try_into().unwrap())];
+    params.custom_extensions = vec![CustomExtension::from_oid_content(
+        &ASPNET_MARKER_OID,
+        vec![6],
+    )];
+    let der = params
+        .self_signed(&KeyPair::generate().unwrap())
+        .unwrap()
+        .der()
+        .to_vec();
+    assert_eq!(check_trust_shape(&der), Err(ShapeError::NotALeaf));
+    assert_eq!(check_trust_shape(b"nope"), Err(ShapeError::Unreadable));
+    let mut trailing = Spec::good().build().der;
+    trailing.push(0);
+    assert_eq!(check_trust_shape(&trailing), Err(ShapeError::Unreadable));
+}
+
+#[test]
+fn a_leaf_for_a_foreign_name_is_never_offered_to_the_system() {
+    // The file in the data folder is replaced by one that passes every other check but names a real
+    // domain: it is not used, so it never reaches the trust call.
+    let dir = tempfile::tempdir().unwrap();
+    let bad = Spec {
+        names: vec!["localhost", "bank.example"],
+        ..Spec::good()
+    }
+    .build();
+    let body = format!(
+        "{}{}",
+        pem::encode(&pem::Pem::new("CERTIFICATE", bad.der.clone())),
+        PrivateKey::from_pkcs8_der(b"junk".to_vec())
+            .to_pem()
+            .as_str()
+    );
+    puddle_fs::private::write_atomic(&leaf_path(&dir), body.as_bytes()).unwrap();
+    let fake = FakeTrust::new(vec![]);
+    let report = manager(&dir, &fake).ensure(now()).unwrap();
+    assert_ne!(report.material.cert_der(), bad.der);
+    assert!(
+        fake.trust_calls
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|c| *c != bad.der)
+    );
+    leaf::check_trust_shape(report.material.cert_der()).unwrap();
+}

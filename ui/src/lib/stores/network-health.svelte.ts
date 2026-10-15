@@ -3,7 +3,7 @@
 // after a resync (`lagged`, reconnect). Reads that overlap share one run and one more follows,
 // so the last answer always reflects the last event.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
-import { isNetworkChanged } from "#lib/network/events.ts";
+import { isNetworkChanged, isProxySignInFailed } from "#lib/network/events.ts";
 import type { NetworkHealth } from "#lib/network/model.ts";
 import { live, type LiveSource } from "./live.svelte.ts";
 
@@ -71,7 +71,9 @@ export class NetworkHealthStore {
   start(): () => void {
     const unsubscribe = this.#source?.subscribe({
       event: (event) => {
-        if (isNetworkChanged(event)) void this.refresh();
+        if (isNetworkChanged(event) || isProxySignInFailed(event)) {
+          void this.refresh();
+        }
       },
       resync: () => void this.refresh(),
     });

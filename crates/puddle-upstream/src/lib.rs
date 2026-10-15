@@ -21,6 +21,10 @@
 //!   unreachable, and the `407` loop on one connection with [`ProxyAuth`] ([`BasicAuth`] from
 //!   configured credentials; SSPI is [`NegotiateAuth`]). [`host::connect`] is the same for
 //!   Puddle's own requests.
+//! - [`RouteWatch`]: tells the holder of a long-lived connection when a network change took its
+//!   hop off the route to its destination, so it can close the connection and let the client
+//!   reconnect over the new route. [`Chain::sign_in_failures`] announces a proxy that began to
+//!   turn the sign-in down, and what the sign-in learned about each proxy is dropped with the epoch.
 //! - [`TlsClient`]: TLS on top of such a connection, verified by the platform's verifier plus
 //!   the corporate roots ([`tls_connect`]).
 //!
@@ -60,7 +64,7 @@ mod windows;
 mod wire;
 
 pub use auth::{AuthError, AuthSession, AuthStep, NoAuth, ProxyAuth, system_auth};
-pub use basic::{AuthList, BasicAuth, Credentials};
+pub use basic::{AuthList, BasicAuth, CredentialSource, Credentials};
 pub use chain::{Chain, ChainConfig, ChainError, Connected, Form, Request, Secret, connect_first};
 pub use discovery::{Config, Decision, Discovery, ManualProxy, Mode, RouteSource, Watching};
 pub use env::{EnvFallback, EnvOs};

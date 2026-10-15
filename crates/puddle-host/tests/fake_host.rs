@@ -4160,14 +4160,30 @@ async fn host_behind_proxy(
     proxy: &puddle_upstream::FakeProxy,
     password: &str,
 ) -> Host<FakeRuntime> {
+    let mut config = rig.config();
+    config.upstream.basic = Some(puddle_upstream::Credentials::new("svc", password));
+    host_behind_proxy_with(rig, proxy, config).await
+}
+
+/// Like [`host_behind_proxy`], with the Basic sign-in left to the stored ones.
+async fn host_behind_proxy_without_a_configured_password(
+    rig: &Rig,
+    proxy: &puddle_upstream::FakeProxy,
+) -> Host<FakeRuntime> {
+    host_behind_proxy_with(rig, proxy, rig.config()).await
+}
+
+async fn host_behind_proxy_with(
+    rig: &Rig,
+    proxy: &puddle_upstream::FakeProxy,
+    config: HostConfig,
+) -> Host<FakeRuntime> {
     let os = FakeOs::new(ProxyConfig {
         pac_url: Some("http://pac.corp/p.pac".into()),
         ..ProxyConfig::default()
     });
     let hops = vec![puddle_upstream::Hop::Proxy(proxy.proxy_addr())];
     os.set_pac(move |_| Ok(hops.clone()));
-    let mut config = rig.config();
-    config.upstream.basic = Some(puddle_upstream::Credentials::new("svc", password));
     let prepared = prepare(config, &FakePlatform::new(&rig.log)).unwrap();
     let mut options = HostOptions::default();
     options.secret_store = Some(rig.secrets.clone());
@@ -4393,5 +4409,98 @@ async fn locks_that_could_not_be_removed_one_by_one_are_listed_in_the_problem() 
             .contains("api/.git/index.lock: Permission denied"),
         "{problems:?}"
     );
+    host.shutdown().await;
+}
+
+/// Waits until the host has read its stored proxy sign-ins (it does so off the start-up path).
+async fn proxy_sign_ins_loaded(host: &Host<FakeRuntime>, count: usize) {
+    for _ in 0..200 {
+        if host.proxy_passwords().proxies().len() == count {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert_eq!(
+        host.proxy_passwords().proxies().len(),
+        count,
+        "the proxy sign-ins were not loaded"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stored_proxy_sign_in_answers_the_proxy_and_is_there_after_a_restart() {
+    use puddle_upstream::{Behaviour, FakeProxy};
+    let rig = Rig::new();
+    let proxy = FakeProxy::start(Behaviour::Basic {
+        user: "svc".into(),
+        password: "pw-stored".into(),
+    })
+    .await;
+    let host = host_behind_proxy_without_a_configured_password(&rig, &proxy).await;
+    proxy_sign_ins_loaded(&host, 0).await;
+    host.proxy_passwords()
+        .set(&proxy.proxy_addr(), "svc", "pw-stored")
+        .unwrap();
+    let api = api(&host);
+    add_github_identity(&api, "ghp_unused_token").await;
+    let _ = api.get("/api/repos").await;
+    let seen = proxy.seen();
+    assert!(
+        seen.iter().any(|request| request.method == "CONNECT"
+            && request.target == "api.github.com:443"
+            && request.proxy_authorization.as_deref() == Some("Basic c3ZjOnB3LXN0b3JlZA==")),
+        "{seen:?}"
+    );
+    host.shutdown().await;
+    drop(host);
+
+    // A second run finds it in the credential store, and nothing but the store holds it.
+    let again = host_behind_proxy_without_a_configured_password(&rig, &proxy).await;
+    proxy_sign_ins_loaded(&again, 1).await;
+    assert_eq!(
+        again.proxy_passwords().proxies(),
+        [(proxy.proxy_addr(), "svc".to_owned())]
+    );
+    let settings = std::fs::read_dir(rig.dir.path())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .map(|e| std::fs::read_to_string(e.path()).unwrap_or_default())
+        .collect::<String>();
+    assert!(!settings.contains("pw-stored"), "{settings}");
+    again.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_proxy_that_turns_the_sign_in_down_is_one_event_and_a_failed_attempt() {
+    use puddle_upstream::{Behaviour, FakeProxy};
+    let rig = Rig::new();
+    let proxy = FakeProxy::start(Behaviour::Basic {
+        user: "svc".into(),
+        password: "pw-right".into(),
+    })
+    .await;
+    let host = host_behind_proxy(&rig, &proxy, "pw-wrong-canary").await;
+    let mut events = host.events().subscribe();
+    let api = api(&host);
+    add_github_identity(&api, "ghp_unused_token").await;
+    // Two listings, each retrying the same wrong password: one episode.
+    let _ = api.get("/api/repos").await;
+    let _ = api.get("/api/repos").await;
+
+    let mut failures = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        if let Event::ProxySignInFailed { proxy, scheme } = event {
+            failures.push((proxy, scheme));
+        }
+    }
+    assert_eq!(
+        failures,
+        [(proxy.proxy_addr().to_string(), Some("Basic".to_owned()))]
+    );
+    let report = api.get("/api/network-health").await;
+    assert!(!report.body.contains("pw-wrong-canary"), "{}", report.body);
+    assert_eq!(report.json()["sign_in"]["attempts"][0]["result"], "failed");
     host.shutdown().await;
 }

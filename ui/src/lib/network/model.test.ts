@@ -18,7 +18,7 @@ import {
   waitText,
   type NetworkHealth,
 } from "./model.ts";
-import { isNetworkChanged } from "./events.ts";
+import { isNetworkChanged, isProxySignInFailed } from "./events.ts";
 import { report } from "#lib/testing/fake-network.ts";
 
 const ids = (r: NetworkHealth) => findings(r).map((f) => f.id);
@@ -261,6 +261,20 @@ describe("words", () => {
     expect(fixedProxies(r.proxy)).toEqual(["a:1", "b:2"]);
   });
 
+  it("recognises the proxy_sign_in_failed event and nothing looser", () => {
+    expect(
+      isProxySignInFailed({
+        type: "proxy_sign_in_failed",
+        proxy: "proxy.corp:8080",
+        scheme: null,
+      }),
+    ).toBe(true);
+    expect(isProxySignInFailed({ type: "proxy_sign_in_failed" })).toBe(false);
+    expect(isProxySignInFailed({ type: "network_changed", epoch: 1 })).toBe(
+      false,
+    );
+    expect(isProxySignInFailed(null)).toBe(false);
+  });
   it("recognises the network_changed event and nothing looser", () => {
     expect(isNetworkChanged({ type: "network_changed", epoch: 2 })).toBe(true);
     expect(isNetworkChanged({ type: "network_changed" })).toBe(false);

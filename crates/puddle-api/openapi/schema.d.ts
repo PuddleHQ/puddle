@@ -2071,6 +2071,13 @@ export interface components {
             /** @enum {string} */
             type: "network_changed";
         } | {
+            /** @description The proxy as `host:port`. */
+            proxy: string;
+            /** @description The scheme that was sent (`Negotiate`, `NTLM`, `Basic`); `null` when none was. */
+            scheme: string | null;
+            /** @enum {string} */
+            type: "proxy_sign_in_failed";
+        } | {
             /** @enum {string} */
             type: "problems_changed";
         };

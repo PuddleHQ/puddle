@@ -40,6 +40,7 @@ mod logins;
 mod paths;
 mod platform;
 mod process_env;
+mod proxy_passwords;
 mod settings_read;
 mod ssh_target;
 mod vault;
@@ -57,4 +58,5 @@ pub use host::{
 pub use injection::{InjectorFactory, InjectorInputs};
 pub use paths::HostPaths;
 pub use platform::{Platform, SystemPlatform};
+pub use proxy_passwords::{ProxyPasswordError, ProxyPasswords};
 pub use workspaces::{HostWorkspaces, NoLauncher};

@@ -241,6 +241,18 @@ pub enum Event {
         /// The network epoch that began; it only grows while Puddle runs.
         epoch: u64,
     },
+    /// Signing in to the company proxy failed (it turned the credentials or the token down, or
+    /// asked again and again), so what `GET /api/network-health` lists under sign-in has changed.
+    /// Sent once when a proxy goes from signed in (or never tried) to failing, not on every retry.
+    /// Names the proxy and the scheme only, never a credential. Global: every subscriber gets it.
+    ProxySignInFailed {
+        /// The proxy as `host:port`.
+        proxy: String,
+        /// The scheme that was sent (`Negotiate`, `NTLM`, `Basic`); `null` when none was.
+        #[serde(default)]
+        #[cfg_attr(feature = "openapi", schema(required = true))]
+        scheme: Option<String>,
+    },
     /// The list of background problems changed (something Puddle does on its own failed, or the
     /// cause went away). Carries no data: refetch `GET /api/problems`. Global: every subscriber
     /// gets it.
@@ -405,6 +417,7 @@ impl Event {
             | Self::CredentialSignInNeeded { .. }
             | Self::AuditAppended { .. }
             | Self::NetworkChanged { .. }
+            | Self::ProxySignInFailed { .. }
             | Self::ProblemsChanged {} => None,
         }
     }
@@ -680,6 +693,22 @@ mod tests {
                 r#"{"type":"network_changed","epoch":4}"#,
                 None,
             ),
+            (
+                Event::ProxySignInFailed {
+                    proxy: "proxy.corp:8080".into(),
+                    scheme: Some("Basic".into()),
+                },
+                r#"{"type":"proxy_sign_in_failed","proxy":"proxy.corp:8080","scheme":"Basic"}"#,
+                None,
+            ),
+            (
+                Event::ProxySignInFailed {
+                    proxy: "proxy.corp:8080".into(),
+                    scheme: None,
+                },
+                r#"{"type":"proxy_sign_in_failed","proxy":"proxy.corp:8080","scheme":null}"#,
+                None,
+            ),
         ] {
             assert_eq!(serde_json::to_string(&event).unwrap(), json);
             assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
@@ -848,6 +877,7 @@ mod tests {
                 "login_problem",
                 "audit_appended",
                 "network_changed",
+                "proxy_sign_in_failed",
                 "problems_changed"
             ]
         );

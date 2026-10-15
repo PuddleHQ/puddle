@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, EventHub, HostCredentials, HostNetworkHealth, Launcher,
-    RunningApi, Services, SettingsRepo, forward_network_changes,
+    RunningApi, Services, SettingsRepo, forward_network_changes, forward_proxy_sign_in_failures,
 };
 use puddle_certs::CorporateRoots;
 use puddle_compute::{Runtime, SandboxInfo};
@@ -43,7 +43,7 @@ use crate::doctor::system_doctor;
 use crate::files::{FileSettings, WorkspaceBook};
 use crate::injection::{Injection, InjectorFactory, InjectorInputs, forward_sign_in_needed};
 use crate::workspaces::{NoLauncher, Parts, known_ids};
-use crate::{HostConfig, HostError, HostWorkspaces, Platform};
+use crate::{HostConfig, HostError, HostWorkspaces, Platform, ProxyPasswords};
 
 /// One step of starting or stopping the host, in the order they ran.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -313,6 +313,7 @@ struct Background {
     _watching: Option<Watching>,
     // Tells the API's event stream about each new network epoch; ended with the rest.
     _network_events: AbortOnDrop,
+    _sign_in_failures: AbortOnDrop,
     // Applies a change of a running workspace's identities to what it decrypts and its authors.
     _git_changes: AbortOnDrop,
     // Turns a read that needs a sign-in into the user's notice.
@@ -332,6 +333,16 @@ impl AbortOnDrop {
     }
 }
 
+impl AbortOnDrop {
+    /// Announces on `events` each time signing in to a company proxy begins to fail.
+    fn forwarding_sign_in_failures(chain: &Chain, events: &Arc<EventHub>) -> Self {
+        Self(forward_proxy_sign_in_failures(
+            chain,
+            events.clone() as Arc<dyn EventSink>,
+        ))
+    }
+}
+
 impl Drop for AbortOnDrop {
     fn drop(&mut self) {
         self.0.abort();
@@ -344,6 +355,7 @@ pub struct Host<R: Runtime + Clone> {
     url: Url,
     events: Arc<EventHub>,
     problems: Arc<Problems>,
+    proxy_passwords: Arc<ProxyPasswords>,
     store: Arc<Store>,
     endpoints: PuddleEndpoints,
     workspaces: HostWorkspaces<R>,
@@ -438,6 +450,8 @@ impl<R: Runtime + Clone> Host<R> {
             .unwrap_or_else(crate::vault::os_vault);
         crate::vault::sweep_in_background(vault.clone(), store.clone(), problems.clone());
         let injecting = Injecting::build(&options, &vault, &store, &events, &roots)?;
+        let proxy_passwords = ProxyPasswords::new(vault.clone());
+        load_proxy_passwords(proxy_passwords.clone(), problems.clone());
 
         // The way out: the company network (discovery, sign-in as the user, then Basic) for the
         // sandbox proxy and the pull proxy alike.
@@ -449,7 +463,7 @@ impl<R: Runtime + Clone> Host<R> {
             &endpoints,
             &connections,
             &events,
-            injecting.termination(),
+            EgressParts::new(injecting.termination(), &proxy_passwords),
         );
         let (proxy, upstream, discovery) = (egress.proxy, egress.upstream, egress.discovery);
         let network_health = network_health_of(&egress.chain, &discovery, &clock, &roots);
@@ -494,6 +508,7 @@ impl<R: Runtime + Clone> Host<R> {
             Sweeper::spawn_reporting(store.clone(), DEFAULT_SWEEP_PERIOD, problems.clone());
         let watching = discovery.watch();
         let network_events = AbortOnDrop::forwarding(&discovery, &events);
+        let sign_in_failures = AbortOnDrop::forwarding_sign_in_failures(&egress.chain, &events);
         steps.push(Step::BackgroundStarted);
 
         let lifecycle = Arc::new(Lifecycle::new(runtime.clone(), config.shutdown.clone()));
@@ -536,6 +551,7 @@ impl<R: Runtime + Clone> Host<R> {
             url: served.url,
             events,
             problems,
+            proxy_passwords,
             store,
             endpoints,
             workspaces: service,
@@ -547,6 +563,7 @@ impl<R: Runtime + Clone> Host<R> {
                 pull,
                 _watching: watching,
                 _network_events: network_events,
+                _sign_in_failures: sign_in_failures,
                 _git_changes: git_changes,
                 _sign_in_notices: sign_in_notices,
             })),
@@ -585,6 +602,13 @@ impl<R: Runtime + Clone> Host<R> {
     #[must_use]
     pub fn problems(&self) -> &Arc<Problems> {
         &self.problems
+    }
+
+    /// The sign-ins for company proxies that ask for a user name and password, kept in the
+    /// operating system's credential store. A change is used by the next connection.
+    #[must_use]
+    pub fn proxy_passwords(&self) -> &Arc<ProxyPasswords> {
+        &self.proxy_passwords
     }
 
     /// The database.
@@ -808,6 +832,47 @@ impl Injecting {
     }
 }
 
+/// Reads the stored proxy sign-ins off the async threads: a locked credential store may take a
+/// long time to answer and starting must not wait for it. Until it has, a proxy that asks for Basic
+/// is answered as if no sign-in were stored.
+fn load_proxy_passwords(passwords: Arc<ProxyPasswords>, problems: Arc<Problems>) {
+    const PROBLEM: &str = "proxy-sign-in-store";
+    tokio::task::spawn_blocking(move || match passwords.load() {
+        Ok(count) => {
+            tracing::debug!(count, "proxy sign-ins loaded");
+            problems.clear(PROBLEM);
+        }
+        Err(_) => problems.raise(Problem::new(
+            PROBLEM,
+            "Puddle could not read the company proxy sign-ins",
+            "The operating system's credential store did not answer, so a proxy that asks for a \
+             user name and password is not signed in to. Unlock the credential store and restart \
+             Puddle.",
+        )),
+    });
+}
+
+/// What the way out is given besides the settings: the machinery for decrypted hosts and the stored
+/// proxy sign-ins.
+struct EgressParts {
+    terminations: Arc<Terminations>,
+    tls: TlsClient,
+    proxy_passwords: Arc<ProxyPasswords>,
+}
+
+impl EgressParts {
+    fn new(
+        (terminations, tls): (Arc<Terminations>, TlsClient),
+        proxy_passwords: &Arc<ProxyPasswords>,
+    ) -> Self {
+        Self {
+            terminations,
+            tls,
+            proxy_passwords: proxy_passwords.clone(),
+        }
+    }
+}
+
 /// The way out through the company network, shared by the sandbox proxy and the pull proxy.
 struct Egress {
     proxy: Arc<Proxy>,
@@ -824,18 +889,25 @@ impl Egress {
         endpoints: &PuddleEndpoints,
         connections: &Arc<ConnectionRecorder>,
         events: &Arc<EventHub>,
-        (terminations, tls): (Arc<Terminations>, TlsClient),
+        parts: EgressParts,
     ) -> Self {
+        let EgressParts {
+            terminations,
+            tls,
+            proxy_passwords,
+        } = parts;
         let discovery = options.discovery.clone().unwrap_or_else(|| {
             Discovery::new(
                 puddle_upstream::system_os(),
                 config.upstream.discovery.clone(),
             )
         });
-        let mut auth = AuthList::new().with(system_auth());
+        // Basic: the sign-in stored for the proxy, else the one configured for every proxy.
+        let mut basic = BasicAuth::new().with_source(proxy_passwords);
         if let Some(credentials) = config.upstream.basic.clone() {
-            auth = auth.with(Arc::new(BasicAuth::new().with_default(credentials)));
+            basic = basic.with_default(credentials);
         }
+        let auth = AuthList::new().with(system_auth()).with(Arc::new(basic));
         let chain = Chain::new(discovery.clone(), Arc::new(auth));
         let upstream = Upstream::new(chain.clone());
         let access_settings = settings.clone();

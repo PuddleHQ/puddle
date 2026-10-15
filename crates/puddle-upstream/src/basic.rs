@@ -33,6 +33,12 @@ impl Credentials {
         }
     }
 
+    /// The user name. The password is never handed out.
+    #[must_use]
+    pub fn user(&self) -> &str {
+        &self.user
+    }
+
     /// The `Proxy-Authorization` value, `Basic base64(user:password)`.
     fn header(&self) -> String {
         format!(
@@ -51,8 +57,17 @@ impl fmt::Debug for Credentials {
     }
 }
 
+/// Where a proxy's Basic credentials are looked up when it asks for them: the product keeps them
+/// in the operating system's credential store and answers from memory, so this never blocks.
+/// Called once per `407`.
+pub trait CredentialSource: Send + Sync + fmt::Debug {
+    /// The credentials for `proxy`, if there are any.
+    fn credentials(&self, proxy: &ProxyAddr) -> Option<Credentials>;
+}
+
 /// Basic authentication: answers a proxy's `407` that offers `Basic` with the configured
-/// credentials for that proxy, else the default credentials.
+/// credentials for that proxy (set by hand, or from a [`CredentialSource`]), else the default
+/// credentials.
 ///
 /// A proxy that rejects the credentials is not asked again on the same exchange: the second
 /// `407` ends the session with an error, so a wrong password costs one attempt, not a loop
@@ -61,6 +76,7 @@ impl fmt::Debug for Credentials {
 pub struct BasicAuth {
     default: Option<Credentials>,
     per_proxy: HashMap<ProxyAddr, Credentials>,
+    source: Option<Arc<dyn CredentialSource>>,
 }
 
 impl BasicAuth {
@@ -83,11 +99,19 @@ impl BasicAuth {
         self.per_proxy.insert(proxy, credentials);
         self
     }
+
+    /// Credentials looked up per proxy when it asks: after the ones set with
+    /// [`BasicAuth::with_proxy`], before the default.
+    #[must_use]
+    pub fn with_source(mut self, source: Arc<dyn CredentialSource>) -> Self {
+        self.source = Some(source);
+        self
+    }
 }
 
 impl ProxyAuth for BasicAuth {
     fn methods(&self) -> Vec<&'static str> {
-        if self.default.is_some() || !self.per_proxy.is_empty() {
+        if self.default.is_some() || !self.per_proxy.is_empty() || self.source.is_some() {
             vec!["basic"]
         } else {
             Vec::new()
@@ -104,16 +128,22 @@ impl ProxyAuth for BasicAuth {
         if !offered.iter().any(|s| s.eq_ignore_ascii_case("basic")) {
             return Ok(None);
         }
-        Ok(self
+        let looked_up = if self.per_proxy.contains_key(proxy) {
+            None
+        } else {
+            self.source.as_ref().and_then(|s| s.credentials(proxy))
+        };
+        let credentials = self
             .per_proxy
             .get(proxy)
-            .or(self.default.as_ref())
-            .map(|credentials| {
-                Box::new(BasicSession {
-                    header: credentials.header(),
-                    sent: false,
-                }) as Box<dyn AuthSession>
-            }))
+            .or(looked_up.as_ref())
+            .or(self.default.as_ref());
+        Ok(credentials.map(|credentials| {
+            Box::new(BasicSession {
+                header: credentials.header(),
+                sent: false,
+            }) as Box<dyn AuthSession>
+        }))
     }
 }
 
@@ -245,6 +275,40 @@ mod tests {
             other.step(None).unwrap(),
             AuthStep::Authorization(format!("Basic {}", BASE64.encode("d:d")))
         );
+    }
+
+    #[derive(Debug)]
+    struct Fixed(HashMap<ProxyAddr, Credentials>);
+
+    impl CredentialSource for Fixed {
+        fn credentials(&self, proxy: &ProxyAddr) -> Option<Credentials> {
+            self.0.get(proxy).cloned()
+        }
+    }
+
+    #[test]
+    fn a_source_answers_per_proxy_between_the_hand_set_and_the_default() {
+        let source = Fixed(HashMap::from([
+            (proxy(1), Credentials::new("from-source", "s1")),
+            (proxy(2), Credentials::new("from-source", "s2")),
+        ]));
+        let auth = BasicAuth::new()
+            .with_proxy(proxy(1), Credentials::new("by-hand", "h"))
+            .with_default(Credentials::new("default", "d"))
+            .with_source(Arc::new(source));
+        assert_eq!(auth.methods(), ["basic"]);
+        let header = |proxy: &ProxyAddr| {
+            let mut session = auth.begin(proxy, &["Basic"]).unwrap().unwrap();
+            session.step(None).unwrap()
+        };
+        let basic = |text: &str| AuthStep::Authorization(format!("Basic {}", BASE64.encode(text)));
+        assert_eq!(header(&proxy(1)), basic("by-hand:h"));
+        assert_eq!(header(&proxy(2)), basic("from-source:s2"));
+        assert_eq!(header(&proxy(3)), basic("default:d"));
+        // A source alone still offers Basic, and gives nothing for a proxy it does not know.
+        let alone = BasicAuth::new().with_source(Arc::new(Fixed(HashMap::new())));
+        assert_eq!(alone.methods(), ["basic"]);
+        assert!(alone.begin(&proxy(1), &["Basic"]).unwrap().is_none());
     }
 
     #[test]

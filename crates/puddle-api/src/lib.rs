@@ -75,7 +75,7 @@ pub use events::{DEFAULT_EVENT_BUFFER, EventHub, Lagged};
 pub use fake_workspaces::{FakeLauncher, FakeWorkspaces, Unsaved};
 pub use network_health::{
     FakeNetworkHealth, HostNetworkHealth, NetworkHealthError, NetworkHealthService,
-    NoNetworkHealth, forward_network_changes,
+    NoNetworkHealth, forward_network_changes, forward_proxy_sign_in_failures,
 };
 pub use openapi::{API_VERSION, openapi, openapi_json};
 pub use repos::{FakeRepos, NoRepos, RepoService, ReposError};

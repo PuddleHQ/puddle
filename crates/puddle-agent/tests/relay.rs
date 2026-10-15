@@ -11,6 +11,7 @@ mod common;
 
 use std::io;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -335,4 +336,49 @@ async fn a_server_that_half_closes_still_gets_an_upload_larger_than_the_stream_w
     .await;
     assert!(sent.is_ok(), "the upload stalled");
     assert_eq!(server.await.unwrap(), OVER_A_WINDOW);
+}
+
+/// A guest client that does not read holds one stream of one yamux session; the connections that
+/// share the session must carry on. A fixed session count of 2 and 16 more connections put several
+/// of them on the stalled session.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_client_that_stops_reading_does_not_stall_the_other_connections_of_its_session() {
+    let rig = common::rig_with(
+        "slowreader",
+        |_| None,
+        |c| c.mux = 2,
+        Arc::new(common::NoBridge),
+    )
+    .await;
+    let echo = echo_server().await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (mut conn, _) = listener.accept().await.unwrap();
+        // More than a stream window, so the window is full and frames are queued for the stream.
+        let chunk = vec![b's'; 256 * 1024];
+        for _ in 0..OVER_A_WINDOW / chunk.len() {
+            if conn.write_all(&chunk).await.is_err() {
+                return;
+            }
+        }
+    });
+    let _slow = connect_via(rig.agent.local_addr(), target).await.unwrap();
+    // Let the download fill the window, the socket buffers and the stream's frame queue.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let agent = rig.agent.local_addr();
+    let mut set = tokio::task::JoinSet::new();
+    for i in 0..16 {
+        set.spawn(async move {
+            tokio::time::timeout(Duration::from_secs(5), round_trip(agent, echo, i)).await
+        });
+    }
+    while let Some(done) = set.join_next().await {
+        let done = done.unwrap();
+        assert!(
+            done.is_ok(),
+            "a connection waited over 5 s behind a stream that does not read"
+        );
+        done.unwrap().unwrap();
+    }
 }

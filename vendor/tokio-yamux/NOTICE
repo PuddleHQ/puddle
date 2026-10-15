@@ -4,10 +4,21 @@ tokio-yamux 0.3.20, modified by the Puddle project
 Original: https://github.com/nervosnetwork/tentacle (directory `yamux`), published on crates.io as
 `tokio-yamux`. Copyright (c) 2018 Nervos Foundation, MIT licence (the `LICENSE` file here).
 
-Changed by Puddle: `src/stream.rs` only. A stream whose peer has closed its sending half (a FIN)
-still handles the peer's window updates, so the half-closed connection can move more than one
-window of data in the other direction. The diff is `diff -u` of `src/stream.rs` against the 0.3.20
-release, and the two commits that vendored it show the same (the unchanged copy, then the fix).
+Changed by Puddle, two changes:
+
+1. `src/stream.rs`. A stream whose peer has closed its sending half (a FIN) still handles the peer's
+   window updates, so the half-closed connection can move more than one window of data in the other
+   direction.
+2. `src/session.rs`. 0.3.20 stops reading the session's socket while any frame is queued for a stream
+   whose reader is behind (its frame channel holds 8), so one slow reader stalls every other stream of
+   the session until it catches up. Now the session keeps reading while the queued frames weigh less than
+   four windows (`PENDING_WINDOWS`), counts what each stream holds, and resets a stream that holds more
+   than its own window (a peer that ignores the window), instead of stopping. Beyond four windows
+   queued in all, it stops reading as before. The memory a stream that does not read can hold is its
+   window, which the peer was already allowed to send.
+
+The diff is `diff -u` of `src/stream.rs` and `src/session.rs` against the 0.3.20 release (the commits
+that vendored the crate show the first change, the unchanged copy, then the fix).
 `Cargo.toml` is the upstream repository's manifest with dev-dependencies, benches and examples
 dropped, and the files carry an SPDX header line; nothing else differs.
 
@@ -20,4 +31,8 @@ workspace `Cargo.toml`, when either of these is true:
    named in `README.md` pass against the registry crate (delete the patch entry, run them).
 2. A fork pinned by `rev` replaces it (decided by the project owner).
 
-Until then, every tokio-yamux version bump re-applies the change to the new release's `stream.rs`.
+Until then, every tokio-yamux version bump re-applies both changes to the new release.
+
+Condition 1 above covers the first change only. For the second, the release must also keep reading a
+session whose slow streams hold less than their windows (check: the two tests named in `README.md`
+under the session change pass against the registry crate).

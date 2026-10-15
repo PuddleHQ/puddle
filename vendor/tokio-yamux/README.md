@@ -1,6 +1,6 @@
 # Vendored tokio-yamux (temporary)
 
-A copy of tokio-yamux 0.3.20 with one fix, wired in through `[patch.crates-io]` in the workspace
+A copy of tokio-yamux 0.3.20 with two fixes, wired in through `[patch.crates-io]` in the workspace
 `Cargo.toml`. `NOTICE` says what differs from the release and the conditions for deleting this
 directory. The licence is the upstream MIT licence (`LICENSE`).
 
@@ -10,6 +10,17 @@ sends its request, shuts down its write side and then downloads more than one st
 here) stalls at the window: `curl` does not half-close, but `nc -N`, Python's `shutdown(SHUT_WR)` and
 Node's `socket.end()` do. The same stall hits an upload when the server half-closes early.
 
+**Second fix, why:** the session stopped reading its socket as soon as one stream's reader fell behind
+(frame channel of 8 full), so a guest client that reads slowly or not at all (a paused download, a tool
+that extracts while it downloads) stalled every other connection on the same session, for as long as it
+stayed behind. One in four connections on the agent's default of 4 sessions. The session now keeps
+reading, bounds what each stream holds to its window (resetting a peer that ignores it) and what
+all of them hold to four windows. Regression tests:
+
+- `crates/puddle-agent/tests/relay.rs`: `a_client_that_stops_reading_does_not_stall_the_other_connections_of_its_session`
+- `crates/puddle-agent-proto/tests/yamux_window.rs`: `a_stream_sent_past_its_window_while_unread_is_reset_and_the_session_goes_on`
+- `crates/puddle-e2e/tests/transparency.rs`: `a_client_reading_one_kibibyte_a_second_for_a_minute_is_not_cut_off`
+
 **What is not here:** upstream's tests, benches and examples. The regression tests live in the
 product's own crates and move 40 MiB through a half-closed connection:
 
@@ -18,4 +29,4 @@ product's own crates and move 40 MiB through a half-closed connection:
   and `a_server_that_half_closes_still_gets_an_upload_larger_than_the_stream_window` (the guest agent)
 
 **Removal:** see `NOTICE`. When it is time, delete this directory and the patch entry, run the three
-tests above, then `cargo update -p tokio-yamux` to take the new release.
+tests above (five now), then `cargo update -p tokio-yamux` to take the new release.

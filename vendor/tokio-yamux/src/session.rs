@@ -39,6 +39,21 @@ use timer::{Interval, interval};
 const BUF_SHRINK_THRESHOLD: usize = u8::MAX as usize;
 const TIMEOUT: Duration = Duration::from_secs(30);
 
+/// puddle: what a frame held for a slow stream counts for: its data, or a fixed cost for a frame
+/// without any (a flood of window updates must not grow the queue for free).
+fn pending_weight(frame: &Frame) -> usize {
+    if frame.ty() == Type::Data {
+        frame.length() as usize
+    } else {
+        64
+    }
+}
+
+/// puddle: how many receive windows a session holds for streams that are not reading before it
+/// stops reading its socket. A stream that does not read holds at most its own window (a peer that
+/// sends more is reset); the session only stops reading when streams together hold more than this.
+const PENDING_WINDOWS: usize = 4;
+
 /// The session
 pub struct Session<T> {
     // Framed low level raw stream
@@ -75,6 +90,8 @@ pub struct Session<T> {
     write_pending_frames: VecDeque<Frame>,
     // The buffer which will distribute to sub streams
     read_pending_frames: VecDeque<Frame>,
+    // puddle: what `read_pending_frames` holds, by `pending_weight`, as of the last distribution
+    read_pending_bytes: usize,
 
     // Why can unbound channel be used here?
     //
@@ -180,6 +197,7 @@ where
             pending_streams: VecDeque::default(),
             write_pending_frames: VecDeque::default(),
             read_pending_frames: VecDeque::default(),
+            read_pending_bytes: 0,
             event_sender,
             event_receiver,
             control_sender,
@@ -504,7 +522,37 @@ where
                 self.streams.remove(&stream_id);
             }
         }
+        self.account_pending(cx)?;
 
+        Ok(())
+    }
+
+    /// puddle: totals what the frames held for slow streams weigh. A stream holding more than its
+    /// receive window has a peer that ignores the window: that stream is reset and its frames
+    /// dropped, and the session goes on. (Without this, the only bound on what slow streams hold
+    /// was to stop reading the socket, which stalled every other stream of the session.)
+    fn account_pending(&mut self, _cx: &mut Context) -> Result<(), io::Error> {
+        let mut held: HashMap<StreamId, usize> = HashMap::new();
+        for frame in &self.read_pending_frames {
+            *held.entry(frame.stream_id()).or_default() += pending_weight(frame);
+        }
+        let window = self.config.max_stream_window_size as usize;
+        for (stream_id, weight) in &held {
+            if *weight > window {
+                debug!(
+                    "substream({}) holds {} bytes past its window, reset, session.ty={:?}",
+                    stream_id, weight, self.ty
+                );
+                self.streams.remove(stream_id);
+                let mut flags = Flags::from(Flag::Ack);
+                flags.add(Flag::Rst);
+                self.write_pending_frames
+                    .push_back(Frame::new_window_update(flags, *stream_id, 0));
+            }
+        }
+        self.read_pending_frames
+            .retain(|f| held.get(&f.stream_id()).is_none_or(|w| *w <= window));
+        self.read_pending_bytes = self.read_pending_frames.iter().map(pending_weight).sum();
         Ok(())
     }
 
@@ -705,13 +753,13 @@ where
             }
 
             let mut is_pending = self.control_poll(cx)?.is_pending();
-            if self.read_pending_frames.is_empty() {
+            if self.read_pending_bytes < PENDING_WINDOWS * self.config.max_stream_window_size as usize {
                 is_pending &= self.recv_frames(cx)?.is_pending();
             } else {
                 trace!(
                     "[{:?}] skip recv_frames while read_pending_frames is backpressured: {}",
                     self.ty,
-                    self.read_pending_frames.len()
+                    self.read_pending_bytes
                 );
             }
             is_pending &= self.recv_events(cx)?.is_pending();
@@ -1294,7 +1342,9 @@ mod test {
             client.send(frame).await.unwrap();
 
             assert!(Pin::new(&mut session).poll_next(&mut cx).is_pending());
-            assert_eq!(session.read_pending_frames.len(), 1);
+            // puddle: the session keeps reading while the streams that do not read hold less than
+            // PENDING_WINDOWS windows, so one slow stream does not stop the others.
+            assert_eq!(session.read_pending_frames.len(), 2);
         });
     }
 

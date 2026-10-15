@@ -14,20 +14,52 @@ export interface Line {
   text: string;
 }
 
-/** The line about an ASP.NET development certificate. */
+/** The line about the development certificate: what Puddle uses and whether the browser trusts it. */
 export function devCertificateLine(status: DevCertificate | undefined): Line {
-  if (status === "reusing_existing") {
-    return {
-      tone: "ok",
-      title: "Using your existing .NET development certificate",
-      text: "Windows already trusts it, so HTTPS on localhost works in your browser for apps in every workspace. No trust dialog needed.",
-    };
+  switch (status) {
+    case "reusing_existing":
+      return {
+        tone: "ok",
+        title: "Using your existing .NET development certificate",
+        text: "Windows already trusts it, so HTTPS on localhost works in your browser for apps in every workspace. No trust dialog needed.",
+      };
+    case "trusted":
+      return {
+        tone: "ok",
+        title: "Development certificate trusted",
+        text: "Puddle made a certificate for localhost and Windows trusts it, so HTTPS on localhost works in your browser for apps in every workspace. If Firefox was open when you trusted it, restart Firefox.",
+      };
+    case "needs_trust":
+      return {
+        tone: "info",
+        title: "Development certificate: Windows will ask once",
+        text: "Puddle makes a certificate for localhost, and Windows asks you once to trust it. Until you do, an HTTPS development server shows a browser warning.",
+      };
+    case "trust_declined":
+      return {
+        tone: "warn",
+        title: "Development certificate: not trusted",
+        text: "You declined Windows' confirmation. Apps in your workspaces still get the certificate, but your browser warns about HTTPS on localhost until you trust it.",
+      };
+    case "trust_failed":
+      return {
+        tone: "warn",
+        title: "Development certificate: couldn't be trusted",
+        text: "Windows didn't let Puddle trust it; a company policy may forbid adding certificates, and Puddle never overrides a policy. An HTTPS development server shows a browser warning.",
+      };
+    case "unsupported":
+      return {
+        tone: "info",
+        title: "Development certificate: not trusted on this system yet",
+        text: "Apps in your workspaces get a certificate for localhost, but Puddle can't add it to your browser's trust yet, so an HTTPS development server shows a browser warning.",
+      };
+    default:
+      return {
+        tone: "skipped",
+        title: "Development certificate: not checked yet",
+        text: "An HTTPS development server in a workspace shows a browser warning until Puddle can trust a certificate for it.",
+      };
   }
-  return {
-    tone: "skipped",
-    title: "Development certificate: not checked yet",
-    text: "An HTTPS development server in a workspace shows a browser warning until Puddle can trust a certificate for it.",
-  };
 }
 
 const plural = (n: number, one: string, many: string): string =>

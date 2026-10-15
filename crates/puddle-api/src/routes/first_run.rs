@@ -12,15 +12,11 @@ use crate::routes::AppState;
 use crate::routes::settings::load_global;
 use crate::wire::{DevCertificate, FirstRun, FirstRunRequest};
 
-/// What the certificates step says about a development certificate. Puddle does not look for
-/// one yet, so this is always "not checked".
-const DEV_CERTIFICATE: DevCertificate = DevCertificate::NotChecked;
-
-fn view(first_run: &puddle_settings::FirstRun) -> FirstRun {
+fn view(first_run: &puddle_settings::FirstRun, dev_certificate: DevCertificate) -> FirstRun {
     FirstRun {
         completed: first_run.is_completed(),
         completed_at: first_run.completed_at.map(|at| at.0),
-        dev_certificate: DEV_CERTIFICATE,
+        dev_certificate,
     }
 }
 
@@ -38,8 +34,12 @@ pub(crate) async fn get_first_run(
     State(state): State<AppState>,
 ) -> Result<Json<FirstRun>, ApiError> {
     let _lock = state.settings_lock.lock().await;
-    let loaded = blocking(move || load_global(state.settings.as_ref())).await?;
-    Ok(Json(view(&loaded.settings.first_run)))
+    let loaded = blocking(move || {
+        let loaded = load_global(state.settings.as_ref())?;
+        Ok(view(&loaded.settings.first_run, state.dev_cert.status()))
+    })
+    .await?;
+    Ok(Json(loaded))
 }
 
 /// Records that the first-run flow was finished or skipped (`true`), or makes it run again at the
@@ -67,11 +67,11 @@ pub(crate) async fn put_first_run(
         match (body.completed, first_run.completed_at) {
             (true, None) => first_run.completed_at = Some(UnixMillis(now)),
             (false, Some(_)) => first_run.completed_at = None,
-            _ => return Ok(view(first_run)),
+            _ => return Ok(view(first_run, state.dev_cert.status())),
         }
         repo.save_global(loaded.settings.to_document())?;
         tracing::info!(completed = body.completed, "first-run state changed");
-        Ok(view(&loaded.settings.first_run))
+        Ok(view(&loaded.settings.first_run, state.dev_cert.status()))
     })
     .await?;
     Ok(Json(first_run))

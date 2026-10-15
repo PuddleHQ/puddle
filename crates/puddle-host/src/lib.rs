@@ -28,6 +28,7 @@ mod boot;
 mod changes;
 mod config;
 mod data_folder;
+mod dev_cert;
 mod doctor;
 mod environment;
 mod error;

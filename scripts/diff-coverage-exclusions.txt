@@ -184,3 +184,4 @@ crates/puddle-agent/src/capture/netlink.rs | return Err(kernel(code)); | a dump 
 crates/puddle-agent/src/capture/netlink.rs | Err(io::Error::other("short netlink write")) | a netlink `send` that writes part of a datagram does not happen on a socket with room to spare
 crates/puddle-agent/src/capture/nft.rs | return None; | a dumped chain or rule of another family: the dump asks for `inet` only, so the kernel never returns one; the check keeps a changed kernel from making the agent compare another family's table
 crates/puddle-agent/src/capture/nft.rs | Err(err) => return Err(err), | the table lookup failing for a reason other than the table missing (no permission, no `nf_tables`): the same kernel refusal that stops the install, reported by it
+crates/puddle-host/src/dev_cert.rs | _ => DevCertificate::NotChecked, | `DevCertStatus` is non-exhaustive in puddle-certs; every state this version has is named above, so no test can build another

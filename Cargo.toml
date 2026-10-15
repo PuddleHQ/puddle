@@ -35,6 +35,7 @@ puddle-ssh = { path = "crates/puddle-ssh" }
 puddle-certs = { path = "crates/puddle-certs" }
 puddle-workspace = { path = "crates/puddle-workspace" }
 puddle-doctor = { path = "crates/puddle-doctor" }
+puddle-e2e = { path = "crates/puddle-e2e" }
 puddle-lifecycle = { path = "crates/puddle-lifecycle" }
 puddle-upstream = { path = "crates/puddle-upstream" }
 puddle-fs = { path = "crates/puddle-fs" }

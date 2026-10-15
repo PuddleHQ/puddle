@@ -416,6 +416,15 @@ impl<T: ConnectionLog + ?Sized> ConnectionLog for std::sync::Arc<T> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_outcome_prints_as_its_wire_name() {
+        assert_eq!(
+            ConnectionOutcome::UpstreamRefused.to_string(),
+            "upstream_refused"
+        );
+        assert_eq!(ConnectionOutcome::Timeout.to_string(), "timeout");
+    }
+
     use super::*;
     use crate::{LocalCategory, PatternKind, PendingOutcome};
 

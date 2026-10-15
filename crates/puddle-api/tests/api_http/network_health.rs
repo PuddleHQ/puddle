@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime};
 
 use puddle_api::{
     FakeNetworkHealth, HostNetworkHealth, NetworkHealthService, forward_network_changes,
+    forward_proxy_sign_in_failures,
 };
 use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
 use puddle_store::{Clock, ManualClock};
@@ -422,6 +423,70 @@ async fn a_network_change_is_an_event_and_the_next_report_shows_it() {
     let body = api.get("/api/network-health").await.json();
     assert_eq!(body["proxy"]["epoch"], 1);
     assert!(body["proxy"]["last_change_at"].as_u64().unwrap() > 0);
+}
+
+#[tokio::test]
+async fn a_proxy_that_turns_the_sign_in_down_is_an_event_naming_the_proxy_and_the_scheme_only() {
+    let target = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy = FakeProxy::start(Behaviour::Basic {
+        user: "svc".into(),
+        password: "right-password".into(),
+    })
+    .await;
+    proxy.resolve_name("target.test", target.local_addr().unwrap());
+    let os = FakeOs::new(ProxyConfig {
+        pac_url: Some("http://pac.corp/p.pac".into()),
+        ..ProxyConfig::default()
+    });
+    let hop = Hop::Proxy(proxy.proxy_addr());
+    os.set_pac(move |_| Ok(vec![hop.clone()]));
+    let discovery = Discovery::new(os, Config::default());
+    let chain = Chain::with_config(
+        discovery.clone(),
+        Arc::new(BasicAuth::new().with_default(Credentials::new("svc", "wrong-canary"))),
+        ChainConfig::default()
+            .with_timeouts(Duration::from_millis(500), Duration::from_millis(400)),
+    );
+    let clock = Arc::new(ManualClock::new(START_MS));
+    let health = Arc::new(
+        HostNetworkHealth::new(discovery, clock as Arc<dyn Clock>).with_chain(chain.clone()),
+    );
+    let api = start_with_network(health).await;
+    let _forwarder = forward_proxy_sign_in_failures(&chain, api.events.clone());
+    let mut stream = Stream::open(&api, "").await;
+
+    let dest = Destination::new(Scheme::Https, "target.test", 443);
+    let _ = chain
+        .connect(&Request::new(&dest, Form::Tunnel, &[]).name_ok(true))
+        .await;
+    stream
+        .read_until(|b| b.contains("proxy_sign_in_failed"))
+        .await;
+    let seen = stream.data();
+    assert!(
+        seen.contains(&json!({
+            "type": "proxy_sign_in_failed",
+            "proxy": proxy.proxy_addr().to_string(),
+            "scheme": "Basic",
+        })),
+        "{seen:?}"
+    );
+    assert!(!format!("{seen:?}").contains("wrong-canary"));
+}
+
+#[tokio::test]
+async fn the_sign_in_failure_forwarder_ends_with_the_chain_it_listens_to() {
+    let discovery = Discovery::new(FakeOs::new(ProxyConfig::default()), Config::default());
+    let chain = Chain::new(discovery, Arc::new(puddle_upstream::NoAuth));
+    let forwarder = forward_proxy_sign_in_failures(
+        &chain,
+        Arc::new(puddle_types::NullSink) as Arc<dyn puddle_types::EventSink>,
+    );
+    drop(chain);
+    tokio::time::timeout(Duration::from_secs(2), forwarder)
+        .await
+        .expect("the forwarder stops when the chain is gone")
+        .unwrap();
 }
 
 #[tokio::test]

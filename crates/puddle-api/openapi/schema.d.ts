@@ -1008,7 +1008,7 @@ export interface paths {
          */
         put: operations["put_shell_init"];
         post?: never;
-        /** Removes the shell init: the workspace's shells source nothing from puddle. */
+        /** Removes the shell init: the workspace's shells source nothing from Puddle. */
         delete: operations["delete_shell_init"];
         options?: never;
         head?: never;
@@ -3166,7 +3166,7 @@ export interface components {
         ShellInitSaved: {
             /**
              * @description Whether the script was run in a throwaway shell in the running workspace and printed
-             *     nothing. `false` when the workspace is not running: puddle checks it when it starts, and
+             *     nothing. `false` when the workspace is not running: Puddle checks it when it starts, and
              *     says so as a problem if it fails then.
              */
             checked: boolean;
@@ -8381,7 +8381,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8462,7 +8462,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8528,7 +8528,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;

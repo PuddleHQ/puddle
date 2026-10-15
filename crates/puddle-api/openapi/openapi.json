@@ -5950,7 +5950,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -6050,7 +6050,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -6065,7 +6065,7 @@
         "tags": [
           "shell-init"
         ],
-        "summary": "Removes the shell init: the workspace's shells source nothing from puddle.",
+        "summary": "Removes the shell init: the workspace's shells source nothing from Puddle.",
         "operationId": "delete_shell_init",
         "parameters": [
           {
@@ -6123,7 +6123,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -8692,7 +8692,7 @@
           },
           {
             "type": "object",
-            "description": "The workspace's own copy of its shell init (or the lines that load it) differed from the\nhost's when it started, and puddle put the host's back. Something inside the workspace\nchanged it: tell the user.",
+            "description": "The workspace's own copy of its shell init (or the lines that load it) differed from the\nhost's when it started, and Puddle put the host's back. Something inside the workspace\nchanged it: tell the user.",
             "required": [
               "workspace",
               "type"
@@ -11346,7 +11346,7 @@
         "properties": {
           "checked": {
             "type": "boolean",
-            "description": "Whether the script was run in a throwaway shell in the running workspace and printed\nnothing. `false` when the workspace is not running: puddle checks it when it starts, and\nsays so as a problem if it fails then."
+            "description": "Whether the script was run in a throwaway shell in the running workspace and printed\nnothing. `false` when the workspace is not running: Puddle checks it when it starts, and\nsays so as a problem if it fails then."
           },
           "shell_init": {
             "$ref": "#/components/schemas/ShellInitView",

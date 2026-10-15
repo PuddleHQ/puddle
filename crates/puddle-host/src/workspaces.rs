@@ -982,7 +982,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 self.inner.problems.raise(
                     Problem::new(
                         key,
-                        format!("puddle could not update {name}'s shell init"),
+                        format!("Puddle could not update {name}'s shell init"),
                         format!(
                             "{reason}. The workspace keeps the shell init it had; saving it again, \
                              or restarting the workspace, tries again."
@@ -1043,7 +1043,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 inner.problems.raise(
                     Problem::new(
                         key,
-                        format!("puddle could not check {name}'s shell init"),
+                        format!("Puddle could not check {name}'s shell init"),
                         format!("{reason}. It will be checked again at the next start."),
                     )
                     .about(name.clone()),
@@ -1923,7 +1923,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 .and_then(|live| live.gated.clone());
             let Some(gated) = running else {
                 return Ok(ShellInitCheck::NotRun(format!(
-                    "{} is not running; puddle checks the script when it starts",
+                    "{} is not running; Puddle checks the script when it starts",
                     record.name
                 )));
             };

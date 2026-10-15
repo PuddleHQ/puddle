@@ -48,8 +48,8 @@ pub struct BootReport {
 }
 
 impl BootReport {
-    /// The files puddle owns that held something else when the hook ran and were put back: it
-    /// said `replaced <path>` for each. A file puddle writes for the first time is not listed, and
+    /// The files Puddle owns that held something else when the hook ran and were put back: it
+    /// said `replaced <path>` for each. A file Puddle writes for the first time is not listed, and
     /// neither is one on an image with no `cmp` (there the hook cannot tell). The text a file
     /// had before is not kept.
     #[must_use]

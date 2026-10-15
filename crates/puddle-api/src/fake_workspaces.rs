@@ -618,7 +618,7 @@ impl WorkspaceService for FakeWorkspaces {
             let record = self.get(id).await?;
             if record.status != WorkspaceStatus::Running {
                 return Ok(ShellInitCheck::NotRun(format!(
-                    "{} is not running; puddle checks the script when it starts",
+                    "{} is not running; Puddle checks the script when it starts",
                     record.name
                 )));
             }

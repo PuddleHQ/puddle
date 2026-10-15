@@ -175,7 +175,7 @@ pub enum Event {
         workspace: WorkspaceName,
     },
     /// The workspace's own copy of its shell init (or the lines that load it) differed from the
-    /// host's when it started, and puddle put the host's back. Something inside the workspace
+    /// host's when it started, and Puddle put the host's back. Something inside the workspace
     /// changed it: tell the user.
     WorkspaceShellInitRestored {
         /// The workspace.

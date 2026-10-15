@@ -226,7 +226,7 @@ fn a_file_puddle_owns_that_was_changed_in_the_guest_is_reported_as_replaced() {
         stdout(&second)
     );
 
-    // The workspace edits one of puddle's files, and puts a link where another was.
+    // The workspace edits one of Puddle's files, and puts a link where another was.
     std::fs::write(fr.path("/etc/npmrc"), "registry=https://evil.example\n").unwrap();
     std::fs::remove_file(fr.path(CA)).unwrap();
     std::os::unix::fs::symlink("/etc/passwd", fr.path(CA)).unwrap();

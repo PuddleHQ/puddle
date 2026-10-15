@@ -2,8 +2,8 @@
 //! A workspace's shell init as the host applies it.
 //!
 //! The text the user saved lives in the database and nowhere else is the truth. At every start
-//! puddle writes it to a file in a folder of its own for that workspace, mounts the folder
-//! read-only in the guest, and has a login shell source the file from a line in a file puddle owns
+//! Puddle writes it to a file in a folder of its own for that workspace, mounts the folder
+//! read-only in the guest, and has a login shell source the file from a line in a file Puddle owns
 //! (see [`loader`]). The guest cannot change the text: the mount is read-only, and the lines that
 //! load it are written again by the boot hook at every start.
 //!
@@ -28,7 +28,7 @@ pub(crate) const GUEST_DIR: &str = "/puddle/shell-init";
 /// The file in the folder that login shells source.
 const FILE_NAME: &str = "init.sh";
 
-/// The file puddle owns in the guest that loads the shell init.
+/// The file Puddle owns in the guest that loads the shell init.
 pub(crate) const LOADER_GUEST: &str = "/etc/profile.d/02-puddle-shell-init.sh";
 
 /// How long the guest may take to run the user's script once (the check on save, and at start).
@@ -38,7 +38,7 @@ pub(crate) const CHECK_TIMEOUT: Duration = Duration::from_secs(5);
 /// workspace whose copy is not there yet starts all the same.
 pub(crate) fn loader() -> GuestFile {
     let text = format!(
-        "# Loads the shell init that puddle keeps for this workspace. The copy it loads is read-only\n\
+        "# Loads the shell init that Puddle keeps for this workspace. The copy it loads is read-only\n\
          # here: change it in puddle.\n\
          if [ -r {GUEST_DIR}/{FILE_NAME} ]; then\n    . {GUEST_DIR}/{FILE_NAME}\nfi\n"
     );
@@ -64,7 +64,7 @@ fn unreachable_path(path: &str) -> GuestPath {
 pub(crate) enum Published {
     /// The folder held the database's text and nothing else (or nothing yet).
     Clean,
-    /// It held something else and puddle put the database's text back.
+    /// It held something else and Puddle put the database's text back.
     Restored,
 }
 

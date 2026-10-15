@@ -17,12 +17,15 @@ mod rig;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use puddle_e2e::lab::{Squid, SquidOptions};
+use puddle_e2e::lab::{NtlmLeg, NtlmProxy, Squid, SquidOptions};
 use puddle_proxy::testing::StaticResolver;
 use puddle_upstream::{
-    BasicAuth, Config, Discovery, FakeOs, Hop, ProxyAddr, ProxyAuth, ProxyConfig,
+    BasicAuth, Config, Discovery, FakeOs, Hop, NegotiateAuth, ProxyAddr, ProxyAuth, ProxyConfig,
 };
-use rig::{LOCAL, allow, connection_records, echo_roundtrip, echo_server, rig_with, tunnel};
+use rig::{
+    HandBuiltNtlmSource, LOCAL, allow, connection_records, echo_roundtrip, echo_server, rig_with,
+    try_tunnel, tunnel,
+};
 use tokio::io::{AsyncReadExt, BufReader};
 use tokio::net::TcpStream;
 
@@ -166,4 +169,50 @@ async fn echo_roundtrip_on(reader: &mut BufReader<TcpStream>) {
     let mut back = [0_u8; 10];
     reader.read_exact(&mut back).await.unwrap();
     assert_eq!(&back, b"still here");
+}
+
+#[tokio::test]
+async fn an_ntlm_proxy_is_asked_from_the_start_again_after_the_network_changes() {
+    let echo = echo_server().await;
+    let Some(proxy) = NtlmProxy::start(&["echo.corp.test"]) else {
+        return;
+    };
+    let hop = Hop::Proxy(ProxyAddr::new("127.0.0.1", proxy.port()));
+    let network = Network::new(vec![hop.clone()]);
+    let auth = Arc::new(NegotiateAuth::new(Arc::new(HandBuiltNtlmSource {
+        domain: "LAB",
+        user: "alice",
+    })));
+    let rig = rig_with(Arc::clone(&network.discovery), auth, StaticResolver::new()).await;
+    allow(&rig.store, "echo.corp.test");
+    let authority = format!("echo.corp.test:{}", echo.port());
+    let connect = || async {
+        let reader = try_tunnel(rig.agent.local_addr(), &authority)
+            .await
+            .unwrap_or_else(|e| panic!("{e}\n{}", proxy.log()));
+        let (sent, back) = echo_roundtrip(reader).await;
+        assert_eq!(back, sent);
+    };
+    let demands = || {
+        proxy
+            .legs()
+            .iter()
+            .filter(|leg| matches!(leg, NtlmLeg::Demand { .. }))
+            .count()
+    };
+
+    // The first connection learns what the proxy asks for; the second goes straight to it.
+    connect().await;
+    let after_first = demands();
+    connect().await;
+    assert_eq!(demands(), after_first, "{:?}", proxy.legs());
+
+    // A new network: the proxy behind that address may be another one, so it is asked afresh.
+    network.flip(vec![hop]);
+    connect().await;
+    assert!(
+        demands() > after_first,
+        "the first connection of a new epoch starts without what was learned: {:?}",
+        proxy.legs()
+    );
 }

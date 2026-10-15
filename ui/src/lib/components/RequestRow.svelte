@@ -41,9 +41,11 @@
   onfocusin={() => onFocusRow(row)}
 >
   <p class="dest">
-    <span class="host">{request.host}</span><span class="port"
-      >:{request.port}</span
-    >
+    <span class="host">{request.host}</span>{#if request.port === 0}<span
+        class="port srv"
+        title="Asked for a service record (SRV) to find where to connect; no port is known yet"
+        >name lookup (SRV)</span
+      >{:else}<span class="port">:{request.port}</span>{/if}
   </p>
   <p class="facts">
     Workspace <b class="mono">{request.workspace}</b> · {request.attempts}
@@ -124,6 +126,11 @@
   .port {
     font-family: var(--font-mono);
     color: var(--color-text-muted);
+  }
+  .port.srv {
+    margin-inline-start: var(--space-2);
+    font-family: inherit;
+    font-size: var(--text-sm);
   }
   .facts {
     font-size: var(--text-sm);

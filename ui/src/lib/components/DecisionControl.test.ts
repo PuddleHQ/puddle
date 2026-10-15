@@ -71,3 +71,37 @@ describe("the one-click buttons", () => {
     }
   });
 });
+
+describe("Ctrl+click", () => {
+  const global = {
+    scope: "global",
+    ruleSet: null,
+    match: "exact",
+    durationSecs: null,
+  };
+
+  it("decides for every workspace on Allow and Deny, with Ctrl or Cmd, without the chevron", async () => {
+    const { onDecide, onMore } = mount();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Allow api.example.com for demo" }),
+      { ctrlKey: true },
+    );
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Deny api.example.com for demo" }),
+      { metaKey: true },
+    );
+    expect(onDecide).toHaveBeenNthCalledWith(1, { effect: "allow", ...global });
+    expect(onDecide).toHaveBeenNthCalledWith(2, { effect: "deny", ...global });
+    expect(onMore).not.toHaveBeenCalled();
+  });
+
+  it("is in the tooltips", () => {
+    mount();
+    for (const name of [/^Allow/, /^Deny/]) {
+      expect(screen.getByRole("button", { name })).toHaveAttribute(
+        "title",
+        expect.stringContaining("Ctrl+click: every workspace"),
+      );
+    }
+  });
+});

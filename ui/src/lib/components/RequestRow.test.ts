@@ -47,6 +47,14 @@ describe("RequestRow", () => {
     expect(li.querySelectorAll("time")).toHaveLength(2);
   });
 
+  it("labels a name lookup (port 0) instead of showing host:0", () => {
+    mount({}, request(1, { host: "cluster.example.com", port: 0 }));
+    const li = screen.getByRole("listitem");
+    expect(li).toHaveTextContent("cluster.example.com");
+    expect(li).toHaveTextContent("name lookup (SRV)");
+    expect(li).not.toHaveTextContent(":0");
+  });
+
   it("says '1 attempt' in the singular", () => {
     mount({}, request(1));
     expect(screen.getByRole("listitem")).toHaveTextContent("1 attempt ");

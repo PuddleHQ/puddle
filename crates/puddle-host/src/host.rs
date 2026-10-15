@@ -38,6 +38,7 @@ use tokio::sync::{Mutex as AsyncMutex, OnceCell};
 use url::Url;
 
 use crate::boot::BootKit;
+use crate::dev_cert::host_dev_cert;
 use crate::doctor::system_doctor;
 use crate::files::{FileSettings, WorkspaceBook};
 use crate::injection::{Injection, InjectorFactory, InjectorInputs, forward_sign_in_needed};
@@ -524,6 +525,7 @@ impl<R: Runtime + Clone> Host<R> {
             .with_credentials(Arc::new(HostCredentials::new(ToolPaths::resolve(), vault)))
             .with_repos(injecting.repos(&egress.chain, &clock, connections.clone()))
             .with_doctor(system_doctor(&config.layout, &config.expected_runtime))
+            .with_dev_cert(host_dev_cert(config.paths.data(), clock.clone()))
             .with_endpoints(endpoints.clone());
         let served = serve_api(&config, services).await?;
         steps.push(Step::ApiServing);

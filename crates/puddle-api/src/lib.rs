@@ -46,6 +46,7 @@
 
 mod auth;
 mod credentials;
+mod dev_cert;
 mod doctor;
 mod error;
 mod events;
@@ -67,6 +68,7 @@ pub use credentials::{
     Check, CredentialService, CredentialsError, FakeCredentials, HostCredentials, NoCredentials,
     NoSecretStore,
 };
+pub use dev_cert::{DevCertService, FakeDevCert, NoDevCert};
 pub use doctor::{DoctorError, DoctorService, FakeDoctor, HostDoctor, NoDoctor, RunChecks};
 pub use error::{ApiErrorBody, ErrorCode};
 pub use events::{DEFAULT_EVENT_BUFFER, EventHub, Lagged};

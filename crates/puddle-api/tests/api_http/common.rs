@@ -8,9 +8,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, CredentialService, DoctorService, EventHub, FakeCredentials,
-    FakeLauncher, FakeRepos, FakeWorkspaces, Launcher, MemorySettings, NetworkHealthService,
-    RepoService, RunningApi, Services, SettingsRepo,
+    ApiConfig, ApiServer, ApiToken, CredentialService, DevCertService, DoctorService, EventHub,
+    FakeCredentials, FakeLauncher, FakeRepos, FakeWorkspaces, Launcher, MemorySettings,
+    NetworkHealthService, RepoService, RunningApi, Services, SettingsRepo,
 };
 use puddle_secrets::MemoryStore;
 use puddle_store::{Limits, ManualClock, Store};
@@ -48,22 +48,54 @@ pub(crate) async fn start() -> Api {
 }
 
 pub(crate) async fn start_with(config: ApiConfig) -> Api {
-    start_inner(config, true, None, None, None, true).await
+    start_inner(config, true, None, None, None, true, None).await
 }
 
 /// An API serving this network-health report.
 pub(crate) async fn start_with_network(network: Arc<dyn NetworkHealthService>) -> Api {
-    start_inner(ApiConfig::default(), true, Some(network), None, None, true).await
+    start_inner(
+        ApiConfig::default(),
+        true,
+        Some(network),
+        None,
+        None,
+        true,
+        None,
+    )
+    .await
 }
 
 /// An API running the system check through `doctor`.
 pub(crate) async fn start_with_doctor(doctor: Arc<dyn DoctorService>) -> Api {
-    start_inner(ApiConfig::default(), true, None, None, Some(doctor), true).await
+    start_inner(
+        ApiConfig::default(),
+        true,
+        None,
+        None,
+        Some(doctor),
+        true,
+        None,
+    )
+    .await
+}
+
+/// An API reporting the development certificate's state through `dev_cert`.
+pub(crate) async fn start_with_dev_cert(dev_cert: Arc<dyn DevCertService>) -> Api {
+    start_inner(
+        ApiConfig::default(),
+        true,
+        None,
+        None,
+        None,
+        true,
+        Some(dev_cert),
+    )
+    .await
 }
 
 /// An API whose services have no workspaces implementation (what `Services::new` gives).
 pub(crate) async fn start_without_workspaces() -> Api {
-    start_inner(ApiConfig::default(), false, None, None, None, true).await
+    start_inner(ApiConfig::default(), false, None, None, None, true, None).await
 }
 
 /// An API whose credentials service is `credentials` (`Api::credentials` is then an unused fake).
@@ -75,13 +107,14 @@ pub(crate) async fn start_with_credentials(credentials: Arc<dyn CredentialServic
         Some(credentials),
         None,
         true,
+        None,
     )
     .await
 }
 
 /// An API whose services have no repository lists (what `Services::new` gives).
 pub(crate) async fn start_without_repos() -> Api {
-    start_inner(ApiConfig::default(), true, None, None, None, false).await
+    start_inner(ApiConfig::default(), true, None, None, None, false, None).await
 }
 
 async fn start_inner(
@@ -91,6 +124,7 @@ async fn start_inner(
     own_credentials: Option<Arc<dyn CredentialService>>,
     doctor: Option<Arc<dyn DoctorService>>,
     with_repos: bool,
+    dev_cert: Option<Arc<dyn DevCertService>>,
 ) -> Api {
     let clock = Arc::new(ManualClock::new(START_MS));
     let events = Arc::new(EventHub::default());
@@ -131,6 +165,10 @@ async fn start_inner(
     );
     let services = match doctor {
         Some(doctor) => services.with_doctor(doctor),
+        None => services,
+    };
+    let services = match dev_cert {
+        Some(dev_cert) => services.with_dev_cert(dev_cert),
         None => services,
     };
     let repos = Arc::new(FakeRepos::new());

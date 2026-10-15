@@ -6331,6 +6331,7 @@ dependencies = [
  "listeners",
  "puddle-agent",
  "puddle-agent-proto",
+ "puddle-ipc",
  "puddle-netpolicy",
  "puddle-types",
  "thiserror 2.0.21",

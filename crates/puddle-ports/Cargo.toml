@@ -21,6 +21,7 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 puddle-agent = { workspace = true }
+puddle-ipc = { workspace = true }
 puddle-agent-proto = { workspace = true, features = ["testing"] }
 puddle-types = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "test-util", "time"] }

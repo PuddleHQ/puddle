@@ -180,14 +180,14 @@ impl Squid {
     pub fn start(options: &SquidOptions) -> Option<Self> {
         let bin = std::env::var_os("PUDDLE_SQUID_BIN");
         let image = std::env::var("PUDDLE_SQUID_DOCKER").ok();
-        if !configured_or_skip(
+        // A missing program is a skip (`None`); `configured_or_skip` panics instead when required.
+        configured_or_skip(
             bin.is_some() || image.is_some(),
             std::env::var_os("PUDDLE_REQUIRE_SQUID").is_some(),
             "PUDDLE_REQUIRE_SQUID",
             "set PUDDLE_SQUID_BIN or PUDDLE_SQUID_DOCKER to run against Squid",
-        ) {
-            return None;
-        }
+        )
+        .then_some(())?;
         let begun = Instant::now();
         let prefix = Prefix::new("squid");
         let dir = tempfile::Builder::new()

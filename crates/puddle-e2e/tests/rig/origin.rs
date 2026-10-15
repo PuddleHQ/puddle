@@ -50,7 +50,7 @@ impl HttpsOrigin {
         ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
         ca_params
             .distinguished_name
-            .push(rcgen::DnType::CommonName, "puddle lab origin root");
+            .push(rcgen::DnType::CommonName, "Puddle lab origin root");
         let ca = ca_params.self_signed(&ca_key).unwrap();
         let issuer = rcgen::Issuer::new(ca_params, ca_key);
         let leaf_key = rcgen::KeyPair::generate().unwrap();

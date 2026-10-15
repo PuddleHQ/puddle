@@ -939,6 +939,9 @@ test.describe("renaming", () => {
     await expect(dialog(page)).toHaveCount(0);
     await expect(rename(page)).toBeFocused();
     await page.keyboard.press("Enter");
+    // Focus moves into the field a moment after the dialog is drawn; keys sent before that land on
+    // the Rename button (a space clicks it) and the typed text is lost.
+    await expect(dialog(page).getByLabel("Name")).toBeFocused();
     await page.keyboard.press("ControlOrMeta+A");
     await page.keyboard.type("Shop two");
     await page.keyboard.press("Enter");

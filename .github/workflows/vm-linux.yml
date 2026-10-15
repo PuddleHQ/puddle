@@ -213,7 +213,7 @@ jobs:
           # cargo-nextest is called directly: through `cargo` it would make rustup install the
           # pinned toolchain here, which an archive run never needs.
           mkdir -p "$RUNNER_TEMP/vmx"
-          # Real-machine tests (vm_machine_*) run in ci/windows-e2e.ps1, not here. Each run gets its
+          # Real-machine tests (vm_machine_*) run in ci/windows-e2e.ps1, and the real-tool radar (vm_radar_*) in full-test.yml, not here. Each run gets its
           # own prefix, so its sandbox names and private msb home never meet another run's.
           base="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           nextest() {
@@ -221,7 +221,7 @@ jobs:
               --archive-file "$RUNNER_TEMP/bundle/vm-tests.tar.zst" \
               --extract-to "$RUNNER_TEMP/vmx" --extract-overwrite --workspace-remap . \
               --partition hash:${{ matrix.partition }}/3 \
-              -E 'not test(/(^|::)vm_machine_/)'
+              -E 'not (test(/(^|::)vm_machine_/) | test(/(^|::)vm_radar_/))'
           }
           if [ "$RUNS" = "1" ]; then
             nextest "$base"

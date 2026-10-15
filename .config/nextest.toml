@@ -53,3 +53,19 @@ slow-timeout = { period = "120s", terminate-after = 5 }
 filter = "test(/(^|::)vm_/) | binary(/^vm_/)"
 test-group = "vm"
 slow-timeout = { period = "120s", terminate-after = 5 }
+
+# The real-tool radar (`vm_radar_*`, never run by the per-pull-request jobs): package managers
+# fetch thousands of packages through the whole stack, so a test may run for up to two hours.
+[[profile.vm.overrides]]
+filter = "test(/(^|::)vm_radar_/)"
+slow-timeout = { period = "600s", terminate-after = 12 }
+
+# The transparency suite moves a gibibyte each way and lets a reader take a minute: a slow runner
+# must not turn "finishes in 30 s" into a kill.
+[[profile.default.overrides]]
+filter = "binary(transparency) & package(puddle-e2e)"
+slow-timeout = { period = "60s", terminate-after = 6 }
+
+[[profile.ci.overrides]]
+filter = "binary(transparency) & package(puddle-e2e)"
+slow-timeout = { period = "60s", terminate-after = 6 }

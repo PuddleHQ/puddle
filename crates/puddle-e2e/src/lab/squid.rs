@@ -27,6 +27,10 @@ pub struct SquidOptions {
     pub names: Vec<String>,
     /// Whether Basic authentication (`BASIC_USER`, `BASIC_PASSWORD`) is required.
     pub basic_auth: bool,
+    /// The port of another proxy on loopback that every tunnel goes through instead of going
+    /// direct (a corporate proxy's own parent): it is how a lab Squid reaches a name that only
+    /// that proxy knows, on a port the hosts file cannot change.
+    pub parent_port: Option<u16>,
 }
 
 impl SquidOptions {
@@ -37,7 +41,15 @@ impl SquidOptions {
             allowed_ports: allowed_ports.to_vec(),
             names: vec!["echo.corp.test".into(), "web.corp.test".into()],
             basic_auth: true,
+            parent_port: None,
         }
+    }
+
+    /// Sends every tunnel through the proxy on loopback port `port` (see [`Self::parent_port`]).
+    #[must_use]
+    pub fn through(mut self, port: u16) -> Self {
+        self.parent_port = Some(port);
+        self
     }
 
     /// The same without authentication.
@@ -141,6 +153,9 @@ fn write_config(dir: &Path, seen: &Path, options: &SquidOptions, port: u16) {
     } else {
         (String::new(), "http_access allow all")
     };
+    let parent = options.parent_port.map_or_else(String::new, |parent| {
+        format!("cache_peer {LOCAL} parent {parent} 0 no-query no-digest\nnever_direct allow all\n")
+    });
     fs::write(
         dir.join("squid.conf"),
         format!(
@@ -154,6 +169,7 @@ fn write_config(dir: &Path, seen: &Path, options: &SquidOptions, port: u16) {
              {access}\n\
              http_access deny all\n\
              hosts_file {hosts}\n\
+             {parent}\
              cache deny all\n\
              buffered_logs off\n\
              access_log daemon:{access_log}\n\
@@ -324,6 +340,26 @@ mod tests {
         let log = squid.access_log();
         assert!(log.starts_with("(empty access log; files "), "{log}");
         assert!(log.contains("cache says hi"), "{log}");
+    }
+
+    #[test]
+    fn a_squid_with_a_parent_proxy_sends_every_tunnel_to_it() {
+        let dir = tempfile::tempdir().unwrap();
+        write_config(
+            dir.path(),
+            dir.path(),
+            &SquidOptions::open(&[443]).through(4242),
+            3128,
+        );
+        let conf = read(&dir.path().join("squid.conf"));
+        assert!(
+            conf.contains(
+                "cache_peer 127.0.0.1 parent 4242 0 no-query no-digest\nnever_direct allow all\n"
+            ),
+            "{conf}"
+        );
+        write_config(dir.path(), dir.path(), &SquidOptions::open(&[443]), 3128);
+        assert!(!read(&dir.path().join("squid.conf")).contains("cache_peer"));
     }
 
     #[test]

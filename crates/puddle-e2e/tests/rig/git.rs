@@ -22,10 +22,14 @@ use puddle_e2e::lab::{GitHost, GitHostOptions, LOCAL, Versions, clean_git};
 use puddle_inject::testing::World;
 use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::AnyAddress;
-use puddle_proxy::{BoxFuture, Proxy, Resolver, Route, Termination, TerminationSet, Terminations};
+use puddle_proxy::{
+    BoxFuture, Proxy, Resolver, Route, Termination, TerminationSet, Terminations, Upstream,
+};
 use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
 use puddle_types::{DomainName, NullSink};
-use puddle_upstream::TlsClient;
+use puddle_upstream::{
+    Chain, Config as DiscoveryConfig, Discovery, FakeOs, Hop, ProxyAuth, ProxyConfig, TlsClient,
+};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -54,6 +58,14 @@ impl Resolver for Fixed {
         })
     }
 }
+
+/// A company proxy in front of the upstream leg: what the PAC answers, how the proxy signs in, and
+/// the roots the proxy trusts there.
+type Via = (
+    Vec<Hop>,
+    Arc<dyn ProxyAuth>,
+    Option<Vec<rustls::pki_types::CertificateDer<'static>>>,
+);
 
 /// The fake host, the workspace and the way in.
 pub(crate) struct GitRig {
@@ -93,7 +105,28 @@ impl GitRig {
 
     /// As [`Self::new`], with a host the options describe.
     pub(crate) async fn with_options(options: GitHostOptions) -> Self {
-        let host = GitHost::start_with(&options).await;
+        Self::build(GitHost::start_with(&options).await, None).await
+    }
+
+    /// As [`Self::new`], with the proxy's upstream leg going through the company proxy that the
+    /// PAC answer `hops` names, signing in with `auth`.
+    pub(crate) async fn via(hops: Vec<Hop>, auth: Arc<dyn ProxyAuth>) -> Self {
+        let host = GitHost::start(NAME, Versions::Http1).await;
+        Self::via_host(host, hops, auth, None).await
+    }
+
+    /// As [`Self::via`] for a host started by the caller (a lab proxy needs its port first) and
+    /// with the roots the proxy trusts for the upstream leg (the host's own root when `None`).
+    pub(crate) async fn via_host(
+        host: GitHost,
+        hops: Vec<Hop>,
+        auth: Arc<dyn ProxyAuth>,
+        trust: Option<Vec<rustls::pki_types::CertificateDer<'static>>>,
+    ) -> Self {
+        Self::build(host, Some((hops, auth, trust))).await
+    }
+
+    async fn build(host: GitHost, via: Option<Via>) -> Self {
         host.accept_token(WORK);
         host.accept_token(PERSONAL);
         // Private: need a token. Public: anyone reads, a push needs a token.
@@ -129,16 +162,29 @@ impl GitRig {
                 world.injector.clone(),
             ),
         );
-        let proxy = Arc::new(
-            Proxy::new(world.store.clone(), Arc::new(NullSink))
-                .with_connection_log(world.store.clone())
-                .with_resolver(Arc::new(Fixed(host.addr())))
-                .with_address_check(Arc::new(AnyAddress))
-                .with_termination(
-                    terminations as Arc<dyn puddle_proxy::TerminationSource>,
-                    TlsClient::new([host.root().clone()]).unwrap(),
-                ),
-        );
+        let mut proxy = Proxy::new(world.store.clone(), Arc::new(NullSink))
+            .with_connection_log(world.store.clone())
+            .with_resolver(Arc::new(Fixed(host.addr())))
+            .with_address_check(Arc::new(AnyAddress))
+            .with_termination(
+                terminations as Arc<dyn puddle_proxy::TerminationSource>,
+                TlsClient::new(
+                    via.as_ref()
+                        .and_then(|(_, _, trust)| trust.clone())
+                        .unwrap_or_else(|| vec![host.root().clone()]),
+                )
+                .unwrap(),
+            );
+        if let Some((hops, auth, _)) = via {
+            let os = FakeOs::new(ProxyConfig {
+                pac_url: Some("http://pac.corp/proxy.pac".into()),
+                ..ProxyConfig::default()
+            });
+            os.set_pac(move |_| Ok(hops.clone()));
+            let chain = Chain::new(Discovery::new(os, DiscoveryConfig::default()), auth);
+            proxy = proxy.with_upstream(Upstream::new(chain));
+        }
+        let proxy = Arc::new(proxy);
         let root = IpcRoot::new().unwrap();
         let route = proxy.serve_route(root.listen().unwrap(), world.workspace.clone());
         let (proxy_addr, way_in) = way_in(&route).await;

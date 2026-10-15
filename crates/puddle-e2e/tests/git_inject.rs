@@ -12,7 +12,7 @@ mod rig;
 
 use std::path::Path;
 
-use puddle_e2e::lab::{GitHost, Versions, clean_git, git_available};
+use puddle_e2e::lab::{GitHost, GitHostOptions, Versions, clean_git, git_available};
 use rig::{GitRig, NAME, PERSONAL, WORK, traced_headers};
 
 fn basic(token: &str) -> String {
@@ -699,5 +699,93 @@ async fn control_the_trace_check_sees_an_authorization_git_does_send() {
         seen.iter()
             .all(|r| r.headers_named("authorization") == ["Bearer mine"]),
         "{seen:#?}"
+    );
+}
+
+#[tokio::test]
+async fn what_is_no_repository_or_has_no_object_is_the_hosts_own_404_and_an_odd_method_a_405() {
+    if !git_available() {
+        return;
+    }
+    let rig = GitRig::new(Versions::Http1).await;
+    for path in [
+        "/robots.txt",
+        "/acme/.git/info/refs",
+        "/acme/nothere.git/info/refs?service=git-upload-pack",
+    ] {
+        let r = rig.request("GET", path, &[], b"").await;
+        assert_eq!(r.status, 404, "{path}: {}", r.body);
+    }
+    let r = rig
+        .request(
+            "GET",
+            &format!("/acme/web.git/info/lfs/objects/{OID}"),
+            &[],
+            b"",
+        )
+        .await;
+    assert_eq!(r.status, 404, "no such object: {}", r.body);
+    let r = rig
+        .request(
+            "DELETE",
+            &format!("/acme/web.git/info/lfs/objects/{OID}"),
+            &[],
+            b"",
+        )
+        .await;
+    assert_eq!(r.status, 405, "{}", r.body);
+}
+
+#[tokio::test]
+async fn a_gzipped_request_body_reaches_git_unpacked_and_a_broken_one_is_a_400() {
+    use std::io::Write as _;
+    if !git_available() {
+        return;
+    }
+    let rig = GitRig::new(Versions::Http1).await;
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    gz.write_all(b"0000").unwrap();
+    let packed = gz.finish().unwrap();
+    let headers = [
+        ("Content-Type", "application/x-git-upload-pack-request"),
+        ("Content-Encoding", "gzip"),
+    ];
+    let r = rig
+        .request("POST", "/acme/open.git/git-upload-pack", &headers, &packed)
+        .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    let r = rig
+        .request(
+            "POST",
+            "/acme/open.git/git-upload-pack",
+            &headers,
+            b"this is not gzip",
+        )
+        .await;
+    assert_eq!(r.status, 400, "{}", r.body);
+}
+
+#[tokio::test]
+async fn an_upstream_certificate_that_has_expired_is_a_502_and_no_credential_is_sent() {
+    if !git_available() {
+        return;
+    }
+    let rig =
+        GitRig::with_options(GitHostOptions::new(NAME, Versions::Http1).valid_between(2000, 2001))
+            .await;
+    let dir = rig.work("w");
+    let ran = rig
+        .run(
+            &dir,
+            &["ls-remote", &format!("https://{NAME}/acme/web.git")],
+        )
+        .await;
+    assert!(!ran.ok);
+    assert!(ran.stderr.contains("502"), "{}", ran.stderr);
+    assert_eq!(
+        rig.host.seen().len(),
+        0,
+        "the credential never left: {:#?}",
+        rig.host.seen()
     );
 }

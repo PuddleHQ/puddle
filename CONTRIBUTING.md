@@ -1,12 +1,12 @@
-# Contributing to puddle
+# Contributing to Puddle
 
-Thanks for wanting to help. puddle is a personal project of Tijs van Kampen, licensed
+Thanks for wanting to help. Puddle is a personal project of Tijs van Kampen, licensed
 GPL-3.0-or-later (see `LICENSE`). Questions about contributing or the CLA:
 <puddle@tijsvankampen.be>. Security problems: see [SECURITY.md](SECURITY.md), not a public issue.
 
 ## Before your first pull request: the CLA
 
-Every contributor signs the [puddle Individual Contributor License Agreement](CLA.md) (CLA) once,
+Every contributor signs the [Puddle Individual Contributor License Agreement](CLA.md) (CLA) once,
 before their first contribution is merged. It is the Harmony Individual CLA (HA-CLA-I 1.0) with its
 placeholders filled in.
 
@@ -16,8 +16,8 @@ What it means in short (the [CLA](CLA.md) itself is what counts):
 - You give the project owner a broad, irrevocable, transferable licence to your contribution,
   including a patent licence (§2.1(b), §2.2).
 - **The owner may relicense** your contribution under any licence, including permissive or
-  proprietary ones, but must always also offer it under the licence puddle used when you submitted
-  it (§2.3, Harmony "Option Five"). This keeps options open, for example moving puddle under an
+  proprietary ones, but must always also offer it under the licence Puddle used when you submitted
+  it (§2.3, Harmony "Option Five"). This keeps options open, for example moving Puddle under an
   organisation later; your contribution stays available under GPL-3.0-or-later either way.
 - You confirm the work is yours to give (§3). **If you write code as an employee**, your employer
   may own it: get your employer's approval first (§3(c)), or ask us about the entity version.
@@ -28,7 +28,7 @@ What it means in short (the [CLA](CLA.md) itself is what counts):
 2. Open your pull request.
 3. Post this comment on the pull request, from the GitHub account that made the commits:
 
-   > I have read the puddle CLA (version 1.0) and I hereby sign it.
+   > I have read the Puddle CLA (version 1.0) and I hereby sign it.
 
 That comment is your electronic signature. You sign once per CLA version, not per pull request. If
 the CLA's version changes, you are asked to sign the new version on your next pull request.
@@ -43,7 +43,7 @@ else (copied from another project, generated from a template, and so on):
 - mark it in the pull request description as "Submitted on behalf of a third party: <name>".
 
 Material under a licence that isn't compatible with GPL-3.0-or-later can't be accepted. Do not
-submit code copied from, or translated from, Huddle (infosupport/huddle): puddle takes only ideas
+submit code copied from, or translated from, Huddle (infosupport/huddle): Puddle takes only ideas
 from it.
 
 ## Pull requests
@@ -57,6 +57,9 @@ from it.
 - Keep code, comments, docs and commit messages self-contained: say the reason in words or cite an ADR or
   spec section, and don't reference ticket or planning-note IDs. The `standalone` gate and the
   `commit-msg` hook check this.
+- Write the name as "Puddle" in prose, UI text and comments. The lowercase `puddle` is for the command,
+  crates, packages, paths and other identifiers. The `standalone` gate (`scripts/check-product-name.sh`)
+  flags a lowercase `puddle` that reads as prose.
 
 ### Maintainer note: branch protection
 

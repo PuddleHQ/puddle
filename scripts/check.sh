@@ -124,7 +124,7 @@ run_gate() {
     typos) typos ;;
     spdx) scripts/check-spdx.sh ;;
     shellcheck)
-        # Every shell script, including the guest scripts puddle runs inside sandboxes (POSIX sh).
+        # Every shell script, including the guest scripts Puddle runs inside sandboxes (POSIX sh).
         command -v shellcheck >/dev/null 2>&1 || {
             echo "shellcheck gate needs shellcheck on PATH (docs/STANDARDS.md, \"Toolchain\")" >&2
             exit 1
@@ -151,7 +151,7 @@ run_gate() {
             exit 1
         fi
         ;;
-    standalone) scripts/check-standalone.sh --self-test && scripts/check-standalone.sh ;;
+    standalone) scripts/check-standalone.sh --self-test && scripts/check-standalone.sh && scripts/check-product-name.sh --self-test && scripts/check-product-name.sh ;;
     git-pins) scripts/check-git-pins.sh --self-test && scripts/check-git-pins.sh ;;
     # A test that returns early because a prerequisite is missing passes without testing; this fails
     # the hidden forms (docs/STANDARDS.md, "Skipped tests").

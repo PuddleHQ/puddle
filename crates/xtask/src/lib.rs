@@ -7,6 +7,8 @@
 //!   are checksum verified, the embedded msb version is checked against the tag, and `licenses/`
 //!   holds the licence texts, the NOTICE (fork commits, written offer) and the third-party notices
 //!   of msb's and Puddle's dependency trees.
+//! - `code-server`: unpacks the pinned code-server release, the browser editor's server
+//!   ([`code_server`]).
 //! - `notices`: Puddle's own third-party notices; `--check` only verifies that every shipped
 //!   dependency has a licence entry (a `scripts/check.sh` gate).
 //! - `openapi`: writes the API contract (`openapi.json`) and its TypeScript types
@@ -19,6 +21,7 @@
 
 pub mod assemble;
 pub mod checksums;
+pub mod code_server;
 pub mod error;
 pub mod inventory;
 pub mod notice;
@@ -55,6 +58,12 @@ commands:
             --upstream <owner/name> upstream repository (default: superradcompany/microsandbox)
             --from <dir>           take the parts from a folder instead of GitHub
             --offline              no network for cargo
+  code-server  unpack the pinned code-server release (the browser editor's server)
+            --out <dir>            output folder (default: <target>/code-server); must not have content
+            --version <x.y.z>      version to build (default: the first line of ci/code-server.sha256)
+            --pins <file>          pin list (default: ci/code-server.sha256)
+            --licenses <dir>       also copy its licence and notices to <dir>/code-server/
+            --from <dir>           take the release asset from a folder instead of GitHub
   notices   Puddle's third-party notices
             --check                only check that every dependency has a licence entry
             --out <file>           output file (default: <target>/THIRD-PARTY-puddle.txt)
@@ -158,6 +167,11 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<String> {
             ],
             &["--offline"],
         )?),
+        "code-server" => code_server_command(&Options::parse(
+            args,
+            &["--out", "--version", "--pins", "--licenses", "--from"],
+            &[],
+        )?),
         "notices" => notices(&Options::parse(
             args,
             &["--out"],
@@ -167,6 +181,33 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<String> {
         "help" | "--help" | "-h" => Ok(USAGE.to_owned()),
         other => Err(XtaskError::Usage(format!("unknown command {other}"))),
     }
+}
+
+fn code_server_command(opts: &Options) -> Result<String> {
+    let pins_path = opts.value("--pins").map_or_else(
+        || workspace_root().join(code_server::PIN_FILE),
+        PathBuf::from,
+    );
+    let text = std::fs::read_to_string(&pins_path)
+        .map_err(|e| XtaskError::io(format!("reading {}", pins_path.display()), e))?;
+    let pins = code_server::parse_pins(&text)?;
+    let pin = code_server::select(&pins, opts.value("--version"))?;
+    let out = opts
+        .value("--out")
+        .map_or_else(|| target_dir().join("code-server"), PathBuf::from);
+    let licences = opts.value("--licenses").map(PathBuf::from);
+    let source: Box<dyn code_server::CodeServerSource> = match opts.value("--from") {
+        Some(dir) => Box::new(code_server::DirReleases(PathBuf::from(dir))),
+        None => Box::new(code_server::GitHubReleases),
+    };
+    let manifest = code_server::assemble(source.as_ref(), pin, &out, licences.as_deref())?;
+    Ok(format!(
+        "code-server {} unpacked in {} ({} files, sha256 {})",
+        manifest.version,
+        out.display(),
+        manifest.files,
+        manifest.sha256
+    ))
 }
 
 fn openapi_command(opts: &Options) -> Result<String> {

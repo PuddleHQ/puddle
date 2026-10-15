@@ -17,6 +17,8 @@
 //! | `PUDDLE_AGENT_OOM_GRACE_MS` | `1000` | how long a counter increase waits for its kernel log line before it is reported unnamed |
 //! | `PUDDLE_AGENT_DNS` | `off` | the stub DNS server for tools that ignore the proxy settings: `on` (`198.18.0.1:53`), `off`, or `<ipv4>:<port>`. Binds exactly that address, retrying until an interface has it |
 //! | `PUDDLE_AGENT_DNS_TABLE` | `/run/puddle/dns-table` | where the stub keeps its name ⇄ address table across restarts; `off` keeps none |
+//! | `PUDDLE_AGENT_EDITOR_DIR` (+ `_PORT`, `_DATA`, `_FOLDER`, `_GRACE`) | unset | the browser editor's server: the release folder switches it on; the rest are in `puddle_agent_proto::editor` |
+//! | `PUDDLE_AGENT_EDITOR_PASSWORD_FILE` | `/run/puddle/editor-password` | where the server's password is written |
 //! | `PUDDLE_AGENT_LOG` | `info` | `error`, `warn`, `info`, `debug` or `trace` (to stderr) |
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -24,7 +26,10 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 
+use puddle_agent_proto::editor::{self, EditorServer};
 use puddle_agent_proto::yamux::STREAM_WINDOW;
+
+use crate::editor::EditorConfig;
 
 /// The vsock buffer the agent asks for: above msb's 8 MiB, so the guest's send window is the
 /// host's and msb's 4 MiB credit updates arrive.
@@ -152,6 +157,8 @@ pub struct Config {
     pub oom: Option<OomSources>,
     /// The stub DNS server, `None` when it is off.
     pub dns: Option<DnsConfig>,
+    /// The browser editor's server, `None` when the host asks for none.
+    pub editor: Option<EditorConfig>,
     /// Log level.
     pub log: tracing::Level,
 }
@@ -167,6 +174,7 @@ impl Default for Config {
             window: STREAM_WINDOW,
             oom: Some(OomSources::default()),
             dns: None,
+            editor: None,
             log: tracing::Level::INFO,
         }
     }
@@ -263,6 +271,17 @@ impl Config {
                 Some(dns)
             }
         };
+        config.editor = EditorServer::from_lookup(&get)
+            .map_err(|e| bad(e.var, &get(e.var).unwrap_or_default(), &e.reason))?
+            .map(|server| {
+                let password_file = get("PUDDLE_AGENT_EDITOR_PASSWORD_FILE")
+                    .filter(|p| !p.is_empty())
+                    .map_or_else(|| PathBuf::from(editor::PASSWORD_FILE), PathBuf::from);
+                EditorConfig {
+                    server,
+                    password_file,
+                }
+            });
         if let Some((v, var)) = lookup("PUDDLE_AGENT_LOG") {
             config.log = v
                 .parse()
@@ -353,6 +372,56 @@ mod tests {
         assert_eq!(c.target, Target::Vsock { cid: 2, port: 5000 });
         assert_eq!(c.vsock_buffer, 16 << 20);
         assert_eq!(c.oom, Some(OomSources::default()));
+    }
+
+    #[test]
+    fn the_editor_server_is_off_until_the_host_names_its_folder() {
+        assert_eq!(
+            from(&[("PUDDLE_AGENT_EDITOR_PORT", "4000")])
+                .unwrap()
+                .editor,
+            None
+        );
+        let c = from(&[
+            ("PUDDLE_AGENT_EDITOR_DIR", "/puddle/code-server"),
+            (
+                "PUDDLE_AGENT_EDITOR_DATA",
+                "/workspaces/a/.puddle/code-server",
+            ),
+            ("PUDDLE_AGENT_EDITOR_FOLDER", "/workspaces/a"),
+            ("PUDDLE_AGENT_EDITOR_GRACE", "60"),
+        ])
+        .unwrap();
+        let editor = c.editor.unwrap();
+        assert_eq!(editor.server.grace_secs, 60);
+        assert_eq!(editor.server.port, 41_337);
+        assert_eq!(
+            editor.password_file,
+            PathBuf::from("/run/puddle/editor-password")
+        );
+        let c = from(&[
+            ("PUDDLE_AGENT_EDITOR_DIR", "/e"),
+            ("PUDDLE_AGENT_EDITOR_DATA", "/d"),
+            ("PUDDLE_AGENT_EDITOR_FOLDER", "/f"),
+            ("PUDDLE_AGENT_EDITOR_PASSWORD_FILE", "/x/pw"),
+        ])
+        .unwrap();
+        assert_eq!(c.editor.unwrap().password_file, PathBuf::from("/x/pw"));
+    }
+
+    #[test]
+    fn an_unusable_editor_variable_is_named_and_never_replaced() {
+        let err = from(&[
+            ("PUDDLE_AGENT_EDITOR_DIR", "/e"),
+            ("PUDDLE_AGENT_EDITOR_DATA", "/d"),
+            ("PUDDLE_AGENT_EDITOR_FOLDER", "/f"),
+            ("PUDDLE_AGENT_EDITOR_GRACE", "5"),
+        ])
+        .unwrap_err();
+        assert_eq!(err.var, "PUDDLE_AGENT_EDITOR_GRACE");
+        assert_eq!(err.value, "5");
+        let err = from(&[("PUDDLE_AGENT_EDITOR_DIR", "/e")]).unwrap_err();
+        assert_eq!(err.var, "PUDDLE_AGENT_EDITOR_DATA");
     }
 
     #[test]

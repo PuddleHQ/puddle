@@ -23,6 +23,9 @@ pub const AGENT_SUPERVISE_GUEST: &str = "/puddle/agent-supervise.sh";
 /// Where the `puddle-agent` binary is mounted by default (`ci/build-agent.sh` builds it).
 pub const AGENT_GUEST: &str = "/puddle/puddle-agent";
 
+/// Where the code-server release is mounted (a read-only directory).
+pub const CODE_SERVER_GUEST: &str = "/puddle/code-server";
+
 /// The guest directory with Puddle's read-only mounts. The plan may not write below it.
 pub const MOUNT_DIR_GUEST: &str = "/puddle";
 
@@ -60,6 +63,12 @@ pub fn write_assets(dir: &Path) -> io::Result<Vec<FileMount>> {
     ])
 }
 
+/// `spec` with the code-server release folder `dir` mounted read-only at [`CODE_SERVER_GUEST`].
+#[must_use]
+pub fn with_code_server_mount(spec: SandboxSpec, dir: &Path) -> SandboxSpec {
+    spec.with_file_mount(FileMount::read_only_dir(dir, guest_path(CODE_SERVER_GUEST)))
+}
+
 /// `spec` with the boot scripts in `assets` (from [`write_assets`]) and, if given, the agent
 /// binary at [`AGENT_GUEST`] mounted read-only.
 #[must_use]
@@ -84,7 +93,12 @@ mod tests {
     #[test]
     fn constants_are_valid_guest_paths_under_the_mount_dir() {
         let dir = guest_path(MOUNT_DIR_GUEST);
-        for p in [BOOT_SH_GUEST, AGENT_SUPERVISE_GUEST, AGENT_GUEST] {
+        for p in [
+            BOOT_SH_GUEST,
+            AGENT_SUPERVISE_GUEST,
+            AGENT_GUEST,
+            CODE_SERVER_GUEST,
+        ] {
             assert!(guest_path(p).is_within(&dir), "{p}");
         }
     }
@@ -123,7 +137,7 @@ mod tests {
                 if let Some((_, target)) = line.split_once(" <") {
                     let target = target.split_whitespace().next().unwrap_or_default();
                     assert!(
-                        ["\"$PLAN\"", "\"$1\""].contains(&target),
+                        ["\"$PLAN\"", "\"$1\"", "\"$envfile\""].contains(&target),
                         "{name}: `{}` reads {target} with `read`",
                         line.trim()
                     );

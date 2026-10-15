@@ -2694,6 +2694,100 @@ async fn a_credential_for_any_host_applies_to_the_running_workspace_with_no_rest
     host.shutdown().await;
 }
 
+/// A folder that looks like an unpacked code-server release, for `GuestSettings::code_server`.
+fn fake_code_server(rig: &Rig) -> PathBuf {
+    let dir = rig.dir.path().join("code-server-release");
+    std::fs::create_dir_all(dir.join("bin")).unwrap();
+    std::fs::write(dir.join("bin/code-server"), b"#!/bin/sh\n").unwrap();
+    std::fs::write(dir.join("code-server.json"), br#"{"version": "9.9.9"}"#).unwrap();
+    dir
+}
+
+fn agent_settings(plan: &[u8]) -> std::collections::BTreeMap<String, String> {
+    String::from_utf8_lossy(plan)
+        .lines()
+        .filter_map(|l| l.strip_prefix("puddle_agent_env "))
+        .filter_map(|l| {
+            let (name, value) = l.split_once(' ')?;
+            Some((
+                name.trim_matches('\'').to_owned(),
+                value.trim_matches('\'').to_owned(),
+            ))
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_with_code_server_tells_each_guest_where_to_run_the_editor_server() {
+    let rig = Rig::new();
+    let mut config = rig.config();
+    config.guest.code_server = Some(fake_code_server(&rig));
+    let host = rig.start_with(config).await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let installed = rig
+        .dir
+        .path()
+        .join("data/guest-share/puddle/code-server-9.9.9");
+    assert!(installed.join("bin/code-server").is_file());
+    assert!(installed.join(".puddle-installed").is_file());
+    let seen = agent_settings(&rig.guest.plan_bytes(rig.guest.boots() - 1));
+    assert_eq!(
+        seen.get("PUDDLE_AGENT_EDITOR_DIR").map(String::as_str),
+        Some("/puddle/code-server")
+    );
+    assert_eq!(
+        seen.get("PUDDLE_AGENT_EDITOR_DATA").map(String::as_str),
+        Some("/workspaces/acme/.puddle/code-server")
+    );
+    assert_eq!(
+        seen.get("PUDDLE_AGENT_EDITOR_FOLDER").map(String::as_str),
+        Some("/workspaces/acme")
+    );
+    assert_eq!(
+        seen.get("PUDDLE_AGENT_EDITOR_GRACE").map(String::as_str),
+        Some("300")
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_workspaces_reconnection_grace_reaches_the_editor_server_at_the_next_start() {
+    let rig = Rig::new();
+    let mut config = rig.config();
+    config.guest.code_server = Some(fake_code_server(&rig));
+    let host = rig.start_with(config).await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let reply = api
+        .put(
+            "/api/settings/workspaces/acme",
+            &json!({"overrides": {"reconnection_grace": 90}}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    create(&api, &mut events, "acme").await;
+    let seen = agent_settings(&rig.guest.plan_bytes(rig.guest.boots() - 1));
+    assert_eq!(
+        seen.get("PUDDLE_AGENT_EDITOR_GRACE").map(String::as_str),
+        Some("90")
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_without_code_server_starts_guests_without_an_editor_server() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let plan = String::from_utf8(rig.guest.plan_bytes(rig.guest.boots() - 1)).unwrap();
+    assert!(!plan.contains("puddle_agent_env"), "{plan}");
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_commit_authors_in_the_running_guest_follow_the_identities() {
     let rig = Rig::new();

@@ -29,6 +29,7 @@
 #![forbid(unsafe_code)]
 
 pub mod control;
+pub mod editor;
 pub mod host;
 pub mod kind;
 pub mod relay;

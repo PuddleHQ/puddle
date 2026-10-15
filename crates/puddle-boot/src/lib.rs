@@ -61,7 +61,7 @@ mod quote;
 
 pub use assets::{
     AGENT_GUEST, AGENT_SUPERVISE_GUEST, AGENT_SUPERVISE_SH, BOOT_SH, BOOT_SH_GUEST,
-    MOUNT_DIR_GUEST, with_boot_mounts, write_assets,
+    CODE_SERVER_GUEST, MOUNT_DIR_GUEST, with_boot_mounts, with_code_server_mount, write_assets,
 };
 pub use gate::{Gate, GateState, GatedError, GatedSandbox, NotReady};
 pub use hook::{BootError, BootFailure, BootHook, BootReport, STDERR_LIMIT};

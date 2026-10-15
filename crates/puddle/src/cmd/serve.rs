@@ -19,6 +19,9 @@ use crate::cli::{Command, UsageError};
 /// The environment variable that overrides the guest agent's location (development builds).
 pub const AGENT_VAR: &str = "PUDDLE_AGENT_BIN";
 
+/// The environment variable that overrides the bundled code-server folder (development builds).
+pub const CODE_SERVER_VAR: &str = "PUDDLE_CODE_SERVER_DIR";
+
 /// The environment variable that sets the log level (`error`..`trace`, default `info`).
 pub const LOG_VAR: &str = "PUDDLE_LOG";
 
@@ -79,7 +82,10 @@ pub fn config(
 ) -> Result<HostConfig, puddle_host::HostError> {
     let mut config = HostConfig::installed_for_user(exe)?;
     if let Some(agent) = std::env::var_os(AGENT_VAR) {
-        config.guest = puddle_host::GuestSettings::new(agent);
+        config.guest.agent_binary = agent.into();
+    }
+    if let Some(dir) = std::env::var_os(CODE_SERVER_VAR) {
+        config.guest.code_server = Some(dir.into());
     }
     if let Some(port) = args.port {
         config.api.port = port;

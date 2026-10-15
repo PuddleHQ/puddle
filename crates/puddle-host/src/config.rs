@@ -62,6 +62,10 @@ pub struct GuestSettings {
     pub git_identity: Option<GitIdentity>,
     /// Longest the boot hook may run.
     pub boot_timeout: Duration,
+    /// The folder with the bundled code-server release (`cargo xtask code-server`), mounted
+    /// read-only into every guest. `None` leaves the browser editor's server out: the guests
+    /// start without it.
+    pub code_server: Option<PathBuf>,
 }
 
 impl GuestSettings {
@@ -72,6 +76,7 @@ impl GuestSettings {
             agent_binary: agent_binary.into(),
             git_identity: None,
             boot_timeout: puddle_boot::BootHook::DEFAULT_TIMEOUT,
+            code_server: None,
         }
     }
 }
@@ -137,13 +142,15 @@ impl HostConfig {
         let data = puddle_fs::data_dir().map_err(|e| HostError::DataDir(e.to_string()))?;
         let layout = RuntimeLayout::installed(exe, &data)?;
         let agent = layout.runtime_dir().join(AGENT_FILE_NAME);
-        Ok(Self::new(
-            HostPaths::new(data),
-            layout,
-            GuestSettings::new(agent),
-        ))
+        let mut guest = GuestSettings::new(agent);
+        let code_server = layout.runtime_dir().join(CODE_SERVER_DIR_NAME);
+        guest.code_server = code_server.is_dir().then_some(code_server);
+        Ok(Self::new(HostPaths::new(data), layout, guest))
     }
 }
+
+/// The code-server release's folder name inside the runtime folder.
+pub const CODE_SERVER_DIR_NAME: &str = "code-server";
 
 /// The guest agent's file name inside the runtime folder.
 pub const AGENT_FILE_NAME: &str = "puddle-agent";

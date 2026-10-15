@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The code-server releases puddle may bundle: `<version> <release asset> <sha256>`. `cargo xtask
+# code-server` refuses a download that is not listed here or does not match. The first line is the
+# version it builds by default. Values are the SHA-256 GitHub shows for the asset
+# (`gh api repos/coder/code-server/releases/tags/v<version>`), checked against a download.
+4.141.0 code-server-4.141.0-linux-amd64.tar.gz 65bcd20b524d03eb1b5adb7f360244599ef0e5b74089a46a982d32c074b97a29

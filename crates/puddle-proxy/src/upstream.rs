@@ -14,7 +14,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use puddle_upstream::{Chain, ChainError, Destination, Form, Request, Scheme, Secret};
+use puddle_upstream::{Chain, ChainError, Destination, Form, Request, RouteWatch, Scheme, Secret};
 use tokio::net::TcpStream;
 
 use crate::proxy::{Refusal, connect_first};
@@ -93,6 +93,9 @@ pub(crate) struct Out {
     pub(crate) hop: Option<String>,
     /// Set for a proxy hop.
     pub(crate) via: Option<ProxyForm>,
+    /// Fires when the network changes and the route to the destination no longer has this
+    /// connection's hop. `None` without an upstream configured (nothing can change then).
+    pub(crate) watch: Option<RouteWatch>,
 }
 
 /// Connects out for `target`: `tunnel` for `CONNECT`, else a plain-HTTP request.
@@ -110,6 +113,7 @@ pub(crate) async fn connect_out(
                 addr: Some(addr),
                 hop: None,
                 via: None,
+                watch: None,
             }),
             Err(err) => {
                 tracing::info!(host = %target.host, port = target.port, error = %err, "upstream connect failed");
@@ -138,6 +142,7 @@ pub(crate) async fn connect_out(
             });
             let hop = Some(connected.hop.to_string());
             tracing::debug!(host = %target.host, port = target.port, hop = ?hop, "connected");
+            let watch = upstream.chain.watch(&destination, &connected);
             let via = connected.authority.map(|authority| ProxyForm {
                 authority,
                 authorization: connected.authorization,
@@ -147,6 +152,7 @@ pub(crate) async fn connect_out(
                 addr,
                 hop,
                 via,
+                watch: Some(watch),
             })
         }
         Err(err) => Err(refusal(&err, target)),

@@ -37,6 +37,7 @@ use crate::tap::RequestTap;
 use crate::target::Target;
 use crate::terminate::{self, TerminationSource};
 use crate::upstream::{Admitted, ProxyForm, Upstream, connect_out};
+use puddle_upstream::RouteWatch;
 
 /// Limits and timeouts. The defaults suit a real guest; tests shorten them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -660,7 +661,7 @@ async fn relay(
     event.upstream = out.hop;
     match path {
         None => {
-            let end = tunnel(reader, out.stream, Some(request)).await;
+            let end = tunnel(reader, out.stream, Some(request), out.watch).await;
             event.http = end.http;
             if end.ssh {
                 note_block(&mut event, BlockReason::SshUnsupported);
@@ -1155,6 +1156,7 @@ pub(crate) async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(
     reader: ClientReader<S>,
     mut server: TcpStream,
     ssh_for: Option<&EgressRequest>,
+    mut watch: Option<RouteWatch>,
 ) -> TunnelEnd {
     let early = reader.buffer().to_vec();
     let mut guest = ssh::Gate::new(
@@ -1175,7 +1177,28 @@ pub(crate) async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(
             ssh: false,
         };
     }
-    match splice(&mut server, &mut guest).await {
+    // A tunnel can outlive the network it was made on. When the route to its destination changes
+    // so that the hop it uses is no longer on it, both ends are reset (the same ending as any
+    // failed tunnel), and the guest's client reconnects over the new route.
+    let spliced = async {
+        let mut spliced = std::pin::pin!(splice(&mut server, &mut guest));
+        match watch.as_mut() {
+            Some(watch) => tokio::select! {
+                result = &mut spliced => Some(result),
+                () = watch.changed() => None,
+            },
+            None => Some(spliced.await),
+        }
+    }
+    .await;
+    let Some(spliced) = spliced else {
+        abort(&server);
+        return TunnelEnd {
+            http: guest.inner().request_line(),
+            ssh: false,
+        };
+    };
+    match spliced {
         Ok((up, down)) => tracing::debug!(
             bytes_up = up + early.len() as u64,
             bytes_down = down,

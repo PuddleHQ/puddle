@@ -52,6 +52,7 @@ mod negotiate;
 mod os;
 mod parse;
 mod redact;
+mod reroute;
 mod signin;
 mod tls;
 #[cfg(windows)]
@@ -79,6 +80,7 @@ pub use os::{
 };
 pub use parse::{BypassList, PacAnswer, ProxyRules, parse_pac_answer};
 pub use redact::{redact_text, redact_url};
+pub use reroute::RouteWatch;
 pub use signin::{SignIn, SignInOutcome};
 pub use tls::{RejectedRoot, TlsClient, TlsConnectError, TlsSetupError, tls_connect};
 #[cfg(windows)]

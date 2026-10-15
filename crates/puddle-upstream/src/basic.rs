@@ -187,6 +187,12 @@ impl ProxyAuth for AuthList {
         }
         Ok(None)
     }
+
+    fn network_changed(&self) {
+        for member in &self.members {
+            member.network_changed();
+        }
+    }
 }
 
 #[cfg(test)]

@@ -2,9 +2,17 @@
 //! The port forward and the listening-ports report, through a real agent and the host's session
 //! code over a Unix socket: the host opens a stream to the agent, the agent connects to a port in
 //! "the guest" (this machine's loopback), and the bytes go through both ways.
+#![expect(
+    clippy::panic,
+    clippy::unwrap_used,
+    unreachable_pub,
+    reason = "helpers outside #[test] functions fail the test by panicking"
+)]
 
+#[expect(dead_code, reason = "shared harness; this test uses part of it")]
 mod common;
 
+use std::fmt::Write as _;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -105,10 +113,14 @@ impl Rig {
 
     /// Writes the kernel's socket table with a wildcard listener on each of `ports`.
     fn listening(&self, ports: &[u16]) {
-        let rows: String = ports
-            .iter()
-            .map(|p| format!("   0: 00000000:{p:04X} 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1 1 0\n"))
-            .collect();
+        let mut rows = String::new();
+        for p in ports {
+            writeln!(
+                rows,
+                "   0: 00000000:{p:04X} 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1 1 0"
+            )
+            .unwrap();
+        }
         std::fs::write(
             self.tables.join("tcp"),
             format!("  sl  local_address rem_address   st\n{rows}"),
@@ -209,7 +221,7 @@ async fn a_guest_server_that_resets_the_connection_resets_the_forward() {
     // The guest's reset arrives as a reset, never as a clean end: a cut-off reply must not look
     // complete.
     assert!(end.is_err(), "a reset ended as a clean close: {end:?}");
-    assert!(buf.is_empty());
+    assert_eq!(buf, Vec::<u8>::new());
 }
 
 #[tokio::test]

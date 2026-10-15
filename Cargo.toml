@@ -45,6 +45,7 @@ puddle-secrets = { path = "crates/puddle-secrets" }
 puddle-inject = { path = "crates/puddle-inject" }
 puddle-repos = { path = "crates/puddle-repos" }
 puddle-logins = { path = "crates/puddle-logins" }
+puddle-ports = { path = "crates/puddle-ports" }
 
 # External
 # msb SDK from Puddle's fork, tag `v<release>-puddle.N`. The SDK and the bundled runtime
@@ -80,6 +81,8 @@ idna = "1.1"
 rusqlite = { version = "0.39", features = ["bundled"] }
 tempfile = "3"
 thiserror = "2"
+# Names the program that holds a port this computer wants to forward to (Linux, Windows, macOS).
+listeners = { version = "0.6.1", default-features = false }
 tokio = { version = "1.52", default-features = false }
 tracing = { version = "0.1", default-features = false, features = ["std", "attributes"] }
 # Guest agent and its protocol. tokio-yamux multiplexes guest connections over a few

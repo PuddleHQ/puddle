@@ -3921,6 +3921,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
+name = "listeners"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "504c4ecfa20498c07ae4ff19b632d212e1fdcef83195b8e9eb2552306c42205f"
+dependencies = [
+ "byteorder",
+ "cc",
+ "libc",
+ "rustix",
+ "windows",
+]
+
+[[package]]
 name = "litemap"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6307,6 +6320,20 @@ dependencies = [
  "puddle-settings",
  "puddle-types",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "puddle-ports"
+version = "0.0.0"
+dependencies = [
+ "listeners",
+ "puddle-agent",
+ "puddle-agent-proto",
+ "puddle-netpolicy",
+ "puddle-types",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

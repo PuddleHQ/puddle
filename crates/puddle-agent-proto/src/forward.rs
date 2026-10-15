@@ -115,7 +115,7 @@ impl Answer {
             return Ok(Self::Ok);
         }
         text.strip_prefix("refused ")
-            .map(|reason| Self::refused(reason))
+            .map(Self::refused)
             .ok_or(LineError::BadAnswer)
     }
 }

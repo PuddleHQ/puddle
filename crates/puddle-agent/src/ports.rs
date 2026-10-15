@@ -55,17 +55,15 @@ pub fn parse_table(text: &str) -> Vec<u16> {
 /// for IPv6) takes a connection to the guest's loopback.
 fn reachable_by_loopback(hex: &str) -> bool {
     match hex.len() {
-        8 => u32::from_str_radix(hex, 16)
-            .map(|word| {
-                // The kernel prints the address as the machine's native word, so on a
-                // little-endian guest the first octet is the low byte.
-                let ip = Ipv4Addr::from(word.to_ne_bytes());
-                ip.is_unspecified() || ip.is_loopback()
-            })
-            .unwrap_or(false),
+        8 => u32::from_str_radix(hex, 16).is_ok_and(|word| {
+            // The kernel prints the address as the machine's native word, so on a
+            // little-endian guest the first octet is the low byte.
+            let ip = Ipv4Addr::from(word.to_ne_bytes());
+            ip.is_unspecified() || ip.is_loopback()
+        }),
         32 => {
             let mut octets = [0u8; 16];
-            for (i, chunk) in octets.chunks_exact_mut(4).enumerate() {
+            for (i, chunk) in octets.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 let Some(word) = hex
                     .get(i * 8..i * 8 + 8)
                     .and_then(|w| u32::from_str_radix(w, 16).ok())
@@ -150,6 +148,7 @@ pub async fn watch(watch: PortWatch, reserved: Vec<u16>, out: mpsc::Sender<Agent
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
     use std::time::Duration;
 
     use super::*;
@@ -168,11 +167,11 @@ mod tests {
     }
 
     fn v6(ip: [u8; 16], port: u16) -> String {
-        let words: String = ip
-            .chunks_exact(4)
-            .map(|c| format!("{:08X}", u32::from_ne_bytes([c[0], c[1], c[2], c[3]])))
-            .collect();
-        format!("{words}:{port:04X}")
+        let mut text = String::new();
+        for word in ip.as_chunks::<4>().0 {
+            write!(text, "{:08X}", u32::from_ne_bytes(*word)).unwrap();
+        }
+        format!("{text}:{port:04X}")
     }
 
     #[test]

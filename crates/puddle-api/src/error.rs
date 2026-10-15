@@ -277,7 +277,10 @@ impl From<PortsServiceError> for ApiError {
             }
             PortsServiceError::Invalid(m) => Self::invalid(m),
             PortsServiceError::NotForwarded(m) => Self::not_found(m),
-            PortsServiceError::Failed(_) => Self::internal(&err),
+            // The text names what could not be read or saved; it holds no secret.
+            PortsServiceError::Failed(m) => {
+                Self::new(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable, m)
+            }
         }
     }
 }
@@ -305,6 +308,35 @@ mod tests {
     use puddle_types::{PendingId, RuleId};
 
     use super::*;
+
+    #[test]
+    fn ports_refusals_map_to_the_status_a_client_can_act_on() {
+        for (err, status) in [
+            (
+                PortsServiceError::Unavailable("x".into()),
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (
+                PortsServiceError::NotRunning("x".into()),
+                StatusCode::CONFLICT,
+            ),
+            (PortsServiceError::Taken("x".into()), StatusCode::CONFLICT),
+            (
+                PortsServiceError::Invalid("x".into()),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                PortsServiceError::NotForwarded("x".into()),
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                PortsServiceError::Failed("the pinned forwards could not be saved".into()),
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+        ] {
+            assert_eq!(ApiError::from(err.clone()).status(), status, "{err}");
+        }
+    }
 
     #[test]
     fn store_errors_map_to_client_statuses() {

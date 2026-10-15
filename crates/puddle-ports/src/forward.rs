@@ -23,9 +23,9 @@ use tokio::task::JoinHandle;
 const LINK_WAIT: Duration = Duration::from_secs(5);
 
 /// Connections one forward carries at once, unless [`crate::Ports::with_connection_limit`] says
-/// otherwise. A browser opens a few dozen for a dev server; the rest are reset instead of costing
-/// this computer descriptors.
-pub const MAX_CONNECTIONS: usize = 256;
+/// otherwise. A test runner or a bundler can open hundreds through one port; past the limit a
+/// connection is reset instead of costing this computer descriptors without end.
+pub const MAX_CONNECTIONS: usize = 1024;
 
 /// The way into one workspace's guest, as the agent last offered it. Shared by every forward of the
 /// workspace: an agent that restarts gives a new link and the forwards use it from then on.

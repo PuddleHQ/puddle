@@ -207,6 +207,25 @@ pub enum Event {
         /// The workspace.
         workspace: WorkspaceName,
     },
+    /// The ports a workspace listens on, its forwards or its pinned forwards changed. Carries no
+    /// data: refetch `GET /api/workspaces/{id}/ports`.
+    WorkspacePortsChanged {
+        /// The workspace.
+        workspace: WorkspaceName,
+    },
+    /// A forward could not be set up or kept: a pinned forward that could not be restored at the
+    /// workspace's start, or one whose port on this computer another program took. `reason` names
+    /// the port and, when known, who has it; it may quote the operating system's error.
+    WorkspacePortForwardFailed {
+        /// The workspace.
+        workspace: WorkspaceName,
+        /// The port in the workspace.
+        guest_port: u16,
+        /// The port on this computer.
+        host_port: u16,
+        /// What went wrong and what to do, for the user.
+        reason: String,
+    },
     /// A workspace asked for a credential and the source of it cannot supply one (not signed in,
     /// or the sign-in ran out). The user signs in from Puddle; a request never opens a sign-in
     /// window. Global: every subscriber gets it. Names only, never a value.
@@ -441,7 +460,9 @@ impl Event {
             | Self::WorkspaceShellInitRestored { workspace }
             | Self::WorkspaceRepositoriesChanged { workspace }
             | Self::WorkspaceSshFailed { workspace, .. }
-            | Self::WorkspaceSshRecovered { workspace } => Some(workspace),
+            | Self::WorkspaceSshRecovered { workspace }
+            | Self::WorkspacePortsChanged { workspace }
+            | Self::WorkspacePortForwardFailed { workspace, .. } => Some(workspace),
             Self::PendingOpened { request } => Some(&request.workspace),
             Self::RulesChanged {}
             | Self::IdentitiesChanged {}
@@ -764,6 +785,33 @@ mod tests {
     }
 
     #[test]
+    fn port_events_have_fixed_shapes() {
+        for (event, json, workspace) in [
+            (
+                Event::WorkspacePortsChanged {
+                    workspace: WorkspaceName::new("box").unwrap(),
+                },
+                r#"{"type":"workspace_ports_changed","workspace":"box"}"#,
+                Some(WorkspaceName::new("box").unwrap()),
+            ),
+            (
+                Event::WorkspacePortForwardFailed {
+                    workspace: WorkspaceName::new("box").unwrap(),
+                    guest_port: 3000,
+                    host_port: 3001,
+                    reason: "port 3001 is in use".into(),
+                },
+                r#"{"type":"workspace_port_forward_failed","workspace":"box","guest_port":3000,"host_port":3001,"reason":"port 3001 is in use"}"#,
+                Some(WorkspaceName::new("box").unwrap()),
+            ),
+        ] {
+            assert_eq!(serde_json::to_string(&event).unwrap(), json);
+            assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
+            assert_eq!(event.workspace(), workspace.as_ref());
+        }
+    }
+
+    #[test]
     fn credential_and_git_access_events_have_fixed_shapes() {
         for (event, json, workspace) in [
             (
@@ -950,6 +998,8 @@ mod tests {
                 "workspace_ssh_failed",
                 "workspace_ssh_recovered",
                 "workspace_repositories_changed",
+                "workspace_ports_changed",
+                "workspace_port_forward_failed",
                 "credential_sign_in_needed",
                 "git_access_denied",
                 "git_no_identity",

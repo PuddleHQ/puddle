@@ -9,10 +9,10 @@ use rusqlite::Connection;
 use crate::error::StoreError;
 
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 8;
+pub const SCHEMA_VERSION: u32 = 9;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -343,6 +343,18 @@ CREATE TABLE shell_init (
     workspace_id TEXT PRIMARY KEY,
     content      TEXT    NOT NULL CHECK (content <> ''),
     changed_at   INTEGER NOT NULL
+) STRICT;
+";
+
+const V9: &str = r"
+-- Pinned port forwards: a port in a workspace that comes back on the same port of this computer
+-- every time the workspace starts. One row per workspace and guest port; the host port is the one
+-- the user chose (or the guest's own number). Rows go with the workspace.
+CREATE TABLE pinned_ports (
+    workspace_id TEXT    NOT NULL,
+    guest_port   INTEGER NOT NULL CHECK (guest_port BETWEEN 1 AND 65535),
+    host_port    INTEGER NOT NULL CHECK (host_port BETWEEN 1 AND 65535),
+    PRIMARY KEY (workspace_id, guest_port)
 ) STRICT;
 ";
 
@@ -725,6 +737,33 @@ mod tests {
         let add = "INSERT INTO git_defaults VALUES (?1, 1, 0)";
         conn.execute(add, [1]).unwrap();
         assert!(conn.execute(add, [2]).is_err());
+    }
+
+    /// A database from before pinned forwards: every row stays, the new table starts empty, and the
+    /// table's own checks keep a port inside what a port can be.
+    #[test]
+    fn v8_adds_the_pinned_ports_table_and_refuses_a_port_outside_the_range() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrate_up_to(&mut conn, 7).unwrap();
+        conn.execute_batch("INSERT INTO git_defaults VALUES (1, 1, 0);")
+            .unwrap();
+        assert_eq!(migrate(&mut conn).unwrap(), 7);
+        assert_eq!(version(&conn), SCHEMA_VERSION);
+        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(count("SELECT count(*) FROM git_defaults"), 1);
+        assert_eq!(count("SELECT count(*) FROM pinned_ports"), 0);
+        let add = "INSERT INTO pinned_ports VALUES (?1, ?2, ?3)";
+        conn.execute(add, ("box", 3000, 3000)).unwrap();
+        for (guest, host) in [(0, 3000), (3000, 0), (65_536, 80), (80, 65_536)] {
+            assert!(
+                conn.execute(add, ("box", guest, host)).is_err(),
+                "{guest} {host}"
+            );
+        }
+        assert!(
+            conn.execute(add, ("box", 3000, 3001)).is_err(),
+            "one pin per guest port"
+        );
     }
 
     #[test]

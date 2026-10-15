@@ -167,6 +167,10 @@ impl GitRig {
                 self.home.path().join("ca.pem").display()
             ))
             .arg("-c")
+            // The workspace's CA publishes no revocation list; Windows' schannel would otherwise
+            // refuse a certificate whose revocation status is unknown.
+            .arg("http.schannelCheckRevoke=false")
+            .arg("-c")
             .arg("credential.helper=")
             .arg("-c")
             .arg("core.askPass=")

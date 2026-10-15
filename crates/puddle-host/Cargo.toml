@@ -52,7 +52,9 @@ tracing = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
+base64 = { workspace = true }
 microsandbox = { workspace = true }
+puddle-e2e = { workspace = true }
 puddle-compute = { workspace = true, features = ["fake"] }
 puddle-upstream = { workspace = true, features = ["testing"] }
 puddle-vm-tests = { workspace = true }

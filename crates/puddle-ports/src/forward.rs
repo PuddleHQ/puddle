@@ -77,6 +77,15 @@ impl Forward {
         })
     }
 
+    /// Closes the listener and every connection it carries, and returns once the listener is gone:
+    /// a connection attempted after this fails. Dropping a forward only asks its task to stop, and
+    /// the listener can accept a little longer (it did, on Windows).
+    pub(crate) async fn close(mut self) {
+        self.task.abort();
+        // Cancelled is the expected end; a panic in the task was logged by the runtime.
+        let _ = (&mut self.task).await;
+    }
+
     /// Why the last connection failed, if it did.
     pub(crate) fn problem(&self) -> Option<String> {
         self.last_error

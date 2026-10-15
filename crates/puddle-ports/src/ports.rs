@@ -264,8 +264,10 @@ impl Ports {
             if let Some(link) = &entry.link {
                 link.send_replace(None);
             }
-            // The listeners close as the entry drops, here and not under the lock.
-            drop(entry);
+            // The listeners are gone before this returns, and not closed under the lock.
+            for active in entry.forwards.into_values() {
+                active.forward.close().await;
+            }
             self.changed(workspace);
         }
     }
@@ -353,9 +355,13 @@ impl Ports {
         };
         if let Err(err) = saved {
             if opened {
-                self.entries()
+                let undone = self
+                    .entries()
                     .get_mut(workspace)
                     .and_then(|e| e.forwards.remove(&guest_port));
+                if let Some(active) = undone {
+                    active.forward.close().await;
+                }
             }
             return Err(err.into());
         }
@@ -386,7 +392,9 @@ impl Ports {
         if active.is_none() && failed.is_none() && !unpinned {
             return Err(PortsError::NotForwarded { guest_port });
         }
-        drop(active);
+        if let Some(active) = active {
+            active.forward.close().await;
+        }
         self.changed(workspace);
         Ok(())
     }
@@ -431,7 +439,9 @@ impl Ports {
                 },
             )
         };
-        drop(old);
+        if let Some(old) = old {
+            old.forward.close().await;
+        }
         Ok(true)
     }
 

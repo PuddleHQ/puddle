@@ -34,7 +34,7 @@
 
 <FormDialog
   bind:open
-  title="Connect to {workspace.name}"
+  title="Connect to {workspace.display_name}"
   description="Choose how to open this workspace."
 >
   <div class="connect">

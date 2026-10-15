@@ -179,6 +179,54 @@ describe("the detail layout", () => {
     );
   });
 
+  it("titles the page with the name the user gave, keeps the identifier in the paths, and opens the rename dialog", async () => {
+    api.list = [
+      workspace("demo", { status: "running", display_name: "Web shop" }),
+    ];
+    await load();
+    render(DetailLayout, { children: (() => {}) as never });
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Web shop" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Stop Web shop" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute(
+      "href",
+      "/workspaces/demo/settings",
+    );
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Rename Web shop" }),
+    );
+    expect(workspaceActions.renameOpen).toBe(true);
+    expect(workspaceActions.renaming?.id).toBe("demo");
+  });
+
+  it("renames a running workspace but not one that is being created or deleted", async () => {
+    await load();
+    const view = render(DetailLayout, { children: (() => {}) as never });
+    expect(
+      await screen.findByRole("button", { name: "Rename demo" }),
+    ).toBeEnabled();
+    view.unmount();
+    for (const busy of ["creating", "deleting"] as const) {
+      api.list = [workspace("demo", { status: "created", busy })];
+      await load();
+      const again = render(DetailLayout, { children: (() => {}) as never });
+      expect(
+        await screen.findByRole("button", { name: "Rename demo" }),
+      ).toBeDisabled();
+      again.unmount();
+    }
+    // Starting is no obstacle: only the label changes.
+    api.list = [workspace("demo", { status: "starting", busy: "starting" })];
+    await load();
+    render(DetailLayout, { children: (() => {}) as never });
+    expect(
+      await screen.findByRole("button", { name: "Rename demo" }),
+    ).toBeEnabled();
+  });
+
   it("says when the workspace's settings cannot be read, and says nothing otherwise", async () => {
     await load();
     const view = render(DetailLayout, { children: (() => {}) as never });
@@ -361,6 +409,25 @@ describe("the overview", () => {
         screen.getByRole("button", { name: "Reclaim space" }),
       ).toBeDisabled(),
     );
+  });
+
+  it("shows the identifier only once the workspace has another name", async () => {
+    await load();
+    const view = render(Overview);
+    await screen.findByText("Status");
+    expect(screen.queryByText("Identifier")).toBeNull();
+    view.unmount();
+    api.list = [
+      workspace("demo", { status: "running", display_name: "Web shop" }),
+    ];
+    await load();
+    render(Overview);
+    expect(await screen.findByText("Identifier")).toBeInTheDocument();
+    expect(screen.getByText("Identifier").nextElementSibling).toHaveTextContent(
+      "demo",
+    );
+    // The disk is still named after the identifier.
+    expect(screen.getByText("ws-demo")).toBeInTheDocument();
   });
 
   it("can't delete a running workspace and says why", async () => {

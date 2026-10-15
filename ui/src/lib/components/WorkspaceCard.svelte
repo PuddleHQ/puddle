@@ -45,7 +45,7 @@
     <div class="who">
       <h2 id={titleId}>
         <a href="/workspaces/{encodeURIComponent(workspace.id)}"
-          >{workspace.name}</a
+          >{workspace.display_name}</a
         >
       </h2>
       <p class="repo">{workspace.repo_url}</p>
@@ -84,7 +84,8 @@
   <div class="acts">
     <AttachButtons {workspace} {onStart} {onStop} {onConnect} />
     <a class="btn details" href="/workspaces/{encodeURIComponent(workspace.id)}"
-      >Details <span class="visually-hidden">of {workspace.name}</span></a
+      >Details <span class="visually-hidden">of {workspace.display_name}</span
+      ></a
     >
   </div>
 </article>

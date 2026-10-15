@@ -6006,6 +6006,8 @@ dependencies = [
  "puddle-vm-tests",
  "rusqlite",
  "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",

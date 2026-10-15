@@ -34,6 +34,7 @@ use puddle_proxy::{Proxy, PullProxy};
 use puddle_store::{Actor, Effect, Limits, ManualClock, NewRule, Pattern, Scope, Store};
 use puddle_types::{ImageRef, LocalCategory, NullSink, WorkspaceName};
 use puddle_vm_tests::{DEBIAN_DEVCONTAINER, Settings};
+use support::mount_attack::{ATTACK, HostDir, Report, judge, judge_outcomes, sha256_hex};
 use support::{cleanup, spec};
 
 /// The guest port Puddle routes (the agent's default target is `vsock://2:5000`).
@@ -282,82 +283,111 @@ async fn vm_hostile_hg04_hg05_a_guest_cannot_reach_puddles_own_listeners_through
     assert_eq!(pending, 0, "a refused endpoint must not become a request");
 }
 
-/// Root's attempts to change the mounted file `target`, then whether anything changed.
-///
-/// The remount succeeds in the guest (root may clear the guest's `ro` flag) but the host's share
-/// stays read-only, which is what protects the host. A write-open of a running binary says
-/// "Text file busy" before the host is asked, so it proves nothing; the chmod after the remount
-/// (an attribute change, sent to the host on every mount) is the write that does.
-const WRITE_ATTACK: &str = r#"
-f=$1
-before=$(sha256sum "$f" | cut -d' ' -f1)$(stat -c ' %a %U' "$f")
-echo "append: $(sh -c ': >> "$0"' "$f" 2>&1)"
-echo "write: $(sh -c 'echo x > "$0"' "$f" 2>&1)"
-echo "truncate: $(truncate -s 0 "$f" 2>&1)"
-echo "delete: $(rm -f "$f" 2>&1)"
-echo "rename: $(mv "$f" "$f.moved" 2>&1)"
-echo "chmod: $(chmod 777 "$f" 2>&1)"
-echo "remount: $(mount -o remount,rw "$f" 2>&1)"
-echo "append after remount: $(sh -c 'echo x >> "$0"' "$f" 2>&1)"
-echo "truncate after remount: $(truncate -s 0 "$f" 2>&1)"
-echo "chmod after remount: $(chmod 777 "$f" 2>&1)"
-after=$(sha256sum "$f" | cut -d' ' -f1)$(stat -c ' %a %U' "$f")
-[ "$before" = "$after" ] && echo "unchanged" || echo "CHANGED: $before -> $after"
-[ -e "$f.moved" ] && echo "MOVED"
-exit 0
-"#;
+/// The guest's view of one file, before and after: hash, mode, owner and modification time as
+/// root sees them. Printed for the log; the proof is the host's own view ([`HostDir`]).
+const GUEST_VIEW: &str =
+    r#"stat -c '%n size=%s mode=%a owner=%u:%g mtime=%Y' "$1"; sha256sum "$1""#;
 
-/// Runs [`WRITE_ATTACK`] on `target` and lists what was not refused.
-async fn write_attack(guest: &Booted, target: &str) -> (String, Vec<String>) {
+/// Root attacks the mounted file `target` with every write path of [`mount_attack::ATTACK`], then
+/// clears the guest's read-only flag with `mount -o remount,rw` and attacks again. Returns each
+/// attack's report and the host's files right after it; the remount's own answer goes to the log (root may clear the flag, and the
+/// host's read-only share is what keeps the file: the second report says so).
+#[expect(
+    clippy::print_stderr,
+    reason = "the attack's report is the log of the run"
+)]
+async fn attack_twice(guest: &Booted, target: &str, names: &[&str]) -> [(Report, HostDir); 2] {
+    let attack = |label: &'static str| async move {
+        let out = guest
+            .sb
+            .exec(ExecRequest::new("perl", ["-e", ATTACK, target]).as_user("root"))
+            .await
+            .expect("exec");
+        assert_eq!(
+            out.status.code,
+            0,
+            "{target}: the attack script failed: {}",
+            out.stderr_text()
+        );
+        let text = out.stdout_text().into_owned();
+        eprintln!("{target} ({label}):\n{text}");
+        Report::parse(&text)
+    };
+    let view = |label: &'static str| async move {
+        let out = guest
+            .sb
+            .exec(ExecRequest::new("sh", ["-c", GUEST_VIEW, "view", target]).as_user("root"))
+            .await
+            .expect("exec");
+        eprintln!("{target} guest view {label}:\n{}", out.stdout_text());
+    };
+    view("before").await;
+    let first = attack("flag ro, as mounted").await;
+    let first = (first, HostDir::take(&guest.assets, names));
+    let remount = guest
+        .sh(&format!(
+            "mount -o remount,rw '{target}' 2>&1; echo \"remount exit $?\""
+        ))
+        .await;
+    eprintln!("{target} remount: {}", remount.stdout_text());
+    let second = attack("after the remount").await;
+    let second = (second, HostDir::take(&guest.assets, names));
+    view("after").await;
+    [first, second]
+}
+
+/// The negative control in the real guest: the attack on an ordinary writable file of the guest's
+/// own, which is what a writable share would be. The judgement must fail on every write path, or
+/// the passes of the real mounts would not mean anything. Returns the failures it found.
+#[expect(
+    clippy::print_stderr,
+    reason = "the control's report is the log of the run"
+)]
+async fn writable_control(guest: &Booted) -> Vec<String> {
+    guest
+        .sh("cp /puddle/boot.sh /var/tmp/writable-control && chmod 644 /var/tmp/writable-control")
+        .await;
     let out = guest
         .sb
-        .exec(ExecRequest::new("sh", ["-c", WRITE_ATTACK, "attack", target]).as_user("root"))
+        .exec(ExecRequest::new("perl", ["-e", ATTACK, "/var/tmp/writable-control"]).as_user("root"))
         .await
         .expect("exec");
-    let report = out.stdout_text().into_owned();
-    let line = |step: &str| {
-        report
-            .lines()
-            .find(|l| l.starts_with(&format!("{step}: ")))
-            .unwrap_or("")
-            .to_owned()
-    };
-    let mut failures = Vec::new();
-    for step in [
+    let report = Report::parse(&out.stdout_text());
+    let failures = judge_outcomes("control", &report);
+    eprintln!("writable control: {report:?}\n{failures:#?}");
+    let mut missed = Vec::new();
+    if report.state != "none" {
+        missed.push(format!("the control file is a mount: {}", report.state));
+    }
+    for op in [
+        "open_write",
         "append",
-        "write",
+        "o_trunc",
         "truncate",
-        "append after remount",
-        "truncate after remount",
-        "chmod after remount",
+        "chmod",
+        "chown",
+        "utimes",
+        "link",
+        "rename_over",
+        "rename_away",
     ] {
-        let l = line(step);
-        let refused_by_host =
-            l.contains("Read-only file system") || l.contains("Permission denied");
-        let busy = l.contains("Text file busy")
-            && line("chmod after remount").contains("Read-only file system");
-        if !(refused_by_host || busy) {
-            failures.push(format!("{target}: {step} was not refused: {l:?}"));
+        if !failures.iter().any(|f| f.contains(&format!("{op} gave "))) {
+            missed.push(format!("the control let {op} through unnoticed"));
         }
     }
-    for step in ["delete", "rename", "chmod"] {
-        if line(step) == format!("{step}: ") {
-            failures.push(format!("{target}: {step} succeeded"));
-        }
-    }
-    if !report.lines().any(|l| l == "unchanged") || report.contains("MOVED") {
-        failures.push(format!("{target}: the file changed:\n{report}"));
-    }
-    (report, failures)
+    missed
 }
 
 /// Every mount Puddle puts into the guest refuses writes from root, and the host's data folder is
 /// not there to see. The mounts are the boot hook's: `boot.sh`, `agent-supervise.sh` and the
-/// agent binary. Root tries to append, truncate, delete, rename and chmod each one, and to
-/// remount it read-write and write again; afterwards the guest's view and the host's files are
-/// byte for byte what was mounted. A sentinel file in a data folder and one beside the mounted
-/// files on the host must not be findable anywhere in the guest, and `/proc/mounts` must name
-/// no host path.
+/// agent binary. On each, root tries every write path (append, write, truncate, `O_TRUNC`, chmod,
+/// chown, utimes, hard link, mknod, rename over it and away, unlink, a new file beside it), as
+/// mounted and again after `mount -o remount,rw` cleared the guest's flag. Each must give the one
+/// errno `mount_attack::expected` names for it. The proof is on the host: hash, length, mode,
+/// owner, modification and change time, link count and the folder's entries of the host's files
+/// are identical before and after. A sentinel file in a data folder and one beside the mounted
+/// files on the host must not be findable anywhere in the guest, and `/proc/mounts` must name no
+/// host path. `mount_attack_control.rs` shows that this judgement fails on a writable share.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_hostile_hg23_every_boot_mount_refuses_writes_and_no_data_folder_is_visible() {
     let settings = support::settings();
@@ -387,13 +417,39 @@ async fn vm_hostile_hg23_every_boot_mount_refuses_writes_and_no_data_folder_is_v
     for m in mounted {
         assert!(targets.contains(&m), "{m} is not a mount: {targets:?}");
     }
-    targets.retain(|t| *t != "/puddle");
+    targets.retain(|t| mounted.contains(t));
+
+    // The host's source files and their folder, as the guest was booted with them.
+    let names = ["boot.sh", "agent-supervise.sh", "puddle-agent"];
+    let before = HostDir::take(&guest.assets, &names);
+    assert_eq!(
+        before.files["boot.sh"].as_ref().unwrap().sha256,
+        sha256_hex(BOOT_SH.as_bytes()),
+        "the host's boot.sh is not what was written"
+    );
+    assert_eq!(
+        before.files["puddle-agent"].as_ref().unwrap().sha256,
+        sha256_hex(&guest.agent_bytes),
+        "the host's agent is not what was copied"
+    );
 
     let mut failures = Vec::new();
     for target in &targets {
-        let (report, refused) = write_attack(&guest, target).await;
-        eprintln!("{target}:\n{report}");
-        failures.extend(refused);
+        let name = target.rsplit('/').next().unwrap();
+        let [(ro, after_ro), (cleared, after_cleared)] = attack_twice(&guest, target, &names).await;
+        assert_eq!(ro.state, "ro", "{target}: not read-only as mounted");
+        // After the remount the flag is `rw` (root may clear it; the host's share is the
+        // protection) or still `ro` (a future change that refuses the remount): either is judged
+        // by its own expectations, and the flag goes to the log.
+        eprintln!("{target}: flag after the remount: {}", cleared.state);
+        // The agent must really be running, or its text-busy cells would be untested.
+        assert_eq!(
+            ro.running,
+            name == "puddle-agent",
+            "{target}: running mismatch"
+        );
+        failures.extend(judge(target, &ro, &before, &after_ro));
+        failures.extend(judge(target, &cleared, &before, &after_cleared));
     }
 
     // What the guest can see of the host: no host path in the mount tables, and neither sentinel
@@ -409,22 +465,18 @@ async fn vm_hostile_hg23_every_boot_mount_refuses_writes_and_no_data_folder_is_v
         .stdout_text()
         .into_owned();
 
-    // What the guest could have changed on the host.
-    let mut changed = Vec::new();
-    if std::fs::read_to_string(guest.assets.join("boot.sh")).unwrap() != BOOT_SH {
-        changed.push("boot.sh");
-    }
-    if std::fs::read(guest.assets.join("puddle-agent")).unwrap() != guest.agent_bytes {
-        changed.push("puddle-agent");
-    }
-    assert!(guest.assets.join("agent-supervise.sh").is_file());
+    let control_missed = writable_control(&guest).await;
+
+    let after = HostDir::take(&guest.assets, &names);
     guest.finish().await;
     assert!(failures.is_empty(), "{failures:#?}");
+    assert!(control_missed.is_empty(), "{control_missed:#?}");
     assert!(
         leaks.is_empty(),
         "the mount tables name host paths: {leaks:?}"
     );
     assert!(found.is_empty(), "the guest can see host files: {found}");
+    let changed = before.differences(&after);
     assert!(changed.is_empty(), "host files changed: {changed:?}");
 }
 

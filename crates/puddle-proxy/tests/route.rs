@@ -18,10 +18,10 @@ use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{
     AnyAddress, CollectingConnectionLog, StaticPolicy, StaticResolver, node_fetch,
 };
-use puddle_proxy::{Proxy, ProxyConfig, Route};
+use puddle_proxy::{AddressCheck, AddressVerdict, Proxy, ProxyConfig, Route};
 use puddle_types::{
-    BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, Host, NullSink, PendingId,
-    WorkspaceName,
+    BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, Host, LocalCategory,
+    NullSink, PendingId, WorkspaceName,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -53,13 +53,22 @@ impl Rig {
 
     /// `*.test` names from `resolver`, every address allowed (the servers are on loopback).
     fn with_resolver(config: ProxyConfig, resolver: StaticResolver) -> Self {
+        Self::with_checks(config, resolver, Arc::new(AnyAddress))
+    }
+
+    /// As [`Self::with_resolver`], with `check` deciding which resolved addresses may be used.
+    fn with_checks(
+        config: ProxyConfig,
+        resolver: StaticResolver,
+        check: Arc<dyn AddressCheck>,
+    ) -> Self {
         let policy = Arc::new(StaticPolicy::new());
         let log = Arc::new(CollectingConnectionLog::new());
         let proxy = Arc::new(
             Proxy::new(policy.clone(), Arc::new(NullSink))
                 .with_connection_log(log.clone())
                 .with_resolver(Arc::new(resolver))
-                .with_address_check(Arc::new(AnyAddress))
+                .with_address_check(check)
                 .with_config(config),
         );
         let root = IpcRoot::new().unwrap();
@@ -85,6 +94,20 @@ impl Rig {
             "{count} events expected, got {events:?}"
         );
         events
+    }
+}
+
+/// Refuses one address as loopback and lets every other through: a stand-in for the real guard,
+/// which cannot be told here that `127.0.0.1` is "the public address" the test server lives at.
+struct RefuseOneAddress(IpAddr);
+
+impl AddressCheck for RefuseOneAddress {
+    fn check(&self, _workspace: &WorkspaceName, addr: SocketAddr) -> AddressVerdict {
+        if addr.ip() == self.0 {
+            AddressVerdict::Block(BlockReason::LocalToggle(LocalCategory::Loopback))
+        } else {
+            AddressVerdict::Allow
+        }
     }
 }
 
@@ -423,7 +446,13 @@ async fn a_head_that_never_ends_gets_408() {
         .request("CONNECT slow.test:443 HTTP/1.1\r\nX-Slow: ")
         .await;
     assert_eq!(code, 408);
-    assert!(started.elapsed() < Duration::from_secs(5));
+    // The 200 ms head deadline is what ended it: not at once (a parse error would be), not after
+    // the default 10 s.
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= Duration::from_millis(200) && elapsed < Duration::from_secs(5),
+        "{elapsed:?}"
+    );
     assert_eq!(rig.policy.decisions(), 0);
 }
 
@@ -502,6 +531,87 @@ async fn a_plain_http_request_is_forwarded_once_with_the_checked_host() {
             request.len() as u64,
             response.len() as u64
         )
+    );
+}
+
+/// HG-09, the sequential variant: the guest asks for `web.test` with keep-alive, waits for the
+/// answer, then asks for `evil.test` on the same stream. The proxy closed the stream after the
+/// first answer, so the second request is never read: no rule is asked about `evil.test`, no row
+/// is written, and nothing is connected to.
+#[tokio::test]
+async fn hostile_hg09_a_second_request_after_the_first_answer_is_never_looked_at() {
+    let response = "HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok";
+    let (server, received) = http_server(response, 0).await;
+    let rig = Rig::with_resolver(
+        ProxyConfig::default(),
+        StaticResolver::new()
+            .with("web.test", &[LOCAL])
+            .with("evil.test", &[LOCAL]),
+    );
+    rig.policy.allow(&host("web.test"));
+    let mut guest = rig.guest().await;
+    let mut stream = guest.stream().await;
+    let first = format!(
+        "GET http://web.test:{}/ HTTP/1.1\r\nHost: web.test\r\nConnection: keep-alive\r\n\r\n",
+        server.port()
+    );
+    stream.write_all(first.as_bytes()).await.unwrap();
+    // The proxy ends the stream after the answer: reading to the end finishes.
+    let back = String::from_utf8(read_all(&mut stream).await.unwrap()).unwrap();
+    assert_eq!(back, response);
+    let (head, _) = received.await.unwrap();
+    assert!(
+        head.contains("Connection: close\r\n") && !head.contains("keep-alive"),
+        "the upstream is told to close, not to keep the connection alive: {head}"
+    );
+    let trap = TcpListener::bind((LOCAL, 0)).await.unwrap();
+    let second = format!(
+        "GET http://evil.test:{}/ HTTP/1.1\r\nHost: evil.test\r\n\r\n",
+        trap.local_addr().unwrap().port()
+    );
+    // The write may fail (the stream is closed) or vanish; either way nothing comes back.
+    let _ = stream.write_all(second.as_bytes()).await;
+    let after = read_all(&mut stream).await.unwrap_or_default();
+    assert_eq!(after, b"", "no second answer");
+    let accepted = tokio::time::timeout(Duration::from_millis(300), trap.accept()).await;
+    assert!(accepted.is_err(), "evil.test was connected to");
+    rig.events(1).await;
+    assert_eq!(
+        (rig.policy.decisions(), rig.policy.pending().len()),
+        (1, 0),
+        "only the first request was decided and no row exists for the second"
+    );
+}
+
+/// HG-08 through the route: a name that resolves to a refused address and an allowed one is
+/// connected to the allowed one only, and the audit row names that address, not the refused one.
+#[tokio::test]
+async fn hostile_hg08_a_mixed_answer_is_connected_at_the_allowed_address_and_audited_as_such() {
+    let refused = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
+    let response = "HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok";
+    let (server, received) = http_server(response, 0).await;
+    let rig = Rig::with_checks(
+        ProxyConfig::default(),
+        StaticResolver::new().with("mixed.test", &[refused, LOCAL]),
+        Arc::new(RefuseOneAddress(refused)),
+    );
+    rig.policy.allow(&host("mixed.test"));
+    let mut guest = rig.guest().await;
+    let mut stream = guest.stream().await;
+    let request = format!("GET http://mixed.test:{}/ HTTP/1.1\r\n\r\n", server.port());
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let back = String::from_utf8(read_all(&mut stream).await.unwrap()).unwrap();
+    assert_eq!(back, response);
+    received.await.unwrap();
+    let event = &rig.events(1).await[0];
+    assert_eq!(
+        (event.host.to_string(), event.decision, event.resolved_ip),
+        (
+            "mixed.test".to_owned(),
+            ConnectionDecision::Allow,
+            Some(LOCAL)
+        ),
+        "the row names the address connected to, never the refused one"
     );
 }
 

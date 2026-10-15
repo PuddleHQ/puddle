@@ -140,7 +140,18 @@ async fn hostile_hg15_the_connect_name_is_what_counts_not_what_the_guest_says_ne
     let result = tokio_rustls::TlsConnector::from(Arc::new(config))
         .connect(ServerName::try_from("bound.test").unwrap(), reader)
         .await;
-    assert!(result.is_err());
+    // The tunnel was spliced to the unbound server, whose real certificate the workspace CA's
+    // client does not trust: that, not some other fault, is why the handshake failed.
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.to_ascii_lowercase().contains("certificate") || err.contains("UnknownIssuer"),
+        "the handshake failed for another reason: {err}"
+    );
+    assert_eq!(
+        other.accepted(),
+        1,
+        "the tunnel reached the server the CONNECT named"
+    );
     assert_eq!(bound.accepted(), 0);
 }
 
@@ -204,42 +215,96 @@ async fn hostile_hg16_ambiguous_framing_is_refused_before_anything_goes_upstream
         .build();
     let cases = [
         // Content-Length with Transfer-Encoding.
-        "POST /x HTTP/1.1\r\nHost: bound.test\r\nContent-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+        (
+            "POST /x HTTP/1.1\r\nHost: bound.test\r\nContent-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+            "both Content-Length and Transfer-Encoding",
+        ),
         // Transfer-Encoding that does not end in chunked.
-        "POST /x HTTP/1.1\r\nHost: bound.test\r\nTransfer-Encoding: chunked, gzip\r\n\r\n",
-        "POST /x HTTP/1.1\r\nHost: bound.test\r\nTransfer-Encoding: gzip\r\n\r\n",
+        (
+            "POST /x HTTP/1.1\r\nHost: bound.test\r\nTransfer-Encoding: chunked, gzip\r\n\r\n",
+            "Transfer-Encoding without final chunked",
+        ),
+        (
+            "POST /x HTTP/1.1\r\nHost: bound.test\r\nTransfer-Encoding: gzip\r\n\r\n",
+            "Transfer-Encoding without final chunked",
+        ),
         // Conflicting or malformed lengths.
-        "POST /x HTTP/1.1\r\nHost: bound.test\r\nContent-Length: 4\r\nContent-Length: 5\r\n\r\nabcd",
-        "POST /x HTTP/1.1\r\nHost: bound.test\r\nContent-Length: -1\r\n\r\n",
-        "POST /x HTTP/1.1\r\nHost: bound.test\r\nContent-Length: 0x10\r\n\r\n",
+        (
+            "POST /x HTTP/1.1\r\nHost: bound.test\r\nContent-Length: 4\r\nContent-Length: 5\r\n\r\nabcd",
+            "conflicting Content-Length",
+        ),
+        (
+            "POST /x HTTP/1.1\r\nHost: bound.test\r\nContent-Length: -1\r\n\r\n",
+            "bad Content-Length",
+        ),
+        (
+            "POST /x HTTP/1.1\r\nHost: bound.test\r\nContent-Length: 0x10\r\n\r\n",
+            "bad Content-Length",
+        ),
         // Obsolete line folding hides a header.
-        "GET /x HTTP/1.1\r\nHost: bound.test\r\nX-A: b\r\n Transfer-Encoding: chunked\r\n\r\n",
+        (
+            "GET /x HTTP/1.1\r\nHost: bound.test\r\nX-A: b\r\n Transfer-Encoding: chunked\r\n\r\n",
+            "malformed header line",
+        ),
         // A space before the colon, and a header with no colon.
-        "GET /x HTTP/1.1\r\nHost: bound.test\r\nTransfer-Encoding : chunked\r\n\r\n",
-        "GET /x HTTP/1.1\r\nHost: bound.test\r\nnonsense\r\n\r\n",
+        (
+            "GET /x HTTP/1.1\r\nHost: bound.test\r\nTransfer-Encoding : chunked\r\n\r\n",
+            "malformed header line",
+        ),
+        (
+            "GET /x HTTP/1.1\r\nHost: bound.test\r\nnonsense\r\n\r\n",
+            "malformed header line",
+        ),
         // Two Host headers.
-        "GET /x HTTP/1.1\r\nHost: bound.test\r\nHost: evil.example\r\n\r\n",
-        "GET /x HTTP/1.1\r\nHost: evil.example\r\nHost: bound.test\r\n\r\n",
+        (
+            "GET /x HTTP/1.1\r\nHost: bound.test\r\nHost: evil.example\r\n\r\n",
+            "more than one Host header",
+        ),
+        (
+            "GET /x HTTP/1.1\r\nHost: evil.example\r\nHost: bound.test\r\n\r\n",
+            "more than one Host header",
+        ),
         // NUL and other control characters.
-        "GET /x HTTP/1.1\r\nHost: bound.test\r\nX-A: a\u{0}b\r\n\r\n",
-        "GET /x\u{1}y HTTP/1.1\r\nHost: bound.test\r\n\r\n",
+        (
+            "GET /x HTTP/1.1\r\nHost: bound.test\r\nX-A: a\u{0}b\r\n\r\n",
+            "control character in head",
+        ),
+        (
+            "GET /x\u{1}y HTTP/1.1\r\nHost: bound.test\r\n\r\n",
+            "control character in head",
+        ),
         // CONNECT inside the tunnel, and an unsupported version.
-        "CONNECT evil.example:443 HTTP/1.1\r\nHost: evil.example:443\r\n\r\n",
-        "GET /x HTTP/2.0\r\nHost: bound.test\r\n\r\n",
+        (
+            "CONNECT evil.example:443 HTTP/1.1\r\nHost: evil.example:443\r\n\r\n",
+            "CONNECT inside a tunnel is not supported",
+        ),
+        (
+            "GET /x HTTP/2.0\r\nHost: bound.test\r\n\r\n",
+            "unsupported HTTP version",
+        ),
         // Bad chunk framing.
-        "POST /x HTTP/1.1\r\nHost: bound.test\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nabc\r\n0\r\n\r\n",
+        (
+            "POST /x HTTP/1.1\r\nHost: bound.test\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nabc\r\n0\r\n\r\n",
+            "the request body could not be read",
+        ),
     ];
-    for request in cases {
+    for (request, reason) in cases {
         let mut guest = rig.guest().await;
         let mut client = guest.tls("bound.test:443", None).await.unwrap();
         client.send(request.as_bytes()).await;
-        let r = client.try_response("POST").await;
-        let status = r.as_ref().map(|r| r.status);
-        // Bad chunk framing is only found while the body is read, so the injector may be asked
-        // first; the upstream still never gets a complete request.
+        // A 400 that says why: a dropped connection would also keep the upstream clean, but it
+        // would not show the shape was refused for what makes it ambiguous. (Bad chunk framing is
+        // only found while the body is read, so the injector may be asked first; the upstream
+        // still never gets a complete request.)
+        let r = client
+            .try_response("POST")
+            .await
+            .unwrap_or_else(|| panic!("{request:?}: the connection ended with no answer"));
+        assert_eq!(r.status, 400, "{request:?}");
         assert!(
-            matches!(status, Some(400 | 431) | None),
-            "{request:?} -> {status:?}"
+            r.text().contains(reason),
+            "{request:?}: wanted {reason:?}, got {:?}",
+            r.text()
         );
         assert!(client.closed().await, "{request:?}");
     }

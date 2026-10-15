@@ -89,6 +89,21 @@ async fn frames_until_end(tls: &mut TlsStream, limit: Duration) -> (Vec<(u8, u32
     }
 }
 
+/// HTTP/2 error code 0xb (RFC 9113 §7): the peer is generating excessive load.
+const ENHANCE_YOUR_CALM: u32 = 0xb;
+
+/// The error code of the last GOAWAY among `frames`, if the connection said goodbye with one.
+fn goaway_code(frames: &[(u8, u32, Vec<u8>)]) -> Option<u32> {
+    frames
+        .iter()
+        .rev()
+        .find(|(kind, ..)| *kind == 7)
+        .and_then(|(_, _, payload)| {
+            let code: [u8; 4] = payload.get(4..8)?.try_into().ok()?;
+            Some(u32::from_be_bytes(code))
+        })
+}
+
 /// Reads the server's own `SETTINGS` and acknowledges them, before anything else is sent.
 async fn ack_server_settings(tls: &mut TlsStream) {
     loop {
@@ -119,6 +134,7 @@ fn rig_with(
 
 #[tokio::test]
 async fn a_rapid_reset_flood_is_ended_and_most_of_it_never_reaches_the_server() {
+    terminate_support::capture_logs();
     let pki = Pki::new();
     let server = H2Server::recording(&pki, "bound.test", ok()).await;
     let injector = TestInjector::always();
@@ -138,6 +154,17 @@ async fn a_rapid_reset_flood_is_ended_and_most_of_it_never_reaches_the_server() 
     }
     let (_, closed) = frames_until_end(&mut tls, Duration::from_secs(5)).await;
     assert!(ended || closed, "the connection was ended");
+    // Ended for the flood, not for some other fault. The watch over the frames cuts the transport
+    // at once, so no GOAWAY follows; its log line is the cause. Without the watch the connection
+    // would stay open: the library only counts resets of streams it has not accepted yet.
+    let logs = terminate_support::captured_logs();
+    assert!(
+        logs.contains("guest HTTP/2 connection ended")
+            && logs.contains("too many HTTP/2 control frames"),
+        "the connection was not ended for the control-frame flood"
+    );
+    // The watch counts 1000 control frames before it cuts, so no more than about that many of the
+    // 5000 requests get as far as the injector.
     assert!(
         injector.calls() <= 1500,
         "{} requests got as far as the injector",
@@ -173,8 +200,11 @@ async fn a_continuation_flood_ends_the_connection_and_nothing_is_sent_upstream()
             break;
         }
     }
-    let (_, closed) = frames_until_end(&mut tls, Duration::from_secs(5)).await;
+    let (seen, closed) = frames_until_end(&mut tls, Duration::from_secs(5)).await;
     assert!(closed, "the connection ended");
+    // Ended because the header block grew past its limit (the library's "too many continuations"),
+    // which it reports as GOAWAY with ENHANCE_YOUR_CALM, not as a transport error.
+    assert_eq!(goaway_code(&seen), Some(ENHANCE_YOUR_CALM), "{seen:?}");
     assert!(server.recorded().is_empty());
 }
 

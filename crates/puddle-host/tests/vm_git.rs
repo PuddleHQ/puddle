@@ -65,9 +65,13 @@ fn internet(hosts: &[(&str, &GitHost)]) -> Internet {
     let platform = HarnessPlatform {
         roots: CorporateRoots::select(&snapshot, SystemTime::now()),
     };
+    let roots: BTreeSet<Vec<u8>> = hosts
+        .iter()
+        .map(|(_, h)| h.root().as_ref().to_vec())
+        .collect();
     assert_eq!(
         platform.roots.certificates().len(),
-        hosts.len(),
+        roots.len(),
         "the fake hosts' roots are reported as corporate roots"
     );
     Internet {

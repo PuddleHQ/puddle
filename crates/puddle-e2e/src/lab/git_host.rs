@@ -720,8 +720,8 @@ fn cgi_response(out: &[u8]) -> Reply {
 }
 
 /// A tiny HTTP `CONNECT` proxy that sends each tunnel to the address registered for the name in
-/// its target: the company proxy that is the only one who knows the fake hosts' names. A name it
-/// does not know gets a 502. Stops when dropped.
+/// its target: the company proxy that is the only one who knows the fake hosts' names. Any other
+/// name is connected to as it stands. Stops when dropped.
 pub struct NameProxy {
     port: u16,
     connects: Arc<Mutex<Vec<String>>>,
@@ -765,11 +765,13 @@ impl NameProxy {
                     lock(&seen).push(authority.clone());
                     let wanted = authority.split(':').next().unwrap_or_default();
                     let target = names.iter().find(|(n, _)| n == wanted).map(|(_, a)| *a);
-                    let Some(target) = target else {
-                        let _ = client.write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n").await;
-                        return;
+                    // A name the fake internet does not hold goes where it says, as through any
+                    // open company proxy (the image pull goes through the same chain).
+                    let connected = match target {
+                        Some(target) => TcpStream::connect(target).await,
+                        None => TcpStream::connect(authority.as_str()).await,
                     };
-                    let Ok(mut upstream) = TcpStream::connect(target).await else {
+                    let Ok(mut upstream) = connected else {
                         let _ = client.write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n").await;
                         return;
                     };

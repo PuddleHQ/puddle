@@ -1858,6 +1858,26 @@ async fn a_rename_is_allowed_while_a_start_runs() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_rename_is_refused_once_shutdown_has_begun() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    host.workspaces().close();
+    let refused = api
+        .patch("/api/workspaces/acme", &display_name_body("Acme shop"))
+        .await;
+    assert_eq!(refused.status, 503, "{}", refused.body);
+    assert!(refused.body.contains("shutting down"), "{}", refused.body);
+    assert_eq!(
+        api.get("/api/workspaces/acme").await.json()["display_name"],
+        "acme"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_rename_is_undone_when_the_workspace_list_cannot_be_saved() {
     let rig = Rig::new();
     let host = rig.start().await;

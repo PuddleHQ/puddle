@@ -159,7 +159,13 @@ describe("events", () => {
       expect(store.byName("b-site")?.status).toBe("running"),
     );
     expect(settled).toEqual([
-      { name: "b-site", operation: "starting", failed: false, detail: null },
+      {
+        name: "b-site",
+        label: "b-site",
+        operation: "starting",
+        failed: false,
+        detail: null,
+      },
     ]);
   });
 
@@ -383,6 +389,51 @@ describe("actions", () => {
     const result = await store.attach("a-shop", "desktop");
     expect(result).toMatchObject({ ok: true, value: { opened: true } });
     expect(api.bodies.at(-1)).toEqual({ mode: "desktop" });
+  });
+});
+
+describe("renaming", () => {
+  it("shows the new name in place and sorts by it", async () => {
+    await store.refresh();
+    const result = await store.rename("a-shop", "Zed");
+    expect(result.ok).toBe(true);
+    expect(api.bodies.at(-1)).toEqual({ display_name: "Zed" });
+    expect(store.list.map((w) => w.display_name)).toEqual(["b-site", "Zed"]);
+    // Looked up by its name: a rename never changes what events and settings call it.
+    expect(store.byName("a-shop")?.display_name).toBe("Zed");
+  });
+
+  it("a clash is a conflict the form can show, and the list is read again", async () => {
+    await store.refresh();
+    const result = await store.rename("b-site", "A-SHOP");
+    expect(result).toMatchObject({ ok: false, reason: "conflict" });
+    expect(store.byName("b-site")?.display_name).toBe("b-site");
+  });
+
+  it("a workspace deleted meanwhile is gone, and a dead service says so", async () => {
+    await store.refresh();
+    expect(await store.rename("ghost", "x")).toMatchObject({
+      ok: false,
+      reason: "gone",
+    });
+    api.down = true;
+    expect(await store.rename("b-site", "x")).toEqual({
+      ok: false,
+      message: "puddle's service isn't answering.",
+    });
+  });
+
+  it("the end of an operation carries the name the user gave", async () => {
+    await store.refresh();
+    await store.rename("a-shop", "Shop");
+    store.handleEvent(step("a-shop", "done"));
+    expect(settled).toMatchObject([{ name: "a-shop", label: "Shop" }]);
+    await store.refresh(); // events wait for a read that is running
+    store.handleEvent(step("unlisted", "failed", "x"));
+    expect(settled.at(-1)).toMatchObject({
+      name: "unlisted",
+      label: "unlisted",
+    });
   });
 });
 

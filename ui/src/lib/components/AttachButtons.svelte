@@ -36,7 +36,7 @@
     onclick={() => onStart(workspace)}
   >
     <Play aria-hidden="true" size={16} />Start
-    <span class="visually-hidden">{workspace.name}</span>
+    <span class="visually-hidden">{workspace.display_name}</span>
   </button>
 {:else}
   <button
@@ -46,7 +46,7 @@
     onclick={() => onConnect(workspace)}
   >
     <Plug aria-hidden="true" size={16} />Connect
-    <span class="visually-hidden"> to {workspace.name}</span>
+    <span class="visually-hidden"> to {workspace.display_name}</span>
   </button>
   <button
     type="button"
@@ -55,6 +55,6 @@
     onclick={() => onStop(workspace)}
   >
     <Square aria-hidden="true" size={16} />Stop
-    <span class="visually-hidden">{workspace.name}</span>
+    <span class="visually-hidden">{workspace.display_name}</span>
   </button>
 {/if}

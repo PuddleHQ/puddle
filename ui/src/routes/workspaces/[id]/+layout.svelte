@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import Pencil from "@lucide/svelte/icons/pencil";
   import LoadNotice from "#lib/components/LoadNotice.svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
@@ -10,6 +11,7 @@
   import { pending } from "#lib/stores/pending.svelte.ts";
   import { workspaceActions as actions } from "#lib/stores/workspace-actions.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
+  import { canRename } from "#lib/workspaces/model.ts";
   import { activeTab, TABS, tabHref } from "#lib/workspaces/tabs.ts";
 
   let { children } = $props();
@@ -33,8 +35,17 @@
   <div class="head">
     <div class="title">
       <p class="crumb"><a href="/workspaces">Workspaces</a> /</p>
-      <h1>{workspace.name}</h1>
+      <h1>{workspace.display_name}</h1>
     </div>
+    <button
+      type="button"
+      class="btn rename"
+      aria-label="Rename {workspace.display_name}"
+      disabled={!canRename(workspace)}
+      onclick={() => actions.openRename(workspace)}
+    >
+      <Pencil aria-hidden="true" size={16} />Rename
+    </button>
     <StatusChip status={workspace.status} busy={workspace.busy} />
     {#if workspace.direct_ssh}<TrustedBadge />{/if}
     <div class="acts">

@@ -13,7 +13,9 @@ const auth = (backend: Backend) => ({
 });
 
 interface Ws {
+  id: string;
   name: string;
+  display_name: string;
   status: string;
   busy: string | null;
   direct_ssh: boolean;
@@ -775,6 +777,187 @@ test.describe("the detail page", () => {
       page.getByRole("button", { name: "Start docs-site" }),
     ).toBeEnabled();
   });
+});
+
+test.describe("renaming", () => {
+  const rename = (page: Page) => page.getByRole("button", { name: /^Rename / });
+  const dialog = (page: Page) =>
+    page.getByRole("dialog", { name: "Rename workspace" });
+
+  test("a running workspace is renamed from its page and keeps its id, name, state and disk", async ({
+    page,
+    backend,
+    request,
+  }) => {
+    await openDetail(page, backend, "web-shop");
+    await rename(page).click();
+    const form = dialog(page);
+    await expect(form.getByLabel("Name")).toHaveValue("web-shop");
+    await expect(form).toContainText("Identifier: web-shop");
+    await form.getByLabel("Name").fill("  Web shop (prod) ");
+    await form.getByRole("button", { name: "Save" }).click();
+    await expect(form).toHaveCount(0);
+    await expect(toast(page, "Renamed to Web shop (prod).")).toBeVisible();
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Web shop (prod)" }),
+    ).toBeVisible();
+    // Still running, still the same address, and the identifier is kept on the overview.
+    await expect(page).toHaveURL(/\/workspaces\/web-shop$/);
+    await expect(page.getByText("Running").first()).toBeVisible();
+    await expect(page.getByText("Identifier")).toBeVisible();
+    await expect(page.getByText("ws-web-shop")).toBeVisible();
+    const found = (await workspaceList(request, backend)).find(
+      (w) => w.id === "web-shop",
+    );
+    expect(found).toMatchObject({
+      id: "web-shop",
+      name: "web-shop",
+      display_name: "Web shop (prod)",
+      status: "running",
+      busy: null,
+    });
+    // The list shows it too, and finds the workspace by its name still.
+    await page.getByRole("link", { name: "Workspaces", exact: true }).click();
+    await expect(card(page, "Web shop (prod)")).toBeVisible();
+    await expect(card(page, "web-shop")).toHaveCount(0);
+    await expect(
+      card(page, "Web shop (prod)").getByRole("button", {
+        name: "Stop Web shop (prod)",
+      }),
+    ).toBeVisible();
+  });
+
+  test("the name goes into the words the page says about the workspace", async ({
+    page,
+    backend,
+  }) => {
+    await openDetail(page, backend, "docs-site");
+    await rename(page).click();
+    await dialog(page).getByLabel("Name").fill("Handbook");
+    await dialog(page).getByRole("button", { name: "Save" }).click();
+    await expect(toast(page, "Renamed to Handbook.")).toBeVisible();
+    await page.getByRole("button", { name: "Start Handbook" }).click();
+    await expect(toast(page, "Handbook is running.")).toBeVisible();
+    await page.getByRole("button", { name: "Stop Handbook" }).click();
+    await expect(toast(page, "Stopped Handbook.")).toBeVisible();
+  });
+
+  test("a name another workspace has is refused as you type, ignoring case, and by the service if it slips through", async ({
+    page,
+    backend,
+    request,
+  }) => {
+    await openDetail(page, backend, "web-shop");
+    await rename(page).click();
+    const form = dialog(page);
+    await form.getByLabel("Name").fill("DOCS-SITE");
+    await expect(form.getByRole("alert")).toContainText(
+      'Another workspace is already called "docs-site".',
+    );
+    await form.getByRole("button", { name: "Save" }).click();
+    await expect(form).toBeVisible();
+    // Another window names a workspace the page has not heard of yet: the service says no, in
+    // the dialog, and the page then reads the list again.
+    const raced = await request.patch("/api/workspaces/data-tools", {
+      headers: auth(backend),
+      data: { display_name: "Racing" },
+    });
+    expect(raced.status()).toBe(200);
+    await form.getByLabel("Name").fill("racing");
+    await expect(form.getByRole("alert")).toHaveCount(0);
+    await form.getByRole("button", { name: "Save" }).click();
+    await expect(form.getByRole("alert")).toContainText(
+      "another workspace is already called Racing",
+    );
+    await expect(form).toBeVisible();
+    // The workspace's own name is free for it.
+    await form.getByLabel("Name").fill("web-shop");
+    await expect(form.getByRole("alert")).toHaveCount(0);
+  });
+
+  test("typing the identifier again goes back to it, and nothing is sent for an unchanged name", async ({
+    page,
+    backend,
+    request,
+  }) => {
+    await openDetail(page, backend, "web-shop");
+    await rename(page).click();
+    await dialog(page).getByLabel("Name").fill("Shop");
+    await dialog(page).getByRole("button", { name: "Save" }).click();
+    await expect(toast(page, "Renamed to Shop.")).toBeVisible();
+    await rename(page).click();
+    await dialog(page).getByLabel("Name").fill("web-shop");
+    await dialog(page).getByRole("button", { name: "Save" }).click();
+    await expect(
+      page.getByRole("heading", { level: 1, name: "web-shop", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText("Identifier")).toHaveCount(0);
+    const found = (await workspaceList(request, backend)).find(
+      (w) => w.id === "web-shop",
+    );
+    expect(found?.display_name).toBe("web-shop");
+  });
+
+  test("a rename is not offered while a workspace is being created", async ({
+    page,
+    backend,
+  }) => {
+    await openList(page, backend);
+    await backend.control.step({ do: "hold_workspaces" });
+    await page.getByRole("button", { name: "New workspace" }).first().click();
+    const create = page.getByRole("dialog", { name: "New workspace" });
+    await create
+      .getByLabel("Git repository (HTTPS)")
+      .fill("https://github.com/acme/slow.git");
+    await create.getByRole("button", { name: "Create workspace" }).click();
+    await expect(card(page, "slow")).toContainText("Creating");
+    await card(page, "slow")
+      .getByRole("link", { name: /^Details/ })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Rename slow" }),
+    ).toBeDisabled();
+    await backend.control.step({ do: "release_workspaces" });
+    await expect(
+      page.getByRole("button", { name: "Rename slow" }),
+    ).toBeEnabled();
+  });
+
+  test("keyboard only: Enter opens it, Enter saves, Escape cancels and focus returns to the button", async ({
+    page,
+    backend,
+  }) => {
+    await openDetail(page, backend, "web-shop");
+    await rename(page).focus();
+    await page.keyboard.press("Enter");
+    await expect(dialog(page).getByLabel("Name")).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(dialog(page)).toHaveCount(0);
+    await expect(rename(page)).toBeFocused();
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("ControlOrMeta+A");
+    await page.keyboard.type("Shop two");
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Shop two" }),
+    ).toBeVisible();
+  });
+
+  for (const scheme of ["light", "dark"] as const) {
+    test(`axe finds nothing in ${scheme}: the rename dialog, with and without a refusal`, async ({
+      page,
+      backend,
+    }) => {
+      await page.emulateMedia({ colorScheme: scheme });
+      await openDetail(page, backend, "web-shop");
+      await rename(page).click();
+      await expect(dialog(page)).toBeVisible();
+      expect(await axeViolations(page), "rename dialog").toEqual([]);
+      await dialog(page).getByLabel("Name").fill("docs-site");
+      await expect(dialog(page).getByRole("alert")).toBeVisible();
+      expect(await axeViolations(page), "rename refused").toEqual([]);
+    });
+  }
 });
 
 test.describe("the network tab", () => {

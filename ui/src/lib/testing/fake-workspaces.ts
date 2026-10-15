@@ -13,6 +13,7 @@ export function workspace(
   return {
     id: name,
     name,
+    display_name: name,
     repo_url: `https://github.com/acme/${name}.git`,
     image: "mcr.microsoft.com/devcontainers/base:debian",
     memory_mib: 8192,
@@ -251,6 +252,38 @@ export class FakeWorkspaces {
           : { ...found, busy: "reclaiming" };
     this.list = this.list.map((w) => (w.id === found.id ? next : w));
     return this.reply(202, next);
+  };
+
+  /** `PATCH /api/workspaces/{id}`: the rename, with the API's clash rule (409, ignoring case). */
+  PATCH = async (
+    path: string,
+    init: {
+      params: { path: { id: string } };
+      body: { display_name: string | null };
+    },
+  ) => {
+    this.calls.push(`PATCH ${path}`);
+    this.bodies.push(init.body);
+    if (this.down) throw new TypeError("down");
+    const refused = this.refusal(`PATCH ${path}`);
+    if (refused) return refused;
+    const found = this.find(init.params.path.id);
+    if (!found) return this.reply(404, undefined, "no such workspace");
+    const shown = init.body.display_name?.trim() ?? found.name;
+    const clash = this.list.find(
+      (w) =>
+        w.id !== found.id &&
+        w.display_name.toLowerCase() === shown.toLowerCase(),
+    );
+    if (clash)
+      return this.reply(
+        409,
+        undefined,
+        `another workspace is already called ${clash.display_name}; choose a different name`,
+      );
+    const next: Workspace = { ...found, display_name: shown };
+    this.list = this.list.map((w) => (w.id === found.id ? next : w));
+    return this.reply(200, next);
   };
 
   DELETE = async (

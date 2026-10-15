@@ -42,6 +42,8 @@ beforeEach(async () => {
   actions.connectOpen = false;
   actions.trustOpen = false;
   actions.deleteOpen = false;
+  actions.renameOpen = false;
+  actions.renaming = null;
   actions.deleting = null;
   for (const t of [...toasts.items]) toasts.dismiss(t.id);
 });
@@ -60,6 +62,79 @@ describe("WorkspaceDialogs", () => {
     expect(
       await screen.findByRole("dialog", { name: "New workspace" }),
     ).toBeInTheDocument();
+  });
+
+  it("renames from the dialog: starts from the current name, refuses a clash before asking, then saves and says so", async () => {
+    api.list = [
+      workspace("demo", { status: "running" }),
+      workspace("docs", { display_name: "Handbook" }),
+    ];
+    await workspaces.refresh();
+    render(WorkspaceDialogs);
+    actions.openRename(workspaces.byName("demo")!);
+    const dialog = await screen.findByRole("dialog", {
+      name: "Rename workspace",
+    });
+    const field = within(dialog).getByRole("textbox", { name: "Name" });
+    expect(field).toHaveValue("demo");
+    expect(dialog).toHaveTextContent("Identifier: demo");
+    await fireEvent.input(field, { target: { value: "handbook" } });
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      'Another workspace is already called "Handbook".',
+    );
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(api.calls).not.toContain("PATCH /api/workspaces/{id}");
+    await fireEvent.input(field, { target: { value: "" } });
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Give the workspace a name.",
+    );
+    await fireEvent.input(field, { target: { value: "x".repeat(61) } });
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Use at most 60 characters.",
+    );
+    await fireEvent.input(field, { target: { value: "Web shop" } });
+    expect(within(dialog).queryByRole("alert")).toBeNull();
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await vi.waitFor(() =>
+      expect(api.calls).toContain("PATCH /api/workspaces/{id}"),
+    );
+    await vi.waitFor(() => expect(actions.renameOpen).toBe(false));
+    expect(workspaces.byName("demo")?.display_name).toBe("Web shop");
+    expect(toasts.items.map((t) => t.message)).toEqual([
+      "Renamed to Web shop.",
+    ]);
+  });
+
+  it("shows the service's refusal in the dialog and keeps it open", async () => {
+    await workspaces.refresh();
+    api.refuse.set("PATCH /api/workspaces/{id}", {
+      status: 409,
+      message: "demo is deleting; rename it when that is done",
+    });
+    render(WorkspaceDialogs);
+    actions.openRename(workspaces.byName("demo")!);
+    const dialog = await screen.findByRole("dialog", {
+      name: "Rename workspace",
+    });
+    await fireEvent.input(
+      within(dialog).getByRole("textbox", { name: "Name" }),
+      {
+        target: { value: "Other" },
+      },
+    );
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "demo is deleting; rename it when that is done",
+    );
+    expect(actions.renameOpen).toBe(true);
+    // Typing again clears the old refusal.
+    await fireEvent.input(
+      within(dialog).getByRole("textbox", { name: "Name" }),
+      {
+        target: { value: "Other 2" },
+      },
+    );
+    expect(within(dialog).queryByRole("alert")).toBeNull();
   });
 
   it("offers the browser editor on top, and desktop VS Code only once direct SSH is on", async () => {

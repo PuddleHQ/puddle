@@ -42,6 +42,8 @@ export interface Progress {
 
 export interface Settled {
   name: string;
+  /** What the user calls it (its display name), for words; `name` when it is no longer listed. */
+  label: string;
   operation: Operation | null;
   failed: boolean;
   detail: string | null;
@@ -61,7 +63,7 @@ export type ActionResult<T = null> =
   | { ok: true; value: T }
   | { ok: false; message: string; field?: Field; reason?: "gone" | "conflict" };
 
-type StoreApi = Pick<ApiClient, "GET" | "POST" | "PUT" | "DELETE">;
+type StoreApi = Pick<ApiClient, "GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
 
 export interface WorkspacesDeps {
   api?: StoreApi;
@@ -206,7 +208,13 @@ export class WorkspaceStore {
             : rest;
           // `busy` is cleared before this event: the record now says what is left.
           void this.refresh();
-          this.onSettled?.({ name, operation, failed, detail: event.detail });
+          this.onSettled?.({
+            name,
+            label: w?.display_name ?? name,
+            operation,
+            failed,
+            detail: event.detail,
+          });
           return;
         }
         this.progress = {
@@ -334,6 +342,25 @@ export class WorkspaceStore {
       }),
     );
     if (result.ok) this.#accept(result.value.name, before, result.value);
+    return result;
+  }
+
+  /**
+   * Gives the workspace a display name (`null`: back to its name). Only the label changes, so it
+   * works on a running workspace. A 409 means another workspace has that name, or this one is
+   * being created or deleted.
+   */
+  async rename(
+    id: string,
+    displayName: string | null,
+  ): Promise<ActionResult<Workspace>> {
+    const result = await this.#post(() =>
+      this.#api.PATCH("/api/workspaces/{id}", {
+        params: { path: { id } },
+        body: { display_name: displayName },
+      }),
+    );
+    if (result.ok) this.#put(result.value);
     return result;
   }
 

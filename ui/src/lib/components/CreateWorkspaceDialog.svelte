@@ -262,7 +262,9 @@
         <p class="error" id="new-ws-name-error" role="alert">{errors.name}</p>
       {:else}
         <p class="hint" id="new-ws-name-hint">
-          Lowercase letters, digits and hyphens. It can't be changed later.
+          Lowercase letters, digits and hyphens. It names the disk and can't be
+          changed; you can rename the workspace later and keep this as its
+          identifier.
         </p>
       {/if}
     </div>

@@ -30,6 +30,7 @@ type Store = Pick<
   | "startWorkspace"
   | "stopWorkspace"
   | "reclaim"
+  | "rename"
   | "attach"
   | "setDirectSsh"
   | "checkDelete"
@@ -38,7 +39,7 @@ type Store = Pick<
   | "dismissProgress"
 >;
 
-const DONE_WORDS: Record<string, (name: string) => string> = {
+const DONE_WORDS: Record<string, (label: string) => string> = {
   creating: (name) => `Created ${name}.`,
   starting: (name) => `${name} is running.`,
   stopping: (name) => `Stopped ${name}.`,
@@ -50,12 +51,12 @@ const DONE_WORDS: Record<string, (name: string) => string> = {
 export function settledMessage(settled: Settled): string {
   if (settled.failed) {
     const what = settled.operation
-      ? `${operationLabel(settled.operation)} ${settled.name} failed`
-      : `Something went wrong with ${settled.name}`;
+      ? `${operationLabel(settled.operation)} ${settled.label} failed`
+      : `Something went wrong with ${settled.label}`;
     return settled.detail ? `${what}: ${settled.detail}` : `${what}.`;
   }
   return (DONE_WORDS[settled.operation ?? ""] ?? ((n) => `${n}: done.`))(
-    settled.name,
+    settled.label,
   );
 }
 
@@ -69,6 +70,9 @@ export class WorkspaceActions {
   trustOpen = $state(false);
   /** The trust text was asked from the connect step, which closes while it is shown. */
   #backToConnect = false;
+  /** The workspace the rename dialog is open for (a snapshot: read live data by its id). */
+  renaming = $state.raw<Workspace | null>(null);
+  renameOpen = $state(false);
   deleting = $state.raw<DeleteState | null>(null);
   deleteOpen = $state(false);
   /** The workspace whose delete check is being read. */
@@ -111,6 +115,27 @@ export class WorkspaceActions {
   reclaim = async (w: Workspace): Promise<void> => {
     const result = await this.#store.reclaim(w.id);
     if (!result.ok) this.#fail(result.message);
+  };
+
+  openRename = (w: Workspace): void => {
+    this.renaming = w;
+    this.renameOpen = true;
+  };
+
+  /**
+   * Renames to what the user typed; a name equal to the workspace's own name goes back to it.
+   * Returns the refusal as text for the dialog, or `null` when it went through.
+   */
+  submitRename = async (w: Workspace, text: string): Promise<string | null> => {
+    const shown = text.trim();
+    if (shown === w.display_name) return null;
+    const result = await this.#store.rename(
+      w.id,
+      shown === w.name ? null : shown,
+    );
+    if (!result.ok) return result.message;
+    this.#toasts.push(`Renamed to ${result.value.display_name}.`);
+    return null;
   };
 
   /** Opens the connect step. */
@@ -159,8 +184,8 @@ export class WorkspaceActions {
     }
     this.#toasts.push(
       on
-        ? `Direct SSH is on for ${w.name}: it is trusted now.`
-        : `Direct SSH is off for ${w.name}.`,
+        ? `Direct SSH is on for ${w.display_name}: it is trusted now.`
+        : `Direct SSH is off for ${w.display_name}.`,
     );
   }
 
@@ -177,10 +202,10 @@ export class WorkspaceActions {
     }
     const { opened, message } = result.value;
     if (opened) {
-      this.#toasts.push(`Opening ${w.name} in VS Code.`);
+      this.#toasts.push(`Opening ${w.display_name} in VS Code.`);
     } else {
       this.#toasts.push(
-        message ?? `puddle couldn't open VS Code for ${w.name}.`,
+        message ?? `puddle couldn't open VS Code for ${w.display_name}.`,
         {
           tone: "error",
           ms: 8000,
@@ -219,7 +244,7 @@ export class WorkspaceActions {
     );
     if (result.ok) {
       this.deleteOpen = false;
-      this.#toasts.push(`Deleting ${state.workspace.name}.`);
+      this.#toasts.push(`Deleting ${state.workspace.display_name}.`);
       return;
     }
     if (result.reason === "gone") {

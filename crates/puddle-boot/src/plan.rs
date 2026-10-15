@@ -267,6 +267,7 @@ pub struct BootPlan {
     entrypoint: Vec<String>,
     entrypoint_cwd: Option<GuestPath>,
     agent: Option<AgentConfig>,
+    capture: bool,
 }
 
 /// Builds a [`BootPlan`]; see there.
@@ -280,6 +281,7 @@ pub struct BootPlanBuilder {
     git: Option<GitIdentity>,
     git_rules: Vec<GitAuthorRule>,
     agent: Option<AgentConfig>,
+    capture: bool,
 }
 
 impl BootPlan {
@@ -295,6 +297,7 @@ impl BootPlan {
             git: None,
             git_rules: Vec::new(),
             agent: Some(AgentConfig::default()),
+            capture: true,
         }
     }
 
@@ -323,6 +326,13 @@ impl BootPlan {
     #[must_use]
     pub fn agent(&self) -> Option<&AgentConfig> {
         self.agent.as_ref()
+    }
+
+    /// Whether the hook turns transparent capture on: the agent starts with it and the guest's
+    /// resolver is pointed at the stub once that answers. Always false without an agent.
+    #[must_use]
+    pub fn capture(&self) -> bool {
+        self.capture && self.agent.is_some()
     }
 
     /// The binary that applies merged files (`puddle-agent merge-file`): the agent's,
@@ -383,6 +393,8 @@ impl BootPlan {
                 sh_word(agent.binary.as_str()),
                 agent.port
             ));
+            let mode = if self.capture { "on" } else { "off" };
+            lines.push(format!("puddle_capture {mode}"));
         }
         for p in &self.entry_env {
             lines.push(format!("puddle_entrypoint_env {}", sh_word(p.as_str())));
@@ -462,6 +474,13 @@ impl BootPlanBuilder {
     /// Starts this agent instead of the default one.
     pub fn agent(mut self, agent: AgentConfig) -> Self {
         self.agent = Some(agent);
+        self
+    }
+
+    /// Turns transparent capture off (on by default): the agent starts without it and the
+    /// resolver stays as the guest had it.
+    pub fn no_capture(mut self) -> Self {
+        self.capture = false;
         self
     }
 
@@ -582,6 +601,7 @@ impl BootPlanBuilder {
             entrypoint,
             entrypoint_cwd,
             agent: self.agent,
+            capture: self.capture,
         })
     }
 }
@@ -974,6 +994,26 @@ mod tests {
     }
 
     #[test]
+    fn capture_is_on_unless_switched_off_or_there_is_no_agent() {
+        let img = image(&["e"], &[], None);
+        let render = |plan: &BootPlan| String::from_utf8(plan.render()).unwrap();
+
+        let on = BootPlan::builder(&img).build().unwrap();
+        assert!(on.capture());
+        assert!(
+            render(&on).contains("puddle_agent '/puddle/puddle-agent' 3128\npuddle_capture on\n")
+        );
+
+        let off = BootPlan::builder(&img).no_capture().build().unwrap();
+        assert!(!off.capture());
+        assert!(render(&off).contains("\npuddle_capture off\n"));
+
+        let none = BootPlan::builder(&img).no_agent().build().unwrap();
+        assert!(!none.capture(), "capture needs the agent");
+        assert!(!render(&none).contains("puddle_capture"));
+    }
+
+    #[test]
     fn render_has_header_files_steps_and_end_marker() {
         let plan = BootPlan::builder(&image(&["e"], &[], Some("/bin")))
             .file(file("/etc/it's", "50%\n").with_mode(0o600).unwrap())
@@ -999,7 +1039,7 @@ mod tests {
         )));
         assert_eq!(plan.agent().unwrap().port, 4000);
         // Every line is one call: content newlines are escaped.
-        assert_eq!(lines.len(), 2 + plan.files().len() + 6);
+        assert_eq!(lines.len(), 2 + plan.files().len() + 7);
         // The agent's port is the one VS Code is told to ignore.
         assert!(text(&plan, MACHINE_SETTINGS_GUEST).contains("\"4000\""));
     }

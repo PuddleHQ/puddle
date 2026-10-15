@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 use puddle_ca::{CaCertificate, TrustBundle};
 use puddle_types::{GuestEnv, GuestFile, GuestPath};
 
+use crate::devcert::GuestDevCert;
 use crate::select::{CorporateRoots, Fingerprint};
 
 /// Directory for the synced host certificates, one `<fingerprint prefix>.crt` each, inside
@@ -32,9 +33,10 @@ pub const BUNDLE_STEP_SH: &str = include_str!("../guest/ca-bundle.sh");
 const NAME_HEX: usize = 16;
 
 /// The guest side of root sync for one workspace: the host's synced roots plus Puddle's own CAs
-/// ([`TrustBundle`], a list so a dev CA is one more entry).
+/// ([`TrustBundle`], a list so a dev CA is one more entry), and the development certificate when
+/// the host has one ([`GuestTrust::with_dev_cert`]).
 ///
-/// Hand [`GuestTrust::guest_files`], [`GuestTrust::env`] and [`GuestTrust::boot_step`] to the
+/// Hand [`GuestTrust::guest_files`], [`GuestTrust::env`] and [`GuestTrust::boot_steps`] to the
 /// boot plan. With nothing to add, all three are empty and the guest keeps the image's trust.
 ///
 /// ```
@@ -42,13 +44,14 @@ const NAME_HEX: usize = 16;
 /// use puddle_certs::{CA_BUNDLE_PATH, CorporateRoots, GuestTrust};
 ///
 /// let trust = GuestTrust::new(&CorporateRoots::default(), &TrustBundle::new());
-/// assert!(trust.guest_files().is_empty() && trust.env().is_empty() && trust.boot_step().is_none());
+/// assert!(trust.guest_files().is_empty() && trust.env().is_empty() && trust.boot_steps().is_empty());
 /// # let _ = CA_BUNDLE_PATH;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GuestTrust {
     host: Vec<(Fingerprint, String)>,
     puddle: TrustBundle,
+    dev: Option<GuestDevCert>,
 }
 
 impl GuestTrust {
@@ -62,13 +65,22 @@ impl GuestTrust {
                 .map(|c| (c.fingerprint(), c.pem()))
                 .collect(),
             puddle: puddle.clone(),
+            dev: None,
         }
+    }
+
+    /// The same trust with the development certificate: trusted by the guest's system store, by
+    /// Node and by the bundle, with its key and the tool variables (see [`GuestDevCert`]).
+    #[must_use]
+    pub fn with_dev_cert(mut self, dev: GuestDevCert) -> Self {
+        self.dev = Some(dev);
+        self
     }
 
     /// Whether there is nothing to add to the guest.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.host.is_empty() && self.puddle.certificates().is_empty()
+        self.host.is_empty() && self.puddle.certificates().is_empty() && self.dev.is_none()
     }
 
     /// The boot files, in a fixed order (the same inputs give byte-identical files, so the boot
@@ -76,10 +88,13 @@ impl GuestTrust {
     ///
     /// 1. one file per synced host certificate under [`HOST_CA_DIR`];
     /// 2. Puddle's CA files ([`TrustBundle::guest_files`]);
-    /// 3. [`EXTRA_CAS_PATH`];
-    /// 4. the step script at [`BUNDLE_STEP_PATH`] (mode `0755`).
+    /// 3. the development certificate's system-store copy, if there is one;
+    /// 4. [`EXTRA_CAS_PATH`];
+    /// 5. the step script at [`BUNDLE_STEP_PATH`] (mode `0755`);
+    /// 6. the development certificate's own files, if there is one: certificate, key (mode
+    ///    `0600`) and step script.
     ///
-    /// All are public certificates or the script; nothing secret.
+    /// Everything is a public certificate or a script, except the development key.
     #[must_use]
     pub fn guest_files(&self) -> Vec<GuestFile> {
         if self.is_empty() {
@@ -96,15 +111,24 @@ impl GuestTrust {
             })
             .collect();
         files.extend(self.puddle.guest_files());
+        let dev = self.dev.as_ref().map(GuestDevCert::guest_files);
+        // The first of the development files is its system-store copy; the rest follow the step.
+        let (dev_system, dev_rest) = dev.map_or((None, Vec::new()), |mut all| {
+            let rest = all.split_off(1);
+            (all.pop(), rest)
+        });
+        files.extend(dev_system);
         files.push(fixed(EXTRA_CAS_PATH, self.extra_cas().into_bytes()));
         let step = fixed(BUNDLE_STEP_PATH, BUNDLE_STEP_SH.as_bytes().to_vec());
         files.extend(step.with_mode(0o755).ok());
+        files.extend(dev_rest);
         files
     }
 
     /// `NODE_EXTRA_CA_CERTS` (the extra CAs only; Node keeps its own roots) and
     /// `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE` (the full bundle: OpenSSL, Python,
-    /// requests, pip, curl). Empty when there is nothing to add.
+    /// requests, pip, curl). With a development certificate also its file paths, .NET's trust
+    /// folder and no generated .NET certificate. Empty when there is nothing to add.
     #[must_use]
     pub fn env(&self) -> GuestEnv {
         let mut env = GuestEnv::new();
@@ -120,18 +144,28 @@ impl GuestTrust {
             // Fixed, valid names and values: can't fail.
             let _ = env.set(name, value);
         }
+        if self.dev.is_some() {
+            env.extend(&GuestDevCert::env());
+        }
         env
     }
 
-    /// The step the boot plan runs at every boot (after `update-ca-certificates`) to build
-    /// [`CA_BUNDLE_PATH`] from the image's bundle; `None` when there is nothing to add.
+    /// The steps the boot plan runs at every boot, in order, after `update-ca-certificates`:
+    /// the one that builds [`CA_BUNDLE_PATH`] from the image's bundle, then (with a development
+    /// certificate) the one that sets up .NET. Empty when there is nothing to add.
     #[must_use]
-    pub fn boot_step(&self) -> Option<GuestPath> {
-        (!self.is_empty()).then(|| path(BUNDLE_STEP_PATH))
+    pub fn boot_steps(&self) -> Vec<GuestPath> {
+        if self.is_empty() {
+            return Vec::new();
+        }
+        std::iter::once(path(BUNDLE_STEP_PATH))
+            .chain(self.dev.as_ref().map(|_| GuestDevCert::step()))
+            .collect()
     }
 
-    /// The text of [`EXTRA_CAS_PATH`]: host certificates, then Puddle's CAs, each once (a dev CA
-    /// the user also added to their Windows store is not repeated).
+    /// The text of [`EXTRA_CAS_PATH`]: host certificates, then Puddle's CAs, then the development
+    /// certificate, each once (a dev CA the user also added to their Windows store is not
+    /// repeated).
     fn extra_cas(&self) -> String {
         let mut seen = BTreeSet::new();
         let host = self.host.iter().map(|(fp, pem)| (*fp, pem.clone()));
@@ -140,11 +174,23 @@ impl GuestTrust {
             .certificates()
             .iter()
             .map(|c: &CaCertificate| (Fingerprint::of(c.der()), c.pem().to_owned()));
+        let dev = self.dev.iter().filter_map(|d| {
+            Some((
+                Fingerprint::of(&der_of(d.cert_pem())?),
+                d.cert_pem().to_owned(),
+            ))
+        });
         host.chain(puddle)
+            .chain(dev)
             .filter(|(fp, _)| seen.insert(*fp))
             .map(|(_, pem)| pem)
             .collect()
     }
+}
+
+/// The DER of a single-certificate PEM.
+fn der_of(cert_pem: &str) -> Option<Vec<u8>> {
+    pem::parse(cert_pem).ok().map(pem::Pem::into_contents)
 }
 
 fn path(p: &str) -> GuestPath {
@@ -250,7 +296,7 @@ mod tests {
             assert_eq!(env.get(name), Some(CA_BUNDLE_PATH), "{name}");
         }
         assert_eq!(env.len(), 4);
-        assert_eq!(trust.boot_step().unwrap().as_str(), BUNDLE_STEP_PATH);
+        assert_eq!(trust.boot_steps(), [path(BUNDLE_STEP_PATH)]);
         assert!(!trust.is_empty());
     }
 
@@ -260,7 +306,7 @@ mod tests {
             &CorporateRoots::default(),
             &TrustBundle::new().with(puddle_ca()),
         );
-        assert!(only_ca.boot_step().is_some());
+        assert_eq!(only_ca.boot_steps().len(), 1);
         assert_eq!(
             text(&only_ca.guest_files(), EXTRA_CAS_PATH)
                 .matches("BEGIN")
@@ -279,7 +325,7 @@ mod tests {
         assert!(trust.is_empty());
         assert_eq!(trust.guest_files(), []);
         assert_eq!(trust.env(), GuestEnv::new());
-        assert_eq!(trust.boot_step(), None);
+        assert_eq!(trust.boot_steps(), []);
     }
 
     #[test]
@@ -301,5 +347,104 @@ mod tests {
         let trust = GuestTrust::new(&corp, &TrustBundle::new().with(ca));
         let extra = text(&trust.guest_files(), EXTRA_CAS_PATH);
         assert_eq!(extra.matches("-----BEGIN CERTIFICATE-----").count(), 2);
+    }
+
+    fn dev_cert() -> GuestDevCert {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = crate::devcert::DevCertManager::new(dir.path(), crate::devcert::Unsupported);
+        let report = manager.ensure(std::time::SystemTime::now()).unwrap();
+        GuestDevCert::new(&report.material)
+    }
+
+    #[test]
+    fn a_development_certificate_alone_is_a_trust_with_files_env_and_two_steps() {
+        let dev = dev_cert();
+        let trust = GuestTrust::new(&CorporateRoots::default(), &TrustBundle::new())
+            .with_dev_cert(dev.clone());
+        assert!(!trust.is_empty());
+        let files = trust.guest_files();
+        let paths: Vec<&str> = files.iter().map(|f| f.path().as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "/usr/local/share/ca-certificates/puddle-dev/localhost.crt",
+                EXTRA_CAS_PATH,
+                BUNDLE_STEP_PATH,
+                "/etc/puddle/dev-cert/localhost.crt",
+                "/etc/puddle/dev-cert/localhost.key",
+                "/usr/local/lib/puddle/dev-cert.sh",
+            ]
+        );
+        let modes: Vec<u32> = files.iter().map(GuestFile::mode).collect();
+        assert_eq!(modes, [0o644, 0o644, 0o755, 0o644, 0o600, 0o755]);
+        // The certificate is the trust anchor in the extra CAs, once.
+        assert_eq!(text(&files, EXTRA_CAS_PATH), dev.cert_pem());
+        assert!(
+            text(&files, "/etc/puddle/dev-cert/localhost.key")
+                .starts_with("-----BEGIN PRIVATE KEY-----")
+        );
+        let env = trust.env();
+        assert_eq!(
+            env.get("DEV_CERT_PEM"),
+            Some("/etc/puddle/dev-cert/localhost.crt")
+        );
+        assert_eq!(
+            env.get("DEV_KEY_PEM"),
+            Some("/etc/puddle/dev-cert/localhost.key")
+        );
+        assert_eq!(env.get("DOTNET_GENERATE_ASPNET_CERTIFICATE"), Some("false"));
+        assert!(
+            env.get("SSL_CERT_DIR")
+                .unwrap()
+                .starts_with("/root/.aspnet/dev-certs/trust:")
+        );
+        assert_eq!(env.get("SSL_CERT_FILE"), Some(CA_BUNDLE_PATH));
+        let steps: Vec<String> = trust.boot_steps().iter().map(ToString::to_string).collect();
+        assert_eq!(
+            steps,
+            [BUNDLE_STEP_PATH, "/usr/local/lib/puddle/dev-cert.sh"]
+        );
+    }
+
+    #[test]
+    fn the_development_certificate_sits_after_the_other_extra_cas_and_is_not_repeated() {
+        let dev = dev_cert();
+        let corp = corporate(&[root_der("Corp")]);
+        let ca = puddle_ca();
+        let trust =
+            GuestTrust::new(&corp, &TrustBundle::new().with(ca.clone())).with_dev_cert(dev.clone());
+        let extra = text(&trust.guest_files(), EXTRA_CAS_PATH);
+        assert_eq!(extra.matches("-----BEGIN CERTIFICATE-----").count(), 3);
+        assert!(
+            extra.ends_with(dev.cert_pem()),
+            "the dev certificate is last"
+        );
+        // The same bytes every time: the boot hook sees no change.
+        let again = GuestTrust::new(&corp, &TrustBundle::new().with(ca)).with_dev_cert(dev);
+        assert_eq!(again.guest_files(), trust.guest_files());
+    }
+
+    #[test]
+    fn no_key_byte_reaches_debug_output() {
+        let dev = dev_cert();
+        let key_body: String = dev
+            .guest_files()
+            .iter()
+            .find(|f| f.path().as_str() == "/etc/puddle/dev-cert/localhost.key")
+            .map(|f| String::from_utf8(f.contents().to_vec()).unwrap())
+            .unwrap()
+            .lines()
+            .nth(1)
+            .unwrap()
+            .to_owned();
+        let trust = GuestTrust::new(&CorporateRoots::default(), &TrustBundle::new())
+            .with_dev_cert(dev.clone());
+        let bytes: Vec<u8> = key_body.bytes().collect();
+        let leaked = format!("{dev:?} {trust:?} {:?}", trust.guest_files());
+        assert!(!leaked.contains(&key_body), "key text in Debug output");
+        assert!(
+            !leaked.contains(format!("{:?}", &bytes[..16]).trim_matches(['[', ']'])),
+            "key bytes in Debug output"
+        );
     }
 }

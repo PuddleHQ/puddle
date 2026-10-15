@@ -26,7 +26,7 @@
 //! let roots = CorporateRoots::select(&read_host_stores()?, SystemTime::now());
 //! let trust = GuestTrust::new(&roots, &TrustBundle::new());
 //! // BootPlan::builder(..).files(trust.guest_files()).env(&trust.env()), plus
-//! // .step(path) for trust.boot_step().
+//! // .step(path) for each of trust.boot_steps().
 //! # Ok::<(), puddle_certs::StoreError>(())
 //! ```
 #![cfg_attr(not(windows), forbid(unsafe_code))]

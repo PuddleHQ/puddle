@@ -147,6 +147,8 @@ struct GuestState {
     /// How the browser editor's server runs in it; `None` when the host bundles none. The grace
     /// is the setting as of this start.
     editor: Option<EditorServer>,
+    /// The development certificate this start gave the guest, so a re-planned boot keeps it.
+    dev_cert: Option<puddle_certs::devcert::GuestDevCert>,
 }
 
 /// What a sandbox owns while this process serves it.
@@ -747,6 +749,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             ca: began.certificate,
             authors: authors(&began.git),
             env: began.env,
+            dev_cert: inner.kit.dev_cert().await,
         };
         match inner.kit.plan(
             &state.image,
@@ -755,6 +758,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 authors: &state.authors,
                 env: &state.env,
                 editor: state.editor.as_ref(),
+                dev_cert: state.dev_cert.as_ref(),
             },
         ) {
             Ok((plan, env)) => Ok((plan, env, state)),
@@ -850,6 +854,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             authors,
             env: &guest.env,
             editor: guest.editor.as_ref(),
+            dev_cert: guest.dev_cert.as_ref(),
         };
         let (plan, _) = kit.plan(&guest.image, &inputs)?;
         kit.hook()

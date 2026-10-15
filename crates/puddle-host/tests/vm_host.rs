@@ -28,7 +28,7 @@ use puddle_store::{
 use puddle_types::{WorkspaceName, WorkspaceStatus};
 use puddle_vm_tests::{RuntimePair, Settings};
 use serde_json::json;
-use support::{Api, ended};
+use support::{Api, TestDevCert, ended, hermetic_options};
 #[cfg(not(windows))]
 use vm_support::start_vm_host_config;
 use vm_support::{
@@ -163,7 +163,7 @@ fn issuer_script(host: &str) -> String {
 /// decrypting proxy with no credential. What the Git injector does with a credential is tested
 /// in `puddle-inject` and the proxy's terminate tests.
 fn options_without_injection() -> HostOptions {
-    let mut options = HostOptions::default();
+    let mut options = hermetic_options();
     options.injector = Some(std::sync::Arc::new(|_, _| {
         std::sync::Arc::new(puddle_proxy::NoInjection)
     }));
@@ -1435,7 +1435,7 @@ async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox(
         runtime,
         settings,
         ..
-    } = start_vm_host_config("edit", HostOptions::default(), |config| {
+    } = start_vm_host_config("edit", hermetic_options(), |config| {
         config.guest.code_server = Some(release);
     })
     .await;
@@ -1524,4 +1524,84 @@ async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox(
     );
 
     host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_boots_the_guest_with_the_development_certificate_and_its_key_stays_root_only() {
+    let dev_cert = std::sync::Arc::new(TestDevCert::new());
+    dev_cert.give();
+    let mut options = options_without_injection();
+    options.dev_cert = Some(dev_cert.clone());
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host_with("devc", options).await;
+
+    let name = format!("{}-devc", settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    host.store()
+        .add_rule(&NewRule {
+            scope: Scope::Workspace(sandbox.clone()),
+            pattern: Pattern::parse(REPO_HOST).unwrap(),
+            effect: Effect::Allow,
+            expires_at: None,
+            created_by: Actor::Cli,
+        })
+        .unwrap();
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "repo_url": REPO, "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+
+    // The real boot hook put the files in place: the key is root's alone, the certificate is in
+    // the system store (a self-signed certificate verifies against a bundle that holds it), in
+    // Node's extra roots and in the profile's variables.
+    let out = guest(
+        &runtime,
+        &sandbox,
+        "set -e
+stat -c 'key %a %U' /etc/puddle/dev-cert/localhost.key
+stat -c 'crt %a' /etc/puddle/dev-cert/localhost.crt
+cmp /etc/puddle/dev-cert/localhost.crt /usr/local/share/ca-certificates/puddle-dev/localhost.crt && echo same-in-store
+grep -c -F \"$(sed -n 2p /etc/puddle/dev-cert/localhost.crt)\" /etc/ssl/certs/ca-certificates.crt | sed 's/^/in-bundle /'
+grep -c -F \"$(sed -n 2p /etc/puddle/dev-cert/localhost.crt)\" /etc/puddle/extra-cas.pem | sed 's/^/in-extra /'
+grep -o 'DEV_CERT_PEM=[^ ]*' /etc/profile.d/01-puddle-env.sh
+if command -v openssl >/dev/null; then openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt /etc/puddle/dev-cert/localhost.crt; fi",
+    )
+    .await;
+    eprintln!("{out}");
+    for line in [
+        "key 600 root",
+        "crt 644",
+        "same-in-store",
+        "in-bundle 1",
+        "in-extra 1",
+    ] {
+        assert!(
+            out.lines().any(|l| l == line),
+            "missing {line:?} in:\n{out}"
+        );
+    }
+    assert!(
+        out.contains("DEV_CERT_PEM='/etc/puddle/dev-cert/localhost.crt'"),
+        "{out}"
+    );
+    if out.contains("localhost.crt: ") {
+        assert!(out.contains("localhost.crt: OK"), "{out}");
+    }
+
+    let down = host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
 }

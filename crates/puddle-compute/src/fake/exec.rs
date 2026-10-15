@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use puddle_types::{GuestEnv, GuestPath, SandboxName};
 
-use crate::{ComputeError, ExecOutput, ExecRequest, ExitStatus, SandboxSpec};
+use crate::{ComputeError, ExecOutput, ExecRequest, ExitStatus, MountKind, SandboxSpec};
 
 /// Files by path: a sandbox's root disk and owned disks (keyed by absolute guest path), or a
 /// volume's contents (keyed by path relative to the volume root).
@@ -58,6 +58,8 @@ pub struct ExecContext<'a> {
 enum Location<'p> {
     /// A read-only host file mount.
     HostFile(&'p Path),
+    /// Inside a read-only host directory mount, at this relative path (`""` = the mount point).
+    HostDir(&'p Path, &'p str),
     /// Inside a named volume, at this relative path (`""` = the mount point).
     Volume(&'p str, String),
     /// The root disk or an owned disk.
@@ -79,13 +81,17 @@ impl ExecContext<'_> {
         &self.env
     }
 
-    fn locate<'p>(spec: &'p SandboxSpec, path: &GuestPath) -> Location<'p> {
+    fn locate<'p>(spec: &'p SandboxSpec, path: &'p GuestPath) -> Location<'p> {
         for m in &spec.file_mounts {
-            if path == &m.guest {
-                return Location::HostFile(&m.host);
-            }
-            if path.is_within(&m.guest) {
-                return Location::Nowhere;
+            match m.kind {
+                MountKind::File if path == &m.guest => return Location::HostFile(&m.host),
+                MountKind::File if path.is_within(&m.guest) => return Location::Nowhere,
+                MountKind::Dir => {
+                    if let Some(rel) = path.relative_to(&m.guest) {
+                        return Location::HostDir(&m.host, rel);
+                    }
+                }
+                MountKind::File => {}
             }
         }
         for m in &spec.volumes {
@@ -104,13 +110,8 @@ impl ExecContext<'_> {
     pub fn read(&self, path: &GuestPath) -> Result<Vec<u8>, FsError> {
         match Self::locate(self.spec, path) {
             // A blocking read in async code: acceptable in the test fake, files are tiny.
-            Location::HostFile(host) => std::fs::read(host).map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    FsError::NotFound
-                } else {
-                    FsError::Host(e.to_string())
-                }
-            }),
+            Location::HostFile(host) => read_host(host),
+            Location::HostDir(host, rel) => read_host(&host.join(rel)),
             Location::Volume(vol, rel) => self
                 .volumes
                 .get(vol)
@@ -130,11 +131,11 @@ impl ExecContext<'_> {
     ///
     /// # Errors
     ///
-    /// [`FsError::ReadOnly`] on a file mount; [`FsError::NotFound`] below a file mount, at a
+    /// [`FsError::ReadOnly`] on a file or directory mount; [`FsError::NotFound`] below a file mount, at a
     /// volume's mount point, or in a volume that no longer exists.
     pub fn write(&mut self, path: &GuestPath, data: Vec<u8>) -> Result<(), FsError> {
         match Self::locate(self.spec, path) {
-            Location::HostFile(_) => Err(FsError::ReadOnly),
+            Location::HostFile(_) | Location::HostDir(..) => Err(FsError::ReadOnly),
             Location::Volume(_, rel) if rel.is_empty() => Err(FsError::NotFound),
             Location::Volume(vol, rel) => {
                 let v = self.volumes.get_mut(vol).ok_or(FsError::NotFound)?;
@@ -162,6 +163,7 @@ impl ExecContext<'_> {
         };
         match Self::locate(self.spec, path) {
             Location::HostFile(host) => host.exists(),
+            Location::HostDir(host, rel) => host.join(rel).exists(),
             Location::Volume(_, rel) if rel.is_empty() => true,
             Location::Volume(vol, rel) => {
                 self.volumes.get(vol).is_some_and(|v| below(&v.files, &rel))
@@ -186,6 +188,17 @@ impl ExecContext<'_> {
     }
 }
 
+/// Reads a host file for a mount; a missing file is [`FsError::NotFound`].
+fn read_host(host: &Path) -> Result<Vec<u8>, FsError> {
+    std::fs::read(host).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            FsError::NotFound
+        } else {
+            FsError::Host(e.to_string())
+        }
+    })
+}
+
 fn out(code: i32, stdout: impl Into<Vec<u8>>, stderr: impl Into<Vec<u8>>) -> ExecOutput {
     ExecOutput::new(code, stdout, stderr)
 }
@@ -203,7 +216,7 @@ fn not_found(program: &str) -> ExecOutput {
 /// | `echo args…` | prints the args |
 /// | `printenv [NAME]` | prints one variable (exit 1 if unset) or all |
 /// | `cat [PATH…]` | prints files, or stdin without arguments |
-/// | `tee PATH` | writes stdin to PATH and echoes it; `EROFS` on a file mount |
+/// | `tee PATH` | writes stdin to PATH and echoes it; `EROFS` on a file or directory mount |
 /// | `test -e/-f PATH` | exit 0 if it exists |
 /// | `sleep SECS` | takes no real time; fails with [`ComputeError::ExecTimeout`] if SECS exceeds the request's timeout |
 ///

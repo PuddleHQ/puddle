@@ -297,6 +297,48 @@ async fn filesystem_layout() {
 }
 
 #[tokio::test]
+async fn a_directory_mount_shows_its_tree_read_only() {
+    let rt = FakeRuntime::new();
+    let root = std::env::temp_dir().join(format!("puddle-fake-dir-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    std::fs::write(root.join("top"), b"t").unwrap();
+    std::fs::write(root.join("sub/deep"), b"d").unwrap();
+    let s = spec("a")
+        .with_file_mount(FileMount::read_only_dir(&root, path("/cache/tree")))
+        .with_file_mount(FileMount::read_only(root.join("top"), path("/cache/file")));
+    let sb = rt.create(s).await.unwrap();
+    assert_eq!(run(&sb, "cat", &["/cache/tree/top"]).await.stdout, b"t");
+    assert_eq!(
+        run(&sb, "cat", &["/cache/tree/sub/deep"]).await.stdout,
+        b"d"
+    );
+    assert_eq!(run(&sb, "cat", &["/cache/tree/nope"]).await.status.code, 1);
+    for p in ["/cache/tree", "/cache/tree/sub", "/cache/tree/top"] {
+        assert!(run(&sb, "test", &["-e", p]).await.status.success(), "{p}");
+    }
+    assert!(
+        !run(&sb, "test", &["-e", "/cache/tree/nope"])
+            .await
+            .status
+            .success()
+    );
+    for target in ["/cache/tree/top", "/cache/tree/new", "/cache/tree/sub/new"] {
+        let out = sb
+            .exec(ExecRequest::new("tee", [target]).with_stdin("x"))
+            .await
+            .unwrap();
+        assert_eq!(out.status.code, 1, "{target}");
+        assert!(
+            out.stderr_text().contains("Read-only file system"),
+            "{target}"
+        );
+    }
+    assert_eq!(std::fs::read(root.join("top")).unwrap(), b"t");
+    assert!(!root.join("new").exists());
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[tokio::test]
 async fn writes_into_a_removed_volume_fail() {
     let rt = FakeRuntime::new();
     let s = spec("a")

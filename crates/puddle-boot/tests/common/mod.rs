@@ -48,6 +48,7 @@ if [ "${1:-}" = merge-file ]; then
     exit 0
 fi
 echo $$ >>"$PUDDLE_ROOT/agent.pids"
+printf '%s\n' "${PUDDLE_AGENT_TEST:-unset}" >>"$PUDDLE_ROOT/agent.seen"
 grep -q 0C38 "$PUDDLE_ROOT/proc/net/tcp" || echo "   0: 0100007F:0C38 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1 1" >>"$PUDDLE_ROOT/proc/net/tcp"
 exec sleep 1000
 "#;
@@ -146,6 +147,15 @@ impl FakeRoot {
     }
 
     /// PIDs the agent stub recorded, in start order.
+    /// The `PUDDLE_AGENT_TEST` value each agent start saw (`unset` when it had none).
+    pub(crate) fn agent_saw(&self) -> Vec<String> {
+        std::fs::read_to_string(self.root.join("agent.seen"))
+            .unwrap_or_default()
+            .lines()
+            .map(ToOwned::to_owned)
+            .collect()
+    }
+
     pub(crate) fn agent_pids(&self) -> Vec<u32> {
         std::fs::read_to_string(self.root.join("agent.pids"))
             .unwrap_or_default()

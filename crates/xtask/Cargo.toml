@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "xtask"
-description = "Developer and release tasks: `cargo xtask runtime` assembles the bundled msb runtime folder with its licence files; `cargo xtask openapi` writes the API contract"
+description = "Developer and release tasks: `cargo xtask runtime` assembles the bundled msb runtime folder with its licence files; `cargo xtask code-server` unpacks the pinned code-server release; `cargo xtask openapi` writes the API contract"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,11 +11,13 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+flate2 = { workspace = true }
 puddle-api = { workspace = true }
 puddle-runtime = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+tar = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

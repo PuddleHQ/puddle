@@ -105,6 +105,14 @@ pub enum PlanError {
         /// `ENV PATH` or `ENTRYPOINT/CMD`.
         what: &'static str,
     },
+    /// A setting for the agent can't be passed on.
+    #[error("agent setting {name}: {reason}")]
+    AgentSetting {
+        /// The variable's name.
+        name: String,
+        /// What is wrong.
+        reason: &'static str,
+    },
     /// A provider step names a script the plan doesn't write.
     #[error("boot step {path} is not a file of this plan")]
     StepNotInPlan {
@@ -267,6 +275,7 @@ pub struct BootPlan {
     entrypoint: Vec<String>,
     entrypoint_cwd: Option<GuestPath>,
     agent: Option<AgentConfig>,
+    agent_env: Vec<(String, String)>,
 }
 
 /// Builds a [`BootPlan`]; see there.
@@ -280,6 +289,7 @@ pub struct BootPlanBuilder {
     git: Option<GitIdentity>,
     git_rules: Vec<GitAuthorRule>,
     agent: Option<AgentConfig>,
+    agent_env: Vec<(String, String)>,
 }
 
 impl BootPlan {
@@ -295,6 +305,7 @@ impl BootPlan {
             git: None,
             git_rules: Vec::new(),
             agent: Some(AgentConfig::default()),
+            agent_env: Vec::new(),
         }
     }
 
@@ -323,6 +334,12 @@ impl BootPlan {
     #[must_use]
     pub fn agent(&self) -> Option<&AgentConfig> {
         self.agent.as_ref()
+    }
+
+    /// The settings the agent starts with (`PUDDLE_AGENT_*` variables), in the order given.
+    #[must_use]
+    pub fn agent_env(&self) -> &[(String, String)] {
+        &self.agent_env
     }
 
     /// The binary that applies merged files (`puddle-agent merge-file`): the agent's,
@@ -383,6 +400,13 @@ impl BootPlan {
                 sh_word(agent.binary.as_str()),
                 agent.port
             ));
+            for (name, value) in &self.agent_env {
+                lines.push(format!(
+                    "puddle_agent_env {} {}",
+                    sh_word(name),
+                    sh_word(value)
+                ));
+            }
         }
         for p in &self.entry_env {
             lines.push(format!("puddle_entrypoint_env {}", sh_word(p.as_str())));
@@ -462,6 +486,14 @@ impl BootPlanBuilder {
     /// Starts this agent instead of the default one.
     pub fn agent(mut self, agent: AgentConfig) -> Self {
         self.agent = Some(agent);
+        self
+    }
+
+    /// Starts the agent with the setting `name` (`PUDDLE_AGENT_*`), for example the browser
+    /// editor's server. Applied when the agent next starts: the supervisor reads the latest boot's
+    /// settings before each start. Needs an agent in the plan.
+    pub fn agent_env(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.agent_env.push((name.into(), value.into()));
         self
     }
 
@@ -575,6 +607,39 @@ impl BootPlanBuilder {
             .and_then(|d| GuestPath::new(d).ok())
             .filter(|_| !entrypoint.is_empty());
 
+        if !self.agent_env.is_empty() && self.agent.is_none() {
+            return Err(PlanError::AgentSetting {
+                name: self
+                    .agent_env
+                    .first()
+                    .map(|(n, _)| n.clone())
+                    .unwrap_or_default(),
+                reason: "the plan starts no agent",
+            });
+        }
+        let mut named = BTreeSet::new();
+        for (name, value) in &self.agent_env {
+            let fail = |reason| PlanError::AgentSetting {
+                name: name.clone(),
+                reason,
+            };
+            let plain = name.strip_prefix("PUDDLE_AGENT_").is_some_and(|rest| {
+                !rest.is_empty()
+                    && rest
+                        .bytes()
+                        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+            });
+            if !plain {
+                return Err(fail("expected a PUDDLE_AGENT_ name in capitals"));
+            }
+            if value.contains(['\0', '\n']) {
+                return Err(fail("the value contains a NUL or newline"));
+            }
+            if !named.insert(name.as_str()) {
+                return Err(fail("set twice"));
+            }
+        }
+
         Ok(BootPlan {
             files,
             steps: self.steps,
@@ -582,6 +647,7 @@ impl BootPlanBuilder {
             entrypoint,
             entrypoint_cwd,
             agent: self.agent,
+            agent_env: self.agent_env,
         })
     }
 }
@@ -1039,6 +1105,55 @@ mod tests {
             }
         );
         assert!(err.to_string().contains("/usr/local/lib/puddle/step.sh"));
+    }
+
+    #[test]
+    fn agent_settings_follow_the_agent_line_quoted() {
+        let plan = BootPlan::builder(&ImageConfig::default())
+            .agent_env("PUDDLE_AGENT_EDITOR_DIR", "/puddle/code-server")
+            .agent_env("PUDDLE_AGENT_EDITOR_DATA", "/w/it's here")
+            .build()
+            .unwrap();
+        let r = String::from_utf8(plan.render()).unwrap();
+        assert!(
+            r.contains(
+                "puddle_agent '/puddle/puddle-agent' 3128\n\
+                 puddle_agent_env 'PUDDLE_AGENT_EDITOR_DIR' '/puddle/code-server'\n\
+                 puddle_agent_env 'PUDDLE_AGENT_EDITOR_DATA' '/w/it'\\''s here'\n"
+            ),
+            "{r}"
+        );
+        assert_eq!(plan.agent_env().len(), 2);
+    }
+
+    #[test]
+    fn unusable_agent_settings_are_refused_by_name() {
+        let build = |env: &[(&str, &str)], agent: bool| {
+            let mut b = BootPlan::builder(&ImageConfig::default());
+            for (k, v) in env {
+                b = b.agent_env(*k, *v);
+            }
+            if !agent {
+                b = b.no_agent();
+            }
+            b.build().unwrap_err().to_string()
+        };
+        for (env, why) in [
+            (vec![("HTTP_PROXY", "x")], "PUDDLE_AGENT_ name"),
+            (vec![("PUDDLE_AGENT_", "x")], "PUDDLE_AGENT_ name"),
+            (vec![("PUDDLE_AGENT_x", "x")], "PUDDLE_AGENT_ name"),
+            (vec![("PUDDLE_AGENT_A", "a\nb")], "NUL or newline"),
+            (vec![("PUDDLE_AGENT_A", "a\0b")], "NUL or newline"),
+            (
+                vec![("PUDDLE_AGENT_A", "1"), ("PUDDLE_AGENT_A", "2")],
+                "set twice",
+            ),
+        ] {
+            let err = build(&env, true);
+            assert!(err.contains(why) && err.contains(env[0].0), "{err}");
+        }
+        let err = build(&[("PUDDLE_AGENT_A", "1")], false);
+        assert!(err.contains("starts no agent"), "{err}");
     }
 
     #[test]

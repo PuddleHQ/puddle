@@ -16,6 +16,7 @@ embedded-ui = ["puddle-api/embedded-ui"]
 
 [dependencies]
 futures-util = { workspace = true }
+puddle-agent-proto = { workspace = true }
 puddle-api = { workspace = true }
 puddle-boot = { workspace = true }
 puddle-ca = { workspace = true }

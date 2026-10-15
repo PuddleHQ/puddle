@@ -83,9 +83,43 @@ pub fn free_port() -> u16 {
         .port()
 }
 
+/// Whether a fixture whose program is not configured must fail its test (`required`, from its
+/// `PUDDLE_REQUIRE_*` variable) instead of skipping.
+///
+/// # Panics
+/// When `required` and the program is not `configured`.
+fn configured_or_skip(configured: bool, required: bool, variable: &str, how: &str) -> bool {
+    assert!(
+        configured || !required,
+        "{variable} is set but the fixture's program is not configured: {how}"
+    );
+    if !configured {
+        // skip-ok: the assert above already failed when the caller's PUDDLE_REQUIRE_* flag is set
+        eprintln!("skipped: {how}");
+    }
+    configured
+}
+
+/// Checks that a configured program path (`variable`) is a file.
+///
+/// # Panics
+/// When it is not.
+fn require_file(bin: &std::ffi::OsStr, variable: &str) {
+    assert!(
+        Path::new(bin).is_file(),
+        "{variable}={} is not a file: install the program or fix the path",
+        bin.to_string_lossy()
+    );
+}
+
 /// Waits until `port` accepts connections, or panics with `diagnostics()`.
-fn wait_ready(port: u16, child: Option<&mut Child>, diagnostics: impl Fn() -> String) {
-    let deadline = Instant::now() + READY;
+fn wait_ready(
+    port: u16,
+    child: Option<&mut Child>,
+    ready: Duration,
+    diagnostics: impl Fn() -> String,
+) {
+    let deadline = Instant::now() + ready;
     let mut child = child;
     while Instant::now() < deadline {
         if TcpStream::connect((LOCAL, port)).is_ok() {
@@ -108,4 +142,54 @@ fn read(path: &Path) -> String {
 fn stop(child: &mut Child) {
     let _ = child.kill();
     let _ = child.wait();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    #[test]
+    fn a_configured_program_runs_and_a_missing_one_skips() {
+        assert!(configured_or_skip(true, true, "V", "how"));
+        assert!(!configured_or_skip(false, false, "V", "how"));
+    }
+
+    #[test]
+    #[should_panic(expected = "V is set but the fixture's program is not configured: set X")]
+    fn a_required_but_missing_program_fails() {
+        configured_or_skip(false, true, "V", "set X");
+    }
+
+    #[test]
+    #[should_panic(expected = "V=/no/such/program is not a file")]
+    fn a_configured_path_that_is_no_file_fails() {
+        require_file(std::ffi::OsStr::new("/no/such/program"), "V");
+    }
+
+    #[test]
+    fn a_listening_port_is_ready() {
+        let listener = std::net::TcpListener::bind((LOCAL, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        wait_ready(port, None, Duration::from_secs(5), || unreachable!());
+    }
+
+    #[test]
+    #[should_panic(expected = "the fixture did not accept connections\nlog text")]
+    fn a_port_nobody_listens_on_times_out_with_the_diagnostics() {
+        let port = free_port();
+        wait_ready(port, None, Duration::from_millis(100), || "log text".into());
+    }
+
+    #[test]
+    #[should_panic(expected = "the fixture exited early")]
+    fn a_fixture_that_exits_is_reported_at_once() {
+        let port = free_port();
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .arg("--list")
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        wait_ready(port, Some(&mut child), Duration::from_secs(30), String::new);
+    }
 }

@@ -8,7 +8,9 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use super::{LOCAL, Prefix, free_port, read, stop, wait_ready};
+use super::{
+    LOCAL, Prefix, READY, configured_or_skip, free_port, read, require_file, stop, wait_ready,
+};
 
 /// The test root of one interceptor: made before the proxy starts and handed to it, so a test
 /// can put it in a trust store (or leave it out) before any connection.
@@ -75,19 +77,17 @@ struct Mitm {
 impl Mitm {
     /// `extra` are the mode-specific arguments; `root` is installed as the signing CA.
     fn spawn(kind: &str, root: Option<&Root>, extra: &[String], addons: &[String]) -> Option<Self> {
-        let Some(bin) = std::env::var_os("PUDDLE_MITMDUMP_BIN") else {
-            assert!(
-                std::env::var_os("PUDDLE_REQUIRE_MITMPROXY").is_none(),
-                "PUDDLE_REQUIRE_MITMPROXY is set but PUDDLE_MITMDUMP_BIN is not"
-            );
-            eprintln!("skipped: set PUDDLE_MITMDUMP_BIN to run against mitmproxy");
+        let bin = std::env::var_os("PUDDLE_MITMDUMP_BIN");
+        if !configured_or_skip(
+            bin.is_some(),
+            std::env::var_os("PUDDLE_REQUIRE_MITMPROXY").is_some(),
+            "PUDDLE_REQUIRE_MITMPROXY",
+            "set PUDDLE_MITMDUMP_BIN to run against mitmproxy",
+        ) {
             return None;
-        };
-        assert!(
-            std::path::Path::new(&bin).is_file(),
-            "PUDDLE_MITMDUMP_BIN={} is not a file: install mitmproxy or fix the path",
-            bin.to_string_lossy()
-        );
+        }
+        let bin = bin.unwrap();
+        require_file(&bin, "PUDDLE_MITMDUMP_BIN");
         let begun = Instant::now();
         let prefix = Prefix::new(kind);
         let dir = tempfile::Builder::new()
@@ -131,7 +131,7 @@ impl Mitm {
             .spawn()
             .unwrap();
         let log_path = dir.path().join("mitm.log");
-        wait_ready(port, Some(&mut child), || read(&log_path));
+        wait_ready(port, Some(&mut child), READY, || read(&log_path));
         Some(Self {
             child,
             port,
@@ -243,13 +243,13 @@ impl NtlmProxy {
     /// When mitmproxy is required but missing, or does not start.
     #[must_use]
     pub fn start(names: &[&str]) -> Option<Self> {
-        let mitm = Mitm::spawn(
+        Mitm::spawn(
             "ntlm",
             None,
             &["--ignore-hosts".into(), ".*".into()],
             &[include_str!("ntlm_proxy_addon.py").into(), split_dns(names)],
-        )?;
-        Some(Self { mitm })
+        )
+        .map(|mitm| Self { mitm })
     }
 
     /// The port the proxy listens on (`127.0.0.1`).
@@ -313,12 +313,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_root_certificate_is_pem() {
+        assert!(
+            Root::generate(&Prefix::new("t"))
+                .pem()
+                .starts_with("-----BEGIN CERTIFICATE-----")
+        );
+    }
+
+    #[test]
     fn handshake_log_lines_parse_into_legs() {
         let lines = [
             "[10:00:00.1] NTLM 407 a1b2c3d4 echo.corp.test",
             "[10:00:00.2] NTLM leg1 a1b2c3d4 -> challenge TlRMTVNTUAAC",
             "[10:00:00.3] NTLM leg3 a1b2c3d4 accepted user=LAB\\alice ntlmv2=True",
             "[10:00:00.4] unrelated line",
+            "[10:00:00.5] NTLM leg9 a1b2c3d4 -> something new",
         ];
         let legs: Vec<_> = lines.iter().filter_map(|l| parse_leg(l)).collect();
         assert_eq!(

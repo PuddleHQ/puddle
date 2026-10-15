@@ -11,6 +11,8 @@
 //!   ([`code_server`]).
 //! - `notices`: Puddle's own third-party notices; `--check` only verifies that every shipped
 //!   dependency has a licence entry (a `scripts/check.sh` gate).
+//! - `release-features`: fails when a test-only feature is on in a shipped program's tree
+//!   ([`features`]).
 //! - `openapi`: writes the API contract (`openapi.json`) and its TypeScript types
 //!   ([`openapi`]); `--check` fails when either committed file is stale (a `scripts/check.sh`
 //!   gate).
@@ -23,6 +25,7 @@ pub mod assemble;
 pub mod checksums;
 pub mod code_server;
 pub mod error;
+pub mod features;
 pub mod inventory;
 pub mod notice;
 pub mod openapi;
@@ -67,6 +70,8 @@ commands:
   notices   Puddle's third-party notices
             --check                only check that every dependency has a licence entry
             --out <file>           output file (default: <target>/THIRD-PARTY-puddle.txt)
+            --offline              no network for cargo
+  release-features  fail when a test-only feature (`testing`, `fuzzing`) is on in a shipped program
             --offline              no network for cargo
   openapi   write crates/puddle-api/openapi/{openapi.json,schema.d.ts} and ui/src/lib/api/schema.d.ts
             (needs Node for the types)
@@ -177,6 +182,7 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<String> {
             &["--out"],
             &["--check", "--offline"],
         )?),
+        "release-features" => release_features(&Options::parse(args, &[], &["--offline"])?),
         "openapi" => openapi_command(&Options::parse(args, &[], &["--check"])?),
         "help" | "--help" | "-h" => Ok(USAGE.to_owned()),
         other => Err(XtaskError::Usage(format!("unknown command {other}"))),
@@ -230,6 +236,15 @@ fn openapi_command(opts: &Options) -> Result<String> {
         &[workspace_root().join(openapi::UI_TYPES_PATH)],
     )?;
     Ok(report.line())
+}
+
+/// The release-feature check ([`features`]): no `testing` or `fuzzing` feature in what ships.
+fn release_features(opts: &Options) -> Result<String> {
+    features::check(
+        &Cargo::from_env(opts.has("--offline")),
+        &workspace_root().join("Cargo.toml"),
+        &PUDDLE_TARGETS,
+    )
 }
 
 /// Puddle's own inventory, computed with cargo-about.

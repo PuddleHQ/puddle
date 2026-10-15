@@ -140,3 +140,4 @@ crates/puddle-host/src/vault.rs | tracing::warn!(%err, "credential store sweep s
 crates/puddle-host/src/vault.rs | "puddle could not read which tokens and secrets it still uses" | same arm: the cause it reports
 crates/puddle-host/src/vault.rs | })?; | same arm: the closing line of the call that returns early
 crates/puddle-host/src/dev_cert.rs | _ => DevCertificate::NotChecked, | `DevCertStatus` is non-exhaustive in puddle-certs; every state this version has is named above, so no test can build another
+crates/puddle-certs/src/devcert/manager.rs | return (DevCertStatus::TrustFailed, Some(error.to_string())); | the last gate before a trust request; both sources of the leaf (a stored file, a new one) already pass the same shape check, so no input reaches it (the check itself is tested in tests/devcert.rs)

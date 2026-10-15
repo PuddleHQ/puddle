@@ -39,6 +39,15 @@ struct Fixture {
     password_file: PathBuf,
 }
 
+/// A port nothing listens on now.
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let release = dir.path().join("release");
@@ -54,6 +63,7 @@ fn fixture() -> Fixture {
         120,
     );
     server.dir = release.to_string_lossy().into_owned();
+    server.port = free_port();
     let password_file = dir.path().join("run/editor-password");
     let mut config = Config::default();
     config.listen = "127.0.0.1:0".parse().unwrap();
@@ -100,7 +110,10 @@ async fn the_agent_starts_the_server_with_a_password_only_the_server_and_a_priva
 
     let server = &f.config.editor.as_ref().unwrap().server;
     let args = read(&f.out, "1.args");
-    assert!(args.contains("--bind-addr\n127.0.0.1:41337\n"), "{args}");
+    assert!(
+        args.contains(&format!("--bind-addr\n127.0.0.1:{}\n", server.port)),
+        "{args}"
+    );
     assert!(args.contains("--reconnection-grace-time\n120\n"), "{args}");
     assert!(args.trim_end().ends_with(&server.folder), "{args}");
     let password = read(&f.out, "1.password");
@@ -123,16 +136,35 @@ async fn the_agent_starts_the_server_with_a_password_only_the_server_and_a_priva
 }
 
 #[tokio::test]
-async fn a_server_that_dies_is_started_again_with_a_new_password() {
+async fn a_server_that_dies_is_started_again_with_the_same_password() {
     let f = fixture();
     let _agent = Agent::start(f.config.clone()).await.unwrap();
     until("the first start", || f.out.join("1.pid").exists()).await;
     let first = read(&f.out, "1.password");
     kill(&read(&f.out, "1.pid"));
     until("the second start", || f.out.join("2.pid").exists()).await;
-    let second = read(&f.out, "2.password");
-    assert_ne!(first, second);
-    assert_eq!(std::fs::read_to_string(&f.password_file).unwrap(), second);
+    // A window signed in with the first password stays signed in.
+    assert_eq!(read(&f.out, "2.password"), first);
+    assert_eq!(std::fs::read_to_string(&f.password_file).unwrap(), first);
+}
+
+#[tokio::test]
+async fn a_new_agent_leaves_a_running_server_alone_and_takes_over_when_it_is_gone() {
+    let f = fixture();
+    let port = f.config.editor.as_ref().unwrap().server.port;
+    // Something answers on the port: the server an earlier agent left behind.
+    let occupant = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+    let _agent = Agent::start(f.config.clone()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    assert!(
+        !f.out.join("1.pid").exists(),
+        "a second server must not start on a taken port"
+    );
+    drop(occupant);
+    until("the start once the port is free", || {
+        f.out.join("1.pid").exists()
+    })
+    .await;
 }
 
 #[tokio::test]

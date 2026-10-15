@@ -40,7 +40,8 @@ pub const ENV_GRACE: &str = "PUDDLE_AGENT_EDITOR_GRACE";
 pub const ENV_FOLDER: &str = "PUDDLE_AGENT_EDITOR_FOLDER";
 
 /// Where the agent writes the server's password (owner-only; the host reads it to sign the
-/// window in). It is a new random value every time the agent starts the server.
+/// window in). It lives in `/run`: a new random value for each boot of the sandbox, kept while
+/// the sandbox runs, so a restarted server accepts the sessions the old one signed in.
 pub const PASSWORD_FILE: &str = "/run/puddle/editor-password";
 
 /// The default port: on the guest's loopback, above the ranges dev servers use.

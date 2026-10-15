@@ -409,7 +409,8 @@ async fn direct_connects_only_to_a_checked_address() {
         .await
         .unwrap_err();
     match err {
-        ChainError::Unreachable { tried } => {
+        ChainError::Unreachable { tried, timed_out } => {
+            assert!(!timed_out, "nothing was tried");
             assert_eq!(tried.len(), 1);
             assert_eq!(tried[0].0, Hop::Direct);
         }
@@ -827,4 +828,67 @@ async fn the_auth_is_told_once_per_new_epoch_before_its_first_connection() {
     connect().await;
     connect().await;
     assert_eq!(counter.0.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn unreachable_says_whether_every_hop_failed_by_not_answering_in_time() {
+    let echo = start_echo().await;
+    let checked = [echo.addr];
+    let dest = https("slow.test");
+    let request = Request::new(&dest, Form::Tunnel, &checked);
+
+    // A proxy that accepts and never answers: the head timeout ends it.
+    let silent = FakeProxy::start(Behaviour::Silent).await;
+    let err = chain(vec![via(&silent)], Arc::new(puddle_upstream::NoAuth))
+        .connect(&request)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            ChainError::Unreachable {
+                timed_out: true,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+
+    // A refused connection is a failure, not a timeout, and one that did answer breaks the tie
+    // for a route of both.
+    let (dead, _held) = dead_port();
+    let err = chain(
+        vec![Hop::Proxy(dead.clone())],
+        Arc::new(puddle_upstream::NoAuth),
+    )
+    .connect(&request)
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            ChainError::Unreachable {
+                timed_out: false,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    let err = chain(
+        vec![via(&silent), Hop::Proxy(dead)],
+        Arc::new(puddle_upstream::NoAuth),
+    )
+    .connect(&request)
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            ChainError::Unreachable {
+                timed_out: false,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
 }

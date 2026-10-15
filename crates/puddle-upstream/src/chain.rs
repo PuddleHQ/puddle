@@ -173,6 +173,8 @@ pub enum ChainError {
     Unreachable {
         /// The hops tried, with the reason for each.
         tried: Vec<(Hop, String)>,
+        /// Every hop failed by not answering in time (a route with no hop tried is not one).
+        timed_out: bool,
     },
     /// A proxy answered the request with a refusal (`403`, `5xx`, ...). It is passed on, not
     /// retried elsewhere.
@@ -216,7 +218,11 @@ fn join(tried: &[(Hop, String)]) -> String {
 /// What a hop attempt came to.
 enum HopError {
     /// The proxy could not be used: mark it down and try the next hop.
-    Down(String),
+    Down {
+        why: String,
+        /// It did not answer in time, as against refusing or failing.
+        timed_out: bool,
+    },
     /// Nothing was wrong with the hop, it just cannot serve this request (no address to send).
     Skip(String),
     /// The answer to give; no further hops.
@@ -319,6 +325,7 @@ impl Chain {
             self.auth.network_changed();
         }
         let mut tried = Vec::new();
+        let mut slow = 0_usize;
         for hop in decision.route.hops() {
             match hop {
                 Hop::Direct => match self.direct(request).await {
@@ -328,7 +335,10 @@ impl Chain {
                             ..connected
                         });
                     }
-                    Err(why) => tried.push((hop.clone(), why)),
+                    Err((why, timed_out)) => {
+                        slow += usize::from(timed_out);
+                        tried.push((hop.clone(), why));
+                    }
                 },
                 Hop::Proxy(proxy) => match self.via(proxy, request).await {
                     Ok(connected) => {
@@ -337,9 +347,10 @@ impl Chain {
                             ..connected
                         });
                     }
-                    Err(HopError::Down(why)) => {
+                    Err(HopError::Down { why, timed_out }) => {
                         tracing::info!(%proxy, %why, "upstream proxy unreachable, trying the next hop");
                         self.discovery.report_failure(proxy);
+                        slow += usize::from(timed_out);
                         tried.push((hop.clone(), why));
                     }
                     Err(HopError::Skip(why)) => tried.push((hop.clone(), why)),
@@ -347,16 +358,18 @@ impl Chain {
                 },
             }
         }
-        Err(ChainError::Unreachable { tried })
+        let timed_out = !tried.is_empty() && slow == tried.len();
+        Err(ChainError::Unreachable { tried, timed_out })
     }
 
-    async fn direct(&self, request: &Request<'_>) -> Result<Connected, String> {
+    /// `Err` carries why, and whether the cause was a timeout.
+    async fn direct(&self, request: &Request<'_>) -> Result<Connected, (String, bool)> {
         if request.checked.is_empty() {
-            return Err("no checked address to connect to".into());
+            return Err(("no checked address to connect to".into(), false));
         }
         let (stream, addr) = connect_first(request.checked, self.config.connect_timeout)
             .await
-            .map_err(|err| err.to_string())?;
+            .map_err(|err| (err.to_string(), err.kind() == io::ErrorKind::TimedOut))?;
         Ok(Connected {
             stream,
             hop: Hop::Direct,
@@ -447,8 +460,18 @@ impl Chain {
         let connect = TcpStream::connect((proxy.host(), proxy.port()));
         let stream = match tokio::time::timeout(self.config.connect_timeout, connect).await {
             Ok(Ok(stream)) => stream,
-            Ok(Err(err)) => return Err(HopError::Down(format!("connect failed: {err}"))),
-            Err(_) => return Err(HopError::Down("connect timed out".into())),
+            Ok(Err(err)) => {
+                return Err(HopError::Down {
+                    why: format!("connect failed: {err}"),
+                    timed_out: false,
+                });
+            }
+            Err(_) => {
+                return Err(HopError::Down {
+                    why: "connect timed out".into(),
+                    timed_out: true,
+                });
+            }
         };
         if let Err(err) = stream.set_nodelay(true) {
             tracing::debug!(error = %err, "nodelay");
@@ -617,8 +640,14 @@ impl Chain {
         };
         match tokio::time::timeout(self.config.head_timeout, exchange).await {
             Ok(Ok(head)) => Ok(head),
-            Ok(Err(err)) => Err(HopError::Down(format!("no usable answer: {err}"))),
-            Err(_) => Err(HopError::Down("no answer in time".into())),
+            Ok(Err(err)) => Err(HopError::Down {
+                why: format!("no usable answer: {err}"),
+                timed_out: false,
+            }),
+            Err(_) => Err(HopError::Down {
+                why: "no answer in time".into(),
+                timed_out: true,
+            }),
         }
     }
 

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use http_body_util::BodyExt as _;
 use hyper::client::conn::http1::SendRequest;
-use puddle_types::{Host, HttpRequestLine, WorkspaceName};
+use puddle_types::{ConnectionOutcome, Host, HttpRequestLine, WorkspaceName};
 use puddle_upstream::{TlsClient, TlsConnectError};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
@@ -75,6 +75,8 @@ pub(crate) struct Outcome {
     pub(crate) resolved_ip: Option<std::net::IpAddr>,
     /// The company-proxy hop that carried the first connection.
     pub(crate) hop: Option<String>,
+    /// How the first connection to the real server (and its TLS handshake) went.
+    pub(crate) connect: Option<ConnectionOutcome>,
     /// The guest asked for a name other than the `CONNECT` host in its TLS handshake.
     pub(crate) sni_mismatch: bool,
     /// The guest's client refused the certificate (it does not trust the workspace's CA).
@@ -153,9 +155,13 @@ where
         Ok(made) => {
             outcome.hop = made.hop;
             outcome.resolved_ip = made.ip;
+            outcome.connect = Some(ConnectionOutcome::Connected);
             (Some(made.conn), None)
         }
-        Err(refusal) => (None, Some(refusal)),
+        Err(refusal) => {
+            outcome.connect = refusal.outcome;
+            (None, Some(refusal))
+        }
     };
     let guest_proto = match &first {
         Some(conn) => hello.guest_proto(conn.proto()),
@@ -866,5 +872,7 @@ pub(crate) fn upstream_tls_refusal(name: &str, err: &TlsConnectError) -> Refusal
         }
         other => format!("could not set up TLS with {name} ({other})"),
     };
-    Refusal::new("502 Bad Gateway", message).header("x-puddle-blocked-by", "upstream-tls")
+    Refusal::new("502 Bad Gateway", message)
+        .header("x-puddle-blocked-by", "upstream-tls")
+        .failed(ConnectionOutcome::ConnectFailed)
 }

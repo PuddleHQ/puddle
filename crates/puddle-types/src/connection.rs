@@ -63,6 +63,44 @@ impl fmt::Display for ConnectionOrigin {
     }
 }
 
+/// How reaching the destination went, once the proxy had decided to let a connection through
+/// (R-24). A refusal Puddle made on purpose has none: a `403` is a decision, not an outcome.
+/// Without this an allowed connection that ended in a `502` or `504` reads like any other allow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ConnectionOutcome {
+    /// The connection to the destination (directly, or through the company proxy) was made.
+    Connected,
+    /// The company proxy refused the destination, or the sign-in to it failed or is not possible
+    /// (the guest got a `403` or `502`).
+    UpstreamRefused,
+    /// No route to the destination worked: it did not resolve, every hop was unreachable, or the
+    /// destination refused the connection (a `502`).
+    ConnectFailed,
+    /// Resolving or connecting took too long (a `504`, or a hop that never answered).
+    Timeout,
+}
+
+impl ConnectionOutcome {
+    /// The stored and wire name.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Connected => "connected",
+            Self::UpstreamRefused => "upstream_refused",
+            Self::ConnectFailed => "connect_failed",
+            Self::Timeout => "timeout",
+        }
+    }
+}
+
+impl fmt::Display for ConnectionOutcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Why the proxy decided as it did (R-24). Serialised as a string: `rule`, `no_rule`, a
 /// [`BlockReason::code`] (`toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`,
 /// `local_address`, `settings_unreadable`), `policy_unavailable`, `puddle_request`, `sni_mismatch`, `guest_tls_rejected`,
@@ -203,6 +241,9 @@ pub struct ConnectionEvent {
     pub upstream: Option<String>,
     /// What happened.
     pub decision: ConnectionDecision,
+    /// How reaching the destination went, once it was allowed; `None` while nothing was
+    /// attempted (a refusal by rule, guard or limit) and where the proxy cannot tell.
+    pub outcome: Option<ConnectionOutcome>,
     /// Why.
     pub reason: ConnectionReason,
     /// The deciding rule.
@@ -243,6 +284,7 @@ impl ConnectionEvent {
             resolved_ip: None,
             upstream: None,
             decision,
+            outcome: None,
             reason,
             rule_id: None,
             rule_set: None,
@@ -273,6 +315,7 @@ impl ConnectionEvent {
             resolved_ip: None,
             upstream: None,
             decision,
+            outcome: None,
             reason,
             rule_id: None,
             rule_set: None,

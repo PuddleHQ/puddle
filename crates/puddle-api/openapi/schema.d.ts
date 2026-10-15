@@ -1220,6 +1220,7 @@ export interface components {
             method: string | null;
             /** @description Whose connection it is. Records written before it existed read as `workspace`. */
             origin: components["schemas"]["ConnectionOrigin"];
+            outcome: components["schemas"]["ConnectionOutcome"] | null;
             /** @description HTTP path without query string, where `method` is set. */
             path: string | null;
             /** @description Whether `path` was cut to fit. */
@@ -1558,6 +1559,11 @@ export interface components {
          * @enum {string}
          */
         ConnectionOrigin: "workspace" | "puddle";
+        /**
+         * @description How reaching the destination went after the proxy let a connection through.
+         * @enum {string}
+         */
+        ConnectionOutcome: "connected" | "upstream_refused" | "connect_failed" | "timeout";
         /** @description What the user agreed to or declined. */
         Consent: {
             /** @enum {string} */

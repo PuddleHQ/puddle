@@ -13,6 +13,7 @@ use bytes::Bytes;
 use http_body_util::combinators::UnsyncBoxBody;
 use hyper::client::conn::{http1, http2};
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
+use puddle_types::ConnectionOutcome;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
 
@@ -105,6 +106,7 @@ fn setup_refusal(name: &str, cause: &str) -> Refusal {
         "502 Bad Gateway",
         format!("could not talk HTTP to {name}: {cause}"),
     )
+    .failed(ConnectionOutcome::ConnectFailed)
 }
 
 /// Every connection of the pool is in use and none came back in time.
@@ -153,7 +155,8 @@ pub(crate) async fn connect(cx: &Context, alpn: &[&[u8]]) -> Result<Made, Refusa
                 "504 Gateway Timeout",
                 format!("the TLS handshake with {name} timed out"),
             )
-            .header("x-puddle-blocked-by", "upstream-tls"));
+            .header("x-puddle-blocked-by", "upstream-tls")
+            .failed(ConnectionOutcome::Timeout));
         }
     };
     let proto = Proto::from_alpn(tls.get_ref().1.alpn_protocol());

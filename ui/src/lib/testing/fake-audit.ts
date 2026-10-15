@@ -22,6 +22,7 @@ export function connection(
       host: `h${id}.example.com`,
       port: 443,
       decision: "allow",
+      outcome: null,
       reason: "rule",
       rule_id: 1,
       rule_set: null,

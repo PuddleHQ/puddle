@@ -17,9 +17,10 @@ use puddle_agent_proto::host::{GuestStream, HostConfig, StreamHandler, UdpRefusa
 use puddle_agent_proto::relay::splice;
 use puddle_agent_proto::resolve::{ResolveAnswer, ResolveQuery};
 use puddle_types::{
-    BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason, Decision,
-    EgressRequest, EventSink, Host, HttpRequestLine, NullConnectionLog, PatternKind,
-    PendingOutcome, Policy, PolicyError, ProtocolHint, RuleId, SuffixAllows, WorkspaceName,
+    BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOutcome,
+    ConnectionReason, Decision, EgressRequest, EventSink, Host, HttpRequestLine, NullConnectionLog,
+    PatternKind, PendingOutcome, Policy, PolicyError, ProtocolHint, RuleId, SuffixAllows,
+    WorkspaceName,
 };
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
@@ -455,6 +456,9 @@ pub(crate) struct Refusal {
     /// The reason the connection record carries, for a refusal Puddle made on purpose (not an
     /// upstream failure): also sent as `x-puddle-blocked`.
     pub(crate) code: Option<&'static str>,
+    /// How reaching the destination went, for a refusal that is a failure to get there (not a
+    /// decision): the connection record's `outcome`.
+    pub(crate) outcome: Option<ConnectionOutcome>,
 }
 
 impl Refusal {
@@ -467,7 +471,15 @@ impl Refusal {
             headers: Vec::new(),
             message: message.into(),
             code: None,
+            outcome: None,
         }
+    }
+
+    /// Marks this refusal as a failure to reach the destination, which the connection record
+    /// carries as `outcome`.
+    pub(crate) fn failed(mut self, outcome: ConnectionOutcome) -> Self {
+        self.outcome = Some(outcome);
+        self
     }
 
     /// Marks this refusal as one Puddle made on purpose: the connection record gets `code` as its
@@ -606,6 +618,7 @@ async fn relay(
     let admitted = match admitted {
         Ok(admitted) => admitted,
         Err(refusal) => {
+            event.outcome = refusal.outcome;
             refuse(reader.get_mut(), &refusal).await;
             return event;
         }
@@ -627,6 +640,7 @@ async fn relay(
         event.http = done.http;
         event.resolved_ip = done.resolved_ip;
         event.upstream = done.hop;
+        event.outcome = done.connect;
         event.injected = done.injected;
         event.binding_id = done.binding_id;
         event.placeholder_unbound = done.placeholder_unbound;
@@ -653,10 +667,12 @@ async fn relay(
     {
         Ok(out) => out,
         Err(refusal) => {
+            event.outcome = refusal.outcome;
             refuse(reader.get_mut(), &refusal).await;
             return event;
         }
     };
+    event.outcome = Some(ConnectionOutcome::Connected);
     event.resolved_ip = out.addr.map(|addr| addr.ip());
     event.upstream = out.hop;
     match path {
@@ -815,12 +831,14 @@ async fn admit_into(
                 Err(_) => {
                     return left_to_upstream(proxy, host, "timed out").ok_or_else(|| {
                         Refusal::new("504 Gateway Timeout", format!("resolving {host} timed out"))
+                            .failed(ConnectionOutcome::Timeout)
                     });
                 }
                 Ok(Err(err)) => {
                     tracing::info!(%host, error = %err, "resolve failed");
                     return left_to_upstream(proxy, host, "failed").ok_or_else(|| {
                         Refusal::new("502 Bad Gateway", format!("could not resolve {host}"))
+                            .failed(ConnectionOutcome::ConnectFailed)
                     });
                 }
                 Ok(Ok(addrs)) => addrs,
@@ -828,8 +846,10 @@ async fn admit_into(
         }
     };
     if addrs.is_empty() {
-        return left_to_upstream(proxy, host, "returned no addresses")
-            .ok_or_else(|| Refusal::new("502 Bad Gateway", format!("{host} has no addresses")));
+        return left_to_upstream(proxy, host, "returned no addresses").ok_or_else(|| {
+            Refusal::new("502 Bad Gateway", format!("{host} has no addresses"))
+                .failed(ConnectionOutcome::ConnectFailed)
+        });
     }
     let resolved = addrs.len();
     let (addrs, ip_allows) = apply_ip_rules(proxy, request, addrs, event)?;

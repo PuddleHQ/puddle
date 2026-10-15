@@ -50,6 +50,8 @@ struct Harness {
     control: Control,
     server: JoinHandle<Result<(), SessionError>>,
     events: mpsc::UnboundedReceiver<Event>,
+    /// Streams the host opened to this fake agent.
+    inbound: mpsc::UnboundedReceiver<StreamHandle>,
     _driver: JoinHandle<()>,
 }
 
@@ -73,11 +75,19 @@ fn start_handler<H: StreamHandler>(handler: Arc<H>, config: HostConfig) -> Harne
     ));
     let mut client = Session::new_client(guest, client_config());
     let control = client.control();
-    let driver = tokio::spawn(async move { while client.next().await.is_some() {} });
+    let (opened, inbound) = mpsc::unbounded_channel();
+    let driver = tokio::spawn(async move {
+        while let Some(next) = client.next().await {
+            if let Ok(stream) = next {
+                let _ = opened.send(stream);
+            }
+        }
+    });
     Harness {
         control,
         server,
         events,
+        inbound,
         _driver: driver,
     }
 }
@@ -787,4 +797,124 @@ async fn lookups_over_the_per_session_limit_are_answered_unavailable() {
     );
     drop(slow);
     h.close().await.unwrap();
+}
+
+/// What a handler is told about the guest's link and ports.
+#[derive(Default)]
+struct Reach {
+    link: std::sync::Mutex<Option<GuestLink>>,
+    ports: std::sync::Mutex<Vec<Vec<u16>>>,
+}
+
+struct Reaching(Arc<Reach>);
+
+impl StreamHandler for Reaching {
+    async fn handle(&self, _stream: GuestStream) {}
+
+    async fn guest_link(&self, link: GuestLink) {
+        *self.0.link.lock().unwrap() = Some(link);
+    }
+
+    async fn guest_ports(&self, ports: Vec<u16>) {
+        self.0.ports.lock().unwrap().push(ports);
+    }
+}
+
+async fn until<T>(mut look: impl FnMut() -> Option<T>) -> T {
+    for _ in 0..500 {
+        if let Some(found) = look() {
+            return found;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("not seen in time");
+}
+
+#[tokio::test]
+async fn the_handler_gets_the_link_at_hello_and_the_ports_clamped_to_what_a_port_can_be() {
+    let reach = Arc::new(Reach::default());
+    let mut h = start_handler(
+        Arc::new(Reaching(Arc::clone(&reach))),
+        HostConfig::default(),
+    );
+    let mut c = h.control_stream().await;
+    assert!(reach.link.lock().unwrap().is_none());
+    send(&mut c, &AgentMessage::hello()).await;
+    until(|| reach.link.lock().unwrap().is_some().then_some(())).await;
+    // A hostile report: unsorted, 600 entries (the most a line holds), then repeats and a zero.
+    let many: Vec<u16> = (10_001..=10_600).rev().collect();
+    let line = format!(
+        "{{\"type\":\"ports\",\"listening\":{}}}\n",
+        serde_json::to_string(&many).unwrap()
+    );
+    assert!(line.len() < MAX_LINE);
+    c.write_all(line.as_bytes()).await.unwrap();
+    c.write_all(b"{\"type\":\"ports\",\"listening\":[8080,0,3000,8080]}\n")
+        .await
+        .unwrap();
+    let told = until(|| {
+        let ports = reach.ports.lock().unwrap();
+        (ports.len() == 2).then(|| ports.clone())
+    })
+    .await;
+    assert_eq!(told[0], (10_001..=10_512).collect::<Vec<u16>>());
+    assert_eq!(told[1], [3000, 8080]);
+    h.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_forward_opened_through_the_link_is_the_connection_once_the_agent_says_ok() {
+    use crate::forward::{Answer, OpenError, parse_request, read_line_exact};
+    let reach = Arc::new(Reach::default());
+    let mut h = start_handler(
+        Arc::new(Reaching(Arc::clone(&reach))),
+        HostConfig::default(),
+    );
+    let mut c = h.control_stream().await;
+    send(&mut c, &AgentMessage::hello()).await;
+    let link = until(|| reach.link.lock().unwrap().clone()).await;
+    // A fake agent: port 3000 echoes, anything else is refused.
+    let mut inbound = std::mem::replace(&mut h.inbound, mpsc::unbounded_channel().1);
+    tokio::spawn(async move {
+        while let Some(mut stream) = inbound.recv().await {
+            tokio::spawn(async move {
+                let preamble = read_line_exact(&mut stream, MAX_PREAMBLE).await.unwrap();
+                assert_eq!(parse_preamble(&preamble), Ok((StreamKind::Forward, 1)));
+                let port = parse_request(&read_line_exact(&mut stream, 16).await.unwrap()).unwrap();
+                if port != 3000 {
+                    stream
+                        .write_all(&Answer::refused("nothing listens").to_line())
+                        .await
+                        .unwrap();
+                    return;
+                }
+                // The data follows the answer in the same write: it must not be lost.
+                let mut reply = Answer::Ok.to_line();
+                reply.extend_from_slice(b"hello");
+                stream.write_all(&reply).await.unwrap();
+                let mut buf = Vec::new();
+                stream.read_to_end(&mut buf).await.unwrap();
+                stream.write_all(&buf).await.unwrap();
+                stream.shutdown().await.unwrap();
+            });
+        }
+    });
+    let mut stream = link.open_forward(3000).await.unwrap();
+    let mut hello = [0u8; 5];
+    stream.read_exact(&mut hello).await.unwrap();
+    assert_eq!(&hello, b"hello");
+    stream.write_all(b"ping").await.unwrap();
+    stream.shutdown().await.unwrap();
+    let mut back = Vec::new();
+    stream.read_to_end(&mut back).await.unwrap();
+    assert_eq!(back, b"ping");
+    match link.open_forward(3001).await {
+        Err(OpenError::Refused(reason)) => assert_eq!(reason, "nothing listens"),
+        other => panic!("{other:?}"),
+    }
+    h.close().await.unwrap();
+    assert!(matches!(
+        link.open_forward(3000).await,
+        Err(OpenError::Disconnected)
+    ));
 }

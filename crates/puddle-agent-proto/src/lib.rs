@@ -3,12 +3,13 @@
 //!
 //! One workspace reaches the host over a vsock route (a Unix socket or named pipe on the host).
 //! The agent opens a few connections on it, and each carries one **yamux session**. The agent
-//! opens every yamux stream; the host never does.
+//! opens every yamux stream except the `forward` ones, which the host opens to reach a guest port.
 //!
 //! | First bytes of a stream | Stream kind | Host side |
 //! |---|---|---|
 //! | a [`kind`] preamble `\0puddle-control/1\n` | the **control stream**: newline-delimited JSON [`AgentMessage`]s, guest → host only | [`host::serve_session`] turns them into [`puddle_types::Event`]s |
 //! | a [`kind`] preamble `\0puddle-resolve/1\n` | one name lookup for the guest's stub DNS ([`resolve`]) | [`host::StreamHandler::resolve`] |
+//! | a [`kind`] preamble `\0puddle-forward/1\n`, opened by the **host** | one connection to a port on the guest's loopback ([`forward`]) | [`host::StreamHandler::guest_link`] hands out the way to open it |
 //! | another [`kind`] preamble (`connect`, `ssh-agent`: reserved) or an unknown one | — | closed with a logged reason |
 //! | anything else (an HTTP request line) | one proxied guest connection: `CONNECT host:port` or an absolute-form request | handed to the caller's [`host::StreamHandler`] (the proxy) |
 //!
@@ -30,6 +31,7 @@
 
 pub mod control;
 pub mod editor;
+pub mod forward;
 pub mod host;
 pub mod kind;
 pub mod relay;

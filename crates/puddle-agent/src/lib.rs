@@ -10,8 +10,10 @@
 //!   ([`oom`], [`control`]), which the host turns into
 //!   [`puddle_types::Event::OomKill`];
 //! - reports an exit of the image's entrypoint ([`entrypoint`]) and what the stub DNS turns away,
-//!   which the host turns into problems on the workspace.
-//!
+//!   which the host turns into problems on the workspace;
+//! - reports the TCP ports the guest listens on ([`ports`]) and serves the host's port forwards:
+//!   the host opens a stream to the agent, which connects to the port on the guest's loopback
+//!   ([`forward`]);
 //! - answers DNS for tools that ignore the proxy settings, when switched on: a stub on one
 //!   address hands out stand-in addresses and asks the host about each name ([`capture`]);
 //! - with capture on (Linux), redirects those tools' connections to a second listener that sends
@@ -36,10 +38,12 @@ pub mod connect;
 pub mod control;
 pub mod editor;
 pub mod entrypoint;
+pub mod forward;
 #[cfg(target_os = "linux")]
 mod ifaddrs;
 pub mod merge_file;
 pub mod oom;
+pub mod ports;
 pub mod serve;
 pub mod upstream;
 #[cfg(target_os = "linux")]
@@ -93,7 +97,12 @@ impl Agent {
     ) -> io::Result<Self> {
         let listener = serve::listen(config.listen)?;
         let local_addr = listener.local_addr()?;
-        let upstream = Arc::new(upstream::Upstream::new(&config));
+        // The listener may have taken any port (`:0` in tests): the agent's own ports are the real ones.
+        let bound = Config {
+            listen: local_addr,
+            ..config.clone()
+        };
+        let upstream = Arc::new(upstream::Upstream::new(&bound));
         let mut tasks = JoinSet::new();
         tasks.spawn(serve::serve(listener, Arc::clone(&upstream)));
         let (bridge_tx, bridge) = watch::channel(bridge::BridgeState::default());
@@ -125,6 +134,9 @@ impl Agent {
         let capture =
             start_capture(&config, stand_ins.as_ref(), &upstream, &tx, &mut tasks).await?;
         tasks.spawn(control::run(upstream, rx));
+        if let Some(watch) = config.ports.clone() {
+            tasks.spawn(ports::watch(watch, bound.reserved_ports(), tx.clone()));
+        }
         let reports = match config.oom {
             Some(sources) => {
                 tasks.spawn(oom::watch(sources, tx));

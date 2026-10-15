@@ -10,6 +10,7 @@
 //! |---|---|---|
 //! | `control` v1 | agent | served: [`crate::AgentMessage`] lines, guest → host |
 //! | `resolve` v1 | agent | served: one name lookup per stream ([`crate::resolve`]), for the guest's stub DNS |
+//! | `forward` v1 | host | served by the agent: the host reaches a guest port ([`crate::forward`]) |
 //! | `connect` | agent | reserved: a raw connection to a named destination (`puddle-agent connect`, the `ssh` `ProxyCommand`, goes through the agent's listener as a `CONNECT` for now: [`crate::ssh`]) |
 //! | `ssh-agent` | agent | reserved: filtered SSH agent / signing |
 //! | `host-control` | host | reserved: [`crate::control::HostMessage`] lines, host → guest |
@@ -34,6 +35,8 @@ pub enum StreamKind {
     Control,
     /// One name lookup for the guest's stub DNS: a query line, an answer line.
     Resolve,
+    /// Opened by the host: one connection to a port on the guest's loopback.
+    Forward,
     /// Reserved: a raw connection to a named destination.
     Connect,
     /// Reserved: the guest side of a filtered SSH agent.
@@ -44,9 +47,10 @@ pub enum StreamKind {
 
 impl StreamKind {
     /// Every registered kind.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Control,
         Self::Resolve,
+        Self::Forward,
         Self::Connect,
         Self::SshAgent,
         Self::HostControl,
@@ -58,6 +62,7 @@ impl StreamKind {
         match self {
             Self::Control => "control",
             Self::Resolve => "resolve",
+            Self::Forward => "forward",
             Self::Connect => "connect",
             Self::SshAgent => "ssh-agent",
             Self::HostControl => "host-control",
@@ -76,6 +81,7 @@ impl StreamKind {
         match self {
             Self::Control => b"\0puddle-control/1\n",
             Self::Resolve => b"\0puddle-resolve/1\n",
+            Self::Forward => b"\0puddle-forward/1\n",
             Self::Connect => b"\0puddle-connect/1\n",
             Self::SshAgent => b"\0puddle-ssh-agent/1\n",
             Self::HostControl => b"\0puddle-host-control/1\n",

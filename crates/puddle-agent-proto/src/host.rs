@@ -37,7 +37,8 @@ use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tokio_yamux::{Session, StreamHandle};
 
-use crate::control::{self, AgentMessage, MAX_LINE, PROTOCOL_VERSION, StubDnsTrouble};
+use crate::control::{self, AgentMessage, MAX_LINE, MAX_PORTS, PROTOCOL_VERSION, StubDnsTrouble};
+use crate::forward::GuestLink;
 use crate::kind::{MAX_PREAMBLE, StreamKind, parse_preamble};
 use crate::resolve::{self, ResolveAnswer, ResolveQuery};
 use crate::yamux::{VERSION_BYTE, server_config};
@@ -124,6 +125,23 @@ pub trait StreamHandler: Send + Sync + 'static {
     /// without an audit has nowhere to put it. The report is untrusted.
     fn udp_refused(&self, refusal: UdpRefusal) -> impl Future<Output = ()> + Send {
         let _ = refusal;
+        async {}
+    }
+
+    /// Hands the handler the way to open streams to this session's agent, as soon as the agent has
+    /// said hello. A workspace has several sessions; this is the one that carries the agent's
+    /// control stream, and a newer call replaces an older one. The default drops it: a handler
+    /// that never reaches into the guest needs none.
+    fn guest_link(&self, link: GuestLink) -> impl Future<Output = ()> + Send {
+        let _ = link;
+        async {}
+    }
+
+    /// Tells the handler which TCP ports the guest listens on now (the whole set, ascending, at
+    /// most [`MAX_PORTS`]). The agent's claim: it can be wrong or hostile, so nothing may be
+    /// trusted beyond "a port number". The default does nothing.
+    fn guest_ports(&self, ports: Vec<u16>) -> impl Future<Output = ()> + Send {
+        let _ = ports;
         async {}
     }
 
@@ -263,6 +281,8 @@ struct Shared<H> {
     config: HostConfig,
     /// Set while a control stream is open: a session has at most one.
     control_open: AtomicBool,
+    /// Opens streams to the agent on this session.
+    link: GuestLink,
     /// Lookups in flight on this session.
     resolves: Semaphore,
 }
@@ -294,14 +314,6 @@ where
     if first != VERSION_BYTE {
         return Err(SessionError::NotYamux(first));
     }
-    let shared = Arc::new(Shared {
-        workspace,
-        sink,
-        handler,
-        resolves: Semaphore::new(config.max_resolves),
-        config,
-        control_open: AtomicBool::new(false),
-    });
     let mut session = Session::new_server(
         Prefixed {
             first: Some(first),
@@ -309,6 +321,15 @@ where
         },
         server_config(),
     );
+    let shared = Arc::new(Shared {
+        link: GuestLink::new(session.control()),
+        workspace,
+        sink,
+        handler,
+        resolves: Semaphore::new(config.max_resolves),
+        config,
+        control_open: AtomicBool::new(false),
+    });
     let mut tasks = JoinSet::new();
     loop {
         tokio::select! {
@@ -494,6 +515,14 @@ async fn on_message<H: StreamHandler>(msg: AgentMessage, shared: &Shared<H>) {
                 tracing::warn!(%workspace, agent_protocol = protocol, host_protocol = PROTOCOL_VERSION, "guest agent speaks another control protocol; connection kept");
             }
             tracing::info!(%workspace, agent_version = %version, protocol, "guest agent connected");
+            shared.handler.guest_link(shared.link.clone()).await;
+        }
+        AgentMessage::Ports { mut listening } => {
+            listening.retain(|p| *p != 0);
+            listening.sort_unstable();
+            listening.dedup();
+            listening.truncate(MAX_PORTS);
+            shared.handler.guest_ports(listening).await;
         }
         AgentMessage::OomKill { pid, process } => {
             let event = Event::oom_kill(

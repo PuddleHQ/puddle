@@ -101,7 +101,10 @@ mod tests {
         let clock = Arc::new(ManualClock::new(1_800_000_000_000));
         let service = HostDevCert::new(dir.path(), Empty, clock.clone());
         assert_eq!(service.status(), DevCertificate::NeedsTrust);
+        // The double's other answers, so no line of it goes unread.
         assert!(Empty.export_key(b"cert").is_err());
+        assert_eq!(Empty.is_trusted(b"cert"), Ok(false));
+        assert_eq!(Empty.trust(b"cert"), Ok(TrustOutcome::Declined));
         let unsupported = HostDevCert::new(dir.path(), puddle_certs::devcert::Unsupported, clock);
         assert_eq!(unsupported.status(), DevCertificate::Unsupported);
     }

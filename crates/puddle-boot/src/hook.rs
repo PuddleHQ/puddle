@@ -47,6 +47,20 @@ pub struct BootReport {
     pub stdout: String,
 }
 
+impl BootReport {
+    /// The files puddle owns that held something else when the hook ran and were put back: it
+    /// said `replaced <path>` for each. A file puddle writes for the first time is not listed, and
+    /// neither is one on an image with no `cmp` (there the hook cannot tell). The text a file
+    /// had before is not kept.
+    #[must_use]
+    pub fn replaced_files(&self) -> Vec<&str> {
+        self.stdout
+            .lines()
+            .filter_map(|line| line.strip_prefix("puddle-boot: replaced "))
+            .collect()
+    }
+}
+
 /// Why a create, start or adopt with the hook failed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -316,6 +330,18 @@ fn tail(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_report_lists_the_files_the_hook_put_back() {
+        let report = BootReport {
+            duration: Duration::ZERO,
+            stdout: "puddle-boot: sysctls set\npuddle-boot: replaced /etc/a b\n\
+                     puddle-boot: replaced /etc/c\npuddle-boot: ready\n"
+                .into(),
+        };
+        assert_eq!(report.replaced_files(), ["/etc/a b", "/etc/c"]);
+        assert!(BootReport::default().replaced_files().is_empty());
+    }
 
     #[test]
     fn classify_sorts_outcomes() {

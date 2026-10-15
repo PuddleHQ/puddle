@@ -144,6 +144,12 @@ merge_result() { # merge_result <path> <tool output>
         if [ "$IS_ROOT" = 1 ]; then chown 0:0 "$tmp" || die "cannot make root own $1"; fi
         if ! { [ -f "$dst" ] && [ ! -L "$dst" ] && same "$tmp" "$dst"; }; then
             printf '%s\n' "$1" >>"$RUN/changed"
+            # Something was there and was not puddle's text: the host reads this line to tell the
+            # user that the workspace changed a file puddle owns. Not said for a file that is new,
+            # and not without cmp (then every file looks changed).
+            if { [ -e "$dst" ] || [ -L "$dst" ]; } && command -v cmp >/dev/null 2>&1; then
+                say "replaced $1"
+            fi
         fi
         # mv onto a link to a directory, or onto a directory, would move the file into it.
         if [ -L "$dst" ]; then rm -f "$dst" || die "cannot replace the link at $1"; fi

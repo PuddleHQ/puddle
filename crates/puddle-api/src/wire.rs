@@ -31,6 +31,7 @@ mod identities;
 mod network_health;
 mod repos;
 mod rule_sets;
+mod shell_init;
 mod workspaces;
 
 pub(crate) use credentials::source_problem;
@@ -65,6 +66,7 @@ pub use rule_sets::{
     RuleSetSwitchRequest, RuleSetSwitched, RuleSetUpdateRequest, RuleSetView, SystemManagedHost,
     SystemReason,
 };
+pub use shell_init::{ShellInitRequest, ShellInitSaved, ShellInitView};
 
 pub use workspaces::{
     AttachMode, AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, FindingList,

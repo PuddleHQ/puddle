@@ -9,10 +9,10 @@ use rusqlite::Connection;
 use crate::error::StoreError;
 
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 7;
+pub const SCHEMA_VERSION: u32 = 8;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -332,6 +332,17 @@ CREATE TABLE git_defaults (
     id               INTEGER PRIMARY KEY CHECK (id = 1),
     only_push_listed INTEGER NOT NULL CHECK (only_push_listed IN (0, 1)),
     only_pull_listed INTEGER NOT NULL CHECK (only_pull_listed IN (0, 1))
+) STRICT;
+";
+
+const V8: &str = r"
+-- The shell init of a workspace: a script its login shells source, written by the user in the UI.
+-- This row is the only source of truth; the workspace sees a read-only copy of it. A workspace
+-- with no script has no row.
+CREATE TABLE shell_init (
+    workspace_id TEXT PRIMARY KEY,
+    content      TEXT    NOT NULL CHECK (content <> ''),
+    changed_at   INTEGER NOT NULL
 ) STRICT;
 ";
 

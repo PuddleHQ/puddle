@@ -27,7 +27,7 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use puddle_api::{
     AttachMode, Attached, DEFAULT_IMAGE, DeleteCheck, LaunchError, Launcher, Listing, NewWorkspace,
-    Operation, RepoFindings, WorkspaceError, WorkspaceRecord, WorkspaceService,
+    Operation, RepoFindings, ShellInitCheck, WorkspaceError, WorkspaceRecord, WorkspaceService,
 };
 use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
@@ -67,19 +67,35 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
     }
 
     async fn environment_changed(&self, workspace: WorkspaceName) {
-        self.inner.injection.environment_changed(&workspace).await;
+        Self::environment_changed(self, &workspace).await;
     }
 
     async fn all_environments_changed(&self) {
         // Together: a credential store that is slow for one workspace's secrets holds up no other.
-        let injection = &self.inner.injection;
         futures_util::future::join_all(
-            injection
+            self.inner
+                .injection
                 .running_workspaces()
                 .iter()
-                .map(|name| injection.environment_changed(name)),
+                .map(|name| Self::environment_changed(self, name)),
         )
         .await;
+    }
+
+    async fn shell_init_changed(&self, workspace: WorkspaceName) {
+        Self::shell_init_changed(self, &workspace);
+    }
+
+    async fn all_shell_inits_changed(&self) {
+        let names: Vec<WorkspaceName> = self
+            .state()
+            .slots
+            .values()
+            .map(|slot| slot.record.name.clone())
+            .collect();
+        for name in names {
+            Self::shell_init_changed(self, &name);
+        }
     }
 }
 
@@ -140,8 +156,8 @@ struct GuestState {
     ca: CaCertificate,
     /// The commit authors the guest holds now.
     authors: Authors,
-    /// The user's variables the guest was started with, a secret as its stand-in. A change to
-    /// them reaches the guest at its next start, so a re-planned boot keeps these.
+    /// The user's variables the guest holds now, a secret as its stand-in: what it started with,
+    /// or what the last change to them wrote into its login-shell file.
     env: GuestEnv,
 }
 
@@ -180,6 +196,12 @@ struct Inner<R: Runtime + Clone> {
     live: tokio::sync::Mutex<BTreeMap<WorkspaceName, Live<R>>>,
     tasks: tokio::sync::Mutex<JoinSet<()>>,
     running: watch::Sender<usize>,
+    /// Workspaces whose start found their shell-init folder changed from inside, until `settle`
+    /// has said so (with what the boot hook found, as one notice).
+    shell_init_changed_inside: Mutex<BTreeSet<WorkspaceName>>,
+    /// Workspaces whose variables changed while their guest was booting: `settle` applies the
+    /// change to the guest once it runs.
+    env_missed_while_booting: Mutex<BTreeSet<WorkspaceName>>,
 }
 
 /// The workspaces service. Cheap to clone; clones share state.
@@ -361,6 +383,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 live: tokio::sync::Mutex::new(BTreeMap::new()),
                 tasks: tokio::sync::Mutex::new(JoinSet::new()),
                 running: watch::channel(0).0,
+                shell_init_changed_inside: Mutex::new(BTreeSet::new()),
+                env_missed_while_booting: Mutex::new(BTreeSet::new()),
             }),
         };
         if interrupted && let Err(e) = service.persist(&service.state()) {
@@ -673,6 +697,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         };
         let image = image.map_err(|e| e.clone())?;
         self.progress(name, WorkspaceStep::Starting, None);
+        if let Err(reason) = self.publish_shell_init(id, name) {
+            return Err(self.abort_attachment(attachment, reason).await);
+        }
         let route = match inner.kit.route(name) {
             Ok(route) => route,
             Err(reason) => return Err(self.abort_attachment(attachment, reason).await),
@@ -685,7 +712,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 return Err(self.abort_attachment(attachment, reason).await);
             }
         };
-        let spec = attachment.add_to(inner.kit.spec(name, image, record.memory, &env, &route));
+        let spec = attachment
+            .add_to(inner.kit.spec(name, image, record.memory, &env, &route))
+            .with_file_mount(inner.kit.shell_init().mount(id));
         let gate = Gate::new();
         match inner
             .kit
@@ -809,7 +838,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         if guest.authors == wanted {
             return;
         }
-        match self.run_plan_with(&gated, &guest, &wanted).await {
+        let replanned = GuestState {
+            authors: wanted.clone(),
+            ..guest
+        };
+        match self.run_plan(&gated, &replanned).await {
             Ok(()) => {
                 if let Some(entry) = inner.live.lock().await.get_mut(name)
                     && let Some(state) = entry.guest.as_mut()
@@ -823,17 +856,16 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
-    /// Plans the guest again with `authors` in place of what it holds and runs the plan in it.
-    async fn run_plan_with(
+    /// Plans the guest as `guest` says and runs the plan in it.
+    async fn run_plan(
         &self,
         gated: &GatedSandbox<R::Sandbox>,
         guest: &GuestState,
-        authors: &Authors,
     ) -> Result<(), String> {
         let kit = &self.inner.kit;
         let inputs = GuestInputs {
             ca: &guest.ca,
-            authors,
+            authors: &guest.authors,
             env: &guest.env,
         };
         let (plan, _) = kit.plan(&guest.image, &inputs)?;
@@ -848,6 +880,188 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     pub(crate) async fn all_git_changed(&self) {
         for name in self.inner.injection.running_workspaces() {
             self.git_changed(&name).await;
+        }
+    }
+
+    /// A change to `name`'s variables: the registry follows (see `Injection::environment_changed`),
+    /// and the running guest's login-shell file is rewritten, so a terminal opened from now on
+    /// sees the new variables with no restart. A process that is already running keeps what it
+    /// has, and so does a sandbox's own environment (it is fixed when the sandbox is made).
+    pub(crate) async fn environment_changed(&self, name: &WorkspaceName) {
+        if let Some(env) = self.inner.injection.environment_changed(name).await {
+            self.rewrite_env(name, env).await;
+        }
+    }
+
+    /// Writes `env` into the running guest's login-shell file by running the boot plan again (the
+    /// hook is idempotent: only the files that differ change).
+    async fn rewrite_env(&self, name: &WorkspaceName, env: GuestEnv) {
+        let inner = &self.inner;
+        let rewrite = {
+            let live = inner.live.lock().await;
+            match live.get(name) {
+                Some(entry) => Arc::clone(&entry.rewrite),
+                None => return,
+            }
+        };
+        let _one_at_a_time = rewrite.lock().await;
+        let running = {
+            let live = inner.live.lock().await;
+            live.get(name)
+                .and_then(|e| Some((e.gated.clone()?, e.guest.clone()?)))
+        };
+        let Some((gated, guest)) = running else {
+            // Still booting (the boot read the variables before this change, and `settle` looks
+            // again) or stopped (the next start reads them).
+            inner
+                .env_missed_while_booting
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(name.clone());
+            return;
+        };
+        if guest.env == env {
+            return;
+        }
+        let replanned = GuestState {
+            env: env.clone(),
+            ..guest
+        };
+        match self.run_plan(&gated, &replanned).await {
+            Ok(()) => {
+                if let Some(entry) = inner.live.lock().await.get_mut(name)
+                    && let Some(state) = entry.guest.as_mut()
+                {
+                    state.env = env;
+                }
+            }
+            Err(reason) => {
+                tracing::warn!(workspace = %name, %reason, "the variables in the workspace's login shells are not updated");
+                inner.events.emit(Event::WorkspaceEnvFailed {
+                    workspace: name.clone(),
+                    reason: format!(
+                        "the change is saved, but new terminals in {name} keep the old variables \
+                         until it restarts: {reason}"
+                    ),
+                });
+            }
+        }
+    }
+
+    /// Writes `name`'s saved shell init to the folder its guest sees, for a start. A folder that
+    /// held something else is put right and remembered, so `settle` tells the user.
+    fn publish_shell_init(&self, id: &WorkspaceId, name: &WorkspaceName) -> Result<(), String> {
+        let published = self.inner.kit.shell_init().publish(id, name)?;
+        if published == crate::shell_init::Published::Restored {
+            self.inner
+                .shell_init_changed_inside
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(name.clone());
+        }
+        Ok(())
+    }
+
+    /// The user saved or removed `name`'s shell init: the folder the running guest sees follows
+    /// at once. A workspace that is gone is left alone.
+    pub(crate) fn shell_init_changed(&self, name: &WorkspaceName) {
+        let id = self
+            .state()
+            .slots
+            .iter()
+            .find(|(_, slot)| &slot.record.name == name && !slot.deleting)
+            .map(|(id, _)| id.clone());
+        let Some(id) = id else { return };
+        let key = problem_key("shell-init-copy", name);
+        match self.inner.kit.shell_init().publish(&id, name) {
+            Ok(_) => self.inner.problems.clear(&key),
+            Err(reason) => {
+                tracing::warn!(workspace = %name, %reason, "the workspace's shell init is not updated");
+                self.inner.problems.raise(
+                    Problem::new(
+                        key,
+                        format!("puddle could not update {name}'s shell init"),
+                        format!(
+                            "{reason}. The workspace keeps the shell init it had; saving it again, \
+                             or restarting the workspace, tries again."
+                        ),
+                    )
+                    .about(name.clone()),
+                );
+            }
+        }
+    }
+
+    /// After a boot: tell the user when something inside the workspace had changed its shell init
+    /// (the folder, or the file that loads it), and check that the saved script still parses and
+    /// prints nothing. A script that fails the check does not stop the start: it is a problem on
+    /// the workspace, because a start that refuses over a user's own script would lock them out of
+    /// the way to fix it.
+    async fn settle_shell_init(&self, name: &WorkspaceName, gated: &GatedSandbox<R::Sandbox>) {
+        let inner = &self.inner;
+        let folder_changed = inner
+            .shell_init_changed_inside
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(name);
+        if folder_changed
+            || crate::shell_init::loader_replaced(&gated.boot_report().replaced_files())
+        {
+            inner.events.emit(Event::WorkspaceShellInitRestored {
+                workspace: name.clone(),
+            });
+        }
+        let key = problem_key("shell-init", name);
+        let saved = match inner.kit.shell_init().saved(name) {
+            Ok(saved) => saved,
+            Err(reason) => {
+                tracing::warn!(workspace = %name, %reason, "the shell init was not checked");
+                return;
+            }
+        };
+        let Some(script) = saved else {
+            inner.problems.clear(&key);
+            return;
+        };
+        match self.run_shell_init_check(gated, &script).await {
+            Ok(None) => inner.problems.clear(&key),
+            Ok(Some(why)) => inner.problems.raise(
+                Problem::new(
+                    key,
+                    format!("{name}'s shell init needs fixing"),
+                    format!(
+                        "{why}. The workspace started, but tools that read a shell's output may \
+                         fail until you change it on the workspace's Shell init tab."
+                    ),
+                )
+                .about(name.clone()),
+            ),
+            Err(reason) => {
+                tracing::warn!(workspace = %name, %reason, "the shell init was not checked");
+            }
+        }
+    }
+
+    /// Runs `script` once in a throwaway shell in the guest. `Ok(None)` when it parses and prints
+    /// nothing, else what is wrong with it.
+    async fn run_shell_init_check(
+        &self,
+        gated: &GatedSandbox<R::Sandbox>,
+        script: &str,
+    ) -> Result<Option<String>, String> {
+        match gated
+            .ungated()
+            .exec(crate::shell_init::check_request(script))
+            .await
+        {
+            Ok(output) => match crate::shell_init::verdict(&output)? {
+                crate::shell_init::Verdict::Quiet => Ok(None),
+                crate::shell_init::Verdict::Refused(why) => Ok(Some(why)),
+            },
+            Err(ComputeError::ExecTimeout { .. }) => {
+                Ok(Some(crate::shell_init::timed_out_message()))
+            }
+            Err(e) => Err(e.to_string()),
         }
     }
 
@@ -916,6 +1130,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .await
             .map_err(|e| e.to_string())?;
         self.report_locks(name, locks);
+        self.settle_shell_init(name, &gated).await;
         let mount = Layout::new(id).map_err(|e| e.to_string())?.mount().clone();
         let handle = inner
             .runtime
@@ -932,6 +1147,15 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         // A change made while the guest booted found no guest to rewrite: look again.
         self.git_changed(name).await;
+        let missed = self
+            .inner
+            .env_missed_while_booting
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(name);
+        if missed {
+            self.environment_changed(name).await;
+        }
         Ok(())
     }
 
@@ -1209,6 +1433,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let name = &record.name;
         let image = ImageRef::new(&record.image).map_err(|e| e.to_string())?;
         let config = self.image_config(&image).await?;
+        self.publish_shell_init(&record.id, name)?;
         let (plan, _, guest) = self.plan_guest(name, config).await?;
         let made_with = inner
             .live
@@ -1327,6 +1552,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         // What the workspace held in Puddle's settings goes with it: its rules, its identities,
         // its environment and the values of its own secrets.
         inner.injection.forget(&record.name).await;
+        inner.kit.shell_init().forget(&record.id);
         Ok(())
     }
 }
@@ -1667,6 +1893,34 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     Ok(()) => Ok(Attached::opened()),
                     Err(err) => Ok(Attached::not_opened(err.to_string())),
                 },
+            }
+        })
+    }
+
+    fn check_shell_init<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        script: &'a str,
+    ) -> BoxFuture<'a, Result<ShellInitCheck, WorkspaceError>> {
+        Box::pin(async move {
+            let record = self.get(id).await?;
+            let running = self
+                .inner
+                .live
+                .lock()
+                .await
+                .get(&record.name)
+                .and_then(|live| live.gated.clone());
+            let Some(gated) = running else {
+                return Ok(ShellInitCheck::NotRun(format!(
+                    "{} is not running; puddle checks the script when it starts",
+                    record.name
+                )));
+            };
+            match self.run_shell_init_check(&gated, script).await {
+                Ok(None) => Ok(ShellInitCheck::Passed),
+                Ok(Some(why)) => Ok(ShellInitCheck::Refused(why)),
+                Err(reason) => Err(WorkspaceError::Unavailable(reason)),
             }
         })
     }

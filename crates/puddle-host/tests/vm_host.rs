@@ -1435,3 +1435,234 @@ async fn vm_host_a_second_process_on_the_same_data_folder_is_refused_and_the_vm_
         .unwrap(),
     );
 }
+
+/// A workspace's shell init on a real guest: the script is checked in a throwaway shell before it
+/// is saved, a login shell sources it from a read-only mount, the guest cannot change it, and a
+/// start that finds the file that loads it replaced says so and puts it back.
+///
+/// The second half tries what a root process in the guest can try against the mount itself
+/// (remounting it writable, writing a file in it). Whatever the VM allows, the host's folder is
+/// back to the saved text at the next start, and the user is told when the guest changed it.
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_shell_init_is_checked_read_only_sourced_by_login_shells_and_restored_after_tampering()
+ {
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        root,
+        secrets: _,
+    } = start_vm_host("shi").await;
+    let name = format!("{}-shi", settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    host.store()
+        .add_rule(&NewRule {
+            scope: Scope::Workspace(sandbox.clone()),
+            pattern: Pattern::parse(REPO_HOST).unwrap(),
+            effect: Effect::Allow,
+            expires_at: None,
+            created_by: Actor::Cli,
+        })
+        .unwrap();
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "repo_url": REPO, "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+
+    let path = format!("/api/workspaces/{name}/shell-init");
+    let save = |content: &str| {
+        let (api, path, content) = (&api, path.clone(), content.to_owned());
+        async move {
+            api.put(&path, &json!({ "content": content }).to_string())
+                .await
+        }
+    };
+
+    // A script that prints, and one that does not parse, are refused by the guest's own shell and
+    // nothing is saved.
+    let loud = save("echo hello from my init\n").await;
+    assert_eq!(loud.status, 422, "{}", loud.body);
+    assert!(
+        loud.body.contains("It printed: hello from my init"),
+        "{}",
+        loud.body
+    );
+    let broken = save("if then\n").await;
+    assert_eq!(broken.status, 422, "{}", broken.body);
+    assert!(broken.body.contains("does not parse"), "{}", broken.body);
+    assert_eq!(api.get(&path).await.json()["saved"], false);
+
+    // A quiet one is saved, and a login shell sources it, for a variable and for a function.
+    let saved = save("export PUDDLE_SHELL_INIT_PROBE='from the shell init'\nshell_init_probe() { echo probed; }\n").await;
+    assert_eq!(saved.status, 200, "{}", saved.body);
+    assert_eq!(saved.json()["checked"], true, "{}", saved.body);
+    let mut seen = String::new();
+    for _ in 0..100 {
+        seen = guest(
+            &runtime,
+            &sandbox,
+            "bash -lc 'printenv PUDDLE_SHELL_INIT_PROBE; shell_init_probe' 2>&1 || true",
+        )
+        .await;
+        if seen.contains("from the shell init") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(
+        seen.contains("from the shell init") && seen.contains("probed"),
+        "a login shell did not source the saved script: {seen}"
+    );
+    // The shell's output stays clean, which is what the check protects.
+    let clean = guest(&runtime, &sandbox, "bash -lc true 2>&1; echo end").await;
+    assert_eq!(clean.trim(), "end", "{clean}");
+
+    // A variable added while the workspace runs reaches the login shells opened from then on, with
+    // no restart (the login-shell file is rewritten); one removed leaves them again.
+    let reply = api
+        .put(
+            &format!("/api/workspaces/{name}/env/PUDDLE_LIVE_PROBE"),
+            &json!({"kind": "plain", "value": "added while running"}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let live = |wanted: &'static str| {
+        let (runtime, sandbox) = (&runtime, &sandbox);
+        async move {
+            let mut now = String::new();
+            for _ in 0..100 {
+                now = guest(
+                    runtime,
+                    sandbox,
+                    "bash -lc 'echo \"[${PUDDLE_LIVE_PROBE-unset}]\"'",
+                )
+                .await;
+                if now.trim() == wanted {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            panic!("a new login shell sees {now:?}, wanted {wanted}");
+        }
+    };
+    live("[added while running]").await;
+    assert_eq!(
+        api.delete(
+            &format!("/api/workspaces/{name}/env/PUDDLE_LIVE_PROBE"),
+            None
+        )
+        .await
+        .status,
+        204
+    );
+    live("[unset]").await;
+
+    // The guest cannot change it: not the file, not a new file beside it.
+    let attempt = guest(
+        &runtime,
+        &sandbox,
+        "(echo evil >/puddle/shell-init/init.sh) 2>&1; (touch /puddle/shell-init/new.sh) 2>&1; echo end",
+    )
+    .await;
+    assert_eq!(
+        attempt.matches("Read-only file system").count(),
+        2,
+        "{attempt}"
+    );
+    let folder = root.join("guest-share").join("shell-init").join(&name);
+    assert_eq!(
+        std::fs::read_to_string(folder.join("init.sh")).unwrap(),
+        "export PUDDLE_SHELL_INIT_PROBE='from the shell init'\nshell_init_probe() { echo probed; }\n"
+    );
+
+    // The file that loads it is replaced from inside, and the next start says so and puts it back.
+    guest(
+        &runtime,
+        &sandbox,
+        "echo '# nothing to see' >/etc/profile.d/02-puddle-shell-init.sh",
+    )
+    .await;
+    api.post(&format!("/api/workspaces/{name}/stop"), "").await;
+    events
+        .until(ended(name_static), Duration::from_secs(120))
+        .await;
+    api.post(&format!("/api/workspaces/{name}/start"), "").await;
+    events
+        .until(
+            |e| e["type"] == "workspace_shell_init_restored" && e["workspace"] == name_static,
+            Duration::from_secs(300),
+        )
+        .await;
+    let end = events
+        .until(ended(name_static), Duration::from_secs(300))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let loader = guest(
+        &runtime,
+        &sandbox,
+        "cat /etc/profile.d/02-puddle-shell-init.sh",
+    )
+    .await;
+    assert!(loader.contains(". /puddle/shell-init/init.sh"), "{loader}");
+    assert!(
+        guest(
+            &runtime,
+            &sandbox,
+            "bash -lc 'printenv PUDDLE_SHELL_INIT_PROBE'"
+        )
+        .await
+        .contains("from the shell init")
+    );
+
+    // What a root process can try against the mount itself. Not an assertion about the VM: the
+    // host's folder is what counts, and it is put right at the next start whatever happened.
+    let tried = guest(
+        &runtime,
+        &sandbox,
+        "(mount -o remount,rw /puddle/shell-init) 2>&1; (echo evil >/puddle/shell-init/evil.sh) 2>&1; echo end",
+    )
+    .await;
+    let wrote = folder.join("evil.sh").exists();
+    eprintln!("remount and write inside the guest: wrote to the host folder = {wrote}: {tried}");
+    let from = events.seen.len();
+    api.post(&format!("/api/workspaces/{name}/stop"), "").await;
+    events
+        .until(ended(name_static), Duration::from_secs(120))
+        .await;
+    api.post(&format!("/api/workspaces/{name}/start"), "").await;
+    let end = events
+        .until(ended(name_static), Duration::from_secs(300))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert!(!folder.join("evil.sh").exists());
+    assert_eq!(
+        std::fs::read_to_string(folder.join("init.sh")).unwrap(),
+        "export PUDDLE_SHELL_INIT_PROBE='from the shell init'\nshell_init_probe() { echo probed; }\n"
+    );
+    let told = events.seen[from..]
+        .iter()
+        .any(|e| e["type"] == "workspace_shell_init_restored");
+    assert_eq!(
+        told, wrote,
+        "the user is told exactly when the guest changed the folder"
+    );
+
+    let stop = api.post(&format!("/api/workspaces/{name}/stop"), "").await;
+    assert_eq!(stop.status, 202, "{}", stop.body);
+    events
+        .until(ended(name_static), Duration::from_secs(120))
+        .await;
+    let down = host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}

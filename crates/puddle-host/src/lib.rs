@@ -40,6 +40,7 @@ mod paths;
 mod platform;
 mod process_env;
 mod settings_read;
+mod shell_init;
 mod ssh_target;
 mod vault;
 mod workspaces;

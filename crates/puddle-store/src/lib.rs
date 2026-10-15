@@ -18,6 +18,7 @@ mod pending;
 mod recorder;
 mod rule;
 mod schema;
+mod shell_init;
 mod store;
 mod sweeper;
 mod workspace_git;
@@ -47,6 +48,7 @@ pub use pending::{
 pub use recorder::{ConnectionRecorder, RECORD_PROBLEM};
 pub use rule::{Actor, Effect, NewRule, Rule, Scope};
 pub use schema::SCHEMA_VERSION;
+pub use shell_init::{MAX_SHELL_INIT_BYTES, ShellInit, ShellInitText};
 pub use store::{
     AuditCursor, AuditFilter, Limits, RuleSetEntryInfo, RuleSetInfo, Store, SweepReport,
     SystemHost, SystemPlan, WorkspaceDeletion, parse_rule_set,

@@ -5,7 +5,6 @@
 #![cfg(unix)]
 #![expect(
     clippy::unwrap_used,
-    clippy::expect_used,
     reason = "helpers outside #[test] fns run only in tests"
 )]
 
@@ -65,15 +64,17 @@ fn fixture() -> Fixture {
     server.dir = release.to_string_lossy().into_owned();
     server.port = free_port();
     let password_file = dir.path().join("run/editor-password");
-    let mut config = Config::default();
-    config.listen = "127.0.0.1:0".parse().unwrap();
-    config.target = Target::Unix(dir.path().join("no-host.sock"));
-    config.oom = None;
-    config.bridge = None;
-    config.editor = Some(EditorConfig {
-        server,
-        password_file: password_file.clone(),
-    });
+    let config = Config {
+        listen: "127.0.0.1:0".parse().unwrap(),
+        target: Target::Unix(dir.path().join("no-host.sock")),
+        oom: None,
+        bridge: None,
+        editor: Some(EditorConfig {
+            server,
+            password_file: password_file.clone(),
+        }),
+        ..Config::default()
+    };
     Fixture {
         _dir: dir,
         out,

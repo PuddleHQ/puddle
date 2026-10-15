@@ -206,7 +206,12 @@ fn mkdir(path: &Path) -> Result<()> {
 /// The entry's path below the release's top folder, `/`-separated; `None` for the top folder
 /// itself.
 fn relative(path: &Path) -> Result<Option<String>> {
-    let bad = |why: &str| XtaskError::parse("the code-server tarball", format!("{why}: {path:?}"));
+    let bad = |why: &str| {
+        XtaskError::parse(
+            "the code-server tarball",
+            format!("{why}: {}", path.display()),
+        )
+    };
     let mut parts = Vec::new();
     for c in path.components() {
         match c {

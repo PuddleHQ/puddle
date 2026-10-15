@@ -607,38 +607,7 @@ impl BootPlanBuilder {
             .and_then(|d| GuestPath::new(d).ok())
             .filter(|_| !entrypoint.is_empty());
 
-        if !self.agent_env.is_empty() && self.agent.is_none() {
-            return Err(PlanError::AgentSetting {
-                name: self
-                    .agent_env
-                    .first()
-                    .map(|(n, _)| n.clone())
-                    .unwrap_or_default(),
-                reason: "the plan starts no agent",
-            });
-        }
-        let mut named = BTreeSet::new();
-        for (name, value) in &self.agent_env {
-            let fail = |reason| PlanError::AgentSetting {
-                name: name.clone(),
-                reason,
-            };
-            let plain = name.strip_prefix("PUDDLE_AGENT_").is_some_and(|rest| {
-                !rest.is_empty()
-                    && rest
-                        .bytes()
-                        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
-            });
-            if !plain {
-                return Err(fail("expected a PUDDLE_AGENT_ name in capitals"));
-            }
-            if value.contains(['\0', '\n']) {
-                return Err(fail("the value contains a NUL or newline"));
-            }
-            if !named.insert(name.as_str()) {
-                return Err(fail("set twice"));
-            }
-        }
+        check_agent_env(&self.agent_env, self.agent.is_some())?;
 
         Ok(BootPlan {
             files,
@@ -650,6 +619,40 @@ impl BootPlanBuilder {
             agent_env: self.agent_env,
         })
     }
+}
+
+/// Refuses settings the agent can't take: none without an agent, names outside `PUDDLE_AGENT_`,
+/// a NUL or newline in a value, a name twice.
+fn check_agent_env(env: &[(String, String)], has_agent: bool) -> Result<(), PlanError> {
+    if !has_agent && let Some((name, _)) = env.first() {
+        return Err(PlanError::AgentSetting {
+            name: name.clone(),
+            reason: "the plan starts no agent",
+        });
+    }
+    let mut named = BTreeSet::new();
+    for (name, value) in env {
+        let fail = |reason| PlanError::AgentSetting {
+            name: name.clone(),
+            reason,
+        };
+        let plain = name.strip_prefix("PUDDLE_AGENT_").is_some_and(|rest| {
+            !rest.is_empty()
+                && rest
+                    .bytes()
+                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+        });
+        if !plain {
+            return Err(fail("expected a PUDDLE_AGENT_ name in capitals"));
+        }
+        if value.contains(['\0', '\n']) {
+            return Err(fail("the value contains a NUL or newline"));
+        }
+        if !named.insert(name.as_str()) {
+            return Err(fail("set twice"));
+        }
+    }
+    Ok(())
 }
 
 fn env_file(env: &GuestEnv) -> GuestFile {

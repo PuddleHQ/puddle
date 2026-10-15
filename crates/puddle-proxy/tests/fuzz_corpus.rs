@@ -75,6 +75,17 @@ fn the_head_parser_corpus_is_refused_or_accepted_without_breaking_a_limit() {
     }
 }
 
+/// Too big to keep in the corpus (it is over the 64 KiB head limit): made here.
+#[test]
+fn a_head_over_the_limit_is_too_large_not_a_target() {
+    let big = [
+        b"GET http://a.test/ HTTP/1.1\r\nX: ".to_vec(),
+        vec![b'a'; 70_000],
+    ]
+    .concat();
+    assert_eq!(fuzzing::head(&big), fuzzing::HeadOutcome::TooLarge);
+}
+
 #[test]
 fn the_connect_target_corpus_keeps_every_target_invariant() {
     for (_, bytes) in corpus("connect_target") {

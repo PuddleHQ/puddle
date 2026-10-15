@@ -188,7 +188,8 @@ impl From<StoreError> for ApiError {
             | StoreError::NotSwitchable
             | StoreError::RuleSetName(_)
             | StoreError::IdentityInvalid(_)
-            | StoreError::EnvInvalid(_) => Self::invalid(err.to_string()),
+            | StoreError::EnvInvalid(_)
+            | StoreError::ShellInitInvalid(_) => Self::invalid(err.to_string()),
             _ => Self::internal(&err),
         }
     }
@@ -338,6 +339,10 @@ mod tests {
             ),
             (
                 StoreError::EnvInvalid("x".into()),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                StoreError::ShellInitInvalid("x".into()),
                 StatusCode::UNPROCESSABLE_ENTITY,
             ),
             (

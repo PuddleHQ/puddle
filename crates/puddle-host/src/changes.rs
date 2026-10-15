@@ -32,10 +32,17 @@ pub(crate) trait Changes: Clone + Send + Sync + 'static {
 
     /// The same for every running workspace: a global variable changed, or events were missed.
     fn all_environments_changed(&self) -> impl Future<Output = ()> + Send;
+
+    /// Brings the folder a workspace's guest sees up to date with its saved shell init.
+    fn shell_init_changed(&self, workspace: WorkspaceName) -> impl Future<Output = ()> + Send;
+
+    /// The same for every workspace, after events were missed.
+    fn all_shell_inits_changed(&self) -> impl Future<Output = ()> + Send;
 }
 
-/// Applies each [`Event::WorkspaceGitChanged`], [`Event::WorkspaceEnvChanged`] and
-/// [`Event::GlobalEnvChanged`] of `events` to `service` until the task is aborted. A Git change's
+/// Applies each [`Event::WorkspaceGitChanged`], [`Event::WorkspaceEnvChanged`],
+/// [`Event::WorkspaceShellInitChanged`] and [`Event::GlobalEnvChanged`] of `events` to `service`
+/// until the task is aborted. A Git change's
 /// decrypt set follows in the order the changes arrive; the guest rewrites and the reads of the
 /// credential store run on their own, so a guest or a store that is slow to answer delays only
 /// itself.
@@ -59,6 +66,12 @@ pub(crate) fn follow<G: Changes>(mut events: Receiver<Event>, service: G) -> Joi
                             service.environment_changed(workspace).await;
                         });
                     }
+                    Ok(Event::WorkspaceShellInitChanged { workspace }) => {
+                        let service = service.clone();
+                        rewrites.spawn(async move {
+                            service.shell_init_changed(workspace).await;
+                        });
+                    }
                     Ok(Event::GlobalEnvChanged {}) => {
                         let service = service.clone();
                         rewrites.spawn(async move {
@@ -71,6 +84,7 @@ pub(crate) fn follow<G: Changes>(mut events: Receiver<Event>, service: G) -> Joi
                         let service = service.clone();
                         rewrites.spawn(async move {
                             service.all_environments_changed().await;
+                            service.all_shell_inits_changed().await;
                         });
                     }
                     Err(RecvError::Closed) => break,
@@ -127,6 +141,17 @@ mod tests {
 
         async fn all_environments_changed(&self) {
             self.calls.lock().unwrap().push("all env".to_owned());
+        }
+
+        async fn shell_init_changed(&self, workspace: WorkspaceName) {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("shell init {workspace}"));
+        }
+
+        async fn all_shell_inits_changed(&self) {
+            self.calls.lock().unwrap().push("all shell init".to_owned());
         }
     }
 
@@ -186,6 +211,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_change_to_a_shell_init_reaches_the_workspace_it_names() {
+        let hub = EventHub::default();
+        let fake = Fake::default();
+        let task = follow(hub.subscribe(), fake.clone());
+        hub.emit(Event::WorkspaceShellInitChanged {
+            workspace: WorkspaceName::new("alpha").unwrap(),
+        });
+        hub.emit(Event::WorkspaceShellInitRestored {
+            workspace: WorkspaceName::new("beta").unwrap(),
+        });
+        assert_eq!(calls_after(&fake, 1).await, ["shell init alpha"]);
+        task.abort();
+    }
+
+    #[tokio::test]
     async fn missed_events_make_every_running_workspace_be_looked_at_again() {
         // A hub that holds one event: sending three before the task runs makes it lag.
         let hub = EventHub::new(1);
@@ -197,6 +237,8 @@ mod tests {
         let calls = calls_after(&fake, 2).await;
         assert!(calls.contains(&"all".to_owned()), "{calls:?}");
         assert!(calls.contains(&"all env".to_owned()), "{calls:?}");
+        let calls = calls_after(&fake, 5).await;
+        assert!(calls.contains(&"all shell init".to_owned()), "{calls:?}");
         task.abort();
     }
 

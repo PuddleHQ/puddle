@@ -285,23 +285,34 @@ impl Injection {
     /// Brings the running `workspace`'s secrets up to date with the store: a new secret's stand-in
     /// is registered and its hosts join what the workspace decrypts, a changed value or host list
     /// replaces the old, a removed secret's stand-in stops being swapped. All of it applies from
-    /// the next request, with no restart. The guest's own environment is read at its next start.
+    /// the next request, with no restart. The guest's own environment is read at its next start; a
+    /// login shell opened later sees the change through the file the caller rewrites.
     ///
     /// A workspace that does not run reads its environment at its next start. A failure leaves
     /// what the workspace had, is logged and reaches the user as [`Event::WorkspaceEnvFailed`]: the
     /// next change tries again.
-    pub(crate) async fn environment_changed(&self, workspace: &WorkspaceName) {
+    ///
+    /// Returns the guest's variables as they are now (plain ones, a secret as its stand-in) when
+    /// the change applied, so the caller can bring the running guest's login-shell file in line.
+    pub(crate) async fn environment_changed(&self, workspace: &WorkspaceName) -> Option<GuestEnv> {
         let lock = self.environment_lock(workspace);
         let _environment = lock.lock().await;
         if !self.running().contains_key(workspace) {
-            return;
+            return None;
         }
         let applied = match self.environment_of(workspace).await {
-            Ok(resolved) => self.apply_environment(workspace, resolved),
+            Ok(resolved) => {
+                let guest = resolved.guest.clone();
+                self.apply_environment(workspace, resolved).map(|()| guest)
+            }
             Err(reason) => Err(reason),
         };
-        if let Err(reason) = applied {
-            self.failed(workspace, reason);
+        match applied {
+            Ok(guest) => Some(guest),
+            Err(reason) => {
+                self.failed(workspace, reason);
+                None
+            }
         }
     }
 

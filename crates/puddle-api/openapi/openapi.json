@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.11.0"
+    "version": "0.12.0"
   },
   "paths": {
     "/api/audit": {
@@ -5880,6 +5880,261 @@
         }
       }
     },
+    "/api/workspaces/{id}/shell-init": {
+      "get": {
+        "tags": [
+          "shell-init"
+        ],
+        "summary": "The shell init saved for a workspace; empty with `saved: false` when it has none.",
+        "operationId": "get_shell_init",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the saved shell init",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShellInitView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "shell-init"
+        ],
+        "summary": "Saves the shell init. In a running workspace the script first runs once in a throwaway shell\n(5 seconds at most): one that does not parse, or prints anything, or runs too long is refused\nwith what was seen and nothing is saved. The new text reaches the running workspace at once;\na stopped one gets it when it starts, and is checked then.",
+        "operationId": "put_shell_init",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShellInitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShellInitSaved"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "the text is refused, or the check found a problem; the message says what",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "shell-init"
+        ],
+        "summary": "Removes the shell init: the workspace's shells source nothing from puddle.",
+        "operationId": "delete_shell_init",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "removed"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace, or it has no shell init",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/workspaces/{id}/start": {
       "post": {
         "tags": [
@@ -8407,6 +8662,46 @@
                 "type": "string",
                 "enum": [
                   "workspace_env_failed"
+                ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A workspace's shell init was saved or removed. Refetch `GET /api/workspaces/{id}/shell-init`.",
+            "required": [
+              "workspace",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "workspace_shell_init_changed"
+                ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The workspace's own copy of its shell init (or the lines that load it) differed from the\nhost's when it started, and puddle put the host's back. Something inside the workspace\nchanged it: tell the user.",
+            "required": [
+              "workspace",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "workspace_shell_init_restored"
                 ]
               },
               "workspace": {
@@ -11027,6 +11322,78 @@
         },
         "additionalProperties": false
       },
+      "ShellInitRequest": {
+        "type": "object",
+        "description": "The script to save.",
+        "required": [
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "The whole script. Line ends become LF. At most 48 KiB, no NUL, not empty (to remove the\nshell init, delete it)."
+          }
+        }
+      },
+      "ShellInitSaved": {
+        "type": "object",
+        "description": "What a save did.",
+        "required": [
+          "shell_init",
+          "checked",
+          "unchecked_reason"
+        ],
+        "properties": {
+          "checked": {
+            "type": "boolean",
+            "description": "Whether the script was run in a throwaway shell in the running workspace and printed\nnothing. `false` when the workspace is not running: puddle checks it when it starts, and\nsays so as a problem if it fails then."
+          },
+          "shell_init": {
+            "$ref": "#/components/schemas/ShellInitView",
+            "description": "What is saved now."
+          },
+          "unchecked_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it was not checked, when `checked` is `false`."
+          }
+        }
+      },
+      "ShellInitView": {
+        "type": "object",
+        "description": "The shell init saved for a workspace.",
+        "required": [
+          "workspace",
+          "content",
+          "saved",
+          "changed_at"
+        ],
+        "properties": {
+          "changed_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When it was last saved, epoch ms; `null` when none is saved.",
+            "minimum": 0
+          },
+          "content": {
+            "type": "string",
+            "description": "The script; empty when none is saved."
+          },
+          "saved": {
+            "type": "boolean",
+            "description": "Whether one is saved. A workspace with none starts all the same."
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceName",
+            "description": "The workspace."
+          }
+        }
+      },
       "SignInAttempt": {
         "type": "object",
         "description": "The latest sign-in attempt to one proxy.",
@@ -11839,6 +12206,10 @@
     {
       "name": "environment",
       "description": "Environment variables and secrets, global and per workspace; a secret's value is write-only"
+    },
+    {
+      "name": "shell-init",
+      "description": "A workspace's shell init: the script its login shells source; the host's copy is the only source of truth"
     }
   ]
 }

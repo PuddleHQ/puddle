@@ -27,5 +27,6 @@ mod rule_sets;
 #[cfg(windows)]
 mod second_user;
 mod settings;
+mod shell_init;
 mod ui;
 mod workspaces;

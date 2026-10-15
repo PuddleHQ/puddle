@@ -169,6 +169,18 @@ pub enum Event {
         /// What went wrong, for the user.
         reason: String,
     },
+    /// A workspace's shell init was saved or removed. Refetch `GET /api/workspaces/{id}/shell-init`.
+    WorkspaceShellInitChanged {
+        /// The workspace.
+        workspace: WorkspaceName,
+    },
+    /// The workspace's own copy of its shell init (or the lines that load it) differed from the
+    /// host's when it started, and puddle put the host's back. Something inside the workspace
+    /// changed it: tell the user.
+    WorkspaceShellInitRestored {
+        /// The workspace.
+        workspace: WorkspaceName,
+    },
     /// A workspace's direct SSH did not work: its endpoint could not be opened or stopped
     /// accepting, or a client's session ended with an error. `reason` says what failed and may
     /// quote the runtime's error. The workspace keeps running; an `ssh` client that was refused
@@ -397,6 +409,8 @@ impl Event {
             | Self::WorkspaceGitChanged { workspace }
             | Self::WorkspaceEnvChanged { workspace }
             | Self::WorkspaceEnvFailed { workspace, .. }
+            | Self::WorkspaceShellInitChanged { workspace }
+            | Self::WorkspaceShellInitRestored { workspace }
             | Self::WorkspaceSshFailed { workspace, .. } => Some(workspace),
             Self::PendingOpened { request } => Some(&request.workspace),
             Self::RulesChanged {}
@@ -714,6 +728,20 @@ mod tests {
                     reason: "cannot read the secret T".into(),
                 },
                 r#"{"type":"workspace_env_failed","workspace":"box","reason":"cannot read the secret T"}"#,
+                Some(WorkspaceName::new("box").unwrap()),
+            ),
+            (
+                Event::WorkspaceShellInitChanged {
+                    workspace: WorkspaceName::new("box").unwrap(),
+                },
+                r#"{"type":"workspace_shell_init_changed","workspace":"box"}"#,
+                Some(WorkspaceName::new("box").unwrap()),
+            ),
+            (
+                Event::WorkspaceShellInitRestored {
+                    workspace: WorkspaceName::new("box").unwrap(),
+                },
+                r#"{"type":"workspace_shell_init_restored","workspace":"box"}"#,
                 Some(WorkspaceName::new("box").unwrap()),
             ),
             (

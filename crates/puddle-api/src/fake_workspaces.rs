@@ -17,8 +17,8 @@ use tokio::sync::watch;
 
 use crate::workspaces::{
     AttachMode, Attached, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DeleteCheck, LaunchError, Launcher,
-    Listing, NewWorkspace, Operation, RepoFindings, WorkspaceError, WorkspaceRecord,
-    WorkspaceService,
+    Listing, NewWorkspace, Operation, RepoFindings, ShellInitCheck, WorkspaceError,
+    WorkspaceRecord, WorkspaceService,
 };
 
 /// A [`Launcher`] that opens nothing and remembers what it was asked to open.
@@ -81,6 +81,10 @@ struct Entry {
 struct State {
     entries: BTreeMap<WorkspaceId, Entry>,
     fail_next: BTreeMap<Operation, String>,
+    /// What a shell-init check in a running workspace answers; passes when unset.
+    shell_init_check: Option<ShellInitCheck>,
+    /// The scripts the checks were asked about.
+    shell_init_checked: Vec<String>,
 }
 
 struct Inner {
@@ -136,6 +140,8 @@ impl FakeWorkspaces {
                 state: Mutex::new(State {
                     entries: BTreeMap::new(),
                     fail_next: BTreeMap::new(),
+                    shell_init_check: None,
+                    shell_init_checked: Vec::new(),
                 }),
                 events,
                 clock,
@@ -163,6 +169,18 @@ impl FakeWorkspaces {
         lock(&self.inner.state)
             .fail_next
             .insert(operation, reason.into());
+    }
+
+    /// Makes the shell-init check of a running workspace answer `answer` from now on (it passes
+    /// until this is called). A stopped workspace is never checked.
+    pub fn set_shell_init_check(&self, answer: ShellInitCheck) {
+        lock(&self.inner.state).shell_init_check = Some(answer);
+    }
+
+    /// The scripts the shell-init check was run on, in order.
+    #[must_use]
+    pub fn shell_init_checked(&self) -> Vec<String> {
+        lock(&self.inner.state).shell_init_checked.clone()
     }
 
     /// Replaces what deleting `id` would lose. `false` if there is no such workspace.
@@ -588,6 +606,28 @@ impl WorkspaceService for FakeWorkspaces {
                 ],
             );
             Ok(record)
+        })
+    }
+
+    fn check_shell_init<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        script: &'a str,
+    ) -> BoxFuture<'a, Result<ShellInitCheck, WorkspaceError>> {
+        Box::pin(async move {
+            let record = self.get(id).await?;
+            if record.status != WorkspaceStatus::Running {
+                return Ok(ShellInitCheck::NotRun(format!(
+                    "{} is not running; puddle checks the script when it starts",
+                    record.name
+                )));
+            }
+            let mut state = lock(&self.inner.state);
+            state.shell_init_checked.push(script.to_owned());
+            Ok(state
+                .shell_init_check
+                .clone()
+                .unwrap_or(ShellInitCheck::Passed))
         })
     }
 

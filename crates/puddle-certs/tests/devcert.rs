@@ -840,3 +840,144 @@ fn a_leaf_for_a_foreign_name_is_never_offered_to_the_system() {
     );
     leaf::check_trust_shape(report.material.cert_der()).unwrap();
 }
+
+// ---- failing hosts, odd certificates -------------------------------------------------------------
+
+/// A host whose answers are set per test; the key and the existing certificates are never used.
+struct Scripted {
+    existing: Result<Vec<ExistingCert>, TrustError>,
+    trusted: Result<bool, TrustError>,
+    trust: Result<TrustOutcome, TrustError>,
+}
+
+impl DevCertTrust for Scripted {
+    fn existing(&self) -> Result<Vec<ExistingCert>, TrustError> {
+        self.existing.clone()
+    }
+    fn export_key(&self, _: &[u8]) -> Result<PrivateKey, TrustError> {
+        Err(TrustError::Failed("not scripted".into()))
+    }
+    fn is_trusted(&self, _: &[u8]) -> Result<bool, TrustError> {
+        self.trusted.clone()
+    }
+    fn trust(&self, _: &[u8]) -> Result<TrustOutcome, TrustError> {
+        self.trust.clone()
+    }
+}
+
+#[test]
+fn a_store_that_cannot_be_read_is_reported_and_the_leaf_is_still_made() {
+    let dir = tempfile::tempdir().unwrap();
+    let m = DevCertManager::new(
+        dir.path(),
+        Scripted {
+            existing: Err(TrustError::Failed(
+                "opening the My store: os error 0x5".into(),
+            )),
+            trusted: Ok(true),
+            trust: Ok(TrustOutcome::Trusted),
+        },
+    );
+    let report = m.ensure(now()).unwrap();
+    assert_eq!(report.status, DevCertStatus::Trusted);
+    assert!(report.detail.as_deref().unwrap().contains("0x5"));
+    assert_eq!(report.material.origin, Origin::Generated);
+    assert_eq!(m.status(now()), DevCertStatus::Trusted);
+}
+
+#[test]
+fn every_way_the_trust_lookup_or_request_fails_is_a_state() {
+    let ensure = |trusted: Result<bool, TrustError>, trust: Result<TrustOutcome, TrustError>| {
+        let dir = tempfile::tempdir().unwrap();
+        let m = DevCertManager::new(
+            dir.path(),
+            Scripted {
+                existing: Ok(vec![]),
+                trusted,
+                trust,
+            },
+        );
+        let report = m.ensure(now()).unwrap();
+        (report.status, report.detail)
+    };
+    let boom = || TrustError::Failed("os error 0x5".into());
+    assert_eq!(
+        ensure(Err(TrustError::Unsupported), Ok(TrustOutcome::Trusted)).0,
+        DevCertStatus::Unsupported
+    );
+    assert_eq!(
+        ensure(Err(boom()), Ok(TrustOutcome::Trusted)),
+        (DevCertStatus::TrustFailed, Some("os error 0x5".into()))
+    );
+    assert_eq!(
+        ensure(Ok(false), Err(TrustError::Unsupported)).0,
+        DevCertStatus::Unsupported
+    );
+    assert_eq!(
+        ensure(Ok(false), Err(boom())),
+        (DevCertStatus::TrustFailed, Some("os error 0x5".into()))
+    );
+}
+
+#[test]
+fn a_certificate_that_is_not_readable_is_ignored_and_other_names_are_not_ours() {
+    let dir = tempfile::tempdir().unwrap();
+    let junk = ExistingCert {
+        der: b"junk".to_vec(),
+        key: KeyAccess::Exportable,
+        trusted: true,
+    };
+    let fake = FakeTrust::new(vec![junk]);
+    let report = manager(&dir, &fake).ensure(now()).unwrap();
+    assert_eq!(report.material.origin, Origin::Generated);
+    assert_eq!(report.skipped.len(), 0);
+
+    // An e-mail name in the SAN is neither a DNS name nor an address: it is left out of both lists,
+    // and a foreign address is refused by the shape check.
+    let mut params = CertificateParams::default();
+    params.is_ca = IsCa::ExplicitNoCa;
+    params.subject_alt_names = vec![
+        SanType::Rfc822Name("dev@example.com".try_into().unwrap()),
+        SanType::IpAddress("10.1.2.3".parse().unwrap()),
+    ];
+    params.custom_extensions = vec![CustomExtension::from_oid_content(
+        &ASPNET_MARKER_OID,
+        vec![6],
+    )];
+    let der = params
+        .self_signed(&KeyPair::generate().unwrap())
+        .unwrap()
+        .der()
+        .to_vec();
+    let info = leaf::inspect(&der).unwrap();
+    assert_eq!(info.dns_names.len(), 0);
+    assert_eq!(info.ip_addresses, ["10.1.2.3".parse::<IpAddr>().unwrap()]);
+    assert_eq!(
+        leaf::check_trust_shape(&der),
+        Err(leaf::ShapeError::ForeignName("10.1.2.3".into()))
+    );
+}
+
+#[test]
+fn the_host_without_trust_says_so_for_every_call_and_the_material_converts_to_pem() {
+    assert_eq!(Unsupported.existing(), Err(TrustError::Unsupported));
+    assert_eq!(
+        Unsupported.export_key(b"c").err(),
+        Some(TrustError::Unsupported)
+    );
+    assert_eq!(Unsupported.is_trusted(b"c"), Err(TrustError::Unsupported));
+    assert_eq!(Unsupported.trust(b"c"), Err(TrustError::Unsupported));
+
+    let dir = tempfile::tempdir().unwrap();
+    let report = DevCertManager::new(dir.path(), Unsupported)
+        .ensure(now())
+        .unwrap();
+    let cert_pem = report.material.cert_pem();
+    let parsed = pem::parse(&cert_pem).unwrap();
+    assert_eq!(parsed.tag(), "CERTIFICATE");
+    assert_eq!(parsed.contents(), report.material.cert_der());
+    let key_pem = report.material.key().to_pem();
+    let parsed = pem::parse(key_pem.as_str()).unwrap();
+    assert_eq!(parsed.tag(), "PRIVATE KEY");
+    assert_eq!(parsed.contents(), report.material.key().pkcs8_der());
+}

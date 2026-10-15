@@ -32,7 +32,7 @@ impl Root {
         params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
         params.distinguished_name.push(
             rcgen::DnType::CommonName,
-            format!("puddle lab interceptor root {}", prefix.as_str()),
+            format!("Puddle lab interceptor root {}", prefix.as_str()),
         );
         let cert = params.self_signed(&key).unwrap();
         Self {
@@ -78,14 +78,14 @@ impl Mitm {
     /// `extra` are the mode-specific arguments; `root` is installed as the signing CA.
     fn spawn(kind: &str, root: Option<&Root>, extra: &[String], addons: &[String]) -> Option<Self> {
         let bin = std::env::var_os("PUDDLE_MITMDUMP_BIN");
-        if !configured_or_skip(
+        // A missing program is a skip (`None`); `configured_or_skip` panics instead when required.
+        configured_or_skip(
             bin.is_some(),
             std::env::var_os("PUDDLE_REQUIRE_MITMPROXY").is_some(),
             "PUDDLE_REQUIRE_MITMPROXY",
             "set PUDDLE_MITMDUMP_BIN to run against mitmproxy",
-        ) {
-            return None;
-        }
+        )
+        .then_some(())?;
         let bin = bin.unwrap();
         require_file(&bin, "PUDDLE_MITMDUMP_BIN");
         let begun = Instant::now();

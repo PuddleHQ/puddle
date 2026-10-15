@@ -100,10 +100,11 @@ fn log_report(report: &DevCertReport) {
         .iter()
         .map(|s| format!("{}: {}", s.fingerprint, s.reason))
         .collect();
+    let detail = report.detail.as_deref().unwrap_or("");
     tracing::info!(
         status = ?report.status,
         origin = ?report.material.origin,
-        detail = report.detail.as_deref().unwrap_or(""),
+        detail,
         passed_over = ?skipped,
         "development certificate for the workspace"
     );

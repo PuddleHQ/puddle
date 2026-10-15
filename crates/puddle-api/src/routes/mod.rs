@@ -95,6 +95,7 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         ))
         .routes(routes!(
             workspaces::get_workspace,
+            workspaces::rename_workspace,
             workspaces::delete_workspace
         ))
         .routes(routes!(workspaces::start_workspace))

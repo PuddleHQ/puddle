@@ -143,6 +143,9 @@ impl SettingsRepo for FileSettings {
 pub(crate) struct Stored {
     pub(crate) id: String,
     pub(crate) name: String,
+    /// What the user renamed the workspace to; absent until they do. A label only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) display_name: Option<String>,
     pub(crate) repo_url: String,
     pub(crate) image: String,
     pub(crate) memory_mib: u32,
@@ -204,6 +207,14 @@ impl WorkspaceBook {
                 .map_err(|e| Self::error(format!("workspace {:?}: {e}", stored.id)))?;
             WorkspaceName::new(&stored.name)
                 .map_err(|e| Self::error(format!("workspace {:?}: {e}", stored.id)))?;
+            if let Some(shown) = &stored.display_name {
+                puddle_api::DisplayName::parse(shown).map_err(|e| {
+                    Self::error(format!(
+                        "workspace {:?} has a bad display name: {e}",
+                        stored.id
+                    ))
+                })?;
+            }
         }
         Ok(file.workspaces)
     }
@@ -228,6 +239,7 @@ mod tests {
         Stored {
             id: id.to_owned(),
             name: id.to_owned(),
+            display_name: None,
             repo_url: "https://example.org/a/b".to_owned(),
             image: "alpine:3".to_owned(),
             memory_mib: 1024,

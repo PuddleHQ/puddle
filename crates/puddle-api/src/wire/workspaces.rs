@@ -44,6 +44,9 @@ pub struct Workspace {
     pub id: String,
     /// The name of the workspace that runs it; events and per-workspace settings use this name.
     pub name: WorkspaceName,
+    /// What the user calls the workspace: the name until they rename it (`PATCH
+    /// /api/workspaces/{id}`). Show this one; `name` and `id` never change.
+    pub display_name: String,
     /// The HTTPS URL it was cloned from.
     pub repo_url: String,
     /// The image its workspace boots.
@@ -86,6 +89,7 @@ impl Workspace {
     /// The workspace as the API shows it, with whether direct SSH is on for it.
     #[must_use]
     pub fn new(record: domain::WorkspaceRecord, direct_ssh: bool) -> Self {
+        let display_name = record.label().to_owned();
         let domain::WorkspaceRecord {
             id,
             name,
@@ -103,6 +107,7 @@ impl Workspace {
         Self {
             id: id.to_string(),
             name,
+            display_name,
             repo_url,
             image,
             memory_mib: memory.get(),
@@ -283,6 +288,27 @@ pub struct DeleteWorkspaceRequest {
     /// nothing to lose": the delete goes ahead only if a fresh check is clean.
     #[serde(default)]
     pub fingerprint: Option<String>,
+}
+
+/// `PATCH /api/workspaces/{id}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RenameWorkspaceRequest {
+    /// The new display name: 1 to 60 characters, spaces at the ends dropped, no line breaks.
+    /// `null` goes back to the workspace's name. Required, so an empty body never resets it.
+    #[serde(deserialize_with = "Option::deserialize")]
+    #[schema(required = true)]
+    pub display_name: Option<String>,
+}
+
+impl RenameWorkspaceRequest {
+    pub(crate) fn into_display_name(self) -> Result<Option<domain::DisplayName>, ApiError> {
+        self.display_name
+            .as_deref()
+            .map(domain::DisplayName::parse)
+            .transpose()
+            .map_err(ApiError::invalid)
+    }
 }
 
 /// How to open the workspace in an editor.

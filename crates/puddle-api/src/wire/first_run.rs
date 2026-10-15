@@ -5,15 +5,28 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-/// What puddle knows about a development certificate on this computer (the ASP.NET one that
-/// `dotnet dev-certs` makes), for the one line the certificates step shows.
+/// Where puddle's development certificate stands on this computer: the one that makes HTTPS
+/// servers in a workspace open in the browser without a warning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DevCertificate {
-    /// puddle does not look for one yet.
+    /// puddle has not looked (no service is wired in this build or state).
     NotChecked,
-    /// Windows already trusts one, so puddle uses it in every workspace with no dialog.
+    /// Windows already trusts an ASP.NET development certificate, so puddle uses it in every
+    /// workspace with no dialog.
     ReusingExisting,
+    /// puddle made its own localhost certificate and Windows trusts it.
+    Trusted,
+    /// puddle's own certificate is not trusted yet: Windows asks the user once to confirm.
+    NeedsTrust,
+    /// The user declined Windows' confirmation. Workspaces still get the certificate; the
+    /// browser shows a warning until it is trusted.
+    TrustDeclined,
+    /// Trusting failed (for example a company policy forbids adding a certificate). puddle never
+    /// overrides a policy.
+    TrustFailed,
+    /// This operating system has no way to trust the certificate yet.
+    Unsupported,
 }
 
 /// Where the first-run flow stands.

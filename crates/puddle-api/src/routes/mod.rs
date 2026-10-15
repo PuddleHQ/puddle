@@ -11,6 +11,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use crate::credentials::CredentialService;
+use crate::dev_cert::DevCertService;
 use crate::doctor::DoctorService;
 use crate::events::EventHub;
 use crate::network_health::NetworkHealthService;
@@ -52,6 +53,8 @@ pub(crate) struct AppState {
     pub(crate) secrets: Arc<dyn SecretStore>,
     pub(crate) repos: Arc<dyn RepoService>,
     pub(crate) doctor: Arc<dyn DoctorService>,
+    /// Where the development certificate stands (the first-run flow's certificates step).
+    pub(crate) dev_cert: Arc<dyn DevCertService>,
     /// Becomes `true` when the server shuts down; ends SSE streams.
     pub(crate) shutdown: watch::Receiver<bool>,
 }

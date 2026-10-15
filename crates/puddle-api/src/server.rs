@@ -26,6 +26,7 @@ use tower_http::timeout::TimeoutLayer;
 
 use crate::auth::{Guard, guard};
 use crate::credentials::{CredentialService, NoCredentials, NoSecretStore};
+use crate::dev_cert::{DevCertService, NoDevCert};
 use crate::doctor::{DoctorService, NoDoctor};
 use crate::error::ApiError;
 use crate::events::EventHub;
@@ -139,6 +140,9 @@ pub struct Services {
     /// The system check. [`Services::new`] starts with [`NoDoctor`], which answers 503; set the
     /// real one with [`Services::with_doctor`].
     pub doctor: Arc<dyn DoctorService>,
+    /// Where the development certificate stands. [`Services::new`] starts with [`NoDevCert`],
+    /// which says "not checked"; set the real one with [`Services::with_dev_cert`].
+    pub dev_cert: Arc<dyn DevCertService>,
     /// The registry of puddle's own listeners that the workspace proxy's guard consults. The API
     /// registers its address here when it binds, so a workspace can't reach it even with the
     /// loopback toggle on. [`Services::new`] starts with an empty registry of its own; give the
@@ -167,6 +171,7 @@ impl Services {
             secrets: Arc::new(NoSecretStore),
             repos: Arc::new(NoRepos),
             doctor: Arc::new(NoDoctor),
+            dev_cert: Arc::new(NoDevCert),
             endpoints: PuddleEndpoints::new(),
         }
     }
@@ -203,6 +208,13 @@ impl Services {
     #[must_use]
     pub fn with_repos(mut self, repos: Arc<dyn RepoService>) -> Self {
         self.repos = repos;
+        self
+    }
+
+    /// These services reporting the development certificate's state through `dev_cert`.
+    #[must_use]
+    pub fn with_dev_cert(mut self, dev_cert: Arc<dyn DevCertService>) -> Self {
+        self.dev_cert = dev_cert;
         self
     }
 
@@ -289,6 +301,7 @@ impl ApiServer {
             secrets: services.secrets,
             repos: services.repos,
             doctor: services.doctor,
+            dev_cert: services.dev_cert,
             shutdown,
         };
         // System managed follows the stored setup from the first request on (rules spec R-41).

@@ -15,6 +15,42 @@ describe("the development certificate line", () => {
     expect(line.text).toMatch(/No trust dialog/);
   });
 
+  it("says every other state in words, and which of them warns", () => {
+    const cases = [
+      ["trusted", "ok", "Development certificate trusted", /restart Firefox/],
+      [
+        "needs_trust",
+        "info",
+        "Development certificate: Windows will ask once",
+        /asks you once/,
+      ],
+      [
+        "trust_declined",
+        "warn",
+        "Development certificate: not trusted",
+        /declined/,
+      ],
+      [
+        "trust_failed",
+        "warn",
+        "Development certificate: couldn't be trusted",
+        /never overrides a policy/,
+      ],
+      [
+        "unsupported",
+        "info",
+        "Development certificate: not trusted on this system yet",
+        /can't add it/,
+      ],
+    ] as const;
+    for (const [status, tone, title, text] of cases) {
+      const line = devCertificateLine(status);
+      expect(line.tone, status).toBe(tone);
+      expect(line.title, status).toBe(title);
+      expect(line.text, status).toMatch(text);
+    }
+  });
+
   it("says plainly that nothing was looked at yet", () => {
     for (const status of ["not_checked", undefined] as const) {
       const line = devCertificateLine(status);

@@ -139,3 +139,4 @@ crates/puddle-api/src/routes/identities.rs | None => true, | same row: every tok
 crates/puddle-host/src/vault.rs | tracing::warn!(%err, "credential store sweep skipped: the rows could not be read"); | a damaged environment-secret row makes the list of ids in use unreadable; only the store's own test can damage one (`the_ids_in_use_are_not_listed_when_a_secret_row_is_damaged`), and the arm only names the cause for the problem the user sees
 crates/puddle-host/src/vault.rs | "puddle could not read which tokens and secrets it still uses" | same arm: the cause it reports
 crates/puddle-host/src/vault.rs | })?; | same arm: the closing line of the call that returns early
+crates/puddle-host/src/dev_cert.rs | _ => DevCertificate::NotChecked, | `DevCertStatus` is non-exhaustive in puddle-certs; every state this version has is named above, so no test can build another

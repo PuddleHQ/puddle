@@ -1727,11 +1727,11 @@ export interface components {
          */
         DensityChoice: "comfortable" | "compact";
         /**
-         * @description What puddle knows about a development certificate on this computer (the ASP.NET one that
-         *     `dotnet dev-certs` makes), for the one line the certificates step shows.
+         * @description Where puddle's development certificate stands on this computer: the one that makes HTTPS
+         *     servers in a workspace open in the browser without a warning.
          * @enum {string}
          */
-        DevCertificate: "not_checked" | "reusing_existing";
+        DevCertificate: "not_checked" | "reusing_existing" | "trusted" | "needs_trust" | "trust_declined" | "trust_failed" | "unsupported";
         /** @description One line of the system check. */
         DoctorCheck: {
             /** @description Raw evidence: an OS error, the runtime's last output lines; `null` when there is none. */

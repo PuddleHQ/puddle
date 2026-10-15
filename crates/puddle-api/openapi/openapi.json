@@ -7743,10 +7743,15 @@
       },
       "DevCertificate": {
         "type": "string",
-        "description": "What puddle knows about a development certificate on this computer (the ASP.NET one that\n`dotnet dev-certs` makes), for the one line the certificates step shows.",
+        "description": "Where puddle's development certificate stands on this computer: the one that makes HTTPS\nservers in a workspace open in the browser without a warning.",
         "enum": [
           "not_checked",
-          "reusing_existing"
+          "reusing_existing",
+          "trusted",
+          "needs_trust",
+          "trust_declined",
+          "trust_failed",
+          "unsupported"
         ]
       },
       "DoctorCheck": {

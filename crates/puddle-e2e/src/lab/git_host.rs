@@ -701,6 +701,7 @@ fn cgi_response(out: &[u8]) -> Reply {
 /// name is connected to as it stands. Stops when dropped.
 pub struct NameProxy {
     port: u16,
+    names: Arc<Mutex<Vec<(String, SocketAddr)>>>,
     connects: Arc<Mutex<Vec<String>>>,
     task: JoinHandle<()>,
 }
@@ -714,12 +715,14 @@ impl Drop for NameProxy {
 impl NameProxy {
     /// Starts a proxy that sends tunnels to `names` (`name`, address) to those addresses.
     pub async fn start(names: &[(&str, SocketAddr)]) -> Self {
-        let names: Vec<(String, SocketAddr)> =
-            names.iter().map(|(n, a)| ((*n).to_owned(), *a)).collect();
+        let names: Arc<Mutex<Vec<(String, SocketAddr)>>> = Arc::new(Mutex::new(
+            names.iter().map(|(n, a)| ((*n).to_owned(), *a)).collect(),
+        ));
         let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let connects = Arc::new(Mutex::new(Vec::new()));
         let seen = connects.clone();
+        let names_for_self = names.clone();
         let task = tokio::spawn(async move {
             loop {
                 let (mut client, _) = listener.accept().await.unwrap();
@@ -742,7 +745,10 @@ impl NameProxy {
                         .to_owned();
                     lock(&seen).push(authority.clone());
                     let wanted = authority.split(':').next().unwrap_or_default();
-                    let target = names.iter().find(|(n, _)| n == wanted).map(|(_, a)| *a);
+                    let target = lock(&names)
+                        .iter()
+                        .find(|(n, _)| n == wanted)
+                        .map(|(_, a)| *a);
                     // A name the fake internet does not hold goes where it says, as through any
                     // open company proxy (the image pull goes through the same chain).
                     let connected = match target {
@@ -762,9 +768,15 @@ impl NameProxy {
         });
         Self {
             port,
+            names: names_for_self,
             connects,
             task,
         }
+    }
+
+    /// Sends tunnels for `name` to `target` from now on.
+    pub fn route(&self, name: &str, target: SocketAddr) {
+        lock(&self.names).push((name.to_owned(), target));
     }
 
     /// The port the proxy listens on (on `127.0.0.1`).

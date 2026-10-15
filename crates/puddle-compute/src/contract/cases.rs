@@ -64,6 +64,7 @@ cases! {
     create_env_reaches_exec => "observed on msb 0.7.6 (create-time env visible in exec); per-exec env: assumed",
     stdin_reaches_exec => "assumed (SDK stdin_bytes)",
     file_mount_is_read_only => "observed on msb 0.7.6 (a file mount is read-only)",
+    dir_mount_is_read_only => "assumed (bind + readonly on a directory); checked by the VM tests",
     root_disk_survives_restart_not_remove => "observed on msb 0.7.6 (root disk files persist across restart)",
     owned_disk_survives_restart_not_remove => "observed on msb 0.7.6 (owned disk kept across restart, gone with the sandbox)",
     named_volume_survives_restart_and_remove => "observed on msb 0.7.6 (volume data kept across restart, recreate and remove; reattach by name)",
@@ -527,6 +528,50 @@ async fn file_mount_is_read_only<R: Runtime>(c: &Case<'_, R>) -> Outcome {
         out.stderr_text().contains("Read-only file system"),
         "want EROFS, got {:?}",
         out.stderr_text()
+    );
+    Ok(())
+}
+
+async fn dir_mount_is_read_only<R: Runtime>(c: &Case<'_, R>) -> Outcome {
+    let host = c.host_tree("tree", &[("top", b"top-ok\n"), ("sub/deep", b"deep-ok\n")])?;
+    let s = spec(c, &c.sandbox("a")?)
+        .with_file_mount(FileMount::read_only_dir(host, path("/puddle-ct/tree")?));
+    let sb = step("create", c.runtime().create(s)).await?;
+    for (file, want) in [
+        ("/puddle-ct/tree/top", "top-ok\n"),
+        ("/puddle-ct/tree/sub/deep", "deep-ok\n"),
+    ] {
+        let got = read_file(&sb, file).await?;
+        check!(got.as_deref() == Some(want), "{file} reads {got:?}");
+    }
+    let missing = read_file(&sb, "/puddle-ct/tree/absent").await?;
+    check!(missing.is_none(), "an absent file read as {missing:?}");
+    for target in [
+        "/puddle-ct/tree/top",
+        "/puddle-ct/tree/sub/deep",
+        "/puddle-ct/tree/new",
+        "/puddle-ct/tree/sub/new",
+    ] {
+        let out = step(
+            "write below the mounted directory",
+            sb.exec(
+                ExecRequest::new("tee", [target])
+                    .with_stdin("x")
+                    .as_user("root"),
+            ),
+        )
+        .await?;
+        check!(!out.status.success(), "writing {target} succeeded");
+        check!(
+            out.stderr_text().contains("Read-only file system"),
+            "{target}: want EROFS, got {:?}",
+            out.stderr_text()
+        );
+    }
+    let still = read_file(&sb, "/puddle-ct/tree/top").await?;
+    check!(
+        still.as_deref() == Some("top-ok\n"),
+        "the mounted file changed to {still:?}"
     );
     Ok(())
 }

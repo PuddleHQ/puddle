@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use puddle_compute::ComputeError;
+use puddle_compute::{ComputeError, MountKind};
 
 /// The SDK's SSH server settings for [`puddle_compute::Sandbox::serve_ssh`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -162,12 +162,14 @@ impl MsbConfig {
     }
 
     /// Checks that `host` lies under [`MsbConfig::guest_share`] after resolving symlinks and
-    /// `..`, so a mount can never expose Puddle's own data.
+    /// `..`, so a mount can never expose Puddle's own data. The share root itself is refused: a
+    /// directory mount names a folder below it.
     ///
     /// # Errors
     ///
-    /// [`ComputeError::InvalidSpec`] when it doesn't, or when either path can't be resolved.
-    pub fn check_mount_source(&self, host: &Path) -> Result<(), ComputeError> {
+    /// [`ComputeError::InvalidSpec`] when it doesn't, when either path can't be resolved, or
+    /// when it isn't a file (or a directory, for [`MountKind::Dir`]) as the mount says.
+    pub fn check_mount_source(&self, host: &Path, kind: MountKind) -> Result<(), ComputeError> {
         let invalid = |reason: String| ComputeError::InvalidSpec { reason };
         let root = self.guest_share.canonicalize().map_err(|e| {
             invalid(format!(
@@ -182,7 +184,18 @@ impl MsbConfig {
             ))
         })?;
         if source.starts_with(&root) && source != root {
-            Ok(())
+            let (found, want) = match kind {
+                MountKind::File => (source.is_file(), "file"),
+                MountKind::Dir => (source.is_dir(), "directory"),
+            };
+            if found {
+                Ok(())
+            } else {
+                Err(invalid(format!(
+                    "mount source {} is not a {want}",
+                    host.display()
+                )))
+            }
         } else {
             Err(invalid(format!(
                 "mount source {} is outside the guest-share root {}",
@@ -287,9 +300,11 @@ mod tests {
         std::fs::write(data.join("puddle.db"), b"x").unwrap();
         let c = MsbConfig::new("/h", "/m", "/l", &share);
 
-        c.check_mount_source(&share.join("boot").join("boot.sh"))
+        c.check_mount_source(&share.join("boot").join("boot.sh"), MountKind::File)
             .unwrap();
-        let outside = c.check_mount_source(&data.join("puddle.db")).unwrap_err();
+        let outside = c
+            .check_mount_source(&data.join("puddle.db"), MountKind::File)
+            .unwrap_err();
         assert!(
             outside.to_string().contains("outside the guest-share root"),
             "{outside}"
@@ -301,17 +316,35 @@ mod tests {
             .join("..")
             .join("data")
             .join("puddle.db");
-        assert!(c.check_mount_source(&climb).is_err());
+        assert!(c.check_mount_source(&climb, MountKind::File).is_err());
         // The root itself isn't a file meant for a guest.
-        assert!(c.check_mount_source(&share).is_err());
+        assert!(c.check_mount_source(&share, MountKind::File).is_err());
+        assert!(c.check_mount_source(&share, MountKind::Dir).is_err());
         // A missing source or root is refused, not assumed fine.
-        let missing = c.check_mount_source(&share.join("nope")).unwrap_err();
+        let missing = c
+            .check_mount_source(&share.join("nope"), MountKind::File)
+            .unwrap_err();
         assert!(
             missing.to_string().contains("can't be resolved"),
             "{missing}"
         );
+        // The mount's kind must match what is on disk.
+        let wrong = c
+            .check_mount_source(&share.join("boot"), MountKind::File)
+            .unwrap_err();
+        assert!(wrong.to_string().contains("is not a file"), "{wrong}");
+        c.check_mount_source(&share.join("boot"), MountKind::Dir)
+            .unwrap();
+        let wrong = c
+            .check_mount_source(&share.join("boot").join("boot.sh"), MountKind::Dir)
+            .unwrap_err();
+        assert!(wrong.to_string().contains("is not a directory"), "{wrong}");
         let no_root = MsbConfig::new("/h", "/m", "/l", dir.0.join("absent"));
-        assert!(no_root.check_mount_source(&data.join("puddle.db")).is_err());
+        assert!(
+            no_root
+                .check_mount_source(&data.join("puddle.db"), MountKind::File)
+                .is_err()
+        );
     }
 
     #[cfg(unix)]
@@ -323,6 +356,9 @@ mod tests {
         std::fs::write(dir.0.join("secret"), b"x").unwrap();
         std::os::unix::fs::symlink(dir.0.join("secret"), share.join("link")).unwrap();
         let c = MsbConfig::new("/h", "/m", "/l", &share);
-        assert!(c.check_mount_source(&share.join("link")).is_err());
+        assert!(
+            c.check_mount_source(&share.join("link"), MountKind::File)
+                .is_err()
+        );
     }
 }

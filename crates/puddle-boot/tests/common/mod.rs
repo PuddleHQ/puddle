@@ -49,6 +49,12 @@ if [ "${1:-}" = merge-file ]; then
 fi
 echo $$ >>"$PUDDLE_ROOT/agent.pids"
 printf '%s\n' "${PUDDLE_AGENT_TEST:-unset}" >>"$PUDDLE_ROOT/agent.seen"
+echo "$PUDDLE_AGENT_CAPTURE" >>"$PUDDLE_ROOT/agent.capture"
+# With capture on, the real agent makes the stub answer on 198.18.0.1:53 (010012C6:0035); the file
+# `no-stub` plays a guest whose kernel can't take the rules.
+if [ "${PUDDLE_AGENT_CAPTURE:-}" = on ] && [ ! -f "$PUDDLE_ROOT/no-stub" ] && ! grep -q 010012C6 "$PUDDLE_ROOT/proc/net/udp" 2>/dev/null; then
+    echo "   3: 010012C6:0035 00000000:0000 07 00000000:00000000 00:00000000 00000000     0        0 1 2" >>"$PUDDLE_ROOT/proc/net/udp"
+fi
 grep -q 0C38 "$PUDDLE_ROOT/proc/net/tcp" || echo "   0: 0100007F:0C38 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1 1" >>"$PUDDLE_ROOT/proc/net/tcp"
 exec sleep 1000
 "#;
@@ -140,6 +146,15 @@ impl FakeRoot {
     /// Lines of the stub call log.
     pub(crate) fn calls(&self) -> Vec<String> {
         std::fs::read_to_string(self.root.join("calls"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// The `PUDDLE_AGENT_CAPTURE` each agent start saw, in start order.
+    pub(crate) fn agent_capture(&self) -> Vec<String> {
+        std::fs::read_to_string(self.root.join("agent.capture"))
             .unwrap_or_default()
             .lines()
             .map(str::to_owned)

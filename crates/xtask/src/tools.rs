@@ -159,6 +159,40 @@ impl Cargo {
         Ok(all)
     }
 
+    /// `cargo tree` of `packages` on `target` with the given dependency `edges` (`normal,build`
+    /// is what a release build links), default features or all of them, printed as
+    /// `package|features` for [`crate::features::leaks`].
+    ///
+    /// # Errors
+    ///
+    /// [`XtaskError::Tool`] when cargo fails.
+    pub fn feature_tree(
+        &self,
+        manifest: &Path,
+        packages: &[&str],
+        edges: &str,
+        target: &str,
+        all_features: bool,
+    ) -> Result<String> {
+        let mut cmd = self.command();
+        cmd.args([
+            "tree", "--edges", edges, "--prefix", "none", "--format", "{p}|{f}",
+        ])
+        .args(["--target", target, "--locked"])
+        .arg("--manifest-path")
+        .arg(manifest);
+        for package in packages {
+            cmd.args(["--package", package]);
+        }
+        if all_features {
+            cmd.arg("--all-features");
+        }
+        if self.offline {
+            cmd.arg("--offline");
+        }
+        run(&mut cmd)
+    }
+
     /// cargo-about's JSON report for the tree at `manifest`, with the config at `config`.
     ///
     /// # Errors

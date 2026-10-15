@@ -25,6 +25,9 @@ pub enum XtaskError {
         /// Exit status and the end of its stderr, or why it couldn't start.
         detail: String,
     },
+    /// A test-only feature is on in a shipped program's dependency tree.
+    #[error("a test-only feature would ship:\n{0}")]
+    Leak(String),
     /// Input that should be machine-made didn't parse.
     #[error("cannot parse {what}: {reason}")]
     Parse {

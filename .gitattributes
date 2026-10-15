@@ -2,3 +2,5 @@
 *.ps1 text eol=crlf
 *.png binary
 *.ico binary
+# Fuzz inputs are exact bytes (CRLF, NUL, invalid UTF-8): never converted.
+fuzz/corpus/** binary

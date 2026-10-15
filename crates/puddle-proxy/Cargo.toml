@@ -42,6 +42,9 @@ zeroize = { workspace = true }
 [features]
 # `testing`: in-memory policy, resolver and allow-any address check for tests (never in product code).
 testing = []
+# `fuzzing`: entry points for the cargo-fuzz targets in `fuzz/` and their checked-in corpus (never in
+# product code; the xtask release-feature check refuses it in a shipped build).
+fuzzing = []
 
 [dev-dependencies]
 base64 = { workspace = true }
@@ -54,7 +57,7 @@ tonic-prost = { workspace = true }
 proptest = { workspace = true }
 puddle-inject = { workspace = true, features = ["testing"] }
 puddle-logins = { workspace = true }
-puddle-proxy = { path = ".", features = ["testing"] }
+puddle-proxy = { path = ".", features = ["testing", "fuzzing"] }
 puddle-secrets = { workspace = true }
 puddle-store = { workspace = true }
 puddle-upstream = { workspace = true, features = ["testing"] }

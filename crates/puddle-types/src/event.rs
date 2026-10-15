@@ -169,6 +169,18 @@ pub enum Event {
         /// What went wrong, for the user.
         reason: String,
     },
+    /// A workspace's shell init was saved or removed. Refetch `GET /api/workspaces/{id}/shell-init`.
+    WorkspaceShellInitChanged {
+        /// The workspace.
+        workspace: WorkspaceName,
+    },
+    /// The workspace's own copy of its shell init (or the lines that load it) differed from the
+    /// host's when it started, and Puddle put the host's back. Something inside the workspace
+    /// changed it: tell the user.
+    WorkspaceShellInitRestored {
+        /// The workspace.
+        workspace: WorkspaceName,
+    },
     /// A workspace's direct SSH did not work: its endpoint could not be opened or stopped
     /// accepting, or a client's session ended with an error. `reason` says what failed and may
     /// quote the runtime's error. The workspace keeps running; an `ssh` client that was refused
@@ -409,6 +421,8 @@ impl Event {
             | Self::WorkspaceGitChanged { workspace }
             | Self::WorkspaceEnvChanged { workspace }
             | Self::WorkspaceEnvFailed { workspace, .. }
+            | Self::WorkspaceShellInitChanged { workspace }
+            | Self::WorkspaceShellInitRestored { workspace }
             | Self::WorkspaceSshFailed { workspace, .. } => Some(workspace),
             Self::PendingOpened { request } => Some(&request.workspace),
             Self::RulesChanged {}
@@ -819,6 +833,24 @@ mod tests {
     }
 
     #[test]
+    fn shell_init_events_have_fixed_shapes() {
+        for (event, json) in [
+            (
+                Event::WorkspaceShellInitChanged { workspace: name() },
+                r#"{"type":"workspace_shell_init_changed","workspace":"box"}"#,
+            ),
+            (
+                Event::WorkspaceShellInitRestored { workspace: name() },
+                r#"{"type":"workspace_shell_init_restored","workspace":"box"}"#,
+            ),
+        ] {
+            assert_eq!(serde_json::to_string(&event).unwrap(), json);
+            assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
+            assert_eq!(event.workspace(), Some(&name()));
+        }
+    }
+
+    #[test]
     fn per_workspace_json_is_unchanged_by_global_events() {
         // Events are not persisted today, but SSE clients parse them: the wire shape of
         // existing variants must stay exactly as it was (ADR 0002).
@@ -870,6 +902,8 @@ mod tests {
                 "global_env_changed",
                 "workspace_env_changed",
                 "workspace_env_failed",
+                "workspace_shell_init_changed",
+                "workspace_shell_init_restored",
                 "workspace_ssh_failed",
                 "credential_sign_in_needed",
                 "git_access_denied",

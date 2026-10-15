@@ -997,6 +997,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{id}/shell-init": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The shell init saved for a workspace; empty with `saved: false` when it has none. */
+        get: operations["get_shell_init"];
+        /**
+         * Saves the shell init. In a running workspace the script first runs once in a throwaway shell
+         *     (5 seconds at most): one that does not parse, or prints anything, or runs too long is refused
+         *     with what was seen and nothing is saved. The new text reaches the running workspace at once;
+         *     a stopped one gets it when it starts, and is checked then.
+         */
+        put: operations["put_shell_init"];
+        post?: never;
+        /** Removes the shell init: the workspace's shells source nothing from Puddle. */
+        delete: operations["delete_shell_init"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{id}/start": {
         parameters: {
             query?: never;
@@ -2005,6 +2029,16 @@ export interface components {
             reason: string;
             /** @enum {string} */
             type: "workspace_env_failed";
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
+        } | {
+            /** @enum {string} */
+            type: "workspace_shell_init_changed";
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
+        } | {
+            /** @enum {string} */
+            type: "workspace_shell_init_restored";
             /** @description The workspace. */
             workspace: components["schemas"]["WorkspaceName"];
         } | {
@@ -3146,6 +3180,41 @@ export interface components {
             wildcards_reach_local: boolean | null;
             /** @description Whether the browser window's zoom hotkeys work. */
             zoom_hotkeys: boolean | null;
+        };
+        /** @description The script to save. */
+        ShellInitRequest: {
+            /**
+             * @description The whole script. Line ends become LF. At most 48 KiB, no NUL, not empty (to remove the
+             *     shell init, delete it).
+             */
+            content: string;
+        };
+        /** @description What a save did. */
+        ShellInitSaved: {
+            /**
+             * @description Whether the script was run in a throwaway shell in the running workspace and printed
+             *     nothing. `false` when the workspace is not running: Puddle checks it when it starts, and
+             *     says so as a problem if it fails then.
+             */
+            checked: boolean;
+            /** @description What is saved now. */
+            shell_init: components["schemas"]["ShellInitView"];
+            /** @description Why it was not checked, when `checked` is `false`. */
+            unchecked_reason: string | null;
+        };
+        /** @description The shell init saved for a workspace. */
+        ShellInitView: {
+            /**
+             * Format: int64
+             * @description When it was last saved, epoch ms; `null` when none is saved.
+             */
+            changed_at: number | null;
+            /** @description The script; empty when none is saved. */
+            content: string;
+            /** @description Whether one is saved. A workspace with none starts all the same. */
+            saved: boolean;
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
         };
         /** @description The latest sign-in attempt to one proxy. */
         SignInAttempt: {
@@ -8350,6 +8419,221 @@ export interface operations {
             };
             /** @description busy */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_shell_init: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the saved shell init */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShellInitView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_shell_init: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ShellInitRequest"];
+            };
+        };
+        responses: {
+            /** @description saved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShellInitSaved"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the text is refused, or the check found a problem; the message says what */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_shell_init: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace, or it has no shell init */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

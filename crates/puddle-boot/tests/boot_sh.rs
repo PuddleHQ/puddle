@@ -212,6 +212,41 @@ fn files_dropped_from_the_plan_are_removed_and_trigger_the_ca_step() {
 }
 
 #[test]
+fn a_file_puddle_owns_that_was_changed_in_the_guest_is_reported_as_replaced() {
+    let fr = FakeRoot::new(&shells()[0]);
+    let first = fr.run(&full_plan("CA\n"));
+    assert!(first.status.success(), "{}", show(&first));
+    // New files are not "replaced", and neither is the second boot of an untouched one.
+    let stdout = |out: &std::process::Output| String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(!stdout(&first).contains("puddle-boot: replaced"));
+    let second = fr.run(&full_plan("CA\n"));
+    assert!(
+        !stdout(&second).contains("puddle-boot: replaced"),
+        "{}",
+        stdout(&second)
+    );
+
+    // The workspace edits one of Puddle's files, and puts a link where another was.
+    std::fs::write(fr.path("/etc/npmrc"), "registry=https://evil.example\n").unwrap();
+    std::fs::remove_file(fr.path(CA)).unwrap();
+    std::os::unix::fs::symlink("/etc/passwd", fr.path(CA)).unwrap();
+    let third = fr.run(&full_plan("CA\n"));
+    assert!(third.status.success(), "{}", show(&third));
+    let said = stdout(&third);
+    assert!(
+        said.contains("puddle-boot: replaced /etc/npmrc\n"),
+        "{said}"
+    );
+    assert!(
+        said.contains(&format!("puddle-boot: replaced {CA}\n")),
+        "{said}"
+    );
+    // Put back, and the host's text is what the guest holds.
+    assert_eq!(fr.read("/etc/npmrc"), "proxy=http://127.0.0.1:3128\n");
+    assert!(!fr.path(CA).is_symlink());
+}
+
+#[test]
 fn every_byte_survives_the_plan() {
     let fr = FakeRoot::new(&shells()[0]);
     let all: Vec<u8> = (0..=255).cycle().take(4096).collect();

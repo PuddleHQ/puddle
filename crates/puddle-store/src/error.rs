@@ -110,6 +110,9 @@ pub enum StoreError {
         /// The variable.
         name: String,
     },
+    /// A shell init was refused; the text says why.
+    #[error("{0}")]
+    ShellInitInvalid(String),
     /// An audit record couldn't be written.
     #[error(transparent)]
     Audit(#[from] AuditError),

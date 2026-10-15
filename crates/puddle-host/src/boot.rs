@@ -15,10 +15,12 @@ use puddle_compute::{FileMount, ImageConfig, SandboxSpec, VsockRoute};
 use puddle_guest_env::{ProxySettings, guest_proxy_config};
 use puddle_ipc::IpcRoot;
 use puddle_proxy::{Proxy, Route};
+use puddle_store::Store;
 use puddle_types::{GuestEnv, ImageRef, MemoryMib, WorkspaceId, WorkspaceName};
 use puddle_workspace::Layout;
 
 use crate::git_hosts::Authors;
+use crate::shell_init::{self, Copies};
 use crate::{GuestSettings, HostError};
 
 /// The guest vsock port the agent connects to; the route of every sandbox listens behind it.
@@ -31,6 +33,9 @@ const ASSET_DIR: &str = "puddle";
 /// extensions.
 const EDITOR_DATA_DIR: &str = "code-server";
 
+/// Folder below the guest-share root with one folder per workspace for its shell init.
+const SHELL_INIT_DIR: &str = "shell-init";
+
 /// The pieces shared by every sandbox of this host.
 pub(crate) struct BootKit {
     proxy: Arc<Proxy>,
@@ -42,6 +47,7 @@ pub(crate) struct BootKit {
     code_server: Option<PathBuf>,
     roots: CorporateRoots,
     git: Option<GitIdentity>,
+    shell_init: Copies,
 }
 
 /// What differs from one sandbox to the next, besides the image: the CA the sandbox's guest
@@ -68,6 +74,7 @@ impl BootKit {
         guest: &GuestSettings,
         proxy: Arc<Proxy>,
         roots: &CorporateRoots,
+        store: Arc<Store>,
     ) -> Result<Self, HostError> {
         let io = |what: &str, e: std::io::Error| HostError::GuestFiles(format!("{what}: {e}"));
         if !guest.agent_binary.is_file() {
@@ -99,7 +106,13 @@ impl BootKit {
             code_server,
             roots: roots.clone(),
             git: guest.git_identity.clone(),
+            shell_init: Copies::new(guest_share.join(SHELL_INIT_DIR), store),
         })
+    }
+
+    /// The folders that carry each workspace's shell init to its guest.
+    pub(crate) fn shell_init(&self) -> &Copies {
+        &self.shell_init
     }
 
     pub(crate) fn hook(&self) -> &BootHook {
@@ -134,7 +147,8 @@ impl BootKit {
         let mut builder = BootPlan::builder(image)
             .env(&env)
             .files(proxy.files)
-            .files(trust.guest_files());
+            .files(trust.guest_files())
+            .file(shell_init::loader());
         if let Some(step) = trust.boot_step() {
             builder = builder.step(step);
         }

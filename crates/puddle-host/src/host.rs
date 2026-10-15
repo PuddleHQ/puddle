@@ -475,7 +475,13 @@ impl<R: Runtime + Clone> Host<R> {
             .with_connection_log(connections.clone());
         steps.push(Step::UpstreamBuilt);
 
-        let kit = BootKit::new(&config.paths.guest_share(), &config.guest, proxy, &roots)?;
+        let kit = BootKit::new(
+            &config.paths.guest_share(),
+            &config.guest,
+            proxy,
+            &roots,
+            store.clone(),
+        )?;
         steps.push(Step::GuestFilesReady);
 
         // The runtime, with image pulls through the pull proxy and the corporate roots trusted.

@@ -88,5 +88,6 @@ pub use ui::{UiAssets, UiFile};
 pub use workspaces::{
     AttachMode, Attached, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DeleteCheck, DisplayName, LaunchError,
     Launcher, Listing, MAX_REPO_URL_LEN, NewWorkspace, NoWorkspaces, Operation, RepoFindings,
-    RepoUrl, WorkspaceError, WorkspaceRecord, WorkspaceService, check_rename, label_taken,
+    RepoUrl, ShellInitCheck, WorkspaceError, WorkspaceRecord, WorkspaceService, check_rename,
+    label_taken,
 };

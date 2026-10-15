@@ -313,6 +313,8 @@ async fn a_directory_mount_shows_its_tree_read_only() {
         b"d"
     );
     assert_eq!(run(&sb, "cat", &["/cache/tree/nope"]).await.status.code, 1);
+    // A path beside the directory mount is not part of it.
+    assert_eq!(run(&sb, "cat", &["/cache/file"]).await.stdout, b"t");
     for p in ["/cache/tree", "/cache/tree/sub", "/cache/tree/top"] {
         assert!(run(&sb, "test", &["-e", p]).await.status.success(), "{p}");
     }

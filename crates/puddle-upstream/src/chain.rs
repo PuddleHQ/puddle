@@ -289,6 +289,13 @@ impl Chain {
         self.sign_in_log.all()
     }
 
+    /// A receiver of the sign-ins to a proxy that began to fail (see [`SignIn`]): one notice per
+    /// proxy until a sign-in works again. The network-health report lists the same attempts.
+    #[must_use]
+    pub fn sign_in_failures(&self) -> tokio::sync::broadcast::Receiver<SignIn> {
+        self.sign_in_log.failures()
+    }
+
     /// The sign-in schemes this chain can answer a proxy with (lower case), for the report.
     #[must_use]
     pub fn auth_methods(&self) -> Vec<&'static str> {

@@ -829,27 +829,18 @@ async fn admit_into(
             .await
             {
                 Err(_) => {
-                    return left_to_upstream(proxy, host, "timed out").ok_or_else(|| {
-                        Refusal::new("504 Gateway Timeout", format!("resolving {host} timed out"))
-                            .failed(ConnectionOutcome::Timeout)
-                    });
+                    return unresolved(proxy, host, Unresolved::TimedOut);
                 }
                 Ok(Err(err)) => {
                     tracing::info!(%host, error = %err, "resolve failed");
-                    return left_to_upstream(proxy, host, "failed").ok_or_else(|| {
-                        Refusal::new("502 Bad Gateway", format!("could not resolve {host}"))
-                            .failed(ConnectionOutcome::ConnectFailed)
-                    });
+                    return unresolved(proxy, host, Unresolved::Failed);
                 }
                 Ok(Ok(addrs)) => addrs,
             }
         }
     };
     if addrs.is_empty() {
-        return left_to_upstream(proxy, host, "returned no addresses").ok_or_else(|| {
-            Refusal::new("502 Bad Gateway", format!("{host} has no addresses"))
-                .failed(ConnectionOutcome::ConnectFailed)
-        });
+        return unresolved(proxy, host, Unresolved::NoAddresses);
     }
     let resolved = addrs.len();
     let (addrs, ip_allows) = apply_ip_rules(proxy, request, addrs, event)?;
@@ -915,6 +906,37 @@ async fn admit_into(
 /// A name this host could not resolve, when the company proxy may resolve it instead: no address
 /// exists to guard, so the rules' decision on the name is all that applies (the audit shows no
 /// `resolved_ip`).
+/// How resolving a name here came to nothing.
+#[derive(Debug, Clone, Copy)]
+enum Unresolved {
+    TimedOut,
+    Failed,
+    NoAddresses,
+}
+
+/// A name this host could not resolve: the company proxy resolves it when that is on, else the
+/// guest gets a `504` for a timeout and a `502` for anything else, and the audit says which.
+fn unresolved(proxy: &Proxy, host: &Host, how: Unresolved) -> Result<Admitted, Refusal> {
+    let (why, refusal) = match how {
+        Unresolved::TimedOut => (
+            "timed out",
+            Refusal::new("504 Gateway Timeout", format!("resolving {host} timed out"))
+                .failed(ConnectionOutcome::Timeout),
+        ),
+        Unresolved::Failed => (
+            "failed",
+            Refusal::new("502 Bad Gateway", format!("could not resolve {host}"))
+                .failed(ConnectionOutcome::ConnectFailed),
+        ),
+        Unresolved::NoAddresses => (
+            "returned no addresses",
+            Refusal::new("502 Bad Gateway", format!("{host} has no addresses"))
+                .failed(ConnectionOutcome::ConnectFailed),
+        ),
+    };
+    left_to_upstream(proxy, host, why).ok_or(refusal)
+}
+
 fn left_to_upstream(proxy: &Proxy, host: &Host, why: &str) -> Option<Admitted> {
     if proxy
         .upstream

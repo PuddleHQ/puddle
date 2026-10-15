@@ -7,6 +7,8 @@ use puddle_secrets::{ChunkedStore, IndexedStore, KeyringStore, SecretStore, Swee
 use puddle_store::Store;
 use puddle_types::{Problem, Problems};
 
+use crate::proxy_passwords::ID_PREFIX;
+
 /// The operating system's credential store, with long values split over entries and an index of
 /// the ids kept, so [`sweep_in_background`] can find a value its row never named.
 pub(crate) fn os_vault() -> Arc<dyn SecretStore> {
@@ -23,10 +25,12 @@ fn sweep(vault: &dyn SecretStore, store: &Store) -> Result<Sweep, &'static str> 
         tracing::warn!(%err, "credential store sweep skipped: the rows could not be read");
         "Puddle could not read which tokens and secrets it still uses"
     })?;
-    vault.sweep_orphans(&|id| in_use.contains(id)).map_err(|_| {
-        tracing::warn!("credential store sweep skipped: the store did not answer");
-        "the operating system's credential store did not answer"
-    })
+    vault
+        .sweep_orphans(&|id| in_use.contains(id) || id.as_str().starts_with(ID_PREFIX))
+        .map_err(|_| {
+            tracing::warn!("credential store sweep skipped: the store did not answer");
+            "the operating system's credential store did not answer"
+        })
 }
 
 /// Tells the user what the sweep found: nothing when it removed what it should, a problem when a
@@ -144,6 +148,29 @@ mod tests {
         assert!(later.get(&id("env-named")).unwrap().is_some());
         assert!(later.get(&id("env-orphan")).unwrap().is_none());
         assert!(later.get(&id("tok-orphan")).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_sweep_keeps_the_proxy_sign_ins_which_no_row_names() {
+        let store =
+            Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
+        let disk = Arc::new(MemoryStore::new());
+        // An earlier run wrote a sign-in and an orphan; this run sweeps.
+        let earlier = Arc::new(IndexedStore::new(Shared(disk.clone())));
+        let passwords = crate::ProxyPasswords::new(earlier.clone());
+        let proxy = puddle_upstream::ProxyAddr::new("proxy.corp", 8080);
+        passwords.set(&proxy, "alice", "pw").unwrap();
+        put(earlier.as_ref(), "tok-orphan");
+        let later = Arc::new(IndexedStore::new(Shared(disk)));
+        assert_eq!(
+            sweep(later.as_ref(), &store),
+            Ok(Sweep {
+                removed: 1,
+                stuck: 0
+            })
+        );
+        let again = crate::ProxyPasswords::new(later);
+        assert_eq!(again.load().unwrap(), 1);
     }
 
     #[test]

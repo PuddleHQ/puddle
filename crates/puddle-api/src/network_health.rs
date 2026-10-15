@@ -201,6 +201,25 @@ pub fn forward_network_changes(discovery: &Discovery, sink: Arc<dyn EventSink>) 
     })
 }
 
+/// Sends [`Event::ProxySignInFailed`] whenever signing in to a company proxy begins to fail,
+/// until it is dropped. Spawns on the current tokio runtime.
+pub fn forward_proxy_sign_in_failures(chain: &Chain, sink: Arc<dyn EventSink>) -> JoinHandle<()> {
+    let mut failures = chain.sign_in_failures();
+    tokio::spawn(async move {
+        loop {
+            match failures.recv().await {
+                Ok(failed) => sink.emit(Event::ProxySignInFailed {
+                    proxy: failed.proxy.to_string(),
+                    scheme: failed.scheme,
+                }),
+                // Notices were dropped for a slow receiver: the next one still tells the user.
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+            }
+        }
+    })
+}
+
 fn millis(time: std::time::SystemTime) -> u64 {
     time.duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))

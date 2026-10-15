@@ -8752,6 +8752,34 @@
           },
           {
             "type": "object",
+            "description": "Signing in to the company proxy failed (it turned the credentials or the token down, or\nasked again and again), so what `GET /api/network-health` lists under sign-in has changed.\nSent once when a proxy goes from signed in (or never tried) to failing, not on every retry.\nNames the proxy and the scheme only, never a credential. Global: every subscriber gets it.",
+            "required": [
+              "proxy",
+              "scheme",
+              "type"
+            ],
+            "properties": {
+              "proxy": {
+                "type": "string",
+                "description": "The proxy as `host:port`."
+              },
+              "scheme": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The scheme that was sent (`Negotiate`, `NTLM`, `Basic`); `null` when none was."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "proxy_sign_in_failed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "The list of background problems changed (something Puddle does on its own failed, or the\ncause went away). Carries no data: refetch `GET /api/problems`. Global: every subscriber\ngets it.",
             "required": [
               "type"

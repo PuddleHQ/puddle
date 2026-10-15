@@ -101,10 +101,21 @@ describe("NetworkHealthStore", () => {
     source.resync();
     await new Promise((r) => setTimeout(r, 0));
     expect(calls).toBe(3);
+    // A proxy that turned the sign-in down changes the report's sign-in list.
+    source.emit({
+      type: "proxy_sign_in_failed",
+      proxy: "proxy.corp:8080",
+      scheme: "Basic",
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toBe(4);
+    source.emit({ type: "proxy_sign_in_failed", scheme: null });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toBe(4);
     stop();
     source.emit({ type: "network_changed", epoch: 10 });
     await new Promise((r) => setTimeout(r, 0));
-    expect(calls).toBe(3);
+    expect(calls).toBe(4);
   });
 
   it("works without a source", async () => {

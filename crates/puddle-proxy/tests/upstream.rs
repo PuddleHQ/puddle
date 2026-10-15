@@ -615,7 +615,7 @@ async fn outcome_of(
     let (code, _, tunnel) = guest.connect_to(&format!("{name}:443")).await;
     drop(tunnel);
     let events = rig.events(1).await;
-    (code, events[0].outcome)
+    (code, events.into_iter().next().unwrap().outcome)
 }
 
 #[tokio::test]

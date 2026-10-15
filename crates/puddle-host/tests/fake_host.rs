@@ -4549,23 +4549,22 @@ async fn a_check_that_cannot_run_is_not_a_verdict_on_the_script() {
     host.shutdown().await;
 }
 
-/// Waits for the problem `key` to be there (or gone) in the problem list.
+/// Waits for the problem `key` to be there (or gone) in the problem list, and says what it is.
 async fn problem_is(api: &Api, key: &str, present: bool) -> Option<(String, String)> {
+    let mut found = None;
     for _ in 0..500 {
-        let found = problems_of(api)
+        found = problems_of(api)
             .await
             .into_iter()
             .find(|p| p.0 == key)
             .map(|p| (p.2, p.3));
         if found.is_some() == present {
-            return found;
+            break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    panic!(
-        "the problem {key} was not {}",
-        if present { "raised" } else { "cleared" }
-    );
+    assert_eq!(found.is_some(), present, "the problem {key}: {found:?}");
+    found
 }
 
 /// Puts a plain file where the workspace's shell init folder is (or was), so nothing can be

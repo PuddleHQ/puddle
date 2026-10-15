@@ -175,8 +175,8 @@ struct Live<R: Runtime> {
     /// the environment it was made with (a restart cannot change it), so a start with other
     /// variables makes a new sandbox on the same volume instead of restarting this one.
     spec_env: GuestEnv,
-    /// Held while the running guest's author files are rewritten, so two changes never run the
-    /// boot hook at once.
+    /// Held while the running guest's author files or login-shell environment file are rewritten,
+    /// so two changes never run the boot hook at once.
     rewrite: Arc<tokio::sync::Mutex<()>>,
 }
 
@@ -1038,6 +1038,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             ),
             Err(reason) => {
                 tracing::warn!(workspace = %name, %reason, "the shell init was not checked");
+                inner.problems.raise(
+                    Problem::new(
+                        key,
+                        format!("puddle could not check {name}'s shell init"),
+                        format!("{reason}. It will be checked again at the next start."),
+                    )
+                    .about(name.clone()),
+                );
             }
         }
     }
@@ -1112,8 +1120,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         );
     }
 
-    /// After a boot: Puddle's directory and stale locks on the volume, the SSH endpoint, and the
-    /// handle the lifecycle stops at exit.
+    /// After a boot: Puddle's directory and stale locks on the volume, the notice and check for the
+    /// shell init, the SSH endpoint, and the handle the lifecycle stops at exit.
     async fn settle(&self, record: &WorkspaceRecord) -> Result<(), String> {
         let inner = &self.inner;
         let (id, name) = (&record.id, &record.name);

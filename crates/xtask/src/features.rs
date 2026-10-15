@@ -196,7 +196,7 @@ puddle-testing-tools v0.0.0 (/w/crates/x)|
 
     #[test]
     fn a_cargo_that_cannot_read_the_workspace_is_an_error_not_a_pass() {
-        let missing = std::path::Path::new("/nonexistent/Cargo.toml");
+        let missing = Path::new("/nonexistent/Cargo.toml");
         let err = check(&Cargo::from_env(true), missing, &["host-tuple"]).unwrap_err();
         assert!(err.to_string().contains("failed"), "{err}");
     }

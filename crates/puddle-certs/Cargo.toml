@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-certs"
-description = "Corporate root sync: the host's admin- and user-added roots, minus Disallowed, into the guest's CA bundle"
+description = "Corporate root sync (the host's admin- and user-added roots, minus Disallowed, into the guest's CA bundle) and the localhost development certificate"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,21 +11,25 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+pem = { workspace = true }
 puddle-ca = { workspace = true }
+puddle-fs = { workspace = true }
 puddle-types = { workspace = true }
+rcgen = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
+time = { workspace = true }
+x509-parser = { workspace = true }
+zeroize = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
 
 [dev-dependencies]
-pem = { workspace = true }
 proptest = { workspace = true }
 puddle-boot = { workspace = true }
 puddle-compute = { workspace = true }
-rcgen = { workspace = true }
-time = { workspace = true }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

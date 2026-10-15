@@ -75,7 +75,10 @@ async fn clone_fetch_push_and_ls_remote_work_and_git_never_sends_an_authorizatio
         .run_env(&clone, &["fetch", "-q", "origin"], &TRACE)
         .await;
     assert!(ran.ok, "{}", ran.stderr);
-    assert!(traced_headers(&ran.stderr, "authorization").is_empty());
+    assert_eq!(
+        traced_headers(&ran.stderr, "authorization"),
+        Vec::<String>::new()
+    );
 
     let ran = rig.run_env(&dir, &["ls-remote", &url], &TRACE).await;
     assert!(ran.ok, "{}", ran.stderr);
@@ -86,7 +89,10 @@ async fn clone_fetch_push_and_ls_remote_work_and_git_never_sends_an_authorizatio
         .run_env(&clone, &["push", "-q", "origin", "main"], &TRACE)
         .await;
     assert!(ran.ok, "{}", ran.stderr);
-    assert!(traced_headers(&ran.stderr, "authorization").is_empty());
+    assert_eq!(
+        traced_headers(&ran.stderr, "authorization"),
+        Vec::<String>::new()
+    );
     let local = rig.run(&clone, &["rev-parse", "HEAD"]).await.stdout;
     assert_eq!(
         head_of(&rig.host, "acme/web", "main"),
@@ -521,13 +527,13 @@ async fn hg17_the_workspaces_own_authorization_goes_out_as_sent_and_nothing_is_a
         )
         .await;
     assert_eq!(r.status, 200);
-    assert!(
+    assert_eq!(
         rig.host
             .seen()
             .last()
             .unwrap()
-            .headers_named("proxy-authorization")
-            .is_empty()
+            .headers_named("proxy-authorization"),
+        Vec::<&str>::new()
     );
 }
 

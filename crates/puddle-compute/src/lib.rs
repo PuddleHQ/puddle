@@ -57,5 +57,5 @@ pub use runtime::{
     Capabilities, ImageConfig, Runtime, Sandbox, SandboxInfo, SshStream, VolumeInfo, VolumeSpec,
 };
 pub use spec::{
-    DiskSize, FileMount, NetworkPolicy, OwnedDisk, SandboxSpec, VolumeMount, VsockRoute,
+    DiskSize, FileMount, MountKind, NetworkPolicy, OwnedDisk, SandboxSpec, VolumeMount, VsockRoute,
 };

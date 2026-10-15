@@ -49,14 +49,26 @@ impl VsockRoute {
     }
 }
 
-/// A host file mounted **read-only** at a guest path (virtiofs; a guest write gets `EROFS`).
-/// Puddle uses these for the agent binary, the boot hook and its inputs.
+/// What a [`FileMount`]'s host path is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MountKind {
+    /// One host file appears at the guest path.
+    File,
+    /// A host directory appears at the guest path with its whole tree.
+    Dir,
+}
+
+/// A host file or directory mounted **read-only** at a guest path (virtiofs; a guest write gets
+/// `EROFS`, also for new files in a directory mount). Puddle uses files for the agent binary,
+/// the boot hook and its inputs, and directories for shared caches and the dev CA.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileMount {
-    /// The file on the host.
+    /// The file or directory on the host.
     pub host: PathBuf,
     /// Where it appears in the guest.
     pub guest: GuestPath,
+    /// Whether `host` is a file or a directory.
+    pub kind: MountKind,
 }
 
 impl FileMount {
@@ -66,6 +78,18 @@ impl FileMount {
         Self {
             host: host.into(),
             guest,
+            kind: MountKind::File,
+        }
+    }
+
+    /// Mounts host directory `host` read-only at `guest`: the guest sees its whole tree and
+    /// can change none of it.
+    #[must_use]
+    pub fn read_only_dir(host: impl Into<PathBuf>, guest: GuestPath) -> Self {
+        Self {
+            host: host.into(),
+            guest,
+            kind: MountKind::Dir,
         }
     }
 }
@@ -399,6 +423,30 @@ mod tests {
             .with_route(VsockRoute::new(5000, "/x"))
             .with_route(VsockRoute::new(5000, "/y"));
         assert!(reason(&twice).contains("routed twice"));
+    }
+
+    #[test]
+    fn a_directory_mount_is_its_own_kind_and_conflicts_like_a_file_mount() {
+        let file = FileMount::read_only("/h/f", p("/cache/f"));
+        let dir = FileMount::read_only_dir("/h/d", p("/cache"));
+        assert_eq!((file.kind, dir.kind), (MountKind::File, MountKind::Dir));
+        assert_eq!(dir.host, PathBuf::from("/h/d"));
+        assert!(
+            reason(&base().with_file_mount(dir.clone()).with_file_mount(file)).contains("overlap")
+        );
+        let twice = base()
+            .with_file_mount(dir.clone())
+            .with_file_mount(FileMount::read_only_dir("/h/e", p("/cache")));
+        assert!(reason(&twice).contains("overlap"));
+        let under_volume = base()
+            .with_file_mount(dir)
+            .with_volume(VolumeMount::named(v("ws-a"), p("/cache/ws")));
+        assert!(reason(&under_volume).contains("overlap"));
+        base()
+            .with_file_mount(FileMount::read_only_dir("/h/d", p("/cache")))
+            .with_file_mount(FileMount::read_only_dir("/h/e", p("/cache2")))
+            .validate()
+            .unwrap();
     }
 
     #[test]

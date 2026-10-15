@@ -158,6 +158,24 @@ impl<R: Runtime> Case<'_, R> {
         Ok(path)
     }
 
+    /// Writes a host directory tree for a directory mount: each `(relative path, contents)` pair
+    /// becomes a file, with its parent directories. Returns the directory.
+    ///
+    /// # Errors
+    ///
+    /// When a file can't be written.
+    pub fn host_tree(&self, tag: &str, files: &[(&str, &[u8])]) -> Result<PathBuf, String> {
+        let root = self.env.host_dir.join(format!("{}-{tag}", self.scope));
+        for (rel, contents) in files {
+            let path = root.join(rel);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(&path, contents).map_err(|e| e.to_string())?;
+        }
+        Ok(root)
+    }
+
     /// A host endpoint for a vsock route: a named pipe path on Windows, a socket path elsewhere.
     #[must_use]
     pub fn route_endpoint(&self, tag: &str) -> PathBuf {
@@ -202,7 +220,8 @@ impl<R: Runtime> Case<'_, R> {
         if let Ok(entries) = std::fs::read_dir(&self.env.host_dir) {
             for entry in entries.flatten() {
                 if mine(&entry.file_name().to_string_lossy()) {
-                    let _ = std::fs::remove_file(entry.path());
+                    let path = entry.path();
+                    let _ = std::fs::remove_file(&path).or_else(|_| std::fs::remove_dir_all(&path));
                 }
             }
         }
@@ -528,6 +547,7 @@ macro_rules! contract_tests {
             create_env_reaches_exec,
             stdin_reaches_exec,
             file_mount_is_read_only,
+            dir_mount_is_read_only,
             root_disk_survives_restart_not_remove,
             owned_disk_survives_restart_not_remove,
             named_volume_survives_restart_and_remove,

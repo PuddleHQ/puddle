@@ -98,7 +98,7 @@ async fn the_suite_catches_lost_exit_codes() {
 }
 
 #[tokio::test]
-async fn the_suite_catches_a_writable_file_mount() {
+async fn the_suite_catches_a_writable_file_or_directory_mount() {
     use puddle_compute::ExecOutput;
     let rt = FakeRuntime::new();
     rt.on_exec(
@@ -108,7 +108,10 @@ async fn the_suite_catches_a_writable_file_mount() {
         },
     );
     let failed = failing_cases(rt).await;
-    assert_eq!(failed, ["file_mount_is_read_only"]);
+    assert_eq!(
+        failed,
+        ["file_mount_is_read_only", "dir_mount_is_read_only"]
+    );
 }
 
 #[tokio::test]

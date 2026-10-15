@@ -357,7 +357,9 @@ impl Runtime for MsbRuntime {
         Box::pin(async move {
             spec.validate()?;
             for mount in &spec.file_mounts {
-                self.inner.config.check_mount_source(&mount.host)?;
+                self.inner
+                    .config
+                    .check_mount_source(&mount.host, mount.kind)?;
             }
             let name = spec.name.clone();
             if self.record(name.as_str()).await?.is_some() {

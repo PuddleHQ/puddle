@@ -97,7 +97,7 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
     ),
     set(
         "SandboxBuilder::volume",
-        "file mounts: bind + readonly; named volumes: named / named_with(ensure_exists, disk, size); owned disks: owned_with(disk, size)",
+        "file and directory mounts: bind + readonly; named volumes: named / named_with(ensure_exists, disk, size); owned disks: owned_with(disk, size)",
         "read-only mounts only; sources under the guest-share root",
     ),
     set(

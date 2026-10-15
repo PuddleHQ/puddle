@@ -16,6 +16,9 @@
 //! | `PUDDLE_AGENT_OOM_POLL_MS` | `250` | how often the counter is read |
 //! | `PUDDLE_AGENT_OOM_GRACE_MS` | `1000` | how long a counter increase waits for its kernel log line before it is reported unnamed |
 //! | `PUDDLE_AGENT_ENTRYPOINT_EXIT` | `/run/puddle/entrypoint.exit` | where the boot hook's wrapper writes the image entrypoint's exit, read once a second and reported to the host; `off` turns the watch off |
+//! | `PUDDLE_AGENT_PORTS` | `1` | `0` turns the listening-ports watch off (the workspace's Ports tab then lists nothing; forwards to a port still work) |
+//! | `PUDDLE_AGENT_PORTS_DIR` | `/proc/net` | where the `tcp` and `tcp6` socket tables are read |
+//! | `PUDDLE_AGENT_PORTS_POLL_MS` | `1000` | how often they are read |
 //! | `PUDDLE_AGENT_DNS` | `off` | the stub DNS server for tools that ignore the proxy settings: `on` (`198.18.0.1:53`), `off`, or `<ipv4>:<port>`. Binds exactly that address, retrying until an interface has it |
 //! | `PUDDLE_AGENT_DNS_TABLE` | `/run/puddle/dns-table` | where the stub keeps its name ⇄ address table across restarts; `off` keeps none |
 //! | `PUDDLE_AGENT_EDITOR_DIR` (+ `_PORT`, `_DATA`, `_FOLDER`, `_GRACE`) | unset | the browser editor's server: the release folder switches it on; the rest are in `puddle_agent_proto::editor` |
@@ -127,6 +130,24 @@ impl Default for EntrypointWatch {
     }
 }
 
+/// Where and how often the listening-ports watch looks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortWatch {
+    /// The folder with the kernel's `tcp` and `tcp6` socket tables (`/proc/net`).
+    pub dir: PathBuf,
+    /// Interval between reads.
+    pub poll: Duration,
+}
+
+impl Default for PortWatch {
+    fn default() -> Self {
+        Self {
+            dir: PathBuf::from("/proc/net"),
+            poll: Duration::from_secs(1),
+        }
+    }
+}
+
 /// The Docker bridge listener.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BridgeConfig {
@@ -206,6 +227,8 @@ pub struct Config {
     pub window: u32,
     /// OOM watch sources, `None` when the watch is off.
     pub oom: Option<OomSources>,
+    /// The listening-ports watch, `None` when it is off.
+    pub ports: Option<PortWatch>,
     /// The stub DNS server, `None` when it is off.
     pub dns: Option<DnsConfig>,
     /// The watch on the image entrypoint's exit, `None` when it is off.
@@ -228,6 +251,7 @@ impl Default for Config {
             vsock_buffer: DEFAULT_VSOCK_BUFFER,
             window: STREAM_WINDOW,
             oom: Some(OomSources::default()),
+            ports: Some(PortWatch::default()),
             dns: None,
             entrypoint: Some(EntrypointWatch::default()),
             editor: None,
@@ -250,6 +274,26 @@ pub struct ConfigError {
 }
 
 impl Config {
+    /// The ports the agent itself serves in the guest (the proxy, the capture listener, the
+    /// editor server). The ports watch leaves them out of its reports and the host cannot forward
+    /// to them: they are Puddle's plumbing, not something the user runs.
+    #[must_use]
+    pub fn reserved_ports(&self) -> Vec<u16> {
+        let mut ports = vec![self.listen.port()];
+        if let Some(bridge) = &self.bridge {
+            ports.push(bridge.addr.port());
+        }
+        if let Some(capture) = &self.capture {
+            ports.push(capture.port);
+        }
+        if let Some(editor) = &self.editor {
+            ports.push(editor.server.port);
+        }
+        ports.sort_unstable();
+        ports.dedup();
+        ports
+    }
+
     /// Reads the settings through `get` (the process environment in `main`). Unset variables
     /// take their defaults; a set but invalid one is an error, never silently replaced.
     ///
@@ -322,6 +366,19 @@ impl Config {
                 exit_file: path(var, &v)?,
                 ..EntrypointWatch::default()
             }),
+        };
+        let mut ports = PortWatch::default();
+        if let Some((v, var)) = lookup("PUDDLE_AGENT_PORTS_DIR") {
+            ports.dir = path(var, &v)?;
+        }
+        if let Some((v, var)) = lookup("PUDDLE_AGENT_PORTS_POLL_MS") {
+            ports.poll = millis(var, &v)?;
+        }
+        config.ports = match lookup("PUDDLE_AGENT_PORTS") {
+            None => Some(ports),
+            Some((v, _)) if v == "1" => Some(ports),
+            Some((v, _)) if v == "0" => None,
+            Some((v, var)) => return Err(bad(var, &v, "expected 0 or 1")),
         };
         let mut dns = DnsConfig::default();
         if let Some((v, var)) = lookup("PUDDLE_AGENT_DNS_TABLE") {
@@ -495,6 +552,46 @@ mod tests {
         assert_eq!(c.target, Target::Vsock { cid: 2, port: 5000 });
         assert_eq!(c.vsock_buffer, 16 << 20);
         assert_eq!(c.oom, Some(OomSources::default()));
+        assert_eq!(c.ports, Some(PortWatch::default()));
+    }
+
+    #[test]
+    fn the_ports_watch_has_its_own_switches_and_the_agents_own_ports_are_reserved() {
+        let c = from(&[
+            ("PUDDLE_AGENT_PORTS_DIR", "/x/net"),
+            ("PUDDLE_AGENT_PORTS_POLL_MS", "50"),
+        ])
+        .unwrap();
+        assert_eq!(
+            c.ports,
+            Some(PortWatch {
+                dir: PathBuf::from("/x/net"),
+                poll: Duration::from_millis(50)
+            })
+        );
+        assert_eq!(from(&[("PUDDLE_AGENT_PORTS", "0")]).unwrap().ports, None);
+        for (var, value) in [
+            ("PUDDLE_AGENT_PORTS", "yes"),
+            ("PUDDLE_AGENT_PORTS_DIR", ""),
+            ("PUDDLE_AGENT_PORTS_POLL_MS", "0"),
+        ] {
+            assert_eq!(from(&[(var, value)]).unwrap_err().var, var);
+        }
+        // The proxy and the Docker bridge listener share a port by default; the others follow
+        // what is switched on.
+        assert_eq!(from(&[]).unwrap().reserved_ports(), [3128]);
+        let c = from(&[
+            ("PUDDLE_AGENT_BRIDGE", "172.17.0.1:3130"),
+            ("PUDDLE_AGENT_CAPTURE", "on"),
+            ("PUDDLE_AGENT_CAPTURE_PORT", "3129"),
+            ("PUDDLE_AGENT_EDITOR_DIR", "/e"),
+            ("PUDDLE_AGENT_EDITOR_DATA", "/d"),
+            ("PUDDLE_AGENT_EDITOR_FOLDER", "/f"),
+            ("PUDDLE_AGENT_EDITOR_PORT", "41337"),
+            ("PUDDLE_AGENT_EDITOR_GRACE", "300"),
+        ])
+        .unwrap();
+        assert_eq!(c.reserved_ports(), [3128, 3129, 3130, 41_337]);
     }
 
     #[test]

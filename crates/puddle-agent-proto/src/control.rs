@@ -30,6 +30,10 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// Longest control line the host accepts, newline included. A longer line ends the stream.
 pub const MAX_LINE: usize = 4096;
 
+/// Most ports one [`AgentMessage::Ports`] carries: five digits and a comma each, so a full report
+/// stays well inside [`MAX_LINE`].
+pub const MAX_PORTS: usize = 512;
+
 /// One message from the agent to the host.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -94,6 +98,14 @@ pub enum AgentMessage {
         kind: StubDnsTrouble,
         /// How often since the last report of this kind.
         count: u32,
+    },
+    /// Every TCP port a process in the guest listens on right now, sorted, without the ports the
+    /// agent itself serves. Sent whenever the set changes (and once at start), and always the whole
+    /// set: the latest report replaces the one before. At most [`MAX_PORTS`] ports; the claim is the
+    /// guest's own, and the host clamps it before use.
+    Ports {
+        /// The ports, ascending.
+        listening: Vec<u16>,
     },
     /// A message type this side doesn't know (from a newer agent). Ignored.
     #[serde(other)]
@@ -185,6 +197,17 @@ impl AgentMessage {
     #[must_use]
     pub fn stub_dns(kind: StubDnsTrouble, count: u32) -> Self {
         Self::StubDns { kind, count }
+    }
+
+    /// An [`AgentMessage::Ports`] for `listening`: sorted, without duplicates or port 0, cut to
+    /// [`MAX_PORTS`].
+    #[must_use]
+    pub fn ports(listening: impl IntoIterator<Item = u16>) -> Self {
+        let mut listening: Vec<u16> = listening.into_iter().filter(|p| *p != 0).collect();
+        listening.sort_unstable();
+        listening.dedup();
+        listening.truncate(MAX_PORTS);
+        Self::Ports { listening }
     }
 
     /// The message as one control line, newline included.
@@ -302,6 +325,28 @@ mod tests {
             AgentMessage::from_line(&line).unwrap(),
             AgentMessage::oom_kill(None, None)
         );
+    }
+
+    #[test]
+    fn a_ports_report_is_sorted_and_clean_and_always_fits_a_line() {
+        assert_eq!(
+            AgentMessage::ports([8080, 22, 8080, 0, 3000]),
+            AgentMessage::Ports {
+                listening: vec![22, 3000, 8080]
+            }
+        );
+        let line = AgentMessage::ports([3000]).to_line().unwrap();
+        assert_eq!(line, b"{\"type\":\"ports\",\"listening\":[3000]}\n");
+        assert_eq!(
+            AgentMessage::from_line(&line).unwrap(),
+            AgentMessage::ports([3000])
+        );
+        let widest = AgentMessage::ports((60_000..).take(MAX_PORTS + 100));
+        let AgentMessage::Ports { listening } = &widest else {
+            unreachable!("ports() builds a Ports message");
+        };
+        assert_eq!(listening.len(), MAX_PORTS);
+        assert!(widest.to_line().unwrap().len() < MAX_LINE);
     }
 
     #[test]

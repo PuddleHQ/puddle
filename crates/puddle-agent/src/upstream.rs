@@ -8,15 +8,17 @@
 
 use std::io;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use futures_util::StreamExt;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
+use tokio::task::{JoinHandle, JoinSet};
 use tokio_yamux::{Control, Session, StreamHandle};
 
 use crate::config::{Config, Target};
+use crate::forward::Forwards;
 
 /// A connection to the host before yamux runs on it.
 trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
@@ -41,6 +43,8 @@ pub struct Upstream {
     yamux: tokio_yamux::Config,
     slots: Vec<Mutex<Option<Slot>>>,
     next: AtomicUsize,
+    /// What the host's own streams (port forwards) are served by.
+    forwards: Arc<Forwards>,
 }
 
 impl std::fmt::Debug for Upstream {
@@ -63,6 +67,7 @@ impl Upstream {
             yamux: puddle_agent_proto::yamux::client_config_with_window(config.window),
             slots: (0..config.mux.max(1)).map(|_| Mutex::new(None)).collect(),
             next: AtomicUsize::new(0),
+            forwards: Forwards::new(config.reserved_ports()),
         }
     }
 
@@ -88,8 +93,24 @@ impl Upstream {
         }
         let mut session = Session::new_client(self.dial().await?, self.yamux);
         let mut control = session.control();
-        // Driving the session moves its frames; the host never opens streams to us.
-        let driver = tokio::spawn(async move { while let Some(Ok(_)) = session.next().await {} });
+        // Driving the session moves its frames. The only streams the host opens are port
+        // forwards; they end with the session.
+        let forwards = Arc::clone(&self.forwards);
+        let driver = tokio::spawn(async move {
+            let mut serving = JoinSet::new();
+            loop {
+                tokio::select! {
+                    next = session.next() => match next {
+                        Some(Ok(stream)) => {
+                            let forwards = Arc::clone(&forwards);
+                            serving.spawn(async move { forwards.serve(stream).await });
+                        }
+                        _ => return,
+                    },
+                    Some(_) = serving.join_next(), if !serving.is_empty() => {}
+                }
+            }
+        });
         let stream = control
             .open_stream()
             .await

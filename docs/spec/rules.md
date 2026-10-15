@@ -109,7 +109,10 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   endpoints are blocked whatever rules or toggles say, and never become pending. So is SSH from a
   workspace, which is not supported yet (reason `ssh_unsupported`, R-24): the proxy recognises it by
   the client's identification line on any port and refuses it before any rule is asked, so no rule
-  allows it and it never goes pending.
+  allows it and it never goes pending. UDP other than DNS is refused the same way, inside the
+  workspace, before it leaves; the workspace's agent reports where each refused datagram was going
+  and the proxy records it as `blocked` with reason `udp_unsupported` (never pending, never
+  approvable; one record per destination at most every ten seconds).
   *Changed 2026-10-06: the exact-IP case was added, following the principle that a local destination
   needs an exact name or IP entry; before, only an exact name rule or an approval counted.*
 - **R-27 An exact IP deny wins for a resolved address** (the proxy applies this to every address an
@@ -169,7 +172,7 @@ readable as JSONL (one record per line).
   `workspace_deleted`.
 - **R-24 Record types** in `puddle-store`: `connection` (written by the proxy: `workspace_id`, `host`, `port`,
   `resolved_ip`, `decision` (`allow`, `deny`, `pending`, `blocked`), `reason` (`rule`, `no_rule`,
-  `toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `local_address`, `settings_unreadable`,
+  `toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`, `local_address`, `settings_unreadable`,
   `policy_unavailable`, `sni_mismatch`, `guest_tls_rejected`, `connection_limit`, `suppressed`, `merged`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `pending_id`, `binding_id`, `injected`, `placeholder_unbound` (a secret stand-in went to a host outside
   its hosts and was sent unchanged),
   `method` and `path` on terminated hosts, plain-HTTP requests and `CONNECT` tunnels that carry

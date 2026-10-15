@@ -19,6 +19,11 @@
 //! | `PUDDLE_AGENT_DNS_TABLE` | `/run/puddle/dns-table` | where the stub keeps its name ⇄ address table across restarts; `off` keeps none |
 //! | `PUDDLE_AGENT_EDITOR_DIR` (+ `_PORT`, `_DATA`, `_FOLDER`, `_GRACE`) | unset | the browser editor's server: the release folder switches it on; the rest are in `puddle_agent_proto::editor` |
 //! | `PUDDLE_AGENT_EDITOR_PASSWORD_FILE` | `/run/puddle/editor-password` | where the server's password is written |
+//! | `PUDDLE_AGENT_CAPTURE` | `off` | transparent capture for tools that ignore the proxy settings: `on` installs the redirect rules, keeps them in place and listens for the redirected connections; it needs the stub DNS (`PUDDLE_AGENT_DNS` set to an address, or unset, which then means `on`), and `PUDDLE_AGENT_DNS=off` with it is an error. Linux guest only |
+//! | `PUDDLE_AGENT_CAPTURE_PORT` | `3129` | the port redirected connections arrive on (all addresses: containers' connections arrive on the bridge address) |
+//! | `PUDDLE_AGENT_CAPTURE_IFACE` | `dummy0` | the dummy interface that carries the stub's address; made when missing |
+//! | `PUDDLE_AGENT_CAPTURE_POLL_MS` | `500` | how often the rules are compared with the kernel's table |
+//! | `PUDDLE_AGENT_CAPTURE_LOG_GROUP` | `1291` | the netfilter log group refused UDP is read from; `0` leaves the logging out |
 //! | `PUDDLE_AGENT_LOG` | `info` | `error`, `warn`, `info`, `debug` or `trace` (to stderr) |
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -138,6 +143,30 @@ impl Default for DnsConfig {
     }
 }
 
+/// Transparent capture: the redirect rules and the listener they send connections to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CaptureConfig {
+    /// The listener's port.
+    pub port: u16,
+    /// The dummy interface that carries the stub's address.
+    pub interface: String,
+    /// How often the rules are compared with the kernel's table.
+    pub poll: Duration,
+    /// The netfilter log group refused UDP is read from, `None` for no logging.
+    pub log_group: Option<u16>,
+}
+
+impl Default for CaptureConfig {
+    fn default() -> Self {
+        Self {
+            port: 3129,
+            interface: "dummy0".to_owned(),
+            poll: Duration::from_millis(500),
+            log_group: Some(1291),
+        }
+    }
+}
+
 /// Everything the agent needs to run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
@@ -159,6 +188,8 @@ pub struct Config {
     pub dns: Option<DnsConfig>,
     /// The browser editor's server, `None` when the host asks for none.
     pub editor: Option<EditorConfig>,
+    /// Transparent capture, `None` when it is off. Needs [`Config::dns`].
+    pub capture: Option<CaptureConfig>,
     /// Log level.
     pub log: tracing::Level,
 }
@@ -175,6 +206,7 @@ impl Default for Config {
             oom: Some(OomSources::default()),
             dns: None,
             editor: None,
+            capture: None,
             log: tracing::Level::INFO,
         }
     }
@@ -199,6 +231,10 @@ impl Config {
     /// # Errors
     ///
     /// The first variable with a value that doesn't parse or is out of range.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one flat list of variables, each with its own check"
+    )]
     pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Result<Self, ConfigError> {
         let mut config = Self::default();
         let lookup = |var: &'static str| get(var).map(|v| (v, var));
@@ -262,9 +298,44 @@ impl Config {
                 Some(path(var, &v)?)
             };
         }
+        let mut capture = CaptureConfig::default();
+        if let Some((v, var)) = lookup("PUDDLE_AGENT_CAPTURE_PORT") {
+            capture.port = v
+                .parse()
+                .ok()
+                .filter(|p| *p != 0)
+                .ok_or_else(|| bad(var, &v, "expected a port, 1 to 65535"))?;
+        }
+        if let Some((v, var)) = lookup("PUDDLE_AGENT_CAPTURE_IFACE") {
+            capture.interface = interface_name(var, &v)?;
+        }
+        if let Some((v, var)) = lookup("PUDDLE_AGENT_CAPTURE_POLL_MS") {
+            capture.poll = millis(var, &v)?;
+        }
+        if let Some((v, var)) = lookup("PUDDLE_AGENT_CAPTURE_LOG_GROUP") {
+            let group: u16 = v
+                .parse()
+                .map_err(|_| bad(var, &v, "expected a log group, 0 to 65535"))?;
+            capture.log_group = (group != 0).then_some(group);
+        }
+        let capture_on = match lookup("PUDDLE_AGENT_CAPTURE") {
+            None => false,
+            Some((v, _)) if v == "off" => false,
+            Some((v, _)) if v == "on" => true,
+            Some((v, var)) => return Err(bad(var, &v, "expected on or off")),
+        };
         config.dns = match lookup("PUDDLE_AGENT_DNS") {
-            None => None,
-            Some((v, _)) if v == "off" => None,
+            None => capture_on.then_some(dns),
+            Some((v, var)) if v == "off" => {
+                if capture_on {
+                    return Err(bad(
+                        var,
+                        &v,
+                        "capture needs the stub DNS: its redirect sends DNS there",
+                    ));
+                }
+                None
+            }
             Some((v, _)) if v == "on" => Some(dns),
             Some((v, var)) => {
                 dns.listen = dns_addr(var, &v)?;
@@ -282,6 +353,7 @@ impl Config {
                     password_file,
                 }
             });
+        config.capture = capture_on.then_some(capture);
         if let Some((v, var)) = lookup("PUDDLE_AGENT_LOG") {
             config.log = v
                 .parse()
@@ -332,6 +404,24 @@ fn dns_addr(var: &'static str, value: &str) -> Result<SocketAddrV4, ConfigError>
         ));
     }
     Ok(addr)
+}
+
+/// An interface name the kernel accepts: 1 to 15 bytes of letters, digits, `-`, `_` and `.`.
+fn interface_name(var: &'static str, value: &str) -> Result<String, ConfigError> {
+    let ok = !value.is_empty()
+        && value.len() <= 15
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    if ok {
+        Ok(value.to_owned())
+    } else {
+        Err(bad(
+            var,
+            value,
+            "expected an interface name of at most 15 letters, digits, - _ .",
+        ))
+    }
 }
 
 fn path(var: &'static str, value: &str) -> Result<PathBuf, ConfigError> {
@@ -422,6 +512,67 @@ mod tests {
         assert_eq!(err.value, "5");
         let err = from(&[("PUDDLE_AGENT_EDITOR_DIR", "/e")]).unwrap_err();
         assert_eq!(err.var, "PUDDLE_AGENT_EDITOR_DATA");
+    }
+
+    #[test]
+    fn capture_is_off_unless_asked_for_and_then_brings_the_stub_with_it() {
+        assert_eq!(from(&[]).unwrap().capture, None);
+        assert_eq!(
+            from(&[("PUDDLE_AGENT_CAPTURE", "off")]).unwrap().capture,
+            None
+        );
+        let c = from(&[("PUDDLE_AGENT_CAPTURE", "on")]).unwrap();
+        assert_eq!(c.capture, Some(CaptureConfig::default()));
+        assert_eq!(
+            c.dns,
+            Some(DnsConfig::default()),
+            "the redirect sends DNS to the stub"
+        );
+        let c = from(&[
+            ("PUDDLE_AGENT_CAPTURE", "on"),
+            ("PUDDLE_AGENT_DNS", "198.18.0.9:5353"),
+            ("PUDDLE_AGENT_CAPTURE_PORT", "4000"),
+            ("PUDDLE_AGENT_CAPTURE_IFACE", "cap0"),
+            ("PUDDLE_AGENT_CAPTURE_POLL_MS", "100"),
+            ("PUDDLE_AGENT_CAPTURE_LOG_GROUP", "7"),
+        ])
+        .unwrap();
+        let capture = c.capture.unwrap();
+        assert_eq!(
+            (
+                capture.port,
+                capture.interface.as_str(),
+                capture.poll,
+                capture.log_group
+            ),
+            (4000, "cap0", Duration::from_millis(100), Some(7))
+        );
+        assert_eq!(c.dns.unwrap().listen.to_string(), "198.18.0.9:5353");
+        let c = from(&[
+            ("PUDDLE_AGENT_CAPTURE", "on"),
+            ("PUDDLE_AGENT_CAPTURE_LOG_GROUP", "0"),
+        ])
+        .unwrap();
+        assert_eq!(c.capture.unwrap().log_group, None);
+    }
+
+    #[test]
+    fn capture_without_its_stub_or_with_odd_values_is_an_error() {
+        let err = from(&[("PUDDLE_AGENT_CAPTURE", "on"), ("PUDDLE_AGENT_DNS", "off")]).unwrap_err();
+        assert_eq!(err.var, "PUDDLE_AGENT_DNS");
+        for (var, value) in [
+            ("PUDDLE_AGENT_CAPTURE", "yes"),
+            ("PUDDLE_AGENT_CAPTURE_PORT", "0"),
+            ("PUDDLE_AGENT_CAPTURE_PORT", "70000"),
+            ("PUDDLE_AGENT_CAPTURE_IFACE", ""),
+            ("PUDDLE_AGENT_CAPTURE_IFACE", "a/b"),
+            ("PUDDLE_AGENT_CAPTURE_IFACE", "sixteen-chars-xxx"),
+            ("PUDDLE_AGENT_CAPTURE_POLL_MS", "0"),
+            ("PUDDLE_AGENT_CAPTURE_LOG_GROUP", "x"),
+        ] {
+            let err = from(&[("PUDDLE_AGENT_CAPTURE", "on"), (var, value)]).unwrap_err();
+            assert_eq!(err.var, var, "{value}");
+        }
     }
 
     #[test]

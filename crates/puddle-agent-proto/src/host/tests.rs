@@ -58,13 +58,17 @@ fn name() -> WorkspaceName {
 }
 
 fn start_with(config: HostConfig) -> Harness {
+    start_handler(Arc::new(Echo), config)
+}
+
+fn start_handler<H: StreamHandler>(handler: Arc<H>, config: HostConfig) -> Harness {
     let (guest, host) = tokio::io::duplex(1 << 20);
     let (tx, events) = mpsc::unbounded_channel();
     let server = tokio::spawn(serve_session(
         host,
         name(),
         Arc::new(ChanSink(tx)),
-        Arc::new(Echo),
+        handler,
         config,
     ));
     let mut client = Session::new_client(guest, client_config());
@@ -148,6 +152,102 @@ async fn oom_kills_on_the_control_stream_become_events_for_the_routes_workspace(
         panic!("wrong event");
     };
     assert_eq!(process, "evil?[2J");
+    h.close().await.unwrap();
+}
+
+/// What a handler is told about the guest's capture rules.
+#[derive(Default)]
+struct Told {
+    udp: std::sync::Mutex<Vec<UdpRefusal>>,
+    tampered: std::sync::Mutex<Vec<bool>>,
+}
+
+struct Listening(Arc<Told>);
+
+impl StreamHandler for Listening {
+    async fn handle(&self, _stream: GuestStream) {}
+
+    async fn udp_refused(&self, refusal: UdpRefusal) {
+        self.0.udp.lock().unwrap().push(refusal);
+    }
+
+    async fn capture_tampered(&self, table_missing: bool) {
+        self.0.tampered.lock().unwrap().push(table_missing);
+    }
+}
+
+#[tokio::test]
+async fn capture_reports_reach_the_handler_with_the_guests_text_cleaned() {
+    let told = Arc::new(Told::default());
+    let mut h = start_handler(
+        Arc::new(Listening(Arc::clone(&told))),
+        HostConfig::default(),
+    );
+    let mut c = h.control_stream().await;
+    send(&mut c, &AgentMessage::hello()).await;
+    send(
+        &mut c,
+        &AgentMessage::udp_refused("192.0.2.9".into(), 443, 3),
+    )
+    .await;
+    send(
+        &mut c,
+        &AgentMessage::udp_refused("\u{1b}[2J".repeat(40), 53, 1),
+    )
+    .await;
+    send(&mut c, &AgentMessage::capture_tampered(true)).await;
+    send(&mut c, &AgentMessage::capture_tampered(false)).await;
+    send(
+        &mut c,
+        &AgentMessage::capture_unavailable("no nf_tables\u{1b}[2J".repeat(40)),
+    )
+    .await;
+    // The session is still reading: wait until the last report was handled.
+    for _ in 0..100 {
+        if told.tampered.lock().unwrap().len() == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let udp = told.udp.lock().unwrap().clone();
+    assert_eq!(udp.len(), 2);
+    assert_eq!(
+        udp[0],
+        UdpRefusal {
+            address: "192.0.2.9".into(),
+            port: 443,
+            count: 3
+        }
+    );
+    assert!(
+        udp[1].address.chars().count() <= MAX_ADDRESS_CHARS && !udp[1].address.contains('\u{1b}'),
+        "{:?}",
+        udp[1].address
+    );
+    assert_eq!(*told.tampered.lock().unwrap(), vec![true, false]);
+    h.close().await.unwrap();
+}
+
+#[test]
+fn guest_text_in_logs_is_cut_and_stripped_of_control_characters() {
+    let reason = clean(&"no nf_tables\u{1b}[2J".repeat(40), MAX_REASON_CHARS);
+    assert_eq!(reason.chars().count(), MAX_REASON_CHARS);
+    assert!(!reason.contains('\u{1b}'));
+    assert!(reason.starts_with("no nf_tables?[2J"));
+}
+
+#[tokio::test]
+async fn a_handler_that_does_not_care_about_capture_reports_loses_nothing_else() {
+    let mut h = start();
+    let mut c = h.control_stream().await;
+    send(
+        &mut c,
+        &AgentMessage::udp_refused("192.0.2.9".into(), 443, 1),
+    )
+    .await;
+    send(&mut c, &AgentMessage::capture_tampered(true)).await;
+    send(&mut c, &AgentMessage::oom_kill(Some(1), Some("a".into()))).await;
+    assert_eq!(h.next_event().await, Event::oom_kill(name(), 1, "a"));
     h.close().await.unwrap();
 }
 

@@ -196,3 +196,5 @@ crates/puddle-host/src/workspaces.rs | Err(e) => Err(e.to_string()), | the runti
 crates/puddle-host/src/shell_init.rs | fn unreachable_path(path: &str) -> GuestPath { | the cold arm of a constant that the unit test proves valid; it cannot run
 crates/puddle-host/src/shell_init.rs | panic!("constant guest path {path:?} is not valid") | the cold arm of a constant that the unit test proves valid; it cannot run
 crates/puddle-host/src/workspaces.rs | }) | closes the logging closure of the database failing on a read of one row; the warn line has its own entry above
+crates/puddle-e2e/src/lab/git_host.rs | // skip-ok: the assert above already failed when PUDDLE_REQUIRE_TOOLS is set | the branch runs only on a machine without git, where PUDDLE_REQUIRE_TOOLS is unset; CI has git and sets it
+crates/puddle-e2e/src/lab/git_host.rs | eprintln!("skipped: git not found"); | the branch runs only on a machine without git, where PUDDLE_REQUIRE_TOOLS is unset; CI has git and sets it

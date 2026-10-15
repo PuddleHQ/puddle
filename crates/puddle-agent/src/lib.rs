@@ -231,7 +231,7 @@ async fn start_capture(
     };
     // All addresses: a redirected connection from a container arrives on the bridge address. A
     // process that dials the port itself has no original destination and is closed at once.
-    let listener = TcpListener::bind(("0.0.0.0", cap.port)).await?;
+    let listener = tokio::net::TcpListener::bind(("0.0.0.0", cap.port)).await?;
     let addr = listener.local_addr()?;
     tasks.spawn(capture::listen::serve(
         listener,

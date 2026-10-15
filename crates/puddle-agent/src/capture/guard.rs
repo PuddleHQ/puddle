@@ -113,7 +113,7 @@ fn tick(guard: &Guard, state: &mut State) -> std::io::Result<Option<Why>> {
     Ok(Some(why))
 }
 
-/// Runs [`tick`] on a schedule until the agent stops. Failures are logged, told to the host once
+/// Runs `tick` on a schedule until the agent stops. Failures are logged, told to the host once
 /// per outage, and retried: a kernel that can't do it today may be able to after a module loads.
 pub async fn keep(guard: Guard, reports: mpsc::Sender<AgentMessage>) {
     let mut state = State::default();

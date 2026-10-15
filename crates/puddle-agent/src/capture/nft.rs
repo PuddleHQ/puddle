@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Installs a [`Plan`] into the kernel's `nf_tables` over netlink, and reads back what is there.
 //!
-//! No `nft` binary and no C library: the messages are written here ([`Writer`]). The attribute
+//! No `nft` binary and no C library: the messages are written here (`Writer`). The attribute
 //! numbers are the kernel's (`linux/netfilter/nf_tables.h`); the integration tests install the plan
 //! in a network namespace and read it back with the real `nft`, which is the check that they match.
 //!

@@ -1597,16 +1597,20 @@ step() {
   timeout 1500 bash -c "$*" > "/tmp/radar-$name.log" 2>&1
   rc=$?
   t1=$(date +%s.%N)
-  bad=$(grep -c -i -E 'retry|retrying|timed out|timeout|ETIMEDOUT|ECONNRESET|EPIPE|reset by peer|connection refused|certificate|tls|ssl|EAI_AGAIN|unexpected eof|stalled' "/tmp/radar-$name.log")
-  echo "RADAR step=$name rc=$rc secs=$(awk "BEGIN {printf \"%.1f\", $t1 - $t0}") suspicious_lines=$bad"
+  bad=$(grep -c -i -E 'Err:|W: Failed|^E: |retrying|will retry|timed out|ETIMEDOUT|ECONNRESET|EPIPE|reset by peer|connection refused|EAI_AGAIN|unexpected eof|stalled|handshake|certificate verify|SSL_ERROR|SSL certificate problem|x509|PKIX|spurious network error|i/o timeout|dial tcp|could not transfer|transfer failed' "/tmp/radar-$name.log")
+  echo "RADAR step=$name rc=$rc secs=$(awk "BEGIN {printf \"%.1f\", $t1 - $t0}") suspicious_lines=$bad disk_free_mib=$(df -Pm / | awk 'NR==2 {print $4}')"
   if [ "$rc" != 0 ] || [ "$bad" != 0 ]; then
-    grep -i -E 'retry|retrying|timed out|timeout|ETIMEDOUT|ECONNRESET|EPIPE|reset by peer|connection refused|certificate|tls|ssl|EAI_AGAIN|unexpected eof|stalled' "/tmp/radar-$name.log" | head -8 | sed 's/^/  | /'
+    grep -i -E 'Err:|W: Failed|^E: |retrying|will retry|timed out|ETIMEDOUT|ECONNRESET|EPIPE|reset by peer|connection refused|EAI_AGAIN|unexpected eof|stalled|handshake|certificate verify|SSL_ERROR|SSL certificate problem|x509|PKIX|spurious network error|i/o timeout|dial tcp|could not transfer|transfer failed' "/tmp/radar-$name.log" | head -8 | sed 's/^/  | /'
     tail -5 "/tmp/radar-$name.log" | sed 's/^/  > /'
   fi
 }
 
 step apt_update 'apt-get update'
-step apt_install 'apt-get install -y --no-install-recommends nodejs npm golang-go default-jdk-headless ca-certificates-java maven cargo curl'
+PKGS='nodejs npm golang-go default-jdk-headless ca-certificates-java maven cargo curl'
+step apt_download "apt-get install -y -d --no-install-recommends $PKGS"
+echo "RADAR apt_downloaded_mib=$(du -sm /var/cache/apt/archives | cut -f1)"
+step apt_install "apt-get install -y --no-install-recommends $PKGS"
+apt-get clean
 
 mkdir -p /tmp/np && cd /tmp/np
 cat > package.json <<'JSON'
@@ -1618,9 +1622,11 @@ cat > package.json <<'JSON'
 JSON
 step npm_cold_install 'cd /tmp/np && npm install --no-audit --no-fund --ignore-scripts'
 echo "RADAR npm_packages=$(find /tmp/np/node_modules -name package.json -not -path '*/test/*' | wc -l)"
+rm -rf /tmp/np/node_modules /root/.npm
 
 step pnpm_cold_install 'npm install -g pnpm@10.12.1 && mkdir -p /tmp/pn && cp /tmp/np/package.json /tmp/pn/ && cd /tmp/pn && pnpm install --ignore-scripts --reporter=append-only'
 echo "RADAR pnpm_packages=$(ls /tmp/pn/node_modules/.pnpm 2>/dev/null | wc -l)"
+rm -rf /tmp/pn /root/.local/share/pnpm /root/.cache/pnpm
 
 mkdir -p /tmp/cg/src && cd /tmp/cg
 cat > Cargo.toml <<'TOML'
@@ -1649,10 +1655,12 @@ TOML
 echo 'fn main() {}' > src/main.rs
 step cargo_fetch 'cd /tmp/cg && cargo fetch'
 echo "RADAR cargo_crates=$(ls ~/.cargo/registry/cache/*/ 2>/dev/null | wc -l)"
+rm -rf /root/.cargo/registry
 
 mkdir -p /tmp/go && cd /tmp/go
 step go_mod_download 'cd /tmp/go && go mod init radar && go get k8s.io/client-go@v0.31.2 github.com/aws/aws-sdk-go-v2/service/s3@v1.66.3 github.com/prometheus/client_golang@v1.20.5 google.golang.org/grpc@v1.67.1 github.com/gin-gonic/gin@v1.10.0 && go mod download'
-echo "RADAR go_modules=$(ls $(go env GOMODCACHE)/cache/download 2>/dev/null | wc -l)"
+echo "RADAR go_modules=$(find $(go env GOMODCACHE)/cache/download -name '*.zip' 2>/dev/null | wc -l)"
+chmod -R u+w "$(go env GOMODCACHE)" 2>/dev/null; rm -rf "$(go env GOMODCACHE)" /root/.cache/go-build
 
 mkdir -p /tmp/mv && cd /tmp/mv
 cat > pom.xml <<'XML'

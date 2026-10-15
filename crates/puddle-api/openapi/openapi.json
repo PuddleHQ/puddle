@@ -4632,7 +4632,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {

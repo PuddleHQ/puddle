@@ -464,6 +464,48 @@ test.describe("what can't be approved, and a burst of new hosts", () => {
   });
 });
 
+test.describe("a name that looks like another", () => {
+  // The proxy turns a name with letters from another script into its punycode form before anything
+  // is asked or stored, so the inbox only ever receives the ASCII form: this one is Cyrillic
+  // "apple.com" lookalike. The row, the button names and the rule an approval writes must all
+  // carry that form, never the letters that look like the real name.
+  const lookalike = "xn--80ak6aa92e.com";
+
+  test("is listed, labelled and approved under its punycode form", async ({
+    page,
+    request,
+    backend,
+  }) => {
+    await ask(backend, "shop", lookalike);
+    await openInbox(page, backend);
+    const row = rowFor(page, lookalike);
+    await expect(row).toHaveCount(1);
+    const text = (await row.innerText()) + (await row.innerHTML());
+    // The row's own separator is the only character outside ASCII.
+    expect(
+      [...text.replaceAll("\u00b7", "")].filter((c) => c.charCodeAt(0) > 0x7e),
+    ).toEqual([]);
+    const allow = row.getByRole("button", {
+      name: `Allow ${lookalike} for shop`,
+    });
+    await allow.click();
+    await expect(row).toHaveCount(0);
+    const rule = (await rules(request, backend)).find(
+      (r) => r.pattern === lookalike,
+    );
+    expect(rule).toMatchObject({
+      effect: "allow",
+      pattern_kind: "exact",
+      scope: { type: "workspace", workspace: "shop" },
+    });
+    expect(
+      (await rules(request, backend)).filter((r) =>
+        /[^\x20-\x7e]/.test(r.pattern),
+      ),
+    ).toEqual([]);
+  });
+});
+
 test.describe("keyboard only", () => {
   // The single keys are a Settings switch, off by default: these tests turn it on first.
   test.beforeEach(async ({ request, backend }) => {

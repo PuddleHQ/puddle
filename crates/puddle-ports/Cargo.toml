@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "puddle-ports"
+description = "Port forwards from a workspace's guest to this computer's loopback: what listens in the guest, forwards, pinned forwards"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+listeners = { workspace = true }
+puddle-agent-proto = { workspace = true }
+puddle-netpolicy = { workspace = true }
+puddle-types = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+puddle-agent = { workspace = true }
+puddle-agent-proto = { workspace = true, features = ["testing"] }
+puddle-types = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "test-util", "time"] }
+
+[lints]
+workspace = true

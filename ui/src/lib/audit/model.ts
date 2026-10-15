@@ -179,6 +179,7 @@ const REASONS: Record<string, string> = {
     "puddle merged the oldest records written while requests waited, to keep the log small (their hosts are not kept)",
   puddle_endpoint: "puddle's own address",
   ssh_unsupported: "SSH is not supported",
+  udp_unsupported: "UDP is not supported",
   local_address: "a local address",
   settings_unreadable: "unreadable settings",
   puddle_request: "puddle's own request",

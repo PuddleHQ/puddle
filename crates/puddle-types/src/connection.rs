@@ -64,7 +64,7 @@ impl fmt::Display for ConnectionOrigin {
 }
 
 /// Why the proxy decided as it did (R-24). Serialised as a string: `rule`, `no_rule`, a
-/// [`BlockReason::code`] (`toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`,
+/// [`BlockReason::code`] (`toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`,
 /// `local_address`, `settings_unreadable`), `policy_unavailable`, `puddle_request`, `sni_mismatch`, `guest_tls_rejected`,
 /// `connection_limit`, `suppressed`, `merged`, `puddle_request_failed:<code>` or, for a request the credential rules refused on a decrypted connection, the
 /// refusal's code (`push_denied`, `pull_denied`, `credential_unavailable`, ...).
@@ -402,6 +402,10 @@ mod tests {
             (
                 ConnectionReason::Blocked(BlockReason::SshUnsupported),
                 "ssh_unsupported",
+            ),
+            (
+                ConnectionReason::Blocked(BlockReason::UdpUnsupported),
+                "udp_unsupported",
             ),
             (
                 ConnectionReason::Blocked(BlockReason::LocalAddress),

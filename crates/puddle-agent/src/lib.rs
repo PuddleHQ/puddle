@@ -44,7 +44,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use puddle_agent_proto::AgentMessage;
-use tokio::net::TcpListener;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
@@ -85,7 +84,7 @@ impl Agent {
         config: Config,
         probe: Arc<dyn bridge::Probe>,
     ) -> io::Result<Self> {
-        let listener = TcpListener::bind(config.listen).await?;
+        let listener = serve::listen(config.listen)?;
         let local_addr = listener.local_addr()?;
         let upstream = Arc::new(upstream::Upstream::new(&config));
         let mut tasks = JoinSet::new();

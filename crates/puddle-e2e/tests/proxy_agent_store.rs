@@ -116,8 +116,10 @@ async fn wait_for_records(store: &Store, count: usize) -> Vec<Value> {
 }
 
 /// An echo server: sends back everything, then closes after the client's FIN.
-async fn echo_server() -> SocketAddr {
-    let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
+fn echo_server() -> SocketAddr {
+    // The agent's backlog: 2 000 proxied connections dial this at once, and tokio's default of
+    // 128 would overflow the accept queue.
+    let listener = puddle_agent::serve::listen(SocketAddr::new(LOCAL, 0)).unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
         loop {
@@ -188,7 +190,7 @@ async fn round_trip(agent: SocketAddr, authority: &str, i: usize) -> io::Result<
 async fn parallel_connects_256_through_agent_proxy_and_store() {
     let rig = rig().await;
     allow(&rig.store, "echo.test");
-    let echo = echo_server().await;
+    let echo = echo_server();
     let authority = format!("echo.test:{}", echo.port());
     let agent = rig.agent.local_addr();
     let mut set = tokio::task::JoinSet::new();
@@ -239,6 +241,46 @@ async fn parallel_connects_256_through_agent_proxy_and_store() {
     assert_eq!(accounted, 256);
 }
 
+/// The agent's listener holds a burst of connections nobody has accepted yet. Nothing accepts
+/// here, so with tokio's default backlog of 128 the connections past the queue never finish
+/// their handshake; with the agent's they all do. (On Linux the kernel caps the backlog at
+/// `net.core.somaxconn`, 4 096 on current kernels.)
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn the_agent_listener_queues_a_burst_nobody_has_accepted() {
+    const BURST: u64 = 1500;
+    let somaxconn: u64 = std::fs::read_to_string("/proc/sys/net/core/somaxconn")
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(
+        somaxconn >= BURST + 100,
+        "net.core.somaxconn is {somaxconn}: this machine cannot queue {BURST} connections"
+    );
+    let limit = puddle_fd_limit::raise_open_file_limit(puddle_fd_limit::Reach::Soft);
+    assert!(
+        limit.allows(BURST + 256),
+        "the open-file limit cannot hold {BURST} sockets: {limit}"
+    );
+    let listener = puddle_agent::serve::listen(SocketAddr::new(LOCAL, 0)).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mut set = tokio::task::JoinSet::new();
+    for _ in 0..BURST {
+        set.spawn(TcpStream::connect(addr));
+    }
+    let connected = tokio::time::timeout(Duration::from_secs(30), async {
+        let mut open = Vec::new();
+        while let Some(done) = set.join_next().await {
+            open.push(done.unwrap().unwrap());
+        }
+        open.len()
+    })
+    .await
+    .expect("connections past the accept queue never finished their handshake");
+    assert_eq!(connected as u64, BURST);
+}
+
 /// The load bar at a real tool's worst case, with the process limit the product gives its own
 /// processes: 2 000 `CONNECT`s through the real agent, proxy and rules engine, all open at the
 /// same moment (each side of each connection holds a descriptor in this one process, 8 000 in
@@ -254,7 +296,7 @@ async fn two_thousand_connections_held_open_at_once_all_succeed() {
     );
     let rig = rig().await;
     allow(&rig.store, "echo.test");
-    let echo = echo_server().await;
+    let echo = echo_server();
     let authority = format!("echo.test:{}", echo.port());
     let agent = rig.agent.local_addr();
     let all_open = Arc::new(tokio::sync::Barrier::new(HELD));
@@ -304,7 +346,7 @@ async fn two_thousand_connections_held_open_at_once_all_succeed() {
 async fn connections_land_in_the_store_audit() {
     const CANARY: &str = "CANARY-e2e-5b7d";
     let rig = rig().await;
-    let echo = echo_server().await;
+    let echo = echo_server();
     let agent = rig.agent.local_addr();
 
     let pending = format!("new.test:{}", echo.port());
@@ -396,7 +438,7 @@ async fn connections_land_in_the_store_audit() {
 #[tokio::test]
 async fn an_unknown_host_is_pending_in_the_store_and_passes_after_approval() {
     let rig = rig().await;
-    let echo = echo_server().await;
+    let echo = echo_server();
     let authority = format!("new.test:{}", echo.port());
     let agent = rig.agent.local_addr();
 
@@ -599,7 +641,7 @@ async fn the_bridge_listener_gets_the_same_policy_and_audit_as_loopback() {
     .unwrap()
     .addr
     .unwrap();
-    let echo = echo_server().await;
+    let echo = echo_server();
     let authority = format!("new.test:{}", echo.port());
 
     // Unknown host: refused and pending, on both listeners.

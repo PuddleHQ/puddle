@@ -21,7 +21,6 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 
@@ -173,7 +172,7 @@ pub async fn watch(
         }
         if bound.is_none() {
             match seen {
-                Some(index) => match bind(&config, &*probe, index, &upstream).await {
+                Some(index) => match bind(&config, &*probe, index, &upstream) {
                     Ok((local, listener)) => {
                         binds += 1;
                         failed_for = None;
@@ -200,13 +199,13 @@ pub async fn watch(
 
 /// Binds the bridge address and starts serving, but only if the probe still reports `index`
 /// afterwards (the bridge could have gone between the probe and the bind).
-async fn bind(
+fn bind(
     config: &BridgeConfig,
     probe: &dyn Probe,
     index: u32,
     upstream: &Arc<Upstream>,
 ) -> io::Result<(SocketAddr, Bound)> {
-    let listener = TcpListener::bind(SocketAddr::V4(config.addr)).await?;
+    let listener = serve::listen(SocketAddr::V4(config.addr))?;
     let local = listener.local_addr()?;
     if probe.find(*config.addr.ip()) != Some(index) {
         return Err(io::Error::other("the bridge changed while binding"));

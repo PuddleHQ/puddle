@@ -105,6 +105,17 @@ jobs:
           # The package starts its own daemon; the test runs its own Squid on a free port.
           sudo systemctl stop squid || true
           test -x /usr/sbin/squid
+      # The corporate-lab fixtures (crates/puddle-e2e/src/lab) run mitmproxy as the TLS interceptor and
+      # the NTLM proxy. The packages are pinned with hashes in ci/lab/requirements.txt (compiled from
+      # requirements.in; Dependabot's pip entry for /ci/lab bumps them weekly), so a new release reaches
+      # the tests through a pull request, not a runner.
+      - name: mitmproxy for the corporate-lab fixtures
+        run: |
+          python3 -c 'import sys; assert sys.version_info >= (3, 12), sys.version'
+          python3 -m venv "$RUNNER_TEMP/lab-venv"
+          "$RUNNER_TEMP/lab-venv/bin/pip" install --require-hashes --no-deps --quiet -r ci/lab/requirements.txt
+          "$RUNNER_TEMP/lab-venv/bin/mitmdump" --version
+          echo "PUDDLE_MITMDUMP_BIN=$RUNNER_TEMP/lab-venv/bin/mitmdump" >> "$GITHUB_ENV"
       # The login tests run the real Claude Code, `gh` (on the runner image) and Copilot CLI against fake
       # servers. The two npm packages are pinned in ci/login-tools/package.json and its lockfile, which
       # Dependabot bumps weekly (the npm entry for /ci/login-tools in .github/dependabot.yml): a bump PR
@@ -196,9 +207,10 @@ jobs:
           NEXTEST_PROFILE: ci
           PUDDLE_SQUID_BIN: /usr/sbin/squid
           # A test whose prerequisite is missing fails here instead of skipping (scripts/check-silent-skips.sh).
-          # Each flag names what this job provides: Squid and Node 24 above, `ssh`, `git` and `python3`
+          # Each flag names what this job provides: Squid, mitmproxy and Node 24 above, `ssh`, `git` and `python3`
           # from the runner image, AF_VSOCK from its kernel, and a non-root user.
           PUDDLE_REQUIRE_SQUID: "1"
+          PUDDLE_REQUIRE_MITMPROXY: "1"
           PUDDLE_REQUIRE_NODE: "1"
           PUDDLE_REQUIRE_SSH_CLIENTS: "1"
           PUDDLE_REQUIRE_TOOLS: "1"

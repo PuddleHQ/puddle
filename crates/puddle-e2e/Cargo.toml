@@ -27,8 +27,10 @@ puddle-secrets = { workspace = true }
 puddle-settings = { workspace = true }
 puddle-store = { workspace = true }
 puddle-types = { workspace = true }
+rcgen = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["fs", "macros", "net", "rt", "rt-multi-thread", "signal", "sync", "time"] }
 
 [dev-dependencies]
@@ -46,11 +48,9 @@ puddle-proxy = { workspace = true, features = ["testing"] }
 puddle-upstream = { workspace = true, features = ["testing"] }
 puddle-vm-tests = { workspace = true }
 futures-util = { workspace = true }
-rcgen = { workspace = true }
 rustls = { workspace = true }
 sha2 = { workspace = true }
 tar = { workspace = true }
-tempfile = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
 tokio-rustls = { workspace = true }
 tracing = { workspace = true }

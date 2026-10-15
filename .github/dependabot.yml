@@ -56,3 +56,12 @@ updates:
     groups:
       login-tools:
         patterns: ["*"]
+  - package-ecosystem: pip
+    directory: /ci/lab
+    target-branch: develop
+    labels: ["dependencies", "python"]
+    schedule:
+      interval: weekly
+    groups:
+      lab-proxies:
+        patterns: ["*"]

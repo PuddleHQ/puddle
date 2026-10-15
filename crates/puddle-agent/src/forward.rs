@@ -28,8 +28,8 @@ use tokio_yamux::StreamHandle;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Forwarded connections the agent serves at once. Each costs a descriptor and a task; a
-/// dev server with a browser behind it needs a few dozen.
-pub const MAX_FORWARDS: usize = 512;
+/// test runner or bundler can open hundreds, so the bound is generous and only stops a runaway.
+pub const MAX_FORWARDS: usize = 2048;
 
 /// The guest end of the host's port forwards.
 #[derive(Debug)]

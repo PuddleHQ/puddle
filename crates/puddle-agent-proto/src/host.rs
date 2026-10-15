@@ -191,6 +191,18 @@ pub enum AgentReport {
     },
 }
 
+/// Who wants to know what a workspace's agent says about the guest. Synchronous and quick: it
+/// runs on the session's control stream, so it records and returns.
+pub trait GuestWatcher: Send + Sync + 'static {
+    /// The agent of `workspace` is connected; `link` opens streams to it. A later call for the
+    /// same workspace (the agent restarted, a session died) replaces the earlier link.
+    fn link(&self, workspace: &WorkspaceName, link: GuestLink);
+
+    /// The ports `workspace`'s guest listens on now: the whole set, ascending, no duplicates, at
+    /// most [`MAX_PORTS`](crate::control::MAX_PORTS). The guest's claim; nothing else is known.
+    fn ports(&self, workspace: &WorkspaceName, ports: Vec<u16>);
+}
+
 /// A report from the guest that UDP was refused: the guest's own claim, cleaned by the host
 /// before it is used.
 #[derive(Debug, Clone, PartialEq, Eq)]

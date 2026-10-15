@@ -6,6 +6,7 @@
     clippy::unwrap_used,
     reason = "VM test: a failed step fails the test"
 )]
+#![allow(dead_code, reason = "each test binary uses some of the helpers")]
 
 use std::time::Duration;
 

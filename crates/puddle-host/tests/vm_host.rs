@@ -398,7 +398,9 @@ echo "direct-http3 $(( (end - start) / 1000 )) ms"
 
 /// A workspace cannot send UDP, so a client that tries QUIC fails at once and uses TCP: a UDP
 /// send to port 443 fails in under 100 ms (in the guest, whatever the tool), and `curl --http3`
-/// against a host that serves HTTP/3 still gets its answer, over HTTP/2 through the proxy.
+/// against a host that serves HTTP/3 still gets its answer, over HTTP/2 through the proxy. With
+/// capture on, the same holds for a curl that ignores the proxy settings: its QUIC attempt is
+/// refused at once, and its TCP fallback is redirected to the proxy by name.
 #[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
@@ -491,24 +493,71 @@ async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
     );
 
     // The tunnel is a connection the host saw and allowed.
-    let mut recorded = false;
+    let allowed_to_h3_host = || {
+        host.store()
+            .audit_lines(0, 10_000)
+            .unwrap()
+            .iter()
+            .filter(|(_, line)| {
+                let record: serde_json::Value = serde_json::from_str(line).unwrap_or_default();
+                record["type"] == "connection"
+                    && record["host"] == H3_HOST
+                    && record["port"] == 443
+                    && record["decision"] == "allow"
+            })
+            .count()
+    };
+    let mut recorded = 0;
     for _ in 0..50 {
-        let lines = host.store().audit_lines(0, 10_000).unwrap();
-        recorded = lines.iter().any(|(_, line)| {
-            let record: serde_json::Value = serde_json::from_str(line).unwrap_or_default();
-            record["type"] == "connection"
-                && record["host"] == H3_HOST
-                && record["port"] == 443
-                && record["decision"] == "allow"
-        });
-        if recorded {
+        recorded = allowed_to_h3_host();
+        if recorded > 0 {
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert!(
-        recorded,
+        recorded > 0,
         "no allowed connection to {H3_HOST}:443 in the audit"
+    );
+
+    // The same curl with no proxy at all: its name resolves to a stand-in through the stub, the
+    // QUIC attempt to it is refused at once, and the TCP fallback is redirected to the proxy and
+    // sent as `CONNECT example.com:443`, which the host allows: a second connection record.
+    let captured = guest(
+        &runtime,
+        &sandbox,
+        &format!(
+            "curl --noproxy '*' --http3 -sS -v -o /dev/null --max-time 60 \
+             -w 'answer http_version=%{{http_version}} http_code=%{{http_code}}\n' \
+             https://{H3_HOST}/ 2>&1 | grep -i -E 'alt-svc|^answer|Connected to'"
+        ),
+    )
+    .await;
+    eprintln!("{captured}");
+    assert!(
+        captured.contains("answer http_version=2 http_code=200"),
+        "{captured}"
+    );
+    assert!(
+        captured.to_ascii_lowercase().contains("alt-svc: h3="),
+        "{captured}"
+    );
+    // The guest connected to a stand-in address, not a real one: its answer came from the stub.
+    assert!(
+        captured.contains("Connected to example.com (198.1"),
+        "{captured}"
+    );
+    let mut after = recorded;
+    for _ in 0..50 {
+        after = allowed_to_h3_host();
+        if after > recorded {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(
+        after > recorded,
+        "the captured fallback left no connection record ({recorded} before, {after} after)"
     );
 
     // A client that tries QUIC and ignores the proxy fails at once instead of waiting.
@@ -519,7 +568,12 @@ async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
     )
     .await;
     eprintln!("{direct}");
-    assert!(direct.contains("exit=7"), "{direct}");
+    // curl's exit status for a refused send is not the "no route" 7 it was with no capture; the
+    // bar is that it failed at once and was not a timeout (28).
+    assert!(
+        !direct.contains("exit=0") && !direct.contains("exit=28"),
+        "{direct}"
+    );
     let millis: u64 = direct
         .lines()
         .find_map(|line| line.strip_prefix("direct-http3 "))

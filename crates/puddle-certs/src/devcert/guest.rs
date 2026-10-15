@@ -71,12 +71,14 @@ impl GuestDevCert {
     /// the system-store copy, the certificate and the key under [`DEV_CERT_DIR`] (the key
     /// mode `0600`, so its bytes never print), then the step script (`0755`).
     pub(crate) fn guest_files(&self) -> Vec<GuestFile> {
+        // The modes are constants within 0o7777: `with_mode` can't fail, and a file that somehow
+        // could not be made would be left out, never written with the default mode.
         let file = |path: &str, contents: Vec<u8>, mode: u32| {
             GuestFile::new(guest_path(path), contents)
                 .with_mode(mode)
-                .unwrap_or_else(|_| unreachable_mode())
+                .ok()
         };
-        vec![
+        [
             file(
                 DEV_SYSTEM_CA_PATH,
                 self.cert_pem.clone().into_bytes(),
@@ -86,6 +88,9 @@ impl GuestDevCert {
             file(DEV_KEY_PATH, self.key_pem.as_bytes().to_vec(), 0o600),
             file(DEV_STEP_PATH, DEV_STEP_SH.as_bytes().to_vec(), 0o755),
         ]
+        .into_iter()
+        .flatten()
+        .collect()
     }
 
     /// The variables: the file paths for tools that take them (Vite, Angular, Next.js), .NET's
@@ -116,9 +121,4 @@ impl GuestDevCert {
 )]
 fn guest_path(p: &str) -> GuestPath {
     GuestPath::new(p).expect("a constant guest path is valid")
-}
-
-#[expect(clippy::panic, reason = "invariant: the modes above are within 0o7777")]
-fn unreachable_mode() -> ! {
-    panic!("a constant file mode is valid")
 }

@@ -311,7 +311,7 @@ resolver_merge() {
     fi
     if [ -f "$RESOLV" ] && same "$tmp" "$RESOLV"; then return 0; fi
     if cat "$tmp" >"$RESOLV" 2>/dev/null; then
-        say "resolv.conf: puddle's nameserver line is $1"
+        say "resolv.conf: Puddle's nameserver line is $1"
     else
         say "resolv.conf is not writable; the guest keeps its resolver"
     fi

@@ -33,9 +33,11 @@ use crate::schema;
 
 mod environment;
 mod identities;
+mod ports;
 mod sets;
 mod shell_init;
 
+pub use ports::PinnedPort;
 pub use sets::{RuleSetEntryInfo, RuleSetInfo, SystemHost, SystemPlan, parse_rule_set};
 
 /// Tunable limits. The defaults are the spec's *(default)* values.
@@ -706,6 +708,8 @@ impl Store {
                 });
             }
             shell_init::delete_workspace_rows(tx, workspace)?;
+            // Its pinned forwards go with it.
+            ports::delete_workspace_rows(tx, workspace)?;
             Ok(WorkspaceDeletion {
                 rules_deleted: rules.len() as u64,
                 pending_expired: expired,

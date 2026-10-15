@@ -50,8 +50,8 @@ pub use rule::{Actor, Effect, NewRule, Rule, Scope};
 pub use schema::SCHEMA_VERSION;
 pub use shell_init::{MAX_SHELL_INIT_BYTES, ShellInit, ShellInitText};
 pub use store::{
-    AuditCursor, AuditFilter, Limits, RuleSetEntryInfo, RuleSetInfo, Store, SweepReport,
-    SystemHost, SystemPlan, WorkspaceDeletion, parse_rule_set,
+    AuditCursor, AuditFilter, Limits, PinnedPort, RuleSetEntryInfo, RuleSetInfo, Store,
+    SweepReport, SystemHost, SystemPlan, WorkspaceDeletion, parse_rule_set,
 };
 pub use sweeper::{DEFAULT_SWEEP_PERIOD, SWEEP_PROBLEM, Sweeper};
 pub use workspace_git::{

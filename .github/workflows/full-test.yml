@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The real-tool radar (tests named `vm_radar_*`): apt, npm, pnpm, cargo, go and maven fetch thousands of
+# packages from the real registries through the whole stack in a real microVM, and the tools' answer
+# to a certificate they refuse is recorded. It discovers; it never blocks a merge (it is not a required
+# check). Every failure is triaged into a deterministic case of the transparency suite
+# (crates/puddle-e2e/tests/transparency.rs, the vm_host_transparency_* VM test) and fixed there.
+# Runs weekly on develop, by hand on any branch (`gh workflow run full-test.yml --ref <branch>`), and
+# on a pull request when it gets the `full-test` label. Never retried.
+name: full-test
+
+on:
+  schedule:
+    - cron: "0 4 * * 0"
+  pull_request:
+    branches: [develop]
+    types: [labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: full-test-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  PUDDLE_VM_MSB_LOG_LEVEL: debug
+
+jobs:
+  radar:
+    name: real-tool radar (KVM, msb microVMs)
+    if: ${{ github.event_name != 'pull_request' || github.event.label.name == 'full-test' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: KVM
+        run: |
+          test -e /dev/kvm || { echo "no /dev/kvm on this runner"; exit 1; }
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sleep 1
+          test -r /dev/kvm && test -w /dev/kvm
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
+      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+        with:
+          tool: cargo-nextest@0.9.146
+      - name: msb build cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/msb-build/msb-*
+          key: msb-linux-${{ hashFiles('ci/msb-runtime.sha256', 'ci/fetch-msb.sh', 'rust-toolchain.toml') }}
+      - name: msb runtime (fork tag; download, verify, build)
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q libcap-ng-dev
+          MSB_BUILD_DIR="$RUNNER_TEMP/msb-build" ci/fetch-msb.sh "$RUNNER_TEMP/msb"
+          echo "PUDDLE_VM_RUNTIME_DIR=$RUNNER_TEMP/msb" >> "$GITHUB_ENV"
+          echo "PUDDLE_VM_ROOT=$RUNNER_TEMP/pvm" >> "$GITHUB_ENV"
+      - name: code-server (pinned release; download, verify)
+        run: |
+          ci/fetch-code-server.sh "$RUNNER_TEMP/code-server"
+          echo "PUDDLE_CODE_SERVER_DIR=$RUNNER_TEMP/code-server" >> "$GITHUB_ENV"
+      - name: guest agent (static musl build)
+        run: echo "PUDDLE_AGENT_BIN=$(ci/build-agent.sh --locked)" >> "$GITHUB_ENV"
+      - name: the radar (one test at a time, never retried)
+        run: |
+          PUDDLE_VM_PREFIX="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            cargo nextest run -p puddle-host --profile vm --locked --no-fail-fast \
+              -E 'test(/(^|::)vm_radar_/)'
+      - name: upload test results and msb logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: full-test-results
+          path: |
+            target/nextest/vm/junit.xml
+            ${{ runner.temp }}/pvm/**/logs/**
+          retention-days: 14
+          if-no-files-found: ignore

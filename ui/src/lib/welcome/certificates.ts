@@ -32,8 +32,8 @@ export function devCertificateLine(status: DevCertificate | undefined): Line {
     case "needs_trust":
       return {
         tone: "info",
-        title: "Development certificate: Windows will ask once",
-        text: "puddle makes a certificate for localhost, and Windows asks you once to trust it. Until you do, an HTTPS development server shows a browser warning.",
+        title: "Development certificate: not trusted yet",
+        text: "puddle hasn't asked Windows to trust the certificate it makes for localhost. When it does, Windows shows one confirmation. Until then an HTTPS development server shows a browser warning.",
       };
     case "trust_declined":
       return {
@@ -45,7 +45,7 @@ export function devCertificateLine(status: DevCertificate | undefined): Line {
       return {
         tone: "warn",
         title: "Development certificate: couldn't be trusted",
-        text: "Windows didn't let puddle trust it; a company policy may forbid adding certificates, and puddle never overrides a policy. An HTTPS development server shows a browser warning.",
+        text: "Windows didn't let puddle trust it. A company policy that forbids adding certificates is one reason, and puddle never overrides a policy. An HTTPS development server shows a browser warning.",
       };
     case "unsupported":
       return {

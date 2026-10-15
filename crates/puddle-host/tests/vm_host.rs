@@ -1447,6 +1447,7 @@ async fn vm_host_a_second_process_on_the_same_data_folder_is_refused_and_the_vm_
 }
 
 /// Waits until the editor server in the guest answers its health check.
+#[cfg(not(windows))]
 async fn editor_up(runtime: &MsbRuntime, sandbox: &WorkspaceName) {
     guest(
         runtime,
@@ -1463,6 +1464,7 @@ async fn editor_up(runtime: &MsbRuntime, sandbox: &WorkspaceName) {
 /// What a client sees of the editor server in a fresh sandbox: the release is read-only, the
 /// password is the owner's alone, a client signs in with it, and it is on no command line.
 /// Returns the password.
+#[cfg(not(windows))]
 async fn check_editor_session(runtime: &MsbRuntime, sandbox: &WorkspaceName, name: &str) -> String {
     // The release is read-only in the guest, and the password is the owner's alone.
     let mount = guest(

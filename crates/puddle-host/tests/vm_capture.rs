@@ -129,6 +129,30 @@ fn allowed_connections(vm: &VmHost, host: &str, port: u16) -> usize {
         .count()
 }
 
+/// Waits until the audit holds more allowed connection records to `host:port` than `before`.
+///
+/// The proxy writes a connection's record when the connection ends, which is after the guest
+/// tool that opened it has exited and the test has read its output, so reading the audit
+/// right away races the proxy's write.
+async fn wait_for_connection_record(vm: &VmHost, host: &str, port: u16, before: usize) {
+    for _ in 0..200 {
+        if allowed_connections(vm, host, port) > before {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let lines: Vec<String> = vm
+        .host
+        .store()
+        .audit_lines(0, 100_000)
+        .unwrap()
+        .into_iter()
+        .map(|(_, line)| line)
+        .filter(|line| line.contains(host))
+        .collect();
+    panic!("no connection record for {host}:{port} after 20 s; audit lines naming it: {lines:#?}");
+}
+
 /// With capture on from the boot and no proxy setting in the command, tools that never look at
 /// one still work for what a rule allows and fail at once for the rest.
 #[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
@@ -159,10 +183,7 @@ async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses
     eprintln!("{scrubbed}");
     assert_eq!(field(&scrubbed, "http="), "200", "{scrubbed}");
     assert!(field(&scrubbed, "ip=").starts_with("198.1"), "{scrubbed}");
-    assert!(
-        allowed_connections(&vm, SITE, 443) > before,
-        "no connection record for {SITE}:443"
-    );
+    wait_for_connection_record(&vm, SITE, 443, before).await;
 
     // Raw TCP: bash's /dev/tcp, no HTTP library, port 80.
     let raw = run(format!(

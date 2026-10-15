@@ -127,8 +127,10 @@ impl From<GuestPath> for String {
 /// A file the boot hook writes into the guest: path, contents, permission bits and how it is
 /// applied ([`ApplyKind`]).
 ///
-/// Contents are public material only (configs, CA certificates). Never put a secret in a
-/// `GuestFile`: it is logged in `Debug` and copied into the guest's root disk.
+/// Contents are public material (configs, CA certificates) unless the mode leaves group and
+/// others no access (`0o600`): then they are a secret meant for the guest (a private key), and
+/// `Debug` prints the length instead of the bytes. A secret file is copied into the guest's root
+/// disk like the rest, so only put one here when the guest has to hold it.
 ///
 /// ```
 /// use puddle_types::{GuestFile, GuestPath};
@@ -137,13 +139,33 @@ impl From<GuestPath> for String {
 ///     .unwrap();
 /// assert_eq!(f.mode(), 0o644);
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GuestFile {
     path: GuestPath,
     contents: Vec<u8>,
     mode: u32,
     #[serde(default)]
     apply: ApplyKind,
+}
+
+impl fmt::Debug for GuestFile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut shown = f.debug_struct("GuestFile");
+        shown.field("path", &self.path);
+        // No bit set for group or others: an owner-only secret.
+        if self.mode.trailing_zeros() >= 6 {
+            shown.field(
+                "contents",
+                &format_args!("<{} bytes, owner-only>", self.contents.len()),
+            );
+        } else {
+            shown.field("contents", &self.contents);
+        }
+        shown
+            .field("mode", &self.mode)
+            .field("apply", &self.apply)
+            .finish()
+    }
 }
 
 /// How the boot hook applies a [`GuestFile`].
@@ -354,6 +376,21 @@ mod tests {
 
     fn p(s: &str) -> GuestPath {
         GuestPath::new(s).unwrap()
+    }
+
+    #[test]
+    fn an_owner_only_file_never_prints_its_contents() {
+        let secret = GuestFile::new(p("/etc/puddle/key"), b"CANARY-KEY".to_vec())
+            .with_mode(0o600)
+            .unwrap();
+        let shown = format!("{secret:?}");
+        assert!(
+            !shown.contains("CANARY") && !shown.contains("67, 65"),
+            "{shown}"
+        );
+        assert!(shown.contains("10 bytes"), "{shown}");
+        let public = GuestFile::new(p("/etc/puddle/cert"), b"PUBLIC".to_vec());
+        assert!(format!("{public:?}").contains("80, 85, 66"));
     }
 
     #[test]

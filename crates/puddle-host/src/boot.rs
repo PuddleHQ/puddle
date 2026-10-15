@@ -10,6 +10,7 @@ use puddle_boot::{
     BootHook, BootPlan, GitIdentity, with_boot_mounts, with_code_server_mount, write_assets,
 };
 use puddle_ca::{CaCertificate, TrustBundle};
+use puddle_certs::devcert::GuestDevCert;
 use puddle_certs::{CorporateRoots, GuestTrust};
 use puddle_compute::{FileMount, ImageConfig, SandboxSpec, VsockRoute};
 use puddle_guest_env::{ProxySettings, guest_proxy_config};
@@ -19,6 +20,7 @@ use puddle_store::Store;
 use puddle_types::{GuestEnv, ImageRef, MemoryMib, WorkspaceId, WorkspaceName};
 use puddle_workspace::Layout;
 
+use crate::dev_cert::GuestCertSource;
 use crate::git_hosts::Authors;
 use crate::shell_init::{self, Copies};
 use crate::{GuestSettings, HostError};
@@ -48,7 +50,13 @@ pub(crate) struct BootKit {
     roots: CorporateRoots,
     git: Option<GitIdentity>,
     shell_init: Copies,
+    dev_cert: Option<Arc<dyn GuestCertSource>>,
 }
+
+/// How long a start waits for the development certificate: the system's one-time confirmation
+/// may be open on the user's desktop. After that the workspace starts without it (and gets it at
+/// its next start).
+const DEV_CERT_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// What differs from one sandbox to the next, besides the image: the CA the sandbox's guest
 /// trusts, who commits, and the user's own variables.
@@ -64,6 +72,8 @@ pub(crate) struct GuestInputs<'a> {
     pub(crate) env: &'a GuestEnv,
     /// The browser editor's server for this workspace, when the host bundles one.
     pub(crate) editor: Option<&'a EditorServer>,
+    /// The development certificate and its key, when the host has one for this start.
+    pub(crate) dev_cert: Option<&'a GuestDevCert>,
 }
 
 impl BootKit {
@@ -107,12 +117,40 @@ impl BootKit {
             roots: roots.clone(),
             git: guest.git_identity.clone(),
             shell_init: Copies::new(guest_share.join(SHELL_INIT_DIR), store),
+            dev_cert: None,
         })
     }
 
     /// The folders that carry each workspace's shell init to its guest.
     pub(crate) fn shell_init(&self) -> &Copies {
         &self.shell_init
+    }
+
+    /// The same kit whose sandboxes are given the development certificate `source` makes.
+    pub(crate) fn with_dev_cert(mut self, source: Arc<dyn GuestCertSource>) -> Self {
+        self.dev_cert = Some(source);
+        self
+    }
+
+    /// The development certificate for a start, read now so a renewed one reaches the guest at
+    /// its next boot. `None` without a source, when it cannot be made (logged) or when the
+    /// system's confirmation stays unanswered for [`DEV_CERT_WAIT`].
+    pub(crate) async fn dev_cert(&self) -> Option<GuestDevCert> {
+        let source = self.dev_cert.clone()?;
+        let work = tokio::task::spawn_blocking(move || source.guest_cert());
+        match tokio::time::timeout(DEV_CERT_WAIT, work).await {
+            Ok(Ok(cert)) => cert,
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "the development certificate could not be prepared");
+                None
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "the development certificate is not ready (is a confirmation open on the desktop?): this workspace starts without it"
+                );
+                None
+            }
+        }
     }
 
     pub(crate) fn hook(&self) -> &BootHook {
@@ -140,7 +178,10 @@ impl BootKit {
         image_env.extend(guest.env.iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
         let proxy =
             guest_proxy_config(&ProxySettings::default(), &image_env).map_err(|e| e.to_string())?;
-        let trust = GuestTrust::new(&self.roots, &TrustBundle::new().with(guest.ca.clone()));
+        let mut trust = GuestTrust::new(&self.roots, &TrustBundle::new().with(guest.ca.clone()));
+        if let Some(dev) = guest.dev_cert {
+            trust = trust.with_dev_cert(dev.clone());
+        }
         let mut env = guest.env.clone();
         env.extend(&proxy.env);
         env.extend(&trust.env());
@@ -149,7 +190,7 @@ impl BootKit {
             .files(proxy.files)
             .files(trust.guest_files())
             .file(shell_init::loader());
-        if let Some(step) = trust.boot_step() {
+        for step in trust.boot_steps() {
             builder = builder.step(step);
         }
         // The first identity's author, else the one the host was configured with.

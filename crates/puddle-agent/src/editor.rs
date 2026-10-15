@@ -260,18 +260,14 @@ mod tests {
         };
         assert_eq!(after("--bind-addr"), "127.0.0.1:41337");
         assert_eq!(after("--auth"), "password");
-        assert_eq!(
-            after("--user-data-dir"),
-            "/workspaces/a/.puddle/code-server/user-data"
-        );
-        assert_eq!(
-            after("--extensions-dir"),
-            "/workspaces/a/.puddle/code-server/extensions"
-        );
-        assert_eq!(
-            after("--config"),
-            "/workspaces/a/.puddle/code-server/config.yaml"
-        );
+        // Built with `Path::join` like the code: the agent runs in the guest, but its unit tests
+        // also run on a Windows host, where the separator differs.
+        let under =
+            |base: &str, leaf: &str| Path::new(base).join(leaf).to_string_lossy().into_owned();
+        let data = "/workspaces/a/.puddle/code-server";
+        assert_eq!(after("--user-data-dir"), under(data, "user-data"));
+        assert_eq!(after("--extensions-dir"), under(data, "extensions"));
+        assert_eq!(after("--config"), under(data, "config.yaml"));
         assert_eq!(after("--reconnection-grace-time"), "300");
         assert!(args.iter().any(|a| a == "--disable-telemetry"));
         assert!(args.iter().any(|a| a == "--disable-update-check"));
@@ -359,7 +355,9 @@ mod tests {
         }
         assert_eq!(
             cmd.as_std().get_program(),
-            "/puddle/code-server/bin/code-server"
+            Path::new("/puddle/code-server")
+                .join("bin/code-server")
+                .as_os_str()
         );
     }
 

@@ -352,6 +352,8 @@ mod tests {
         let list = AuthList::new().with(a.clone()).with(b.clone());
         list.network_changed();
         list.network_changed();
+        // Neither member signs in to anything.
+        assert!(list.begin(&proxy(1), &["Basic"]).unwrap().is_none());
         assert_eq!(a.0.load(std::sync::atomic::Ordering::SeqCst), 2);
         assert_eq!(b.0.load(std::sync::atomic::Ordering::SeqCst), 2);
     }

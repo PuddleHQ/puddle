@@ -1,0 +1,16 @@
+# path<TAB>fixed substring: hits on a line containing it are ignored (scripts/check-product-name.sh).
+# Only for a lowercase `puddle` that is the command or an identifier, never for prose.
+crates/puddle-doctor/src/report.rs	puddle doctor (puddle {}
+crates/puddle/src/cmd/doctor.rs	puddle doctor (puddle 
+crates/puddle/tests/doctor.rs	puddle doctor (puddle 
+crates/puddle/tests/cli.rs	format!("puddle {}"
+crates/puddle/tests/cli.rs	usage: puddle
+crates/puddle-types/src/lib.rs	version_line("puddle")
+crates/xtask/src/error.rs	Which tree (puddle, msb)
+crates/xtask/src/inventory.rs	Third-party notices: puddle
+ci/scope.sh	NO_VM=" puddle
+ci/scope.sh	NO_UI=" puddle
+ci/check-runtime-layout.sh	for tree in msb puddle
+crates/puddle-proxy/tests/terminate_real_git.rs	remote: puddle:
+crates/xtask/src/inventory.rs	licence entry in the puddle notices
+crates/xtask/tests/runtime.rs	licence entry in the puddle notices

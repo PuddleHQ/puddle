@@ -15,3 +15,5 @@ ci/check-runtime-layout.sh	for tree in msb puddle
 crates/puddle-proxy/tests/terminate_real_git.rs	remote: puddle:
 crates/xtask/src/inventory.rs	licence entry in the puddle notices
 crates/xtask/tests/runtime.rs	licence entry in the puddle notices
+crates/puddle-agent/src/capture/rules.rs	table inet puddle
+crates/puddle-host/tests/vm_capture.rs	table inet puddle

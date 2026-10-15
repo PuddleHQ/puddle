@@ -854,16 +854,14 @@ async fn unreachable_says_whether_every_hop_failed_by_not_answering_in_time() {
         "{err:?}"
     );
 
-    // A refused connection is a failure, not a timeout, and one that did answer breaks the tie
-    // for a route of both.
-    let (dead, _held) = dead_port();
-    let err = chain(
-        vec![Hop::Proxy(dead.clone())],
-        Arc::new(puddle_upstream::NoAuth),
-    )
-    .connect(&request)
-    .await
-    .unwrap_err();
+    // A proxy that answers with garbage is a failure, not a timeout (a refused connection is not
+    // used here: a socket that never listens is refused on Linux and hangs on Windows), and one
+    // hop that did answer breaks the tie for a route of both.
+    let garbage = FakeProxy::start(Behaviour::Garbage).await;
+    let err = chain(vec![via(&garbage)], Arc::new(puddle_upstream::NoAuth))
+        .connect(&request)
+        .await
+        .unwrap_err();
     assert!(
         matches!(
             err,
@@ -875,7 +873,7 @@ async fn unreachable_says_whether_every_hop_failed_by_not_answering_in_time() {
         "{err:?}"
     );
     let err = chain(
-        vec![via(&silent), Hop::Proxy(dead)],
+        vec![via(&silent), via(&garbage)],
         Arc::new(puddle_upstream::NoAuth),
     )
     .connect(&request)

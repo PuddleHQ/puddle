@@ -1489,6 +1489,9 @@ async fn vm_host_shell_init_is_checked_read_only_sourced_by_login_shells_and_res
         }
     };
 
+    // What a login shell prints with no shell init (an image may print its own banner).
+    let quiet_before = guest(&runtime, &sandbox, "bash -lc true 2>&1; echo end").await;
+
     // A script that prints, and one that does not parse, are refused by the guest's own shell and
     // nothing is saved.
     let loud = save("echo hello from my init\n").await;
@@ -1526,7 +1529,10 @@ async fn vm_host_shell_init_is_checked_read_only_sourced_by_login_shells_and_res
     );
     // The shell's output stays clean, which is what the check protects.
     let clean = guest(&runtime, &sandbox, "bash -lc true 2>&1; echo end").await;
-    assert_eq!(clean.trim(), "end", "{clean}");
+    assert_eq!(
+        clean, quiet_before,
+        "the image's login shell said something new"
+    );
 
     // A variable added while the workspace runs reaches the login shells opened from then on, with
     // no restart (the login-shell file is rewritten); one removed leaves them again.
@@ -1572,13 +1578,21 @@ async fn vm_host_shell_init_is_checked_read_only_sourced_by_login_shells_and_res
     let attempt = guest(
         &runtime,
         &sandbox,
-        "(echo evil >/puddle/shell-init/init.sh) 2>&1; (touch /puddle/shell-init/new.sh) 2>&1; echo end",
+        "echo evil >/puddle/shell-init/init.sh 2>/dev/null; echo \"write=$?\"; \
+         touch /puddle/shell-init/new.sh 2>/dev/null; echo \"create=$?\"",
     )
     .await;
-    assert_eq!(
-        attempt.matches("Read-only file system").count(),
-        2,
-        "{attempt}"
+    assert!(
+        !attempt.contains("write=0") && !attempt.contains("create=0"),
+        "the guest changed the read-only folder: {attempt}"
+    );
+    assert!(
+        !root
+            .join("guest-share")
+            .join("shell-init")
+            .join(&name)
+            .join("new.sh")
+            .exists()
     );
     let folder = root.join("guest-share").join("shell-init").join(&name);
     assert_eq!(

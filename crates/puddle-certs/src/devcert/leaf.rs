@@ -93,7 +93,7 @@ pub(crate) fn generate(now: SystemTime) -> Result<NewLeaf, GenerateError> {
     })
 }
 
-/// What a certificate says, for the choices puddle makes about it.
+/// What a certificate says, for the choices Puddle makes about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CertInfo {
     /// Start of validity, Unix seconds.
@@ -118,7 +118,7 @@ impl CertInfo {
     }
 }
 
-/// `der` is not a certificate puddle can read.
+/// `der` is not a certificate Puddle can read.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("not a readable certificate")]
 pub struct Unreadable;
@@ -234,7 +234,7 @@ pub(crate) fn check_names(info: &CertInfo) -> Result<(), ShapeError> {
     Ok(())
 }
 
-/// Whether `der` has the shape puddle ever trusts: a leaf (`CA:false`), carrying the marker, and
+/// Whether `der` has the shape Puddle ever trusts: a leaf (`CA:false`), carrying the marker, and
 /// valid only for [`DNS_NAMES`] and [`IP_ADDRESSES`]. Trusting anything wider would let a leaked
 /// key impersonate more than loopback.
 ///

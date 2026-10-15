@@ -21,7 +21,7 @@ use std::fs::{File, FileTimes};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use support::mount_attack::{ATTACK, HostDir, OPS, Report, expected, judge, judge_outcomes};
+use support::mount_attack::{HostDir, OPS, Report, expected, judge, judge_outcomes};
 
 /// What the mounts promise for a file in `state`.
 fn promised(state: &str, running: bool) -> Report {
@@ -189,6 +189,8 @@ fn every_kind_of_change_to_the_host_files_is_flagged() {
 #[cfg(unix)]
 #[test]
 fn a_writable_share_fails_the_judgement() {
+    use support::mount_attack::ATTACK;
+
     let (dir, names) = folder();
     let target = dir.path().join("boot.sh");
     let before = HostDir::take(dir.path(), &names);

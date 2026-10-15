@@ -122,8 +122,8 @@ impl<T: DevCertTrust> DevCertManager<T> {
         }
     }
 
-    /// Makes sure a certificate is ready for the guests and, when puddle's own is used, trusted.
-    /// The system's confirmation may appear (once, the first time puddle's own leaf is trusted).
+    /// Makes sure a certificate is ready for the guests and, when Puddle's own is used, trusted.
+    /// The system's confirmation may appear (once, the first time Puddle's own leaf is trusted).
     /// A declined or failed trust is reported in the status, not as an error.
     ///
     /// # Errors
@@ -201,7 +201,7 @@ impl<T: DevCertTrust> DevCertManager<T> {
             Err(TrustError::Unsupported) => return (DevCertStatus::Unsupported, None),
             Err(TrustError::Failed(why)) => return (DevCertStatus::TrustFailed, Some(why)),
         }
-        // Only a certificate of the shape puddle makes is ever offered to the system.
+        // Only a certificate of the shape Puddle makes is ever offered to the system.
         if let Err(error) = check_trust_shape(cert_der) {
             return (DevCertStatus::TrustFailed, Some(error.to_string()));
         }

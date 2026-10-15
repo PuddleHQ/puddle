@@ -88,23 +88,28 @@ pub fn check(cargo: &Cargo, manifest: &Path, targets: &[&str]) -> Result<String>
             }
         }
     }
+    verdict(problems, targets.len())
+}
+
+/// The command's answer: the leaks as an error, else the line that says what was checked.
+fn verdict(mut problems: Vec<String>, targets: usize) -> Result<String> {
     if !problems.is_empty() {
         problems.sort();
         problems.dedup();
         return Err(XtaskError::Leak(problems.join("\n")));
     }
     Ok(format!(
-        "release features ok: no `{}` feature is on in {} on {} targets",
+        "release features ok: no `{}` feature is on in {} on {targets} targets",
         TEST_ONLY_FEATURES.join("` or `"),
         SHIPPED_PROGRAMS.join(", "),
-        targets.len()
     ))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+
     use super::*;
-    use crate::PUDDLE_TARGETS;
 
     fn manifest() -> std::path::PathBuf {
         crate::workspace_root().join("Cargo.toml")
@@ -175,11 +180,23 @@ puddle-testing-tools v0.0.0 (/w/crates/x)|
     }
 
     #[test]
-    fn every_ship_target_is_checked() {
-        // Offline cargo only resolves what this machine fetched; the host's own tuple is checked
-        // above, so here only the command line is exercised.
-        let err = crate::run(["release-features".into(), "--tag".into()]).unwrap_err();
+    fn the_command_checks_the_workspace_and_rejects_unknown_arguments() {
+        let line = crate::run(
+            ["release-features", "--offline", "--target", "host-tuple"].map(OsString::from),
+        )
+        .unwrap();
+        assert!(line.ends_with("on 1 targets"), "{line}");
+        let err = crate::run(["release-features", "--tag"].map(OsString::from)).unwrap_err();
         assert!(err.to_string().contains("unknown argument --tag"), "{err}");
-        assert_eq!(PUDDLE_TARGETS.len(), 3);
+    }
+
+    #[test]
+    fn leaks_become_one_error_that_names_each_once() {
+        let leak = "puddle-proxy v0.0.0 has the `testing` feature on (target t, default features)";
+        let err = verdict(vec![leak.into(), leak.into()], 1)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(err, format!("a test-only feature would ship:\n{leak}"));
+        assert!(verdict(vec![], 3).unwrap().ends_with("on 3 targets"));
     }
 }

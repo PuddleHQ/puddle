@@ -72,6 +72,7 @@ commands:
             --out <file>           output file (default: <target>/THIRD-PARTY-puddle.txt)
             --offline              no network for cargo
   release-features  fail when a test-only feature (`testing`, `fuzzing`) is on in a shipped program
+            --target <triple>      only this target (default: every ship target)
             --offline              no network for cargo
   openapi   write crates/puddle-api/openapi/{openapi.json,schema.d.ts} and ui/src/lib/api/schema.d.ts
             (needs Node for the types)
@@ -182,7 +183,9 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<String> {
             &["--out"],
             &["--check", "--offline"],
         )?),
-        "release-features" => release_features(&Options::parse(args, &[], &["--offline"])?),
+        "release-features" => {
+            release_features(&Options::parse(args, &["--target"], &["--offline"])?)
+        }
         "openapi" => openapi_command(&Options::parse(args, &[], &["--check"])?),
         "help" | "--help" | "-h" => Ok(USAGE.to_owned()),
         other => Err(XtaskError::Usage(format!("unknown command {other}"))),
@@ -240,10 +243,15 @@ fn openapi_command(opts: &Options) -> Result<String> {
 
 /// The release-feature check ([`features`]): no `testing` or `fuzzing` feature in what ships.
 fn release_features(opts: &Options) -> Result<String> {
+    let only: Vec<&str> = opts.value("--target").into_iter().collect();
     features::check(
         &Cargo::from_env(opts.has("--offline")),
         &workspace_root().join("Cargo.toml"),
-        &PUDDLE_TARGETS,
+        if only.is_empty() {
+            &PUDDLE_TARGETS
+        } else {
+            &only
+        },
     )
 }
 

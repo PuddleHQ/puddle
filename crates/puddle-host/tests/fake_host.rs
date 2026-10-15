@@ -3275,6 +3275,7 @@ async fn a_workspace_starts_with_its_variables_and_a_stand_in_for_each_secret_an
     );
 }
 
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connection_with_no_restart()
  {

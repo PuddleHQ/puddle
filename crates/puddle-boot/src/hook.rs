@@ -340,7 +340,7 @@ mod tests {
                 .into(),
         };
         assert_eq!(report.replaced_files(), ["/etc/a b", "/etc/c"]);
-        assert!(BootReport::default().replaced_files().is_empty());
+        assert_eq!(BootReport::default().replaced_files(), [] as [&str; 0]);
     }
 
     #[test]

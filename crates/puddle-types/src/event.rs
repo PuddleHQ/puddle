@@ -731,20 +731,6 @@ mod tests {
                 Some(WorkspaceName::new("box").unwrap()),
             ),
             (
-                Event::WorkspaceShellInitChanged {
-                    workspace: WorkspaceName::new("box").unwrap(),
-                },
-                r#"{"type":"workspace_shell_init_changed","workspace":"box"}"#,
-                Some(WorkspaceName::new("box").unwrap()),
-            ),
-            (
-                Event::WorkspaceShellInitRestored {
-                    workspace: WorkspaceName::new("box").unwrap(),
-                },
-                r#"{"type":"workspace_shell_init_restored","workspace":"box"}"#,
-                Some(WorkspaceName::new("box").unwrap()),
-            ),
-            (
                 Event::WorkspaceSshFailed {
                     workspace: WorkspaceName::new("box").unwrap(),
                     reason: "no SSH endpoint: the listener failed".into(),
@@ -814,6 +800,24 @@ mod tests {
             assert_eq!(serde_json::to_string(&event).unwrap(), json);
             assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
             assert_eq!(event.workspace(), workspace.as_ref());
+        }
+    }
+
+    #[test]
+    fn shell_init_events_have_fixed_shapes() {
+        for (event, json) in [
+            (
+                Event::WorkspaceShellInitChanged { workspace: name() },
+                r#"{"type":"workspace_shell_init_changed","workspace":"box"}"#,
+            ),
+            (
+                Event::WorkspaceShellInitRestored { workspace: name() },
+                r#"{"type":"workspace_shell_init_restored","workspace":"box"}"#,
+            ),
+        ] {
+            assert_eq!(serde_json::to_string(&event).unwrap(), json);
+            assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
+            assert_eq!(event.workspace(), Some(&name()));
         }
     }
 

@@ -1210,6 +1210,10 @@ async fn vm_host_carries_2000_concurrent_guest_connections_through_agent_and_pro
 /// A small HTTP/1.1 server on the host for the transparency bar (keep-alive):
 /// `GET /ping` answers `pong`; `GET /bytes/<n>` sends `n` bytes; `PUT /sink` with a
 /// `Content-Length` reads that many bytes and answers `received=<n>`.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one connection loop, read top to bottom"
+)]
 async fn transparency_fixture() -> u16 {
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
@@ -1320,7 +1324,7 @@ async fn transparency_fixture() -> u16 {
 const TRANSPARENCY_SCRIPT: &str = r#"
 set -u
 ulimit -n 8192 2>/dev/null || ulimit -n "$(ulimit -Hn)"
-PROXY="-p -x http://127.0.0.1:3128"
+PROXY=(-p -x http://127.0.0.1:3128 --noproxy '')
 U="http://127.0.0.1:$PORT"
 cd /tmp
 now() { date +%s.%N; }
@@ -1329,29 +1333,29 @@ now() { date +%s.%N; }
 : > par.cfg
 for i in $(seq 1 1024); do printf 'url = "%s/ping?i=%s"\noutput = "/dev/null"\n' "$U" "$i" >> par.cfg; done
 t0=$(now)
-curl -s $PROXY --parallel --parallel-immediate --parallel-max 1024 -K par.cfg --max-time 120 \
+curl -s "${PROXY[@]}" --parallel --parallel-immediate --parallel-max 1024 -K par.cfg --max-time 120 \
   -w '%{http_code} %{time_total}\n' > par.out 2> par.err
-echo "parallel_ok=$(grep -c '^200 ' par.out) parallel_total=1024 parallel_slowest=$(sort -k2 -n par.out | tail -1 | cut -d' ' -f2) parallel_wall=$(echo "$(now) - $t0" | bc -l 2>/dev/null || echo ?)"
+echo "parallel_ok=$(grep -c '^200 ' par.out) parallel_total=1024 parallel_slowest=$(sort -k2 -n par.out | tail -1 | cut -d' ' -f2)"
 [ -s par.err ] && echo "parallel_stderr=$(head -c 300 par.err | tr '\n' ' ')"
 
 # 1000 requests in a row on one reused connection.
 : > seq.cfg
 for i in $(seq 1 1000); do printf 'url = "%s/ping?i=%s"\noutput = "/dev/null"\n' "$U" "$i" >> seq.cfg; done
-curl -s $PROXY -K seq.cfg --max-time 120 -w '%{http_code} %{time_total} %{num_connects}\n' > seq.out 2> seq.err
+curl -s "${PROXY[@]}" -K seq.cfg --max-time 120 -w '%{http_code} %{time_total} %{num_connects}\n' > seq.out 2> seq.err
 echo "keepalive_ok=$(grep -c '^200 ' seq.out) keepalive_slowest=$(sort -k2 -n seq.out | tail -1 | cut -d' ' -f2) keepalive_connects=$(awk '{n+=$3} END {print n}' seq.out)"
 
 # A gibibyte down and a gibibyte up.
-curl -s $PROXY -o /dev/null --max-time 300 -w 'download_bytes=%{size_download} download_s=%{time_total} download_code=%{http_code}\n' "$U/bytes/1073741824"
-head -c 1073741824 /dev/zero | curl -s $PROXY -T - -H 'Transfer-Encoding:' -H 'Content-Length: 1073741824' \
+curl -s "${PROXY[@]}" -o /dev/null --max-time 300 -w 'download_bytes=%{size_download} download_s=%{time_total} download_code=%{http_code}\n' "$U/bytes/1073741824"
+head -c 1073741824 /dev/zero | curl -s "${PROXY[@]}" -T - -H 'Transfer-Encoding:' -H 'Content-Length: 1073741824' \
   --max-time 300 -w ' upload_s=%{time_total} upload_code=%{http_code}\n' "$U/sink"
 
 # A reader at 1 KiB/s for 60 s, with 20 other transfers started meanwhile, one every 2 s.
-curl -s $PROXY --limit-rate 1k -o /dev/null --max-time 60 -w 'slow_bytes=%{size_download} slow_exit_time=%{time_total}\n' "$U/bytes/1073741824" &
+curl -s "${PROXY[@]}" --limit-rate 1k -o /dev/null --max-time 60 -w 'slow_bytes=%{size_download} slow_exit_time=%{time_total}\n' "$U/bytes/1073741824" &
 slow=$!
 sleep 3
 others=0
 for i in $(seq 1 20); do
-  if curl -s $PROXY -o /dev/null --max-time 5 "$U/bytes/1048576"; then others=$((others + 1)); fi
+  if curl -s "${PROXY[@]}" -o /dev/null --max-time 5 "$U/bytes/1048576"; then others=$((others + 1)); fi
   sleep 2
 done
 echo "slow_others_ok=$others slow_others_total=20"
@@ -1449,6 +1453,426 @@ async fn vm_host_transparency_bar_curl_at_its_widest_through_agent_and_proxy() {
     assert_eq!(end["step"], "done", "{end}");
     let down = host.shutdown().await;
     assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
+/// Hosts the radar's package managers talk to. With termination on, an identity names each, so
+/// Puddle decrypts and re-encrypts every connection to them; with it off they are only allowed.
+const RADAR_HOSTS: &[&str] = &[
+    "deb.debian.org",
+    "security.debian.org",
+    "registry.npmjs.org",
+    "index.crates.io",
+    "static.crates.io",
+    "crates.io",
+    "proxy.golang.org",
+    "sum.golang.org",
+    "repo.maven.apache.org",
+    "repo1.maven.org",
+];
+
+/// Hosts served over TLS among [`RADAR_HOSTS`] (apt uses plain HTTP).
+fn radar_tls_hosts() -> impl Iterator<Item = &'static &'static str> {
+    RADAR_HOSTS.iter().filter(|h| !h.ends_with("debian.org"))
+}
+
+/// An identity with one credential binding per host, so every one of them is decrypted.
+fn identity_for(label: &str, hosts: impl Iterator<Item = &'static &'static str>) -> IdentityDraft {
+    let credentials = hosts
+        .map(|host| {
+            let name = HostName::new(*host).unwrap();
+            CredentialBinding::new(
+                &name,
+                SourceSpec::Gh {
+                    host: name.clone(),
+                    account: AccountName::new("nobody").unwrap(),
+                },
+                Coverage::new(BTreeSet::new(), true).unwrap(),
+            )
+            .unwrap()
+        })
+        .collect();
+    IdentityDraft {
+        label: label.to_owned(),
+        author: Author::new(label, "radar@example.org").unwrap(),
+        credentials,
+    }
+}
+
+/// A workspace for a radar: the hosts allowed, the identity attached when `terminate` is set (a
+/// host with no injection, so nothing is added to a request), and the workspace created and
+/// running.
+async fn radar_workspace(tag: &str, terminate: bool) -> (VmHost, WorkspaceName, Api) {
+    let vm = start_vm_host_with(tag, options_without_injection()).await;
+    let name = format!("{}-{tag}", vm.settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    for site in RADAR_HOSTS.iter().chain(&[REPO_HOST]) {
+        vm.host
+            .store()
+            .add_rule(&NewRule {
+                scope: Scope::Workspace(sandbox.clone()),
+                pattern: Pattern::parse(site).unwrap(),
+                effect: Effect::Allow,
+                expires_at: None,
+                created_by: Actor::Cli,
+            })
+            .unwrap();
+    }
+    if terminate {
+        vm.host
+            .store()
+            .create_identity(identity_for("Radar", radar_tls_hosts()))
+            .unwrap();
+    }
+    let api = Api::new(vm.host.url(), vm.host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "repo_url": REPO, "memory_mib": 2048}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(
+        end.get("step").and_then(serde_json::Value::as_str),
+        Some("done"),
+        "{end}"
+    );
+    (vm, sandbox, api)
+}
+
+/// The connection records of the audit so far.
+fn audit_connections(host: &Host<MsbRuntime>) -> Vec<serde_json::Value> {
+    host.store()
+        .audit_lines(0, 200_000)
+        .unwrap()
+        .into_iter()
+        .filter_map(|(_, line)| serde_json::from_str::<serde_json::Value>(&line).ok())
+        .filter(|r| r["type"] == "connection")
+        .collect()
+}
+
+/// A summary of the connection records: how many per host, how many decrypted (they carry a
+/// method), and every one the proxy did not simply allow by rule.
+fn audit_summary(records: &[serde_json::Value]) -> String {
+    let mut per_host: std::collections::BTreeMap<String, (u32, u32)> =
+        std::collections::BTreeMap::new();
+    let mut odd = Vec::new();
+    for r in records {
+        let host = r["host"].as_str().unwrap_or("?").to_owned();
+        let entry = per_host.entry(host).or_default();
+        entry.0 += 1;
+        entry.1 += u32::from(!r["method"].is_null());
+        if r["reason"] != "rule" || r["decision"] != "allow" {
+            odd.push(format!(
+                "  {} {} {} {}",
+                r["host"], r["decision"], r["reason"], r["detail"]
+            ));
+        }
+    }
+    let mut lines = vec!["connection records by host (all, decrypted):".to_owned()];
+    lines.extend(
+        per_host
+            .into_iter()
+            .map(|(host, (all, decrypted))| format!("  {host}: {all}, {decrypted}")),
+    );
+    lines.push(format!("not allowed by rule: {}", odd.len()));
+    lines.extend(odd.into_iter().take(20));
+    lines.join("\n")
+}
+
+/// What the radar installs and fetches, as one guest script: each step is timed, its own output
+/// kept, and the lines that show a tool retrying or failing are counted (a retry is a failure the
+/// tool hid). The package sets are pinned at the top level only, so the full trees drift with the
+/// registries: that is what a radar is for.
+const RADAR_SCRIPT: &str = r#"
+set -u
+export DEBIAN_FRONTEND=noninteractive
+step() {
+  name=$1; shift
+  t0=$(date +%s.%N)
+  timeout 1500 bash -c "$*" > "/tmp/radar-$name.log" 2>&1
+  rc=$?
+  t1=$(date +%s.%N)
+  bad=$(grep -c -i -E 'retry|retrying|timed out|timeout|ETIMEDOUT|ECONNRESET|EPIPE|reset by peer|connection refused|certificate|tls|ssl|EAI_AGAIN|unexpected eof|stalled' "/tmp/radar-$name.log")
+  echo "RADAR step=$name rc=$rc secs=$(awk "BEGIN {printf \"%.1f\", $t1 - $t0}") suspicious_lines=$bad"
+  if [ "$rc" != 0 ] || [ "$bad" != 0 ]; then
+    grep -i -E 'retry|retrying|timed out|timeout|ETIMEDOUT|ECONNRESET|EPIPE|reset by peer|connection refused|certificate|tls|ssl|EAI_AGAIN|unexpected eof|stalled' "/tmp/radar-$name.log" | head -8 | sed 's/^/  | /'
+    tail -5 "/tmp/radar-$name.log" | sed 's/^/  > /'
+  fi
+}
+
+step apt_update 'apt-get update'
+step apt_install 'apt-get install -y --no-install-recommends nodejs npm golang-go default-jdk-headless ca-certificates-java maven cargo curl'
+
+mkdir -p /tmp/np && cd /tmp/np
+cat > package.json <<'JSON'
+{"name":"radar","version":"1.0.0","dependencies":{
+ "next":"14.2.15","react":"18.3.1","react-dom":"18.3.1","typescript":"5.6.3","eslint":"8.57.1",
+ "eslint-config-next":"14.2.15","jest":"29.7.0","webpack":"5.95.0","@babel/core":"7.25.8",
+ "@babel/preset-env":"7.25.8","tailwindcss":"3.4.14","postcss":"8.4.47","rollup":"4.24.0","vite":"5.4.9",
+ "@angular/cli":"18.2.9","@nestjs/core":"10.4.5","@nestjs/cli":"10.4.5","express":"4.21.1","lodash":"4.17.21"}}
+JSON
+step npm_cold_install 'cd /tmp/np && npm install --no-audit --no-fund --ignore-scripts'
+echo "RADAR npm_packages=$(find /tmp/np/node_modules -name package.json -not -path '*/test/*' | wc -l)"
+
+step pnpm_cold_install 'npm install -g pnpm@10.12.1 && mkdir -p /tmp/pn && cp /tmp/np/package.json /tmp/pn/ && cd /tmp/pn && pnpm install --ignore-scripts --reporter=append-only'
+echo "RADAR pnpm_packages=$(ls /tmp/pn/node_modules/.pnpm 2>/dev/null | wc -l)"
+
+mkdir -p /tmp/cg/src && cd /tmp/cg
+cat > Cargo.toml <<'TOML'
+[package]
+name = "radar"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+tracing-subscriber = "0.3"
+rayon = "1"
+regex = "1"
+hyper = "1"
+tonic = "0.12"
+prost = "0.13"
+aws-sdk-s3 = "1"
+polars = "0.43"
+bevy = "0.14"
+TOML
+echo 'fn main() {}' > src/main.rs
+step cargo_fetch 'cd /tmp/cg && cargo fetch'
+echo "RADAR cargo_crates=$(ls ~/.cargo/registry/cache/*/ 2>/dev/null | wc -l)"
+
+mkdir -p /tmp/go && cd /tmp/go
+step go_mod_download 'cd /tmp/go && go mod init radar && go get k8s.io/client-go@v0.31.2 github.com/aws/aws-sdk-go-v2/service/s3@v1.66.3 github.com/prometheus/client_golang@v1.20.5 google.golang.org/grpc@v1.67.1 github.com/gin-gonic/gin@v1.10.0 && go mod download'
+echo "RADAR go_modules=$(ls $(go env GOMODCACHE)/cache/download 2>/dev/null | wc -l)"
+
+mkdir -p /tmp/mv && cd /tmp/mv
+cat > pom.xml <<'XML'
+<project xmlns="http://maven.apache.org/POM/4.0.0"><modelVersion>4.0.0</modelVersion>
+<groupId>x</groupId><artifactId>radar</artifactId><version>1</version>
+<properties><maven.compiler.source>21</maven.compiler.source><maven.compiler.target>21</maven.compiler.target></properties>
+<dependencies>
+<dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId><version>3.3.5</version></dependency>
+<dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-jpa</artifactId><version>3.3.5</version></dependency>
+<dependency><groupId>org.apache.kafka</groupId><artifactId>kafka-clients</artifactId><version>3.8.0</version></dependency>
+<dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-databind</artifactId><version>2.18.0</version></dependency>
+</dependencies></project>
+XML
+step maven_resolve 'cd /tmp/mv && mvn -q -B dependency:resolve dependency:resolve-plugins'
+echo "RADAR maven_jars=$(find ~/.m2/repository -name '*.jar' | wc -l)"
+"#;
+
+/// Tools whose refusal of the workspace's certificate the proxy cannot see today: they finish the
+/// TLS handshake (their trust check runs after it) or close without a certificate alert, so the
+/// audit shows an ordinary connection. Listed so the test fails when a tool outside the list goes
+/// silent and when a listed one starts to be seen.
+const SILENT_REFUSALS: &[&str] = &["node"];
+
+/// One probe per tool. Each is given a trust list without the workspace's CA (an unrelated root),
+/// goes through the proxy like the tool would, and asks the decrypted registry for its front page.
+fn refusal_probes() -> Vec<(&'static str, String)> {
+    let host = "registry.npmjs.org";
+    let probe_js = r"
+const net = require('net'), tls = require('tls'), fs = require('fs');
+const s = net.connect(3128, '127.0.0.1');
+s.write('CONNECT HOST:443 HTTP/1.1\r\nHost: HOST:443\r\n\r\n');
+s.once('data', () => {
+  const t = tls.connect({ socket: s, servername: 'HOST', ca: fs.readFileSync('/tmp/other.pem') }, () => {
+    console.log(t.authorized ? 'trusted' : 'refused after the handshake: ' + t.authorizationError);
+    t.destroy(); process.exit(t.authorized ? 0 : 1);
+  });
+  t.on('error', (e) => { console.log('error: ' + e.message); process.exit(1); });
+});
+".replace("HOST", host);
+    let probe_go = r#"
+package main
+import ("fmt"; "net/http"; "os")
+func main() {
+	r, err := http.Get(os.Args[1])
+	if err != nil { fmt.Println("error:", err); os.Exit(1) }
+	fmt.Println("status:", r.Status)
+}
+"#;
+    let probe_java = r#"
+import java.net.URI;
+import java.net.http.*;
+public class Probe {
+  public static void main(String[] a) throws Exception {
+    try {
+      var r = HttpClient.newHttpClient().send(HttpRequest.newBuilder(URI.create(a[0])).build(), HttpResponse.BodyHandlers.ofString());
+      System.out.println("status: " + r.statusCode());
+    } catch (Exception e) { System.out.println("error: " + e); System.exit(1); }
+  }
+}
+"#;
+    let setup = format!(
+        "set -u; cp /usr/share/ca-certificates/mozilla/ISRG_Root_X1.crt /tmp/other.pem; \
+         rm -f /tmp/other.jks; keytool -importcert -noprompt -alias isrg -file /tmp/other.pem \
+         -keystore /tmp/other.jks -storepass changeit >/dev/null 2>&1; \
+         cat > /tmp/probe.js <<'EOF'\n{probe_js}\nEOF\n\
+         cat > /tmp/probe.go <<'EOF'\n{probe_go}\nEOF\n\
+         cat > /tmp/Probe.java <<'EOF'\n{probe_java}\nEOF\n"
+    );
+    let url = format!("https://{host}/");
+    vec![
+        ("setup", setup),
+        (
+            "curl",
+            format!("curl -sS --max-time 30 --cacert /tmp/other.pem {url}"),
+        ),
+        ("node", "node /tmp/probe.js".to_owned()),
+        (
+            "go",
+            format!(
+                "cd /tmp && SSL_CERT_FILE=/tmp/other.pem SSL_CERT_DIR=/nonexistent go run /tmp/probe.go {url}"
+            ),
+        ),
+        (
+            "java",
+            format!(
+                "cd /tmp && java -Djavax.net.ssl.trustStore=/tmp/other.jks -Djavax.net.ssl.trustStorePassword=changeit \
+                 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=3128 /tmp/Probe.java {url}"
+            ),
+        ),
+    ]
+}
+
+/// Runs each probe as root and reads the audit record the connection left: the exit code, what the
+/// tool said, and the audit reason (`guest_tls_rejected` when the proxy saw the certificate alert).
+/// Returns one line per tool and the tools whose refusal the audit did not show.
+async fn refusal_matrix(vm: &VmHost, sandbox: &WorkspaceName) -> (Vec<String>, Vec<String>) {
+    let handle = vm.runtime.get(&sandbox.sandbox_name()).await.unwrap();
+    let (mut lines, mut silent) = (Vec::new(), Vec::new());
+    for (tool, script) in refusal_probes() {
+        let count = |records: &[serde_json::Value]| {
+            records
+                .iter()
+                .filter(|r| r["host"] == "registry.npmjs.org")
+                .count()
+        };
+        let before = count(&audit_connections(&vm.host));
+        let out = handle
+            .exec(
+                ExecRequest::sh(script)
+                    .as_user("root")
+                    .with_timeout(Duration::from_secs(300)),
+            )
+            .await
+            .unwrap();
+        let said = format!("{}{}", out.stdout_text(), out.stderr_text());
+        if tool == "setup" {
+            assert!(out.status.success(), "the probes' setup failed: {said}");
+            continue;
+        }
+        let mut reason = "no connection record".to_owned();
+        for _ in 0..40 {
+            let records = audit_connections(&vm.host);
+            if count(&records) > before {
+                let newest = records
+                    .iter()
+                    .rev()
+                    .find(|r| r["host"] == "registry.npmjs.org")
+                    .unwrap();
+                reason = newest["reason"].as_str().unwrap_or("?").to_owned();
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        let first_line = said
+            .lines()
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(150)
+            .collect::<String>();
+        lines.push(format!(
+            "{tool}: exit={} audit_reason={reason} tool said: {first_line}",
+            out.status.code
+        ));
+        assert!(
+            !out.status.success(),
+            "{tool} trusted a certificate it should have refused: {said}"
+        );
+        if reason != "guest_tls_rejected" {
+            silent.push(tool.to_owned());
+        }
+    }
+    (lines, silent)
+}
+
+/// The real tools at their widest, cold, through the real proxy and the real agent (the discovery
+/// radar of the transparency bar): apt, npm, pnpm, cargo, go and maven fetch a few hundred to a few
+/// thousand packages from the real registries. Nothing may fail or be retried. With `terminate`
+/// set the registries' connections are decrypted and re-encrypted by Puddle; without it they are
+/// spliced. Never run by the per-pull-request gate (the name starts `vm_radar_`).
+#[expect(clippy::print_stderr, reason = "the radar's table goes to stderr")]
+async fn radar(tag: &str, terminate: bool) {
+    let (vm, sandbox, api) = radar_workspace(tag, terminate).await;
+    let out = {
+        let handle = vm.runtime.get(&sandbox.sandbox_name()).await.unwrap();
+        let out = handle
+            .exec(
+                ExecRequest::sh(format!(
+                    "bash -s <<'PUDDLE_EOF'\n{RADAR_SCRIPT}\nPUDDLE_EOF"
+                ))
+                .as_user("root")
+                .with_timeout(Duration::from_hours(3)),
+            )
+            .await
+            .unwrap();
+        format!("{}{}", out.stdout_text(), out.stderr_text())
+    };
+    eprintln!("{out}");
+    let refusals = if terminate {
+        let (lines, silent) = refusal_matrix(&vm, &sandbox).await;
+        eprintln!("refused certificate, by tool:\n{}", lines.join("\n"));
+        Some(silent)
+    } else {
+        None
+    };
+    let records = audit_connections(&vm.host);
+    eprintln!("terminate={terminate}\n{}", audit_summary(&records));
+    let failing: Vec<&str> = out
+        .lines()
+        .filter(|l| {
+            l.starts_with("RADAR step=")
+                && !(l.contains(" rc=0 ") && l.ends_with("suspicious_lines=0"))
+        })
+        .collect();
+    assert!(
+        failing.is_empty(),
+        "steps that failed or retried: {failing:#?}"
+    );
+    if let Some(silent) = refusals {
+        assert_eq!(
+            silent, SILENT_REFUSALS,
+            "the tools whose refused certificate the audit did not show changed"
+        );
+    }
+    let stop = api
+        .post(&format!("/api/workspaces/{}/stop", sandbox.as_str()), "")
+        .await;
+    assert_eq!(stop.status, 202, "{}", stop.body);
+    let down = vm.host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_radar_package_managers_cold_with_the_registries_decrypted() {
+    radar("radt", true).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_radar_package_managers_cold_with_the_registries_spliced() {
+    radar("rads", false).await;
 }
 
 /// The variable that turns [`vm_host_second_process_probe`] from a no-op into the second

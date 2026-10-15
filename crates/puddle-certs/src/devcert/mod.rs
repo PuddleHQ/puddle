@@ -15,12 +15,17 @@
 //! reaches a workspace is the leaf's. The per-workspace CA of the credential proxy is a different certificate
 //! and is never mixed with this one.
 
+mod guest;
 pub mod leaf;
 mod manager;
 mod material;
 mod reuse;
 mod trust;
 
+pub use guest::{
+    DEV_CERT_DIR, DEV_CERT_PATH, DEV_KEY_PATH, DEV_STEP_PATH, DEV_STEP_SH, DEV_SYSTEM_CA_PATH,
+    DOTNET_SSL_CERT_DIR, GuestDevCert,
+};
 pub use manager::{DevCertError, DevCertManager, DevCertReport, DevCertStatus, FOLDER, LEAF_FILE};
 pub use material::{DevCertMaterial, Origin, PrivateKey};
 pub use reuse::{SkipReason, SkippedExisting};

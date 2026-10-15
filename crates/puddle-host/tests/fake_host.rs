@@ -22,7 +22,7 @@ use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
 use puddle_compute::fake::{ExecContext, FakeRuntime, Fault, Op};
 use puddle_compute::{ExecOutput, ExecRequest, ImageConfig, Runtime};
 use puddle_host::{
-    GuestSettings, Host, HostConfig, HostError, HostOptions, HostPaths, PREPARE_STEPS, Platform,
+    DevCertSource, GuestSettings, Host, HostConfig, HostError, HostPaths, PREPARE_STEPS, Platform,
     RuntimeFactory, RuntimeInputs, SHUTDOWN_STEPS, START_STEPS, Step, prepare,
 };
 use puddle_netpolicy::EndpointKind;
@@ -35,7 +35,7 @@ use puddle_upstream::{Discovery, FakeOs, Mode, ProxyConfig};
 use puddle_workspace::{CLEAR_LOCKS_SH, DELETE_CHECK_SH};
 use rustls::pki_types::pem::PemObject;
 use serde_json::json;
-use support::{Api, ended};
+use support::{Api, TestDevCert, ended, hermetic_options};
 
 type Log = Arc<Mutex<Vec<String>>>;
 
@@ -352,6 +352,7 @@ impl Launcher for RecordingLauncher {
 }
 
 struct Rig {
+    dev_cert: Arc<TestDevCert>,
     dir: tempfile::TempDir,
     log: Log,
     runtime: FakeRuntime,
@@ -367,6 +368,7 @@ impl Rig {
         let guest = Arc::new(Guest::default());
         guest.install(&runtime);
         Self {
+            dev_cert: Arc::new(TestDevCert::new()),
             dir: tempfile::tempdir().unwrap(),
             log: Log::default(),
             runtime,
@@ -400,9 +402,10 @@ impl Rig {
 
     async fn start_with(&self, config: HostConfig) -> Host<FakeRuntime> {
         let prepared = prepare(config, &FakePlatform::new(&self.log)).unwrap();
-        let mut options = HostOptions::default();
+        let mut options = hermetic_options();
         options.launcher = self.launcher.clone();
         options.secret_store = Some(self.secrets.clone());
+        options.dev_cert = Some(self.dev_cert.clone() as Arc<dyn DevCertSource>);
         Host::start(
             prepared,
             &FakeFactory::new(&self.runtime, &self.log),
@@ -455,7 +458,7 @@ async fn start_runs_the_steps_in_the_documented_order() {
     let prepared = prepare(rig.config(), &platform).unwrap();
     assert_eq!(prepared.steps(), PREPARE_STEPS);
     let factory = FakeFactory::new(&rig.runtime, &rig.log);
-    let host = Host::start(prepared, &factory, HostOptions::default())
+    let host = Host::start(prepared, &factory, hermetic_options())
         .await
         .unwrap();
     assert_eq!(host.steps(), START_STEPS);
@@ -500,7 +503,7 @@ async fn a_missing_agent_stops_the_start_before_anything_is_reconciled() {
     let err = Host::start(
         prepared,
         &FakeFactory::new(&rig.runtime, &rig.log),
-        HostOptions::default(),
+        hermetic_options(),
     )
     .await
     .unwrap_err();
@@ -521,7 +524,7 @@ async fn a_taken_api_port_is_reported_and_nothing_was_stopped_or_removed() {
     let err = Host::start(
         prepared,
         &FakeFactory::new(&rig.runtime, &rig.log),
-        HostOptions::default(),
+        hermetic_options(),
     )
     .await
     .unwrap_err();
@@ -737,7 +740,7 @@ async fn the_network_health_report_is_the_hosts_own_and_follows_a_network_change
     let mut platform = FakePlatform::new(&rig.log);
     platform.roots = company_roots();
     let prepared = prepare(rig.config(), &platform).unwrap();
-    let mut options = HostOptions::default();
+    let mut options = hermetic_options();
     options.discovery = Some(Discovery::new(
         os.clone(),
         puddle_upstream::Config::default(),
@@ -1179,7 +1182,7 @@ async fn a_stored_memory_size_that_is_not_valid_stops_the_start_and_names_the_wa
         let err = Host::start(
             prepared,
             &FakeFactory::new(&rig.runtime, &rig.log),
-            HostOptions::default(),
+            hermetic_options(),
         )
         .await
         .unwrap_err();
@@ -1392,7 +1395,7 @@ async fn shutdown_ends_an_operation_that_outlasts_the_grace_period() {
     config.operations_grace = Duration::from_millis(50);
     let prepared = prepare(config, &FakePlatform::new(&rig.log)).unwrap();
     let slow = SlowPull(rig.runtime.clone(), Duration::from_secs(30));
-    let host = Host::start(prepared, &SlowFactory(slow), HostOptions::default())
+    let host = Host::start(prepared, &SlowFactory(slow), hermetic_options())
         .await
         .unwrap();
     let api = api_slow(&host);
@@ -1594,7 +1597,7 @@ async fn a_damaged_workspace_list_stops_the_start_instead_of_looking_empty() {
     let err = Host::start(
         prepared,
         &FakeFactory::new(&rig.runtime, &rig.log),
-        HostOptions::default(),
+        hermetic_options(),
     )
     .await
     .unwrap_err();
@@ -1613,7 +1616,7 @@ async fn an_open_data_folder_is_made_owner_only_at_start_and_one_that_cannot_be_
     let host = Host::start(
         prepared,
         &FakeFactory::new(&rig.runtime, &rig.log),
-        HostOptions::default(),
+        hermetic_options(),
     )
     .await
     .unwrap();
@@ -1630,7 +1633,7 @@ async fn an_open_data_folder_is_made_owner_only_at_start_and_one_that_cannot_be_
     let err = Host::start(
         prepared,
         &FakeFactory::new(&rig.runtime, &rig.log),
-        HostOptions::default(),
+        hermetic_options(),
     )
     .await
     .unwrap_err();
@@ -2225,7 +2228,7 @@ async fn an_image_pull_is_audited_as_puddles_own_connection() {
     let platform = FakePlatform::new(&rig.log);
     let prepared = prepare(rig.config(), &platform).unwrap();
     let factory = FakeFactory::new(&rig.runtime, &rig.log);
-    let host = Host::start(prepared, &factory, HostOptions::default())
+    let host = Host::start(prepared, &factory, hermetic_options())
         .await
         .unwrap();
 
@@ -3063,7 +3066,7 @@ async fn each_start_gets_an_injector_built_for_its_workspace_from_the_hosts_stor
     let rig = Rig::new();
     let built = Arc::new(Mutex::new(Vec::new()));
     let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
-    let mut options = HostOptions::default();
+    let mut options = hermetic_options();
     let record = built.clone();
     options.injector = Some(Arc::new(
         move |inputs: &puddle_host::InjectorInputs, workspace: &WorkspaceName| {
@@ -3143,7 +3146,7 @@ async fn the_company_roots_go_into_the_clients_that_verify_decrypted_hosts() {
     let host = Host::start(
         prepared,
         &FakeFactory::new(&rig.runtime, &rig.log),
-        HostOptions::default(),
+        hermetic_options(),
     )
     .await
     .unwrap();
@@ -3181,7 +3184,7 @@ async fn a_company_root_the_hosts_own_tls_client_cannot_use_is_reported_as_left_
     let host = Host::start(
         prepared,
         &FakeFactory::new(&rig.runtime, &rig.log),
-        HostOptions::default(),
+        hermetic_options(),
     )
     .await
     .unwrap();
@@ -4233,8 +4236,9 @@ async fn host_behind_proxy_with(
     let hops = vec![puddle_upstream::Hop::Proxy(proxy.proxy_addr())];
     os.set_pac(move |_| Ok(hops.clone()));
     let prepared = prepare(config, &FakePlatform::new(&rig.log)).unwrap();
-    let mut options = HostOptions::default();
+    let mut options = hermetic_options();
     options.secret_store = Some(rig.secrets.clone());
+    options.dev_cert = Some(rig.dev_cert.clone() as Arc<dyn DevCertSource>);
     options.discovery = Some(Discovery::new(os, puddle_upstream::Config::default()));
     Host::start(prepared, &FakeFactory::new(&rig.runtime, &rig.log), options)
         .await
@@ -4333,8 +4337,9 @@ async fn listing_the_repositories_of_an_identity_is_in_the_activity_log_as_puddl
     let hops = vec![Hop::Proxy(proxy.proxy_addr())];
     os.set_pac(move |_| Ok(hops.clone()));
     let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
-    let mut options = HostOptions::default();
+    let mut options = hermetic_options();
     options.secret_store = Some(rig.secrets.clone());
+    options.dev_cert = Some(rig.dev_cert.clone() as Arc<dyn DevCertSource>);
     options.discovery = Some(Discovery::new(os, puddle_upstream::Config::default()));
     let host = Host::start(prepared, &FakeFactory::new(&rig.runtime, &rig.log), options)
         .await
@@ -5263,4 +5268,67 @@ async fn a_plan_run_in_a_live_guest_tells_the_user_when_it_put_the_loader_back()
         )
         .await;
     host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_workspace_boots_with_the_development_certificate_and_a_renewed_one_at_its_next_start() {
+    let rig = Rig::new();
+    rig.dev_cert.give();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+
+    let first = rig.guest.boots() - 1;
+    let plan = String::from_utf8(rig.guest.plan_bytes(first)).unwrap();
+    let files = rig.guest.plan_files(first);
+    // The certificate is public; the key is a file only root reads, and a step sets up .NET.
+    assert!(plan.contains("puddle_file '/etc/puddle/dev-cert/localhost.key' 0600 "));
+    assert!(plan.contains("puddle_file '/etc/puddle/dev-cert/localhost.crt' 0644 "));
+    assert!(plan.contains("puddle_step '/usr/local/lib/puddle/dev-cert.sh'"));
+    let cert = pem_of(&files, "/etc/puddle/dev-cert/localhost.crt");
+    assert!(pem_of(&files, "/etc/puddle/dev-cert/localhost.key").contains("BEGIN PRIVATE KEY"));
+    assert_eq!(
+        pem_of(
+            &files,
+            "/usr/local/share/ca-certificates/puddle-dev/localhost.crt"
+        ),
+        cert
+    );
+    assert!(pem_of(&files, "/etc/puddle/extra-cas.pem").contains(&cert));
+    let env = pem_of(&files, "/etc/profile.d/01-puddle-env.sh");
+    for line in [
+        "export DEV_CERT_PEM='/etc/puddle/dev-cert/localhost.crt'",
+        "export DEV_KEY_PEM='/etc/puddle/dev-cert/localhost.key'",
+        "export DOTNET_GENERATE_ASPNET_CERTIFICATE='false'",
+    ] {
+        assert!(env.contains(line), "{line} in {env}");
+    }
+    assert!(env.contains("export SSL_CERT_DIR='/root/.aspnet/dev-certs/trust:"));
+
+    // After a renewal the next start (the guest boots again) carries the new certificate.
+    rig.dev_cert.renew();
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let renewed = pem_of(
+        &rig.guest.plan_files(rig.guest.boots() - 1),
+        "/etc/puddle/dev-cert/localhost.crt",
+    );
+    assert_ne!(renewed, cert);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_without_a_development_certificate_writes_nothing_for_it_into_the_guest() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+
+    let plan = String::from_utf8(rig.guest.plan_bytes(rig.guest.boots() - 1)).unwrap();
+    for word in ["dev-cert", "puddle-dev", "DEV_CERT_PEM", "DOTNET_GENERATE"] {
+        assert!(!plan.contains(word), "{word} in the plan");
+    }
 }

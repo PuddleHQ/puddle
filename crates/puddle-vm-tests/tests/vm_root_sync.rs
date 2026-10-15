@@ -172,7 +172,7 @@ async fn run(env: &VmEnv) -> Result<(), HarnessError> {
         assert_ne!(code, 0, "curl trusted the test root before the sync: {out}");
 
         // boot.sh's order: files, update-ca-certificates (a CA file changed), the step.
-        let step = f.trust.boot_step().unwrap();
+        let step = &f.trust.boot_steps()[0];
         let apply = format!("{install_sh}update-ca-certificates\nsh {step}\n");
         let (code, out) = sh(&sandbox, "apply", apply).await?;
         eprintln!("first apply:\n{out}");

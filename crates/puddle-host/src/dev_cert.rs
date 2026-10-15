@@ -8,13 +8,33 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use puddle_api::DevCertService;
 use puddle_api::wire::DevCertificate;
-use puddle_certs::devcert::{DevCertManager, DevCertStatus, DevCertTrust, HostTrust};
+use puddle_certs::devcert::{
+    DevCertManager, DevCertReport, DevCertStatus, DevCertTrust, GuestDevCert, HostTrust,
+};
 use puddle_store::Clock;
 
-/// Where the development certificate stands, read from the host's stores and the data folder.
+/// Where a workspace's guest gets the development certificate from, at every boot.
+pub trait GuestCertSource: Send + Sync {
+    /// The certificate and key for the next boot, or `None` when there is none to give (the
+    /// reason is logged). May block: the system can ask the user once (the first time puddle's
+    /// own certificate is trusted), so callers run it off the async threads.
+    fn guest_cert(&self) -> Option<GuestDevCert>;
+}
+
+/// The development certificate on this host: its state for the API and the certificate for the
+/// guests. Tests give a double in [`HostOptions`](crate::HostOptions), so they never touch the
+/// real certificate stores.
+pub trait DevCertSource: GuestCertSource + DevCertService {}
+
+impl<T: GuestCertSource + DevCertService> DevCertSource for T {}
+
+/// Where the development certificate stands, read from the host's stores and the data folder,
+/// and what the guests are given.
 pub(crate) struct HostDevCert<T = HostTrust> {
     manager: DevCertManager<T>,
     clock: Arc<dyn Clock>,
+    /// One `ensure` at a time: two starts must not raise two confirmations.
+    ensuring: std::sync::Mutex<()>,
 }
 
 impl<T: DevCertTrust> HostDevCert<T> {
@@ -22,14 +42,54 @@ impl<T: DevCertTrust> HostDevCert<T> {
         Self {
             manager: DevCertManager::new(data_dir, trust),
             clock,
+            ensuring: std::sync::Mutex::new(()),
+        }
+    }
+
+    fn now(&self) -> std::time::SystemTime {
+        UNIX_EPOCH + Duration::from_millis(self.clock.now_ms())
+    }
+}
+
+impl<T: DevCertTrust> GuestCertSource for HostDevCert<T> {
+    fn guest_cert(&self) -> Option<GuestDevCert> {
+        let _one_at_a_time = self
+            .ensuring
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match self.manager.ensure(self.now()) {
+            Ok(report) => {
+                log_report(&report);
+                Some(GuestDevCert::new(&report.material))
+            }
+            Err(error) => {
+                tracing::warn!(%error, "the workspace gets no development certificate this time");
+                None
+            }
         }
     }
 }
 
+/// One line for the log: where it stands, whose certificate and what was passed over (names and
+/// reasons only, never key material).
+fn log_report(report: &DevCertReport) {
+    let skipped: Vec<String> = report
+        .skipped
+        .iter()
+        .map(|s| format!("{}: {}", s.fingerprint, s.reason))
+        .collect();
+    tracing::info!(
+        status = ?report.status,
+        origin = ?report.material.origin,
+        detail = report.detail.as_deref().unwrap_or(""),
+        passed_over = ?skipped,
+        "development certificate for the workspace"
+    );
+}
+
 impl<T: DevCertTrust> DevCertService for HostDevCert<T> {
     fn status(&self) -> DevCertificate {
-        let now = UNIX_EPOCH + Duration::from_millis(self.clock.now_ms());
-        wire(self.manager.status(now))
+        wire(self.manager.status(self.now()))
     }
 }
 
@@ -48,7 +108,7 @@ fn wire(status: DevCertStatus) -> DevCertificate {
 }
 
 /// The real service for this host.
-pub(crate) fn host_dev_cert(data_dir: &Path, clock: Arc<dyn Clock>) -> Arc<HostDevCert> {
+pub(crate) fn host_dev_cert(data_dir: &Path, clock: Arc<dyn Clock>) -> Arc<dyn DevCertSource> {
     Arc::new(HostDevCert::new(data_dir, HostTrust::default(), clock))
 }
 

@@ -9,8 +9,12 @@
 #![allow(dead_code, reason = "each test binary uses some of the helpers")]
 
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use puddle_certs::devcert::{DevCertManager, GuestDevCert, LEAF_FILE, Unsupported};
+use puddle_host::{GuestCertSource, HostOptions};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -229,7 +233,7 @@ pub(crate) fn ended(workspace: &'static str) -> impl Fn(&Value) -> bool {
 /// Everything the process logs from here on, at every level, so a test can prove a value never
 /// reached a log line. One subscriber per process: a test that needs it calls this before the
 /// code under test runs, and the self-check fails loudly when another subscriber got there first.
-pub(crate) fn capture_logs() -> std::sync::Arc<std::sync::Mutex<Vec<u8>>> {
+pub(crate) fn capture_logs() -> Arc<std::sync::Mutex<Vec<u8>>> {
     use std::io::Write;
     use std::sync::{Arc, Mutex, OnceLock};
 
@@ -268,4 +272,72 @@ pub(crate) fn capture_logs() -> std::sync::Arc<std::sync::Mutex<Vec<u8>>> {
         "the capture does not see this test's logs"
     );
     Arc::clone(logs)
+}
+
+/// The development certificate the host gives its guests: puddle's own leaf in a folder of the
+/// test's, with no trust implementation, so nothing touches the machine's certificate stores.
+/// Off until a test turns it on.
+pub(crate) struct TestDevCert {
+    folder: tempfile::TempDir,
+    manager: DevCertManager<Unsupported>,
+    given: AtomicBool,
+}
+
+impl TestDevCert {
+    pub(crate) fn new() -> Self {
+        let folder = tempfile::tempdir().unwrap();
+        let manager = DevCertManager::new(folder.path(), Unsupported);
+        Self {
+            folder,
+            manager,
+            given: AtomicBool::new(false),
+        }
+    }
+
+    pub(crate) fn give(&self) {
+        self.given.store(true, Ordering::SeqCst);
+    }
+
+    /// The next start gets a new leaf, as after a renewal.
+    pub(crate) fn renew(&self) {
+        let leaf = self.folder.path().join("dev-cert").join(LEAF_FILE);
+        std::fs::remove_file(leaf).unwrap();
+    }
+}
+
+impl GuestCertSource for TestDevCert {
+    fn guest_cert(&self) -> Option<GuestDevCert> {
+        self.given.load(Ordering::SeqCst).then(|| {
+            let report = self.manager.ensure(std::time::SystemTime::now()).unwrap();
+            GuestDevCert::new(&report.material)
+        })
+    }
+}
+
+impl puddle_api::DevCertService for TestDevCert {
+    fn status(&self) -> puddle_api::wire::DevCertificate {
+        puddle_api::wire::DevCertificate::Unsupported
+    }
+}
+
+/// A host that gives its guests no development certificate and reports none: the host's own
+/// would read the machine's certificate stores and trust a certificate in them.
+pub(crate) struct NoDevCert;
+
+impl GuestCertSource for NoDevCert {
+    fn guest_cert(&self) -> Option<GuestDevCert> {
+        None
+    }
+}
+
+impl puddle_api::DevCertService for NoDevCert {
+    fn status(&self) -> puddle_api::wire::DevCertificate {
+        puddle_api::wire::DevCertificate::NotChecked
+    }
+}
+
+pub(crate) fn hermetic_options() -> HostOptions {
+    let mut options = HostOptions::default();
+    options.dev_cert = Some(Arc::new(NoDevCert));
+    options
 }

@@ -16,7 +16,7 @@ use puddle_types::{GuestEnv, GuestPath};
 /// assert_eq!(r.program, "sh");
 /// assert_eq!(r.args, ["-c", "exit 3"]);
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ExecRequest {
     /// The program (looked up on the guest's `PATH` if it has no `/`).
     pub program: String,
@@ -33,6 +33,21 @@ pub struct ExecRequest {
     /// How long the command may run. On expiry the runtime returns
     /// [`crate::ComputeError::ExecTimeout`].
     pub timeout: Duration,
+}
+
+/// `stdin` shows as a length: the boot hook feeds its plan (and so any private key in it) there.
+impl std::fmt::Debug for ExecRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExecRequest")
+            .field("program", &self.program)
+            .field("args", &self.args)
+            .field("env", &self.env)
+            .field("cwd", &self.cwd)
+            .field("user", &self.user)
+            .field("stdin", &format_args!("<{} bytes>", self.stdin.len()))
+            .field("timeout", &self.timeout)
+            .finish()
+    }
 }
 
 impl ExecRequest {
@@ -170,6 +185,16 @@ impl ExecOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn debug_shows_the_length_of_stdin_never_its_bytes() {
+        let r = ExecRequest::sh("cat").with_stdin(b"CANARY-KEY".to_vec());
+        let shown = format!("{r:?}");
+        assert!(
+            shown.contains("<10 bytes>") && !shown.contains("CANARY"),
+            "{shown}"
+        );
+    }
 
     #[test]
     fn request_builders() {

@@ -38,7 +38,7 @@ use tokio::sync::{Mutex as AsyncMutex, OnceCell};
 use url::Url;
 
 use crate::boot::BootKit;
-use crate::dev_cert::host_dev_cert;
+use crate::dev_cert::{DevCertSource, host_dev_cert};
 use crate::doctor::system_doctor;
 use crate::files::{FileSettings, WorkspaceBook};
 use crate::injection::{Injection, InjectorFactory, InjectorInputs, forward_sign_in_needed};
@@ -276,6 +276,10 @@ pub struct HostOptions {
     /// long for one of its entries is spread over several). Tests give an in-memory store, so they
     /// never touch the real one.
     pub secret_store: Option<Arc<dyn SecretStore>>,
+    /// Where the development certificate comes from: the first-run state and the certificate every
+    /// workspace gets at boot. Without one, the host's own (its certificate stores and the data
+    /// folder). Tests give a double.
+    pub dev_cert: Option<Arc<dyn DevCertSource>>,
 }
 
 impl Default for HostOptions {
@@ -285,6 +289,7 @@ impl Default for HostOptions {
             discovery: None,
             injector: None,
             secret_store: None,
+            dev_cert: None,
         }
     }
 }
@@ -475,13 +480,19 @@ impl<R: Runtime + Clone> Host<R> {
             .with_connection_log(connections.clone());
         steps.push(Step::UpstreamBuilt);
 
+        // One development certificate service: the guests' boot files and the first-run line.
+        let dev_cert: Arc<dyn DevCertSource> = options
+            .dev_cert
+            .clone()
+            .unwrap_or_else(|| host_dev_cert(config.paths.data(), clock.clone()));
         let kit = BootKit::new(
             &config.paths.guest_share(),
             &config.guest,
             proxy,
             &roots,
             store.clone(),
-        )?;
+        )?
+        .with_dev_cert(dev_cert.clone());
         steps.push(Step::GuestFilesReady);
 
         // The runtime, with image pulls through the pull proxy and the corporate roots trusted.
@@ -546,7 +557,7 @@ impl<R: Runtime + Clone> Host<R> {
             .with_credentials(Arc::new(HostCredentials::new(ToolPaths::resolve(), vault)))
             .with_repos(injecting.repos(&egress.chain, &clock, connections.clone()))
             .with_doctor(system_doctor(&config.layout, &config.expected_runtime))
-            .with_dev_cert(host_dev_cert(config.paths.data(), clock.clone()))
+            .with_dev_cert(dev_cert)
             .with_endpoints(endpoints.clone());
         let served = serve_api(&config, services).await?;
         steps.push(Step::ApiServing);

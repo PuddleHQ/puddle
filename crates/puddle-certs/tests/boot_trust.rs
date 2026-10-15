@@ -19,6 +19,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use puddle_boot::{BOOT_SH, BootPlan, ENV_FILE_GUEST};
 use puddle_ca::{CaBuilder, CaCertificate, TrustBundle};
+use puddle_certs::devcert::{DevCertManager, GuestDevCert, Unsupported};
 use puddle_certs::{
     BUNDLE_STEP_SH, CA_BUNDLE_PATH, CorporateRoots, EXTRA_CAS_PATH, GuestTrust, HOST_CA_DIR,
     SOURCES, StoreSnapshot,
@@ -140,7 +141,7 @@ impl Guest {
             .no_agent()
             .files(trust.guest_files())
             .env(&trust.env());
-        if let Some(step) = trust.boot_step() {
+        for step in trust.boot_steps() {
             b = b.step(step);
         }
         let plan = b.build().unwrap();
@@ -429,4 +430,263 @@ fn the_step_fails_clearly_without_its_input_or_with_a_directory_in_the_way() {
         String::from_utf8_lossy(&out.stderr),
         format!("ca-bundle: {CA_BUNDLE_PATH} is a directory\n")
     );
+}
+
+// --- the development certificate (the plan's dev-cert step, through the real boot.sh) -------------
+
+/// Stands in for the .NET SDK: logs what it was asked with the environment that matters, opens
+/// the import file with the password it was given (so the file is a real PKCS#12 holding the
+/// certificate), refuses `--check` while `$PUDDLE_ROOT/dotnet.refuse` exists and exits 4 on a bare `--trust` while `dotnet.trust-exit4` exists.
+const DOTNET_STUB: &str = r#"#!/bin/sh
+echo "$* | HOME=$HOME SSL_CERT_DIR=$SSL_CERT_DIR GEN=$DOTNET_GENERATE_ASPNET_CERTIFICATE" >>"$PUDDLE_ROOT/dotnet.log"
+case "$*" in
+*--import*)
+    # dev-certs https --clean --import <file> -p <password>
+    PW=$7 openssl pkcs12 -in "$5" -nokeys -password env:PW >"$PUDDLE_ROOT/dotnet.import-cert" 2>/dev/null || exit 3
+    cp "$5" "$PUDDLE_ROOT/dotnet.pfx-seen" 2>/dev/null
+    ;;
+*--check*)
+    if [ -f "$PUDDLE_ROOT/dotnet.refuse" ]; then
+        echo "no trust for you" >&2
+        exit 4
+    fi
+    ;;
+*--trust*)
+    # Under WSL the real one exits 4 here (it reaches for powershell.exe) though the guest's own
+    # trust is done: the step must go by the check.
+    [ -f "$PUDDLE_ROOT/dotnet.trust-exit4" ] && exit 4
+    ;;
+esac
+exit 0
+"#;
+
+fn dev_cert() -> GuestDevCert {
+    let dir = tempfile::tempdir().unwrap();
+    let report = DevCertManager::new(dir.path(), Unsupported)
+        .ensure(SystemTime::now())
+        .unwrap();
+    GuestDevCert::new(&report.material)
+}
+
+fn with_dev(dev: &GuestDevCert) -> GuestTrust {
+    trust(&[], &[]).with_dev_cert(dev.clone())
+}
+
+fn has_openssl() -> bool {
+    Command::new("openssl").arg("version").output().is_ok()
+}
+
+fn dotnet_log(g: &Guest) -> Vec<String> {
+    std::fs::read_to_string(g.root.join("dotnet.log"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn the_development_certificate_reaches_the_guest_and_net_is_set_up_once_per_certificate() {
+    assert!(has_openssl(), "the test host needs openssl");
+    let dev = dev_cert();
+    let t = with_dev(&dev);
+    for sh in shells() {
+        let g = Guest::new(&sh, "", true);
+        write_exec(&g.root.join("stubs/dotnet"), DOTNET_STUB);
+        std::fs::write(g.root.join("dotnet.trust-exit4"), "").unwrap();
+        let out = g.boot(&t);
+        assert!(out.status.success(), "{}: {}", sh.display(), show(&out));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("certificate imported into .NET and trusted for its check"),
+            "{stdout}"
+        );
+
+        // Files: the certificate is public, the key is root's alone, the system store has it.
+        let cert = g.read("/etc/puddle/dev-cert/localhost.crt");
+        assert_eq!(
+            cert,
+            g.read("/usr/local/share/ca-certificates/puddle-dev/localhost.crt")
+        );
+        assert!(
+            g.read("/etc/puddle/dev-cert/localhost.key")
+                .contains("BEGIN PRIVATE KEY")
+        );
+        let mode = |p: &str| std::fs::metadata(g.p(p)).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode("/etc/puddle/dev-cert/localhost.key"), 0o600);
+        assert_eq!(mode("/etc/puddle/dev-cert/localhost.crt"), 0o644);
+        // Trusted by the system store and by the bundle and Node's file.
+        assert!(
+            g.read("/etc/ssl/certs/ca-certificates.crt")
+                .contains(&body(&cert)[..60])
+        );
+        assert!(g.read(CA_BUNDLE_PATH).contains(&body(&cert)[..60]));
+        assert!(g.read(EXTRA_CAS_PATH).contains(&body(&cert)[..60]));
+        let env = g.read(ENV_FILE_GUEST);
+        for line in [
+            "export DEV_CERT_PEM='/etc/puddle/dev-cert/localhost.crt'",
+            "export DEV_KEY_PEM='/etc/puddle/dev-cert/localhost.key'",
+            "export DOTNET_GENERATE_ASPNET_CERTIFICATE='false'",
+        ] {
+            assert!(env.contains(line), "{line} in {env}");
+        }
+
+        // .NET was asked in order, with its trust folder on SSL_CERT_DIR, and got a PKCS#12 that
+        // opens and holds this very certificate; the file is gone afterwards.
+        let log = dotnet_log(&g);
+        let verbs: Vec<&str> = log.iter().map(|l| l.split(" | ").next().unwrap()).collect();
+        assert_eq!(verbs.len(), 3, "{log:?}");
+        assert!(
+            verbs[0].starts_with("dev-certs https --clean --import /"),
+            "{verbs:?}"
+        );
+        assert!(verbs[0].contains(" -p "), "{verbs:?}");
+        assert_eq!(verbs[1], "dev-certs https --trust");
+        assert_eq!(verbs[2], "dev-certs https --check --trust");
+        assert!(
+            log[0].contains("SSL_CERT_DIR=/root/.aspnet/dev-certs/trust:/etc/ssl/certs"),
+            "{log:?}"
+        );
+        assert!(log[0].contains("GEN=false"), "{log:?}");
+        assert_eq!(body(&g.read("/dotnet.import-cert")), body(&cert));
+        let pfx_path = verbs[0].split(' ').nth(5).unwrap();
+        assert!(
+            !Path::new(pfx_path).exists(),
+            "the import file is left behind at {pfx_path}"
+        );
+
+        // The key never reaches the boot output.
+        let key_line = g
+            .read("/etc/puddle/dev-cert/localhost.key")
+            .lines()
+            .nth(1)
+            .unwrap()
+            .to_owned();
+        assert!(!String::from_utf8_lossy(&out.stdout).contains(&key_line));
+        assert!(!String::from_utf8_lossy(&out.stderr).contains(&key_line));
+
+        // The same certificate again: nothing is asked of .NET.
+        let again = g.boot(&t);
+        assert!(again.status.success(), "{}", show(&again));
+        assert!(
+            String::from_utf8_lossy(&again.stdout)
+                .contains("certificate unchanged; .NET already has it")
+        );
+        assert_eq!(dotnet_log(&g).len(), 3);
+
+        // A renewed certificate is imported at the next boot, and the old one leaves the stores.
+        let renewed = dev_cert();
+        let out = g.boot(&with_dev(&renewed));
+        assert!(out.status.success(), "{}", show(&out));
+        assert_eq!(dotnet_log(&g).len(), 6);
+        let new_cert = g.read("/etc/puddle/dev-cert/localhost.crt");
+        assert_ne!(new_cert, cert);
+        assert_eq!(body(&g.read("/dotnet.import-cert")), body(&new_cert));
+        assert!(!g.read(CA_BUNDLE_PATH).contains(&body(&cert)[..60]));
+        assert!(
+            !g.read("/etc/ssl/certs/ca-certificates.crt")
+                .contains(&body(&cert)[..60])
+        );
+    }
+}
+
+#[test]
+fn a_net_that_refuses_the_certificate_is_a_line_in_the_boot_output_and_is_tried_again() {
+    assert!(has_openssl());
+    let t = with_dev(&dev_cert());
+    let g = Guest::new(&shells()[0], "", true);
+    write_exec(&g.root.join("stubs/dotnet"), DOTNET_STUB);
+    std::fs::write(g.root.join("dotnet.refuse"), "").unwrap();
+    let out = g.boot(&t);
+    assert!(
+        out.status.success(),
+        "the boot must not fail over .NET: {}",
+        show(&out)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout
+            .contains(".NET refused it at 'dev-certs --check --trust' (exit 4): no trust for you"),
+        "{stdout}"
+    );
+    // Everything else is in place.
+    assert!(
+        g.read(CA_BUNDLE_PATH)
+            .contains(&body(&g.read("/etc/puddle/dev-cert/localhost.crt"))[..60])
+    );
+    // No record of success, so the next boot tries again, and then succeeds.
+    std::fs::remove_file(g.root.join("dotnet.refuse")).unwrap();
+    let out = g.boot(&t);
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("imported into .NET"),
+        "{}",
+        show(&out)
+    );
+}
+
+#[test]
+fn an_image_without_net_or_openssl_keeps_the_certificate_and_says_so() {
+    let t = with_dev(&dev_cert());
+    // No dotnet on the PATH (the test host may well have one).
+    let mut g = Guest::new(&shells()[0], "", true);
+    let bin = g.root.join("without-dotnet");
+    std::fs::create_dir_all(&bin).unwrap();
+    for entry in std::fs::read_dir("/usr/bin").unwrap().flatten() {
+        if entry.file_name() != "dotnet" {
+            let _ = std::os::unix::fs::symlink(entry.path(), bin.join(entry.file_name()));
+        }
+    }
+    g.path = format!("{}:{}", g.root.join("stubs").display(), bin.display());
+    let out = g.boot(&t);
+    assert!(out.status.success(), "{}", show(&out));
+    assert!(
+        String::from_utf8_lossy(&out.stdout)
+            .contains("certificate in place; no .NET SDK in this image")
+    );
+    assert!(g.p("/etc/puddle/dev-cert/localhost.key").exists());
+
+    // dotnet without a working openssl: the import file can't be built.
+    assert!(has_openssl());
+    let g = Guest::new(&shells()[0], "", true);
+    write_exec(&g.root.join("stubs/dotnet"), DOTNET_STUB);
+    write_exec(
+        &g.root.join("stubs/openssl"),
+        "#!/bin/sh\necho 'openssl: broken' >&2\nexit 1\n",
+    );
+    let out = g.boot(&t);
+    assert!(out.status.success(), "{}", show(&out));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout
+            .contains(".NET not set up (openssl could not build the import file: openssl: broken)"),
+        "{stdout}"
+    );
+    assert_eq!(
+        dotnet_log(&g).len(),
+        0,
+        "dotnet was asked without an import file"
+    );
+}
+
+#[test]
+fn a_host_with_no_certificate_leaves_the_guest_without_one_and_drops_one_it_had() {
+    assert!(has_openssl());
+    let dev = dev_cert();
+    let g = Guest::new(&shells()[0], "", true);
+    write_exec(&g.root.join("stubs/dotnet"), DOTNET_STUB);
+    assert!(g.boot(&with_dev(&dev)).status.success());
+    assert!(g.p("/etc/puddle/dev-cert/localhost.key").exists());
+
+    // The plan no longer lists the files: the boot removes them (the key first of all).
+    let out = g.boot(&trust(&[], &[]));
+    assert!(out.status.success(), "{}", show(&out));
+    for gone in [
+        "/etc/puddle/dev-cert/localhost.key",
+        "/etc/puddle/dev-cert/localhost.crt",
+        "/usr/local/share/ca-certificates/puddle-dev/localhost.crt",
+    ] {
+        assert!(!g.p(gone).exists(), "{gone}");
+    }
+    let fresh = Guest::new(&shells()[0], "", true);
+    assert!(fresh.boot(&trust(&[], &[])).status.success());
+    assert!(!fresh.p("/etc/puddle/dev-cert").exists());
 }

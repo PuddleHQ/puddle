@@ -223,13 +223,12 @@ async fn start_once(config: &EditorConfig) -> io::Result<std::process::ExitStatu
         }
         tokio::time::sleep(PORT_POLL).await;
     }
-    let password = match existing_password(&config.password_file) {
-        Some(password) => password,
-        None => {
-            let password = new_password()?;
-            write_password(&config.password_file, &password)?;
-            password
-        }
+    let password = if let Some(password) = existing_password(&config.password_file) {
+        password
+    } else {
+        let password = new_password()?;
+        write_password(&config.password_file, &password)?;
+        password
     };
     let inherited = std::env::vars_os().filter_map(|(k, _)| k.into_string().ok());
     let mut child = command(&config.server, &password, inherited).spawn()?;
@@ -257,7 +256,7 @@ mod tests {
             .collect();
         let after = |flag: &str| {
             let at = args.iter().position(|a| a == flag).unwrap();
-            args.get(at + 1).unwrap().as_str()
+            args[at + 1].as_str()
         };
         assert_eq!(after("--bind-addr"), "127.0.0.1:41337");
         assert_eq!(after("--auth"), "password");

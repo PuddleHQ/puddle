@@ -1460,6 +1460,61 @@ async fn editor_up(runtime: &MsbRuntime, sandbox: &WorkspaceName) {
     .await;
 }
 
+/// What a client sees of the editor server in a fresh sandbox: the release is read-only, the
+/// password is the owner's alone, a client signs in with it, and it is on no command line.
+/// Returns the password.
+async fn check_editor_session(runtime: &MsbRuntime, sandbox: &WorkspaceName, name: &str) -> String {
+    // The release is read-only in the guest, and the password is the owner's alone.
+    let mount = guest(
+        runtime,
+        sandbox,
+        "touch /puddle/code-server/x 2>&1; test -x /puddle/code-server/lib/node && echo node-runs",
+    )
+    .await;
+    assert!(
+        mount.contains("Read-only file system") && mount.contains("node-runs"),
+        "{mount}"
+    );
+    let first_password = guest(
+        runtime,
+        sandbox,
+        "stat -c %a /run/puddle/editor-password; cat /run/puddle/editor-password",
+    )
+    .await;
+    let (mode, password) = first_password.split_once('\n').unwrap();
+    assert_eq!(mode, "600");
+    assert_eq!(password.len(), 64, "{password}");
+    let password = password.to_owned();
+    // A client without the password is sent to the login page, with it gets in, and the password
+    // is on no command line (the pattern's first character is bracketed so grep does not match itself).
+    let signed_in = guest(
+        runtime,
+        sandbox,
+        "pw=$(cat /run/puddle/editor-password); pat=$(printf %s \"$pw\" | sed 's/^./[&]/'); \
+         curl -s -o /dev/null -w 'anonymous %{http_code} %{redirect_url}\\n' http://127.0.0.1:41337/; \
+         curl -s -c /tmp/jar -o /dev/null -w 'login %{http_code}\\n' -d \"password=$pw\" http://127.0.0.1:41337/login; \
+         curl -s -b /tmp/jar -o /dev/null -w 'signed-in %{http_code} %{redirect_url}\\n' http://127.0.0.1:41337/; \
+         cat /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' ' ' >/tmp/cmdlines; \
+         grep -c \"$pat\" /tmp/cmdlines | sed 's/^/on-command-lines /'; \
+         grep -q '[-]-reconnection-grace-time 300' /tmp/cmdlines && echo grace-300",
+    )
+    .await;
+    for expected in [
+        "anonymous 302 http://127.0.0.1:41337/login",
+        "login 302",
+        // Signed in, the client is sent to the folder the editor opens.
+        format!("signed-in 302 http://127.0.0.1:41337/?folder=/workspaces/{name}").as_str(),
+        "on-command-lines 0",
+        "grace-300",
+    ] {
+        assert!(
+            signed_in.contains(expected),
+            "{expected} missing in {signed_in}"
+        );
+    }
+    password
+}
+
 /// K tier. The bundled code-server runs in the guest, started by the agent from the read-only
 /// mount: it listens on loopback with a password only its owner can read, signs a client in, and
 /// keeps its data on the workspace volume, so a rebuilt sandbox finds it again. (The Windows tier
@@ -1508,55 +1563,7 @@ async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox(
 
     editor_up(&runtime, &sandbox).await;
     let data = format!("/workspaces/{name}/.puddle/code-server");
-    // The release is read-only in the guest, and the password is the owner's alone.
-    let mount = guest(
-        &runtime,
-        &sandbox,
-        "touch /puddle/code-server/x 2>&1; test -x /puddle/code-server/lib/node && echo node-runs",
-    )
-    .await;
-    assert!(
-        mount.contains("Read-only file system") && mount.contains("node-runs"),
-        "{mount}"
-    );
-    let first_password = guest(
-        &runtime,
-        &sandbox,
-        "stat -c %a /run/puddle/editor-password; cat /run/puddle/editor-password",
-    )
-    .await;
-    let (mode, password) = first_password.split_once('\n').unwrap();
-    assert_eq!(mode, "600");
-    assert_eq!(password.len(), 64, "{password}");
-    let password = password.to_owned();
-    // A client without the password is sent to the login page, with it gets in, and the password
-    // is on no command line (the pattern's first character is bracketed so grep does not match itself).
-    let signed_in = guest(
-        &runtime,
-        &sandbox,
-        "pw=$(cat /run/puddle/editor-password); pat=$(printf %s \"$pw\" | sed 's/^./[&]/'); \
-         curl -s -o /dev/null -w 'anonymous %{http_code} %{redirect_url}\\n' http://127.0.0.1:41337/; \
-         curl -s -c /tmp/jar -o /dev/null -w 'login %{http_code}\\n' -d \"password=$pw\" http://127.0.0.1:41337/login; \
-         curl -s -b /tmp/jar -o /dev/null -w 'signed-in %{http_code} %{redirect_url}\\n' http://127.0.0.1:41337/; \
-         cat /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' ' ' >/tmp/cmdlines; \
-         grep -c \"$pat\" /tmp/cmdlines | sed 's/^/on-command-lines /'; \
-         grep -q '[-]-reconnection-grace-time 300' /tmp/cmdlines && echo grace-300",
-    )
-    .await;
-    for expected in [
-        "anonymous 302 http://127.0.0.1:41337/login",
-        "login 302",
-        // Signed in, the client is sent to the folder the editor opens.
-        format!("signed-in 302 http://127.0.0.1:41337/?folder=/workspaces/{name}").as_str(),
-        "on-command-lines 0",
-        "grace-300",
-    ] {
-        assert!(
-            signed_in.contains(expected),
-            "{expected} missing in {signed_in}"
-        );
-    }
-
+    let password = check_editor_session(&runtime, &sandbox, &name).await;
     // Data on the volume: the server made its folders there, and a marker we add stays.
     guest(
         &runtime,

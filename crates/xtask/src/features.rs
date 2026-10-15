@@ -76,19 +76,23 @@ pub fn check(cargo: &Cargo, manifest: &Path, targets: &[&str]) -> Result<String>
                 target,
                 all_features,
             )?;
-            for leak in leaks(&tree)? {
-                problems.push(format!(
-                    "{leak} (target {target}, {})",
-                    if all_features {
-                        "all features"
-                    } else {
-                        "default features"
-                    }
-                ));
-            }
+            problems.extend(describe(&tree, target, all_features)?);
         }
     }
     verdict(problems, targets.len())
+}
+
+/// The leaks in one `cargo tree` output, each with where it was found.
+fn describe(tree: &str, target: &str, all_features: bool) -> Result<Vec<String>> {
+    let features = if all_features {
+        "all features"
+    } else {
+        "default features"
+    };
+    Ok(leaks(tree)?
+        .into_iter()
+        .map(|leak| format!("{leak} (target {target}, {features})"))
+        .collect())
 }
 
 /// The command's answer: the leaks as an error, else the line that says what was checked.
@@ -188,6 +192,19 @@ puddle-testing-tools v0.0.0 (/w/crates/x)|
         assert!(line.ends_with("on 1 targets"), "{line}");
         let err = crate::run(["release-features", "--tag"].map(OsString::from)).unwrap_err();
         assert!(err.to_string().contains("unknown argument --tag"), "{err}");
+    }
+
+    #[test]
+    fn a_leak_is_described_with_its_target_and_feature_set() {
+        let tree = "a v1.0.0 (/w/a)|testing\nb v1.0.0|default\n";
+        assert_eq!(
+            describe(tree, "t", true).unwrap(),
+            ["a v1.0.0 (/w/a) has the `testing` feature on (target t, all features)"]
+        );
+        assert_eq!(
+            describe(tree, "t", false).unwrap(),
+            ["a v1.0.0 (/w/a) has the `testing` feature on (target t, default features)"]
+        );
     }
 
     #[test]

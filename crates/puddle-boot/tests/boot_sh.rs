@@ -821,7 +821,7 @@ fn capture_starts_the_agent_with_it_and_puts_the_stub_first_in_resolv_conf() {
             fr.read("/etc/resolv.conf")
         );
         assert!(
-            !String::from_utf8_lossy(&out.stdout).contains("puddle's nameserver line"),
+            !String::from_utf8_lossy(&out.stdout).contains("Puddle's nameserver line"),
             "an unchanged file is not rewritten"
         );
     }
@@ -877,7 +877,7 @@ fn capture_off_starts_the_agent_without_it_and_gives_back_the_line() {
     assert_eq!(fr.agent_capture(), ["off"]);
     assert_eq!(fr.read("/etc/resolv.conf"), "search x\nnameserver 10.0.0.2");
 
-    // On, then off in a later boot: only puddle's line goes. (A running agent keeps the mode it
+    // On, then off in a later boot: only Puddle's line goes. (A running agent keeps the mode it
     // started with, so each run is a new boot.)
     let reboot = |n: u32| {
         kill9(fr.recorded_pid("supervisor.pid").unwrap());

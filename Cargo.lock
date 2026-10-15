@@ -5968,12 +5968,16 @@ dependencies = [
  "puddle-boot",
  "puddle-ca",
  "puddle-compute",
+ "puddle-fs",
  "puddle-types",
  "rcgen",
  "sha2 0.11.0",
+ "tempfile",
  "thiserror 2.0.21",
  "time",
  "windows-sys 0.61.2",
+ "x509-parser",
+ "zeroize",
 ]
 
 [[package]]

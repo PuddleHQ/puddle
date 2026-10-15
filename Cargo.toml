@@ -101,6 +101,8 @@ rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
 time = { version = "0.3", default-features = false, features = ["std"] }
+# Reading certificate extensions (the dev certificate's shape checks); already in the tree through rcgen.
+x509-parser = { version = "0.18", default-features = false }
 # PEM for the guest CA bundle; already in the tree through rcgen.
 pem = { version = "4", default-features = false, features = ["std"] }
 # OpenAPI schemas for the API's wire types (ADR 0004).

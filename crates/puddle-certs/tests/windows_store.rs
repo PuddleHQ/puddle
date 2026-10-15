@@ -297,3 +297,175 @@ fn reading_the_stores_twice_gives_the_same_selection() {
     let two = CorporateRoots::select(&read_host_stores().unwrap(), now);
     assert_eq!(one, two);
 }
+
+// ---- the development certificate ---------------------------------------------------------------
+
+use puddle_certs::devcert::{
+    DevCertManager, DevCertStatus, DevCertTrust, KeyAccess, Origin, WindowsTrust,
+};
+
+/// A certificate with the ASP.NET marker and a CNG key in `CurrentUser\My`, made like `dotnet
+/// dev-certs` makes its own. `policy` is `New-SelfSignedCertificate`'s `-KeyExportPolicy`:
+/// `Exportable` allows plain export, `ExportableEncrypted` and `NonExportable` do not.
+fn dev_cert(tag: &str, policy: &str) -> TestCert {
+    let nanos = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let file = std::env::temp_dir().join(format!("puddle-devcert-{tag}-{nanos}.cer"));
+    let thumbprint = powershell(&format!(
+        "$c = New-SelfSignedCertificate -Subject 'CN=puddle devcert {tag} {nanos}' -DnsName localhost \
+         -KeyAlgorithm ECDSA_nistP256 -KeyExportPolicy {policy} -CertStoreLocation Cert:\\CurrentUser\\My \
+         -NotAfter (Get-Date).AddDays(90) -TextExtension @('1.3.6.1.4.1.311.84.1.1={{hex}}06'); \
+         Export-Certificate -Cert $c -FilePath '{}' | Out-Null; $c.Thumbprint",
+        file.display()
+    ))
+    .unwrap_or_else(|e| panic!("making a development certificate: {e}"))
+    .trim()
+    .to_owned();
+    let der = std::fs::read(&file).unwrap();
+    TestCert {
+        der,
+        file,
+        thumbprint,
+    }
+}
+
+const CU_MY: &str = "Cert:\\CurrentUser\\My";
+
+#[test]
+fn an_exportable_development_certificate_is_found_and_its_key_exports() {
+    if !enabled() {
+        return;
+    }
+    let cert = dev_cert("exportable", "Exportable");
+    let _cleanup = Cleanup(vec![(&cert, vec![CU_MY], vec![])]);
+
+    let found = WindowsTrust.existing().unwrap();
+    let ours = found
+        .iter()
+        .find(|c| c.der == cert.der)
+        .expect("the certificate in CurrentUser\\My is listed");
+    assert_eq!(ours.key, KeyAccess::Exportable);
+    assert!(!ours.trusted, "it is in My only");
+
+    let key = WindowsTrust.export_key(&cert.der).unwrap();
+    // PKCS#8: SEQUENCE { INTEGER 0, SEQUENCE { OID .. }, OCTET STRING }.
+    let (_, parsed) = x509_parser::der_parser::parse_der(key.pkcs8_der()).unwrap();
+    let items = parsed.as_sequence().unwrap();
+    assert_eq!(items.len(), 3, "a PrivateKeyInfo");
+    assert_eq!(items[0].as_u32().unwrap(), 0);
+    // ring is strict about the key's layout; when it accepts it, it must be the certificate's key.
+    if let Ok(pair) = rcgen::KeyPair::try_from(key.pkcs8_der()) {
+        let (_, x509) = x509_parser::parse_x509_certificate(&cert.der).unwrap();
+        assert_eq!(
+            pair.public_key_raw(),
+            x509.public_key().subject_public_key.data.as_ref()
+        );
+    } else {
+        eprintln!("note: the exported PKCS#8 is not in ring's layout (valid for OpenSSL and .NET)");
+    }
+}
+
+#[test]
+fn keys_that_cannot_be_exported_in_plain_form_are_reported_so() {
+    if !enabled() {
+        return;
+    }
+    for policy in ["ExportableEncrypted", "NonExportable"] {
+        let cert = dev_cert(policy, policy);
+        let _cleanup = Cleanup(vec![(&cert, vec![CU_MY], vec![])]);
+        let found = WindowsTrust.existing().unwrap();
+        let ours = found.iter().find(|c| c.der == cert.der).unwrap();
+        assert!(
+            matches!(ours.key, KeyAccess::NotExportable(_)),
+            "{policy}: {:?}",
+            ours.key
+        );
+        assert!(WindowsTrust.export_key(&cert.der).is_err(), "{policy}");
+    }
+}
+
+#[test]
+fn a_trusted_exportable_development_certificate_is_reused() {
+    if !enabled() {
+        return;
+    }
+    let cert = dev_cert("reuse", "Exportable");
+    // Machine roots are part of the user's trusted roots; the runner is elevated.
+    let _cleanup = Cleanup(vec![(
+        &cert,
+        vec![CU_MY, "Cert:\\LocalMachine\\Root"],
+        vec![],
+    )]);
+    add(&cert, "Cert:\\LocalMachine\\Root");
+
+    let data = tempfile::tempdir().unwrap();
+    let manager = DevCertManager::new(data.path(), WindowsTrust);
+    assert_eq!(
+        manager.status(SystemTime::now()),
+        DevCertStatus::ReusingExisting
+    );
+    let report = manager.ensure(SystemTime::now()).unwrap();
+    assert_eq!(report.status, DevCertStatus::ReusingExisting);
+    assert_eq!(report.material.origin, Origin::ReusedAspNet);
+    assert_eq!(report.material.cert_der(), cert.der);
+    assert_ne!(report.material.key().pkcs8_der().len(), 0);
+    assert!(
+        !data.path().join(puddle_certs::devcert::FOLDER).exists(),
+        "reusing makes no leaf"
+    );
+}
+
+#[test]
+fn the_machine_roots_count_as_trusted_and_an_unknown_certificate_does_not() {
+    if !enabled() {
+        return;
+    }
+    let snapshot = read_host_stores().unwrap();
+    let machine_root = snapshot
+        .certs()
+        .iter()
+        .find(|c| c.source == LM_ROOT)
+        .expect("a machine root");
+    assert!(WindowsTrust.is_trusted(&machine_root.der).unwrap());
+    assert!(!WindowsTrust.is_trusted(&test_root("never").der).unwrap());
+}
+
+/// The generated leaf is offered to `CurrentUser\Root`. A person is asked once there; the hosted
+/// runner is refused ("UI is not allowed"), so this only checks that every answer is a reported
+/// state with the leaf still handed over, and removes the leaf if the runner did add it.
+#[test]
+fn asking_for_trust_ends_in_a_reported_state_never_a_crash() {
+    if !enabled() {
+        return;
+    }
+    let data = tempfile::tempdir().unwrap();
+    let manager = DevCertManager::new(data.path(), WindowsTrust);
+    let report = manager.ensure(SystemTime::now()).unwrap();
+    // Remove the leaf from the trusted roots again, whatever the outcome.
+    let thumbprint = powershell(&format!(
+        "$f = Join-Path $env:TEMP 'puddle-leaf-{}.cer'; [IO.File]::WriteAllBytes($f, [byte[]]({})); \
+         (New-Object Security.Cryptography.X509Certificates.X509Certificate2($f)).Thumbprint; Remove-Item $f",
+        std::process::id(),
+        report
+            .material
+            .cert_der()
+            .iter()
+            .map(u8::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    ))
+    .unwrap()
+    .trim()
+    .to_owned();
+    let _ = powershell(&format!(
+        "Remove-Item -LiteralPath 'Cert:\\CurrentUser\\Root\\{thumbprint}' -ErrorAction SilentlyContinue"
+    ));
+    eprintln!("status {:?}, detail {:?}", report.status, report.detail);
+    assert!(matches!(
+        report.status,
+        DevCertStatus::Trusted | DevCertStatus::TrustDeclined | DevCertStatus::TrustFailed
+    ));
+    assert_eq!(report.material.origin, Origin::Generated);
+}

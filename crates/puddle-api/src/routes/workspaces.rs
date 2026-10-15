@@ -17,7 +17,7 @@ use crate::extract::Path;
 use crate::routes::AppState;
 use crate::wire::{
     AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, NewWorkspaceIdentity,
-    NewWorkspaceRequest, Workspace, WorkspaceList,
+    NewWorkspaceRequest, RenameWorkspaceRequest, Workspace, WorkspaceList,
 };
 
 /// The id in a path. A string that can't be an id names no workspace.
@@ -196,6 +196,34 @@ pub(crate) async fn get_workspace(
     Path(id): Path<String>,
 ) -> Result<Json<Workspace>, ApiError> {
     let record = state.workspaces.get(&workspace_id(&id)?).await?;
+    Ok(Json(view(&state, record).await))
+}
+
+/// Renames a workspace: sets the display name the UI shows. Only the label changes (the id, the
+/// name, the volume and the sandbox stay), so it works on a running workspace and restarts
+/// nothing. A name another workspace already goes by (ignoring case) is refused with 409, and so
+/// is a rename while the workspace is being created or deleted.
+#[utoipa::path(
+    patch,
+    path = "/api/workspaces/{id}",
+    tag = "workspaces",
+    params(("id" = String, Path, description = "workspace id")),
+    request_body = RenameWorkspaceRequest,
+    responses(
+        (status = OK, description = "the renamed workspace", body = Workspace),
+        (status = NOT_FOUND, description = "no such workspace", body = ApiErrorBody),
+        (status = CONFLICT, description = "another workspace has that name, or this one is being created or deleted", body = ApiErrorBody),
+        (status = UNPROCESSABLE_ENTITY, description = "empty, too long or contains control characters", body = ApiErrorBody)
+    )
+)]
+pub(crate) async fn rename_workspace(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    crate::extract::Json(body): crate::extract::Json<RenameWorkspaceRequest>,
+) -> Result<Json<Workspace>, ApiError> {
+    let id = workspace_id(&id)?;
+    let display_name = body.into_display_name()?;
+    let record = state.workspaces.rename(&id, display_name).await?;
     Ok(Json(view(&state, record).await))
 }
 

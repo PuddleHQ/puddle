@@ -68,7 +68,8 @@ pub use rule_sets::{
 
 pub use workspaces::{
     AttachMode, AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, FindingList,
-    NewWorkspaceRequest, RepoFindings, Workspace, WorkspaceList, WorkspaceOperation,
+    NewWorkspaceRequest, RenameWorkspaceRequest, RepoFindings, Workspace, WorkspaceList,
+    WorkspaceOperation,
 };
 
 // ---------------------------------------------------------------------------------------------

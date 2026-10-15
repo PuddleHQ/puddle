@@ -198,6 +198,10 @@ async fn s7_an_ntlm_proxy_gets_three_legs_on_one_connection_before_it_tunnels() 
     let (sent, back) = echo_roundtrip(reader).await;
     assert_eq!(back, sent, "64 KiB through the NTLM proxy, byte for byte");
 
+    assert!(
+        proxy.log().contains("NTLM"),
+        "the proxy's log records the handshake"
+    );
     let legs = proxy.legs();
     let conn = match legs.last() {
         Some(NtlmLeg::Accepted { conn, .. }) => conn.clone(),

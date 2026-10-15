@@ -12,7 +12,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use super::{BASIC_PASSWORD, BASIC_USER, LOCAL, Prefix, free_port, read, stop, wait_ready};
+use super::{
+    BASIC_PASSWORD, BASIC_USER, LOCAL, Prefix, READY, configured_or_skip, free_port, read,
+    require_file, stop, wait_ready,
+};
 
 /// What a lab Squid is set up to do.
 #[derive(Clone, Debug)]
@@ -177,12 +180,12 @@ impl Squid {
     pub fn start(options: &SquidOptions) -> Option<Self> {
         let bin = std::env::var_os("PUDDLE_SQUID_BIN");
         let image = std::env::var("PUDDLE_SQUID_DOCKER").ok();
-        if bin.is_none() && image.is_none() {
-            assert!(
-                std::env::var_os("PUDDLE_REQUIRE_SQUID").is_none(),
-                "PUDDLE_REQUIRE_SQUID is set but neither PUDDLE_SQUID_BIN nor PUDDLE_SQUID_DOCKER is"
-            );
-            eprintln!("skipped: set PUDDLE_SQUID_BIN or PUDDLE_SQUID_DOCKER to run against Squid");
+        if !configured_or_skip(
+            bin.is_some() || image.is_some(),
+            std::env::var_os("PUDDLE_REQUIRE_SQUID").is_some(),
+            "PUDDLE_REQUIRE_SQUID",
+            "set PUDDLE_SQUID_BIN or PUDDLE_SQUID_DOCKER to run against Squid",
+        ) {
             return None;
         }
         let begun = Instant::now();
@@ -213,11 +216,7 @@ impl Squid {
             Stop::Container(name)
         } else {
             let bin = bin.unwrap();
-            assert!(
-                Path::new(&bin).is_file(),
-                "PUDDLE_SQUID_BIN={} is not a file: install Squid or fix the path",
-                bin.to_string_lossy()
-            );
+            require_file(&bin, "PUDDLE_SQUID_BIN");
             let log = fs::File::create(dir.path().join("squid.stderr")).unwrap();
             let name = instance_name(port);
             remove_shared_memory(&name);
@@ -249,7 +248,7 @@ impl Squid {
             Stop::Process(child) => Some(child),
             Stop::Container(_) => None,
         };
-        wait_ready(self.port, child, || {
+        wait_ready(self.port, child, READY, || {
             format!(
                 "squid.stderr:\n{}\ncache.log:\n{}",
                 read(&dir.join("squid.stderr")),
@@ -300,5 +299,46 @@ impl Squid {
             return format!("(empty access log; files {files:?}; cache.log:\n{cache})");
         }
         log
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `Squid` around a process that is not Squid, in an empty directory.
+    fn stand_in(command: &mut Command) -> Squid {
+        Squid {
+            port: free_port(),
+            prefix: Prefix::new("squid"),
+            dir: tempfile::tempdir().unwrap(),
+            stop: Stop::Process(command.stdout(Stdio::null()).spawn().unwrap()),
+            started_in: Duration::ZERO,
+        }
+    }
+
+    #[test]
+    fn an_empty_access_log_is_explained_with_the_directory_and_cache_log() {
+        let squid = stand_in(Command::new("sleep").arg("60"));
+        fs::write(squid.dir.path().join("cache.log"), "cache says hi").unwrap();
+        let log = squid.access_log();
+        assert!(log.starts_with("(empty access log; files "), "{log}");
+        assert!(log.contains("cache says hi"), "{log}");
+    }
+
+    #[test]
+    fn a_written_access_log_is_returned_as_is() {
+        let squid = stand_in(Command::new("sleep").arg("60"));
+        fs::write(squid.dir.path().join("access.log"), "GET x").unwrap();
+        assert_eq!(squid.access_log(), "GET x");
+    }
+
+    #[test]
+    #[should_panic(expected = "squid.stderr:\nboom\ncache.log:\ncache says hi")]
+    fn a_squid_that_dies_at_start_shows_both_logs() {
+        let mut squid = stand_in(&mut Command::new("false"));
+        fs::write(squid.dir.path().join("squid.stderr"), "boom").unwrap();
+        fs::write(squid.dir.path().join("cache.log"), "cache says hi").unwrap();
+        squid.wait();
     }
 }

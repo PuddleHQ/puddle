@@ -52,12 +52,23 @@ pub(crate) async fn rig(hops: Vec<Hop>, auth: Arc<dyn ProxyAuth>) -> Rig {
 
 /// The proxy over any OS proxy layer (a real PAC engine, say), authenticating with `auth`.
 pub(crate) async fn rig_over(os: Arc<dyn OsProxy>, auth: Arc<dyn ProxyAuth>) -> Rig {
+    let discovery = Discovery::new(os, DiscoveryConfig::default());
+    rig_with(discovery, auth, StaticResolver::new()).await
+}
+
+/// The proxy over a discovery the test keeps (to end the network epoch), with `resolver` for the
+/// names this host can resolve itself.
+pub(crate) async fn rig_with(
+    discovery: Arc<Discovery>,
+    auth: Arc<dyn ProxyAuth>,
+    resolver: StaticResolver,
+) -> Rig {
     let store = Arc::new(Store::open_in_memory(Arc::new(SystemClock), Limits::default()).unwrap());
-    let chain = Chain::new(Discovery::new(os, DiscoveryConfig::default()), auth);
+    let chain = Chain::new(discovery, auth);
     let proxy = Arc::new(
         Proxy::new(store.clone(), Arc::new(NullSink))
             .with_connection_log(store.clone())
-            .with_resolver(Arc::new(StaticResolver::new()))
+            .with_resolver(Arc::new(resolver))
             .with_address_check(Arc::new(AnyAddress))
             .with_upstream(Upstream::new(chain)),
     );

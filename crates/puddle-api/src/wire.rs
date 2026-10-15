@@ -2141,6 +2141,30 @@ impl ConsentRequest {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn every_connection_outcome_reaches_the_wire_under_its_own_name() {
+        use puddle_types::ConnectionOutcome as T;
+        for (from, to, name) in [
+            (T::Connected, ConnectionOutcome::Connected, "connected"),
+            (
+                T::UpstreamRefused,
+                ConnectionOutcome::UpstreamRefused,
+                "upstream_refused",
+            ),
+            (
+                T::ConnectFailed,
+                ConnectionOutcome::ConnectFailed,
+                "connect_failed",
+            ),
+            (T::Timeout, ConnectionOutcome::Timeout, "timeout"),
+        ] {
+            let wire = ConnectionOutcome::from(from);
+            assert_eq!(wire, to);
+            assert_eq!(serde_json::to_value(wire).unwrap(), name);
+            assert_eq!(from.as_str(), name);
+        }
+    }
+
     use std::collections::BTreeSet;
 
     use puddle_types::{Host, PendingId, RuleId};

@@ -11,11 +11,13 @@ use std::sync::atomic::Ordering;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use futures_util::future::BoxFuture;
 use puddle_netpolicy::{EndpointKind, LocalAccess, PuddleEndpoints};
-use puddle_proxy::PullProxy;
 use puddle_proxy::testing::StaticResolver;
+use puddle_proxy::{ProxyConfig, PullProxy, Resolver};
 use puddle_types::{
-    BlockReason, ConnectionDecision, ConnectionOrigin, ConnectionReason, LocalCategory,
+    BlockReason, ConnectionDecision, ConnectionOrigin, ConnectionOutcome, ConnectionReason,
+    DomainName, LocalCategory,
 };
 use pull_support::{LOCAL, connect, echo, http_server, pull_proxy, pull_proxy_logged, send};
 use std::time::Duration;
@@ -324,5 +326,75 @@ async fn refused_pulls_are_recorded_and_unauthorised_ones_are_not() {
         failed.reason,
         ConnectionReason::PuddleRequestFailed("unreachable"),
         "a pull that got nowhere must not read as one that went through"
+    );
+}
+
+/// A resolver whose lookups never finish.
+struct Stuck;
+
+impl Resolver for Stuck {
+    fn resolve<'a>(
+        &'a self,
+        _name: &'a DomainName,
+        _port: u16,
+    ) -> BoxFuture<'a, std::io::Result<Vec<std::net::SocketAddr>>> {
+        Box::pin(std::future::pending())
+    }
+}
+
+#[tokio::test]
+async fn a_pull_that_could_not_resolve_its_name_records_why_it_failed() {
+    let endpoints = PuddleEndpoints::new();
+    let log = Arc::new(puddle_proxy::testing::CollectingConnectionLog::new());
+    let mut config = ProxyConfig::default();
+    config.resolve_timeout = Duration::from_millis(100);
+    let proxy = PullProxy::bind(&endpoints)
+        .unwrap()
+        .with_resolver(Arc::new(Stuck))
+        .with_config(config)
+        .with_connection_log(log.clone());
+    let auth = format!(
+        "Basic {}",
+        BASE64.encode(format!("puddle:{}", proxy.token().expose()))
+    );
+    let route = proxy.serve().unwrap();
+    // The lookup never finishes: a 504 and a timeout in the record.
+    let (head, _) = send(route.local_addr(), &connect("slow.test:443", Some(&auth))).await;
+    assert!(head.starts_with("HTTP/1.1 504 "), "{head}");
+    let events = log.wait_for(1, Duration::from_secs(5)).await;
+    assert_eq!(events[0].outcome, Some(ConnectionOutcome::Timeout));
+    assert_eq!(
+        events[0].reason,
+        ConnectionReason::PuddleRequestFailed("timeout")
+    );
+}
+
+#[tokio::test]
+async fn a_pull_whose_name_has_no_address_or_does_not_resolve_is_a_connect_failure_in_the_record() {
+    let endpoints = PuddleEndpoints::new();
+    let log = Arc::new(puddle_proxy::testing::CollectingConnectionLog::new());
+    let proxy = PullProxy::bind(&endpoints)
+        .unwrap()
+        .with_resolver(Arc::new(StaticResolver::new().with("empty.test", &[])))
+        .with_connection_log(log.clone());
+    let auth = format!(
+        "Basic {}",
+        BASE64.encode(format!("puddle:{}", proxy.token().expose()))
+    );
+    let route = proxy.serve().unwrap();
+    for name in ["empty.test", "unknown.test"] {
+        let (head, _) = send(
+            route.local_addr(),
+            &connect(&format!("{name}:443"), Some(&auth)),
+        )
+        .await;
+        assert!(head.starts_with("HTTP/1.1 502 "), "{name}: {head}");
+    }
+    let events = log.wait_for(2, Duration::from_secs(5)).await;
+    assert!(
+        events
+            .iter()
+            .all(|e| e.outcome == Some(ConnectionOutcome::ConnectFailed)),
+        "{events:?}"
     );
 }

@@ -100,6 +100,15 @@ pub(crate) struct Out {
     pub(crate) watch: Option<RouteWatch>,
 }
 
+/// How a failed direct connect is recorded: a timeout, or any other failure.
+fn connect_outcome(err: &std::io::Error) -> ConnectionOutcome {
+    if err.kind() == std::io::ErrorKind::TimedOut {
+        ConnectionOutcome::Timeout
+    } else {
+        ConnectionOutcome::ConnectFailed
+    }
+}
+
 /// Connects out for `target`: `tunnel` for `CONNECT`, else a plain-HTTP request.
 pub(crate) async fn connect_out(
     upstream: Option<&Upstream>,
@@ -119,16 +128,11 @@ pub(crate) async fn connect_out(
             }),
             Err(err) => {
                 tracing::info!(host = %target.host, port = target.port, error = %err, "upstream connect failed");
-                let outcome = if err.kind() == std::io::ErrorKind::TimedOut {
-                    ConnectionOutcome::Timeout
-                } else {
-                    ConnectionOutcome::ConnectFailed
-                };
                 Err(Refusal::new(
                     "502 Bad Gateway",
                     format!("could not connect to {}:{}", target.host, target.port),
                 )
-                .failed(outcome))
+                .failed(connect_outcome(&err)))
             }
         };
     };
@@ -212,4 +216,25 @@ fn refusal(err: &ChainError, target: &Target) -> Refusal {
         // The company proxy answered, or turned the sign-in down: it is the proxy's refusal.
         _ => ConnectionOutcome::UpstreamRefused,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Error, ErrorKind};
+
+    use super::*;
+
+    #[test]
+    fn a_direct_connect_that_timed_out_is_a_timeout_and_any_other_failure_is_a_connect_failure() {
+        assert_eq!(
+            connect_outcome(&Error::new(ErrorKind::TimedOut, "connect timed out")),
+            ConnectionOutcome::Timeout
+        );
+        for kind in [ErrorKind::ConnectionRefused, ErrorKind::NotFound] {
+            assert_eq!(
+                connect_outcome(&Error::from(kind)),
+                ConnectionOutcome::ConnectFailed
+            );
+        }
+    }
 }

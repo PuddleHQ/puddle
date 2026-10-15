@@ -229,6 +229,16 @@ enum HopError {
     Final(ChainError),
 }
 
+impl HopError {
+    /// A proxy that did not answer in time.
+    fn slow(why: &str) -> Self {
+        Self::Down {
+            why: why.to_owned(),
+            timed_out: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AuthState {
     /// The proxy let a request through without credentials.
@@ -473,12 +483,7 @@ impl Chain {
                     timed_out: false,
                 });
             }
-            Err(_) => {
-                return Err(HopError::Down {
-                    why: "connect timed out".into(),
-                    timed_out: true,
-                });
-            }
+            Err(_) => return Err(HopError::slow("connect timed out")),
         };
         if let Err(err) = stream.set_nodelay(true) {
             tracing::debug!(error = %err, "nodelay");
@@ -651,10 +656,7 @@ impl Chain {
                 why: format!("no usable answer: {err}"),
                 timed_out: false,
             }),
-            Err(_) => Err(HopError::Down {
-                why: "no answer in time".into(),
-                timed_out: true,
-            }),
+            Err(_) => Err(HopError::slow("no answer in time")),
         }
     }
 

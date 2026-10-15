@@ -1071,10 +1071,11 @@ mod tests {
                 .unwrap();
             let value: Value = serde_json::from_str(&line).unwrap();
             assert_eq!(value["outcome"], outcome.as_str(), "{line}");
-            let AuditRecord::Connection(back) = serde_json::from_str(&line).unwrap() else {
-                panic!("a connection record");
-            };
-            assert_eq!(back.outcome, Some(outcome));
+            let back: AuditRecord = serde_json::from_str(&line).unwrap();
+            assert!(
+                matches!(&back, AuditRecord::Connection(r) if r.outcome == Some(outcome)),
+                "{back:?}"
+            );
         }
         // A record written before the field existed.
         let old = serde_json::json!({"type": "connection", "ts": 1, "workspace_id": "box",
@@ -1082,10 +1083,11 @@ mod tests {
             "reason": "rule", "rule_id": null, "pending_id": null, "binding_id": null,
             "injected": false, "method": null, "path": null, "path_truncated": false,
             "bytes_up": 0, "bytes_down": 0, "count": null});
-        let AuditRecord::Connection(old) = serde_json::from_value(old).unwrap() else {
-            panic!("a connection record");
-        };
-        assert_eq!(old.outcome, None);
+        let old: AuditRecord = serde_json::from_value(old).unwrap();
+        assert!(
+            matches!(&old, AuditRecord::Connection(r) if r.outcome.is_none()),
+            "{old:?}"
+        );
     }
 
     #[test]

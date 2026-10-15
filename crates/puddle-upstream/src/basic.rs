@@ -329,6 +329,33 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Default)]
+    struct Counts(std::sync::atomic::AtomicUsize);
+
+    impl ProxyAuth for Counts {
+        fn begin(
+            &self,
+            _proxy: &ProxyAddr,
+            _offered: &[&str],
+        ) -> Result<Option<Box<dyn AuthSession>>, AuthError> {
+            Ok(None)
+        }
+
+        fn network_changed(&self) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn a_network_change_reaches_every_member_of_the_list() {
+        let (a, b) = (Arc::new(Counts::default()), Arc::new(Counts::default()));
+        let list = AuthList::new().with(a.clone()).with(b.clone());
+        list.network_changed();
+        list.network_changed();
+        assert_eq!(a.0.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(b.0.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
     #[test]
     fn the_list_uses_the_first_member_that_helps() {
         let first = BasicAuth::new().with_proxy(proxy(1), Credentials::new("first", "1"));

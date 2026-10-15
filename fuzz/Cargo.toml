@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# cargo-fuzz targets for what a guest's first bytes reach (docs/arch/threat-model.md, HG-10). Not a
+# member of the root workspace (it needs a nightly toolchain and libFuzzer), so the stable gates
+# never build it; `.github/workflows/fuzz.yml` runs it nightly. Each target's checked-in corpus under
+# `corpus/` is replayed on stable by the crates' own tests (`fuzz_corpus`).
+[package]
+name = "puddle-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+puddle-proxy = { path = "../crates/puddle-proxy", features = ["fuzzing"] }
+
+[workspace]
+
+[[bin]]
+name = "head_parser"
+path = "fuzz_targets/head_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "connect_target"
+path = "fuzz_targets/connect_target.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "normalise_host"
+path = "fuzz_targets/normalise_host.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "agent_preamble"
+path = "fuzz_targets/agent_preamble.rs"
+test = false
+doc = false
+bench = false

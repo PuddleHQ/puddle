@@ -53,10 +53,14 @@
 //! - `testing`: in-memory doubles ([`testing::StaticPolicy`], [`testing::AnyAddress`],
 //!   [`testing::StaticResolver`], [`testing::CollectingConnectionLog`]) for tests. Never use
 //!   them in product code.
+//! - `fuzzing`: the parsers a guest's first bytes reach, behind entry points that check their own
+//!   invariants (`fuzzing`), for the cargo-fuzz targets. Never use it in product code.
 #![forbid(unsafe_code)]
 
 mod counted;
 mod destination;
+#[cfg(feature = "fuzzing")]
+pub mod fuzzing;
 mod http;
 mod proxy;
 mod pull;

@@ -1538,7 +1538,7 @@ async fn vm_host_shell_init_is_checked_read_only_sourced_by_login_shells_and_res
     // no restart (the login-shell file is rewritten); one removed leaves them again.
     let reply = api
         .put(
-            &format!("/api/workspaces/{name}/env/PUDDLE_LIVE_PROBE"),
+            &format!("/api/workspaces/{name}/env/SHELL_INIT_LIVE_PROBE"),
             &json!({"kind": "plain", "value": "added while running"}).to_string(),
         )
         .await;
@@ -1551,7 +1551,7 @@ async fn vm_host_shell_init_is_checked_read_only_sourced_by_login_shells_and_res
                 now = guest(
                     runtime,
                     sandbox,
-                    "bash -lc 'echo \"[${PUDDLE_LIVE_PROBE-unset}]\"'",
+                    "bash -lc 'echo \"[${SHELL_INIT_LIVE_PROBE-unset}]\"'",
                 )
                 .await;
                 if now.trim() == wanted {
@@ -1565,7 +1565,7 @@ async fn vm_host_shell_init_is_checked_read_only_sourced_by_login_shells_and_res
     live("[added while running]").await;
     assert_eq!(
         api.delete(
-            &format!("/api/workspaces/{name}/env/PUDDLE_LIVE_PROBE"),
+            &format!("/api/workspaces/{name}/env/SHELL_INIT_LIVE_PROBE"),
             None
         )
         .await

@@ -4548,3 +4548,118 @@ async fn a_check_that_cannot_run_is_not_a_verdict_on_the_script() {
     assert!(found.unwrap().2.contains("could not check"), "{found:?}");
     host.shutdown().await;
 }
+
+/// Waits for the problem `key` to be there (or gone) in the problem list.
+async fn problem_is(api: &Api, key: &str, present: bool) -> Option<(String, String)> {
+    for _ in 0..500 {
+        let found = problems_of(api)
+            .await
+            .into_iter()
+            .find(|p| p.0 == key)
+            .map(|p| (p.2, p.3));
+        if found.is_some() == present {
+            return found;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!(
+        "the problem {key} was not {}",
+        if present { "raised" } else { "cleared" }
+    );
+}
+
+/// Puts a plain file where the workspace's shell init folder is (or was), so nothing can be
+/// published there.
+fn block_shell_init_folder(rig: &Rig, workspace: &str) -> PathBuf {
+    let folder = shell_init_folder(rig, workspace);
+    std::fs::remove_dir_all(&folder).unwrap();
+    std::fs::write(&folder, "in the way").unwrap();
+    folder
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_shell_init_that_cannot_reach_the_running_guest_is_a_problem_until_a_save_gets_through() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let folder = block_shell_init_folder(&rig, "acme");
+
+    let saved = put_shell_init(&api, "acme", "export A=1\n").await;
+    assert_eq!(saved.status, 200, "{}", saved.body);
+    let (title, detail) = problem_is(&api, "shell-init-copy:acme", true)
+        .await
+        .unwrap();
+    assert!(title.contains("acme's shell init"), "{title}");
+    assert!(detail.contains("keeps the shell init it had"), "{detail}");
+
+    std::fs::remove_file(&folder).unwrap();
+    put_shell_init(&api, "acme", "export A=2\n").await;
+    problem_is(&api, "shell-init-copy:acme", false).await;
+    assert_eq!(
+        std::fs::read_to_string(folder.join("init.sh")).unwrap(),
+        "export A=2\n"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_start_that_cannot_write_the_shell_init_folder_fails_and_leaves_the_workspace_stopped() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let folder = block_shell_init_folder(&rig, "acme");
+
+    api.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    assert!(
+        end["detail"]
+            .as_str()
+            .unwrap()
+            .contains("acme's shell init"),
+        "{end}"
+    );
+
+    std::fs::remove_file(&folder).unwrap();
+    api.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_change_to_the_variables_that_the_guest_cannot_take_says_so_and_keeps_the_change() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+
+    rig.guest.fail_boot.store(true, Ordering::SeqCst);
+    put_env(
+        &api,
+        "/api/workspaces/acme/env/EDITOR",
+        json!({"kind": "plain", "value": "vim"}),
+    )
+    .await;
+    let failed = events
+        .until(
+            is_event("workspace_env_failed", "acme"),
+            Duration::from_secs(20),
+        )
+        .await;
+    let reason = failed["reason"].as_str().unwrap();
+    assert!(
+        reason.contains("the change is saved") && reason.contains("keep the old variables"),
+        "{failed}"
+    );
+    let saved = api.get("/api/workspaces/acme/env").await;
+    assert!(saved.body.contains("EDITOR"), "{}", saved.body);
+    host.shutdown().await;
+}

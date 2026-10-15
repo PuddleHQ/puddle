@@ -148,3 +148,5 @@ crates/xtask/src/lib.rs | inventory.render("The Rust crates in Puddle's own prog
 crates/puddle-host/src/workspaces.rs | tracing::warn!(workspace = %name, %reason, "the shell init was not checked"); | the database failing on a read of one row; the other branch of the same message is tested
 crates/puddle-host/src/workspaces.rs | Ok(Some(crate::shell_init::timed_out_message())) | needs the runtime to report an exec timeout for the check only; the message itself is tested in shell_init
 crates/puddle-host/src/workspaces.rs | Err(e) => Err(e.to_string()), | the runtime failing the check's exec for a reason other than a timeout; the exit-70 path is tested
+crates/puddle-host/src/shell_init.rs | fn unreachable_path(path: &str) -> GuestPath { | the cold arm of a constant that the unit test proves valid; it cannot run
+crates/puddle-host/src/shell_init.rs | panic!("constant guest path {path:?} is not valid") | the cold arm of a constant that the unit test proves valid; it cannot run

@@ -168,11 +168,6 @@ fn publish_in(dir: &Path, wanted: &str) -> std::io::Result<Published> {
     // followed, and a reader never sees half a text. `create_new` refuses a name that is taken,
     // links included.
     let partial = dir.join(".init.sh.new");
-    match fs::remove_file(&partial) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(e),
-    }
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -425,6 +420,38 @@ mod tests {
     }
 
     #[test]
+    fn forgetting_a_folder_that_cannot_be_removed_leaves_it_and_goes_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let (copies, _) = copies(dir.path());
+        // Not a folder, so removing it as one fails with something other than "not found".
+        let in_the_way = dir.path().join("w1");
+        fs::write(&in_the_way, "x").unwrap();
+        copies.forget(&id("w1"));
+        assert!(in_the_way.exists());
+    }
+
+    #[test]
+    fn an_extra_file_beside_the_right_text_is_removed_and_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let (copies, store) = copies(dir.path());
+        store
+            .set_shell_init(&name("alpha"), &ShellInitText::new("export A=1").unwrap())
+            .unwrap();
+        copies.publish(&id("w1"), &name("alpha")).unwrap();
+        let extra = dir.path().join("w1/extra.sh");
+        fs::write(&extra, "echo hi").unwrap();
+        assert_eq!(
+            copies.publish(&id("w1"), &name("alpha")).unwrap(),
+            Published::Restored
+        );
+        assert!(!extra.exists());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("w1/init.sh")).unwrap(),
+            "export A=1\n"
+        );
+    }
+
+    #[test]
     fn a_folder_that_cannot_be_written_says_which_workspace_and_why() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("in-the-way");
@@ -435,28 +462,35 @@ mod tests {
         assert!(why.contains("alpha's shell init"), "{why}");
     }
 
+    /// The text of a refusal; empty (so the asserts on it fail) for anything else.
+    fn refusal(said: Result<Verdict, String>) -> String {
+        said.ok()
+            .and_then(|v| {
+                if let Verdict::Refused(m) = v {
+                    Some(m)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default()
+    }
+
     #[test]
     fn the_check_reads_every_exit_the_guest_script_has() {
         let said = |code: i32, out: &str| verdict(&ExecOutput::new(code, out, "err"));
         assert_eq!(said(0, ""), Ok(Verdict::Quiet));
-        let Ok(Verdict::Refused(syntax)) = said(65, "line 3: unexpected end") else {
-            panic!("syntax");
-        };
+        let syntax = refusal(said(65, "line 3: unexpected end"));
         assert!(
             syntax.contains("does not parse") && syntax.contains("line 3"),
             "{syntax}"
         );
-        let Ok(Verdict::Refused(loud)) = said(66, "hello") else {
-            panic!("loud");
-        };
+        let loud = refusal(said(66, "hello"));
         assert!(
             loud.contains("prints output") && loud.contains("It printed: hello"),
             "{loud}"
         );
         let long = "y".repeat(10_000);
-        let Ok(Verdict::Refused(cut)) = said(66, &long) else {
-            panic!("long");
-        };
+        let cut = refusal(said(66, &long));
         assert!(cut.len() < 3000 && cut.ends_with(" ..."), "{}", cut.len());
         assert!(said(70, "").unwrap_err().contains("could not run"));
         assert!(timed_out_message().contains("5 seconds"));

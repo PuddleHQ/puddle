@@ -718,6 +718,16 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn a_service_with_no_guest_does_not_check_shell_init() {
+        let id = WorkspaceId::new("w").unwrap();
+        let check = NoWorkspaces.check_shell_init(&id, "echo hi\n").await;
+        assert!(
+            matches!(check, Ok(ShellInitCheck::NotRun(ref why)) if why.contains("no workspace")),
+            "{check:?}"
+        );
+    }
+
     #[test]
     fn operations_have_wire_names() {
         assert_eq!(Operation::Reclaiming.to_string(), "reclaiming");

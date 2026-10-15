@@ -17,6 +17,8 @@ use std::time::Duration;
 use puddle_upstream::{Chain, ChainError, Destination, Form, Request, RouteWatch, Scheme, Secret};
 use tokio::net::TcpStream;
 
+use puddle_types::ConnectionOutcome;
+
 use crate::proxy::{Refusal, connect_first};
 use crate::target::Target;
 
@@ -117,10 +119,16 @@ pub(crate) async fn connect_out(
             }),
             Err(err) => {
                 tracing::info!(host = %target.host, port = target.port, error = %err, "upstream connect failed");
+                let outcome = if err.kind() == std::io::ErrorKind::TimedOut {
+                    ConnectionOutcome::Timeout
+                } else {
+                    ConnectionOutcome::ConnectFailed
+                };
                 Err(Refusal::new(
                     "502 Bad Gateway",
                     format!("could not connect to {}:{}", target.host, target.port),
-                ))
+                )
+                .failed(outcome))
             }
         };
     };
@@ -165,7 +173,7 @@ fn refusal(err: &ChainError, target: &Target) -> Refusal {
     let host = &target.host;
     let port = target.port;
     tracing::info!(%host, port, error = %err, "upstream route failed");
-    match err {
+    let refusal = match err {
         ChainError::Refused { status, reason, .. } => {
             let (code, text) = if *status == 403 {
                 ("403 Forbidden", "refused")
@@ -195,5 +203,13 @@ fn refusal(err: &ChainError, target: &Target) -> Refusal {
             "502 Bad Gateway",
             format!("could not connect to {host}:{port} (no route to it works)"),
         ),
-    }
+    };
+    refusal.failed(match err {
+        ChainError::Unreachable {
+            timed_out: true, ..
+        } => ConnectionOutcome::Timeout,
+        ChainError::Unreachable { .. } => ConnectionOutcome::ConnectFailed,
+        // The company proxy answered, or turned the sign-in down: it is the proxy's refusal.
+        _ => ConnectionOutcome::UpstreamRefused,
+    })
 }

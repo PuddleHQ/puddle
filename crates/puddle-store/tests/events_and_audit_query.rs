@@ -425,6 +425,7 @@ fn connection(ts: u64, workspace: &str, host: &str, decision: ConnectionDecision
         resolved_ip: None,
         upstream: None,
         decision: Some(decision),
+        outcome: None,
         reason: "rule".into(),
         rule_id: None,
         rule_set: None,

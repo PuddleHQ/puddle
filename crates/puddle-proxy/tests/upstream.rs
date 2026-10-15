@@ -24,7 +24,7 @@ use puddle_ipc::IpcRoot;
 use puddle_netpolicy::PuddleEndpoints;
 use puddle_proxy::testing::{AnyAddress, CollectingConnectionLog, StaticPolicy, StaticResolver};
 use puddle_proxy::{Proxy, PullProxy, Route, Upstream};
-use puddle_types::{ConnectionEvent, Host, NullSink, WorkspaceName};
+use puddle_types::{ConnectionEvent, ConnectionOutcome, Host, NullSink, WorkspaceName};
 use puddle_upstream::{
     BasicAuth, Behaviour, Chain, ChainConfig, Config, Credentials, Discovery, FakeOs, FakeProxy,
     Hop, NoAuth, ProxyAddr, ProxyAuth, ProxyConfig,
@@ -228,6 +228,7 @@ async fn connect_goes_through_the_company_proxy_and_the_audit_names_the_hop() {
         Some(format!("PROXY {}", proxy.proxy_addr()).as_str())
     );
     assert_eq!(events[0].resolved_ip, None);
+    assert_eq!(events[0].outcome, Some(ConnectionOutcome::Connected));
 }
 
 #[tokio::test]
@@ -594,6 +595,94 @@ async fn hostile_a_hostile_company_proxy_cannot_hang_or_loop_the_workspace_proxy
         let (code, _, _) = guest.connect_to("site.test:443").await;
         assert_eq!(code, 502);
     }
+}
+
+// ---- the outcome of reaching the destination ----
+
+/// Opens a tunnel to `name` through a workspace proxy built on `up` and returns the status the
+/// guest got and the outcome the audit recorded.
+async fn outcome_of(
+    up: Upstream,
+    resolver: StaticResolver,
+    name: &str,
+    allowed: bool,
+) -> (u16, Option<ConnectionOutcome>) {
+    let rig = Rig::new(resolver, up, None);
+    if allowed {
+        rig.policy.allow(&host(name));
+    }
+    let mut guest = rig.guest().await;
+    let (code, _, tunnel) = guest.connect_to(&format!("{name}:443")).await;
+    drop(tunnel);
+    let events = rig.events(1).await;
+    (code, events[0].outcome)
+}
+
+#[tokio::test]
+async fn an_allowed_connection_records_how_reaching_the_destination_went() {
+    let server = echo().await;
+    let resolver = || StaticResolver::new().with("site.test", &[LOCAL]);
+
+    // Made.
+    let open = FakeProxy::start(Behaviour::Open).await;
+    open.resolve_name("site.test", server.addr);
+    let (up, _) = upstream(vec![via(&open)], Arc::new(NoAuth));
+    assert_eq!(
+        outcome_of(up, resolver(), "site.test", true).await,
+        (200, Some(ConnectionOutcome::Connected))
+    );
+
+    // The company proxy refused the destination, or the sign-in.
+    let refusing = FakeProxy::start(Behaviour::Refuse(403)).await;
+    let (up, _) = upstream(vec![via(&refusing)], Arc::new(NoAuth));
+    assert_eq!(
+        outcome_of(up, resolver(), "site.test", true).await,
+        (403, Some(ConnectionOutcome::UpstreamRefused))
+    );
+    let wants_basic = FakeProxy::start(Behaviour::Basic {
+        user: "u".into(),
+        password: "p".into(),
+    })
+    .await;
+    let (up, _) = upstream(vec![via(&wants_basic)], Arc::new(BasicAuth::new()));
+    assert_eq!(
+        outcome_of(up, resolver(), "site.test", true).await,
+        (502, Some(ConnectionOutcome::UpstreamRefused))
+    );
+
+    // Nothing answered: refused, then not in time.
+    let (dead, _held) = dead_proxy();
+    let (up, _) = upstream(vec![Hop::Proxy(dead)], Arc::new(NoAuth));
+    assert_eq!(
+        outcome_of(up, resolver(), "site.test", true).await,
+        (502, Some(ConnectionOutcome::ConnectFailed))
+    );
+    let silent = FakeProxy::start(Behaviour::Silent).await;
+    let (up, _) = upstream(vec![via(&silent)], Arc::new(NoAuth));
+    assert_eq!(
+        outcome_of(up, resolver(), "site.test", true).await,
+        (502, Some(ConnectionOutcome::Timeout))
+    );
+
+    // A name no one here resolves, with the company proxy not asked to.
+    let (up, _) = upstream(vec![via(&open)], Arc::new(NoAuth));
+    assert_eq!(
+        outcome_of(
+            up.with_resolve_via_upstream(false),
+            StaticResolver::new(),
+            "wiki.corp.test",
+            true
+        )
+        .await,
+        (502, Some(ConnectionOutcome::ConnectFailed))
+    );
+
+    // A refusal by rule is a decision, not an outcome: nothing was attempted.
+    let (up, _) = upstream(vec![via(&open)], Arc::new(NoAuth));
+    assert_eq!(
+        outcome_of(up, resolver(), "site.test", false).await,
+        (403, None)
+    );
 }
 
 // ---- a network change while a tunnel is open ----

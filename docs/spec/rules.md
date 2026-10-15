@@ -171,7 +171,7 @@ readable as JSONL (one record per line).
   reason `sandbox_deleted`, and read as `workspace_id`, `workspace`, `workspace` and
   `workspace_deleted`.
 - **R-24 Record types** in `puddle-store`: `connection` (written by the proxy: `workspace_id`, `host`, `port`,
-  `resolved_ip`, `decision` (`allow`, `deny`, `pending`, `blocked`), `reason` (`rule`, `no_rule`,
+  `resolved_ip`, `decision` (`allow`, `deny`, `pending`, `blocked`), `outcome` (how reaching the destination went after an allow: `connected`, `upstream_refused`, `connect_failed`, `timeout`; `null` where nothing was attempted and in older records), `reason` (`rule`, `no_rule`,
   `toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`, `local_address`, `settings_unreadable`,
   `policy_unavailable`, `sni_mismatch`, `guest_tls_rejected`, `connection_limit`, `suppressed`, `merged`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `pending_id`, `binding_id`, `injected`, `placeholder_unbound` (a secret stand-in went to a host outside
   its hosts and was sent unchanged),

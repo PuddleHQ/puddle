@@ -787,6 +787,32 @@ impl From<ConnectionOrigin> for puddle_types::ConnectionOrigin {
     }
 }
 
+/// How reaching the destination went after the proxy let a connection through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionOutcome {
+    /// The connection to the destination, directly or through the company proxy, was made.
+    Connected,
+    /// The company proxy refused the destination, or signing in to it failed.
+    UpstreamRefused,
+    /// No route to the destination worked.
+    ConnectFailed,
+    /// Resolving or connecting took too long.
+    Timeout,
+}
+
+impl From<puddle_types::ConnectionOutcome> for ConnectionOutcome {
+    fn from(outcome: puddle_types::ConnectionOutcome) -> Self {
+        match outcome {
+            puddle_types::ConnectionOutcome::Connected => Self::Connected,
+            puddle_types::ConnectionOutcome::UpstreamRefused => Self::UpstreamRefused,
+            puddle_types::ConnectionOutcome::Timeout => Self::Timeout,
+            // An outcome this API doesn't know yet is the general failure.
+            _ => Self::ConnectFailed,
+        }
+    }
+}
+
 /// Why a pending request expired.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -843,6 +869,12 @@ pub enum AuditRecord {
         /// What happened.
         #[schema(required = true)]
         decision: Option<ConnectionDecision>,
+        /// How reaching the destination went after an `allow`: `connected`, `upstream_refused`,
+        /// `connect_failed` or `timeout`. `null` where nothing was attempted (a refusal by rule,
+        /// guard or limit) and in records written before it existed.
+        #[serde(default)]
+        #[schema(required = true)]
+        outcome: Option<ConnectionOutcome>,
         /// Why: `rule`, `no_rule`, or a block reason.
         reason: String,
         /// The deciding rule.
@@ -1039,6 +1071,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
             resolved_ip,
             upstream,
             decision,
+            outcome,
             reason,
             rule_id,
             rule_set,
@@ -1062,6 +1095,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
             upstream,
             origin: origin.into(),
             decision: decision.map(Into::into),
+            outcome: outcome.map(Into::into),
             reason,
             rule_id,
             rule_set,
@@ -2649,7 +2683,7 @@ mod tests {
         let stored = serde_json::json!({
             "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
             "port": 443, "resolved_ip": "93.184.216.34", "upstream": "PROXY corp:3128",
-            "decision": "allow", "reason": "rule", "rule_id": 4, "rule_set": "user:2",
+            "decision": "allow", "outcome": "connected", "reason": "rule", "rule_id": 4, "rule_set": "user:2",
             "pending_id": null, "binding_id": null, "injected": false, "placeholder_unbound": false,
             "method": "GET", "path": "/",
             "path_truncated": false, "bytes_up": 1, "bytes_down": 2, "count": null

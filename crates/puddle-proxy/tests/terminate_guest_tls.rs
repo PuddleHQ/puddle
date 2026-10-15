@@ -11,7 +11,7 @@ mod terminate_support;
 use std::process::Command;
 use std::sync::Arc;
 
-use puddle_types::ConnectionDecision;
+use puddle_types::{ConnectionDecision, ConnectionOutcome};
 use rustls::pki_types::ServerName;
 use terminate_support::{FakeServer, Flaw, Guest, Pki, Reply, RigBuilder};
 
@@ -116,6 +116,28 @@ async fn a_client_that_trusts_the_workspace_ca_is_served_as_before() {
     client.close().await;
     let events = rig.events(1).await;
     assert_eq!(events[0].reason.to_string(), "rule");
+    assert_eq!(events[0].outcome, Some(ConnectionOutcome::Connected));
+}
+
+#[tokio::test]
+async fn an_upstream_certificate_that_is_not_accepted_is_a_connect_failure_in_the_audit() {
+    let pki = Pki::new();
+    let server = FakeServer::tls(
+        pki.server_config("bound.test", Flaw::Expired),
+        Arc::new(|_| Reply::ok("never")),
+    )
+    .await;
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .build();
+    let mut guest = rig.guest().await;
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    assert_eq!(client.get("bound.test", "/").await.status, 502);
+    client.close().await;
+    let events = rig.events(1).await;
+    // The rule allowed it and the guest got a 502: the record must say the connection failed.
+    assert_eq!(events[0].decision, ConnectionDecision::Allow);
+    assert_eq!(events[0].outcome, Some(ConnectionOutcome::ConnectFailed));
 }
 
 const REFUSING_CLIENT: &str = r#"

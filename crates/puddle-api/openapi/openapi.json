@@ -6520,6 +6520,7 @@
               "resolved_ip",
               "upstream",
               "decision",
+              "outcome",
               "reason",
               "rule_id",
               "rule_set",
@@ -6596,6 +6597,17 @@
               "origin": {
                 "$ref": "#/components/schemas/ConnectionOrigin",
                 "description": "Whose connection it is. Records written before it existed read as `workspace`."
+              },
+              "outcome": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ConnectionOutcome",
+                    "description": "How reaching the destination went after an `allow`: `connected`, `upstream_refused`,\n`connect_failed` or `timeout`. `null` where nothing was attempted (a refusal by rule,\nguard or limit) and in records written before it existed."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "path": {
                 "type": [
@@ -7424,6 +7436,16 @@
         "enum": [
           "workspace",
           "puddle"
+        ]
+      },
+      "ConnectionOutcome": {
+        "type": "string",
+        "description": "How reaching the destination went after the proxy let a connection through.",
+        "enum": [
+          "connected",
+          "upstream_refused",
+          "connect_failed",
+          "timeout"
         ]
       },
       "Consent": {

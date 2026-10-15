@@ -234,6 +234,25 @@ describe("a record as a row", () => {
       "the tool in the workspace didn't accept Puddle's certificate (it may keep its own list of trusted roots)",
     );
   });
+  it("says when an allowed connection could not reach its destination", () => {
+    const refused = row(
+      connection(1, { outcome: "upstream_refused", method: null }).record,
+    );
+    expect(refused.outcome).toEqual({ label: "Failed", tone: "warn" });
+    expect(refused.detail).toBe("rule 1 · the company proxy refused it");
+    expect(
+      row(connection(2, { outcome: "connect_failed" }).record).detail,
+    ).toBe("rule 1 · Puddle could not connect to it");
+    expect(row(connection(3, { outcome: "timeout" }).record).detail).toBe(
+      "rule 1 · it did not answer in time",
+    );
+    // Made, or never tried: a plain allow.
+    for (const outcome of ["connected", null] as const) {
+      const plain = row(connection(4, { outcome }).record);
+      expect(plain.outcome).toEqual({ label: "Allowed", tone: "allow" });
+      expect(plain.detail).toBe("rule 1");
+    }
+  });
   it("flags a secret stand-in that went to a host it is not for", () => {
     const view = row(
       connection(1, { placeholder_unbound: true, method: "GET", path: "/x" })

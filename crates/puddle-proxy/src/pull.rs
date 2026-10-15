@@ -45,8 +45,8 @@ use puddle_netpolicy::{
     AddressClass, EndpointKind, LocalAccess, NetPolicy, PuddleEndpoints, Registration,
 };
 use puddle_types::{
-    BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason, Host,
-    HttpRequestLine, LocalCategory, NullConnectionLog,
+    BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOutcome,
+    ConnectionReason, Host, HttpRequestLine, LocalCategory, NullConnectionLog,
 };
 use subtle::ConstantTimeEq;
 use tokio::io::BufReader;
@@ -500,6 +500,7 @@ async fn relay(
             return;
         }
     };
+    event.outcome = Some(ConnectionOutcome::Connected);
     event.resolved_ip = out.addr.map(|addr| addr.ip());
     event.upstream.clone_from(&out.hop);
     tracing::info!(host = %target.host, port = target.port, addr = ?out.addr, hop = ?out.hop, "image-pull connection");
@@ -529,12 +530,13 @@ fn note_failure(event: &mut ConnectionEvent, refusal: &Refusal) {
     if event.decision != ConnectionDecision::Allow {
         return;
     }
-    let code = if refusal.status.starts_with("504") {
+    let code = if refusal.outcome == Some(ConnectionOutcome::Timeout) {
         "timeout"
     } else {
         "unreachable"
     };
     event.reason = ConnectionReason::PuddleRequestFailed(code);
+    event.outcome = refusal.outcome;
 }
 
 /// The verdict on one address a pull would connect to.
@@ -590,12 +592,14 @@ async fn admit(
                 Err(_) => {
                     return left_to_upstream(shared, host, "timed out").ok_or_else(|| {
                         Refusal::new("504 Gateway Timeout", format!("resolving {host} timed out"))
+                            .failed(ConnectionOutcome::Timeout)
                     });
                 }
                 Ok(Err(err)) => {
                     tracing::info!(%host, error = %err, "image-pull resolve failed");
                     return left_to_upstream(shared, host, "failed").ok_or_else(|| {
                         Refusal::new("502 Bad Gateway", format!("could not resolve {host}"))
+                            .failed(ConnectionOutcome::ConnectFailed)
                     });
                 }
                 Ok(Ok(addrs)) => addrs,
@@ -613,10 +617,10 @@ async fn admit(
     }
     if usable.is_empty() {
         if reasons.is_empty() {
-            return Err(Refusal::new(
-                "502 Bad Gateway",
-                format!("{host} has no addresses"),
-            ));
+            return Err(
+                Refusal::new("502 Bad Gateway", format!("{host} has no addresses"))
+                    .failed(ConnectionOutcome::ConnectFailed),
+            );
         }
         return Err(blocked(host, port, &reasons, event));
     }
@@ -696,13 +700,23 @@ mod tests {
                 ConnectionReason::PuddleRequest,
             )
         };
-        for (status, code) in [
-            ("504 Gateway Timeout", "timeout"),
-            ("502 Bad Gateway", "unreachable"),
+        for (status, outcome, code) in [
+            ("504 Gateway Timeout", ConnectionOutcome::Timeout, "timeout"),
+            (
+                "502 Bad Gateway",
+                ConnectionOutcome::ConnectFailed,
+                "unreachable",
+            ),
+            (
+                "502 Bad Gateway",
+                ConnectionOutcome::UpstreamRefused,
+                "unreachable",
+            ),
         ] {
             let mut failed = event();
-            note_failure(&mut failed, &Refusal::new(status, "no"));
+            note_failure(&mut failed, &Refusal::new(status, "no").failed(outcome));
             assert_eq!(failed.reason, ConnectionReason::PuddleRequestFailed(code));
+            assert_eq!(failed.outcome, Some(outcome));
         }
         let mut blocked = event();
         blocked.decision = ConnectionDecision::Blocked;

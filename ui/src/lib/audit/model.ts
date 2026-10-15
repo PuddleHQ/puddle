@@ -217,6 +217,14 @@ const FAILED_REQUEST: Record<string, string> = {
 };
 const FAILED_PREFIX = "puddle_request_failed:";
 
+/** What an allowed connection came to when reaching the destination failed. A connection
+ * that was made (`connected`) or never tried (`null`) has no note. */
+const OUTCOME_NOTES: Record<string, string> = {
+  upstream_refused: "the company proxy refused it",
+  connect_failed: "Puddle could not connect to it",
+  timeout: "it did not answer in time",
+};
+
 /** Reasons that say something happened to an allowed connection, shown beside the rule. */
 const NOTES: Record<string, string> = {
   guest_tls_rejected:
@@ -334,6 +342,8 @@ function connectionDetail(
       `${bytesLabel(record.bytes_up)} up, ${bytesLabel(record.bytes_down)} down`,
     );
   }
+  const unreached = unreachedNote(record);
+  if (unreached !== null) parts.push(unreached);
   if (record.injected) parts.push("credential added");
   if (record.placeholder_unbound) {
     parts.push(
@@ -343,10 +353,21 @@ function connectionDetail(
   return parts.join(" · ");
 }
 
+function unreachedNote(
+  record: Extract<AuditRecord, { type: "connection" }>,
+): string | null {
+  return record.outcome === null
+    ? null
+    : (OUTCOME_NOTES[record.outcome] ?? null);
+}
+
 function connectionOutcome(
   record: Extract<AuditRecord, { type: "connection" }>,
 ): RowView["outcome"] {
-  if (record.reason.startsWith(FAILED_PREFIX)) {
+  if (
+    record.reason.startsWith(FAILED_PREFIX) ||
+    unreachedNote(record) !== null
+  ) {
     return { label: "Failed", tone: "warn" };
   }
   return record.decision === null ? null : decisionOutcome(record.decision);

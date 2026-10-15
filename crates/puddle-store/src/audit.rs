@@ -9,8 +9,8 @@
 use std::io;
 
 use puddle_types::{
-    ConnectionDecision, ConnectionEvent, ConnectionOrigin, ConnectionReason, WorkspaceName,
-    request_path,
+    ConnectionDecision, ConnectionEvent, ConnectionOrigin, ConnectionOutcome, ConnectionReason,
+    WorkspaceName, request_path,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -60,6 +60,11 @@ pub struct ConnectionRecord {
     pub upstream: Option<String>,
     /// What happened.
     pub decision: Option<ConnectionDecision>,
+    /// How reaching the destination went after an allow (`connected`, `upstream_refused`,
+    /// `connect_failed`, `timeout`); absent where nothing was attempted and in records written
+    /// before it existed.
+    #[serde(default)]
+    pub outcome: Option<ConnectionOutcome>,
     /// Why (see [`ConnectionReason`]).
     pub reason: String,
     /// The deciding rule.
@@ -106,6 +111,7 @@ impl ConnectionRecord {
             resolved_ip: event.resolved_ip.map(|ip| ip.to_string()),
             upstream: event.upstream.clone(),
             decision: Some(event.decision),
+            outcome: event.outcome,
             reason: event.reason.to_string(),
             rule_id: event.rule_id.map(|id| id.0),
             rule_set: event.rule_set.map(|set| set.to_string()),
@@ -156,6 +162,7 @@ impl ConnectionRecord {
             resolved_ip: None,
             upstream: None,
             decision: None,
+            outcome: None,
             reason: reason.to_string(),
             rule_id: None,
             rule_set: None,
@@ -1049,6 +1056,39 @@ mod tests {
     }
 
     #[test]
+    fn the_outcome_of_reaching_the_destination_is_kept_and_old_records_read_as_none() {
+        let mut event = event();
+        assert_eq!(ConnectionRecord::from_event(1, &event).outcome, None);
+        for outcome in [
+            ConnectionOutcome::Connected,
+            ConnectionOutcome::UpstreamRefused,
+            ConnectionOutcome::ConnectFailed,
+            ConnectionOutcome::Timeout,
+        ] {
+            event.outcome = Some(outcome);
+            let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &event))
+                .to_line()
+                .unwrap();
+            let value: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(value["outcome"], outcome.as_str(), "{line}");
+            let AuditRecord::Connection(back) = serde_json::from_str(&line).unwrap() else {
+                panic!("a connection record");
+            };
+            assert_eq!(back.outcome, Some(outcome));
+        }
+        // A record written before the field existed.
+        let old = serde_json::json!({"type": "connection", "ts": 1, "workspace_id": "box",
+            "host": "example.com", "port": 443, "resolved_ip": null, "decision": "allow",
+            "reason": "rule", "rule_id": null, "pending_id": null, "binding_id": null,
+            "injected": false, "method": null, "path": null, "path_truncated": false,
+            "bytes_up": 0, "bytes_down": 0, "count": null});
+        let AuditRecord::Connection(old) = serde_json::from_value(old).unwrap() else {
+            panic!("a connection record");
+        };
+        assert_eq!(old.outcome, None);
+    }
+
+    #[test]
     fn r23_records_are_internally_tagged_snake_case_with_nulls_written() {
         for record in every_record() {
             let line = record.to_line().unwrap();
@@ -1115,6 +1155,7 @@ mod tests {
             "resolved_ip",
             "upstream",
             "decision",
+            "outcome",
             "reason",
             "rule_id",
             "pending_id",

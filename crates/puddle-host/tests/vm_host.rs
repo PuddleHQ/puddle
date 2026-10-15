@@ -3352,3 +3352,202 @@ async fn vm_host_a_login_shell_lands_in_the_start_folder_and_a_missing_one_opens
         .until(ended(name_static), Duration::from_secs(300))
         .await;
 }
+
+/// Starts a server in the guest that greets each connection on `addr:port` (perl is part of the
+/// base image), in the background, and waits until it listens.
+async fn greeter(runtime: &MsbRuntime, sandbox: &WorkspaceName, addr: &str, port: u16, who: &str) {
+    guest(
+        runtime,
+        sandbox,
+        &format!(
+            "nohup setsid perl -MIO::Socket::INET -e '\
+               $s = IO::Socket::INET->new(Listen => 16, LocalAddr => \"{addr}\", LocalPort => {port}, ReuseAddr => 1) or die \"listen: $!\"; \
+               while ($c = $s->accept) {{ print $c \"hello from {who}\\n\"; close $c }}' >/tmp/greeter-{port}.log 2>&1 </dev/null & \
+             for i in $(seq 1 50); do grep -q ':{port:04X} ' /proc/net/tcp && exit 0; sleep 0.2; done; \
+             echo \"greeter did not listen\"; cat /tmp/greeter-{port}.log; exit 1"
+        ),
+    )
+    .await;
+}
+
+/// What a connection to `127.0.0.1:port` on this computer is answered, within 20 s.
+async fn greeting(port: u16) -> String {
+    use tokio::io::AsyncReadExt as _;
+    let mut conn = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let mut text = String::new();
+    tokio::time::timeout(Duration::from_secs(20), conn.read_to_string(&mut text))
+        .await
+        .expect("no answer through the forward in time")
+        .unwrap();
+    text
+}
+
+/// K and W tiers. The workspace's ports on a real guest: the agent reports what listens (not its own
+/// ports), a forward carries a connection from this computer's loopback to a guest server, and a
+/// pinned forward is on the same port again after the workspace stops and starts.
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_ports_are_listed_forwarded_and_pinned_across_a_restart() {
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host("ports").await;
+    let name = format!("{}-ports", settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    host.store()
+        .add_rule(&NewRule {
+            scope: Scope::Workspace(sandbox.clone()),
+            pattern: Pattern::parse(REPO_HOST).unwrap(),
+            effect: Effect::Allow,
+            expires_at: None,
+            created_by: Actor::Cli,
+        })
+        .unwrap();
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "repo_url": REPO, "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+
+    // What listens in the guest is listed within a few seconds; the agent's own ports are not.
+    greeter(&runtime, &sandbox, "127.0.0.1", 8000, "loopback").await;
+    greeter(&runtime, &sandbox, "0.0.0.0", 8001, "wildcard").await;
+    let path = format!("/api/workspaces/{name}/ports");
+    let listed = |view: &serde_json::Value| -> Vec<u64> {
+        view["ports"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|p| p["listening"] == true)
+            .map(|p| p["guest_port"].as_u64().unwrap())
+            .collect()
+    };
+    let started = std::time::Instant::now();
+    let view = loop {
+        let view = api.get(&path).await.json();
+        let ports = listed(&view);
+        if ports.contains(&8000) && ports.contains(&8001) {
+            break view;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(60),
+            "the guest's listeners were not reported: {view}"
+        );
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    };
+    eprintln!("ports reported after {:?}", started.elapsed());
+    assert_eq!(view["running"], true);
+    let ports = listed(&view);
+    for plumbing in [3128u64, 3129, 41_337] {
+        assert!(
+            !ports.contains(&plumbing),
+            "the agent's own port {plumbing} is listed: {view}"
+        );
+    }
+
+    // A forward from this computer's loopback reaches the guest server, on each address it
+    // listens on; the agent's own proxy port is refused.
+    let free = || {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    };
+    let (pinned_port, plain_port) = (free(), free());
+    let put = api
+        .put(
+            &format!("{path}/8000"),
+            &json!({"host_port": pinned_port, "pinned": true}).to_string(),
+        )
+        .await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    let put = api
+        .put(
+            &format!("{path}/8001"),
+            &json!({"host_port": plain_port}).to_string(),
+        )
+        .await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    assert_eq!(greeting(pinned_port).await, "hello from loopback\n");
+    assert_eq!(greeting(plain_port).await, "hello from wildcard\n");
+    let proxy_port = free();
+    api.put(
+        &format!("{path}/3128"),
+        &json!({"host_port": proxy_port}).to_string(),
+    )
+    .await;
+    let mut refused = tokio::net::TcpStream::connect(("127.0.0.1", proxy_port))
+        .await
+        .unwrap();
+    let mut buf = Vec::new();
+    let _ = tokio::io::AsyncReadExt::read_to_end(&mut refused, &mut buf).await;
+    assert!(
+        buf.is_empty(),
+        "the agent's proxy port was reachable through a forward"
+    );
+    let view = api.get(&path).await.json();
+    let row = view["ports"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["guest_port"] == 3128)
+        .unwrap();
+    assert!(
+        row["problem"].as_str().unwrap().contains("agent"),
+        "the refusal says why: {row}"
+    );
+    api.delete(&format!("{path}/3128"), None).await;
+
+    // Stop and start: the plain forward is gone, the pinned one is on the same port again.
+    for step in ["stop", "start"] {
+        let reply = api
+            .post(&format!("/api/workspaces/{name}/{step}"), "")
+            .await;
+        assert_eq!(reply.status, 202, "{}", reply.body);
+        let end = events
+            .until(ended(name_static), Duration::from_secs(300))
+            .await;
+        assert_eq!(end["step"], "done", "{end}");
+        if step == "stop" {
+            let view = api.get(&path).await.json();
+            assert_eq!(view["running"], false);
+            assert_eq!(view["ports"].as_array().unwrap().len(), 1, "{view}");
+            assert!(
+                tokio::net::TcpStream::connect(("127.0.0.1", pinned_port))
+                    .await
+                    .is_err(),
+                "a stopped workspace's forward is still open"
+            );
+        }
+    }
+    let view = api.get(&path).await.json();
+    let row = &view["ports"][0];
+    assert_eq!(
+        (
+            row["guest_port"].clone(),
+            row["forwarded"].clone(),
+            row["host_port"].clone()
+        ),
+        (json!(8000), json!(true), json!(pinned_port)),
+        "{view}"
+    );
+    // The guest's processes did not survive the restart: start the server again.
+    greeter(&runtime, &sandbox, "127.0.0.1", 8000, "again").await;
+    assert_eq!(greeting(pinned_port).await, "hello from again\n");
+
+    host.shutdown().await;
+}

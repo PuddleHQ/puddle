@@ -10,428 +10,54 @@
 //! local lab). With neither set the tests skip, unless `PUDDLE_REQUIRE_SQUID=1`, which makes a
 //! missing Squid a failure (CI sets it).
 #![cfg(unix)]
-#![expect(
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::print_stderr,
-    reason = "helpers outside #[test] functions fail the test by panicking"
-)]
 
-use std::fs;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+mod rig;
+
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
-use puddle_agent::config::Target;
-use puddle_agent::{Agent, Config};
-use puddle_ipc::IpcRoot;
-use puddle_proxy::testing::{AnyAddress, StaticResolver};
-use puddle_proxy::{Proxy, Route, Upstream};
-use puddle_store::{Actor, Effect, Limits, NewRule, Pattern, Scope, Store, SystemClock};
-use puddle_types::{NullSink, WorkspaceName};
-use puddle_upstream::{
-    BasicAuth, Chain, Config as DiscoveryConfig, Credentials, Discovery, FakeOs, Hop, ProxyAddr,
-    ProxyAuth, ProxyConfig,
+use puddle_e2e::lab::{BASIC_PASSWORD as PASSWORD, BASIC_USER as USER, Squid, SquidOptions};
+use puddle_upstream::{BasicAuth, Hop, ProxyAddr, ProxyAuth};
+use rig::{
+    allow, basic, connection_records, dead_proxy, echo_roundtrip, echo_server, rig,
+    status_and_body, tunnel,
 };
-use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::TcpListener;
 
-const LOCAL: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-const USER: &str = "alice";
-const PASSWORD: &str = "lab-only-pw-7Qx2";
+use rig::LOCAL;
 
-/// A running Squid; stopped on drop.
-struct Squid {
-    port: u16,
-    dir: tempfile::TempDir,
-    stop: Stop,
-}
-
-enum Stop {
-    Process(Child),
-    Container(String),
-}
-
-impl Drop for Squid {
-    fn drop(&mut self) {
-        match &mut self.stop {
-            Stop::Process(child) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                // A killed Squid cannot unlink its shared-memory segments.
-                remove_shared_memory(&instance_name(self.port));
-            }
-            Stop::Container(name) => {
-                let _ = Command::new("docker")
-                    .args(["rm", "-f", name])
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status();
-            }
-        }
-    }
-}
-
-/// Squid's instance name (`-n`, alphanumeric only). It prefixes the shared-memory segments
-/// (`/dev/shm/<name>-cf__*`) that Squid creates exclusively, so concurrent Squids, or one killed
-/// earlier, would otherwise collide on the default name.
-fn instance_name(port: u16) -> String {
-    format!("puddletest{port}")
-}
-
-/// Removes the shared-memory segments left under `name` (Linux's `/dev/shm`; absent elsewhere).
-fn remove_shared_memory(name: &str) {
-    let prefix = format!("{name}-cf__");
-    let Ok(entries) = fs::read_dir("/dev/shm") else {
-        return;
-    };
-    for entry in entries.flatten() {
-        if entry.file_name().to_string_lossy().starts_with(&prefix) {
-            let _ = fs::remove_file(entry.path());
-        }
-    }
-}
-
-fn free_port() -> u16 {
-    let listener = std::net::TcpListener::bind((LOCAL, 0)).unwrap();
-    listener.local_addr().unwrap().port()
-}
-
-impl Squid {
-    /// Starts Squid with Basic auth for [`USER`], allowing `CONNECT` and plain requests to
-    /// `origin_port` only, and `*.corp.test` names resolved from its own hosts file (split DNS:
-    /// this host cannot resolve them).
-    fn start(origin_port: u16) -> Option<Self> {
-        let bin = std::env::var_os("PUDDLE_SQUID_BIN");
-        let image = std::env::var("PUDDLE_SQUID_DOCKER").ok();
-        if bin.is_none() && image.is_none() {
-            assert!(
-                std::env::var_os("PUDDLE_REQUIRE_SQUID").is_none(),
-                "PUDDLE_REQUIRE_SQUID is set but neither PUDDLE_SQUID_BIN nor PUDDLE_SQUID_DOCKER is"
-            );
-            eprintln!("skipped: set PUDDLE_SQUID_BIN or PUDDLE_SQUID_DOCKER to run against Squid");
-            return None;
-        }
-        let dir = tempfile::tempdir().unwrap();
-        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o777)).unwrap();
-        // Where Squid sees the directory: here, or at /lab in the container.
-        let seen = if image.is_some() {
-            PathBuf::from("/lab")
-        } else {
-            dir.path().to_path_buf()
-        };
-        let port = free_port();
-        let helper = dir.path().join("basic-helper.sh");
-        fs::write(
-            &helper,
-            format!(
-                "#!/bin/sh\nwhile read -r user pass; do\n  if [ \"$user\" = \"{USER}\" ] && [ \"$pass\" = \"{PASSWORD}\" ]; then echo OK; else echo ERR; fi\ndone\n"
-            ),
-        )
-        .unwrap();
-        fs::set_permissions(&helper, fs::Permissions::from_mode(0o755)).unwrap();
-        fs::write(
-            dir.path().join("hosts"),
-            "127.0.0.1 echo.corp.test web.corp.test\n",
-        )
-        .unwrap();
-        let at = |name: &str| seen.join(name).display().to_string();
-        fs::write(
-            dir.path().join("squid.conf"),
-            format!(
-                "http_port 127.0.0.1:{port}\n\
-                 auth_param basic program /bin/sh {helper}\n\
-                 auth_param basic realm puddle-upstream-lab\n\
-                 auth_param basic children 2\n\
-                 acl authed proxy_auth REQUIRED\n\
-                 acl SSL_ports port {origin_port}\n\
-                 acl Safe_ports port {origin_port}\n\
-                 acl CONNECT method CONNECT\n\
-                 http_access deny !Safe_ports\n\
-                 http_access deny CONNECT !SSL_ports\n\
-                 http_access allow authed\n\
-                 http_access deny all\n\
-                 hosts_file {hosts}\n\
-                 cache deny all\n\
-                 buffered_logs off\n\
-                 access_log daemon:{access}\n\
-                 cache_log stdio:{cache}\n\
-                 pid_filename {pid}\n\
-                 coredump_dir {core}\n\
-                 visible_hostname puddle-lab\n",
-                helper = at("basic-helper.sh"),
-                hosts = at("hosts"),
-                access = at("access.log"),
-                cache = at("cache.log"),
-                pid = at("squid.pid"),
-                core = seen.display(),
-            ),
-        )
-        .unwrap();
-        let stop = if let Some(image) = image {
-            let name = format!("puddle-squid-{port}");
-            let status = Command::new("docker")
-                .args(["run", "-d", "--name", &name, "--network", "host", "-v"])
-                .arg(format!("{}:/lab", dir.path().display()))
-                .args([&image, "-f", "/lab/squid.conf", "-NYC"])
-                .stdout(Stdio::null())
-                .status()
-                .unwrap();
-            assert!(status.success(), "docker run failed");
-            Stop::Container(name)
-        } else {
-            let bin = bin.unwrap();
-            assert!(
-                std::path::Path::new(&bin).is_file(),
-                "PUDDLE_SQUID_BIN={} is not a file: install Squid or fix the path",
-                bin.to_string_lossy()
-            );
-            let log = fs::File::create(dir.path().join("squid.stderr")).unwrap();
-            let name = instance_name(port);
-            remove_shared_memory(&name);
-            let child = Command::new(bin)
-                .arg("-f")
-                .arg(dir.path().join("squid.conf"))
-                .args(["-N", "-Y", "-C", "-n", &name])
-                .stdout(Stdio::null())
-                .stderr(log)
-                .spawn()
-                .unwrap();
-            Stop::Process(child)
-        };
-        let squid = Self { port, dir, stop };
-        squid.wait_ready();
-        Some(squid)
-    }
-
-    fn wait_ready(&self) {
-        let deadline = Instant::now() + Duration::from_secs(60);
-        while Instant::now() < deadline {
-            if std::net::TcpStream::connect((LOCAL, self.port)).is_ok() {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(200));
-        }
-        let stderr = fs::read_to_string(self.dir.path().join("squid.stderr")).unwrap_or_default();
-        let cache = fs::read_to_string(self.dir.path().join("cache.log")).unwrap_or_default();
-        panic!("squid did not start\n{stderr}\n{cache}");
-    }
-
-    fn addr(&self) -> ProxyAddr {
-        ProxyAddr::new("127.0.0.1", self.port)
-    }
-
-    /// Squid's access log (what it forwarded, and as which user).
-    fn access_log(&self) -> String {
-        // Squid flushes stdio logs lazily; give it a moment.
-        std::thread::sleep(Duration::from_millis(300));
-        let log = match &self.stop {
-            // The container's Squid writes its logs as its own user, mode 0640.
-            Stop::Container(name) => Command::new("docker")
-                .args(["exec", name, "cat", "/lab/access.log"])
-                .output()
-                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-                .unwrap_or_default(),
-            Stop::Process(_) => {
-                fs::read_to_string(self.dir.path().join("access.log")).unwrap_or_default()
-            }
-        };
-        if log.is_empty() {
-            let cache = fs::read_to_string(self.dir.path().join("cache.log")).unwrap_or_default();
-            let files: Vec<_> = fs::read_dir(self.dir.path())
-                .unwrap()
-                .flatten()
-                .map(|e| e.file_name())
-                .collect();
-            return format!("(empty access log; files {files:?}; cache.log:\n{cache})");
-        }
-        log
-    }
-}
-
-fn workspace() -> WorkspaceName {
-    WorkspaceName::new("e2e").unwrap()
-}
-
-struct Rig {
-    store: Arc<Store>,
-    agent: Agent,
-    _route: Route,
-    _root: IpcRoot,
-}
-
-/// The proxy over `hops` (a PAC answer), authenticating with `auth`; names are unknown to the
-/// resolver, so only Squid can reach them.
-async fn rig(hops: Vec<Hop>, auth: Arc<dyn ProxyAuth>) -> Rig {
-    let store = Arc::new(Store::open_in_memory(Arc::new(SystemClock), Limits::default()).unwrap());
-    let os = FakeOs::new(ProxyConfig {
-        pac_url: Some("http://pac.corp/proxy.pac".into()),
-        ..ProxyConfig::default()
-    });
-    os.set_pac(move |_| Ok(hops.clone()));
-    let chain = Chain::new(Discovery::new(os, DiscoveryConfig::default()), auth);
-    let proxy = Arc::new(
-        Proxy::new(store.clone(), Arc::new(NullSink))
-            .with_connection_log(store.clone())
-            .with_resolver(Arc::new(StaticResolver::new()))
-            .with_address_check(Arc::new(AnyAddress))
-            .with_upstream(Upstream::new(chain)),
-    );
-    let root = IpcRoot::new().unwrap();
-    let route = proxy.serve_route(root.listen().unwrap(), workspace());
-    let config = Config {
-        listen: SocketAddr::new(LOCAL, 0),
-        target: Target::Unix(route.endpoint().path().to_path_buf()),
-        oom: None,
-        bridge: None,
-        ..Config::default()
-    };
-    let agent = Agent::start(config).await.unwrap();
-    Rig {
-        store,
-        agent,
-        _route: route,
-        _root: root,
-    }
-}
-
-fn allow(store: &Store, host: &str) {
-    store
-        .add_rule(&NewRule {
-            scope: Scope::Workspace(workspace()),
-            pattern: Pattern::parse(host).unwrap(),
-            effect: Effect::Allow,
-            expires_at: None,
-            created_by: Actor::Cli,
-        })
-        .unwrap();
-}
-
-async fn connection_records(store: &Store, count: usize) -> Vec<Value> {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let records: Vec<Value> = store
-            .audit_lines(0, 100_000)
-            .unwrap()
-            .into_iter()
-            .map(|(_, line)| serde_json::from_str::<Value>(&line).unwrap())
-            .filter(|v| v["type"] == "connection")
-            .collect();
-        if records.len() >= count || Instant::now() >= deadline {
-            assert!(
-                records.len() >= count,
-                "{count} records expected: {records:?}"
-            );
-            return records;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
-
-/// An echo server on loopback.
-async fn echo_server() -> SocketAddr {
-    let echo = TcpListener::bind((LOCAL, 0)).await.unwrap();
-    let echo_addr = echo.local_addr().unwrap();
-    tokio::spawn(async move {
-        loop {
-            let (mut conn, _) = echo.accept().await.unwrap();
-            tokio::spawn(async move {
-                let (mut r, mut w) = conn.split();
-                let _ = tokio::io::copy(&mut r, &mut w).await;
-                let _ = w.shutdown().await;
-            });
-        }
-    });
-    echo_addr
-}
-
-async fn status_and_body(agent: SocketAddr, request: &str) -> (u16, Vec<String>, String) {
-    let mut conn = TcpStream::connect(agent).await.unwrap();
-    conn.write_all(request.as_bytes()).await.unwrap();
-    let mut reader = BufReader::new(conn);
-    let mut line = String::new();
-    reader.read_line(&mut line).await.unwrap();
-    let code: u16 = line.split(' ').nth(1).unwrap().parse().unwrap();
-    let mut headers = Vec::new();
-    loop {
-        let mut h = String::new();
-        reader.read_line(&mut h).await.unwrap();
-        if h == "\r\n" || h.is_empty() {
-            break;
-        }
-        headers.push(h.trim_end().to_ascii_lowercase());
-    }
-    let mut body = String::new();
-    let _ = reader.read_to_string(&mut body).await;
-    (code, headers, body)
-}
-
-fn basic(user: &str, password: &str) -> Arc<dyn ProxyAuth> {
-    Arc::new(BasicAuth::new().with_default(Credentials::new(user, password)))
-}
-
-/// A proxy address nothing answers on: bound but never listening, so the port stays ours and
-/// connecting is refused.
-fn dead_proxy() -> (ProxyAddr, tokio::net::TcpSocket) {
-    let socket = tokio::net::TcpSocket::new_v4().unwrap();
-    socket.bind(SocketAddr::new(LOCAL, 0)).unwrap();
-    let port = socket.local_addr().unwrap().port();
-    (ProxyAddr::new("127.0.0.1", port), socket)
+fn squid_addr(squid: &Squid) -> ProxyAddr {
+    ProxyAddr::new("127.0.0.1", squid.port())
 }
 
 #[tokio::test]
 async fn a_tunnel_goes_through_basic_auth_squid_after_a_dead_pac_hop() {
     let echo = echo_server().await;
-    let Some(squid) = Squid::start(echo.port()) else {
+    let Some(squid) = Squid::start(&SquidOptions::basic(&[echo.port()])) else {
         return;
     };
     let (dead, _held) = dead_proxy();
     let rig = rig(
-        vec![Hop::Proxy(dead), Hop::Proxy(squid.addr()), Hop::Direct],
+        vec![
+            Hop::Proxy(dead),
+            Hop::Proxy(squid_addr(&squid)),
+            Hop::Direct,
+        ],
         basic(USER, PASSWORD),
     )
     .await;
     allow(&rig.store, "echo.corp.test");
     let authority = format!("echo.corp.test:{}", echo.port());
-    let mut conn = TcpStream::connect(rig.agent.local_addr()).await.unwrap();
-    conn.write_all(format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n\r\n").as_bytes())
-        .await
-        .unwrap();
-    let mut reader = BufReader::new(conn);
-    let mut line = String::new();
-    reader.read_line(&mut line).await.unwrap();
-    assert!(line.starts_with("HTTP/1.1 200"), "{line}");
-    loop {
-        let mut h = String::new();
-        reader.read_line(&mut h).await.unwrap();
-        if h == "\r\n" {
-            break;
-        }
-    }
-    let payload: Vec<u8> = (0..64 * 1024usize)
-        .map(|n| u8::try_from(n % 251).unwrap())
-        .collect();
-    // No half-close: Squid ends the whole tunnel on the client's FIN, so read the echo in full.
-    let (mut rd, mut wr) = tokio::io::split(reader);
-    let upload = async {
-        wr.write_all(&payload).await.unwrap();
-    };
-    let download = async {
-        let mut back = vec![0_u8; payload.len()];
-        rd.read_exact(&mut back).await.unwrap();
-        back
-    };
-    let ((), back) = tokio::join!(upload, download);
+    let reader = tunnel(rig.agent.local_addr(), &authority).await;
+    let (payload, back) = echo_roundtrip(reader).await;
     assert_eq!(back, payload, "64 KiB through Squid, byte for byte");
-    drop((rd, wr));
 
     let records = connection_records(&rig.store, 1).await;
     assert_eq!(records[0]["decision"], "allow");
-    assert_eq!(records[0]["upstream"], format!("PROXY {}", squid.addr()));
+    assert_eq!(
+        records[0]["upstream"],
+        format!("PROXY {}", squid_addr(&squid))
+    );
     let log = squid.access_log();
     assert!(
         log.contains("TCP_TUNNEL/200")
@@ -468,10 +94,10 @@ async fn plain_http_goes_through_squid_with_the_basic_credential() {
             });
         }
     });
-    let Some(squid) = Squid::start(origin_addr.port()) else {
+    let Some(squid) = Squid::start(&SquidOptions::basic(&[origin_addr.port()])) else {
         return;
     };
-    let rig = rig(vec![Hop::Proxy(squid.addr())], basic(USER, PASSWORD)).await;
+    let rig = rig(vec![Hop::Proxy(squid_addr(&squid))], basic(USER, PASSWORD)).await;
     allow(&rig.store, "web.corp.test");
     let (code, _, body) = status_and_body(
         rig.agent.local_addr(),
@@ -483,7 +109,10 @@ async fn plain_http_goes_through_squid_with_the_basic_credential() {
     .await;
     assert_eq!((code, body.as_str()), (200, "hello from the origin"));
     let records = connection_records(&rig.store, 1).await;
-    assert_eq!(records[0]["upstream"], format!("PROXY {}", squid.addr()));
+    assert_eq!(
+        records[0]["upstream"],
+        format!("PROXY {}", squid_addr(&squid))
+    );
     assert_eq!(records[0]["method"], "GET");
     let log = squid.access_log();
     assert!(
@@ -495,14 +124,14 @@ async fn plain_http_goes_through_squid_with_the_basic_credential() {
 #[tokio::test]
 async fn a_wrong_or_missing_password_is_a_502_naming_upstream_auth_and_squid_never_tunnels() {
     let echo = echo_server().await;
-    let Some(squid) = Squid::start(echo.port()) else {
+    let Some(squid) = Squid::start(&SquidOptions::basic(&[echo.port()])) else {
         return;
     };
     for auth in [
         basic(USER, "not-the-password"),
         Arc::new(BasicAuth::new()) as Arc<dyn ProxyAuth>,
     ] {
-        let rig = rig(vec![Hop::Proxy(squid.addr()), Hop::Direct], auth).await;
+        let rig = rig(vec![Hop::Proxy(squid_addr(&squid)), Hop::Direct], auth).await;
         allow(&rig.store, "echo.corp.test");
         let (code, headers, body) = status_and_body(
             rig.agent.local_addr(),

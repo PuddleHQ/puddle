@@ -195,6 +195,13 @@ puddle-testing-tools v0.0.0 (/w/crates/x)|
     }
 
     #[test]
+    fn a_cargo_that_cannot_read_the_workspace_is_an_error_not_a_pass() {
+        let missing = std::path::Path::new("/nonexistent/Cargo.toml");
+        let err = check(&Cargo::from_env(true), missing, &["host-tuple"]).unwrap_err();
+        assert!(err.to_string().contains("failed"), "{err}");
+    }
+
+    #[test]
     fn a_leak_is_described_with_its_target_and_feature_set() {
         let tree = "a v1.0.0 (/w/a)|testing\nb v1.0.0|default\n";
         assert_eq!(

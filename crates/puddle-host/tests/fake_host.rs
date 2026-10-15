@@ -4662,3 +4662,55 @@ async fn a_change_to_the_variables_that_the_guest_cannot_take_says_so_and_keeps_
     assert!(saved.body.contains("EDITOR"), "{}", saved.body);
     host.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_create_that_cannot_write_the_shell_init_folder_fails_and_leaves_nothing_behind() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let parent = shell_init_folder(&rig, "acme")
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    std::fs::create_dir_all(parent.parent().unwrap()).unwrap();
+    let _ = std::fs::remove_dir_all(&parent);
+    std::fs::write(&parent, "in the way").unwrap();
+
+    api.post("/api/workspaces", &new_workspace("acme")).await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    assert!(rig.runtime.list_volumes().await.unwrap().is_empty());
+    assert!(rig.runtime.list().await.unwrap().is_empty());
+
+    std::fs::remove_file(&parent).unwrap();
+    create(&api, &mut events, "acme").await;
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_variable_set_while_the_guest_boots_reaches_its_login_shells_once_it_is_up() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let store = host.store().clone();
+    *rig.guest.during_boot.lock().unwrap() = Some(Box::new(move || {
+        store
+            .set_env(
+                &puddle_store::EnvScope::Workspace(name("acme")),
+                &puddle_store::EnvName::new("EDITOR").unwrap(),
+                puddle_store::EnvDraft::plain("vim").unwrap(),
+            )
+            .unwrap();
+    }));
+    create(&api, &mut events, "acme").await;
+
+    rig.guest.boots_reach(2).await;
+    let file = pem_of(
+        &rig.guest.plan_files(rig.guest.boots() - 1),
+        "/etc/profile.d/01-puddle-env.sh",
+    );
+    assert!(file.contains("export EDITOR='vim'"), "{file}");
+    host.shutdown().await;
+}

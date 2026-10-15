@@ -150,3 +150,4 @@ crates/puddle-host/src/workspaces.rs | Ok(Some(crate::shell_init::timed_out_mess
 crates/puddle-host/src/workspaces.rs | Err(e) => Err(e.to_string()), | the runtime failing the check's exec for a reason other than a timeout; the exit-70 path is tested
 crates/puddle-host/src/shell_init.rs | fn unreachable_path(path: &str) -> GuestPath { | the cold arm of a constant that the unit test proves valid; it cannot run
 crates/puddle-host/src/shell_init.rs | panic!("constant guest path {path:?} is not valid") | the cold arm of a constant that the unit test proves valid; it cannot run
+crates/puddle-host/src/workspaces.rs | }) | closes the logging closure of the database failing on a read of one row; the warn line has its own entry above

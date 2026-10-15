@@ -462,36 +462,28 @@ mod tests {
         assert!(why.contains("alpha's shell init"), "{why}");
     }
 
-    /// The text of a refusal; empty (so the asserts on it fail) for anything else.
-    fn refusal(said: Result<Verdict, String>) -> String {
-        said.ok()
-            .and_then(|v| {
-                if let Verdict::Refused(m) = v {
-                    Some(m)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default()
+    /// What a verdict says, as text to assert on: a refusal's message is in it.
+    fn refusal(said: &Result<Verdict, String>) -> String {
+        format!("{said:?}")
     }
 
     #[test]
     fn the_check_reads_every_exit_the_guest_script_has() {
         let said = |code: i32, out: &str| verdict(&ExecOutput::new(code, out, "err"));
         assert_eq!(said(0, ""), Ok(Verdict::Quiet));
-        let syntax = refusal(said(65, "line 3: unexpected end"));
+        let syntax = refusal(&said(65, "line 3: unexpected end"));
         assert!(
             syntax.contains("does not parse") && syntax.contains("line 3"),
             "{syntax}"
         );
-        let loud = refusal(said(66, "hello"));
+        let loud = refusal(&said(66, "hello"));
         assert!(
             loud.contains("prints output") && loud.contains("It printed: hello"),
             "{loud}"
         );
         let long = "y".repeat(10_000);
-        let cut = refusal(said(66, &long));
-        assert!(cut.len() < 3000 && cut.ends_with(" ..."), "{}", cut.len());
+        let cut = refusal(&said(66, &long));
+        assert!(cut.len() < 3000 && cut.contains(" ...\""), "{}", cut.len());
         assert!(said(70, "").unwrap_err().contains("could not run"));
         assert!(timed_out_message().contains("5 seconds"));
     }

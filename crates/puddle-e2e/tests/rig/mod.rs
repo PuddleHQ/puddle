@@ -12,3 +12,5 @@ pub(crate) use ntlm::*;
 pub(crate) use origin::*;
 #[cfg(unix)]
 pub(crate) use sandbox::*;
+mod git;
+pub(crate) use git::*;

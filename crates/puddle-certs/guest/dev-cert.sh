@@ -8,7 +8,8 @@
 # and `dotnet dev-certs https --check --trust` passes.
 #
 # boot.sh runs this as a plan step at every boot. It never fails the boot over a tool: a .NET
-# that refuses the certificate is reported on one line and the other tools keep working. It is
+# that refuses the certificate is reported on one line and the other tools keep working. Each
+# .NET command gets 12 s (a boot has 60 s in all; the commands take about a second). It is
 # idempotent: the import is skipped while the certificate is the one imported last time.
 # POSIX sh. PUDDLE_ROOT relocates the paths for the unit tests only (boot.sh passes it on empty);
 # PUDDLE_DEV_HOME is the home the .NET tooling uses (root's by default).
@@ -75,7 +76,7 @@ run() { # run <label> <command...>: quiet unless it fails
     label=$1
     shift
     if command -v timeout >/dev/null 2>&1; then
-        timeout 120 "$@" >"$work/out.log" 2>&1
+        timeout 12 "$@" >"$work/out.log" 2>&1
     else
         "$@" >"$work/out.log" 2>&1
     fi
@@ -88,7 +89,11 @@ run() { # run <label> <command...>: quiet unless it fails
 run "dev-certs --clean --import" dotnet dev-certs https --clean --import "$work/dev.pfx" -p "$pw"
 # `--trust` also tries the host side (it reaches for powershell.exe under WSL) and then exits
 # non-zero though the guest's own trust is done: only the check below decides.
-dotnet dev-certs https --trust >/dev/null 2>&1 || :
+if command -v timeout >/dev/null 2>&1; then
+    timeout 12 dotnet dev-certs https --trust >/dev/null 2>&1 || :
+else
+    dotnet dev-certs https --trust >/dev/null 2>&1 || :
+fi
 run "dev-certs --check --trust" dotnet dev-certs https --check --trust
 
 printf '%s\n' "$have" >"$STAMP"

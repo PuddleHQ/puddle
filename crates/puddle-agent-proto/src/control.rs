@@ -54,6 +54,30 @@ pub enum AgentMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         process: Option<String>,
     },
+    /// The capture rules in the guest were deleted or changed by something other than the agent;
+    /// the agent put them back.
+    CaptureTampered {
+        /// `true` when the whole table was gone, `false` when it was edited.
+        table_missing: bool,
+    },
+    /// The agent could not install the capture rules (no netfilter in the kernel, no permission):
+    /// until it can, tools in the workspace that ignore the proxy settings see an offline network.
+    /// Sent once per outage; the reason is the agent's own error text.
+    CaptureUnavailable {
+        /// What the kernel or the agent said.
+        reason: String,
+    },
+    /// Datagrams the capture rules refused: UDP that is not DNS fails at once in the guest, and
+    /// the agent says where it was going. The address and port are the guest's claim, as is the
+    /// count; the host cleans them.
+    UdpRefused {
+        /// The destination address as text.
+        address: String,
+        /// The destination port.
+        port: u16,
+        /// Datagrams refused since the last report for this destination.
+        count: u32,
+    },
     /// A message type this side doesn't know (from a newer agent). Ignored.
     #[serde(other)]
     Unknown,
@@ -73,6 +97,28 @@ impl AgentMessage {
     #[must_use]
     pub fn oom_kill(pid: Option<u32>, process: Option<String>) -> Self {
         Self::OomKill { pid, process }
+    }
+
+    /// An [`AgentMessage::CaptureTampered`].
+    #[must_use]
+    pub fn capture_tampered(table_missing: bool) -> Self {
+        Self::CaptureTampered { table_missing }
+    }
+
+    /// An [`AgentMessage::CaptureUnavailable`].
+    #[must_use]
+    pub fn capture_unavailable(reason: String) -> Self {
+        Self::CaptureUnavailable { reason }
+    }
+
+    /// An [`AgentMessage::UdpRefused`].
+    #[must_use]
+    pub fn udp_refused(address: String, port: u16, count: u32) -> Self {
+        Self::UdpRefused {
+            address,
+            port,
+            count,
+        }
     }
 
     /// The message as one control line, newline included.

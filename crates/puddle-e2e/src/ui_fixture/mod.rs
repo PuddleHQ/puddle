@@ -838,6 +838,7 @@ impl State {
             "no_rule" => ConnectionReason::NoRule,
             "puddle_endpoint" => ConnectionReason::Blocked(BlockReason::PuddleEndpoint),
             "ssh_unsupported" => ConnectionReason::Blocked(BlockReason::SshUnsupported),
+            "udp_unsupported" => ConnectionReason::Blocked(BlockReason::UdpUnsupported),
             "local_address" => ConnectionReason::Blocked(BlockReason::LocalAddress),
             other => return Err(format!("unknown connection reason {other:?}")),
         };

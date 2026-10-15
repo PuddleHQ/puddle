@@ -169,6 +169,9 @@ impl Decision {
 pub enum BlockReason {
     /// SSH through the proxy isn't supported yet (F-8; audit reason `ssh_unsupported`).
     SshUnsupported,
+    /// UDP other than DNS is not supported: the workspace's capture rules refused the datagram
+    /// at once and the agent reported where it was going (audit reason `udp_unsupported`).
+    UdpUnsupported,
     /// The destination is one of Puddle's own endpoints (`puddle_endpoint`).
     PuddleEndpoint,
     /// Every address of the destination is local and the checker has no toggles to offer
@@ -191,6 +194,7 @@ impl BlockReason {
     pub fn code(self) -> &'static str {
         match self {
             Self::SshUnsupported => "ssh_unsupported",
+            Self::UdpUnsupported => "udp_unsupported",
             Self::PuddleEndpoint => "puddle_endpoint",
             Self::LocalAddress => "local_address",
             Self::LocalToggle(category) => category.audit_reason(),
@@ -333,6 +337,7 @@ mod tests {
     #[test]
     fn block_reasons_have_their_audit_codes() {
         assert_eq!(BlockReason::SshUnsupported.to_string(), "ssh_unsupported");
+        assert_eq!(BlockReason::UdpUnsupported.to_string(), "udp_unsupported");
         assert_eq!(BlockReason::PuddleEndpoint.code(), "puddle_endpoint");
         assert_eq!(BlockReason::LocalAddress.code(), "local_address");
         assert_eq!(

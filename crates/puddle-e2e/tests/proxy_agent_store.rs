@@ -707,6 +707,127 @@ async fn ssh_is_refused_never_pending_and_audited_with_its_own_reason() {
     assert_eq!(rig.store.rules().len(), 1);
 }
 
+/// What the transparent listener sends for a captured raw SSH client (libssh2, Go): the `CONNECT`
+/// with the client's identification line right behind it, with the header or without. The real proxy
+/// refuses it before the rules, and it is audited as SSH, never as a pending row, even for a host
+/// a rule allows and an address nobody has seen.
+#[tokio::test]
+async fn a_captured_raw_ssh_client_is_refused_before_the_rules_and_never_pending() {
+    let rig = rig().await;
+    allow(&rig.store, "echo.test");
+    let config = Config {
+        target: Target::Unix(rig.route.endpoint().path().to_path_buf()),
+        ..Config::default()
+    };
+    let upstream = puddle_agent::upstream::Upstream::new(&config);
+    let attempts = [
+        ("echo.test:22", true),
+        ("192.0.2.22:22", true),
+        ("192.0.2.23:2222", false),
+        ("new.test:22", false),
+    ];
+    for (authority, header) in attempts {
+        let mut stream = upstream.open().await.unwrap();
+        let header = if header {
+            "x-puddle-protocol: ssh\r\n"
+        } else {
+            ""
+        };
+        let head = format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n{header}\r\n");
+        stream.write_all(head.as_bytes()).await.unwrap();
+        stream
+            .write_all(b"SSH-2.0-libssh2_1.11.0\r\n")
+            .await
+            .unwrap();
+        stream.flush().await.unwrap();
+        let mut answer = Vec::new();
+        stream.read_to_end(&mut answer).await.unwrap();
+        let answer = String::from_utf8(answer).unwrap();
+        assert!(answer.starts_with("HTTP/1.1 403"), "{authority}: {answer}");
+        assert!(
+            answer.contains("x-puddle-blocked: ssh_unsupported"),
+            "{authority}: {answer}"
+        );
+        assert!(
+            answer.contains("SSH is not supported yet"),
+            "{authority}: {answer}"
+        );
+    }
+    let records = wait_for_records(&rig.store, attempts.len()).await;
+    assert_eq!(records.len(), attempts.len(), "{records:?}");
+    for record in &records {
+        assert_eq!(record["decision"], "blocked", "{record}");
+        assert_eq!(record["reason"], "ssh_unsupported", "{record}");
+        assert!(
+            record["pending_id"].is_null() && record["resolved_ip"].is_null(),
+            "{record}"
+        );
+    }
+    assert_eq!(
+        rig.store.open_pending(None).unwrap().len(),
+        0,
+        "nothing in the inbox"
+    );
+    assert_eq!(rig.store.rules().len(), 1);
+}
+
+/// UDP the guest's capture rules refused is reported by the agent on its control stream and
+/// audited as `blocked` with reason `udp_unsupported`: no inbox row, no rule, and nothing that is
+/// not an IP address becomes a record. A line from the real agent's own message type, over the
+/// real endpoint, into the real store.
+#[tokio::test]
+async fn refused_udp_is_audited_with_its_own_reason_and_never_pending() {
+    use puddle_agent_proto::AgentMessage;
+    use puddle_agent_proto::control::PREAMBLE;
+
+    let rig = rig().await;
+    let config = Config {
+        target: Target::Unix(rig.route.endpoint().path().to_path_buf()),
+        ..Config::default()
+    };
+    // The session lives as long as this value does.
+    let upstream = puddle_agent::upstream::Upstream::new(&config);
+    let mut control = upstream.open().await.unwrap();
+    control.write_all(PREAMBLE).await.unwrap();
+    for message in [
+        AgentMessage::hello(),
+        AgentMessage::udp_refused("192.0.2.9".to_owned(), 9999, 3),
+        AgentMessage::udp_refused("2001:db8::9".to_owned(), 443, 1),
+        // The guest's words are data: neither a name nor escape characters become a record.
+        AgentMessage::udp_refused("evil.example".to_owned(), 53, 1),
+        AgentMessage::udp_refused("\u{1b}[2J".to_owned(), 53, 1),
+    ] {
+        control
+            .write_all(&message.to_line().unwrap())
+            .await
+            .unwrap();
+        control.flush().await.unwrap();
+    }
+    let records = wait_for_records(&rig.store, 2).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let records = if connection_records(&rig.store).len() > records.len() {
+        connection_records(&rig.store)
+    } else {
+        records
+    };
+    assert_eq!(records.len(), 2, "{records:?}");
+    for (host, port) in [("192.0.2.9", 9999), ("2001:db8::9", 443)] {
+        let record = records
+            .iter()
+            .find(|r| r["host"] == host && r["port"] == port)
+            .unwrap_or_else(|| panic!("{host}:{port}: {records:?}"));
+        assert_eq!(record["decision"], "blocked", "{record}");
+        assert_eq!(record["reason"], "udp_unsupported", "{record}");
+        assert!(
+            record["pending_id"].is_null() && record["rule_id"].is_null(),
+            "{record}"
+        );
+        assert!(record["resolved_ip"].is_null(), "never connected: {record}");
+    }
+    assert_eq!(rig.store.open_pending(None).unwrap().len(), 0);
+    assert_eq!(rig.store.rules().len(), 0);
+}
+
 /// A guest that asks for 100 000 names nobody allowed is answered "waiting for approval" every
 /// time, none of them is denied for the volume, the store lists no more than its cap, and the
 /// request that was there first is still waiting and still answerable. Through the real agent,

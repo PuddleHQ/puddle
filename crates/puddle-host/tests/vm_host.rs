@@ -28,6 +28,10 @@ use puddle_store::{
 use puddle_types::{WorkspaceName, WorkspaceStatus};
 use puddle_vm_tests::{RuntimePair, Settings};
 use serde_json::json;
+use support::vm::{
+    HarnessPlatform, VmHost, guest, harness_config, start_vm_host, start_vm_host_config,
+    start_vm_host_with,
+};
 use support::{Api, TestDevCert, ended, hermetic_options};
 #[cfg(not(windows))]
 use vm_support::start_vm_host_config;
@@ -1227,7 +1231,7 @@ fn vm_host_second_process_probe() {
     let pair = RuntimePair::find_in(&settings.runtime_dir).expect("msb runtime pair");
     let agent = std::path::PathBuf::from(std::env::var_os("PUDDLE_AGENT_BIN").expect("agent"));
     let config = harness_config(&settings, &pair, std::path::Path::new(&folder), agent);
-    match prepare(config, &HarnessPlatform) {
+    match prepare(config, &HarnessPlatform::default()) {
         Ok(_) => panic!("the second process took the first one's data folder"),
         Err(error) => println!("refused: {error}"),
     }
@@ -1343,7 +1347,7 @@ async fn vm_host_a_second_process_on_the_same_data_folder_is_refused_and_the_vm_
     drop(
         prepare(
             harness_config(&settings, &pair, &root, agent),
-            &HarnessPlatform,
+            &HarnessPlatform::default(),
         )
         .unwrap(),
     );

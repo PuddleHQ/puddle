@@ -85,6 +85,50 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// How a [`GitHost`] presents itself.
+#[derive(Clone, Debug)]
+pub struct GitHostOptions {
+    name: String,
+    certificate_names: Vec<String>,
+    versions: Versions,
+    valid: (i32, i32),
+}
+
+impl GitHostOptions {
+    /// A host answering to `name` with a certificate for it, valid from 2020 to 2090.
+    #[must_use]
+    pub fn new(name: &str, versions: Versions) -> Self {
+        Self {
+            name: name.to_owned(),
+            certificate_names: vec![name.to_owned()],
+            versions,
+            valid: (2020, 2090),
+        }
+    }
+
+    /// The certificate names `cert_name` instead of the host's name (a host with a wrong-name
+    /// certificate).
+    #[must_use]
+    pub fn certificate_for(mut self, cert_name: &str) -> Self {
+        self.certificate_names = vec![cert_name.to_owned()];
+        self
+    }
+
+    /// The certificate also names `name` (another name the same server answers to).
+    #[must_use]
+    pub fn also_for(mut self, name: &str) -> Self {
+        self.certificate_names.push(name.to_owned());
+        self
+    }
+
+    /// The certificate is valid from the start of year `from` to the start of year `to`.
+    #[must_use]
+    pub fn valid_between(mut self, from: i32, to: i32) -> Self {
+        self.valid = (from, to);
+        self
+    }
+}
+
 /// The fake host. Stops when dropped.
 pub struct GitHost {
     addr: SocketAddr,
@@ -154,19 +198,26 @@ fn run(mut command: std::process::Command) {
 impl GitHost {
     /// Starts the host answering to `name`, over a root made for the run.
     pub async fn start(name: &str, versions: Versions) -> Self {
-        Self::start_named(name, name, versions).await
+        Self::start_with(&GitHostOptions::new(name, versions)).await
     }
 
     /// Starts the host answering to `name` with a certificate that is valid for `cert_name`
     /// instead (a host whose certificate names another host).
     pub async fn start_named(name: &str, cert_name: &str, versions: Versions) -> Self {
+        Self::start_with(&GitHostOptions::new(name, versions).certificate_for(cert_name)).await
+    }
+
+    /// Starts the host the options describe.
+    pub async fn start_with(options: &GitHostOptions) -> Self {
+        let name = options.name.as_str();
         let dir = tempfile::Builder::new()
             .prefix(super::Prefix::new("githost").as_str())
             .tempdir()
             .unwrap();
         let repos = dir.path().join("repos");
         std::fs::create_dir_all(&repos).unwrap();
-        let (root, config) = tls_config(cert_name, versions);
+        let (root, config) =
+            tls_config(&options.certificate_names, options.versions, options.valid);
         let state = Arc::new(State {
             name: name.to_owned(),
             repos,
@@ -315,8 +366,9 @@ impl GitHost {
 
 /// A root, and a server configuration for a leaf signed by it for `name`.
 fn tls_config(
-    name: &str,
+    names: &[String],
     versions: Versions,
+    valid: (i32, i32),
 ) -> (CertificateDer<'static>, Arc<rustls::ServerConfig>) {
     let ca_key = rcgen::KeyPair::generate().unwrap();
     let mut ca = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
@@ -325,11 +377,13 @@ fn tls_config(
         .push(rcgen::DnType::CommonName, "Puddle fake git host root");
     let ca_cert = ca.self_signed(&ca_key).unwrap();
     let issuer = rcgen::Issuer::new(ca, ca_key);
-    let mut leaf = rcgen::CertificateParams::new(vec![name.to_owned()]).unwrap();
-    leaf.distinguished_name
-        .push(rcgen::DnType::CommonName, name);
-    leaf.not_before = rcgen::date_time_ymd(2020, 1, 1);
-    leaf.not_after = rcgen::date_time_ymd(2090, 1, 1);
+    let mut leaf = rcgen::CertificateParams::new(names.to_vec()).unwrap();
+    leaf.distinguished_name.push(
+        rcgen::DnType::CommonName,
+        names.first().cloned().unwrap_or_default(),
+    );
+    leaf.not_before = rcgen::date_time_ymd(valid.0, 1, 1);
+    leaf.not_after = rcgen::date_time_ymd(valid.1, 1, 1);
     let key = rcgen::KeyPair::generate().unwrap();
     let cert = leaf.signed_by(&key, &issuer).unwrap();
     let mut config = rustls::ServerConfig::builder_with_provider(Arc::new(
@@ -665,8 +719,9 @@ fn cgi_response(out: &[u8]) -> Reply {
         .unwrap()
 }
 
-/// A tiny HTTP `CONNECT` proxy that sends every tunnel to one address, whatever the target: the
-/// company proxy that is the only one who knows the fake host's name. Stops when dropped.
+/// A tiny HTTP `CONNECT` proxy that sends each tunnel to the address registered for the name in
+/// its target: the company proxy that is the only one who knows the fake hosts' names. A name it
+/// does not know gets a 502. Stops when dropped.
 pub struct NameProxy {
     port: u16,
     connects: Arc<Mutex<Vec<String>>>,
@@ -680,8 +735,10 @@ impl Drop for NameProxy {
 }
 
 impl NameProxy {
-    /// Starts a proxy whose tunnels all end at `target`.
-    pub async fn start(target: SocketAddr) -> Self {
+    /// Starts a proxy that sends tunnels to `names` (`name`, address) to those addresses.
+    pub async fn start(names: &[(&str, SocketAddr)]) -> Self {
+        let names: Vec<(String, SocketAddr)> =
+            names.iter().map(|(n, a)| ((*n).to_owned(), *a)).collect();
         let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let connects = Arc::new(Mutex::new(Vec::new()));
@@ -689,6 +746,7 @@ impl NameProxy {
         let task = tokio::spawn(async move {
             while let Ok((mut client, _)) = listener.accept().await {
                 let seen = seen.clone();
+                let names = names.clone();
                 tokio::spawn(async move {
                     let mut head = Vec::new();
                     let mut byte = [0_u8; 1];
@@ -704,7 +762,13 @@ impl NameProxy {
                         .nth(1)
                         .unwrap_or_default()
                         .to_owned();
-                    lock(&seen).push(authority);
+                    lock(&seen).push(authority.clone());
+                    let wanted = authority.split(':').next().unwrap_or_default();
+                    let target = names.iter().find(|(n, _)| n == wanted).map(|(_, a)| *a);
+                    let Some(target) = target else {
+                        let _ = client.write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n").await;
+                        return;
+                    };
                     let Ok(mut upstream) = TcpStream::connect(target).await else {
                         let _ = client.write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n").await;
                         return;

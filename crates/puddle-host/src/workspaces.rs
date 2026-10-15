@@ -859,7 +859,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             authors: wanted.clone(),
             ..guest
         };
-        match self.run_plan(&gated, &replanned).await {
+        match self.run_plan(name, &gated, &replanned).await {
             Ok(()) => {
                 if let Some(entry) = inner.live.lock().await.get_mut(name)
                     && let Some(state) = entry.guest.as_mut()
@@ -873,9 +873,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
-    /// Plans the guest as `guest` says and runs the plan in it.
+    /// Plans the guest as `guest` says and runs the plan in it. When the hook put the loader of
+    /// the shell init back, the user is told, as a boot would.
     async fn run_plan(
         &self,
+        name: &WorkspaceName,
         gated: &GatedSandbox<R::Sandbox>,
         guest: &GuestState,
     ) -> Result<(), String> {
@@ -887,11 +889,21 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             editor: guest.editor.as_ref(),
         };
         let (plan, _) = kit.plan(&guest.image, &inputs)?;
-        kit.hook()
+        let report = kit
+            .hook()
             .run(gated.ungated(), &plan)
             .await
-            .map(|_| ())
-            .map_err(|failure| failure.to_string())
+            .map_err(|failure| failure.to_string())?;
+        self.announce_loader_replaced(name, &report);
+        Ok(())
+    }
+
+    fn announce_loader_replaced(&self, name: &WorkspaceName, report: &puddle_boot::BootReport) {
+        if crate::shell_init::loader_replaced(&report.replaced_files()) {
+            self.inner.events.emit(Event::WorkspaceShellInitRestored {
+                workspace: name.clone(),
+            });
+        }
     }
 
     /// Looks at every running workspace again (after events were missed).
@@ -911,31 +923,44 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
+    fn note_env_missed(&self, name: &WorkspaceName) {
+        self.inner
+            .env_missed_while_booting
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(name.clone());
+    }
+
     /// Writes `env` into the running guest's login-shell file by running the boot plan again (the
     /// hook is idempotent: only the files that differ change).
     async fn rewrite_env(&self, name: &WorkspaceName, env: GuestEnv) {
         let inner = &self.inner;
+        // The miss is recorded under the `live` lock: `start` inserts the entry under the same
+        // lock before `settle` reads the record, so a change either finds the entry or is seen by
+        // `settle`, never neither.
         let rewrite = {
             let live = inner.live.lock().await;
-            match live.get(name) {
-                Some(entry) => Arc::clone(&entry.rewrite),
-                None => return,
-            }
+            let Some(entry) = live.get(name) else {
+                // Not in the map yet (the boot hook has not returned, so the boot read the
+                // variables before this change and `settle` looks again) or stopped (the next
+                // start reads them).
+                self.note_env_missed(name);
+                return;
+            };
+            Arc::clone(&entry.rewrite)
         };
         let _one_at_a_time = rewrite.lock().await;
         let running = {
             let live = inner.live.lock().await;
-            live.get(name)
-                .and_then(|e| Some((e.gated.clone()?, e.guest.clone()?)))
+            let running = live
+                .get(name)
+                .and_then(|e| Some((e.gated.clone()?, e.guest.clone()?)));
+            if running.is_none() {
+                self.note_env_missed(name);
+            }
+            running
         };
         let Some((gated, guest)) = running else {
-            // Still booting (the boot read the variables before this change, and `settle` looks
-            // again) or stopped (the next start reads them).
-            inner
-                .env_missed_while_booting
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .insert(name.clone());
             return;
         };
         if guest.env == env {
@@ -945,7 +970,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             env: env.clone(),
             ..guest
         };
-        match self.run_plan(&gated, &replanned).await {
+        match self.run_plan(name, &gated, &replanned).await {
             Ok(()) => {
                 if let Some(entry) = inner.live.lock().await.get_mut(name)
                     && let Some(state) = entry.guest.as_mut()
@@ -1022,12 +1047,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(name);
-        if folder_changed
-            || crate::shell_init::loader_replaced(&gated.boot_report().replaced_files())
-        {
+        if folder_changed {
             inner.events.emit(Event::WorkspaceShellInitRestored {
                 workspace: name.clone(),
             });
+        } else {
+            self.announce_loader_replaced(name, gated.boot_report());
         }
         let key = problem_key("shell-init", name);
         let saved = inner

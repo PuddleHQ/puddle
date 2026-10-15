@@ -82,11 +82,12 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
         .await;
     }
 
-    async fn shell_init_changed(&self, workspace: WorkspaceName) {
+    fn shell_init_changed(&self, workspace: WorkspaceName) -> impl Future<Output = ()> + Send {
         Self::shell_init_changed(self, &workspace);
+        std::future::ready(())
     }
 
-    async fn all_shell_inits_changed(&self) {
+    fn all_shell_inits_changed(&self) -> impl Future<Output = ()> + Send {
         let names: Vec<WorkspaceName> = self
             .state()
             .slots
@@ -96,6 +97,7 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
         for name in names {
             Self::shell_init_changed(self, &name);
         }
+        std::future::ready(())
     }
 }
 

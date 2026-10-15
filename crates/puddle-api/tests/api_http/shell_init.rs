@@ -138,7 +138,7 @@ async fn text_that_is_empty_has_a_nul_or_is_too_long_is_refused_and_says_why() {
             .json()["saved"],
         false
     );
-    assert!(api.workspaces.shell_init_checked().is_empty());
+    assert_eq!(api.workspaces.shell_init_checked(), Vec::<String>::new());
     // The body must be an object with the one field.
     let reply = api
         .send("PUT", "/api/workspaces/shop/shell-init", Some(&json!({})))
@@ -183,7 +183,7 @@ async fn a_stopped_workspace_takes_the_save_unchecked_and_says_why() {
         "{}",
         reply.body
     );
-    assert!(api.workspaces.shell_init_checked().is_empty());
+    assert_eq!(api.workspaces.shell_init_checked(), Vec::<String>::new());
 }
 
 #[tokio::test]

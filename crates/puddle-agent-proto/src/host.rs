@@ -199,7 +199,7 @@ pub trait GuestWatcher: Send + Sync + 'static {
     fn link(&self, workspace: &WorkspaceName, link: GuestLink);
 
     /// The ports `workspace`'s guest listens on now: the whole set, ascending, no duplicates, at
-    /// most [`MAX_PORTS`](crate::control::MAX_PORTS). The guest's claim; nothing else is known.
+    /// most [`MAX_PORTS`]. The guest's claim; nothing else is known.
     fn ports(&self, workspace: &WorkspaceName, ports: Vec<u16>);
 }
 

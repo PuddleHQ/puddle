@@ -1741,6 +1741,171 @@ async fn a_create_whose_last_save_fails_is_undone_and_says_why() {
     host.shutdown().await;
 }
 
+fn display_name_body(shown: &str) -> String {
+    json!({"display_name": shown}).to_string()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rename_survives_a_restart_and_leaves_the_sandbox_and_volume_alone() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api1 = api(&host);
+    let mut events = api1.events().await;
+    create(&api1, &mut events, "acme").await;
+    let calls_before = rig.runtime.calls().len();
+    let renamed = api1
+        .patch("/api/workspaces/acme", &display_name_body("Acme shop"))
+        .await;
+    assert_eq!(renamed.status, 200, "{}", renamed.body);
+    let ws = renamed.json();
+    assert_eq!(
+        (&ws["id"], &ws["name"], &ws["display_name"], &ws["status"]),
+        (
+            &json!("acme"),
+            &json!("acme"),
+            &json!("Acme shop"),
+            &json!("running")
+        )
+    );
+    // The workspace is running and nothing in the runtime was touched: a label only.
+    assert_eq!(rig.runtime.calls().len(), calls_before);
+    assert_eq!(volume_names(&rig).await, ["ws-acme"]);
+    host.shutdown().await;
+    drop(host);
+    drop(events);
+
+    let again = rig.start().await;
+    let api2 = api(&again);
+    let ws = api2.get("/api/workspaces/acme").await.json();
+    assert_eq!(
+        (&ws["name"], &ws["display_name"]),
+        (&json!("acme"), &json!("Acme shop"))
+    );
+    // Going back to the name is saved too.
+    let reset = api2
+        .patch(
+            "/api/workspaces/acme",
+            &json!({"display_name": null}).to_string(),
+        )
+        .await;
+    assert_eq!(reset.json()["display_name"], "acme");
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(list_path(&rig)).unwrap()).unwrap();
+    assert!(
+        saved["workspaces"][0].get("display_name").is_none(),
+        "{saved}"
+    );
+    again.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn two_workspaces_never_share_a_label_and_a_create_cannot_take_one_in_use() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    create(&api, &mut events, "docs").await;
+    assert_eq!(
+        api.patch("/api/workspaces/acme", &display_name_body("Handbook"))
+            .await
+            .status,
+        200
+    );
+    let clash = api
+        .patch("/api/workspaces/docs", &display_name_body("handbook"))
+        .await;
+    assert_eq!(clash.status, 409, "{}", clash.body);
+    let taken = api
+        .post("/api/workspaces", &new_workspace("handbook"))
+        .await;
+    assert_eq!(taken.status, 409, "{}", taken.body);
+    assert_eq!(volume_names(&rig).await, ["ws-acme", "ws-docs"]);
+    // A workspace's own name is free for it only while nobody else answers to it.
+    assert_eq!(
+        api.patch("/api/workspaces/acme", &display_name_body("docs"))
+            .await
+            .status,
+        409
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rename_is_allowed_while_a_start_runs() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let started = api.post("/api/workspaces/acme/start", "").await;
+    assert_eq!(started.status, 202, "{}", started.body);
+    // The start is in flight: only the label changes, so the rename goes through.
+    let during = api
+        .patch("/api/workspaces/acme", &display_name_body("Acme"))
+        .await;
+    assert_eq!(during.status, 200, "{}", during.body);
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    let ws = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(
+        (&ws["status"], &ws["display_name"]),
+        (&json!("running"), &json!("Acme"))
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rename_is_undone_when_the_workspace_list_cannot_be_saved() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    make_unwritable(&list_path(&rig));
+    let refused = api
+        .patch("/api/workspaces/acme", &display_name_body("Acme shop"))
+        .await;
+    assert_eq!(refused.status, 503, "{}", refused.body);
+    let message = refused.json()["message"].as_str().unwrap().to_owned();
+    assert!(
+        message.contains("not renamed") && message.contains("workspace list"),
+        "{message}"
+    );
+    // The user is not told a name that a restart would undo.
+    assert_eq!(
+        api.get("/api/workspaces/acme").await.json()["display_name"],
+        "acme"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_workspace_list_with_a_bad_display_name_stops_the_start() {
+    let rig = Rig::new();
+    let data = rig.dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let book = json!({"version": 1, "workspaces": [{
+        "id": "acme", "name": "acme", "display_name": "two\nlines", "repo_url": REPO,
+        "image": FakeRuntime::DEBIAN, "memory_mib": 1024, "created_at": 1, "disk_size_mib": 1024
+    }]});
+    std::fs::write(data.join("workspaces.json"), book.to_string()).unwrap();
+    let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
+    let err = Host::start(
+        prepared,
+        &FakeFactory::new(&rig.runtime, &rig.log),
+        HostOptions::default(),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, HostError::State { .. }), "{err}");
+    assert!(err.to_string().contains("display name"), "{err}");
+    // The workspace's volume is safe: nothing was reconciled.
+    assert!(rig.runtime.calls().is_empty());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_delete_is_refused_when_the_workspace_list_cannot_be_saved() {
     let rig = Rig::new();

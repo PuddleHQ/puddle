@@ -48,8 +48,11 @@ impl fmt::Display for Operation {
 pub struct WorkspaceRecord {
     /// The workspace's id (its volume is `ws-<id>`).
     pub id: WorkspaceId,
-    /// The workspace that runs it; events and settings use this name.
+    /// The workspace that runs it; events and settings use this name. It never changes.
     pub name: WorkspaceName,
+    /// What the user renamed the workspace to; `None` until they do. Only a label: nothing
+    /// else (sandbox, volume, rules, settings) uses it.
+    pub display_name: Option<DisplayName>,
     /// The repository it was created from (HTTPS, no credentials).
     pub repo_url: String,
     /// The image its workspace boots.
@@ -75,6 +78,7 @@ impl WorkspaceRecord {
         Self {
             id,
             name,
+            display_name: None,
             repo_url: repo_url.into(),
             image: DEFAULT_IMAGE.to_owned(),
             memory: MemoryMib::DEFAULT,
@@ -84,6 +88,107 @@ impl WorkspaceRecord {
             disk_size_mib: DEFAULT_DISK_MIB,
             disk_used_mib: None,
         }
+    }
+}
+
+impl WorkspaceRecord {
+    /// What the user calls the workspace: its display name, else its name.
+    #[must_use]
+    pub fn label(&self) -> &str {
+        self.display_name
+            .as_ref()
+            .map_or(self.name.as_str(), DisplayName::as_str)
+    }
+}
+
+/// A name the user chose for a workspace: free text of 1 to [`DisplayName::MAX_CHARS`]
+/// characters, trimmed, with no control characters (a line break included).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DisplayName(String);
+
+impl DisplayName {
+    /// Longest display name, in characters.
+    pub const MAX_CHARS: usize = 60;
+
+    /// Checks a display name.
+    ///
+    /// # Errors
+    ///
+    /// A message for the user when the name is empty, too long or has control characters.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err("the name must not be empty".into());
+        }
+        if text.chars().count() > Self::MAX_CHARS {
+            return Err(format!(
+                "the name is longer than {} characters",
+                Self::MAX_CHARS
+            ));
+        }
+        if text.chars().any(char::is_control) {
+            return Err("the name must not contain line breaks or control characters".into());
+        }
+        Ok(Self(text.to_owned()))
+    }
+
+    /// The name.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for DisplayName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// The workspace in `records` that already goes by `label`, ignoring case and `except` itself.
+/// Two workspaces never share a label, so the list, the dialogs and the toasts stay unambiguous.
+pub fn label_taken<'a>(
+    records: impl IntoIterator<Item = &'a WorkspaceRecord>,
+    label: &str,
+    except: Option<&WorkspaceId>,
+) -> Option<&'a WorkspaceRecord> {
+    let wanted = label.to_lowercase();
+    records
+        .into_iter()
+        .find(|r| Some(&r.id) != except && r.label().to_lowercase() == wanted)
+}
+
+/// Whether the workspace `id` may take `display_name` (or go back to its name for `None`) among
+/// `records`. The one rule both services apply.
+///
+/// # Errors
+///
+/// [`WorkspaceError::NotFound`] for an unknown id; [`WorkspaceError::Conflict`] while the
+/// workspace is being created or deleted (there is nothing settled to rename), or when another
+/// workspace already goes by that name.
+pub fn check_rename<'a>(
+    records: impl IntoIterator<Item = &'a WorkspaceRecord> + Clone,
+    id: &WorkspaceId,
+    display_name: Option<&DisplayName>,
+) -> Result<(), WorkspaceError> {
+    let record = records
+        .clone()
+        .into_iter()
+        .find(|r| &r.id == id)
+        .ok_or_else(|| WorkspaceError::NotFound(format!("no workspace {id}")))?;
+    if let Some(busy @ (Operation::Creating | Operation::Deleting)) = record.busy {
+        return Err(WorkspaceError::Conflict(format!(
+            "{} is {busy}; rename it when that is done",
+            record.label()
+        )));
+    }
+    let label = display_name.map_or(record.name.as_str(), DisplayName::as_str);
+    match label_taken(records, label, Some(id)) {
+        Some(other) => Err(WorkspaceError::Conflict(format!(
+            "another workspace is already called {}; choose a different name",
+            other.label()
+        ))),
+        None => Ok(()),
     }
 }
 
@@ -424,6 +529,17 @@ pub trait WorkspaceService: Send + Sync {
         fingerprint: Option<&'a str>,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
 
+    /// Gives the workspace a display name (`None` goes back to its name). Only the label
+    /// changes: the id, the name, the volume and the sandbox stay, so this works on a running
+    /// workspace and does not restart anything. [`WorkspaceError::Conflict`] when another
+    /// workspace already goes by that name (ignoring case), or while this one is being created
+    /// or deleted.
+    fn rename<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        display_name: Option<DisplayName>,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
+
     /// Opens the workspace in an editor. The workspace must be running.
     fn attach<'a>(
         &'a self,
@@ -524,6 +640,13 @@ impl WorkspaceService for NoWorkspaces {
         &'a self,
         _: &'a WorkspaceId,
         _: Option<&'a str>,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        unavailable()
+    }
+    fn rename<'a>(
+        &'a self,
+        _: &'a WorkspaceId,
+        _: Option<DisplayName>,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         unavailable()
     }
@@ -685,11 +808,105 @@ mod tests {
             svc.reclaim(&id).await.map(|_| ()),
             svc.delete_check(&id).await.map(|_| ()),
             svc.delete(&id, None).await.map(|_| ()),
+            svc.rename(&id, None).await.map(|_| ()),
             svc.attach(&id, AttachMode::Browser).await.map(|_| ()),
         ];
         for result in all {
             assert!(matches!(result, Err(WorkspaceError::Unavailable(_))));
         }
+    }
+
+    #[test]
+    fn display_names_are_trimmed_and_bounded() {
+        assert_eq!(
+            DisplayName::parse("  Web shop ").unwrap().as_str(),
+            "Web shop"
+        );
+        assert_eq!(
+            DisplayName::parse("Café 日本").unwrap().as_str(),
+            "Café 日本"
+        );
+        assert!(DisplayName::parse("a".repeat(60).as_str()).is_ok());
+        for (bad, wants) in [
+            ("", "empty"),
+            ("   ", "empty"),
+            (&"a".repeat(61), "longer than 60"),
+            ("two\nlines", "line breaks"),
+            ("tab\there", "control"),
+        ] {
+            let err = DisplayName::parse(bad).unwrap_err();
+            assert!(err.contains(wants), "{bad:?}: {err}");
+        }
+        // Sixty multi-byte characters are within the limit: it counts characters, not bytes.
+        assert!(DisplayName::parse(&"é".repeat(60)).is_ok());
+    }
+
+    #[test]
+    fn a_label_is_taken_ignoring_case_and_the_workspace_itself() {
+        let mk = |id: &str, shown: Option<&str>| {
+            let mut r = WorkspaceRecord::new(
+                WorkspaceId::new(id).unwrap(),
+                WorkspaceName::new(id).unwrap(),
+                "https://example.org/a",
+            );
+            r.display_name = shown.map(|s| DisplayName::parse(s).unwrap());
+            r
+        };
+        let all = [mk("alpha", None), mk("beta", Some("Web Shop"))];
+        assert_eq!(all[1].label(), "Web Shop");
+        assert_eq!(all[0].label(), "alpha");
+        let beta = WorkspaceId::new("beta").unwrap();
+        assert_eq!(label_taken(&all, "web shop", None).unwrap().id, beta);
+        assert_eq!(
+            label_taken(&all, "ALPHA", None).unwrap().name.as_str(),
+            "alpha"
+        );
+        assert!(label_taken(&all, "web shop", Some(&beta)).is_none());
+        // A workspace that was renamed no longer goes by its old name.
+        assert!(label_taken(&all, "beta", None).is_none());
+    }
+
+    #[test]
+    fn a_rename_is_refused_while_creating_or_deleting_and_on_a_clash() {
+        let mk = |id: &str| {
+            WorkspaceRecord::new(
+                WorkspaceId::new(id).unwrap(),
+                WorkspaceName::new(id).unwrap(),
+                "https://example.org/a",
+            )
+        };
+        let (mut a, b) = (mk("alpha"), mk("beta"));
+        let name = |s: &str| Some(DisplayName::parse(s).unwrap());
+        let ida = a.id.clone();
+        let check = |a: &WorkspaceRecord, to: Option<&DisplayName>| check_rename([a, &b], &ida, to);
+        assert!(check(&a, name("Web").as_ref()).is_ok());
+        assert!(
+            check(&a, name("alpha").as_ref()).is_ok(),
+            "its own name is not a clash"
+        );
+        assert!(matches!(
+            check(&a, name("BETA").as_ref()),
+            Err(WorkspaceError::Conflict(m)) if m.contains("already called beta")
+        ));
+        a.busy = Some(Operation::Creating);
+        assert!(
+            matches!(check(&a, None), Err(WorkspaceError::Conflict(m)) if m.contains("creating"))
+        );
+        a.busy = Some(Operation::Deleting);
+        assert!(matches!(check(&a, None), Err(WorkspaceError::Conflict(_))));
+        for busy in [
+            Operation::Starting,
+            Operation::Stopping,
+            Operation::Reclaiming,
+        ] {
+            a.busy = Some(busy);
+            assert!(check(&a, name("Web").as_ref()).is_ok(), "{busy}");
+        }
+        let missing = WorkspaceId::new("nope").unwrap();
+        assert!(matches!(
+            check_rename([&a, &b], &missing, None),
+            Err(WorkspaceError::NotFound(_))
+        ));
     }
 
     #[test]

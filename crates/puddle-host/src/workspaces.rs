@@ -26,8 +26,8 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use puddle_api::{
-    AttachMode, Attached, DEFAULT_IMAGE, DeleteCheck, LaunchError, Launcher, Listing, NewWorkspace,
-    Operation, RepoFindings, WorkspaceError, WorkspaceRecord, WorkspaceService,
+    AttachMode, Attached, DEFAULT_IMAGE, DeleteCheck, DisplayName, LaunchError, Launcher, Listing,
+    NewWorkspace, Operation, RepoFindings, WorkspaceError, WorkspaceRecord, WorkspaceService,
 };
 use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
@@ -317,6 +317,15 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             let id = WorkspaceId::new(&stored.id).map_err(|e| state(&e))?;
             let name = WorkspaceName::new(&stored.name).map_err(|e| state(&e))?;
             let mut record = WorkspaceRecord::new(id.clone(), name.clone(), stored.repo_url);
+            record.display_name = stored
+                .display_name
+                .as_deref()
+                .map(DisplayName::parse)
+                .transpose()
+                .map_err(|e| HostError::State {
+                    what: "the workspace list",
+                    reason: format!("workspace {name} has a bad display name: {e}"),
+                })?;
             record.image = stored.image;
             record.memory = MemoryMib::new(stored.memory_mib).map_err(|e| HostError::State {
                 what: "the workspace list",
@@ -387,6 +396,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .map(|slot| Stored {
                 id: slot.record.id.to_string(),
                 name: slot.record.name.to_string(),
+                display_name: slot.record.display_name.as_ref().map(ToString::to_string),
                 repo_url: slot.record.repo_url.clone(),
                 image: slot.record.image.clone(),
                 memory_mib: slot.record.memory.get(),
@@ -1413,7 +1423,14 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                         "puddle is shutting down".to_owned(),
                     ));
                 }
-                if state.slots.contains_key(&id) {
+                if state.slots.contains_key(&id)
+                    || puddle_api::label_taken(
+                        state.slots.values().map(|s| &s.record),
+                        new.name.as_str(),
+                        None,
+                    )
+                    .is_some()
+                {
                     return Err(WorkspaceError::Conflict(format!(
                         "a workspace named {} already exists",
                         new.name
@@ -1643,6 +1660,43 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             })
             .await;
             Ok(record)
+        })
+    }
+
+    fn rename<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        display_name: Option<DisplayName>,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let mut state = self.state();
+            if state.closed {
+                return Err(WorkspaceError::Unavailable(
+                    "puddle is shutting down".to_owned(),
+                ));
+            }
+            puddle_api::check_rename(
+                state.slots.values().map(|s| &s.record),
+                id,
+                display_name.as_ref(),
+            )?;
+            let slot = state.slots.get_mut(id).ok_or_else(|| not_found(id))?;
+            let before = std::mem::replace(&mut slot.record.display_name, display_name);
+            if let Err(e) = self.persist(&state) {
+                // Nothing changes when the list can't be saved, so a restart doesn't undo a
+                // rename the user was told about.
+                if let Some(slot) = state.slots.get_mut(id) {
+                    slot.record.display_name = before;
+                }
+                return Err(WorkspaceError::Unavailable(format!(
+                    "the workspace was not renamed: {e}; {SAVE_HINT}"
+                )));
+            }
+            state
+                .slots
+                .get(id)
+                .map(|s| s.record.clone())
+                .ok_or_else(|| not_found(id))
         })
     }
 

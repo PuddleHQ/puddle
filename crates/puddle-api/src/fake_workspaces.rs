@@ -16,8 +16,8 @@ use puddle_types::{Event, EventSink, WorkspaceId, WorkspaceStatus, WorkspaceStep
 use tokio::sync::watch;
 
 use crate::workspaces::{
-    AttachMode, Attached, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DeleteCheck, LaunchError, Launcher,
-    Listing, NewWorkspace, Operation, RepoFindings, WorkspaceError, WorkspaceRecord,
+    AttachMode, Attached, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DeleteCheck, DisplayName, LaunchError,
+    Launcher, Listing, NewWorkspace, Operation, RepoFindings, WorkspaceError, WorkspaceRecord,
     WorkspaceService,
 };
 
@@ -415,7 +415,14 @@ impl WorkspaceService for FakeWorkspaces {
             record.busy = Some(Operation::Creating);
             {
                 let mut state = lock(&self.inner.state);
-                if state.entries.contains_key(&id) {
+                if state.entries.contains_key(&id)
+                    || crate::label_taken(
+                        state.entries.values().map(|e| &e.record),
+                        new.name.as_str(),
+                        None,
+                    )
+                    .is_some()
+                {
                     return Err(WorkspaceError::Conflict(format!(
                         "a workspace named {} already exists",
                         new.name
@@ -591,6 +598,24 @@ impl WorkspaceService for FakeWorkspaces {
         })
     }
 
+    fn rename<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        display_name: Option<DisplayName>,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let mut state = lock(&self.inner.state);
+            crate::check_rename(
+                state.entries.values().map(|e| &e.record),
+                id,
+                display_name.as_ref(),
+            )?;
+            let entry = state.entries.get_mut(id).ok_or_else(|| not_found(id))?;
+            entry.record.display_name = display_name;
+            Ok(entry.record.clone())
+        })
+    }
+
     fn attach<'a>(
         &'a self,
         id: &'a WorkspaceId,
@@ -668,6 +693,46 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[tokio::test]
+    async fn a_rename_changes_only_the_label_and_works_on_a_running_workspace() {
+        let (fake, sink) = fake();
+        seeded(&fake, "w", WorkspaceStatus::Running);
+        let shown = DisplayName::parse("Web shop").unwrap();
+        let renamed = fake.rename(&id("w"), Some(shown.clone())).await.unwrap();
+        assert_eq!(renamed.label(), "Web shop");
+        assert_eq!((renamed.id.as_str(), renamed.name.as_str()), ("w", "w"));
+        assert_eq!(renamed.status, WorkspaceStatus::Running);
+        assert_eq!(fake.get(&id("w")).await.unwrap().display_name, Some(shown));
+        assert!(
+            sink.events().is_empty(),
+            "a rename restarts and announces nothing"
+        );
+        let reset = fake.rename(&id("w"), None).await.unwrap();
+        assert_eq!(reset.label(), "w");
+    }
+
+    #[tokio::test]
+    async fn a_rename_clash_is_refused_and_a_create_cannot_take_a_label_in_use() {
+        let (fake, _) = fake();
+        seeded(&fake, "a", WorkspaceStatus::Stopped);
+        seeded(&fake, "b", WorkspaceStatus::Stopped);
+        fake.rename(&id("a"), Some(DisplayName::parse("Shop").unwrap()))
+            .await
+            .unwrap();
+        let clash = fake
+            .rename(&id("b"), Some(DisplayName::parse("shop").unwrap()))
+            .await;
+        assert!(matches!(clash, Err(WorkspaceError::Conflict(_))));
+        assert_eq!(fake.get(&id("b")).await.unwrap().display_name, None);
+        // `a` now answers to "Shop", so a new workspace named "shop" is not free.
+        let taken = fake.create(new_ws("shop")).await;
+        assert!(matches!(taken, Err(WorkspaceError::Conflict(_))));
+        assert!(matches!(
+            fake.rename(&id("nope"), None).await,
+            Err(WorkspaceError::NotFound(_))
+        ));
     }
 
     #[tokio::test]

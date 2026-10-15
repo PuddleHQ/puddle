@@ -119,6 +119,13 @@ impl ProxyAuth for NegotiateAuth {
         vec!["negotiate", "ntlm"]
     }
 
+    fn network_changed(&self) {
+        self.learned
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+    }
+
     fn begin(
         &self,
         proxy: &ProxyAddr,
@@ -560,6 +567,21 @@ mod tests {
         // A 407 that does offer NTLM works again.
         assert!(auth.begin(&proxy(), &["NTLM"]).unwrap().is_some());
         assert_eq!(source.opened.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_network_change_forgets_what_each_proxy_asked_for() {
+        let (auth, _) = auth(Source::default());
+        let mut first = auth.begin(&proxy(), &[]).unwrap().unwrap();
+        assert!(first.step(Some("Basic realm=\"corp\"")).is_err());
+        assert!(auth.begin(&proxy(), &[]).unwrap().is_none());
+        auth.network_changed();
+        // The proxy behind the name may be another one now: the first connection probes again.
+        let mut again = auth.begin(&proxy(), &[]).unwrap().unwrap();
+        assert_eq!(
+            authorization(again.step(None).unwrap()),
+            header("Negotiate", b"type1")
+        );
     }
 
     #[test]

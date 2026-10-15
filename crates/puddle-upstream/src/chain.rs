@@ -24,6 +24,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::io;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -33,6 +34,7 @@ use tokio::net::TcpStream;
 use crate::auth::{AuthSession, AuthStep, ProxyAuth};
 use crate::discovery::Discovery;
 use crate::hop::{Destination, Hop, ProxyAddr};
+use crate::reroute::RouteWatch;
 use crate::signin::{SignIn, SignInLog, SignInOutcome};
 use crate::wire::{self, MAX_DRAIN, ResponseHead};
 
@@ -158,6 +160,8 @@ pub struct Connected {
     /// A `Proxy-Authorization` value every absolute-form request on `stream` must carry (Basic
     /// credentials are per request; connection-based schemes need no header after the probe).
     pub authorization: Option<Secret>,
+    /// The network epoch whose route the connection was made over (see [`Chain::watch`]).
+    pub epoch: u64,
 }
 
 /// Why no connection was made.
@@ -244,6 +248,8 @@ pub struct Chain {
     config: ChainConfig,
     memo: Mutex<HashMap<ProxyAddr, Memo>>,
     sign_in_log: SignInLog,
+    /// The epoch `auth` was last told about.
+    auth_epoch: AtomicU64,
 }
 
 impl Chain {
@@ -266,6 +272,7 @@ impl Chain {
             config,
             memo: Mutex::default(),
             sign_in_log: SignInLog::default(),
+            auth_epoch: AtomicU64::new(0),
         })
     }
 
@@ -282,6 +289,18 @@ impl Chain {
         self.auth.methods()
     }
 
+    /// A watch on the route of a connection this chain made: it resolves when the network
+    /// changes and the route to `destination` no longer contains the hop the connection used.
+    #[must_use]
+    pub fn watch(&self, destination: &Destination, connected: &Connected) -> RouteWatch {
+        RouteWatch::new(
+            &self.discovery,
+            destination.clone(),
+            connected.hop.clone(),
+            connected.epoch,
+        )
+    }
+
     /// The discovery in use.
     #[must_use]
     pub fn discovery(&self) -> &Arc<Discovery> {
@@ -295,15 +314,29 @@ impl Chain {
     pub async fn connect(&self, request: &Request<'_>) -> Result<Connected, ChainError> {
         let decision = self.discovery.route(request.destination).await;
         tracing::debug!(route = %decision.route, source = ?decision.source, "route for connection");
+        if self.auth_epoch.swap(decision.epoch, Ordering::SeqCst) != decision.epoch {
+            // What the sign-in learned about each proxy belongs to the network it learned it on.
+            self.auth.network_changed();
+        }
         let mut tried = Vec::new();
         for hop in decision.route.hops() {
             match hop {
                 Hop::Direct => match self.direct(request).await {
-                    Ok(connected) => return Ok(connected),
+                    Ok(connected) => {
+                        return Ok(Connected {
+                            epoch: decision.epoch,
+                            ..connected
+                        });
+                    }
                     Err(why) => tried.push((hop.clone(), why)),
                 },
                 Hop::Proxy(proxy) => match self.via(proxy, request).await {
-                    Ok(connected) => return Ok(connected),
+                    Ok(connected) => {
+                        return Ok(Connected {
+                            epoch: decision.epoch,
+                            ..connected
+                        });
+                    }
                     Err(HopError::Down(why)) => {
                         tracing::info!(%proxy, %why, "upstream proxy unreachable, trying the next hop");
                         self.discovery.report_failure(proxy);
@@ -330,6 +363,7 @@ impl Chain {
             addr: Some(addr),
             authority: None,
             authorization: None,
+            epoch: 0,
         })
     }
 
@@ -642,6 +676,7 @@ fn connected(
         addr: None,
         authority: Some(authority.to_owned()),
         authorization: authorization.map(Secret),
+        epoch: 0,
     }
 }
 

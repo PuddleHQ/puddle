@@ -596,6 +596,134 @@ async fn hostile_a_hostile_company_proxy_cannot_hang_or_loop_the_workspace_proxy
     }
 }
 
+// ---- a network change while a tunnel is open ----
+
+/// A company-proxy route that a test can change: the PAC answers what `answer` holds, and
+/// `flip` starts a new network epoch the way the OS watcher does after its quiet period.
+struct Network {
+    discovery: Arc<Discovery>,
+    answer: Arc<std::sync::Mutex<Vec<Hop>>>,
+}
+
+impl Network {
+    fn upstream(hops: Vec<Hop>) -> (Self, Upstream) {
+        let os = FakeOs::new(ProxyConfig {
+            pac_url: Some("http://pac.corp/p.pac".into()),
+            ..ProxyConfig::default()
+        });
+        let answer = Arc::new(std::sync::Mutex::new(hops));
+        let current = Arc::clone(&answer);
+        os.set_pac(move |_| Ok(current.lock().unwrap().clone()));
+        let discovery = Discovery::new(os, Config::default());
+        let config = ChainConfig::default()
+            .with_timeouts(Duration::from_millis(500), Duration::from_millis(400));
+        let chain = Chain::with_config(Arc::clone(&discovery), Arc::new(NoAuth), config);
+        (Self { discovery, answer }, Upstream::new(chain))
+    }
+
+    fn flip(&self, hops: Vec<Hop>) {
+        *self.answer.lock().unwrap() = hops;
+        self.discovery.bump_epoch();
+    }
+}
+
+/// Reads until the stream ends or fails; true when it ended within `limit`.
+async fn ends_within<R: AsyncRead + Unpin>(stream: &mut BufReader<R>, limit: Duration) -> bool {
+    let mut buf = [0_u8; 64];
+    tokio::time::timeout(limit, async {
+        loop {
+            match stream.read(&mut buf).await {
+                Ok(0) | Err(_) => return,
+                Ok(_) => {}
+            }
+        }
+    })
+    .await
+    .is_ok()
+}
+
+#[tokio::test]
+async fn a_tunnel_on_a_route_that_is_gone_is_reset_within_two_seconds_and_new_ones_take_the_new_route()
+ {
+    let server = echo().await;
+    let proxy = FakeProxy::start(Behaviour::Open).await;
+    proxy.resolve_name("site.test", server.addr);
+    let (network, up) = Network::upstream(vec![via(&proxy)]);
+    let rig = Rig::new(StaticResolver::new().with("site.test", &[LOCAL]), up, None);
+    rig.policy.allow(&host("site.test"));
+    let mut guest = rig.guest().await;
+    let authority = format!("site.test:{}", server.addr.port());
+
+    let (code, _, mut old) = guest.connect_to(&authority).await;
+    assert_eq!(code, 200);
+    echo_through(&mut old, b"before the change").await;
+
+    // The machine leaves the company network: the route is DIRECT now.
+    network.flip(vec![Hop::Direct]);
+    assert!(
+        ends_within(&mut old, Duration::from_secs(2)).await,
+        "the old tunnel must be closed within 2 s of the new epoch"
+    );
+
+    let (code, _, mut fresh) = guest.connect_to(&authority).await;
+    assert_eq!(code, 200);
+    echo_through(&mut fresh, b"after the change").await;
+    drop(fresh);
+    drop(old);
+    let events = rig.events(2).await;
+    let hops: Vec<_> = events.iter().filter_map(|e| e.upstream.clone()).collect();
+    assert!(
+        hops.contains(&format!("PROXY {}", proxy.proxy_addr())),
+        "{hops:?}"
+    );
+    assert!(hops.contains(&"DIRECT".to_owned()), "{hops:?}");
+    assert_eq!(
+        proxy.connections(),
+        1,
+        "the new tunnel did not use the proxy"
+    );
+}
+
+#[tokio::test]
+async fn a_tunnel_whose_hop_is_still_on_the_new_route_is_left_alone() {
+    let server = echo().await;
+    let proxy = FakeProxy::start(Behaviour::Open).await;
+    proxy.resolve_name("site.test", server.addr);
+    let (network, up) = Network::upstream(vec![via(&proxy)]);
+    let rig = Rig::new(StaticResolver::new().with("site.test", &[LOCAL]), up, None);
+    rig.policy.allow(&host("site.test"));
+    let mut guest = rig.guest().await;
+    let (code, _, mut tunnel) = guest
+        .connect_to(&format!("site.test:{}", server.addr.port()))
+        .await;
+    assert_eq!(code, 200);
+    // A network change that leaves the proxy on the route (first or as a fallback).
+    network.flip(vec![Hop::Direct, via(&proxy)]);
+    assert!(
+        !ends_within(&mut tunnel, Duration::from_millis(500)).await,
+        "the hop is still part of the route"
+    );
+    echo_through(&mut tunnel, b"still open").await;
+}
+
+#[tokio::test]
+async fn a_pull_tunnel_is_reset_when_its_route_is_gone() {
+    let server = echo().await;
+    let proxy = FakeProxy::start(Behaviour::Open).await;
+    proxy.resolve_name("registry.corp.test", server.addr);
+    let (network, up) = Network::upstream(vec![via(&proxy)]);
+    let rig = pull_rig(StaticResolver::new(), up);
+    let (head, mut tunnel) =
+        pull_connect(&rig, &format!("registry.corp.test:{}", server.addr.port())).await;
+    assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+    network.flip(vec![Hop::Direct]);
+    let mut buf = [0_u8; 16];
+    let read = tokio::time::timeout(Duration::from_secs(2), tunnel.read(&mut buf))
+        .await
+        .expect("the pull tunnel is closed within 2 s");
+    assert!(matches!(read, Ok(0) | Err(_)), "{read:?}");
+}
+
 // ---- the pull proxy ----
 
 struct PullRig {

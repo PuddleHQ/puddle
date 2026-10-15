@@ -695,3 +695,136 @@ async fn a_list_names_the_methods_of_its_members_once() {
         .with(Arc::new(puddle_upstream::NoAuth));
     assert_eq!(list.methods(), ["basic"]);
 }
+
+/// A discovery whose route can be flipped between a proxy and `DIRECT` mid-test: the fake OS
+/// answers the PAC from a shared cell.
+struct Flippable {
+    discovery: Arc<Discovery>,
+    hops: Arc<std::sync::Mutex<Vec<Hop>>>,
+}
+
+impl Flippable {
+    fn new(hops: Vec<Hop>) -> Self {
+        let os = FakeOs::new(ProxyConfig {
+            pac_url: Some("http://pac.corp/p.pac".into()),
+            ..ProxyConfig::default()
+        });
+        let hops = Arc::new(std::sync::Mutex::new(hops));
+        let answer = Arc::clone(&hops);
+        os.set_pac(move |_| Ok(answer.lock().unwrap().clone()));
+        let discovery = Discovery::new(os, Config::default());
+        Self { discovery, hops }
+    }
+
+    /// The network changed: the PAC answers `hops` from now on and a new epoch begins.
+    fn flip(&self, hops: Vec<Hop>) {
+        *self.hops.lock().unwrap() = hops;
+        self.discovery.bump_epoch();
+    }
+}
+
+#[tokio::test]
+async fn a_watch_fires_when_the_new_route_no_longer_has_the_hop_and_not_before() {
+    let echo = start_echo().await;
+    let proxy = FakeProxy::start(Behaviour::Open).await;
+    proxy.resolve_name("a.test", echo.addr);
+    let flip = Flippable::new(vec![via(&proxy)]);
+    let chain = Chain::with_config(
+        Arc::clone(&flip.discovery),
+        Arc::new(puddle_upstream::NoAuth),
+        fast(),
+    );
+    let dest = https("a.test");
+    let request = Request::new(&dest, Form::Tunnel, &[]).name_ok(true);
+    let connected = chain.connect(&request).await.unwrap();
+    let mut watch = chain.watch(&dest, &connected);
+
+    // Nothing changed: the watch stays pending.
+    assert!(
+        tokio::time::timeout(Duration::from_millis(150), watch.changed())
+            .await
+            .is_err()
+    );
+    // A new epoch whose route still lists the hop (as a fallback) keeps the connection.
+    flip.flip(vec![Hop::Direct, via(&proxy)]);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(150), watch.changed())
+            .await
+            .is_err(),
+        "the hop is still in the route"
+    );
+    // The route goes direct: the connection is on a hop that is gone.
+    flip.flip(vec![Hop::Direct]);
+    tokio::time::timeout(Duration::from_secs(2), watch.changed())
+        .await
+        .expect("the watch fires within 2 s of the new epoch");
+}
+
+#[tokio::test]
+async fn an_epoch_that_began_before_the_watch_was_made_still_fires_it() {
+    let echo = start_echo().await;
+    let flip = Flippable::new(vec![Hop::Direct]);
+    let chain = Chain::with_config(
+        Arc::clone(&flip.discovery),
+        Arc::new(puddle_upstream::NoAuth),
+        fast(),
+    );
+    let dest = https("a.test");
+    let checked = [echo.addr];
+    let connected = chain
+        .connect(&Request::new(&dest, Form::Tunnel, &checked))
+        .await
+        .unwrap();
+    let proxy = FakeProxy::start(Behaviour::Open).await;
+    // The route flips between the connect and the watch being made.
+    flip.flip(vec![via(&proxy)]);
+    let mut watch = chain.watch(&dest, &connected);
+    tokio::time::timeout(Duration::from_secs(2), watch.changed())
+        .await
+        .expect("a change that raced the watch is not lost");
+}
+
+/// An auth that only counts how often it was told the network changed.
+#[derive(Debug, Default)]
+struct CountsChanges(AtomicUsize);
+
+impl ProxyAuth for CountsChanges {
+    fn begin(
+        &self,
+        _proxy: &ProxyAddr,
+        _offered: &[&str],
+    ) -> Result<Option<Box<dyn AuthSession>>, AuthError> {
+        Ok(None)
+    }
+
+    fn network_changed(&self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[tokio::test]
+async fn the_auth_is_told_once_per_new_epoch_before_its_first_connection() {
+    let echo = start_echo().await;
+    let flip = Flippable::new(vec![Hop::Direct]);
+    let counter = Arc::new(CountsChanges::default());
+    let chain = Chain::with_config(
+        Arc::clone(&flip.discovery),
+        Arc::clone(&counter) as Arc<dyn ProxyAuth>,
+        fast(),
+    );
+    let dest = https("a.test");
+    let checked = [echo.addr];
+    let connect = || async {
+        chain
+            .connect(&Request::new(&dest, Form::Tunnel, &checked))
+            .await
+            .unwrap();
+    };
+    connect().await;
+    connect().await;
+    assert_eq!(counter.0.load(Ordering::SeqCst), 0, "epoch 0 is the start");
+    flip.flip(vec![Hop::Direct]);
+    connect().await;
+    connect().await;
+    assert_eq!(counter.0.load(Ordering::SeqCst), 1);
+}

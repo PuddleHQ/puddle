@@ -61,6 +61,11 @@ pub trait ProxyAuth: Send + Sync + std::fmt::Debug {
     fn methods(&self) -> Vec<&'static str> {
         Vec::new()
     }
+
+    /// The network changed: forget what was learned about each proxy (which scheme it asks for),
+    /// since the proxy a name or address stands for may be another one now. Called by the
+    /// [`Chain`](crate::Chain) before the first connection of a new epoch.
+    fn network_changed(&self) {}
 }
 
 /// No authentication: every proxy is used as it is. The Unix implementation of [`system_auth`].

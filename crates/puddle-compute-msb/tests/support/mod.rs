@@ -19,6 +19,8 @@ use puddle_types::{GuestPath, ImageRef, MemoryMib, SandboxName};
 use puddle_vm_tests::{DEBIAN_DEVCONTAINER, Settings};
 use tokio::io::AsyncReadExt;
 
+pub(crate) mod mount_attack;
+
 /// A throwaway public key (its private half was never kept): the SDK's SSH server refuses to
 /// start without an authorized key.
 pub(crate) const TEST_SSH_KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOrqAVBGG1BD2K0dsi6Z6il4+PlI8R/egmhi8Ox00c0/ puddle-contract-test";

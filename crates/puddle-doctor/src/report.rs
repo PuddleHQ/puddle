@@ -198,7 +198,7 @@ impl Check {
 pub struct Report {
     /// [`SCHEMA_VERSION`].
     pub schema_version: u32,
-    /// The puddle version that ran the checks.
+    /// The Puddle version that ran the checks.
     pub puddle_version: String,
     /// `windows`, `linux` or `other`.
     pub os: String,

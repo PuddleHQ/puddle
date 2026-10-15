@@ -114,7 +114,7 @@ function hit(s, a, code, js,    pc, nc, nn, rest) {
     } else if (rest ~ /^\\n/) {
     } else if ((nc == "/" || nc == "\\") && code && js) {
     } else if (index(" \t,;)]*<?!\"\047", nc) == 0 && a + 5 < length(s)) return 0
-    if (rest ~ /^[ \t]+(doctor|serve|ssh-bridge|help|version|[0-9]|-[-A-Za-z]|\[|<)/) return 0
+    if (rest ~ /^[ \t]+(doctor|serve|ssh-bridge|help|[0-9]|-[-A-Za-z]|\[|<)/) return 0
     if (code && !instring(s, a, js)) return 0
     return 1
 }

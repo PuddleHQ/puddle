@@ -7842,7 +7842,7 @@
           },
           "puddle_version": {
             "type": "string",
-            "description": "The puddle version that ran the checks."
+            "description": "The Puddle version that ran the checks."
           },
           "schema_version": {
             "type": "integer",

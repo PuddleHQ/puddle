@@ -65,7 +65,7 @@ pub struct DoctorCheck {
 pub struct DoctorReport {
     /// The version of this layout (the command line's `--json` carries the same number).
     pub schema_version: u32,
-    /// The puddle version that ran the checks.
+    /// The Puddle version that ran the checks.
     pub puddle_version: String,
     /// `windows`, `linux`, `macos` or `other`.
     pub os: String,

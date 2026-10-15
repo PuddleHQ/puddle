@@ -1770,7 +1770,7 @@ export interface components {
             ok: boolean;
             /** @description `windows`, `linux`, `macos` or `other`. */
             os: string;
-            /** @description The puddle version that ran the checks. */
+            /** @description The Puddle version that ran the checks. */
             puddle_version: string;
             /**
              * Format: int32

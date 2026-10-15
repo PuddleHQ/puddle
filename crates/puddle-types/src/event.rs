@@ -873,6 +873,8 @@ mod tests {
                 "global_env_changed",
                 "workspace_env_changed",
                 "workspace_env_failed",
+                "workspace_shell_init_changed",
+                "workspace_shell_init_restored",
                 "workspace_ssh_failed",
                 "credential_sign_in_needed",
                 "git_access_denied",

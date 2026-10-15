@@ -6,6 +6,7 @@ crates/puddle/tests/doctor.rs	puddle doctor (puddle
 crates/puddle/tests/cli.rs	format!("puddle {}"
 crates/puddle/tests/cli.rs	usage: puddle
 crates/puddle-types/src/lib.rs	version_line("puddle")
+# The notices tooling names a dependency tree by its identifier (`puddle`, `msb`) and prints it in a message.
 crates/xtask/src/error.rs	Which tree (puddle, msb)
 crates/xtask/src/inventory.rs	Third-party notices: puddle
 ci/scope.sh	NO_VM=" puddle

@@ -167,10 +167,6 @@ impl GitRig {
                 self.home.path().join("ca.pem").display()
             ))
             .arg("-c")
-            // The workspace's CA publishes no revocation list; Windows' schannel would otherwise
-            // refuse a certificate whose revocation status is unknown.
-            .arg("http.schannelCheckRevoke=false")
-            .arg("-c")
             .arg("credential.helper=")
             .arg("-c")
             .arg("core.askPass=")
@@ -178,6 +174,12 @@ impl GitRig {
             .arg("user.name=guest")
             .arg("-c")
             .arg("user.email=guest@example.org");
+        if cfg!(windows) {
+            // Git for Windows' default TLS backend (schannel) refuses a certificate whose
+            // revocation status it cannot read, and the workspace's CA publishes no list; the
+            // OpenSSL backend that ships with it verifies against the CA file as given.
+            std_command.arg("-c").arg("http.sslBackend=openssl");
+        }
         let mut command = tokio::process::Command::from(std_command);
         command
             .env("GCM_INTERACTIVE", "never")

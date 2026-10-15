@@ -382,6 +382,18 @@ async fn vm_git_clones_and_pushes_with_two_identities_and_the_guest_never_holds_
          echo files=$(grep -rlaFf /dev/shm/.p --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev --exclude=.p / 2>/dev/null | grep -v '^/dev/shm/.p$' | tr '\\n' ' '); \
          rm -f /dev/shm/.p; echo done"
     );
+    // The control first: a token planted in a file and in a process's environment must be found,
+    // or the search proves nothing.
+    let planted = format!(
+        "w={work}; printf '%s\\n' \"$w\" > /root/planted.txt; \
+         env PLANTED=\"$w\" sleep 120 & pid=$!; sleep 1; {search}; kill $pid; rm -f /root/planted.txt",
+        work = split(WORK),
+    );
+    let control = guest_within(&vm.runtime, &sandbox, &planted, Duration::from_secs(600)).await;
+    assert!(
+        !control.contains("procs=0") && control.contains("/root/planted.txt"),
+        "the search must find a planted token in a process and in a file: {control}"
+    );
     let found = guest_within(&vm.runtime, &sandbox, &search, Duration::from_secs(600)).await;
     assert!(
         found.contains("procs=0"),

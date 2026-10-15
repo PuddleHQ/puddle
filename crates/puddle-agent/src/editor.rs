@@ -7,12 +7,15 @@
 //!
 //! - keeps the server's user data and extensions below the data folder, on the workspace volume,
 //!   so they outlive a rebuilt sandbox;
-//! - makes a new random password every time it starts the server, writes it to an owner-only file
-//!   (the host reads it to sign a window in) and hands it to the server in its environment, never
-//!   on its command line;
+//! - makes a random password for the sandbox's boot, writes it to an owner-only file in `/run` (the
+//!   host reads it to sign a window in) and hands it to the server in its environment, never on its
+//!   command line. A restarted server, or a restarted agent, keeps the password while the file
+//!   holds one, so a window signed in stays signed in; a rebooted sandbox gets a new one;
 //! - passes the reconnection grace on, and turns off the server's telemetry and update check
 //!   (the release is replaced only with a Puddle release);
-//! - starts it again when it exits, waiting longer after each quick exit.
+//! - starts it again when it exits, waiting longer after each quick exit. A server that an earlier
+//!   agent left running (the agent was killed; the server outlives it) is left alone: the agent
+//!   waits until the port is free instead of starting a second one that cannot bind.
 //!
 //! The server runs without the `VSCODE_*` variables of the agent's environment: with
 //! `VSCODE_IPC_HOOK_CLI` set, code-server hands its command line to the editor that variable
@@ -36,6 +39,8 @@ const CONFIG: &str = "config.yaml";
 
 /// A server that ran this long counts as healthy: the wait before a restart starts over.
 const HEALTHY: Duration = Duration::from_secs(30);
+/// How often the port of a server left by an earlier agent is looked at.
+const PORT_POLL: Duration = Duration::from_secs(2);
 /// The longest wait between two starts.
 const MAX_WAIT: Duration = Duration::from_secs(30);
 
@@ -64,6 +69,13 @@ pub fn new_password() -> io::Result<String> {
         let _ = write!(s, "{b:02x}"); // writing to a String can't fail
         s
     }))
+}
+
+/// The password already in `path`, when it is one this module wrote.
+fn existing_password(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let valid = text.len() == PASSWORD_BYTES * 2 && text.bytes().all(|b| b.is_ascii_hexdigit());
+    valid.then_some(text)
 }
 
 /// Writes `password` to `path` for its owner only, through a temporary file renamed over it, so a
@@ -191,10 +203,34 @@ pub async fn run(config: EditorConfig) {
     }
 }
 
+/// Whether something already accepts connections on the server's port.
+async fn port_taken(port: u16) -> bool {
+    tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .is_ok()
+}
+
 async fn start_once(config: &EditorConfig) -> io::Result<std::process::ExitStatus> {
     prepare(&config.server)?;
-    let password = new_password()?;
-    write_password(&config.password_file, &password)?;
+    let mut warned = false;
+    while port_taken(config.server.port).await {
+        if !warned {
+            tracing::warn!(
+                port = config.server.port,
+                "the editor port is taken (by a server an earlier agent started?); waiting for it to be free"
+            );
+            warned = true;
+        }
+        tokio::time::sleep(PORT_POLL).await;
+    }
+    let password = match existing_password(&config.password_file) {
+        Some(password) => password,
+        None => {
+            let password = new_password()?;
+            write_password(&config.password_file, &password)?;
+            password
+        }
+    };
     let inherited = std::env::vars_os().filter_map(|(k, _)| k.into_string().ok());
     let mut child = command(&config.server, &password, inherited).spawn()?;
     tracing::info!(
@@ -255,6 +291,26 @@ mod tests {
         assert_eq!(a.len(), PASSWORD_BYTES * 2);
         assert!(a.bytes().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn only_a_password_this_module_wrote_is_reused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pw");
+        assert_eq!(existing_password(&path), None);
+        let good = new_password().unwrap();
+        for bad in [
+            "",
+            "short",
+            &"g".repeat(64),
+            &format!("{good}\n"),
+            &format!("{good}00"),
+        ] {
+            std::fs::write(&path, bad).unwrap();
+            assert_eq!(existing_password(&path), None, "{bad:?}");
+        }
+        std::fs::write(&path, &good).unwrap();
+        assert_eq!(existing_password(&path), Some(good));
     }
 
     #[test]

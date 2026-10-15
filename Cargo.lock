@@ -6097,6 +6097,7 @@ version = "0.0.0"
 dependencies = [
  "futures-util",
  "microsandbox",
+ "puddle-agent-proto",
  "puddle-api",
  "puddle-boot",
  "puddle-ca",

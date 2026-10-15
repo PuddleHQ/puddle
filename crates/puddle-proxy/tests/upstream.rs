@@ -650,9 +650,9 @@ async fn an_allowed_connection_records_how_reaching_the_destination_went() {
         (502, Some(ConnectionOutcome::UpstreamRefused))
     );
 
-    // Nothing answered: refused, then not in time.
-    let (dead, _held) = dead_proxy();
-    let (up, _) = upstream(vec![Hop::Proxy(dead)], Arc::new(NoAuth));
+    // Nothing usable answered: garbage (a refused connection differs by OS), then not in time.
+    let garbage = FakeProxy::start(Behaviour::Garbage).await;
+    let (up, _) = upstream(vec![via(&garbage)], Arc::new(NoAuth));
     assert_eq!(
         outcome_of(up, resolver(), "site.test", true).await,
         (502, Some(ConnectionOutcome::ConnectFailed))

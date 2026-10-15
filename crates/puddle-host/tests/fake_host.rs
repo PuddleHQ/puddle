@@ -3280,33 +3280,37 @@ async fn an_image_the_boot_plan_cannot_take_fails_the_start_and_leaves_nothing_b
     host.shutdown().await;
 }
 
+/// Attaches a new identity to `workspace`, as a user clicking would.
+fn attach_a_new_identity(store: &puddle_store::Store, workspace: &WorkspaceName) {
+    let host = puddle_secrets::HostName::new("github.com").unwrap();
+    let credential = puddle_store::CredentialBinding::new(
+        &host,
+        puddle_secrets::SourceSpec::Gh {
+            host: host.clone(),
+            account: puddle_secrets::AccountName::new("me").unwrap(),
+        },
+        puddle_store::Coverage::new(std::collections::BTreeSet::new(), true).unwrap(),
+    )
+    .unwrap();
+    let identity = store
+        .create_identity(puddle_store::IdentityDraft {
+            label: "Ada".to_owned(),
+            author: puddle_store::Author::new("Ada", "ada@example.org").unwrap(),
+            credentials: vec![credential],
+        })
+        .unwrap();
+    // The first identity becomes the default, which a new workspace gets at its create; attach
+    // is idempotent for this test's purpose.
+    let _ = store.attach_identity(workspace, identity.id, None);
+}
+
 /// Makes the next run of the boot hook attach a new identity to `workspace`, as a user clicking
 /// while the guest boots would.
 fn attach_during_the_next_boot(rig: &Rig, host: &Host<FakeRuntime>, workspace: &str) {
     let store = host.store().clone();
     let workspace = name(workspace);
-    *rig.guest.during_boot.lock().unwrap() = Some(Box::new(move || {
-        let host = puddle_secrets::HostName::new("github.com").unwrap();
-        let credential = puddle_store::CredentialBinding::new(
-            &host,
-            puddle_secrets::SourceSpec::Gh {
-                host: host.clone(),
-                account: puddle_secrets::AccountName::new("me").unwrap(),
-            },
-            puddle_store::Coverage::new(std::collections::BTreeSet::new(), true).unwrap(),
-        )
-        .unwrap();
-        let identity = store
-            .create_identity(puddle_store::IdentityDraft {
-                label: "Ada".to_owned(),
-                author: puddle_store::Author::new("Ada", "ada@example.org").unwrap(),
-                credentials: vec![credential],
-            })
-            .unwrap();
-        // The first identity becomes the default, which a new workspace gets at its create; attach
-        // is idempotent for this test's purpose.
-        let _ = store.attach_identity(&workspace, identity.id, None);
-    }));
+    *rig.guest.during_boot.lock().unwrap() =
+        Some(Box::new(move || attach_a_new_identity(&store, &workspace)));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -5137,5 +5141,87 @@ async fn a_variable_set_while_the_guest_boots_reaches_its_login_shells_once_it_i
         "/etc/profile.d/01-puddle-env.sh",
     );
     assert!(file.contains("export EDITOR='vim'"), "{file}");
+    host.shutdown().await;
+}
+
+/// A change made from another thread while the boot hook is still busy reaches the host's change
+/// handler before the hook returns: at that moment the host has no entry for the sandbox yet.
+fn during_the_next_boot_from_another_thread(rig: &Rig, change: impl FnOnce() + Send + 'static) {
+    *rig.guest.during_boot.lock().unwrap() = Some(Box::new(move || {
+        std::thread::spawn(change).join().unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+    }));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_variable_set_before_the_first_boot_returns_reaches_the_guest_once_it_is_up() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let store = host.store().clone();
+    during_the_next_boot_from_another_thread(&rig, move || {
+        store
+            .set_env(
+                &puddle_store::EnvScope::Workspace(name("acme")),
+                &puddle_store::EnvName::new("EDITOR").unwrap(),
+                puddle_store::EnvDraft::plain("vim").unwrap(),
+            )
+            .unwrap();
+    });
+    create(&api, &mut events, "acme").await;
+
+    rig.guest.boots_reach(2).await;
+    let file = pem_of(
+        &rig.guest.plan_files(rig.guest.boots() - 1),
+        "/etc/profile.d/01-puddle-env.sh",
+    );
+    assert!(file.contains("export EDITOR='vim'"), "{file}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_identity_attached_before_the_first_boot_returns_reaches_the_guest_once_it_is_up() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let store = host.store().clone();
+    during_the_next_boot_from_another_thread(&rig, move || {
+        attach_a_new_identity(&store, &name("acme"));
+    });
+    create(&api, &mut events, "acme").await;
+
+    rig.guest.boots_reach(2).await;
+    let files = rig.guest.plan_files(rig.guest.boots() - 1);
+    assert!(pem_of(&files, "/etc/puddle/gitconfig").contains("name = \"Ada\""));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plan_run_in_a_live_guest_tells_the_user_when_it_put_the_loader_back() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let booted = rig.guest.boots();
+
+    *rig.guest.boot_says.lock().unwrap() =
+        "puddle-boot: replaced /etc/profile.d/02-puddle-shell-init.sh\n".to_owned();
+    host.store()
+        .set_env(
+            &puddle_store::EnvScope::Workspace(name("acme")),
+            &puddle_store::EnvName::new("EDITOR").unwrap(),
+            puddle_store::EnvDraft::plain("vim").unwrap(),
+        )
+        .unwrap();
+    rig.guest.boots_reach(booted + 1).await;
+    events
+        .until(
+            is_event("workspace_shell_init_restored", "acme"),
+            Duration::from_secs(20),
+        )
+        .await;
     host.shutdown().await;
 }

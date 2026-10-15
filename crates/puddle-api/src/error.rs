@@ -269,7 +269,8 @@ impl From<DoctorError> for ApiError {
 impl From<PortsServiceError> for ApiError {
     fn from(err: PortsServiceError) -> Self {
         match err {
-            PortsServiceError::Unavailable(m) => {
+            // `Failed` names what could not be read or saved (no secret in it): say it.
+            PortsServiceError::Unavailable(m) | PortsServiceError::Failed(m) => {
                 Self::new(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable, m)
             }
             PortsServiceError::NotRunning(m) | PortsServiceError::Taken(m) => {
@@ -277,10 +278,6 @@ impl From<PortsServiceError> for ApiError {
             }
             PortsServiceError::Invalid(m) => Self::invalid(m),
             PortsServiceError::NotForwarded(m) => Self::not_found(m),
-            // The text names what could not be read or saved; it holds no secret.
-            PortsServiceError::Failed(m) => {
-                Self::new(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable, m)
-            }
         }
     }
 }

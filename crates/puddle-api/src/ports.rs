@@ -29,7 +29,7 @@ pub enum PortsServiceError {
     /// Nothing is forwarded or pinned for that port (404).
     #[error("{0}")]
     NotForwarded(String),
-    /// The pins could not be read or written (500, with the text for the log).
+    /// The pins could not be read or written (503, with what failed).
     #[error("{0}")]
     Failed(String),
 }

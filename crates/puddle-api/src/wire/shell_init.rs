@@ -34,7 +34,7 @@ pub struct ShellInitSaved {
     /// What is saved now.
     pub shell_init: ShellInitView,
     /// Whether the script was run in a throwaway shell in the running workspace and printed
-    /// nothing. `false` when the workspace is not running: puddle checks it when it starts, and
+    /// nothing. `false` when the workspace is not running: Puddle checks it when it starts, and
     /// says so as a problem if it fails then.
     pub checked: bool,
     /// Why it was not checked, when `checked` is `false`.

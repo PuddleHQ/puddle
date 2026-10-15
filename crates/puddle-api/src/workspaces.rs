@@ -452,7 +452,7 @@ pub trait WorkspaceService: Send + Sync {
     ) -> BoxFuture<'a, Result<ShellInitCheck, WorkspaceError>> {
         Box::pin(async {
             Ok(ShellInitCheck::NotRun(
-                "this puddle has no workspace to run it in".to_owned(),
+                "this Puddle has no workspace to run it in".to_owned(),
             ))
         })
     }

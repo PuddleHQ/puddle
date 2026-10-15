@@ -98,7 +98,7 @@ pub(crate) async fn put_shell_init(
     }))
 }
 
-/// Removes the shell init: the workspace's shells source nothing from puddle.
+/// Removes the shell init: the workspace's shells source nothing from Puddle.
 #[utoipa::path(
     delete,
     path = "/api/workspaces/{id}/shell-init",

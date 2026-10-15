@@ -123,21 +123,7 @@ impl BootKit {
     /// its next boot. `None` without a source, when it cannot be made (logged) or when the
     /// system's confirmation stays unanswered for [`DEV_CERT_WAIT`].
     pub(crate) async fn dev_cert(&self) -> Option<GuestDevCert> {
-        let source = self.dev_cert.clone()?;
-        let work = tokio::task::spawn_blocking(move || source.guest_cert());
-        match tokio::time::timeout(DEV_CERT_WAIT, work).await {
-            Ok(Ok(cert)) => cert,
-            Ok(Err(error)) => {
-                tracing::warn!(%error, "the development certificate could not be prepared");
-                None
-            }
-            Err(_) => {
-                tracing::warn!(
-                    "the development certificate is not ready (is a confirmation open on the desktop?): this workspace starts without it"
-                );
-                None
-            }
-        }
+        crate::dev_cert::certificate_within(self.dev_cert.clone()?, DEV_CERT_WAIT).await
     }
 
     pub(crate) fn hook(&self) -> &BootHook {

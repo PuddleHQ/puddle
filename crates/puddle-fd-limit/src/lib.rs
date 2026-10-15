@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The open-file limit of a puddle process.
+//! The open-file limit of a Puddle process.
 //!
-//! Every connection a process carries costs it one or two file descriptors (puddle's relays hold
+//! Every connection a process carries costs it one or two file descriptors (Puddle's relays hold
 //! one per connection per side), and most systems start a process with a soft limit of 1024 while
 //! the hard limit is far higher. A browser or a parallel `npm install` inside a workspace opens
 //! hundreds of connections at once, so a process that stayed at 1024 would refuse connections

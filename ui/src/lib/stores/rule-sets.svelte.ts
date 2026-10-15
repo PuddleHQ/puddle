@@ -26,7 +26,7 @@ export interface RuleSetsDeps {
   onDecidedElsewhere?: () => void;
 }
 
-const DOWN = "puddle's service isn't answering.";
+const DOWN = "Puddle's service isn't answering.";
 
 export class RuleSetsStore {
   sets = $state.raw<RuleSet[]>([]);
@@ -82,7 +82,7 @@ export class RuleSetsStore {
       if (!data) {
         return {
           ok: false,
-          message: sentence(error?.message ?? "puddle refused the name"),
+          message: sentence(error?.message ?? "Puddle refused the name"),
         };
       }
       this.#put(data);
@@ -106,7 +106,7 @@ export class RuleSetsStore {
       if (!data) {
         return {
           ok: false,
-          message: sentence(error?.message ?? "puddle refused the name"),
+          message: sentence(error?.message ?? "Puddle refused the name"),
         };
       }
       this.#put(data);
@@ -123,7 +123,7 @@ export class RuleSetsStore {
         params: { path: { id } },
       });
       if (!response.ok && response.status !== 404) {
-        return { ok: false, message: "puddle couldn't delete that rule set." };
+        return { ok: false, message: "Puddle couldn't delete that rule set." };
       }
       this.sets = this.sets.filter((s) => s.id !== id);
       return { ok: true };
@@ -156,7 +156,7 @@ export class RuleSetsStore {
       if (!data) {
         return {
           ok: false,
-          message: sentence(error?.message ?? "puddle refused the switch"),
+          message: sentence(error?.message ?? "Puddle refused the switch"),
         };
       }
       this.#put(data.set);

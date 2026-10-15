@@ -6,7 +6,7 @@
 //! address it got, and connects only to an address that passed: it never resolves twice, so a
 //! DNS answer can't change between the check and the connect. The checks are
 //! `puddle-netpolicy`'s [`NetPolicy`]: address classes, the workspace's local-destination toggles
-//! and puddle's own endpoints.
+//! and Puddle's own endpoints.
 
 use std::future::Future;
 use std::io;

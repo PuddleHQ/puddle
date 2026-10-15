@@ -19,7 +19,7 @@ export function parseConnection(text: string): Connection {
       return { url, token };
     }
   }
-  throw new Error("not a puddle connection file (version 1)");
+  throw new Error("not a Puddle connection file (version 1)");
 }
 
 export interface DevProxyDeps {

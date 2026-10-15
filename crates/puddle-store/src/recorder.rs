@@ -15,7 +15,7 @@ pub const RECORD_PROBLEM: &str = "connection-records";
 fn record_problem(reason: &str) -> Problem {
     Problem::new(
         RECORD_PROBLEM,
-        "puddle could not write to its activity log",
+        "Puddle could not write to its activity log",
         format!(
             "{reason}. Connections still work, but the activity list is missing the ones made \
              since this started. A full disk is the usual cause: free some space."

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// What the certificates step says: the development certificate (what puddle knows about it) and
+// What the certificates step says: the development certificate (what Puddle knows about it) and
 // the company roots workspaces get. Words only; the page decides the layout.
 import type { components } from "#lib/api/schema.d.ts";
 import type { NetworkHealth } from "#lib/network/model.ts";
@@ -26,7 +26,7 @@ export function devCertificateLine(status: DevCertificate | undefined): Line {
   return {
     tone: "skipped",
     title: "Development certificate: not checked yet",
-    text: "An HTTPS development server in a workspace shows a browser warning until puddle can trust a certificate for it.",
+    text: "An HTTPS development server in a workspace shows a browser warning until Puddle can trust a certificate for it.",
   };
 }
 
@@ -43,12 +43,12 @@ export function rootsLine(
       ? {
           tone: "skipped",
           title: "Company certificates: not read",
-          text: "puddle couldn't read its certificate report. Workspaces still get the standard certificates.",
+          text: "Puddle couldn't read its certificate report. Workspaces still get the standard certificates.",
         }
       : {
           tone: "skipped",
           title: "Company certificates",
-          text: "puddle is reading this computer's certificate stores…",
+          text: "Puddle is reading this computer's certificate stores…",
         };
   }
   const { roots } = report;
@@ -56,7 +56,7 @@ export function rootsLine(
     return {
       tone: "skipped",
       title: "Company certificates: not read yet",
-      text: "puddle has not read this computer's certificate stores yet.",
+      text: "Puddle has not read this computer's certificate stores yet.",
     };
   }
   if (roots.unreadable_stores.length > 0) {

@@ -55,10 +55,10 @@ describe("system check model", () => {
       "No problems found; 2 warnings to know about.",
     );
     expect(verdict(report("fail"))).toBe(
-      "1 problem to fix before puddle can run workspaces.",
+      "1 problem to fix before Puddle can run workspaces.",
     );
     expect(verdict(report("fail", "fail", "warn"))).toBe(
-      "2 problems to fix before puddle can run workspaces; 1 warning.",
+      "2 problems to fix before Puddle can run workspaces; 1 warning.",
     );
   });
 

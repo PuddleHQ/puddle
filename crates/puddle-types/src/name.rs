@@ -3,7 +3,7 @@
 //!
 //! Workspace, sandbox and volume names are DNS labels (RFC 1123: `a-z`, `0-9`, `-`, 1–63
 //! characters, starting and ending with a letter or digit). That is stricter than msb's own rule
-//! (it also allows upper case, `.` and `_`), so every puddle name is a valid msb name, and a name
+//! (it also allows upper case, `.` and `_`), so every Puddle name is a valid msb name, and a name
 //! can also be used as a host label (`<name>.localhost`) and in a pipe or file name unchanged.
 
 use std::fmt;
@@ -20,7 +20,7 @@ const MAX_LABEL_LEN: usize = 63;
 /// (ADR 0006).
 pub const WORKSPACE_VOLUME_PREFIX: &str = "ws-";
 
-/// Workspace names puddle refuses because the desktop shell uses them as host names
+/// Workspace names Puddle refuses because the desktop shell uses them as host names
 /// (`tauri.localhost`, `ipc.localhost`, `asset.localhost`).
 pub const RESERVED_WORKSPACE_NAMES: [&str; 3] = ["tauri", "ipc", "asset"];
 
@@ -162,7 +162,7 @@ string_newtype!(WorkspaceName);
 
 /// The name of a sandbox in the runtime (the microVM that runs a workspace): a DNS label.
 ///
-/// A workspace's sandbox has the workspace's name ([`WorkspaceName::sandbox_name`]); puddle's own
+/// A workspace's sandbox has the workspace's name ([`WorkspaceName::sandbox_name`]); Puddle's own
 /// helper sandboxes (such as the one that checks a stopped workspace's volume) have names no
 /// workspace can have, which is why this is a type of its own.
 ///

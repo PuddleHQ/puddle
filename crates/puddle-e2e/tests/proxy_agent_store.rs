@@ -404,7 +404,7 @@ async fn an_unknown_host_is_pending_in_the_store_and_passes_after_approval() {
     assert_eq!(code, 403);
     let mut body = String::new();
     conn.read_to_string(&mut body).await.unwrap();
-    assert!(body.contains("waiting for approval in puddle"), "{body}");
+    assert!(body.contains("waiting for approval in Puddle"), "{body}");
 
     let open = rig.store.open_pending(Some(&workspace())).unwrap();
     assert_eq!(open.len(), 1);
@@ -732,7 +732,7 @@ async fn a_hundred_thousand_unknown_names_are_all_told_to_wait_and_the_store_sta
                         .unwrap();
                 let mut body = String::new();
                 conn.read_to_string(&mut body).await.unwrap();
-                assert!(body.contains("for approval in puddle"), "{body}");
+                assert!(body.contains("for approval in Puddle"), "{body}");
                 assert!(!body.contains("denied"), "{body}");
                 *answers.entry(code).or_default() += 1;
             }

@@ -13,7 +13,7 @@ FAIL  Test boot           msb exited with 1 without booting the test VM
             msb's logs of this boot were not kept: no folder to keep them in under
             /home/dev/kept: Permission denied
 
-1 problem to fix before puddle can run sandboxes. (1.2 s)
+1 problem to fix before Puddle can run sandboxes. (1.2 s)
 
 ---
 {

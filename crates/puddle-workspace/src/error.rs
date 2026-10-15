@@ -6,17 +6,17 @@ use puddle_compute::ComputeError;
 use crate::DeleteReport;
 
 /// Why a workspace operation failed. Workspace and sandbox names are plain strings: a holder
-/// may be a sandbox puddle didn't create.
+/// may be a sandbox Puddle didn't create.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum WorkspaceError {
-    /// Another sandbox has the workspace's volume (ADR 0006 point 8: one writer). puddle refuses
+    /// Another sandbox has the workspace's volume (ADR 0006 point 8: one writer). Puddle refuses
     /// before msb would, so the message can name the holder.
     #[error("workspace {workspace:?} is in use by sandbox {holder:?}")]
     InUse {
         /// The workspace.
         workspace: String,
-        /// The sandbox that holds it (running, stopped, or puddle's short-lived maintenance
+        /// The sandbox that holds it (running, stopped, or Puddle's short-lived maintenance
         /// sandbox).
         holder: String,
     },
@@ -26,7 +26,7 @@ pub enum WorkspaceError {
         /// The workspace.
         workspace: String,
     },
-    /// A workspace that should have data has no volume, and puddle did not make an empty one
+    /// A workspace that should have data has no volume, and Puddle did not make an empty one
     /// in its place.
     #[error(
         "workspace {workspace:?} has no volume ({volume}); it was not started, and no new empty volume was made in its place; restore the volume, then start it again"
@@ -96,7 +96,7 @@ pub enum WorkspaceError {
         reason: String,
     },
     /// A maintenance job failed, and then the maintenance sandbox could not be stopped or
-    /// removed either: puddle's short-lived sandbox is still there. Both causes are in the
+    /// removed either: Puddle's short-lived sandbox is still there. Both causes are in the
     /// message; the next maintenance run removes the leftover.
     #[error(
         "{job}; and the maintenance sandbox of workspace {workspace:?} was left behind: {leftover}"

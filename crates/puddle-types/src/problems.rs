@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Background problems the user should hear about: something puddle does on its own (a sweep, a
+//! Background problems the user should hear about: something Puddle does on its own (a sweep, a
 //! clean-up, a start-up step) failed, and nobody asked for it, so no request can carry the error.
 
 use std::collections::BTreeMap;
@@ -16,19 +16,19 @@ pub struct Problem {
     /// Names the problem; raising it again replaces the old one, and it ends with
     /// [`Problems::clear`].
     pub key: String,
-    /// The workspace it is about, or `null` when it is about puddle.
+    /// The workspace it is about, or `null` when it is about Puddle.
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = true))]
     pub workspace: Option<WorkspaceName>,
     /// What went wrong, in one line. It can quote tool output: escape it when rendering.
     pub title: String,
-    /// What puddle did about it and what the user can do. It can quote tool output: escape it
+    /// What Puddle did about it and what the user can do. It can quote tool output: escape it
     /// when rendering.
     pub detail: String,
 }
 
 impl Problem {
-    /// A problem about puddle.
+    /// A problem about Puddle.
     #[must_use]
     pub fn new(
         key: impl Into<String>,

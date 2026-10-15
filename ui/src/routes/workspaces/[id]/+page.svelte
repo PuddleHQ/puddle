@@ -142,7 +142,7 @@
                 ? "workspace override"
                 : memorySource === "global"
                   ? "global default"
-                  : "puddle's default"}</span
+                  : "Puddle's default"}</span
             >
           {/if}
         </dd>
@@ -176,11 +176,11 @@
       {#if workspace.status === "volume_missing"}
         <p class="hint">
           The disk is already gone, so deleting only removes the workspace from
-          puddle.
+          Puddle.
         </p>
       {:else}
         <p class="hint">
-          Deleting removes the workspace and its disk. puddle first lists
+          Deleting removes the workspace and its disk. Puddle first lists
           uncommitted changes, unpushed commits and stashes.
         </p>
       {/if}

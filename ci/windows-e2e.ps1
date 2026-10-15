@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 <#
 .SYNOPSIS
-Runs puddle's real-machine VM tests (tier R) on a real Windows machine and posts the result as
+Runs Puddle's real-machine VM tests (tier R) on a real Windows machine and posts the result as
 the commit status `puddle/windows-e2e`.
 
 .DESCRIPTION

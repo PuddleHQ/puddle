@@ -12,7 +12,7 @@ ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
 skip  Test boot             not checked: no usable hypervisor
 ok    Global Secure Access  client not installed
 
-1 problem to fix before puddle can run sandboxes. (1.2 s)
+1 problem to fix before Puddle can run sandboxes. (1.2 s)
 
 ---
 {

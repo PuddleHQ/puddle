@@ -200,7 +200,7 @@
 <FormDialog
   bind:open
   title="New workspace"
-  description="puddle clones the repository into a fresh workspace with its own disk."
+  description="Puddle clones the repository into a fresh workspace with its own disk."
   onClose={reset}
 >
   <form onsubmit={submit} novalidate>

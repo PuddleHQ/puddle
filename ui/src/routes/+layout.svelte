@@ -45,12 +45,12 @@
   <div class="content">
     {#if live.problem === "unauthorized"}
       <p class="banner" role="status">
-        puddle can't sign in to its service. Open puddle from its app window or
+        Puddle can't sign in to its service. Open Puddle from its app window or
         tray icon.
       </p>
     {:else if live.problem === "unreachable"}
       <p class="banner" role="status">
-        puddle's service isn't answering. Retrying.
+        Puddle's service isn't answering. Retrying.
       </p>
     {:else if live.problem === "failing"}
       <p class="banner" role="status">
@@ -58,7 +58,7 @@
       </p>
     {:else if live.streamError}
       <p class="banner" role="status">
-        Live updates paused: {live.streamError}. puddle keeps trying and
+        Live updates paused: {live.streamError}. Puddle keeps trying and
         refreshes every few seconds meanwhile.
       </p>
     {/if}

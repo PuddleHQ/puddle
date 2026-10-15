@@ -3,7 +3,7 @@
 //!
 //! Each workspace is a named msb disk volume `ws-<id>` (ext4), mounted at `/workspaces/<id>`.
 //! The volume outlives its sandboxes: rebuilding a sandbox reattaches it. Code gets in by
-//! cloning inside the guest, into a subdirectory (the volume root also holds puddle's `.puddle`).
+//! cloning inside the guest, into a subdirectory (the volume root also holds Puddle's `.puddle`).
 //!
 //! | Need | Call |
 //! |---|---|
@@ -12,7 +12,7 @@
 //! | a failed create leaves nothing (record, stale dir, new volume) | [`Attachment::abort`] |
 //! | paths in the guest, the clone command | [`Layout`], [`checkout_name`] |
 //! | clone a checkout and `sync` it (a VMM kill right after a clone can lose the repo) | [`Workspaces::clone_checkout`] |
-//! | after every boot: puddle's directory, and stale git locks of a crash cleared | [`Workspaces::after_boot`] ([`Workspaces::clear_stale_locks`]) |
+//! | after every boot: Puddle's directory, and stale git locks of a crash cleared | [`Workspaces::after_boot`] ([`Workspaces::clear_stale_locks`]) |
 //! | `fstrim` before stop; "reclaim space" | [`Workspaces::stop`], [`Workspaces::reclaim_space`] |
 //! | delete after listing unsaved work, with explicit confirmation | [`Workspaces::check_delete`] → [`DeleteReport::confirm`] → [`Workspaces::delete`] |
 //! | reconcile after a restart | [`Workspaces::adopt`], [`is_maintenance_name`] |

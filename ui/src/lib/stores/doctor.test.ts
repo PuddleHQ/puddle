@@ -61,31 +61,31 @@ describe("DoctorStore", () => {
     expect(store.problem).toBeNull();
   });
 
-  it("fails with puddle's own reason, or says what is known", async () => {
+  it("fails with Puddle's own reason, or says what is known", async () => {
     answers.push({
-      error: { error: "internal", message: "internal error; see puddle's log" },
+      error: { error: "internal", message: "internal error; see Puddle's log" },
       response: { status: 500 },
     });
     const a = make();
     await a.run();
     expect(a.status).toBe("failed");
-    expect(a.problem).toBe("internal error; see puddle's log");
+    expect(a.problem).toBe("internal error; see Puddle's log");
 
     answers.push({ response: { status: 408 } });
     const b = make();
     await b.run();
-    expect(b.problem).toBe("the check took longer than puddle allows.");
+    expect(b.problem).toBe("the check took longer than Puddle allows.");
 
     answers.push({ response: { status: 502 } });
     const c = make();
     await c.run();
-    expect(c.problem).toBe("puddle answered 502.");
+    expect(c.problem).toBe("Puddle answered 502.");
 
     answers.push("throw");
     const d = make();
     await d.run();
     expect(d.status).toBe("failed");
-    expect(d.problem).toBe("puddle's service isn't answering.");
+    expect(d.problem).toBe("Puddle's service isn't answering.");
     expect(d.report).toBeNull();
   });
 

@@ -1,4 +1,4 @@
-Third-party software shipped in puddle's user interface.
+Third-party software shipped in Puddle's user interface.
 
 ========================================================================
 @floating-ui/core 1.8.0 (MIT)

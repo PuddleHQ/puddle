@@ -27,9 +27,9 @@ pub enum SettingsError {
         /// The value found (truncated).
         found: String,
     },
-    /// The document was written by a newer puddle in a shape this version doesn't know.
+    /// The document was written by a newer Puddle in a shape this version doesn't know.
     #[error(
-        "{kind} settings have schema version {found}, written by a newer puddle; this version reads up to {supported}"
+        "{kind} settings have schema version {found}, written by a newer Puddle; this version reads up to {supported}"
     )]
     NewerSchema {
         /// The document kind.

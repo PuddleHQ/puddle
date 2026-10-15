@@ -40,7 +40,7 @@ describe("reading", () => {
     const store = make();
     await store.refresh();
     expect(store.status).toBe("failed");
-    expect(store.loadError).toBe("puddle's service isn't answering.");
+    expect(store.loadError).toBe("Puddle's service isn't answering.");
     api.down = false;
     api.rules = [rule(1)];
     await store.refresh();
@@ -50,7 +50,7 @@ describe("reading", () => {
     await store.refresh();
     expect(store.status).toBe("ready");
     expect(store.rules).toHaveLength(1);
-    expect(store.loadError).toBe("puddle's service isn't answering.");
+    expect(store.loadError).toBe("Puddle's service isn't answering.");
   });
   it("treats an error answer like a failure", async () => {
     api.GET = async () =>

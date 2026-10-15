@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Three stream events become notices: a credential a workspace asked for that puddle can't read
+// Three stream events become notices: a credential a workspace asked for that Puddle can't read
 // ("sign in"), a push or fetch the workspace's repository table refused ("allow it"), and a Git
 // host's `401` that no identity could answer ("attach an identity"). None opens a window or
 // changes a list by itself: the sign-in is a link to the page with its
@@ -72,8 +72,8 @@ export class CredentialNotices {
     this.#notifier.notify({
       key: signInKey(event.source),
       tone: "warning",
-      title: `Sign-in needed: puddle can't read ${event.source}.`,
-      detail: `A workspace asked ${event.host} for it, so that request failed. Sign in from Identities; puddle never opens a sign-in window by itself.`,
+      title: `Sign-in needed: Puddle can't read ${event.source}.`,
+      detail: `A workspace asked ${event.host} for it, so that request failed. Sign in from Identities; Puddle never opens a sign-in window by itself.`,
       link: {
         href: identity ? `/identities/${identity.id}` : "/identities",
         label: "Sign in",
@@ -86,7 +86,7 @@ export class CredentialNotices {
       key: noIdentityKey(event),
       tone: "warning",
       title: `${event.workspace}: ${repoName(event)} answered 401, and no identity covers ${event.owner}.`,
-      detail: `If it is a private repository, attach an identity that covers ${event.owner} on ${event.host} to the workspace; puddle adds no credential on its own. A public repository answers without one.`,
+      detail: `If it is a private repository, attach an identity that covers ${event.owner} on ${event.host} to the workspace; Puddle adds no credential on its own. A public repository answers without one.`,
       link: {
         href: `/workspaces/${encodeURIComponent(event.workspace)}/git`,
         label: "Git tab",
@@ -148,7 +148,7 @@ export class CredentialNotices {
       if (!result.data) {
         this.#denied(
           event,
-          sentence(result.error?.message ?? `puddle couldn't list ${name}`),
+          sentence(result.error?.message ?? `Puddle couldn't list ${name}`),
         );
         return;
       }
@@ -165,7 +165,7 @@ export class CredentialNotices {
     } catch {
       this.#denied(
         event,
-        `puddle couldn't list ${name}: its service isn't answering.`,
+        `Puddle couldn't list ${name}: its service isn't answering.`,
       );
     }
   }

@@ -124,18 +124,18 @@ describe("the screen", () => {
     );
   });
 
-  it("states that puddle sends nothing", async () => {
+  it("states that Puddle sends nothing", async () => {
     await open();
     expect(
-      screen.getByText(/puddle sends nothing about you or your use of it/),
+      screen.getByText(/Puddle sends nothing about you or your use of it/),
     ).toBeInTheDocument();
   });
 
-  it("says when the settings can't be read, and when a newer puddle wrote them", async () => {
+  it("says when the settings can't be read, and when a newer Puddle wrote them", async () => {
     api.down = true;
     render(Page);
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Couldn't read puddle's settings.",
+      "Couldn't read Puddle's settings.",
     );
     cleanup();
     api.down = false;
@@ -147,7 +147,7 @@ describe("the screen", () => {
     });
     render(Page);
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /newer puddle\. Update puddle/,
+      /newer Puddle\. Update Puddle/,
     );
   });
 
@@ -156,31 +156,31 @@ describe("the screen", () => {
       status: 409,
       error: "settings_unreadable",
       message:
-        "puddle cannot read the global settings: global settings must be an object",
+        "Puddle cannot read the global settings: global settings must be an object",
     });
     render(Page);
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Couldn't read puddle's settings.");
+    expect(alert).toHaveTextContent("Couldn't read Puddle's settings.");
     expect(alert).toHaveTextContent("global settings must be an object");
   });
 
   it("lists the stored fields it doesn't know, and nothing when there are none", async () => {
     await open();
-    expect(screen.queryByText(/fields this puddle doesn't know/)).toBeNull();
+    expect(screen.queryByText(/fields this Puddle doesn't know/)).toBeNull();
     cleanup();
     globalSettings.view = null;
     globalSettings.status = "loading";
     api.unknown = ["workspace_defaults.memry", "color"];
     await open();
-    const note = screen.getByText(/fields this puddle doesn't know/);
+    const note = screen.getByText(/fields this Puddle doesn't know/);
     expect(note).toHaveTextContent("workspace_defaults.memry, color");
     expect(note).toHaveTextContent("kept but have no effect");
   });
 
-  it("shows puddle's version and loads the licences when asked", async () => {
+  it("shows Puddle's version and loads the licences when asked", async () => {
     api.version = "9.8.7";
     await open();
-    expect(await screen.findByText("puddle 9.8.7")).toBeInTheDocument();
+    expect(await screen.findByText("Puddle 9.8.7")).toBeInTheDocument();
     await fireEvent.click(screen.getByText("Third-party licences"));
     const text = await screen.findByLabelText("Third-party licences", {
       selector: "pre",
@@ -374,7 +374,7 @@ describe("appearance and notifications", () => {
 describe("notification and inbox switches", () => {
   const rows: [string, keyof typeof api.ui, boolean][] = [
     [
-      "Only when puddle is not the window in front",
+      "Only when Puddle is not the window in front",
       "notify_only_unfocused",
       true,
     ],
@@ -389,7 +389,7 @@ describe("notification and inbox switches", () => {
     ["Keyboard shortcuts in the inbox", "inbox_shortcuts", false],
   ];
 
-  it("shows each switch at puddle's default and saves a change on Save", async () => {
+  it("shows each switch at Puddle's default and saves a change on Save", async () => {
     await open();
     for (const [label, , on] of rows) {
       const box = screen.getByLabelText(label);
@@ -417,7 +417,7 @@ describe("notification and inbox switches", () => {
   it("switches off the focus choice while system notifications are off", async () => {
     await open();
     const only = screen.getByLabelText(
-      "Only when puddle is not the window in front",
+      "Only when Puddle is not the window in front",
     );
     expect(only).toBeEnabled();
     await fireEvent.click(
@@ -560,7 +560,7 @@ describe("Microsoft's server", () => {
       }),
     ).toBeInTheDocument();
     expect(dialog).toHaveTextContent(
-      "puddle downloads the server from Microsoft",
+      "Puddle downloads the server from Microsoft",
     );
     const link = within(dialog).getByRole("link", {
       name: /Microsoft VS Code Server licence terms/,
@@ -640,7 +640,7 @@ describe("Microsoft's server", () => {
     ).not.toBeChecked();
   });
 
-  it("keeps the popup open and says why when puddle refuses", async () => {
+  it("keeps the popup open and says why when Puddle refuses", async () => {
     const dialog = await pick();
     api.refuse.set("PUT /api/consents/{kind}", {
       status: 500,

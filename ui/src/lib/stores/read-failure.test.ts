@@ -15,13 +15,13 @@ describe("readFailure", () => {
 
   it("says what the status means when the body has no message", () => {
     expect(readFailure({}, { status: 401 })).toBe(
-      "puddle didn't accept this app's key.",
+      "Puddle didn't accept this app's key.",
     );
     expect(readFailure({}, { status: 503 })).toBe(
-      "puddle's service hit an error (status 503).",
+      "Puddle's service hit an error (status 503).",
     );
     expect(readFailure(undefined, { status: 404 })).toBe(
-      "puddle answered with status 404.",
+      "Puddle answered with status 404.",
     );
   });
 });

@@ -190,7 +190,7 @@ export class NoticeWatcher {
         tone: "warning",
         title: `${name} stopped without being asked to.`,
         detail:
-          "Nothing in puddle stopped it. Start it again from the workspace list.",
+          "Nothing in Puddle stopped it. Start it again from the workspace list.",
         link: {
           href: `/workspaces/${encodeURIComponent(name)}`,
           label: "Open workspace",

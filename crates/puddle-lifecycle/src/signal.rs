@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! What tells puddle to shut down.
+//! What tells Puddle to shut down.
 
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 
-/// Why puddle is shutting down.
+/// Why Puddle is shutting down.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ShutdownCause {

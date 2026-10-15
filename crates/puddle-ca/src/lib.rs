@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! puddle's per-workspace certificate authority and its leaf certificate cache.
+//! Puddle's per-workspace certificate authority and its leaf certificate cache.
 //!
 //! The proxy terminates TLS only for the hosts a workspace has a credential, secret or capture
 //! profile for (its decrypt set). For those hosts it presents a leaf certificate issued by a CA

@@ -156,7 +156,7 @@
     </p>
     {#if own && !own.ok && git.identities.length === 0 && git.repos.length === 0}
       <p class="warn" role="status">
-        puddle couldn't read this workspace's repository address, so it listed
+        Puddle couldn't read this workspace's repository address, so it listed
         no repository and chose no identity. {own.message} Add them here.
       </p>
     {/if}
@@ -397,7 +397,7 @@
   </section>
 
   <p class="muted note">
-    Credentials stay on this computer: puddle adds them to Git requests as they
+    Credentials stay on this computer: Puddle adds them to Git requests as they
     leave the workspace, and the workspace never holds them. Opening the
     workspace in desktop VS Code is different: code in it can then read the
     editor's own secrets, including a signed-in GitHub token, so only attach

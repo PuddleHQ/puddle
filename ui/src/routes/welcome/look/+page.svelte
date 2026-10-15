@@ -20,7 +20,7 @@
     const result = await theme.set(value);
     if (result.ok) saved = "Theme saved.";
     else
-      problem = `The theme changed here but puddle couldn't save it. ${result.message}`;
+      problem = `The theme changed here but Puddle couldn't save it. ${result.message}`;
   }
 
   async function chooseDensity(value: string) {
@@ -30,7 +30,7 @@
     const result = await density.set(value);
     if (result.ok) saved = "Density saved.";
     else
-      problem = `The density changed here but puddle couldn't save it. ${result.message}`;
+      problem = `The density changed here but Puddle couldn't save it. ${result.message}`;
   }
 </script>
 

@@ -21,7 +21,7 @@ describe("loading", () => {
     expect(store.consents?.vscode_server.state).toBe("not_asked");
   });
 
-  it("fails without a service or on a refusal, and says when a newer puddle wrote them", async () => {
+  it("fails without a service or on a refusal, and says when a newer Puddle wrote them", async () => {
     api.down = true;
     await store.load();
     expect(store.status).toBe("failed");
@@ -43,7 +43,7 @@ describe("loading", () => {
   });
 
   it("keeps the reason a damaged settings file is refused with, from either read", async () => {
-    const reason = "puddle cannot read the global settings: not an object";
+    const reason = "Puddle cannot read the global settings: not an object";
     api.refuse.set("GET /api/settings", {
       status: 409,
       error: "settings_unreadable",
@@ -64,7 +64,7 @@ describe("loading", () => {
     api.refuse.clear();
     api.down = true;
     await store.load();
-    expect(store.reason).toBe("puddle's service isn't answering.");
+    expect(store.reason).toBe("Puddle's service isn't answering.");
     api.down = false;
     await store.load();
     expect(store.status).toBe("ready");
@@ -120,7 +120,7 @@ describe("saving", () => {
     expect(store.view?.ui.notifications).toBe(false);
   });
 
-  it("reports a refusal, a newer puddle and a missing service", async () => {
+  it("reports a refusal, a newer Puddle and a missing service", async () => {
     await store.load();
     api.refuse.set("PUT /api/settings", {
       status: 422,
@@ -143,11 +143,11 @@ describe("saving", () => {
       message: "x",
     });
     const newer = await store.save({});
-    expect(!newer.ok && newer.message).toMatch(/newer puddle/);
+    expect(!newer.ok && newer.message).toMatch(/newer Puddle/);
     api.down = true;
     expect(await store.save({})).toEqual({
       ok: false,
-      message: "puddle's service isn't answering.",
+      message: "Puddle's service isn't answering.",
     });
   });
 });

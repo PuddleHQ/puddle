@@ -57,7 +57,7 @@ export const TYPES: readonly { value: AuditType; label: string }[] = [
   { value: "rule_set_updated", label: "Rule set renamed" },
   { value: "rule_set_deleted", label: "Rule set deleted" },
   { value: "rule_set_switched", label: "Rule set switched" },
-  { value: "rule_set_changed", label: "Rule set updated by puddle" },
+  { value: "rule_set_changed", label: "Rule set updated by Puddle" },
   { value: "system_managed_changed", label: "System managed changed" },
   { value: "audit_trimmed", label: "Log trimmed" },
 ];
@@ -174,34 +174,34 @@ export interface RowView {
 const REASONS: Record<string, string> = {
   rule: "a rule",
   no_rule: "no rule yet",
-  suppressed: "more records came in one second than puddle writes",
+  suppressed: "more records came in one second than Puddle writes",
   merged:
-    "puddle merged the oldest records written while requests waited, to keep the log small (their hosts are not kept)",
-  puddle_endpoint: "puddle's own address",
+    "Puddle merged the oldest records written while requests waited, to keep the log small (their hosts are not kept)",
+  puddle_endpoint: "Puddle's own address",
   ssh_unsupported: "SSH is not supported",
   local_address: "a local address",
   settings_unreadable: "unreadable settings",
-  puddle_request: "puddle's own request",
+  puddle_request: "Puddle's own request",
   push_denied:
     'the push is not on the workspace\'s push list (add it on its Git tab, or turn off "Only push to listed repos")',
   pull_denied:
     'the fetch is not on the workspace\'s pull list (add it on its Git tab, or turn off "Only pull from listed repos")',
   bad_git_path: "the Git address names the repository in more than one way",
   credential_rejected:
-    "the Git host did not accept the credential puddle added",
+    "the Git host did not accept the credential Puddle added",
   credential_unavailable: "the Git credential could not be read",
   credential_ambiguous: "two identities cover the repository",
   git_settings_unavailable: "the workspace's Git settings could not be read",
-  body_too_large: "the request body was too large for puddle to read",
+  body_too_large: "the request body was too large for Puddle to read",
   bad_request: "the request was malformed",
   misdirected_host: "the request was for another host than its connection",
-  expectation_unsupported: "the request asked for more than puddle supports",
+  expectation_unsupported: "the request asked for more than Puddle supports",
   head_too_large: "the request head was too large",
   request_timeout: "the request did not arrive in time",
-  protocol_unsupported: "the request used a protocol puddle does not support",
+  protocol_unsupported: "the request used a protocol Puddle does not support",
 };
 
-/** Why one of puddle's own requests (listing repositories) did not work: the code after
+/** Why one of Puddle's own requests (listing repositories) did not work: the code after
  * `puddle_request_failed:`. */
 const FAILED_REQUEST: Record<string, string> = {
   unreachable: "the host could not be reached",
@@ -219,7 +219,7 @@ const FAILED_PREFIX = "puddle_request_failed:";
 /** Reasons that say something happened to an allowed connection, shown beside the rule. */
 const NOTES: Record<string, string> = {
   guest_tls_rejected:
-    "the tool in the workspace didn't accept puddle's certificate (it may keep its own list of trusted roots)",
+    "the tool in the workspace didn't accept Puddle's certificate (it may keep its own list of trusted roots)",
 };
 
 const DECISIONS: Record<string, { label: string; tone: Tone }> = {
@@ -291,7 +291,7 @@ function closedDetail(reason: string): string {
   if (reason === "workspace_deleted")
     return "closed: its workspace was deleted";
   if (reason === "stale")
-    return "closed: not repeated for 7 days (puddle no longer does this)";
+    return "closed: not repeated for 7 days (Puddle no longer does this)";
   return `closed: ${reason}`;
 }
 
@@ -318,7 +318,7 @@ function connectionDetail(
   const reason =
     failed === null
       ? (REASONS[record.reason] ?? record.reason)
-      : `puddle's own request failed: ${FAILED_REQUEST[failed] ?? failed}`;
+      : `Puddle's own request failed: ${FAILED_REQUEST[failed] ?? failed}`;
   const note = NOTES[record.reason];
   const set = setLabel(record.rule_set);
   if (set !== null) parts.push(set);
@@ -397,7 +397,7 @@ export function describe(record: AuditRecord): RowView {
         type,
         destination: null,
         outcome: null,
-        detail: `${record.count} ${record.count === 1 ? "request" : "requests"} refused for volume (puddle no longer does this)`,
+        detail: `${record.count} ${record.count === 1 ? "request" : "requests"} refused for volume (Puddle no longer does this)`,
       };
     case "rule_created":
     case "rule_expired":
@@ -484,7 +484,7 @@ export function describe(record: AuditRecord): RowView {
   }
 }
 
-/** A record type this build doesn't know (puddle is newer than the app): the row says so, and its
+/** A record type this build doesn't know (Puddle is newer than the app): the row says so, and its
  * raw record is in the expanded view. */
 function unknownRecord(record: never): RowView {
   const raw = record as {
@@ -499,7 +499,7 @@ function unknownRecord(record: never): RowView {
     type,
     destination: null,
     outcome: null,
-    detail: `a record of type "${type}" that this version of puddle's app can't describe; open the row to see it as it was written`,
+    detail: `a record of type "${type}" that this version of Puddle's app can't describe; open the row to see it as it was written`,
   };
 }
 

@@ -22,7 +22,7 @@ pub enum Command {
 /// Arguments that don't form a valid command.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum UsageError {
-    /// An argument puddle doesn't know.
+    /// An argument Puddle doesn't know.
     #[error("unknown argument: {0}")]
     UnknownArgument(String),
     /// No command given.

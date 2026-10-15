@@ -203,7 +203,7 @@ describe("a record as a row", () => {
       }).record,
     );
     expect(merged.detail).toBe(
-      "because puddle merged the oldest records written while requests waited, to keep the log small (their hosts are not kept) · 4200 records",
+      "because Puddle merged the oldest records written while requests waited, to keep the log small (their hosts are not kept) · 4200 records",
     );
     const odd = row(
       connection(3, {
@@ -215,7 +215,7 @@ describe("a record as a row", () => {
     );
     expect(odd.detail).toBe("PUT · because something_new");
   });
-  it("says when the tool in the workspace refused puddle's certificate, beside the rule that allowed it", () => {
+  it("says when the tool in the workspace refused Puddle's certificate, beside the rule that allowed it", () => {
     const refused = row(
       connection(1, {
         decision: "allow",
@@ -225,13 +225,13 @@ describe("a record as a row", () => {
     );
     expect(refused.outcome).toEqual({ label: "Allowed", tone: "allow" });
     expect(refused.detail).toBe(
-      "rule 12 · the tool in the workspace didn't accept puddle's certificate (it may keep its own list of trusted roots)",
+      "rule 12 · the tool in the workspace didn't accept Puddle's certificate (it may keep its own list of trusted roots)",
     );
     const withoutRule = row(
       connection(2, { reason: "guest_tls_rejected", rule_id: null }).record,
     );
     expect(withoutRule.detail).toBe(
-      "the tool in the workspace didn't accept puddle's certificate (it may keep its own list of trusted roots)",
+      "the tool in the workspace didn't accept Puddle's certificate (it may keep its own list of trusted roots)",
     );
   });
   it("flags a secret stand-in that went to a host it is not for", () => {
@@ -244,7 +244,7 @@ describe("a record as a row", () => {
     );
     expect(row(connection(2, {}).record).detail).not.toContain("stand-in");
   });
-  it("shows puddle's own connections as puddle, with its own reason", () => {
+  it("shows Puddle's own connections as Puddle, with its own reason", () => {
     const view = row(
       connection(1, {
         workspace_id: null,
@@ -256,7 +256,7 @@ describe("a record as a row", () => {
     );
     expect(view.workspace).toBeNull();
     expect(view.detail).toBe(
-      "because puddle's own request · 0 B up, 2.0 KB down",
+      "because Puddle's own request · 0 B up, 2.0 KB down",
     );
   });
   it("words the reasons the proxy refuses a Git request or a request on its own", () => {
@@ -287,7 +287,7 @@ describe("a record as a row", () => {
       "because a_code_from_a_newer_puddle",
     );
   });
-  it("shows a listing request of puddle's that failed as failed, with why", () => {
+  it("shows a listing request of Puddle's that failed as failed, with why", () => {
     const view = row(
       connection(1, {
         workspace_id: null,
@@ -300,7 +300,7 @@ describe("a record as a row", () => {
     );
     expect(view.outcome).toEqual({ label: "Failed", tone: "warn" });
     expect(view.detail).toBe(
-      "because puddle's own request failed: the host could not be reached",
+      "because Puddle's own request failed: the host could not be reached",
     );
     const unknown = row(
       connection(2, {
@@ -367,7 +367,7 @@ describe("a record as a row", () => {
     });
     for (const [reason, detail] of [
       ["workspace_deleted", "closed: its workspace was deleted"],
-      ["stale", "closed: not repeated for 7 days (puddle no longer does this)"],
+      ["stale", "closed: not repeated for 7 days (Puddle no longer does this)"],
     ] as const) {
       expect(
         row({
@@ -428,7 +428,7 @@ describe("a record as a row", () => {
     ).toMatchObject({
       workspace: "shop",
       destination: null,
-      detail: "40 requests refused for volume (puddle no longer does this)",
+      detail: "40 requests refused for volume (Puddle no longer does this)",
     });
     expect(
       row({
@@ -437,7 +437,7 @@ describe("a record as a row", () => {
         workspace_id: "shop",
         count: 1,
       } as AuditRecord).detail,
-    ).toBe("1 request refused for volume (puddle no longer does this)");
+    ).toBe("1 request refused for volume (Puddle no longer does this)");
     expect(
       row({
         type: "audit_trimmed",

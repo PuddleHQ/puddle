@@ -75,10 +75,10 @@ impl Exchange<'_> {
                 ..Problem::new(
                     ProblemKind::RateLimited,
                     if primary {
-                        format!("{who}'s rate limit is used up; puddle asks again once it resets")
+                        format!("{who}'s rate limit is used up; Puddle asks again once it resets")
                     } else {
                         format!(
-                            "{who} is limiting how fast puddle may ask; puddle waits before it asks again"
+                            "{who} is limiting how fast Puddle may ask; Puddle waits before it asks again"
                         )
                     },
                 )
@@ -96,7 +96,7 @@ impl Exchange<'_> {
                 format!("{who} has no {} that this token can see", self.missing),
             ),
             Verdict::Other(status) => Problem::bad_answer(format!(
-                "{who} answered {status}, which puddle has no rule for"
+                "{who} answered {status}, which Puddle has no rule for"
             )),
         }
     }
@@ -263,7 +263,7 @@ mod tests {
             (
                 TransportError::TooLarge,
                 ProblemKind::BadAnswer,
-                "the host answered something puddle does not understand: the answer is larger than 16 MiB",
+                "the host answered something Puddle does not understand: the answer is larger than 16 MiB",
             ),
             (
                 TransportError::BadToken,

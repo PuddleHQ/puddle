@@ -334,7 +334,7 @@ async fn direct_ssh_gives_microsofts_hosts_to_that_workspace_only() {
 async fn unreadable_settings_leave_system_managed_as_it_was() {
     let api = start().await;
     assert!(decide(&api, "box", "open-vsx.org").is_allow());
-    // A document from a newer puddle can't be read: the derivation stops, nothing is dropped.
+    // A document from a newer Puddle can't be read: the derivation stops, nothing is dropped.
     api.settings
         .save_global(json!({"schema_version": 99}))
         .unwrap();

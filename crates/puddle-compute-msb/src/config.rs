@@ -37,14 +37,14 @@ impl std::fmt::Debug for RegistryProxy {
 /// Everything [`crate::MsbRuntime::open`] needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MsbConfig {
-    /// puddle's private msb home (database, image cache, sandboxes, volumes, logs).
+    /// Puddle's private msb home (database, image cache, sandboxes, volumes, logs).
     pub home: PathBuf,
     /// The bundled `msb` binary.
     pub msb: PathBuf,
     /// The `libkrunfw` library released with it.
     pub libkrunfw: PathBuf,
     /// The only directory file mounts may come from: it holds just the files meant for guests,
-    /// never puddle's data (database, tokens, CA keys).
+    /// never Puddle's data (database, tokens, CA keys).
     pub guest_share: PathBuf,
     /// SSH server settings.
     pub ssh: SshConfig,
@@ -52,7 +52,7 @@ pub struct MsbConfig {
     /// (`puddle-certs`), so pulls work behind a TLS-intercepting company proxy.
     /// Added to the platform's roots, never instead of them.
     pub registry_roots: Vec<String>,
-    /// Where image pulls go: puddle's pull proxy. Given to the SDK's registry client
+    /// Where image pulls go: Puddle's pull proxy. Given to the SDK's registry client
     /// directly, so the token is never in the process environment. `None` leaves pulls
     /// to the process environment, which is what tests without a pull proxy want.
     pub registry_proxy: Option<RegistryProxy>,
@@ -162,7 +162,7 @@ impl MsbConfig {
     }
 
     /// Checks that `host` lies under [`MsbConfig::guest_share`] after resolving symlinks and
-    /// `..`, so a mount can never expose puddle's own data.
+    /// `..`, so a mount can never expose Puddle's own data.
     ///
     /// # Errors
     ///

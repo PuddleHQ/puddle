@@ -97,7 +97,7 @@ impl LoginKeeper {
 }
 
 /// Whether `workspace` captures logins: its own setting, else the global one, else on. Settings
-/// that cannot be read count as on (the safer reading: puddle keeps the token), with the reason
+/// that cannot be read count as on (the safer reading: Puddle keeps the token), with the reason
 /// logged.
 pub(crate) fn capture_enabled(
     settings: &dyn puddle_api::SettingsRepo,

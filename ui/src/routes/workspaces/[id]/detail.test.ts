@@ -402,7 +402,7 @@ describe("the overview", () => {
       screen.getByText(/delete the workspace below; nothing is lost/),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/deleting only removes the workspace from puddle/),
+      screen.getByText(/deleting only removes the workspace from Puddle/),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Delete workspace…" }),
@@ -411,7 +411,7 @@ describe("the overview", () => {
 
   it("shows why the settings can't be read when the API says, from either read", async () => {
     const reason =
-      "puddle cannot read the settings of workspace demo: settings must be an object";
+      "Puddle cannot read the settings of workspace demo: settings must be an object";
     for (const path of [
       "/api/settings/workspaces/{workspace}",
       "/api/settings",
@@ -507,12 +507,12 @@ describe("the network tab", () => {
     rulesStore.status = "failed";
     expect(
       await screen.findByText(
-        /Couldn't read the requests\. puddle's service isn't answering\./,
+        /Couldn't read the requests\. Puddle's service isn't answering\./,
       ),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        /Couldn't read the rules\. puddle's service isn't answering\./,
+        /Couldn't read the rules\. Puddle's service isn't answering\./,
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("Nothing is waiting for demo.")).toBeNull();
@@ -620,7 +620,7 @@ describe("the settings tab", () => {
       screen.getByText(/A change applies at the next restart/),
     ).toBeInTheDocument();
     expect(screen.getAllByText("global setting").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("puddle's default").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Puddle's default").length).toBeGreaterThan(0);
     for (const label of [
       "This computer (loopback)",
       "Private networks",
@@ -636,12 +636,12 @@ describe("the settings tab", () => {
 
   it("lists stored fields it doesn't know, only when there are some", async () => {
     await open();
-    expect(screen.queryByText(/fields this puddle doesn't know/)).toBeNull();
+    expect(screen.queryByText(/fields this Puddle doesn't know/)).toBeNull();
     cleanup();
     api.unknown = { demo: ["clipboard_reed"] };
     await open();
     expect(
-      screen.getByText(/fields this puddle doesn't know/),
+      screen.getByText(/fields this Puddle doesn't know/),
     ).toHaveTextContent("clipboard_reed");
   });
 

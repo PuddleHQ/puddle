@@ -15,7 +15,7 @@ export type ParsedRepo =
   ({ ok: true } & RepoRef) | { ok: false; message: string };
 
 const SHAPE =
-  "That is not a repository address puddle can read. Use https://github.com/owner/repo or https://dev.azure.com/organisation/project/_git/repo.";
+  "That is not a repository address Puddle can read. Use https://github.com/owner/repo or https://dev.azure.com/organisation/project/_git/repo.";
 
 const NAME = /^[a-z0-9._-]{1,100}$/;
 // An Azure DevOps project or repository name: any letter or space, but nothing that ends or splits

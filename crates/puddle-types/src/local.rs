@@ -16,7 +16,7 @@ use crate::ValidationError;
 /// A class of local destination with its own toggle. Everything outside these is public.
 ///
 /// A toggle only *permits* its category; each destination still needs an allow rule or an
-/// approval. puddle's own endpoints are not a category: no toggle reaches them.
+/// approval. Puddle's own endpoints are not a category: no toggle reaches them.
 ///
 /// Non-exhaustive: a "company network" category may follow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

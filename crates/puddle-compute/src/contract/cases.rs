@@ -51,7 +51,7 @@ cases! {
     unknown_image_fails_create_cleanly => "assumed",
     create_boots_and_returns_owning_handle => "observed on msb 0.7.6 (create as owner, list); puddle_owned from the owner label",
     create_refuses_a_taken_name => "assumed",
-    invalid_spec_is_refused_before_anything_exists => "puddle-side check (SandboxSpec::validate)",
+    invalid_spec_is_refused_before_anything_exists => "Puddle-side check (SandboxSpec::validate)",
     stop_then_start_boots_again => "observed on msb 0.7.6 (status after stop, restart); stop twice: assumed",
     dropping_the_owning_handle_stops_the_vm => "observed on msb 0.7.6 (dropping the owner handle: Crashed); msb 0.7.7: Stopped; the case accepts either",
     get_readopts_a_running_sandbox_without_owning_it => "observed on msb 0.7.6 (re-adopting a running sandbox)",
@@ -68,7 +68,7 @@ cases! {
     owned_disk_survives_restart_not_remove => "observed on msb 0.7.6 (owned disk kept across restart, gone with the sandbox)",
     named_volume_survives_restart_and_remove => "observed on msb 0.7.6 (volume data kept across restart, recreate and remove; reattach by name)",
     volume_capacity_reads_back => "observed on msb 0.7.6 (volume capacity reads back); duplicate create: assumed",
-    second_attach_is_refused_naming_the_holder => "observed on msb 0.7.6 (second attach refused, leaving a Stopped record); holder named by puddle (ADR 0006 point 8)",
+    second_attach_is_refused_naming_the_holder => "observed on msb 0.7.6 (second attach refused, leaving a Stopped record); holder named by Puddle (ADR 0006 point 8)",
     failed_create_leaves_a_stale_dir_unless_fixed => "observed on msb 0.7.6 (a wrong-size volume error leaves a stale directory)",
     missing_volume_fails_create => "assumed",
     ssh_server_speaks_first => "observed on msb 0.7.6 (SSH banner); full SSH exec is covered by the VM tests",
@@ -221,7 +221,7 @@ async fn create_boots_and_returns_owning_handle<R: Runtime>(c: &Case<'_, R>) -> 
         .into_iter()
         .find(|i| i.name == name.as_str())
         .is_some_and(|i| i.puddle_owned);
-    check!(owned, "list doesn't mark puddle's sandbox as puddle-owned");
+    check!(owned, "list doesn't mark Puddle's sandbox as Puddle-owned");
     Ok(())
 }
 

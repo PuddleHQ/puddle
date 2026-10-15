@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-secrets"
-description = "where puddle gets a secret on the host: signed-in gh, Git Credential Manager, a pasted token in the OS store"
+description = "where Puddle gets a secret on the host: signed-in gh, Git Credential Manager, a pasted token in the OS store"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -4,11 +4,11 @@
 use puddle_types::{GuestFile, GuestPath};
 use rustls::pki_types::CertificateDer;
 
-/// Directory under the guest's `update-ca-certificates` input where puddle's CAs go, one file
+/// Directory under the guest's `update-ca-certificates` input where Puddle's CAs go, one file
 /// each (`update-ca-certificates` and `openssl rehash` read one certificate per file).
 pub(crate) const GUEST_CA_DIR: &str = "/usr/local/share/ca-certificates/puddle";
 
-/// All of puddle's CAs in one PEM file, for tools that take a bundle path
+/// All of Puddle's CAs in one PEM file, for tools that take a bundle path
 /// (`NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`), which do not read the system store.
 pub const GUEST_BUNDLE_PATH: &str = "/etc/puddle/puddle-cas.pem";
 
@@ -51,7 +51,7 @@ impl CaCertificate {
     }
 }
 
-/// The puddle CAs one workspace's guest trusts: a list, so a later dev CA is one more
+/// The Puddle CAs one workspace's guest trusts: a list, so a later dev CA is one more
 /// entry next to the proxy CA rather than a second mechanism.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TrustBundle {
@@ -123,8 +123,8 @@ mod tests {
     #[test]
     fn the_ca_text_and_every_guest_file_have_lf_line_ends_on_any_host() {
         let bundle = TrustBundle::new()
-            .with(cert("puddle proxy CA"))
-            .with(cert("puddle second CA"));
+            .with(cert("Puddle proxy CA"))
+            .with(cert("Puddle second CA"));
         for ca in bundle.certificates() {
             let text = ca.pem();
             assert!(
@@ -149,8 +149,8 @@ mod tests {
 
     #[test]
     fn each_ca_gets_its_own_file_and_all_share_the_bundle_file() {
-        let proxy = cert("puddle proxy CA");
-        let dev = cert("puddle second CA");
+        let proxy = cert("Puddle proxy CA");
+        let dev = cert("Puddle second CA");
         let bundle = TrustBundle::new()
             .with(proxy.clone())
             .with(dev.clone())

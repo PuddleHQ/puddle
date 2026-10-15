@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Where puddle gets a secret on the host.
+//! Where Puddle gets a secret on the host.
 //!
 //! Three sources behind one interface, [`Fetch`]:
 //!
 //! - **`gh`**: the token of a named, signed-in GitHub CLI account.
 //! - **Git credential**: one HTTPS URL with its path, asked of Git Credential Manager (or whatever
 //!   credential helper Git is set up with) through `git credential fill`.
-//! - **Stored**: a token the user pasted, kept in the OS credential store under puddle's own name.
+//! - **Stored**: a token the user pasted, kept in the OS credential store under Puddle's own name.
 //!
 //! The list is closed ([`SourceSpec`]): no variant carries a command line, and every name that
 //! reaches a child process is validated first. No source ever opens a sign-in window: tools run

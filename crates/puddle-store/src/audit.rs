@@ -41,7 +41,7 @@ pub enum AuditError {
 pub struct ConnectionRecord {
     /// Epoch ms.
     pub ts: u64,
-    /// The workspace; `null` for puddle's own connections (`origin: puddle`).
+    /// The workspace; `null` for Puddle's own connections (`origin: puddle`).
     #[serde(alias = "sandbox_id")]
     pub workspace_id: Option<String>,
     /// Whose connection it is: `workspace` or `puddle`. Absent in records written before it
@@ -122,7 +122,7 @@ impl ConnectionRecord {
         }
     }
 
-    /// The `suppressed` summary for a workspace, or for puddle's own connections when `workspace` is
+    /// The `suppressed` summary for a workspace, or for Puddle's own connections when `workspace` is
     /// `None`.
     pub(crate) fn suppressed_summary(
         ts: u64,
@@ -446,7 +446,7 @@ pub enum AuditRecord {
         /// Who switched it.
         actor: String,
     },
-    /// A puddle update changed a built-in set's entries (R-36).
+    /// A Puddle update changed a built-in set's entries (R-36).
     RuleSetChanged {
         /// Epoch ms.
         ts: u64,
@@ -457,7 +457,7 @@ pub enum AuditRecord {
         /// Patterns the update removed.
         removed: Vec<String>,
     },
-    /// The reasons puddle allows System managed hosts changed, because the user's setup did
+    /// The reasons Puddle allows System managed hosts changed, because the user's setup did
     /// (R-41).
     SystemManagedChanged {
         /// Epoch ms.
@@ -570,7 +570,7 @@ impl AuditRecord {
     }
 
     /// Whose connection the record describes: `connection` records only (every other record
-    /// has none). A puddle connection is the one with no workspace, which is how the `origin`
+    /// has none). A Puddle connection is the one with no workspace, which is how the `origin`
     /// filter finds it without a column of its own.
     #[must_use]
     pub fn origin(&self) -> Option<ConnectionOrigin> {

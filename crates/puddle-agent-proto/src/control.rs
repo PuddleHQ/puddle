@@ -37,7 +37,7 @@ pub const MAX_LINE: usize = 4096;
 pub enum AgentMessage {
     /// Sent first on every control stream.
     Hello {
-        /// The agent's version (puddle's version at build time).
+        /// The agent's version (Puddle's version at build time).
         agent_version: String,
         /// [`PROTOCOL_VERSION`] of the agent.
         protocol: u32,

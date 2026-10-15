@@ -118,7 +118,7 @@ describe("useIdentities", () => {
     const result = await useIdentities("w", [1], label, store());
     expect(result).toEqual({
       ok: false,
-      message: "puddle couldn't read which identities the workspace has.",
+      message: "Puddle couldn't read which identities the workspace has.",
     });
   });
 });

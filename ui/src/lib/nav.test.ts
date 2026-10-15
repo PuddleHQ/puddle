@@ -23,15 +23,15 @@ describe("nav", () => {
   });
 
   it("titles pages, with the pending count only on the inbox", () => {
-    expect(documentTitle("/inbox", 0)).toBe("Inbox - puddle");
-    expect(documentTitle("/inbox", 3)).toBe("Inbox (3) - puddle");
-    expect(documentTitle("/rules", 3)).toBe("Rules - puddle");
-    expect(documentTitle("/nope", 3)).toBe("Not found - puddle");
+    expect(documentTitle("/inbox", 0)).toBe("Inbox - Puddle");
+    expect(documentTitle("/inbox", 3)).toBe("Inbox (3) - Puddle");
+    expect(documentTitle("/rules", 3)).toBe("Rules - Puddle");
+    expect(documentTitle("/nope", 3)).toBe("Not found - Puddle");
   });
 
   it("titles the first-run steps by their name, with no pending count", () => {
-    expect(documentTitle("/welcome", 3)).toBe("Welcome - puddle");
-    expect(documentTitle("/welcome/connect", 3)).toBe("Connect - puddle");
-    expect(documentTitle("/welcome/unknown", 0)).toBe("Welcome - puddle");
+    expect(documentTitle("/welcome", 3)).toBe("Welcome - Puddle");
+    expect(documentTitle("/welcome/connect", 3)).toBe("Connect - Puddle");
+    expect(documentTitle("/welcome/unknown", 0)).toBe("Welcome - Puddle");
   });
 });

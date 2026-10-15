@@ -10,7 +10,7 @@ FAIL  Test boot             couldn't prepare the test VM's files
       from: temp dir: Access is denied. (os error 5)
 ok    Global Secure Access  client not installed
 
-1 problem to fix before puddle can run sandboxes. (1.2 s)
+1 problem to fix before Puddle can run sandboxes. (1.2 s)
 
 ---
 {

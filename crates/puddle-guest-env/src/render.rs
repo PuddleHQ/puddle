@@ -38,11 +38,11 @@ pub const GRADLE_INIT_RELATIVE: &str = "init.d/puddle-proxy.gradle";
 
 const SUDOERS_MODE: u32 = 0o440;
 
-/// Mode of a Docker CLI config puddle creates: `docker login` stores credentials in it later.
+/// Mode of a Docker CLI config Puddle creates: `docker login` stores credentials in it later.
 const DOCKER_CONFIG_MODE: u32 = 0o600;
 
 /// Header of every generated file (the boot hook rewrites them at every boot).
-const GENERATED: &str = "Written by puddle at every boot; changes here are overwritten.";
+const GENERATED: &str = "Written by Puddle at every boot; changes here are overwritten.";
 
 /// Java's own `http.nonProxyHosts` default, repeated because setting the property replaces it.
 const JDK_NON_PROXY_DEFAULTS: [&str; 5] = ["localhost", "127.*", "[::1]", "0.0.0.0", "[::0]"];
@@ -61,7 +61,7 @@ pub struct GuestProxyConfig {
 /// `ImageConfig::env`: `(name, value)` in image order, the last one wins).
 ///
 /// The image env matters for three things: `JAVA_TOOL_OPTIONS` and `MAVEN_ARGS` keep the image's
-/// value with puddle's appended, and `GRADLE_USER_HOME` / `DOCKER_CONFIG` move the per-user
+/// value with Puddle's appended, and `GRADLE_USER_HOME` / `DOCKER_CONFIG` move the per-user
 /// files. The image's own `*_PROXY` values are replaced: the agent is the guest's only route out.
 ///
 /// ```
@@ -255,7 +255,7 @@ impl Vars {
 fn apt_conf(proxy_url: &str, bypass: &[NoProxyEntry]) -> String {
     let mut out = format!(
         "// {GENERATED}\n\
-         // apt's downloads go through puddle's proxy, whatever environment apt starts with.\n\
+         // apt's downloads go through Puddle's proxy, whatever environment apt starts with.\n\
          Acquire::http::Proxy \"{proxy_url}\";\n\
          Acquire::https::Proxy \"{proxy_url}\";\n"
     );
@@ -272,7 +272,7 @@ fn apt_conf(proxy_url: &str, bypass: &[NoProxyEntry]) -> String {
 fn sudoers(env: &GuestEnv) -> String {
     let names = join(env.iter().map(|(k, _)| k.to_owned()), " ");
     format!(
-        "# {GENERATED}\n# Keeps puddle's proxy variables under sudo.\nDefaults env_keep += \"{names}\"\n"
+        "# {GENERATED}\n# Keeps Puddle's proxy variables under sudo.\nDefaults env_keep += \"{names}\"\n"
     )
 }
 
@@ -311,7 +311,7 @@ fn gradle_init(proxy: SocketAddr, java_bypass: &str) -> String {
     let port = proxy.port();
     format!(
         "// {GENERATED}\n\
-         // Gradle keeps puddle's proxy even when JAVA_TOOL_OPTIONS is cleared.\n\
+         // Gradle keeps Puddle's proxy even when JAVA_TOOL_OPTIONS is cleared.\n\
          [\n    \
          'http.proxyHost': '{host}',\n    \
          'http.proxyPort': '{port}',\n    \
@@ -325,7 +325,7 @@ fn gradle_init(proxy: SocketAddr, java_bypass: &str) -> String {
 
 /// The one line that makes `ssh` read [`SSH_CONFIG_GUEST`]'s folder, for an image whose
 /// `ssh_config` doesn't include it (Debian's does). The file is the image's, so it is merged,
-/// not replaced: puddle adds the line when it is missing and touches nothing else.
+/// not replaced: Puddle adds the line when it is missing and touches nothing else.
 fn ssh_config_include() -> Result<GuestFile, ConfigError> {
     let spec = MergeSpec::new(
         MergeFormat::SshConfig,
@@ -368,7 +368,7 @@ fn ssh_config(settings: &ProxySettings) -> Result<String, ConfigError> {
 /// The Docker CLI passes these to every container and build it starts. Containers reach the
 /// guest's proxy at the bridge gateway, not at loopback; the bypass list is the guest's.
 ///
-/// The file is the user's (`docker login` keeps `auths` and `credHelpers` in it), so puddle owns
+/// The file is the user's (`docker login` keeps `auths` and `credHelpers` in it), so Puddle owns
 /// only `proxies.default` and merges it in; other daemons' `proxies` entries stay too.
 fn docker_cli_config(container: SocketAddr, no_proxy: &str) -> Result<MergeSpec, ConfigError> {
     let proxy = url(container);
@@ -474,8 +474,8 @@ mod tests {
         assert_eq!(
             text(file_at(&c, APT_CONF_GUEST)),
             "\
-// Written by puddle at every boot; changes here are overwritten.
-// apt's downloads go through puddle's proxy, whatever environment apt starts with.
+// Written by Puddle at every boot; changes here are overwritten.
+// apt's downloads go through Puddle's proxy, whatever environment apt starts with.
 Acquire::http::Proxy \"http://127.0.0.1:3128\";
 Acquire::https::Proxy \"http://127.0.0.1:3128\";
 Acquire::http::Proxy::localhost \"DIRECT\";
@@ -494,7 +494,7 @@ Acquire::https::Proxy::172.17.0.1 \"DIRECT\";
         assert_eq!(
             text(file_at(&c, SSH_CONFIG_GUEST)),
             "\
-# Written by puddle at every boot; changes here are overwritten.
+# Written by Puddle at every boot; changes here are overwritten.
 # SSH from a workspace is not supported yet: ssh runs the agent as its ProxyCommand, which
 # refuses the connection and says why. Loopback and the container bridge stay direct (the
 # agent checks the address). A ProxyCommand or ProxyJump in ~/.ssh/config comes first and
@@ -579,8 +579,8 @@ Match host \"*,!localhost,!::1\"
         assert_eq!(
             text(file_at(&c, SUDOERS_GUEST)),
             "\
-# Written by puddle at every boot; changes here are overwritten.
-# Keeps puddle's proxy variables under sudo.
+# Written by Puddle at every boot; changes here are overwritten.
+# Keeps Puddle's proxy variables under sudo.
 Defaults env_keep += \"CARGO_NET_GIT_FETCH_WITH_CLI ELECTRON_GET_USE_PROXY \
 GLOBAL_AGENT_HTTPS_PROXY GLOBAL_AGENT_HTTP_PROXY GLOBAL_AGENT_NO_PROXY HTTPS_PROXY HTTP_PROXY \
 JAVA_TOOL_OPTIONS MAVEN_ARGS NODE_USE_ENV_PROXY NO_PROXY YARN_HTTPS_PROXY YARN_HTTP_PROXY \
@@ -622,7 +622,7 @@ http_proxy https_proxy no_proxy\"
         let expected = format!(
             "\
 <?xml version=\"1.0\" encoding=\"UTF-8\"?>
-<!-- Written by puddle at every boot; changes here are overwritten.
+<!-- Written by Puddle at every boot; changes here are overwritten.
      Maven's global settings through MAVEN_ARGS (-gs); ~/.m2/settings.xml still applies on top. -->
 <settings xmlns=\"http://maven.apache.org/SETTINGS/1.0.0\"
           xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"
@@ -644,8 +644,8 @@ http_proxy https_proxy no_proxy\"
             text(file_at(&c, "/root/.gradle/init.d/puddle-proxy.gradle")),
             format!(
                 "\
-// Written by puddle at every boot; changes here are overwritten.
-// Gradle keeps puddle's proxy even when JAVA_TOOL_OPTIONS is cleared.
+// Written by Puddle at every boot; changes here are overwritten.
+// Gradle keeps Puddle's proxy even when JAVA_TOOL_OPTIONS is cleared.
 [
     'http.proxyHost': '127.0.0.1',
     'http.proxyPort': '3128',
@@ -696,7 +696,7 @@ http_proxy https_proxy no_proxy\"
         };
         let out = String::from_utf8(out).unwrap();
         assert!(out.starts_with("{\n\t\"auths\": {\n\t\t\"registry.example.test\": {\n\t\t\t\"auth\": \"dTpw\"\n\t\t}\n\t},\n\t\"proxies\": {"), "{out}");
-        // Only puddle's other files are written whole.
+        // Only Puddle's other files are written whole.
         assert!(
             c.files
                 .iter()
@@ -756,7 +756,7 @@ http_proxy https_proxy no_proxy\"
             Some("-B -gs /etc/puddle/maven/settings.xml")
         );
 
-        // A value that already carries puddle's (an image built from a puddle workspace) isn't doubled.
+        // A value that already carries Puddle's (an image built from a Puddle workspace) isn't doubled.
         let again = image(&[
             ("JAVA_TOOL_OPTIONS", java),
             ("MAVEN_ARGS", c.env.get("MAVEN_ARGS").unwrap()),

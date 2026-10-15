@@ -14,7 +14,7 @@ import {
 } from "./theme.ts";
 
 /**
- * The reactive theme choice. The stored choice lives in puddle's settings (the API's address
+ * The reactive theme choice. The stored choice lives in Puddle's settings (the API's address
  * changes on every launch, so the page can't keep it); localStorage only holds a hint that is
  * applied before the first paint. `init()` once in the root layout, then `sync()`.
  */

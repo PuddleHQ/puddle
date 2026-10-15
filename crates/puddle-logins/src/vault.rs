@@ -66,7 +66,7 @@ pub(crate) struct Saved {
     pub(crate) real: Zeroizing<String>,
 }
 
-/// The credential store, with puddle's own entry names.
+/// The credential store, with Puddle's own entry names.
 #[derive(Clone)]
 pub(crate) struct Vault {
     store: Arc<dyn SecretStore>,

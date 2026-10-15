@@ -106,7 +106,7 @@ impl Gate {
         }
     }
 
-    /// Closes the gate ([`GateState::Down`]), e.g. when puddle finds the VM gone.
+    /// Closes the gate ([`GateState::Down`]), e.g. when Puddle finds the VM gone.
     pub fn close(&self) {
         self.set(GateState::Down);
     }
@@ -138,7 +138,7 @@ pub enum GatedError {
 }
 
 /// A booted sandbox whose exec and SSH go through its [`Gate`]. This is the handle the rest of
-/// puddle (SSH endpoint, API) uses; only puddle's own maintenance goes around the gate.
+/// Puddle (SSH endpoint, API) uses; only Puddle's own maintenance goes around the gate.
 #[derive(Debug)]
 pub struct GatedSandbox<S> {
     inner: S,
@@ -224,7 +224,7 @@ impl<S: Sandbox> GatedSandbox<S> {
         self.inner.stop().await
     }
 
-    /// The handle without the gate, for puddle's own maintenance only (`fstrim` before a stop).
+    /// The handle without the gate, for Puddle's own maintenance only (`fstrim` before a stop).
     /// Never hand it to a user-facing path.
     #[must_use]
     pub fn ungated(&self) -> &S {

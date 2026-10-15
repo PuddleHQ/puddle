@@ -53,7 +53,7 @@ export interface paths {
         };
         get?: never;
         /**
-         * Records the user's answer to a consent prompt, with the terms version shown. puddle stamps
+         * Records the user's answer to a consent prompt, with the terms version shown. Puddle stamps
          *     the time.
          */
         put: operations["put_consent"];
@@ -133,9 +133,9 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Starts a sign-in the user finishes outside puddle: `gh` shows a one-time code and an address,
+         * Starts a sign-in the user finishes outside Puddle: `gh` shows a one-time code and an address,
          *     Git Credential Manager opens its own window. Only from a click; a request from a workspace
-         *     never does this. Check the credential until it reads; puddle ends an unfinished sign-in after
+         *     never does this. Check the credential until it reads; Puddle ends an unfinished sign-in after
          *     five minutes.
          */
         post: operations["sign_in"];
@@ -190,7 +190,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Checks this computer for what puddle needs (virtualization, the hypervisor, the bundled
+         * Checks this computer for what Puddle needs (virtualization, the hypervisor, the bundled
          *     runtime, a test boot) and says the exact fix for each problem. It needs no administrator
          *     rights. With the test boot it takes a few seconds and up to about 30; checks that overlap run
          *     one after another.
@@ -292,7 +292,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** puddle's version and the API contract's version. */
+        /** Puddle's version and the API contract's version. */
         get: operations["health"];
         put?: never;
         post?: never;
@@ -429,7 +429,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The proxy setup puddle sees (PAC, WPAD, fixed proxy or environment), how it signs in to the
+         * The proxy setup Puddle sees (PAC, WPAD, fixed proxy or environment), how it signs in to the
          *     company proxy, the company roots copied into workspaces, the route chosen per destination
          *     and whether image pulls go through the pull proxy. Safe to show: it holds no password, token,
          *     proxy credential or PAC script. A client refetches on the `network_changed` event.
@@ -525,7 +525,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * What puddle did on its own that failed and has not been put right: a sweep that could not
+         * What Puddle did on its own that failed and has not been put right: a sweep that could not
          *     write, a clean-up that left something behind, a step at start-up that did not finish. Each
          *     entry names what went wrong and what to do; one ends by itself when its cause does. A client
          *     refetches on the `problems_changed` event.
@@ -704,7 +704,7 @@ export interface paths {
         /** The global settings and the effective values of a workspace without overrides. */
         get: operations["get_global"];
         /**
-         * Replaces the global settings listed in the body; `null` falls back to puddle's default.
+         * Replaces the global settings listed in the body; `null` falls back to Puddle's default.
          *     Consents are changed through `/api/consents`.
          */
         put: operations["put_global"];
@@ -789,7 +789,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Opens a running workspace in VS Code: on the desktop (puddle opens it) or in the browser
+         * Opens a running workspace in VS Code: on the desktop (Puddle opens it) or in the browser
          *     (the response has the URL, the caller opens it).
          */
         post: operations["attach_workspace"];
@@ -1096,7 +1096,7 @@ export interface components {
              *     installed).
              */
             message: string | null;
-            /** @description Whether puddle opened an editor itself (desktop mode, when it worked). */
+            /** @description Whether Puddle opened an editor itself (desktop mode, when it worked). */
             opened: boolean;
             /** @description Where the browser editor is, in browser mode; the caller opens it. */
             url: string | null;
@@ -1184,7 +1184,7 @@ export interface components {
         };
         /**
          * @description One audit record (rules spec R-24): a tagged union on `type`. `host`, `path` and the like come
-         *     from the guest, so escape them when rendering. Records written by an older puddle lack the
+         *     from the guest, so escape them when rendering. Records written by an older Puddle lack the
          *     fields added since, which read as `null`.
          */
         AuditRecord: {
@@ -1256,7 +1256,7 @@ export interface components {
              *     upstream route is configured.
              */
             upstream: string | null;
-            /** @description The workspace; `null` for puddle's own connections (`origin` is `puddle`). */
+            /** @description The workspace; `null` for Puddle's own connections (`origin` is `puddle`). */
             workspace_id: string | null;
         } | {
             /** @description The request. */
@@ -1523,7 +1523,7 @@ export interface components {
             /** @description Where its value comes from. */
             source: components["schemas"]["CredentialSource"];
         };
-        /** @description Whether puddle can read a credential's value now. Never the value. */
+        /** @description Whether Puddle can read a credential's value now. Never the value. */
         CheckResult: {
             /** @description True when the way out is for the user to sign in. */
             needs_sign_in: boolean;
@@ -1587,7 +1587,7 @@ export interface components {
          * @enum {string}
          */
         ConsentKind: "telemetry" | "crash_reports" | "vscode_server";
-        /** @description Records the user's answer to a consent prompt. puddle stamps the time. */
+        /** @description Records the user's answer to a consent prompt. Puddle stamps the time. */
         ConsentRequest: {
             /** @description Agreed or declined. */
             decision: components["schemas"]["ConsentDecision"];
@@ -1597,7 +1597,7 @@ export interface components {
              */
             terms_version: string;
         };
-        /** @description Every consent puddle asks for. */
+        /** @description Every consent Puddle asks for. */
         Consents: {
             /** @description Crash reports. */
             crash_reports: components["schemas"]["Consent"];
@@ -1727,7 +1727,7 @@ export interface components {
          */
         DensityChoice: "comfortable" | "compact";
         /**
-         * @description What puddle knows about a development certificate on this computer (the ASP.NET one that
+         * @description What Puddle knows about a development certificate on this computer (the ASP.NET one that
          *     `dotnet dev-certs` makes), for the one line the certificates step shows.
          * @enum {string}
          */
@@ -1745,7 +1745,7 @@ export interface components {
             fix: string | null;
             /**
              * @description Which check, as a stable `snake_case` code (`virtualization`, `hypervisor`, `runtime`,
-             *     `test_boot`, ...). A newer puddle may add codes: show an unknown one by its title.
+             *     `test_boot`, ...). A newer Puddle may add codes: show an unknown one by its title.
              */
             id: string;
             /** @description How it came out. */
@@ -1788,7 +1788,7 @@ export interface components {
          * @enum {string}
          */
         Effect: "allow" | "deny";
-        /** @description The values a workspace gets: its override, else the global value, else puddle's default. */
+        /** @description The values a workspace gets: its override, else the global value, else Puddle's default. */
         EffectiveSettings: {
             /** @description Whether logins made inside the workspace are captured. */
             capture_logins: components["schemas"]["ResolvedBool"];
@@ -2053,7 +2053,7 @@ export interface components {
         } | {
             /**
              * Format: int64
-             * @description The network epoch that began; it only grows while puddle runs.
+             * @description The network epoch that began; it only grows while Puddle runs.
              */
             epoch: number;
             /** @enum {string} */
@@ -2105,7 +2105,7 @@ export interface components {
             /** @description Which tool knows it. */
             via: components["schemas"]["FoundVia"];
         };
-        /** @description What puddle found signed in on this computer. */
+        /** @description What Puddle found signed in on this computer. */
         FoundAccounts: {
             /** @description The accounts, without duplicates. */
             accounts: components["schemas"]["FoundAccount"][];
@@ -2188,7 +2188,7 @@ export interface components {
         };
         /** @description New global settings. Replaces every value listed here; unknown stored fields are kept. */
         GlobalSettingsRequest: {
-            /** @description Preferences for puddle's window. */
+            /** @description Preferences for Puddle's window. */
             ui?: components["schemas"]["UiPrefs"];
             /** @description VS Code server options. */
             vscode_server?: components["schemas"]["VsCodeServer"];
@@ -2199,10 +2199,10 @@ export interface components {
         GlobalSettingsView: {
             /** @description The effective values for a workspace with no overrides. */
             effective: components["schemas"]["EffectiveSettings"];
-            /** @description Preferences for puddle's window. */
+            /** @description Preferences for Puddle's window. */
             ui: components["schemas"]["UiPrefs"];
             /**
-             * @description Fields in the stored document this puddle doesn't know (written by a newer one); they
+             * @description Fields in the stored document this Puddle doesn't know (written by a newer one); they
              *     are kept.
              */
             unknown_fields: string[];
@@ -2211,11 +2211,11 @@ export interface components {
             /** @description Defaults for every workspace. */
             workspace_defaults: components["schemas"]["SettingsLayer"];
         };
-        /** @description The API's identity, for a client to check it reached puddle. */
+        /** @description The API's identity, for a client to check it reached Puddle. */
         Health: {
             /** @description The API contract's version ([`crate::API_VERSION`]). */
             api_version: string;
-            /** @description puddle's version. */
+            /** @description Puddle's version. */
             version: string;
         };
         /** @description The name and email git writes into a commit. */
@@ -2305,7 +2305,7 @@ export interface components {
             groups: components["schemas"]["InboxGroup"][];
             /**
              * Format: int64
-             * @description The most open requests puddle lists for one workspace. A workspace with this many has a
+             * @description The most open requests Puddle lists for one workspace. A workspace with this many has a
              *     full list: a new host it asks about is answered as waiting but gets no row until the user
              *     answers some (rules spec R-45).
              */
@@ -2333,7 +2333,7 @@ export interface components {
          * @description A class of local destination with its own toggle. Everything outside these is public.
          *
          *     A toggle only *permits* its category; each destination still needs an allow rule or an
-         *     approval. puddle's own endpoints are not a category: no toggle reaches them.
+         *     approval. Puddle's own endpoints are not a category: no toggle reaches them.
          *
          *     Non-exhaustive: a "company network" category may follow.
          * @enum {string}
@@ -2357,7 +2357,7 @@ export interface components {
          * @enum {string}
          */
         LoginProblemKind: "store_unavailable" | "unexpected_answer" | "unusable_token" | "bound_token" | "unreadable" | "capture_off" | "unknown";
-        /** @description `GET /api/network-health`: everything puddle knows about how it reaches the internet. */
+        /** @description `GET /api/network-health`: everything Puddle knows about how it reaches the internet. */
         NetworkHealth: {
             /**
              * Format: int64
@@ -2563,7 +2563,7 @@ export interface components {
         /** @description One background problem, as `GET /api/problems` lists it. */
         Problem: {
             /**
-             * @description What puddle did about it and what the user can do. It can quote tool output: escape it
+             * @description What Puddle did about it and what the user can do. It can quote tool output: escape it
              *     when rendering.
              */
             detail: string;
@@ -2582,12 +2582,12 @@ export interface components {
             problems: components["schemas"]["Problem"][];
         };
         /**
-         * @description What puddle found out about the proxy setup.
+         * @description What Puddle found out about the proxy setup.
          * @enum {string}
          */
         ProxyDetected: "pac" | "wpad" | "static" | "env" | "direct" | "unknown";
         /**
-         * @description Where puddle gets its proxy setting from.
+         * @description Where Puddle gets its proxy setting from.
          * @enum {string}
          */
         ProxyMode: "system" | "direct" | "manual" | "unknown";
@@ -2603,7 +2603,7 @@ export interface components {
          * @enum {string}
          */
         ProxyProblemKind: "unusable_setting" | "changes_not_noticed" | "other";
-        /** @description The proxy setup puddle sees. */
+        /** @description The proxy setup Puddle sees. */
         ProxyReport: {
             /** @description Automatic detection (WPAD) is on. */
             auto_detect: boolean;
@@ -2627,7 +2627,7 @@ export interface components {
             https_proxy: string | null;
             /**
              * Format: int64
-             * @description Epoch ms when the last change was noticed; `null` when none since puddle started.
+             * @description Epoch ms when the last change was noticed; `null` when none since Puddle started.
              */
             last_change_at: number | null;
             /** @description Where the setting comes from. */
@@ -2643,7 +2643,7 @@ export interface components {
         };
         /** @description Image pulls and the pull proxy. */
         PullProxyReport: {
-            /** @description Image pulls go through puddle's pull proxy (where the rules and the guard apply). */
+            /** @description Image pulls go through Puddle's pull proxy (where the rules and the guard apply). */
             active: boolean;
             /** @description The pull proxy reaches the internet through the company proxy setup above. */
             via_upstream: boolean;
@@ -2768,7 +2768,7 @@ export interface components {
             repo_count: number;
             /**
              * Format: int64
-             * @description Epoch ms the host lets puddle ask again, when it said to wait.
+             * @description Epoch ms the host lets Puddle ask again, when it said to wait.
              */
             retry_at: number | null;
             /** @description How current the list is. */
@@ -2841,7 +2841,7 @@ export interface components {
          * @enum {string}
          */
         RootKind: "root" | "intermediate" | "unknown";
-        /** @description The company roots puddle copied into workspaces. */
+        /** @description The company roots Puddle copied into workspaces. */
         RootsReport: {
             /** @description What workspaces get. */
             certificates: components["schemas"]["SyncedRoot"][];
@@ -2851,9 +2851,9 @@ export interface components {
              */
             intermediates: number;
             /**
-             * @description Company certificates puddle's own TLS checks could not use (the checks that guard a
+             * @description Company certificates Puddle's own TLS checks could not use (the checks that guard a
              *     workspace's credentials on the way out): a server that chains to one fails with an unknown
-             *     issuer. Workspaces still get them; this is only about what puddle itself verifies.
+             *     issuer. Workspaces still get them; this is only about what Puddle itself verifies.
              */
             left_out_of_tls: components["schemas"]["SkippedRoot"][];
             /**
@@ -2865,7 +2865,7 @@ export interface components {
             skipped: components["schemas"]["SkippedRoot"][];
             /**
              * @description Whether the host's certificate stores have been read (false until the first sync, and
-             *     on systems where puddle has no store to read).
+             *     on systems where Puddle has no store to read).
              */
             synced: boolean;
             /**
@@ -2876,7 +2876,7 @@ export interface components {
             /** @description Stores that could not be read, with the system's reason. */
             unreadable_stores: string[];
         };
-        /** @description The route puddle chose for one destination in this network epoch. */
+        /** @description The route Puddle chose for one destination in this network epoch. */
         RouteDecision: {
             /** @description The hops in order: `PROXY host:port` or `DIRECT`. */
             hops: string[];
@@ -3000,7 +3000,7 @@ export interface components {
             /** @description Built-in sets first, then yours by name. */
             sets: components["schemas"]["RuleSetView"][];
             /**
-             * @description The hosts puddle allows because of your setup, each with its reason. Your own rules
+             * @description The hosts Puddle allows because of your setup, each with its reason. Your own rules
              *     decide first: a deny of yours blocks one.
              */
             system_managed: components["schemas"]["SystemManagedHost"][];
@@ -3039,7 +3039,7 @@ export interface components {
         RuleSetView: {
             /**
              * Format: int64
-             * @description Built-in sets: epoch ms when a puddle update last changed the entries; `null` if never.
+             * @description Built-in sets: epoch ms when a Puddle update last changed the entries; `null` if never.
              */
             changed_at: number | null;
             /**
@@ -3087,18 +3087,18 @@ export interface components {
         /**
          * @description The settings every workspace has. On a global document they are the defaults for every
          *     workspace; on a workspace they override those. `null` means "not set here": the next level (the
-         *     global value, then puddle's default) applies.
+         *     global value, then Puddle's default) applies.
          */
         SettingsLayer: {
             /**
              * @description Whether a login made inside the workspace (Claude Code, `gh`, Copilot CLI) is captured:
-             *     puddle keeps the real token on the host and the workspace holds a stand-in that works
-             *     only through puddle. On by default; applies at the workspace's next start.
+             *     Puddle keeps the real token on the host and the workspace holds a stand-in that works
+             *     only through Puddle. On by default; applies at the workspace's next start.
              */
             capture_logins: boolean | null;
             clipboard_read: components["schemas"]["ClipboardRead"] | null;
             /**
-             * @description Whether puddle opens an SSH way into the workspace for the user's own tools (desktop
+             * @description Whether Puddle opens an SSH way into the workspace for the user's own tools (desktop
              *     VS Code, a terminal `ssh`). Off by default; while off there is no SSH endpoint and no ssh
              *     config entry. Turning it on marks the workspace trusted.
              */
@@ -3136,13 +3136,13 @@ export interface components {
             /** @description The scheme sent (`Negotiate`, `NTLM`, `Basic`); `null` when none was. */
             scheme: string | null;
         };
-        /** @description How puddle signs in to the company proxy. */
+        /** @description How Puddle signs in to the company proxy. */
         SignInReport: {
             /** @description The latest attempt per proxy, newest first. */
             attempts: components["schemas"]["SignInAttempt"][];
             /**
-             * @description The schemes puddle can answer a proxy with, lower case (`negotiate`, `ntlm`, `basic`).
-             *     Empty: puddle can not sign in to a proxy on this system.
+             * @description The schemes Puddle can answer a proxy with, lower case (`negotiate`, `ntlm`, `basic`).
+             *     Empty: Puddle can not sign in to a proxy on this system.
              */
             methods: string[];
         };
@@ -3157,8 +3157,8 @@ export interface components {
          */
         SignInResult: "signed_in" | "not_required" | "failed" | "unsupported" | "unknown";
         /**
-         * @description What the user does to finish a sign-in puddle started. Poll the credential's check to learn
-         *     when it worked; puddle ends a sign-in nobody finished after five minutes.
+         * @description What the user does to finish a sign-in Puddle started. Poll the credential's check to learn
+         *     when it worked; Puddle ends a sign-in nobody finished after five minutes.
          */
         SignInStarted: {
             /** @description The one-time code to type at `url`; `null` when the tool opens its own window. */
@@ -3176,7 +3176,7 @@ export interface components {
             subject: string | null;
         };
         /**
-         * @description A token the user pasted. It is kept in the operating system's credential store under puddle's
+         * @description A token the user pasted. It is kept in the operating system's credential store under Puddle's
          *     own name and never read back through the API.
          */
         StoreTokenRequest: {
@@ -3211,7 +3211,7 @@ export interface components {
             /** @description The subject's common name, when it has one. Comes from a certificate: escape it. */
             subject: string | null;
         };
-        /** @description One host puddle allows because of your setup, and why. */
+        /** @description One host Puddle allows because of your setup, and why. */
         SystemManagedHost: {
             /** @description What the host is for. */
             note: string;
@@ -3224,12 +3224,12 @@ export interface components {
             workspace: components["schemas"]["WorkspaceName"] | null;
         };
         /**
-         * @description Why puddle allows a System managed host: a choice you made.
+         * @description Why Puddle allows a System managed host: a choice you made.
          * @enum {string}
          */
         SystemReason: "microsoft_server" | "code_server" | "direct_ssh";
         /**
-         * @description The colour theme of puddle's window.
+         * @description The colour theme of Puddle's window.
          * @enum {string}
          */
         ThemeChoice: "system" | "light" | "dark";
@@ -3242,7 +3242,7 @@ export interface components {
             /** @description The organisation, for tokens that belong to one (Azure DevOps). */
             org: string | null;
         };
-        /** @description Preferences for puddle's own window. `null` means puddle's default. */
+        /** @description Preferences for Puddle's own window. `null` means Puddle's default. */
         UiPrefs: {
             /** @description The waiting count on the tray, taskbar and window title (default on). */
             badge: boolean | null;
@@ -3254,7 +3254,7 @@ export interface components {
             inbox_shortcuts: boolean | null;
             /** @description A system notification for a new request (default on). */
             notifications: boolean | null;
-            /** @description Notify only while puddle's window is not focused (default on). */
+            /** @description Notify only while Puddle's window is not focused (default on). */
             notify_only_unfocused: boolean | null;
             /** @description Notify when a workspace is killed for running out of memory (default on). */
             notify_oom: boolean | null;
@@ -3264,9 +3264,9 @@ export interface components {
             sound: boolean | null;
             theme: components["schemas"]["ThemeChoice"] | null;
         };
-        /** @description Options for the VS Code server in the guest. `null` means puddle's default. */
+        /** @description Options for the VS Code server in the guest. `null` means Puddle's default. */
         VsCodeServer: {
-            /** @description Whether puddle updates the server (default on). */
+            /** @description Whether Puddle updates the server (default on). */
             auto_update: boolean | null;
             server: components["schemas"]["ServerChoice"] | null;
             /** @description Whether the server may send Microsoft telemetry (default off). */
@@ -3489,7 +3489,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -3536,7 +3536,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description written by a newer puddle (newer_settings), or damaged (settings_unreadable) */
+            /** @description written by a newer Puddle (newer_settings), or damaged (settings_unreadable) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3554,7 +3554,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -3617,7 +3617,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description written by a newer puddle (newer_settings), or damaged (settings_unreadable) */
+            /** @description written by a newer Puddle (newer_settings), or damaged (settings_unreadable) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3644,7 +3644,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -3713,7 +3713,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -3778,7 +3778,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -3856,7 +3856,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -3934,7 +3934,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4012,7 +4012,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4087,7 +4087,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4164,7 +4164,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4229,7 +4229,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4301,7 +4301,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4376,7 +4376,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4453,7 +4453,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4500,7 +4500,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description settings written by a newer puddle (newer_settings), or damaged (settings_unreadable) */
+            /** @description settings written by a newer Puddle (newer_settings), or damaged (settings_unreadable) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -4518,7 +4518,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4569,7 +4569,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description settings written by a newer puddle (newer_settings), or damaged (settings_unreadable) */
+            /** @description settings written by a newer Puddle (newer_settings), or damaged (settings_unreadable) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -4587,7 +4587,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4607,7 +4607,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description puddle is up */
+            /** @description Puddle is up */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -4643,7 +4643,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4699,7 +4699,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4777,7 +4777,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4833,7 +4833,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4893,7 +4893,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4962,7 +4962,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5030,7 +5030,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5120,7 +5120,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5188,7 +5188,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5256,7 +5256,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5312,7 +5312,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5368,7 +5368,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5445,7 +5445,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5513,7 +5513,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5603,7 +5603,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5693,7 +5693,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5749,7 +5749,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5832,7 +5832,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5910,7 +5910,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5975,7 +5975,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6044,7 +6044,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6125,7 +6125,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6202,7 +6202,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6283,7 +6283,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6339,7 +6339,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6408,7 +6408,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6476,7 +6476,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6557,7 +6557,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6604,7 +6604,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description written by a newer puddle (newer_settings), or damaged (settings_unreadable) */
+            /** @description written by a newer Puddle (newer_settings), or damaged (settings_unreadable) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6622,7 +6622,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6673,7 +6673,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description written by a newer puddle (newer_settings), or damaged (settings_unreadable) */
+            /** @description written by a newer Puddle (newer_settings), or damaged (settings_unreadable) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6700,7 +6700,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6759,7 +6759,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description written by a newer puddle (newer_settings), or damaged (settings_unreadable) */
+            /** @description written by a newer Puddle (newer_settings), or damaged (settings_unreadable) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6777,7 +6777,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6840,7 +6840,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description written by a newer puddle (newer_settings), or damaged (settings_unreadable) */
+            /** @description written by a newer Puddle (newer_settings), or damaged (settings_unreadable) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6867,7 +6867,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6923,7 +6923,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -7001,7 +7001,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -7078,7 +7078,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -7168,7 +7168,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -7249,7 +7249,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -7317,7 +7317,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -7385,7 +7385,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -7468,7 +7468,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -7545,7 +7545,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -7622,7 +7622,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -7712,7 +7712,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -7786,7 +7786,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -7854,7 +7854,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -7926,7 +7926,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8016,7 +8016,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8097,7 +8097,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8167,7 +8167,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8244,7 +8244,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8321,7 +8321,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8398,7 +8398,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;

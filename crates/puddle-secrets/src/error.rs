@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Why a source could not supply a secret. No variant carries a secret or tool output.
 
-/// A tool puddle runs.
+/// A tool Puddle runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Tool {
@@ -27,7 +27,7 @@ impl Tool {
 #[non_exhaustive]
 pub enum SourceError {
     /// Nothing is signed in for this source, or its login expired. The user must sign in from
-    /// puddle; a request never does it.
+    /// Puddle; a request never does it.
     #[error("not signed in")]
     NotSignedIn,
     /// The tool is not installed or not on `PATH`.

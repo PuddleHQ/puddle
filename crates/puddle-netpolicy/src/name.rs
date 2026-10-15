@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The name stage: turn the host a guest asked for into puddle's normal form, before any rule
+//! The name stage: turn the host a guest asked for into Puddle's normal form, before any rule
 //! lookup and before DNS (`docs/spec/rules.md` §1).
 //!
 //! Strict on purpose: what comes out is either a canonical IP literal or a [`DomainName`]

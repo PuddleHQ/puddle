@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Quoting for the plan, which `boot.sh` sources as POSIX sh. Everything puddle puts into the plan
+//! Quoting for the plan, which `boot.sh` sources as POSIX sh. Everything Puddle puts into the plan
 //! goes through one of these two functions, so no value can end a word or run a command.
 
 use std::fmt::Write as _;

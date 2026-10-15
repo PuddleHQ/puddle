@@ -18,7 +18,7 @@ pub struct TokenScope {
 }
 
 /// One secret source. A closed enum: there is no variant that carries a command line, so no
-/// configuration or API input can make puddle run anything but the fixed invocations in this crate.
+/// configuration or API input can make Puddle run anything but the fixed invocations in this crate.
 /// An identity owns one of these per credential; a source never assumes it is the only one for a
 /// workspace.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -44,7 +44,7 @@ pub enum SourceSpec {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         username: Option<AccountName>,
     },
-    /// A token the user pasted, kept in the OS credential store under puddle's own name.
+    /// A token the user pasted, kept in the OS credential store under Puddle's own name.
     Stored {
         /// The id of the entry.
         id: StoredId,

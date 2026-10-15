@@ -25,7 +25,7 @@ describe("parseConnection", () => {
       '"x"',
     ]) {
       expect(() => parseConnection(bad)).toThrow(
-        "not a puddle connection file",
+        "not a Puddle connection file",
       );
     }
     expect(() => parseConnection("{")).toThrow();

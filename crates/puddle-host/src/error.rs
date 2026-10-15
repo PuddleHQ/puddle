@@ -9,9 +9,9 @@ use std::path::PathBuf;
 #[non_exhaustive]
 pub enum HostError {
     /// The per-user data folder could not be found.
-    #[error("cannot find puddle's data folder: {0}")]
+    #[error("cannot find Puddle's data folder: {0}")]
     DataDir(String),
-    /// Another puddle process already uses the data folder, or the folder cannot be locked.
+    /// Another Puddle process already uses the data folder, or the folder cannot be locked.
     #[error(transparent)]
     DataFolder(#[from] puddle_fs::LockError),
     /// The bundled runtime is missing, unreadable or of another version.
@@ -32,7 +32,7 @@ pub enum HostError {
     /// The host's corporate root certificates could not be read.
     #[error("cannot read the host's certificate stores: {0}")]
     Roots(String),
-    /// puddle's TLS client, which verifies the servers of decrypted hosts, could not be built.
+    /// Puddle's TLS client, which verifies the servers of decrypted hosts, could not be built.
     #[error("cannot set up TLS toward decrypted hosts: {0}")]
     Tls(#[from] puddle_upstream::TlsSetupError),
     /// The runtime could not be opened.

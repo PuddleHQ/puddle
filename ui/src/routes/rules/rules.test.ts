@@ -119,7 +119,7 @@ describe("the list", () => {
     render(RulesPage);
     expect(
       await screen.findByText(
-        /Couldn't read the rules\. puddle's service isn't answering\./,
+        /Couldn't read the rules\. Puddle's service isn't answering\./,
       ),
     ).toBeInTheDocument();
   });

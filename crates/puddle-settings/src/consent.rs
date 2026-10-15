@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The consent store: one record per thing puddle asks the user's permission for. Telemetry and
+//! The consent store: one record per thing Puddle asks the user's permission for. Telemetry and
 //! crash reports (strictly opt-in) and Microsoft's VS Code server (the enable popup,
 //! consent recorded per user) share this one type, so there is one store, not two.
 
@@ -15,7 +15,7 @@ use serde_json::Value;
 #[serde(transparent)]
 pub struct UnixMillis(pub u64);
 
-/// Which version of the terms (or of puddle's consent text) the user saw, e.g. `2026-10-05`
+/// Which version of the terms (or of Puddle's consent text) the user saw, e.g. `2026-10-05`
 /// or a licence URL. 1 to [`TermsVersion::MAX_LEN`] visible ASCII characters, no spaces.
 ///
 /// ```
@@ -126,8 +126,8 @@ impl Consent {
         matches!(self, Self::Granted { terms_version, .. } if terms_version == current)
     }
 
-    /// Whether puddle should put the question to the user: never asked, or agreed to terms
-    /// that have since changed. A decline is respected; puddle doesn't ask again on its own
+    /// Whether Puddle should put the question to the user: never asked, or agreed to terms
+    /// that have since changed. A decline is respected; Puddle doesn't ask again on its own
     /// (the user can still change it in the settings).
     #[must_use]
     pub fn should_ask(&self, current: &TermsVersion) -> bool {
@@ -144,9 +144,9 @@ impl Consent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConsentKind {
-    /// puddle's own usage telemetry.
+    /// Puddle's own usage telemetry.
     Telemetry,
-    /// Sending puddle's crash reports.
+    /// Sending Puddle's crash reports.
     CrashReports,
     /// Downloading and running Microsoft's VS Code server under its licence terms.
     #[serde(rename = "vscode_server")]
@@ -162,7 +162,7 @@ impl ConsentKind {
 /// per user, never per workspace.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Consents {
-    /// puddle's own usage telemetry.
+    /// Puddle's own usage telemetry.
     #[serde(default, skip_serializing_if = "is_not_asked")]
     pub telemetry: Consent,
     /// Sending crash reports.

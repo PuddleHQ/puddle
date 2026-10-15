@@ -31,7 +31,7 @@ impl EnvOs {
     }
 
     /// Reads `vars`. Upper- and lower-case names both count; the lower-case one wins (curl's rule).
-    /// A value puddle cannot use (`socks5://`, `https://`, no host) is ignored: it is listed in
+    /// A value Puddle cannot use (`socks5://`, `https://`, no host) is ignored: it is listed in
     /// [`ProxyConfig::problems`], which discovery logs and the network-health report shows (the
     /// connections it was meant for go direct).
     #[must_use]

@@ -39,7 +39,7 @@ describe("findings", () => {
     expect(f?.fix).toMatch(/network settings/);
   });
 
-  it("lists a proxy setting puddle cannot use, and changes it cannot see, with the detail and what to do", () => {
+  it("lists a proxy setting Puddle cannot use, and changes it cannot see, with the detail and what to do", () => {
     const r = report();
     r.proxy.problems = [
       {
@@ -107,7 +107,7 @@ describe("findings", () => {
     expect(list[0]?.fix).toMatch(/logged in/);
   });
 
-  it("explains an unsupported sign-in by what puddle can answer", () => {
+  it("explains an unsupported sign-in by what Puddle can answer", () => {
     const r = report();
     r.sign_in.attempts = [
       {
@@ -123,7 +123,7 @@ describe("findings", () => {
     r.sign_in.methods = [];
     r.sign_in.attempts[0]!.detail = null;
     expect(findings(r)[0]?.title).toBe(
-      "p:1 asks for a sign-in puddle can't give.",
+      "p:1 asks for a sign-in Puddle can't give.",
     );
     expect(findings(r)[0]?.fix).toMatch(/no way to sign in/);
   });
@@ -134,15 +134,15 @@ describe("findings", () => {
     r.roots.unreadable_stores = ["A: denied"];
     expect(ids(r)).toEqual(["unreadable-stores"]);
     expect(findings(r)[0]?.title).toBe(
-      "puddle couldn't read a certificate store.",
+      "Puddle couldn't read a certificate store.",
     );
     r.roots.unreadable_stores = ["A: denied", "B: denied"];
     expect(findings(r)[0]?.title).toBe(
-      "puddle couldn't read 2 certificate stores.",
+      "Puddle couldn't read 2 certificate stores.",
     );
   });
 
-  it("reports company certificates puddle's own TLS checks left out, in the singular and the plural", () => {
+  it("reports company certificates Puddle's own TLS checks left out, in the singular and the plural", () => {
     const r = report();
     expect(ids(r)).toEqual([]);
     r.roots.left_out_of_tls = [
@@ -151,7 +151,7 @@ describe("findings", () => {
     expect(ids(r)).toEqual(["roots-left-out-of-tls"]);
     expect(findings(r)[0]?.level).toBe("problem");
     expect(findings(r)[0]?.title).toBe(
-      "puddle can't use a company certificate when it checks the servers it adds your credentials for.",
+      "Puddle can't use a company certificate when it checks the servers it adds your credentials for.",
     );
     r.roots.left_out_of_tls.push({
       subject: null,
@@ -159,7 +159,7 @@ describe("findings", () => {
       reason: "not usable",
     });
     expect(findings(r)[0]?.title).toBe(
-      "puddle can't use 2 company certificates when it checks the servers it adds your credentials for.",
+      "Puddle can't use 2 company certificates when it checks the servers it adds your credentials for.",
     );
   });
 

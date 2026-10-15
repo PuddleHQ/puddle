@@ -7,7 +7,7 @@ ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Progr
 ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
 ok    Test boot             a test VM booted and ran a program in 1.1 s
 info  Global Secure Access  could not check whether the client is installed
-      note: puddle works without it. If company resources reached through Microsoft Entra Global
+      note: Puddle works without it. If company resources reached through Microsoft Entra Global
             Secure Access don't work from a sandbox, see whether its client is installed on this
             PC: it doesn't tunnel virtual machines' traffic.
       from: OpenSCManagerW: Access is denied. (os error 5)
@@ -57,7 +57,7 @@ No problems found. (1.2 s)
       "status": "info",
       "summary": "could not check whether the client is installed",
       "finding": "global_secure_access_unknown",
-      "fix": "puddle works without it. If company resources reached through Microsoft Entra Global Secure Access don't work from a sandbox, see whether its client is installed on this PC: it doesn't tunnel virtual machines' traffic.",
+      "fix": "Puddle works without it. If company resources reached through Microsoft Entra Global Secure Access don't work from a sandbox, see whether its client is installed on this PC: it doesn't tunnel virtual machines' traffic.",
       "detail": "OpenSCManagerW: Access is denied. (os error 5)"
     }
   ],

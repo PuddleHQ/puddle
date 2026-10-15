@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-logins"
-description = "puddle's captured logins: the built-in profiles of Claude Code and GitHub, the token-endpoint rewriter that keeps the real token on the host and hands the workspace a stand-in with the token's shape, and where the real tokens are kept"
+description = "Puddle's captured logins: the built-in profiles of Claude Code and GitHub, the token-endpoint rewriter that keeps the real token on the host and hands the workspace a stand-in with the token's shape, and where the real tokens are kept"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

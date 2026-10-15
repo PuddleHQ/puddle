@@ -5,14 +5,14 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-/// What puddle knows about a development certificate on this computer (the ASP.NET one that
+/// What Puddle knows about a development certificate on this computer (the ASP.NET one that
 /// `dotnet dev-certs` makes), for the one line the certificates step shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DevCertificate {
-    /// puddle does not look for one yet.
+    /// Puddle does not look for one yet.
     NotChecked,
-    /// Windows already trusts one, so puddle uses it in every workspace with no dialog.
+    /// Windows already trusts one, so Puddle uses it in every workspace with no dialog.
     ReusingExisting,
 }
 

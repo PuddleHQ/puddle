@@ -706,7 +706,7 @@ async fn two_candidates_are_refused_never_guessed() {
     assert_eq!((status, code), (409, "credential_ambiguous"));
     assert_eq!(
         message,
-        "Work and Clash both cover github.com/acme; narrow one in puddle"
+        "Work and Clash both cover github.com/acme; narrow one in Puddle"
     );
     assert_eq!(w.credentials.reads(), 0);
 }
@@ -782,7 +782,7 @@ async fn a_source_that_needs_a_sign_in_is_a_502_that_says_so_and_never_a_401() {
     assert_eq!((status, code), (502, "credential_unavailable"));
     assert!(message.contains("Work"), "{message}");
     assert!(message.contains("not signed in"), "{message}");
-    assert!(message.contains("sign in to it in puddle"), "{message}");
+    assert!(message.contains("sign in to it in Puddle"), "{message}");
     assert!(message.contains("t-work"), "names the source: {message}");
     // The source's cache raises the sign-in notice, not the injector: no second one.
     assert_eq!(w.events.take(), []);
@@ -804,7 +804,7 @@ async fn a_source_that_is_broken_is_a_502_without_a_sign_in_notice() {
     let (status, code, message) = refusal(&w.decide("github.com", "GET", FETCH, &[]).await);
     assert_eq!((status, code), (502, "credential_unavailable"));
     assert!(message.contains("is not installed"), "{message}");
-    assert!(message.contains("check it in puddle"), "{message}");
+    assert!(message.contains("check it in Puddle"), "{message}");
     assert_eq!(w.events.take(), []);
 }
 

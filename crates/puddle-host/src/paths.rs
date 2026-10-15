@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-/// The files and folders of one puddle installation, derived from its data folder.
+/// The files and folders of one Puddle installation, derived from its data folder.
 ///
 /// The msb home (`msb/`) belongs to [`puddle_runtime::RuntimeLayout`]; everything else the host
 /// writes is named here so one value says where a run's state lives.
@@ -37,7 +37,7 @@ impl HostPaths {
         self.data.join("settings")
     }
 
-    /// The workspace book: what puddle knows about each workspace besides its volume.
+    /// The workspace book: what Puddle knows about each workspace besides its volume.
     #[must_use]
     pub fn workspace_book(&self) -> PathBuf {
         self.data.join("workspaces.json")

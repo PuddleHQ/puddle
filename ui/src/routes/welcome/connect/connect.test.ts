@@ -78,7 +78,7 @@ describe("connect step", () => {
     expect(directSsh()).toBeChecked();
   });
 
-  it("says it is loading, and when the settings can't be read or are from a newer puddle", async () => {
+  it("says it is loading, and when the settings can't be read or are from a newer Puddle", async () => {
     render(Page);
     expect(screen.getByText(/Loading/)).toBeInTheDocument();
     await screen.findByRole("group", { name: "Editor in your browser" });
@@ -89,7 +89,7 @@ describe("connect step", () => {
     api.down = true;
     render(Page);
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Couldn't read puddle's settings.",
+      "Couldn't read Puddle's settings.",
     );
     cleanup();
 
@@ -103,7 +103,7 @@ describe("connect step", () => {
     });
     render(Page);
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /saved by a newer puddle/,
+      /saved by a newer Puddle/,
     );
     expect(screen.queryByRole("radio")).toBeNull();
   });
@@ -113,7 +113,7 @@ describe("connect step", () => {
     await fireEvent.click(microsoft());
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent(
-      "puddle downloads the server from Microsoft",
+      "Puddle downloads the server from Microsoft",
     );
     // Nothing is chosen until the popup is accepted.
     expect(codeServer()).toBeChecked();
@@ -147,7 +147,7 @@ describe("connect step", () => {
     expect(microsoft()).toBeChecked();
   });
 
-  it("keeps the popup open and says why when puddle refuses the consent", async () => {
+  it("keeps the popup open and says why when Puddle refuses the consent", async () => {
     await open();
     await fireEvent.click(microsoft());
     const dialog = await screen.findByRole("dialog");
@@ -183,7 +183,7 @@ describe("connect step", () => {
     expect(codeServer()).toBeChecked();
   });
 
-  it("puts the radio back and says so when puddle refuses the choice", async () => {
+  it("puts the radio back and says so when Puddle refuses the choice", async () => {
     api.consent = {
       state: "granted",
       at: 1,

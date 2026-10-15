@@ -130,7 +130,7 @@ describe("RepoSourceStatus", () => {
     expect(screen.queryByRole("button")).toBeNull();
   });
 
-  it("says when puddle asks again after a limit, and that the list shown is old", () => {
+  it("says when Puddle asks again after a limit, and that the list shown is old", () => {
     show(
       repoSource({
         state: "stale",
@@ -139,13 +139,13 @@ describe("RepoSourceStatus", () => {
         repo_count: 2,
         problem: {
           code: "rate_limited",
-          message: "GitHub asked puddle to wait.",
+          message: "GitHub asked Puddle to wait.",
           needs_sign_in: false,
         },
       }),
     );
     expect(screen.getByText("Old list")).toBeVisible();
-    expect(screen.getByText(/puddle asks again in 10 minutes/)).toBeVisible();
-    expect(screen.getByText(/GitHub asked puddle to wait/)).toBeVisible();
+    expect(screen.getByText(/Puddle asks again in 10 minutes/)).toBeVisible();
+    expect(screen.getByText(/GitHub asked Puddle to wait/)).toBeVisible();
   });
 });

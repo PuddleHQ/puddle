@@ -42,14 +42,14 @@ pub enum ErrorCode {
     /// Two identities on one workspace cover the same owner or both cover the rest of a host
     /// (409); the message names both.
     IdentityCollision,
-    /// The stored settings were written by a newer puddle and can't be changed by this one (409).
+    /// The stored settings were written by a newer Puddle and can't be changed by this one (409).
     NewerSettings,
     /// A stored settings document is damaged or cannot be read, so the settings cannot be shown
     /// or changed until it is fixed or removed (409); the message says what is wrong.
     SettingsUnreadable,
     /// The feature isn't available in this build or state (503).
     Unavailable,
-    /// puddle failed; the details are in its log (500).
+    /// Puddle failed; the details are in its log (500).
     Internal,
 }
 
@@ -100,14 +100,14 @@ impl ApiError {
         Self::new(StatusCode::BAD_REQUEST, ErrorCode::BadRequest, message)
     }
 
-    /// A failure inside puddle. `detail` is logged here (this is where the error is consumed);
+    /// A failure inside Puddle. `detail` is logged here (this is where the error is consumed);
     /// the client only learns that something failed.
     pub(crate) fn internal(detail: &dyn std::fmt::Display) -> Self {
         tracing::error!(error = %detail, "api request failed");
         let mut err = Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             ErrorCode::Internal,
-            "internal error; see puddle's log",
+            "internal error; see Puddle's log",
         );
         err.detail = Some(detail.to_string());
         err
@@ -121,7 +121,7 @@ impl ApiError {
             StatusCode::CONFLICT,
             ErrorCode::SettingsUnreadable,
             format!(
-                "puddle cannot read {what}: {cause}; fix that file, or remove it to go back to the defaults"
+                "Puddle cannot read {what}: {cause}; fix that file, or remove it to go back to the defaults"
             ),
         );
         err.detail = Some(cause.to_string());
@@ -200,7 +200,7 @@ impl From<SettingsError> for ApiError {
             SettingsError::NewerSchema { .. } => Self::new(
                 StatusCode::CONFLICT,
                 ErrorCode::NewerSettings,
-                format!("{err}; update puddle to change these settings"),
+                format!("{err}; update Puddle to change these settings"),
             ),
             _ => Self::internal(&err),
         }

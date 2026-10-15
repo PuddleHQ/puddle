@@ -110,7 +110,7 @@ fn test_root(tag: &str) -> TestCert {
     let mut p = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
     p.distinguished_name.push(
         rcgen::DnType::CommonName,
-        format!("puddle test root {tag} {nanos}"),
+        format!("Puddle test root {tag} {nanos}"),
     );
     p.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
     p.not_after = rcgen::date_time_ymd(2040, 1, 1);

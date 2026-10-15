@@ -3,7 +3,7 @@
 //! reads on stdin.
 //!
 //! The hook holds no provider logic. Providers (proxy config, corporate roots, the
-//! per-sandbox CA) hand over [`GuestFile`]s and a [`GuestEnv`]; the plan adds puddle's own files
+//! per-sandbox CA) hand over [`GuestFile`]s and a [`GuestEnv`]; the plan adds Puddle's own files
 //! (the image `PATH` fix, the env file for login shells, the git settings and VS Code's Machine
 //! settings) and the image's ENTRYPOINT, and checks that no two of them claim the same path.
 
@@ -26,7 +26,7 @@ pub const PATH_FILE_GUEST: &str = "/etc/profile.d/00-puddle-path.sh";
 /// The provider environment, for login shells and the chained ENTRYPOINT.
 pub const ENV_FILE_GUEST: &str = "/etc/profile.d/01-puddle-env.sh";
 
-/// puddle's git settings, included from `/etc/gitconfig`.
+/// Puddle's git settings, included from `/etc/gitconfig`.
 pub const GIT_CONFIG_GUEST: &str = "/etc/puddle/gitconfig";
 
 /// The directory of the per-rule author files [`GitAuthorRule`] writes, next to
@@ -49,20 +49,20 @@ pub const DEFAULT_AGENT_PORT: u16 = 3128;
 /// Env names the hook keeps for itself.
 const RESERVED_ENV_PREFIX: &str = "PUDDLE_";
 
-const GENERATED: &str = "# Written by puddle at every boot; changes here are overwritten.\n";
+const GENERATED: &str = "# Written by Puddle at every boot; changes here are overwritten.\n";
 
 /// Why a plan can't be built. Every variant names the offending item.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum PlanError {
-    /// Two files (from providers or puddle) claim the same guest path.
+    /// Two files (from providers or Puddle) claim the same guest path.
     #[error("two boot files claim {path}")]
     DuplicatePath {
         /// The path.
         path: String,
     },
-    /// A file would land below puddle's read-only mounts.
-    #[error("boot file {path} is below {MOUNT_DIR_GUEST}, which holds puddle's read-only mounts")]
+    /// A file would land below Puddle's read-only mounts.
+    #[error("boot file {path} is below {MOUNT_DIR_GUEST}, which holds Puddle's read-only mounts")]
     ReservedPath {
         /// The path.
         path: String,
@@ -74,7 +74,7 @@ pub enum PlanError {
         path: String,
     },
     /// A provider env name is reserved for the hook.
-    #[error("environment variable {name} is reserved for puddle's boot hook")]
+    #[error("environment variable {name} is reserved for Puddle's boot hook")]
     ReservedEnv {
         /// The name.
         name: String,
@@ -113,8 +113,8 @@ pub enum PlanError {
     },
 }
 
-/// The git identity puddle writes into the sandbox (a basic identities feature: the user
-/// sets it in puddle, nothing is copied from the host's `.gitconfig`).
+/// The git identity Puddle writes into the sandbox (a basic identities feature: the user
+/// sets it in Puddle, nothing is copied from the host's `.gitconfig`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitIdentity {
     name: String,
@@ -298,7 +298,7 @@ impl BootPlan {
         }
     }
 
-    /// Every file the hook writes, puddle's own first, then the providers' in the order given.
+    /// Every file the hook writes, Puddle's own first, then the providers' in the order given.
     #[must_use]
     pub fn files(&self) -> &[GuestFile] {
         &self.files
@@ -476,7 +476,7 @@ impl BootPlanBuilder {
     /// # Errors
     ///
     /// - [`PlanError::DuplicatePath`]: two files claim a path (also a provider file on one of
-    ///   puddle's own paths);
+    ///   Puddle's own paths);
     /// - [`PlanError::ReservedPath`], [`PlanError::UnsafePath`]: a file path is unusable;
     /// - [`PlanError::ReservedEnv`]: an env name starts with `PUDDLE_`;
     /// - [`PlanError::ImageValue`]: the image's `PATH` or ENTRYPOINT/CMD holds a NUL or newline;
@@ -614,7 +614,7 @@ fn git_author_name(n: usize) -> String {
     format!("git-author-{n}.gitconfig")
 }
 
-/// puddle's git settings: `core.fsync=committed` always (ADR 0006: no lost commits on a VM
+/// Puddle's git settings: `core.fsync=committed` always (ADR 0006: no lost commits on a VM
 /// kill), the identity when set, then one `includeIf` per remote glob of each author rule, in
 /// order (git lets the last match win), each pointing at that rule's author file. Never a
 /// credential helper.
@@ -953,7 +953,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             err.to_string(),
-            "environment variable PUDDLE_ROOT is reserved for puddle's boot hook"
+            "environment variable PUDDLE_ROOT is reserved for Puddle's boot hook"
         );
         let err = BootPlan::builder(&image(&[], &[], Some("/a\n/b")))
             .build()

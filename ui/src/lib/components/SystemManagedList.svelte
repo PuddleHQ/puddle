@@ -8,7 +8,7 @@
     type SystemHost,
   } from "#lib/rules/sets.ts";
 
-  // What puddle allows by itself, because of choices you made: each host with its reason and
+  // What Puddle allows by itself, because of choices you made: each host with its reason and
   // where it applies (rules spec R-40). Read-only.
   let { hosts }: { hosts: SystemHost[] } = $props();
 

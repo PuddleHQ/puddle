@@ -3,7 +3,7 @@
 //! `puddle-settings`.
 //!
 //! The value becomes msb's `--memory` at create; a change applies at the workspace's next start.
-//! puddle never sets `--max-memory`.
+//! Puddle never sets `--max-memory`.
 
 use std::fmt;
 

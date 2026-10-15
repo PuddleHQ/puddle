@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Hostile-guest tier W, a sweep of the process's own listening sockets: everything puddle's host
+//! Hostile-guest tier W, a sweep of the process's own listening sockets: everything Puddle's host
 //! side listens on is loopback only, and every such listener is in the endpoint registry, which is
 //! what makes the proxy refuse a guest that dials it (so a listener nobody registered would be
 //! reachable from a guest as plain loopback).
@@ -43,7 +43,7 @@ fn own_sockets() -> Vec<Listening> {
     mine
 }
 
-/// The sockets that are open to other machines, or that puddle has not registered.
+/// The sockets that are open to other machines, or that Puddle has not registered.
 fn offenders(sockets: &[Listening], registered: &BTreeSet<SocketAddr>) -> Vec<String> {
     sockets
         .iter()

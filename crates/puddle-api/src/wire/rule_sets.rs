@@ -8,7 +8,7 @@ use utoipa::ToSchema;
 
 use super::{Effect, PatternKind};
 
-/// Why puddle allows a System managed host: a choice you made.
+/// Why Puddle allows a System managed host: a choice you made.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SystemReason {
@@ -40,7 +40,7 @@ impl SystemReason {
     }
 }
 
-/// One host puddle allows because of your setup, and why.
+/// One host Puddle allows because of your setup, and why.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct SystemManagedHost {
     /// `example.com`, or `*.example.com` for every name under it.
@@ -72,7 +72,7 @@ impl SystemManagedHost {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RuleSetKind {
-    /// Ships with puddle, read-only, updated with puddle.
+    /// Ships with Puddle, read-only, updated with Puddle.
     BuiltIn,
     /// Made by you.
     User,
@@ -127,7 +127,7 @@ pub struct RuleSetView {
     pub overrides: Vec<RuleSetOverride>,
     /// Its entries.
     pub entries: Vec<RuleSetEntry>,
-    /// Built-in sets: epoch ms when a puddle update last changed the entries; `null` if never.
+    /// Built-in sets: epoch ms when a Puddle update last changed the entries; `null` if never.
     #[schema(required = true)]
     pub changed_at: Option<u64>,
     /// Your sets: epoch ms it was made.
@@ -198,7 +198,7 @@ impl RuleSetEntry {
 pub struct RuleSetList {
     /// Built-in sets first, then yours by name.
     pub sets: Vec<RuleSetView>,
-    /// The hosts puddle allows because of your setup, each with its reason. Your own rules
+    /// The hosts Puddle allows because of your setup, each with its reason. Your own rules
     /// decide first: a deny of yours blocks one.
     pub system_managed: Vec<SystemManagedHost>,
 }

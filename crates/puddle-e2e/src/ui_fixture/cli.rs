@@ -15,7 +15,7 @@ use super::{
 #[must_use]
 pub fn usage() -> String {
     format!(
-        "puddle-ui-fixture: the real puddle API on fake services, for UI development and tests
+        "puddle-ui-fixture: the real Puddle API on fake services, for UI development and tests
 
 usage: puddle-ui-fixture [<port> <connection-file>] [options]
 

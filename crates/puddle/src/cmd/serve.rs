@@ -169,7 +169,7 @@ pub fn run(args: &ServeArgs) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        println!("puddle is up at {}", host.url());
+        println!("Puddle is up at {}", host.url());
         match wait_for_shutdown().await {
             Ok(cause) => tracing::info!(cause = cause.as_str(), "shutting down"),
             Err(e) => tracing::error!(error = %e, "cannot wait for a shutdown request; stopping"),
@@ -194,7 +194,7 @@ fn exit_after(report: &puddle_lifecycle::ShutdownReport) -> ExitCode {
     }
 }
 
-/// What puddle tells the user at exit about sandboxes that did not stop or trim cleanly:
+/// What Puddle tells the user at exit about sandboxes that did not stop or trim cleanly:
 /// nothing when all did.
 fn shutdown_lines(report: &puddle_lifecycle::ShutdownReport) -> Vec<String> {
     let mut lines: Vec<String> = report
@@ -215,7 +215,7 @@ fn shutdown_lines(report: &puddle_lifecycle::ShutdownReport) -> Vec<String> {
                 .map(|(sandbox, why)| format!("puddle:   {sandbox}: {why}")),
         );
         lines.push(
-            "puddle: the machines end with puddle; check the workspace volumes if a tool was writing"
+            "puddle: the machines end with Puddle; check the workspace volumes if a tool was writing"
                 .to_owned(),
         );
     }

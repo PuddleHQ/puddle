@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Where the main window may go.
 //!
-//! The main window shows puddle's own page from the API origin and nothing else. A link or
+//! The main window shows Puddle's own page from the API origin and nothing else. A link or
 //! redirect that leaves that origin is cancelled in the window; a web address is then handed to
 //! the default browser, called from Rust (the page never gets to call an opener). Anything that
 //! is not a plain web address is dropped.

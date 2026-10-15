@@ -178,7 +178,7 @@ test.describe("the list", () => {
     expect((await detail.boundingBox())?.height).toBeCloseTo(280, 0);
   });
 
-  test("a fresh install's log holds only what puddle allowed by itself, and a filter with no match says so", async ({
+  test("a fresh install's log holds only what Puddle allowed by itself, and a filter with no match says so", async ({
     page,
     backend,
   }) => {

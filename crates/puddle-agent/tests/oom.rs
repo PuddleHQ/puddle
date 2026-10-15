@@ -58,7 +58,7 @@ async fn a_guest_oom_kill_becomes_one_event_on_the_hosts_sink_within_2_s() {
         None
     );
 
-    // The host restarts (puddle restarted, sessions gone): the next kill still arrives, on a
+    // The host restarts (Puddle restarted, sessions gone): the next kill still arrives, on a
     // control stream the agent reopened.
     rig.restart_host().await;
     std::fs::write(&vmstat, "oom_kill 2\n").unwrap();

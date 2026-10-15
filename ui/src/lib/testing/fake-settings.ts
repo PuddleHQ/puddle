@@ -40,7 +40,7 @@ const noUi = (): S["UiPrefs"] => ({
 
 export class FakeSettings {
   layer = noLayer();
-  /** Fields the stored document has that puddle doesn't know. */
+  /** Fields the stored document has that Puddle doesn't know. */
   unknown: string[] = [];
   vscode: S["VsCodeServer"] = {
     server: null,

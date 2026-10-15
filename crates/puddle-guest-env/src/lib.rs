@@ -23,7 +23,7 @@
 //! | containers (Docker CLI) | `~/.docker/config.json` `proxies.default`, at the bridge gateway, merged |
 //! | `ssh` (and `git`, `scp`, `rsync` over it) | `/etc/ssh/ssh_config.d/00-puddle.conf`: the agent as `ProxyCommand`, which refuses SSH with a message (not supported yet); loopback and the container bridge stay direct |
 //!
-//! Every file is one puddle owns outright, except the Docker CLI config, where puddle owns only
+//! Every file is one Puddle owns outright, except the Docker CLI config, where Puddle owns only
 //! `proxies.default` and the boot hook merges it in (`docker login`'s `auths` survive a restart).
 //! No other user file is touched (Maven's goes in through `-gs`, Gradle's is an init
 //! script next to the user's).

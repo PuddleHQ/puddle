@@ -16,11 +16,11 @@ pub const SCHEMA_VERSION: u32 = 1;
 pub enum Status {
     /// Fine.
     Ok,
-    /// Worth knowing; puddle works.
+    /// Worth knowing; Puddle works.
     Info,
-    /// puddle works, with a limitation the text explains.
+    /// Puddle works, with a limitation the text explains.
     Warn,
-    /// puddle can't run sandboxes until this is fixed.
+    /// Puddle can't run sandboxes until this is fixed.
     Fail,
     /// Not checked, because an earlier check failed or it doesn't apply.
     Skipped,
@@ -54,7 +54,7 @@ pub enum CheckId {
     Launch,
     /// Booting a test microVM.
     TestBoot,
-    /// The job object puddle runs in.
+    /// The job object Puddle runs in.
     JobObject,
     /// Microsoft Entra Global Secure Access.
     GlobalSecureAccess,
@@ -277,11 +277,11 @@ impl Report {
             (0, 0) => "No problems found.".to_owned(),
             (0, w) => format!("No problems found; {} to know about.", plural(w, "warning")),
             (f, 0) => format!(
-                "{} to fix before puddle can run sandboxes.",
+                "{} to fix before Puddle can run sandboxes.",
                 plural(f, "problem")
             ),
             (f, w) => format!(
-                "{} to fix before puddle can run sandboxes; {}.",
+                "{} to fix before Puddle can run sandboxes; {}.",
                 plural(f, "problem"),
                 plural(w, "warning")
             ),
@@ -377,12 +377,12 @@ mod tests {
         assert!(
             report(vec![fail.clone(), fail.clone()])
                 .to_text()
-                .contains("2 problems to fix before puddle can run sandboxes.")
+                .contains("2 problems to fix before Puddle can run sandboxes.")
         );
         assert!(
             report(vec![fail, warn.clone(), warn])
                 .to_text()
-                .contains("1 problem to fix before puddle can run sandboxes; 2 warnings.")
+                .contains("1 problem to fix before Puddle can run sandboxes; 2 warnings.")
         );
     }
 

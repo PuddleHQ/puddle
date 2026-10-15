@@ -71,7 +71,7 @@ export interface WorkspacesDeps {
   pollMs?: number;
 }
 
-const DOWN = "puddle's service isn't answering.";
+const DOWN = "Puddle's service isn't answering.";
 
 /** Which create-form field a refusal is about, from its text. */
 export function fieldOf(message: string): Field {
@@ -258,7 +258,7 @@ export class WorkspaceStore {
     try {
       const { data, error, response } = await run();
       if (data !== undefined) return { ok: true, value: data };
-      const message = error?.message ?? "puddle refused that.";
+      const message = error?.message ?? "Puddle refused that.";
       if (response.status === 404) {
         void this.refresh();
         return {
@@ -358,7 +358,7 @@ export class WorkspaceStore {
       if (!mine.data) {
         return {
           ok: false,
-          message: mine.error?.message ?? "puddle couldn't read the settings.",
+          message: mine.error?.message ?? "Puddle couldn't read the settings.",
         };
       }
       const saved = await this.#api.PUT(
@@ -371,7 +371,7 @@ export class WorkspaceStore {
       if (!saved.data) {
         return {
           ok: false,
-          message: saved.error?.message ?? "puddle couldn't save that.",
+          message: saved.error?.message ?? "Puddle couldn't save that.",
         };
       }
       await this.refresh();

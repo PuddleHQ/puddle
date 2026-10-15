@@ -102,7 +102,7 @@ async fn ho2_a_pipe_squatted_by_another_creator_is_refused() {
     use tokio::net::windows::named_pipe::ServerOptions;
     let root = root();
     let endpoint = root.endpoint().unwrap();
-    // The squatter: a plain pipe at puddle's name, created first, default DACL.
+    // The squatter: a plain pipe at Puddle's name, created first, default DACL.
     let _squatter = ServerOptions::new().create(endpoint.path()).unwrap();
     let err = root.bind(&endpoint).unwrap_err();
     assert!(matches!(err, IpcError::NameTaken { .. }), "{err}");
@@ -219,7 +219,7 @@ async fn closing_the_listener_closes_the_endpoint() {
         listener.close().await;
         let err = connect(endpoint.path()).await.unwrap_err();
         assert!(matches!(err, IpcError::NotFound { .. }), "{err}");
-        // The name is free again for puddle (not for anyone else: it was random).
+        // The name is free again for Puddle (not for anyone else: it was random).
         root.bind(&endpoint).unwrap().close().await;
     }
 }

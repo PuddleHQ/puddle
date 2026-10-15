@@ -252,12 +252,12 @@ mod tests {
         {
             set.insert(name.to_owned());
         }
-        // These four are added to, not replaced (the user's value is kept and puddle's follows).
+        // These four are added to, not replaced (the user's value is kept and Puddle's follows).
         let merged = ["JAVA_TOOL_OPTIONS", "MAVEN_ARGS"];
         let owned: BTreeSet<String> = PUDDLE_OWNED_NAMES.iter().map(|n| (*n).to_owned()).collect();
         let mut expected = set.clone();
         for name in merged {
-            assert!(expected.remove(name), "{name} is set by puddle");
+            assert!(expected.remove(name), "{name} is set by Puddle");
         }
         assert_eq!(owned, expected);
     }

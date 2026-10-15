@@ -200,7 +200,7 @@ async fn a_proxy_typed_into_puddles_settings_that_cannot_be_used_is_reported_not
         assert_eq!(health.problems.len(), 1, "{typed}: {:?}", health.problems);
         assert_eq!(health.problems[0].kind, ProxyProblemKind::UnusableSetting);
         assert!(
-            health.problems[0].detail.contains("puddle's settings")
+            health.problems[0].detail.contains("Puddle's settings")
                 && health.problems[0].detail.contains(mentions),
             "{typed}: {:?}",
             health.problems

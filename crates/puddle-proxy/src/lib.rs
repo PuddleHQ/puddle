@@ -10,13 +10,13 @@
 //! 2. **Target**: `CONNECT host:port` or an absolute-form `http://` request; the host is
 //!    normalised into a [`puddle_types::Host`] (`puddle_netpolicy::normalise_host`: IDNA, LDH,
 //!    canonical IPs); anything else is a `400`. A literal address or a name that is blocked by
-//!    itself (toggle off, puddle's own endpoint) is refused here, before the rules.
+//!    itself (toggle off, Puddle's own endpoint) is refused here, before the rules.
 //! 3. **Decision**: the [`puddle_types::Policy`] decides on the name before it is resolved
 //!    (R-10). Deny, pending and blocked are a `403` that says which, with an
 //!    `x-puddle-decision` header (and `x-puddle-pending: <id>` / `x-puddle-blocked: <reason>`);
 //!    a policy error is a `503`: the proxy fails closed.
 //! 4. **Addresses**: an allowed name is resolved once; every address goes through the
-//!    [`AddressCheck`] (`puddle_netpolicy::NetPolicy`: address classes, local toggles, puddle's
+//!    [`AddressCheck`] (`puddle_netpolicy::NetPolicy`: address classes, local toggles, Puddle's
 //!    own endpoints) and only an address that passed is connected to. A local address needs its
 //!    toggle on and an exact allow of the name or of the address itself, unless "wildcards
 //!    reach local addresses" is on (R-14); a block names the toggle that would allow it.
@@ -45,7 +45,7 @@
 //! open connections and each route on agent sessions ([`ProxyConfig`]), far above what real tools
 //! open.
 //!
-//! [`PullProxy`] is the other way out: the loopback listener for puddle's own image pulls
+//! [`PullProxy`] is the other way out: the loopback listener for Puddle's own image pulls
 //!, with a per-run token instead of a route, and the address guard without the rules.
 //!
 //! # Features

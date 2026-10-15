@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Real `git` against the proxy and the real injector: the messages a refusal carries are what
 //! the person at the terminal reads, and a request git sends with its own header behaves as it
-//! would without puddle.
+//! would without Puddle.
 //!
 //! Needs `git` on the path; without it the tests skip unless `PUDDLE_REQUIRE_TOOLS` is set (the
 //! Linux CI job sets it). Unix only: `git` on Windows verifies certificates with its own TLS backend, and the
@@ -265,12 +265,16 @@ async fn a_repository_no_identity_covers_works_with_the_token_git_has_and_fails_
             .detach_identity(&git.t.world.workspace, identity.id)
             .unwrap();
     }
-    // Without a token: git's own error for a private repository, no word from puddle.
+    // Without a token: git's own error for a private repository, no word from Puddle.
     let ran = git
         .run(&["ls-remote", "https://bound.test/acme/private.git"])
         .await;
     assert!(!ran.ok);
-    assert!(!ran.stderr.contains("puddle"), "{}", ran.stderr);
+    assert!(
+        !ran.stderr.to_lowercase().contains("puddle"),
+        "{}",
+        ran.stderr
+    );
     assert!(
         ran.stderr.contains("terminal prompts disabled"),
         "{}",
@@ -310,7 +314,7 @@ async fn git_s_own_header_goes_out_as_it_is_and_a_401_to_it_is_what_git_would_ha
     let seen = git.t.server.recorded();
     assert_eq!(seen[0].headers_named("authorization"), ["Bearer mine"]);
     assert!(!format!("{seen:?}").contains(WORK));
-    // One the host rejects: git's own error, with no word from puddle.
+    // One the host rejects: git's own error, with no word from Puddle.
     let ran = git
         .run(&[
             "-c",
@@ -320,7 +324,11 @@ async fn git_s_own_header_goes_out_as_it_is_and_a_401_to_it_is_what_git_would_ha
         ])
         .await;
     assert!(!ran.ok);
-    assert!(!ran.stderr.contains("puddle"), "{}", ran.stderr);
+    assert!(
+        !ran.stderr.to_lowercase().contains("puddle"),
+        "{}",
+        ran.stderr
+    );
     assert!(
         ran.stderr.contains("terminal prompts disabled") || ran.stderr.contains("401"),
         "{}",

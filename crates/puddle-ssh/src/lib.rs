@@ -12,12 +12,12 @@
 //! | Piece | What |
 //! |---|---|
 //! | [`SshEndpoint`] | accepts clients on a sandbox's owner-only [`puddle_ipc::Listener`]; each client gets **its own** SSH connection to the sandbox |
-//! | [`SshTarget`] | what a client is served by; puddle's only implementation is [`puddle_boot::GatedSandbox`], so nobody gets SSH before the boot hook returned 0 |
+//! | [`SshTarget`] | what a client is served by; Puddle's only implementation is [`puddle_boot::GatedSandbox`], so nobody gets SSH before the boot hook returned 0 |
 //! | [`bridge`] | the relay between `ssh`'s stdio and the endpoint, and the refusal line it turns into a message |
 //!
 //! **One SSH connection per client.** msb caps active TCP forwards at 64 per SSH connection,
-//! so connections are never shared: an IDE's forwards don't eat into puddle's own, and
-//! puddle's forwards open their own connection.
+//! so connections are never shared: an IDE's forwards don't eat into Puddle's own, and
+//! Puddle's forwards open their own connection.
 //!
 //! **No timeouts on a session.** Neither the endpoint nor the bridge ends an idle session; an
 //! IDE may sit idle for hours. The runtime's own SSH server must have its inactivity timeout off

@@ -10,7 +10,7 @@ use crate::assets::guest_path;
 /// Where the VS Code server reads Machine settings for the `root` user.
 pub const MACHINE_SETTINGS_GUEST: &str = "/root/.vscode-server/data/Machine/settings.json";
 
-/// The Machine settings file, as a JSONC merge: puddle owns only these keys, so the
+/// The Machine settings file, as a JSONC merge: Puddle owns only these keys, so the
 /// user's own Machine settings, comments and trailing commas survive every boot.
 ///
 /// - `remote.autoForwardPortsSource: process` and `remote.autoForwardPortsFallback: 0`, so ports
@@ -40,7 +40,7 @@ pub fn machine_settings(agent_port: u16) -> GuestFile {
             ),
             entry(
                 &["remote.portsAttributes", &port],
-                json!({ "onAutoForward": "ignore", "label": "puddle proxy" }),
+                json!({ "onAutoForward": "ignore", "label": "Puddle proxy" }),
             ),
             entry(&["github.gitAuthentication"], json!(false)),
             entry(&["git.terminalAuthentication"], json!(false)),

@@ -2,7 +2,7 @@
 //! Basic authentication to an upstream proxy from credentials the user configured, and a list
 //! that tries several [`ProxyAuth`] implementations in order (Basic after SSPI, say).
 //!
-//! The credentials are the only ones puddle ever holds for a proxy; they come from settings or
+//! The credentials are the only ones Puddle ever holds for a proxy; they come from settings or
 //! the OS credential store, never from a prompt in the proxy path. They are never logged: every
 //! `Debug` shows names, not secrets.
 

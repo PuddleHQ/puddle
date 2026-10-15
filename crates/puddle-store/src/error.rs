@@ -15,8 +15,8 @@ pub enum StoreError {
     /// SQLite failed.
     #[error("database error: {0}")]
     Database(#[from] rusqlite::Error),
-    /// The database was written by a newer puddle; it is never downgraded.
-    #[error("database schema version {found} is newer than this puddle supports ({supported})")]
+    /// The database was written by a newer Puddle; it is never downgraded.
+    #[error("database schema version {found} is newer than this Puddle supports ({supported})")]
     SchemaTooNew {
         /// The database's version.
         found: u32,

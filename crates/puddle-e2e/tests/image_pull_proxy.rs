@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! I test of the image-pull path (P1/P2 without a VM): the msb adapter's real
 //! `pull_image` (the SDK's registry client) → the client's own proxy setting
-//! ([`MsbConfig::with_registry_proxy`]) → puddle's [`PullProxy`] with its per-run token → a TLS registry whose certificate chains to a lab root
+//! ([`MsbConfig::with_registry_proxy`]) → Puddle's [`PullProxy`] with its per-run token → a TLS registry whose certificate chains to a lab root
 //! nobody trusts, standing in for a TLS-intercepting company proxy.
 //!
 //! - **P1**: without the lab root the pull fails on the certificate, after the proxy tunnelled
@@ -14,7 +14,7 @@
 //! - **The token is not in any environment.** After the pulls, neither this process nor a
 //!   child it spawns has a variable that holds it. The process environment carries a decoy
 //!   `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY` instead, which the pulls ignore: nothing connects to
-//!   it, so puddle needs no scrubbing of the user's own proxy variables.
+//!   it, so Puddle needs no scrubbing of the user's own proxy variables.
 //!
 //! One test in its own binary: it sets the decoy environment before any thread starts and
 //! installs a global log subscriber. The child is this same binary run again with a marker
@@ -214,7 +214,7 @@ const ENV_BEGIN: &str = "<<<ENV-BEGIN>>>";
 const ENV_END: &str = "<<<ENV-END>>>";
 const TEST_NAME: &str = "image_pulls_go_through_the_pull_proxy_and_trust_only_the_given_roots";
 
-/// Runs this test binary as a child process, as puddle starts msb's runner processes, and returns
+/// Runs this test binary as a child process, as Puddle starts msb's runner processes, and returns
 /// the environment it sees (`NAME=value` lines).
 fn child_environment() -> String {
     let out = std::process::Command::new(std::env::current_exe().unwrap())
@@ -286,7 +286,7 @@ fn decoy_environment() -> std::net::TcpListener {
     decoy
 }
 
-/// The pulls are in the audit as puddle's own connections: no workspace, the address connected to,
+/// The pulls are in the audit as Puddle's own connections: no workspace, the address connected to,
 /// and the bytes that went through.
 async fn assert_pulls_are_audited(store: &Store, token: &str) {
     // connected to, and the bytes that went through.

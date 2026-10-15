@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Comfortable or compact spacing for the whole app. Like the theme, the stored choice lives in
-// puddle's settings; localStorage only holds a hint so the first paint is already right, and
+// Puddle's settings; localStorage only holds a hint so the first paint is already right, and
 // every access is guarded because storage can be unavailable.
 import type { StorageLike } from "./theme.ts";
 

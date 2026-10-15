@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Signing in from puddle, on the user's click and never for a request.
+//! Signing in from Puddle, on the user's click and never for a request.
 //!
 //! A source that cannot supply a secret answers [`SourceError::NotSignedIn`]. Here is how the user
 //! fixes that: `gh auth login --web` for a GitHub CLI account, or Git Credential Manager allowed to
@@ -23,7 +23,7 @@ use crate::run::{Prompts, ToolPaths, command, run_with, spawn_error};
 use crate::sources::parse_fill;
 use crate::spec::SourceSpec;
 
-/// How long a sign-in may stay open before puddle ends it.
+/// How long a sign-in may stay open before Puddle ends it.
 const SIGN_IN_WINDOW: Duration = Duration::from_mins(5);
 
 /// How long `gh` gets to print its code and address.
@@ -51,7 +51,7 @@ fn detail(text: &str) -> String {
     }
 }
 
-/// What the user needs to finish a sign-in that puddle started.
+/// What the user needs to finish a sign-in that Puddle started.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SignInStart {
     /// The one-time code to type at the address (`gh`).

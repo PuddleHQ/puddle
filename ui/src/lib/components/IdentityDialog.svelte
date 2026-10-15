@@ -129,7 +129,7 @@
 <FormDialog
   bind:open
   title={mode === "create" ? "Add identity" : "Edit identity"}
-  description="An identity is who commits and signs in: the author Git writes into commits, and the credentials puddle adds to Git requests as they leave a workspace. The secrets stay on this computer."
+  description="An identity is who commits and signs in: the author Git writes into commits, and the credentials Puddle adds to Git requests as they leave a workspace. The secrets stay on this computer."
 >
   <form id="{id}-form" onsubmit={submit} novalidate>
     <div class="field">

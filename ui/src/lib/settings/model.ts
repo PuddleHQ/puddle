@@ -30,8 +30,8 @@ export const MS_TERMS_VERSION = MS_TERMS_URL;
 /** The words of the enable popup. The first sentence is fixed: the user's licensee consent covers it. */
 export const MS_POPUP = {
   title: "Use Microsoft's VS Code server?",
-  statement: "puddle downloads the server from Microsoft",
-  rest: "and starts it in your workspace. By continuing you accept the Microsoft VS Code Server licence terms as your own licence. puddle does not ship, change or keep a copy of the server.",
+  statement: "Puddle downloads the server from Microsoft",
+  rest: "and starts it in your workspace. By continuing you accept the Microsoft VS Code Server licence terms as your own licence. Puddle does not ship, change or keep a copy of the server.",
   licenceLink: "Microsoft VS Code Server licence terms",
   telemetry: "Allow the server to send telemetry to Microsoft",
   accept: "Accept and use Microsoft's server",
@@ -42,13 +42,13 @@ export const MS_POPUP = {
 export const microsoftChosenToast = (telemetry: boolean): string =>
   "Microsoft's VS Code server is on. You accepted Microsoft's licence terms, and " +
   `telemetry is ${telemetry ? "on" : "off"}. ` +
-  "puddle downloads the server from Microsoft the next time you open a workspace in the browser, " +
+  "Puddle downloads the server from Microsoft the next time you open a workspace in the browser, " +
   "so that first open can take a little longer. You can go back to code-server in Settings.";
 
 export const CODE_SERVER_NOTE =
   "code-server (bundled). Some extensions may not be listed: it is not Microsoft's official VS Code, so it uses the Open VSX registry instead of Microsoft's Marketplace.";
 export const MICROSOFT_NOTE =
-  "Microsoft's VS Code server, downloaded by puddle from Microsoft.";
+  "Microsoft's VS Code server, downloaded by Puddle from Microsoft.";
 
 export const serverNote = (server: ServerChoice): string =>
   server === "microsoft" ? MICROSOFT_NOTE : CODE_SERVER_NOTE;
@@ -99,7 +99,7 @@ export function parseGrace(
 
 export const CLOSE_OPTIONS: { value: CloseBehaviour; label: string }[] = [
   { value: "tray", label: "Keep running in the tray" },
-  { value: "quit", label: "Quit puddle" },
+  { value: "quit", label: "Quit Puddle" },
 ];
 
 export const LOCAL_EXPLAIN: Record<string, string> = {
@@ -126,6 +126,6 @@ export function bodyFrom(
   };
 }
 
-/** What a toggle shows: the stored value, else puddle's default (off). */
+/** What a toggle shows: the stored value, else Puddle's default (off). */
 export const toggleOn = (value: boolean | null | undefined): boolean =>
   value === true;

@@ -13,13 +13,13 @@ use crate::redact::redact_text;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SignInOutcome {
-    /// The proxy asked, and puddle answered.
+    /// The proxy asked, and Puddle answered.
     SignedIn,
     /// The proxy let the request through without asking.
     NotRequired,
     /// The proxy refused the credentials or the token, or asked too often.
     Failed,
-    /// The proxy asks for something puddle has no way to give (a scheme it does not speak, or no
+    /// The proxy asks for something Puddle has no way to give (a scheme it does not speak, or no
     /// configured password).
     Unsupported,
 }

@@ -118,7 +118,7 @@ describe("changing identities", () => {
   it("says the service is down when it is", async () => {
     const store = make();
     api.down = true;
-    const down = "puddle's service isn't answering.";
+    const down = "Puddle's service isn't answering.";
     expect(await store.create(request("A"))).toEqual({
       ok: false,
       message: down,
@@ -174,7 +174,7 @@ describe("changing identities", () => {
     api.refuse = { status: 500, message: "x" };
     expect(await store.remove(1)).toEqual({
       ok: false,
-      message: "puddle couldn't delete that identity.",
+      message: "Puddle couldn't delete that identity.",
     });
     expect(store.identities).toHaveLength(1);
   });

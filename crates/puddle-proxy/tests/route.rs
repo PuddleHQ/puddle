@@ -330,7 +330,7 @@ async fn an_unknown_host_is_refused_and_pending_then_passes_once_approved() {
     // `status` consumed the head; the body says what to do.
     let body = String::from_utf8(read_all(&mut reader).await.unwrap()).unwrap();
     assert!(
-        body.contains("new.test is waiting for approval in puddle"),
+        body.contains("new.test is waiting for approval in Puddle"),
         "{body}"
     );
 

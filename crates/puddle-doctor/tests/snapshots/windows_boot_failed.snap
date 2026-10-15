@@ -14,7 +14,7 @@ FAIL  Test boot             msb exited with 1 without booting the test VM
               → sandbox process exited (exit code: 0) before agent relay became available
 ok    Global Secure Access  client not installed
 
-1 problem to fix before puddle can run sandboxes. (1.2 s)
+1 problem to fix before Puddle can run sandboxes. (1.2 s)
 
 ---
 {

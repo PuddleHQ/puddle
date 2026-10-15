@@ -180,7 +180,7 @@ and restart again.";
 fn nested_fix(os: Os, vendor: &str) -> String {
     format!(
         "This {} is a virtual machine ({vendor}) whose host doesn't pass CPU virtualization through. \
-Turn on nested virtualization for this VM on its host, or run puddle on a physical PC. On a \
+Turn on nested virtualization for this VM on its host, or run Puddle on a physical PC. On a \
 Hyper-V host, with the VM off:
   Set-VMProcessor -VMName <name> -ExposeVirtualizationExtensions $true
 On VMware: \"Virtualize Intel VT-x/EPT or AMD-V/RVI\" in the VM's processor settings.",
@@ -258,17 +258,17 @@ report it."
         HypervisorApi::Unsupported if os == Os::MacOs => Check::new(
             id,
             Status::Fail,
-            "puddle doesn't support macOS yet",
+            "Puddle doesn't support macOS yet",
         )
         .finding(Finding::UnsupportedOs)
-        .fix("Run puddle on Windows 10/11 or Linux with KVM for now. macOS on Apple Silicon is being explored."),
+        .fix("Run Puddle on Windows 10/11 or Linux with KVM for now. macOS on Apple Silicon is being explored."),
         HypervisorApi::Unsupported => Check::new(
             id,
             Status::Fail,
-            "puddle has no hypervisor support on this operating system",
+            "Puddle has no hypervisor support on this operating system",
         )
         .finding(Finding::UnsupportedOs)
-        .fix("Run puddle on Windows 10/11 (or Linux with KVM)."),
+        .fix("Run Puddle on Windows 10/11 (or Linux with KVM)."),
     }
 }
 
@@ -284,7 +284,7 @@ fn code_integrity(facts: &CodeIntegrityFacts) -> Check {
         )
         .finding(Finding::CodeIntegrityUnreadable)
         .fix(
-            "puddle works without it. If \"Runtime starts\" or \"Test boot\" reports a blocked msb, that \
+            "Puddle works without it. If \"Runtime starts\" or \"Test boot\" reports a blocked msb, that \
 check names the policy.",
         )
         .detail(detail.clone()),
@@ -308,7 +308,7 @@ fn code_integrity_state(ci: CodeIntegrity) -> Check {
     let check = Check::new(CheckId::CodeIntegrity, Status::Info, summary);
     if ci.user_mode_enforced {
         check.fix(
-            "An App Control (WDAC) policy decides which programs may run. If it blocks puddle's runtime, \
+            "An App Control (WDAC) policy decides which programs may run. If it blocks Puddle's runtime, \
 \"Runtime starts\" says so and names the log with the rule.",
         )
     } else {
@@ -322,11 +322,11 @@ fn job_check(_job: JobFacts) -> Check {
     Check::new(
         CheckId::JobObject,
         Status::Info,
-        "puddle runs in a job object that doesn't let child processes leave it",
+        "Puddle runs in a job object that doesn't let child processes leave it",
     )
     .finding(Finding::JobWithoutBreakaway)
     .fix(
-        "Usual under CI runners and some IDE or remote shells. puddle keeps its VM processes in its own \
+        "Usual under CI runners and some IDE or remote shells. Puddle keeps its VM processes in its own \
 job, so this only matters if \"Test boot\" fails with access denied.",
     )
 }
@@ -374,21 +374,21 @@ fn runtime(os: Os, rt: &RuntimeFacts) -> Check {
                 RuntimeError::Missing { .. } => (
                     Finding::RuntimeMissing,
                     format!(
-                        "Reinstall puddle: its runtime folder {dir} is incomplete. The runtime ships with puddle \
-and must sit next to puddle's program file."
+                        "Reinstall Puddle: its runtime folder {dir} is incomplete. The runtime ships with Puddle \
+and must sit next to Puddle's program file."
                     ),
                 ),
                 RuntimeError::Mismatch { .. } | RuntimeError::NoVersion { .. } => (
                     Finding::RuntimeVersionMismatch,
                     format!(
-                        "Reinstall puddle so the runtime in {dir} matches this puddle again. Don't copy an msb \
-from elsewhere into it: puddle only runs the exact msb {} it was built for.",
+                        "Reinstall Puddle so the runtime in {dir} matches this Puddle again. Don't copy an msb \
+from elsewhere into it: Puddle only runs the exact msb {} it was built for.",
                         rt.expected
                     ),
                 ),
                 _ => (
                     Finding::RuntimeUnreadable,
-                    format!("Reinstall puddle: the runtime in {dir} is damaged."),
+                    format!("Reinstall Puddle: the runtime in {dir} is damaged."),
                 ),
             };
             Check::new(id, Status::Fail, err.to_string())
@@ -434,8 +434,8 @@ fn applocker(msb: &Path) -> Blocked {
         finding: Finding::BlockedByAppLocker,
         summary: "an AppLocker or Software Restriction policy blocks msb".into(),
         fix: format!(
-            "The policy doesn't allow {}. Allow puddle's install folder (a path or publisher rule), or \
-install puddle where the policy lets programs run. Event Viewer > Applications and Services \
+            "The policy doesn't allow {}. Allow Puddle's install folder (a path or publisher rule), or \
+install Puddle where the policy lets programs run. Event Viewer > Applications and Services \
 Logs > Microsoft > Windows > AppLocker > EXE and DLL names the rule.",
             msb.display()
         ),
@@ -447,7 +447,7 @@ fn app_control(msb: &Path) -> Blocked {
         finding: Finding::BlockedByAppControl,
         summary: "App Control for Business (WDAC) or Smart App Control blocks msb".into(),
         fix: format!(
-            "A code integrity policy doesn't allow {}. Allow puddle's files or signer in that policy; \
+            "A code integrity policy doesn't allow {}. Allow Puddle's files or signer in that policy; \
 Event Viewer > Applications and Services Logs > Microsoft > Windows > CodeIntegrity > \
 Operational names the rule. Smart App Control has no exceptions: it can only be turned off \
 (Windows Security > App & browser control > Smart App Control).",
@@ -462,7 +462,7 @@ fn antivirus(msb: &Path) -> Blocked {
         summary: "antivirus flagged msb".into(),
         fix: format!(
             "Look for {} in your antivirus's protection history or quarantine. If it is a false \
-positive, restore it, exclude puddle's runtime folder, and reinstall puddle if the file is gone.",
+positive, restore it, exclude Puddle's runtime folder, and reinstall Puddle if the file is gone.",
             msb.display()
         ),
     }
@@ -495,14 +495,14 @@ fn permissions_fix(os: Os, msb: &Path) -> String {
         format!(
             "The file's permissions deny your account. Restore the inherited permissions:
   icacls \"{}\" /reset
-(as administrator if puddle is installed for all users), or reinstall puddle.",
+(as administrator if Puddle is installed for all users), or reinstall Puddle.",
             msb.display()
         )
     } else {
         format!(
             "Make it readable and executable again:
   chmod a+rx \"{}\"
-or reinstall puddle.",
+or reinstall Puddle.",
             msb.display()
         )
     }
@@ -549,7 +549,7 @@ fn load_failure(os: Os, msb: &Path, code: i32, hypervisor_ready: bool) -> Option
             finding: Finding::DllMissing,
             summary: format!("msb can't load a DLL it needs (0x{status:08X})"),
             fix: if hypervisor_ready {
-                "Reinstall puddle; if that doesn't help, run Windows Update: msb needs the Windows Hypervisor \
+                "Reinstall Puddle; if that doesn't help, run Windows Update: msb needs the Windows Hypervisor \
 Platform DLLs of a current Windows 10/11."
                     .into()
             } else {
@@ -607,7 +607,7 @@ fn launch(os: Os, msb: &Path, outcome: &ProcessOutcome, hypervisor_ready: bool) 
                 Some(b) => blocked_check(id, b, detail.clone()),
                 None => Check::new(id, Status::Fail, "msb could not be started")
                     .finding(Finding::LaunchFailed)
-                    .fix("Reinstall puddle. If this stays, include the line below when you report it.")
+                    .fix("Reinstall Puddle. If this stays, include the line below when you report it.")
                     .detail(detail.clone()),
             }
         }
@@ -637,10 +637,10 @@ fn launch(os: Os, msb: &Path, outcome: &ProcessOutcome, hypervisor_ready: bool) 
 }
 
 const STOPPED_FIX: &str = "If endpoint security (EDR or antivirus) runs on this PC, check its log for msb: it may have \
-stopped the process. Otherwise reinstall puddle and include the lines below when you report it.";
+stopped the process. Otherwise reinstall Puddle and include the lines below when you report it.";
 
-const SLOW_FIX: &str = "Security software scanning a program it hasn't seen before is the usual cause. Run puddle \
-doctor again; if it keeps timing out, check your endpoint security's log for msb.";
+const SLOW_FIX: &str = "Security software scanning a program it hasn't seen before is the usual cause. \
+Run puddle doctor again; if it keeps timing out, check your endpoint security's log for msb.";
 
 fn test_boot(os: Os, msb: &Path, dir: &Path, facts: &BootFacts, job: Option<JobFacts>) -> Check {
     let check = test_boot_outcome(os, msb, dir, facts, job);
@@ -742,7 +742,7 @@ fn test_boot_outcome(
                 )
                 .finding(Finding::BootBlockedByJob)
                 .fix(
-                    "The job object puddle was started in (see \"Job object\") doesn't let the VM process leave \
+                    "The job object Puddle was started in (see \"Job object\") doesn't let the VM process leave \
 it. Run puddle doctor from a normal terminal; on a CI runner, start it through a process \
 outside the step's job.",
                 )
@@ -759,7 +759,7 @@ outside the step's job.",
                 )
                 .finding(Finding::RuntimeMissing)
                 .fix(format!(
-                    "Reinstall puddle: its runtime folder {} is incomplete. msb needs the libkrunfw \
+                    "Reinstall Puddle: its runtime folder {} is incomplete. msb needs the libkrunfw \
 it was released with in the same folder.",
                     dir.display()
                 ))
@@ -797,7 +797,7 @@ fn global_secure_access(gsa: &GsaFacts) -> Check {
         )
         .finding(Finding::GlobalSecureAccessUnknown)
         .fix(
-            "puddle works without it. If company resources reached through Microsoft Entra Global Secure \
+            "Puddle works without it. If company resources reached through Microsoft Entra Global Secure \
 Access don't work from a sandbox, see whether its client is installed on this PC: it doesn't \
 tunnel virtual machines' traffic.",
         )
@@ -818,9 +818,9 @@ tunnel virtual machines' traffic.",
         .fix(
             "Microsoft documents that this client doesn't tunnel virtual machines' traffic and isn't \
 supported on devices that host VMs. Sandboxes have no network of their own: their traffic \
-leaves through puddle's proxy, an ordinary program on this PC, which the client handles like \
+leaves through Puddle's proxy, an ordinary program on this PC, which the client handles like \
 any other app. If company resources reached through Global Secure Access don't work from a \
-sandbox, this limitation is the likely cause; puddle can't change it.",
+sandbox, this limitation is the likely cause; Puddle can't change it.",
         ),
     }
 }

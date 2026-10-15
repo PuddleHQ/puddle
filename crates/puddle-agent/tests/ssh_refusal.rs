@@ -111,7 +111,7 @@ impl Rig {
         }
     }
 
-    /// The guest's `ssh_config` as the boot hook lays it out: puddle's drop-in, included first.
+    /// The guest's `ssh_config` as the boot hook lays it out: Puddle's drop-in, included first.
     /// `before` is what the user's own config says before the include (it wins).
     fn ssh_config(&self, before: &str) -> PathBuf {
         let settings = ProxySettings {

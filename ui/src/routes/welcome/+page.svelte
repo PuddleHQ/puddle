@@ -14,7 +14,7 @@
   }
 </script>
 
-<StepHeading title="Welcome to puddle" />
+<StepHeading title="Welcome to Puddle" />
 <p class="body">
   Your code runs in a small virtual machine per workspace. Nothing leaves it
   unless you allow the host, and every connection is logged.

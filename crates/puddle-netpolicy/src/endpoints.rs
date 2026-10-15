@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! puddle's own listeners: every puddle listener registers here when it binds, and
+//! Puddle's own listeners: every Puddle listener registers here when it binds, and
 //! the guard blocks a workspace from reaching any of them, whatever the loopback toggle or
 //! the rules say.
 
@@ -9,7 +9,7 @@ use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
-/// What a registered puddle listener is, for the block message.
+/// What a registered Puddle listener is, for the block message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum EndpointKind {
@@ -87,7 +87,7 @@ struct Inner {
     next_id: AtomicU64,
 }
 
-/// The registry of puddle's own listeners. Cheap to clone; clones share the registry.
+/// The registry of Puddle's own listeners. Cheap to clone; clones share the registry.
 ///
 /// ```
 /// use puddle_netpolicy::{EndpointKind, OwnAddresses, PuddleEndpoints};

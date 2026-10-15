@@ -17,7 +17,7 @@ use crate::{HostError, HostPaths};
 /// # Errors
 ///
 /// [`HostError::State`] when something can't be made owner-only (for example a folder another
-/// account owns): puddle does not run with wider permissions.
+/// account owns): Puddle does not run with wider permissions.
 pub(crate) fn make_owner_only(paths: &HostPaths) -> Result<(), HostError> {
     let mut changed = Vec::new();
     let data = paths.data();
@@ -41,7 +41,7 @@ pub(crate) fn make_owner_only(paths: &HostPaths) -> Result<(), HostError> {
     if !changed.is_empty() {
         tracing::warn!(
             changed = %changed.join("; "),
-            "made puddle's data folder owner-only (access for other accounts removed)"
+            "made Puddle's data folder owner-only (access for other accounts removed)"
         );
     }
     Ok(())
@@ -73,9 +73,9 @@ fn refuse(path: &Path, err: &io::Error) -> HostError {
     HostError::State {
         what: "the data folder",
         reason: format!(
-            "{} must be accessible to your account only, and puddle could not make it so: \
-             {err}. puddle will not run with wider permissions; fix the folder's permissions \
-             (or its owner) and start puddle again",
+            "{} must be accessible to your account only, and Puddle could not make it so: \
+             {err}. Puddle will not run with wider permissions; fix the folder's permissions \
+             (or its owner) and start Puddle again",
             path.display()
         ),
     }

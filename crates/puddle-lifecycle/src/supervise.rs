@@ -16,7 +16,7 @@ pub enum Role {
         /// The worker's exit code (1 if it has none, e.g. it was killed).
         exit_code: i32,
     },
-    /// The worker: run puddle. [`crate::wait_for_shutdown`] resolves on the front's request.
+    /// The worker: run Puddle. [`crate::wait_for_shutdown`] resolves on the front's request.
     Worker,
 }
 
@@ -28,8 +28,8 @@ pub enum Role {
 /// worker can finish stopping the VMs after Windows ends the front (about 5 s); the worker's
 /// owning handles still end any VM it doesn't stop.
 ///
-/// Elsewhere it returns [`Role::Worker`] at once (msb's parent watchdog ends the VMs if puddle
-/// dies; `SIGINT`/`SIGTERM`/`SIGHUP` reach puddle through [`crate::wait_for_shutdown`]).
+/// Elsewhere it returns [`Role::Worker`] at once (msb's parent watchdog ends the VMs if Puddle
+/// dies; `SIGINT`/`SIGTERM`/`SIGHUP` reach Puddle through [`crate::wait_for_shutdown`]).
 ///
 /// Only long-running commands use it: the worker's stdin is the control pipe, not the user's.
 ///

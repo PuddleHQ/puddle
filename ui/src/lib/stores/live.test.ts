@@ -38,7 +38,7 @@ describe("LiveState.refresh", () => {
     await live.refresh();
     expect(live.problem).toBe("failing");
     expect(live.problemDetail).toBe(
-      "puddle's service hit an error (status 500).",
+      "Puddle's service hit an error (status 500).",
     );
     const thrown = new LiveState({
       api: fakeApi(() => {

@@ -80,7 +80,7 @@
 
 <div class="head">
   <p class="muted">
-    puddle asks each Git host with this identity's own sign-ins, on this
+    Puddle asks each Git host with this identity's own sign-ins, on this
     computer. Nothing is sent to a workspace.
   </p>
   <button

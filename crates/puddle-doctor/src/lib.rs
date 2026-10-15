@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `puddle doctor`: checks what puddle needs on this machine and what can get in its
+//! `puddle doctor`: checks what Puddle needs on this machine and what can get in its
 //! way, and says plainly what is wrong and the exact fix. Dev-focused: no admin rights needed to
 //! run it, and no IT-process advice.
 //!

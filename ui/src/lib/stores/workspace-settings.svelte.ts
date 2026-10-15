@@ -18,7 +18,7 @@ export class WorkspaceSettings {
   status = $state<Status>("loading");
   overrides = $state.raw<Layer | null>(null);
   effective = $state.raw<Effective | null>(null);
-  /** Fields in the stored document that this puddle doesn't know. */
+  /** Fields in the stored document that this Puddle doesn't know. */
   unknownFields = $state.raw<string[]>([]);
   /** What a workspace with no overrides gets: the global values. */
   global = $state.raw<Effective | null>(null);
@@ -88,7 +88,7 @@ export class WorkspaceSettings {
       if (!data) {
         return {
           ok: false,
-          message: error?.message ?? "puddle couldn't save that.",
+          message: error?.message ?? "Puddle couldn't save that.",
         };
       }
       if (ticket === this.#ticket) {
@@ -97,7 +97,7 @@ export class WorkspaceSettings {
       }
       return { ok: true };
     } catch {
-      return { ok: false, message: "puddle's service isn't answering." };
+      return { ok: false, message: "Puddle's service isn't answering." };
     }
   }
 }

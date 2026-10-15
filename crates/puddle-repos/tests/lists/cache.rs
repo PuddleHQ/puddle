@@ -143,7 +143,7 @@ async fn a_secondary_limit_leaves_the_host_alone_until_it_allows_and_says_when()
     assert_eq!(first[0].state, ListState::Failed);
     let problem = first[0].problem.as_ref().unwrap();
     assert_eq!(problem.kind, ProblemKind::RateLimited);
-    assert!(problem.message.contains("limiting how fast puddle may ask"));
+    assert!(problem.message.contains("limiting how fast Puddle may ask"));
     assert_eq!(first[0].retry_at, Some(T0 + 120_000));
     assert_eq!(rig.api.count(), 1);
 

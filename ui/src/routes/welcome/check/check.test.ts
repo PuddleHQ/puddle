@@ -106,7 +106,7 @@ describe("system check step", () => {
     api.report = brokenReport();
     render(Page);
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "1 problem to fix before puddle can run workspaces.",
+      "1 problem to fix before Puddle can run workspaces.",
     );
     expect(screen.getByText("Fix:")).toBeInTheDocument();
     expect(
@@ -122,7 +122,7 @@ describe("system check step", () => {
     // Leaving does not mark the flow done: it comes back at the next start.
     expect(link("Leave setup for now")).toHaveAttribute("href", "/workspaces");
     expect(
-      screen.getByText(/comes back the next time you open puddle/),
+      screen.getByText(/comes back the next time you open Puddle/),
     ).toBeVisible();
   });
 
@@ -152,7 +152,7 @@ describe("system check step", () => {
 
     writeText.mockRejectedValueOnce(new Error("denied"));
     await fireEvent.click(screen.getByRole("button", { name: "Copy report" }));
-    expect(await screen.findByText(/didn't let puddle copy/)).toHaveAttribute(
+    expect(await screen.findByText(/didn't let Puddle copy/)).toHaveAttribute(
       "role",
       "alert",
     );
@@ -160,11 +160,11 @@ describe("system check step", () => {
     // A new run forgets the old copy message.
     await fireEvent.click(screen.getByRole("button", { name: "Check again" }));
     await waitFor(() =>
-      expect(screen.queryByText(/didn't let puddle copy/)).toBeNull(),
+      expect(screen.queryByText(/didn't let Puddle copy/)).toBeNull(),
     );
   });
 
-  it("says plainly when this puddle has no system check, and lets the user go on", async () => {
+  it("says plainly when this Puddle has no system check, and lets the user go on", async () => {
     api.doctorStatus = 503;
     render(Page);
     expect(await screen.findByText(/can't run the system check/)).toBeVisible();
@@ -176,7 +176,7 @@ describe("system check step", () => {
     api.down = true;
     render(Page);
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /couldn't run the system check: puddle's service isn't answering/,
+      /couldn't run the system check: Puddle's service isn't answering/,
     );
     expect(link("Continue")).toBeInTheDocument();
     api.down = false;
@@ -184,11 +184,11 @@ describe("system check step", () => {
     await screen.findByText("No problems found.");
   });
 
-  it("gives puddle's own reason when the check itself fails", async () => {
+  it("gives Puddle's own reason when the check itself fails", async () => {
     api.doctorStatus = 500;
     render(Page);
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "puddle couldn't run the system check: not here",
+      "Puddle couldn't run the system check: not here",
     );
     expect(link("Continue")).toBeInTheDocument();
   });

@@ -9,7 +9,7 @@ use puddle_doctor::{Options, SystemProbe, diagnose};
 use puddle_runtime::{DevOverride, RuntimeLayout, RuntimeVersion};
 
 /// A service that runs every check, with or without the test boot, on the real machine. Each run
-/// opens the runtime afresh, so a fix made while puddle runs (a permission, a replaced file) shows
+/// opens the runtime afresh, so a fix made while Puddle runs (a permission, a replaced file) shows
 /// at the next run.
 pub(crate) fn system_doctor(layout: &RuntimeLayout, expected: &RuntimeVersion) -> Arc<HostDoctor> {
     let dir = layout.runtime_dir().to_path_buf();

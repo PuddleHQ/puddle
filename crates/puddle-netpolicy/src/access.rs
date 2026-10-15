@@ -6,7 +6,7 @@ use puddle_settings::Effective;
 use puddle_types::{LocalCategory, WorkspaceName};
 
 /// One workspace's local-destination settings, resolved (workspace override over global over
-/// default). [`LocalAccess::NONE`] is puddle's default: every toggle off, wildcards don't reach
+/// default). [`LocalAccess::NONE`] is Puddle's default: every toggle off, wildcards don't reach
 /// local addresses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct LocalAccess {

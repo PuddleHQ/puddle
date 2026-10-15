@@ -1,8 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# puddle's guest CA bundle: the image's own CA bundle with puddle's extra CAs appended
-# (the host's corporate and user-added roots, puddle's own CAs), every certificate once.
+# Puddle's guest CA bundle: the image's own CA bundle with Puddle's extra CAs appended
+# (the host's corporate and user-added roots, Puddle's own CAs), every certificate once.
 # SSL_CERT_FILE, REQUESTS_CA_BUNDLE and CURL_CA_BUNDLE point at the result, so tools that take
 # a bundle path keep the distro roots: append, never replace.
 #

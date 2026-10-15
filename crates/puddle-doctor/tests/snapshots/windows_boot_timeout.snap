@@ -11,7 +11,7 @@ FAIL  Test boot             the test VM didn't finish within 25.0 s
             msb.
 ok    Global Secure Access  client not installed
 
-1 problem to fix before puddle can run sandboxes. (1.2 s)
+1 problem to fix before Puddle can run sandboxes. (1.2 s)
 
 ---
 {

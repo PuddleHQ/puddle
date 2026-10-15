@@ -410,7 +410,7 @@ fn rule_wire(workspace: Option<&str>, pattern: &str) -> RuleWire {
     }
 }
 
-/// A connection record; an empty `workspace` is one of puddle's own (no workspace).
+/// A connection record; an empty `workspace` is one of Puddle's own (no workspace).
 fn connection(ts: u64, workspace: &str, host: &str, decision: ConnectionDecision) -> AuditRecord {
     AuditRecord::Connection(ConnectionRecord {
         ts,

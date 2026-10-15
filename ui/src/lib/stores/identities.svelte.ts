@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /* eslint-disable svelte/prefer-svelte-reactivity -- the sets here are bookkeeping that no template reads */
-// The Identities screens' state: the identities in your order, what puddle found signed in on this
+// The Identities screens' state: the identities in your order, what Puddle found signed in on this
 // computer, what the last check of each credential came to, and what a user does to them (make,
 // change, delete, default, order, test, paste a token, sign in). It refetches on
 // `identities_changed` and on a resync, and polls slowly as a safety net. A credential's secret is
@@ -42,11 +42,11 @@ export interface IdentitiesDeps {
   pollMs?: number;
 }
 
-const DOWN = "puddle's service isn't answering.";
+const DOWN = "Puddle's service isn't answering.";
 
 const SIGNED_OUT: Check = {
   state: "problem",
-  message: "A workspace asked for it and puddle couldn't read it.",
+  message: "A workspace asked for it and Puddle couldn't read it.",
   needsSignIn: true,
 };
 
@@ -108,7 +108,7 @@ export class IdentitiesStore {
       if (!data) {
         return {
           ok: false,
-          message: this.#refused(error, "puddle couldn't change the default"),
+          message: this.#refused(error, "Puddle couldn't change the default"),
         };
       }
       this.gitDefaults = data;
@@ -167,7 +167,7 @@ export class IdentitiesStore {
       if (!data) {
         return {
           ok: false,
-          message: this.#refused(error, "puddle refused the identity"),
+          message: this.#refused(error, "Puddle refused the identity"),
         };
       }
       this.#put(data);
@@ -190,7 +190,7 @@ export class IdentitiesStore {
       if (!data) {
         return {
           ok: false,
-          message: this.#refused(error, "puddle refused the change"),
+          message: this.#refused(error, "Puddle refused the change"),
         };
       }
       this.identities = this.identities.map((i) => (i.id === id ? data : i));
@@ -210,7 +210,7 @@ export class IdentitiesStore {
         },
       );
       if (!data && response.status !== 404) {
-        return { ok: false, message: "puddle couldn't delete that identity." };
+        return { ok: false, message: "Puddle couldn't delete that identity." };
       }
       this.identities = this.identities.filter((i) => i.id !== id);
       return { ok: true, value: data?.detached_from ?? [] };
@@ -228,7 +228,7 @@ export class IdentitiesStore {
       if (!data) {
         return {
           ok: false,
-          message: this.#refused(error, "puddle couldn't change the default"),
+          message: this.#refused(error, "Puddle couldn't change the default"),
         };
       }
       await this.refresh();
@@ -247,7 +247,7 @@ export class IdentitiesStore {
       if (!data) {
         return {
           ok: false,
-          message: this.#refused(error, "puddle couldn't change the order"),
+          message: this.#refused(error, "Puddle couldn't change the order"),
         };
       }
       this.identities = data.identities;
@@ -282,7 +282,7 @@ export class IdentitiesStore {
       if (!data) {
         return {
           state: "problem",
-          message: this.#refused(error, "puddle couldn't check it"),
+          message: this.#refused(error, "Puddle couldn't check it"),
           needsSignIn: false,
         };
       }
@@ -356,7 +356,7 @@ export class IdentitiesStore {
       if (!data) {
         return {
           ok: false,
-          message: this.#refused(error, "puddle couldn't keep the token"),
+          message: this.#refused(error, "Puddle couldn't keep the token"),
         };
       }
       return { ok: true, value: data.source };
@@ -377,7 +377,7 @@ export class IdentitiesStore {
     }
   }
 
-  /** Starts a sign-in the user finishes outside puddle (a code at an address, or the helper's own window). */
+  /** Starts a sign-in the user finishes outside Puddle (a code at an address, or the helper's own window). */
   async signIn(source: Source): Promise<Result<SignInStart>> {
     try {
       const { data, error } = await this.#api.POST("/api/credentials/sign-in", {
@@ -386,7 +386,7 @@ export class IdentitiesStore {
       if (!data) {
         return {
           ok: false,
-          message: this.#refused(error, "puddle couldn't start the sign-in"),
+          message: this.#refused(error, "Puddle couldn't start the sign-in"),
         };
       }
       return { ok: true, value: { code: data.code, url: data.url } };

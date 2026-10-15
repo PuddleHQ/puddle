@@ -14,7 +14,7 @@ import {
 import { browserStorage } from "./theme.ts";
 
 /**
- * The reactive density choice, kept the way the theme is: the stored choice lives in puddle's
+ * The reactive density choice, kept the way the theme is: the stored choice lives in Puddle's
  * settings and a localStorage hint is applied before the first paint. `init()` once in the root
  * layout, then `sync()`.
  */

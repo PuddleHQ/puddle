@@ -81,7 +81,7 @@ test("a slow list shows progress, then the repositories when the host answers", 
   await expect(summary).toContainText("9 repositories.");
 });
 
-test("a rate-limited host shows the old list, why, and when puddle asks again", async ({
+test("a rate-limited host shows the old list, why, and when Puddle asks again", async ({
   page,
   backend,
 }) => {
@@ -91,7 +91,7 @@ test("a rate-limited host shows the old list, why, and when puddle asks again", 
   });
   await expect(sources).toContainText("Old list");
   await expect(sources).toContainText(/1[45] minutes ago/);
-  await expect(sources).toContainText("puddle asks again in 10 minutes");
+  await expect(sources).toContainText("Puddle asks again in 10 minutes");
   await expect(sources).toContainText(
     "GitHub says this account asked too often",
   );

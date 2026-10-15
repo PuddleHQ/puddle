@@ -18,12 +18,12 @@
 
 <StepHeading
   title="Your first workspace"
-  lead="Optional. Give puddle the HTTPS address of a git repository and it clones it into a workspace of its own."
+  lead="Optional. Give Puddle the HTTPS address of a git repository and it clones it into a workspace of its own."
 />
 
 <p class="body">
   You can also do this later from Workspaces. The workspace appears there while
-  puddle prepares it.
+  Puddle prepares it.
 </p>
 
 <div class="actions">

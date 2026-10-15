@@ -5,7 +5,7 @@
 //! deep nesting can't overflow the stack) to find the byte spans of the members on an owned
 //! path, and splices only those spans. After all edits, the result is parsed again and compared
 //! with the same edits done on the parsed value; any difference refuses the merge
-//! ([`MergeRefusal::Inconsistent`]) instead of writing a file puddle can't vouch for.
+//! ([`MergeRefusal::Inconsistent`]) instead of writing a file Puddle can't vouch for.
 //!
 //! The same engine serves JSONC ([`Dialect::Comments`]): it reads a same-length *view* of the
 //! text with the comments and trailing commas blanked (see `jsonc`), and splices the original,
@@ -760,7 +760,7 @@ mod tests {
             out.contains("httpsProxy") && out.contains("dXNlcjpwYXNz"),
             "{out}"
         );
-        // Removing everything puddle owns gives back the user's file exactly.
+        // Removing everything Puddle owns gives back the user's file exactly.
         let u = unmerge_bytes(MergeFormat::Json, out.as_bytes(), &docker_spec().keys()).unwrap();
         assert_eq!(u.merged, Merged::Write(DOCKER_LOGIN.as_bytes().to_vec()));
         assert!(!u.empty);

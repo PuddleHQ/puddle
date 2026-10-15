@@ -3,7 +3,7 @@ puddle doctor (puddle 0.1.0, windows x86_64)
 ok    CPU virtualization    on (the hypervisor uses it)
 ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
 info  Code integrity        could not be read; whether memory integrity (HVCI) or an App Control policy is on is unknown
-      note: puddle works without it. If "Runtime starts" or "Test boot" reports a blocked msb,
+      note: Puddle works without it. If "Runtime starts" or "Test boot" reports a blocked msb,
             that check names the policy.
       from: NtQuerySystemInformation(SystemCodeIntegrityInformation) failed: NTSTATUS 0xC0000022
 ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
@@ -36,7 +36,7 @@ No problems found. (1.2 s)
       "status": "info",
       "summary": "could not be read; whether memory integrity (HVCI) or an App Control policy is on is unknown",
       "finding": "code_integrity_unreadable",
-      "fix": "puddle works without it. If \"Runtime starts\" or \"Test boot\" reports a blocked msb, that check names the policy.",
+      "fix": "Puddle works without it. If \"Runtime starts\" or \"Test boot\" reports a blocked msb, that check names the policy.",
       "detail": "NtQuerySystemInformation(SystemCodeIntegrityInformation) failed: NTSTATUS 0xC0000022"
     },
     {

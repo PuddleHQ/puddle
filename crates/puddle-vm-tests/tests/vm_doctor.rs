@@ -32,7 +32,7 @@ fn ci_runtime() -> RuntimePair {
 }
 
 /// A puddle-style runtime folder in `root` with a copy (never a link: the permission test
-/// changes the file) of CI's pair, laid out as puddle ships it.
+/// changes the file) of CI's pair, laid out as Puddle ships it.
 fn runtime_copy(root: &Path) -> PathBuf {
     let pair = ci_runtime();
     let dir = root.join(RUNTIME_DIR_NAME);

@@ -90,10 +90,10 @@
   <p class="muted">Loading&hellip;</p>
 {:else if store.status === "newer"}
   <p class="error" role="alert">
-    These settings were saved by a newer puddle. Update puddle to change them.
+    These settings were saved by a newer Puddle. Update Puddle to change them.
   </p>
 {:else if !store.view || !store.consents}
-  <p class="error" role="alert">Couldn't read puddle's settings.</p>
+  <p class="error" role="alert">Couldn't read Puddle's settings.</p>
 {:else}
   {@const view = store.view}
   <fieldset class="card">

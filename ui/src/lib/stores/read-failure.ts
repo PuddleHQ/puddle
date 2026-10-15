@@ -3,7 +3,7 @@
 // what the status code means, else that the service did not answer.
 import { sentence } from "#lib/rules/model.ts";
 
-export const SERVICE_DOWN = "puddle's service isn't answering.";
+export const SERVICE_DOWN = "Puddle's service isn't answering.";
 
 /** A failed read: the API's error body (if any) and the HTTP response (if one arrived). */
 export function readFailure(
@@ -12,9 +12,9 @@ export function readFailure(
 ): string {
   if (error?.message) return sentence(error.message);
   if (!response) return SERVICE_DOWN;
-  if (response.status === 401) return "puddle didn't accept this app's key.";
+  if (response.status === 401) return "Puddle didn't accept this app's key.";
   if (response.status >= 500) {
-    return `puddle's service hit an error (status ${response.status}).`;
+    return `Puddle's service hit an error (status ${response.status}).`;
   }
-  return `puddle answered with status ${response.status}.`;
+  return `Puddle answered with status ${response.status}.`;
 }

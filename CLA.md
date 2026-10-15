@@ -1,4 +1,4 @@
-# puddle Individual Contributor License Agreement
+# Puddle Individual Contributor License Agreement
 
 Version 1.0 of this agreement. Based on the Harmony Individual Contributor License Agreement
 (HA-CLA-I) Version 1.0, July 4, 2011, by Project Harmony (<https://www.harmonyagreements.org/>),
@@ -10,14 +10,14 @@ available under CC BY 3.0.
 
 ---
 
-Thank you for your interest in contributing to puddle ("We" or "Us"). "We" and "Us" mean Tijs van
-Kampen, the owner of the puddle project, and his successors in interest. You can reach Us at
+Thank you for your interest in contributing to Puddle ("We" or "Us"). "We" and "Us" mean Tijs van
+Kampen, the owner of the Puddle project, and his successors in interest. You can reach Us at
 <puddle@tijsvankampen.be>.
 
 This contributor agreement ("Agreement") documents the rights granted by contributors to Us. To
 make this document effective, please sign it and send it to Us by mail, email, fax, or electronic
 submission, following the instructions in the section "Signing the CLA" of `CONTRIBUTING.md` in the
-puddle repository. This is a legally binding document, so please read it carefully before agreeing
+Puddle repository. This is a legally binding document, so please read it carefully before agreeing
 to it. The Agreement may cover more than one software project managed by Us.
 
 ## 1. Definitions

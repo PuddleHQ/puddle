@@ -89,7 +89,7 @@ pub enum Actor {
     Ui,
     /// The HTTP API.
     Api,
-    /// puddle itself (the sweeper, workspace deletion). Never creates rules.
+    /// Puddle itself (the sweeper, workspace deletion). Never creates rules.
     System,
 }
 

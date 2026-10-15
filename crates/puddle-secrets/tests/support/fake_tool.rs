@@ -14,7 +14,7 @@
 //! ```
 //!
 //! Every call appends the arguments, the standard input and the prompt-related environment to
-//! `<binary path>.log`, so a test can check what puddle sent.
+//! `<binary path>.log`, so a test can check what Puddle sent.
 #![allow(
     clippy::print_stdout,
     clippy::print_stderr,

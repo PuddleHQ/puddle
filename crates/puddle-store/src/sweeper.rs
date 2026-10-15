@@ -19,10 +19,10 @@ pub const SWEEP_PROBLEM: &str = "sweeper";
 fn sweep_problem(reason: &str) -> Problem {
     Problem::new(
         SWEEP_PROBLEM,
-        "puddle could not tidy up its rules and activity log",
+        "Puddle could not tidy up its rules and activity log",
         format!(
             "{reason}. Rules that expired keep applying, and the activity log is not trimmed or \
-             completed, until it works; puddle tries again every minute. A full disk is the usual \
+             completed, until it works; Puddle tries again every minute. A full disk is the usual \
              cause: free some space."
         ),
     )

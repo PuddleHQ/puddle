@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-repos"
-description = "Which repositories an identity's credentials reach: GitHub and Azure DevOps listing over puddle's own route, cached in memory, with rate limits honoured"
+description = "Which repositories an identity's credentials reach: GitHub and Azure DevOps listing over Puddle's own route, cached in memory, with rate limits honoured"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

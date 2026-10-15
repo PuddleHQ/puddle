@@ -6,7 +6,7 @@ use std::time::Duration;
 use puddle_types::WorkspaceStatus;
 
 /// Why a compute-plane call failed. Names are plain strings because a runtime may report names
-/// puddle didn't create (a foreign sandbox, a stale directory).
+/// Puddle didn't create (a foreign sandbox, a stale directory).
 ///
 /// The enum is `Clone` + `Eq` so the fake can inject the same error repeatedly and tests can
 /// compare errors directly.

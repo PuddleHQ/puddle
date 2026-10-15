@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The network-health report in words: what puddle found, what each state means and what to do
+// The network-health report in words: what Puddle found, what each state means and what to do
 // about it. Pure functions over the generated wire types. Every string that comes from outside
 // (hosts, certificate subjects, proxy detail) is returned as data and only ever drawn as text.
 import type { components } from "#lib/api/schema.d.ts";
@@ -28,14 +28,14 @@ export const DETECTED_LABEL: Record<S["ProxyDetected"], string> = {
   static: "A fixed proxy from the system settings",
   env: "Proxy environment variables",
   direct: "No proxy (direct connection)",
-  unknown: "A kind of setup this version of puddle doesn't recognise",
+  unknown: "A kind of setup this version of Puddle doesn't recognise",
 };
 
 export const MODE_LABEL: Record<S["ProxyMode"], string> = {
   system: "Follow the system settings",
-  manual: "Fixed in puddle's settings",
+  manual: "Fixed in Puddle's settings",
   direct: "Never use a proxy",
-  unknown: "A source this version of puddle doesn't recognise",
+  unknown: "A source this version of Puddle doesn't recognise",
 };
 
 export const PAC_STATE_LABEL: Record<S["PacState"], string> = {
@@ -43,7 +43,7 @@ export const PAC_STATE_LABEL: Record<S["PacState"], string> = {
   not_asked: "Not asked yet (no connection needed it)",
   answering: "Answering",
   unreachable: "Not answering",
-  unknown: "A setup this version of puddle doesn't recognise",
+  unknown: "A setup this version of Puddle doesn't recognise",
 };
 
 export const SIGN_IN_LABEL: Record<S["SignInResult"], string> = {
@@ -51,20 +51,20 @@ export const SIGN_IN_LABEL: Record<S["SignInResult"], string> = {
   not_required: "No sign-in needed",
   failed: "Failed",
   unsupported: "Not possible here",
-  unknown: "An ending this version of puddle doesn't recognise",
+  unknown: "An ending this version of Puddle doesn't recognise",
 };
 
 export const ROUTE_SOURCE_LABEL: Record<S["RouteSource"], string> = {
   loopback: "Local address, never proxied",
   disabled: "Proxy use is off",
-  manual: "Fixed in puddle's settings",
+  manual: "Fixed in Puddle's settings",
   pac: "Proxy script (PAC)",
-  pac_unsupported: "Proxy script, a function puddle can't run",
+  pac_unsupported: "Proxy script, a function Puddle can't run",
   system: "System proxy settings",
   env: "Environment variables",
   bypass: "On the bypass list",
   no_proxy: "On the NO_PROXY list",
-  unknown: "A way of choosing this version of puddle doesn't recognise",
+  unknown: "A way of choosing this version of Puddle doesn't recognise",
 };
 
 export const ROOT_KIND_LABEL: Record<S["RootKind"], string> = {
@@ -117,17 +117,17 @@ function problemWords(
   switch (problem.kind) {
     case "unusable_setting":
       return {
-        title: `puddle can't use part of the proxy settings: ${problem.detail}.`,
-        fix: "puddle sends traffic through plain HTTP proxies (host:port) only. What that setting was meant for is not sent through it: it goes straight out, or through the other settings that are fine. Change it to an HTTP proxy or remove it, then press Check again.",
+        title: `Puddle can't use part of the proxy settings: ${problem.detail}.`,
+        fix: "Puddle sends traffic through plain HTTP proxies (host:port) only. What that setting was meant for is not sent through it: it goes straight out, or through the other settings that are fine. Change it to an HTTP proxy or remove it, then press Check again.",
       };
     case "changes_not_noticed":
       return {
-        title: `puddle can't see changes to the proxy settings or the network: ${problem.detail}.`,
-        fix: "puddle keeps the routes it has worked out until it is restarted. After you change the proxy settings or move to another network, quit puddle and start it again.",
+        title: `Puddle can't see changes to the proxy settings or the network: ${problem.detail}.`,
+        fix: "Puddle keeps the routes it has worked out until it is restarted. After you change the proxy settings or move to another network, quit Puddle and start it again.",
       };
     default:
       return {
-        title: `puddle found a problem with the proxy setup: ${problem.detail}.`,
+        title: `Puddle found a problem with the proxy setup: ${problem.detail}.`,
         fix: null,
       };
   }
@@ -142,8 +142,8 @@ export function findings(report: NetworkHealth): Finding[] {
     out.push({
       id: "settings-error",
       level: "problem",
-      title: `puddle couldn't read the system proxy settings: ${proxy.settings_error}`,
-      fix: "Check the proxy page of the operating system's network settings, or set the proxy for puddle in its own settings. Then press Check again.",
+      title: `Puddle couldn't read the system proxy settings: ${proxy.settings_error}`,
+      fix: "Check the proxy page of the operating system's network settings, or set the proxy for Puddle in its own settings. Then press Check again.",
     });
   }
   proxy.problems.forEach((problem, i) => {
@@ -159,7 +159,7 @@ export function findings(report: NetworkHealth): Finding[] {
       id: "pac-unreachable",
       level: "problem",
       title: `The proxy script at ${address} isn't answering.`,
-      fix: "Open that address in a browser on this computer. If it fails there too you are probably off the company network or the VPN is down. puddle looks again by itself when the network changes.",
+      fix: "Open that address in a browser on this computer. If it fails there too you are probably off the company network or the VPN is down. Puddle looks again by itself when the network changes.",
     });
   }
   for (const attempt of sign_in.attempts) {
@@ -168,17 +168,17 @@ export function findings(report: NetworkHealth): Finding[] {
         id: `sign-in-${attempt.proxy}`,
         level: "problem",
         title: `Signing in to ${attempt.proxy} failed${attempt.scheme ? ` (${attempt.scheme})` : ""}${attempt.detail ? `: ${attempt.detail}` : "."}`,
-        fix: "puddle signs in as the person who is logged in to this computer. Check you are signed in to the company account (lock and unlock the computer, or sign in again) and on the company network. puddle tries again at the next connection.",
+        fix: "Puddle signs in as the person who is logged in to this computer. Check you are signed in to the company account (lock and unlock the computer, or sign in again) and on the company network. Puddle tries again at the next connection.",
       });
     } else if (attempt.result === "unsupported") {
       out.push({
         id: `sign-in-${attempt.proxy}`,
         level: "problem",
-        title: `${attempt.proxy} asks for a sign-in puddle can't give${attempt.detail ? `: ${attempt.detail}` : "."}`,
+        title: `${attempt.proxy} asks for a sign-in Puddle can't give${attempt.detail ? `: ${attempt.detail}` : "."}`,
         fix:
           sign_in.methods.length === 0
-            ? "puddle has no way to sign in to a proxy on this system yet. Ask for this destination to be let through without sign-in, or use a proxy that doesn't ask."
-            : `puddle can answer ${sign_in.methods.map(methodLabel).join(", ")}. Ask IT whether the proxy can accept one of these.`,
+            ? "Puddle has no way to sign in to a proxy on this system yet. Ask for this destination to be let through without sign-in, or use a proxy that doesn't ask."
+            : `Puddle can answer ${sign_in.methods.map(methodLabel).join(", ")}. Ask IT whether the proxy can accept one of these.`,
       });
     }
   }
@@ -186,8 +186,8 @@ export function findings(report: NetworkHealth): Finding[] {
     out.push({
       id: "unreadable-stores",
       level: "problem",
-      title: `puddle couldn't read ${roots.unreadable_stores.length === 1 ? "a certificate store" : `${roots.unreadable_stores.length} certificate stores`}.`,
-      fix: "Tools inside workspaces may then fail with certificate errors on sites the company proxy inspects. Make sure puddle runs as a user who may read the computer's certificate stores, or ask IT. Then press Check again.",
+      title: `Puddle couldn't read ${roots.unreadable_stores.length === 1 ? "a certificate store" : `${roots.unreadable_stores.length} certificate stores`}.`,
+      fix: "Tools inside workspaces may then fail with certificate errors on sites the company proxy inspects. Make sure Puddle runs as a user who may read the computer's certificate stores, or ask IT. Then press Check again.",
     });
   }
 
@@ -195,8 +195,8 @@ export function findings(report: NetworkHealth): Finding[] {
     out.push({
       id: `dead-${dead.proxy}`,
       level: "note",
-      title: `${dead.proxy} is marked as not answering. puddle tries it again in ${waitText(dead.retry_in_secs)}.`,
-      fix: "Nothing to do unless it stays that way: puddle uses the next proxy in the list meanwhile, and starts over when the network changes.",
+      title: `${dead.proxy} is marked as not answering. Puddle tries it again in ${waitText(dead.retry_in_secs)}.`,
+      fix: "Nothing to do unless it stays that way: Puddle uses the next proxy in the list meanwhile, and starts over when the network changes.",
     });
   }
   if (!roots.synced && roots.unreadable_stores.length === 0) {
@@ -220,8 +220,8 @@ export function findings(report: NetworkHealth): Finding[] {
     out.push({
       id: "roots-left-out-of-tls",
       level: "problem",
-      title: `puddle can't use ${leftOut.length === 1 ? "a company certificate" : `${leftOut.length} company certificates`} when it checks the servers it adds your credentials for.`,
-      fix: "A Git host reached through a company proxy that inspects traffic may then fail with an unknown-issuer error. The list below says which certificate and why. Ask IT for it again as a standard CA certificate, then restart puddle.",
+      title: `Puddle can't use ${leftOut.length === 1 ? "a company certificate" : `${leftOut.length} company certificates`} when it checks the servers it adds your credentials for.`,
+      fix: "A Git host reached through a company proxy that inspects traffic may then fail with an unknown-issuer error. The list below says which certificate and why. Ask IT for it again as a standard CA certificate, then restart Puddle.",
     });
   }
   if (!pull_proxy.active) {
@@ -229,7 +229,7 @@ export function findings(report: NetworkHealth): Finding[] {
       id: "pull-off",
       level: "note",
       title:
-        "Image downloads don't go through puddle's pull proxy, so puddle's rules and address guard don't apply to them.",
+        "Image downloads don't go through Puddle's pull proxy, so Puddle's rules and address guard don't apply to them.",
       fix: null,
     });
   } else if (

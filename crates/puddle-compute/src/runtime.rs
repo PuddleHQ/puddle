@@ -26,17 +26,17 @@ pub struct Capabilities {
 /// A sandbox as [`Runtime::list`] sees it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxInfo {
-    /// The name as the runtime reports it; may be a name puddle didn't create.
+    /// The name as the runtime reports it; may be a name Puddle didn't create.
     pub name: String,
     /// Its state.
     pub status: WorkspaceStatus,
-    /// Whether puddle created it (msb: the sandbox carries puddle's owner label). Shutdown and
+    /// Whether Puddle created it (msb: the sandbox carries Puddle's owner label). Shutdown and
     /// reconcile only ever touch sandboxes with this set and a valid [`SandboxName`].
     pub puddle_owned: bool,
 }
 
 impl SandboxInfo {
-    /// The name as a [`SandboxName`], or `None` if it isn't a valid puddle name.
+    /// The name as a [`SandboxName`], or `None` if it isn't a valid Puddle name.
     #[must_use]
     pub fn sandbox_name(&self) -> Option<SandboxName> {
         SandboxName::new(&self.name).ok()
@@ -55,7 +55,7 @@ pub struct VolumeSpec {
 /// A named volume as the runtime reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VolumeInfo {
-    /// The name as the runtime reports it; may be a name puddle didn't create.
+    /// The name as the runtime reports it; may be a name Puddle didn't create.
     pub name: String,
     /// Its capacity, read back from the runtime's catalog.
     pub size: DiskSize,
@@ -64,14 +64,14 @@ pub struct VolumeInfo {
 }
 
 impl VolumeInfo {
-    /// The name as a [`VolumeName`], or `None` if it isn't a valid puddle name.
+    /// The name as a [`VolumeName`], or `None` if it isn't a valid Puddle name.
     #[must_use]
     pub fn volume_name(&self) -> Option<VolumeName> {
         VolumeName::new(&self.name).ok()
     }
 }
 
-/// An image's OCI config, as far as puddle needs it (the boot hook chains `entrypoint` and uses
+/// An image's OCI config, as far as Puddle needs it (the boot hook chains `entrypoint` and uses
 /// the image `PATH`; `user` and `labels` carry the image's `USER` and `devcontainer.metadata`).
 /// All values come from the image and are untrusted. Build it with
 /// `..ImageConfig::default()` so new fields don't break callers.
@@ -129,7 +129,7 @@ pub trait Runtime: Send + Sync + 'static {
     /// A handle to one sandbox.
     type Sandbox: Sandbox;
 
-    /// Reports the runtime's version and the behaviours puddle works around.
+    /// Reports the runtime's version and the behaviours Puddle works around.
     ///
     /// # Errors
     ///
@@ -148,7 +148,7 @@ pub trait Runtime: Send + Sync + 'static {
 
     /// Creates a sandbox and boots it; returns an **owning** handle (`Running`). Dropping that
     /// handle without [`Sandbox::stop`] shuts the VM down: the record reads `Stopped` on msb 0.7.7
-    /// and read `Crashed` on 0.7.6. puddle still stops every sandbox itself at
+    /// and read `Crashed` on 0.7.6. Puddle still stops every sandbox itself at
     /// shutdown (`fstrim` first, ADR 0006). Pulls the image if needed. Named volumes with
     /// [`crate::VolumeMount::ensure_size`] are created if missing.
     ///
@@ -181,7 +181,7 @@ pub trait Runtime: Send + Sync + 'static {
         name: &SandboxName,
     ) -> impl Future<Output = Result<Self::Sandbox, ComputeError>> + Send;
 
-    /// Connects to a `Running` sandbox, e.g. one a previous puddle left behind (re-adoption). The
+    /// Connects to a `Running` sandbox, e.g. one a previous Puddle left behind (re-adoption). The
     /// handle does **not** own the VM: dropping it does nothing.
     ///
     /// # Errors
@@ -194,7 +194,7 @@ pub trait Runtime: Send + Sync + 'static {
 
     /// Sets the guest memory a sandbox boots with from its **next** start on (the memory setting,
     /// `--memory`). A running sandbox keeps its current size until it is stopped and started
-    /// again; puddle never sets a max-memory.
+    /// again; Puddle never sets a max-memory.
     ///
     /// # Errors
     ///
@@ -205,7 +205,7 @@ pub trait Runtime: Send + Sync + 'static {
         memory: MemoryMib,
     ) -> impl Future<Output = Result<(), ComputeError>> + Send;
 
-    /// Every sandbox the runtime knows, in name order, including ones puddle didn't create.
+    /// Every sandbox the runtime knows, in name order, including ones Puddle didn't create.
     ///
     /// # Errors
     ///
@@ -221,7 +221,7 @@ pub trait Runtime: Send + Sync + 'static {
     fn remove(&self, name: &SandboxName) -> impl Future<Output = Result<(), ComputeError>> + Send;
 
     /// Names whose sandbox directory exists without a sandbox record (left by a failed create
-    /// while the upstream msb bug is unfixed), in name order. May include names puddle didn't
+    /// while the upstream msb bug is unfixed), in name order. May include names Puddle didn't
     /// create.
     ///
     /// # Errors
@@ -260,7 +260,7 @@ pub trait Runtime: Send + Sync + 'static {
         name: &VolumeName,
     ) -> impl Future<Output = Result<Option<VolumeInfo>, ComputeError>> + Send;
 
-    /// Every volume, in name order, including ones puddle didn't create.
+    /// Every volume, in name order, including ones Puddle didn't create.
     ///
     /// # Errors
     ///

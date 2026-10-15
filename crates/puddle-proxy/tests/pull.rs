@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! I tests of the image-pull proxy: a real loopback listener, raw HTTP clients and local
 //! servers. The bars: only `127.0.0.1`; a missing or wrong token is a `407` and nothing is
-//! connected; the right token tunnels and forwards; the guard blocks puddle's own endpoints and
+//! connected; the right token tunnels and forwards; the guard blocks Puddle's own endpoints and
 //! metadata; the token never shows up in a log line
 //! (`pull_logs.rs`, its own process for a global subscriber).
 mod pull_support;
@@ -72,7 +72,7 @@ async fn a_missing_or_wrong_token_is_a_407_and_nothing_is_connected() {
         );
         let mut body = String::new();
         s.read_to_string(&mut body).await.unwrap();
-        assert!(body.contains("only puddle may use it"), "{body}");
+        assert!(body.contains("only Puddle may use it"), "{body}");
     }
     // A plain-HTTP request without credentials is refused the same way.
     let (head, _) = send(
@@ -313,7 +313,7 @@ async fn refused_pulls_are_recorded_and_unauthorised_ones_are_not() {
         ConnectionReason::Blocked(BlockReason::LocalToggle(LocalCategory::Metadata))
     );
     assert_eq!(blocked.resolved_ip, None);
-    // A name that doesn't resolve: puddle allowed it, nothing connected, and the record says so.
+    // A name that doesn't resolve: Puddle allowed it, nothing connected, and the record says so.
     let failed = events
         .iter()
         .find(|e| e.decision == ConnectionDecision::Allow)

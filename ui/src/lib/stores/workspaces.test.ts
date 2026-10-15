@@ -58,7 +58,7 @@ describe("reading the list", () => {
     api.down = true;
     await store.refresh();
     expect(store.status).toBe("failed");
-    expect(store.loadError).toBe("puddle's service isn't answering.");
+    expect(store.loadError).toBe("Puddle's service isn't answering.");
     api.down = false;
     await store.refresh();
     expect(store.status).toBe("ready");
@@ -67,7 +67,7 @@ describe("reading the list", () => {
     await store.refresh();
     expect(store.status).toBe("ready");
     expect(store.list).toHaveLength(2);
-    expect(store.loadError).toBe("puddle's service isn't answering.");
+    expect(store.loadError).toBe("Puddle's service isn't answering.");
   });
 
   it("fails on a refusal as well as on a dead service", async () => {
@@ -253,7 +253,7 @@ describe("actions", () => {
     api.down = true;
     expect(await store.create({ name: "x", repo_url: "https://x/y" })).toEqual({
       ok: false,
-      message: "puddle's service isn't answering.",
+      message: "Puddle's service isn't answering.",
     });
   });
 

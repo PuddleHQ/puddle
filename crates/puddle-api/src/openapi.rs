@@ -20,8 +20,8 @@ const BEARER: &str = "bearer";
 #[derive(utoipa::OpenApi)]
 #[openapi(
     info(
-        title = "puddle",
-        description = "puddle's local API: pending requests, rules, audit, settings, consents and \
+        title = "Puddle",
+        description = "Puddle's local API: pending requests, rules, audit, settings, consents and \
                        the event stream. Listens on 127.0.0.1 only. Every request needs \
                        `Authorization: Bearer <token>` (from the connection file), a `Host` of \
                        `127.0.0.1:<port>` or `localhost:<port>`, and no foreign `Origin`."
@@ -47,7 +47,7 @@ const BEARER: &str = "bearer";
         (name = "consents", description = "What the user agreed to"),
         (name = "doctor", description = "The system check: what this computer needs to run workspaces, and the fix for what is missing"),
         (name = "first-run", description = "Whether the first-run flow has been through"),
-        (name = "network", description = "How puddle reaches the internet: proxy, sign-in, company roots"),
+        (name = "network", description = "How Puddle reaches the internet: proxy, sign-in, company roots"),
         (name = "identities", description = "Git identities (author and credentials) and each workspace's identities, repository table and push and pull switches"),
         (name = "workspaces", description = "Workspaces: repository checkouts with their own disk and sandbox"),
         (name = "environment", description = "Environment variables and secrets, global and per workspace; a secret's value is write-only")
@@ -105,7 +105,7 @@ fn add_guard_responses(doc: &mut OpenApi) {
         ("401", "missing or wrong bearer token"),
         ("403", "forbidden origin"),
         ("421", "Host is not the API's own address"),
-        ("500", "puddle failed; see its log"),
+        ("500", "Puddle failed; see its log"),
     ];
     for item in doc.paths.paths.values_mut() {
         let operations = [

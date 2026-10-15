@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The notice for a login made inside a workspace that puddle could not capture, or could not
+// The notice for a login made inside a workspace that Puddle could not capture, or could not
 // use after a restart. Capture is on by default and is meant to be invisible, so every case where
 // it does not work says so: the first four leave the real token in the workspace (the login still
 // works, it is just not protected), the next two mean the login in the workspace does not work
@@ -24,19 +24,19 @@ const KINDS: readonly Kind[] = [
 
 const WHY: Record<Kind, string> = {
   store_unavailable:
-    "puddle can't keep tokens in this computer's credential store, so a login made in this workspace stays in it as the real token. The login works, but an agent in the workspace could copy it. Make the credential store available and sign in again to protect it.",
+    "Puddle can't keep tokens in this computer's credential store, so a login made in this workspace stays in it as the real token. The login works, but an agent in the workspace could copy it. Make the credential store available and sign in again to protect it.",
   unexpected_answer:
-    "puddle could not read the service's answer, so the workspace received the real token. The login works, but an agent in the workspace could copy it.",
+    "Puddle could not read the service's answer, so the workspace received the real token. The login works, but an agent in the workspace could copy it.",
   unusable_token:
-    "the token has a form puddle cannot imitate, so the workspace received the real token. The login works, but an agent in the workspace could copy it.",
+    "the token has a form Puddle cannot imitate, so the workspace received the real token. The login works, but an agent in the workspace could copy it.",
   bound_token:
-    "the service ties its token to a key of the tool's own, which puddle cannot stand in for, so the workspace received the real token. The login works, but an agent in the workspace could copy it.",
+    "the service ties its token to a key of the tool's own, which Puddle cannot stand in for, so the workspace received the real token. The login works, but an agent in the workspace could copy it.",
   unreadable:
-    "puddle could not read the login it kept for this workspace from the credential store, so the tool will ask you to sign in again. Sign in inside the workspace to keep a new login.",
+    "Puddle could not read the login it kept for this workspace from the credential store, so the tool will ask you to sign in again. Sign in inside the workspace to keep a new login.",
   capture_off:
     "login capture is off for this workspace, but the login was made while it was on, so the workspace holds a stand-in that no service accepts. Turn login capture on in the workspace settings and restart the workspace to use it again, or sign in again inside the workspace.",
   unknown:
-    "puddle ran into a problem with this login that this version cannot describe. The login may not work and may not be protected. Signing in again inside the workspace may help.",
+    "Puddle ran into a problem with this login that this version cannot describe. The login may not work and may not be protected. Signing in again inside the workspace may help.",
 };
 
 const isObject = (v: unknown): v is Record<string, unknown> =>

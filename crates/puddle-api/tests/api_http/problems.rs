@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `GET /api/problems`: what puddle did on its own that failed, listed until its cause goes away,
+//! `GET /api/problems`: what Puddle did on its own that failed, listed until its cause goes away,
 //! and announced on the event stream.
 
 use puddle_api::SettingsRepo;
@@ -27,7 +27,7 @@ async fn a_fresh_install_has_no_problems() {
 async fn a_system_managed_update_that_failed_is_listed_with_its_reason_until_one_works() {
     let api = start().await;
     let mut stream = Stream::open(&api, "").await;
-    // A document from a newer puddle can't be read: the allows stay, and the user is told.
+    // A document from a newer Puddle can't be read: the allows stay, and the user is told.
     api.settings
         .save_global(json!({"schema_version": 99}))
         .unwrap();

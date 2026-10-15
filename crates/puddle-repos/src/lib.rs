@@ -4,7 +4,7 @@
 //! The host asks the Git host's own API with the token a [`Secrets`] source gives it: GitHub's
 //! `GET /user/repos` (paged; a fine-grained token lists only what it was granted) and Azure
 //! DevOps' organisation-wide repository list for each organisation a credential names. The
-//! request leaves through puddle's own company-proxy route ([`HostApi`]); the token goes to that
+//! request leaves through Puddle's own company-proxy route ([`HostApi`]); the token goes to that
 //! host and nowhere else, and nothing here reaches a workspace.
 //!
 //! [`Repos`] keeps the lists in memory, one per credential:

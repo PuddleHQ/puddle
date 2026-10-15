@@ -88,7 +88,7 @@ The first milestone isn't called done, or handed to anyone to drive, until it is
 not only a CLI over working plumbing. So it now includes the product UI (this ADR's Svelte 5
 SPA, with environment variables whose secrets stay with the proxy, a shell-init editor and a ports
 panel with pinned forwards), the Tauri shell with an MSI installer and code signing, browser VS Code
-in a puddle-owned Tauri window, and an explicit "SSH not supported yet, use HTTPS" message for git
+in a Puddle-owned Tauri window, and an explicit "SSH not supported yet, use HTTPS" message for git
 remotes over SSH.
 
 What changes here:
@@ -113,7 +113,7 @@ snapshots and extensions are still later (after v1, and only if users ask for th
 
 ## Amendment 2026-10-06: written fresh, no Huddle material
 
-puddle is a personal project of its author, licensed GPL-3.0-or-later, and takes only ideas from
+Puddle is a personal project of its author, licensed GPL-3.0-or-later, and takes only ideas from
 Huddle; no Huddle code is copied. Translating code counts as modifying it under copyright law, so a
 Svelte reimplementation made with the Angular original open beside it would still derive from
 Huddle.
@@ -124,10 +124,10 @@ What changes here:
   model, icons, two pipes, theme tokens) and the ~780 LOC "reimplemented" components
   (`container-terminal`, `pie-menu`, `path-allowlist`, `confirm-modal`) are not used. Instead: own
   theme tokens, an MIT/ISC icon set such as Lucide, `Intl`-based formatting, and the pie menu and
-  confirm modal built from the interaction lessons; the logo is puddle's own.
+  confirm modal built from the interaction lessons; the logo is Puddle's own.
 - **Clean-room rule:** whoever builds these screens (human or agent) does not open upstream's
   Angular components, CSS or icon files for them. The same holds for the firewall rules engine and
-  its store: they are built from puddle's own [rules spec](../spec/rules.md) and tests, not from
+  its store: they are built from Puddle's own [rules spec](../spec/rules.md) and tests, not from
   upstream's rules, database or test code.
 - **The nine interaction lessons stand.** They are ideas, written in our own words.
 - **Effort.** Writing these pieces fresh costs a few more days than porting would have.

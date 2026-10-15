@@ -310,10 +310,10 @@ async fn released_and_replaced_handles_are_not_stopped_by_shutdown() {
     drop(older);
 }
 
-/// The world after a puddle that was killed: one sandbox of each kind reconcile must handle.
+/// The world after a Puddle that was killed: one sandbox of each kind reconcile must handle.
 struct World {
     rt: FakeRuntime,
-    /// Owning handles that keep "VMs left running" running, as a dead puddle's VMs would be.
+    /// Owning handles that keep "VMs left running" running, as a dead Puddle's VMs would be.
     _left_running: Vec<puddle_compute::fake::FakeSandbox>,
     inventory: Inventory,
 }
@@ -324,7 +324,7 @@ async fn killed_puddle_world() -> World {
     let mut left_running = Vec::new();
     // Known, left running.
     left_running.push(rt.create(spec("known-running")).await.unwrap());
-    // Unknown (puddle died before recording it), left running.
+    // Unknown (Puddle died before recording it), left running.
     left_running.push(rt.create(spec("unknown-running")).await.unwrap());
     // Known and stopped, unknown and stopped.
     for n in ["known-stopped", "unknown-stopped"] {
@@ -334,7 +334,7 @@ async fn killed_puddle_world() -> World {
     let crashed = rt.create(spec("known-crashed")).await.unwrap();
     assert!(rt.crash(&name("known-crashed")));
     drop(crashed);
-    // Foreign sandboxes: one with a valid name, one with a name puddle can't even parse.
+    // Foreign sandboxes: one with a valid name, one with a name Puddle can't even parse.
     rt.add_foreign_sandbox("other-tool", WorkspaceStatus::Running);
     rt.add_foreign_sandbox("Other_Tool", WorkspaceStatus::Stopped);
     // Stale directories.
@@ -593,7 +593,7 @@ async fn an_orphan_that_cannot_be_reached_is_reported() {
 async fn leftover_maintenance_sandboxes_go_even_when_listed() {
     let rt = FakeRuntime::new();
     fstrim_ok(&rt);
-    // A maintenance run puddle died in (running), one that finished but wasn't removed, and a
+    // A maintenance run Puddle died in (running), one that finished but wasn't removed, and a
     // foreign sandbox that only looks like one.
     let running = rt.create(spec("m--acme")).await.unwrap();
     rt.create(spec("m--beta"))

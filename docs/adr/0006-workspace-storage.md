@@ -31,7 +31,7 @@ The original plan assumed each workspace is a Windows folder bind-mounted into t
   ext4 replays cleanly after a VMM kill (10/10), and a sandbox with one is created in about 1.2 s,
   the same as without.
 
-Two findings from the rerun put requirements on puddle rather than on the choice:
+Two findings from the rerun put requirements on Puddle rather than on the choice:
 
 - **Git with default settings lost HEAD in 5/5 VMM kills;** with `core.fsync=committed`, 5/5 repos
   passed `git fsck --full`.
@@ -42,10 +42,10 @@ Two findings from the rerun put requirements on puddle rather than on the choice
 ## Decision
 
 1. **Each workspace is a named msb disk volume** (`ws-<id>`, ext4, `--mount-named
-   ws-<id>:/workspaces/<name>:kind=disk,size=N`) in puddle's private `MSB_HOME`: puddle bundles
+   ws-<id>:/workspaces/<name>:kind=disk,size=N`) in puddle's private `MSB_HOME`: Puddle bundles
    its own msb runtime, so its images and volumes never mix with an msb the user installed
    separately. No Windows folder is bind-mounted as the workspace.
-2. **Code gets in by cloning inside the VM** through puddle's proxy in the first milestone, with
+2. **Code gets in by cloning inside the VM** through Puddle's proxy in the first milestone, with
    git HTTPS credentials injected by the proxy. **"Start from my Windows checkout"** is the first
    thing after it; the measurements showed the mechanism works (a read-only bind of the checkout +
    `git clone` inside the guest: 0.6 s for `nestjs/nest`, no #1638 on reads). Prefer `clone` over
@@ -63,19 +63,19 @@ Two findings from the rerun put requirements on puddle rather than on the choice
 ### Requirements from the rerun
 
 6. **Guest git uses `core.fsync=committed`.** There is no image of our own to bake it into
-   (ADR 0005), so puddle's boot-time guest setup writes it into its own git config file in the guest
+   (ADR 0005), so Puddle's boot-time guest setup writes it into its own git config file in the guest
    (`/etc/puddle/gitconfig`), which `/etc/gitconfig` pulls in with one `include` line, next to
    the other boot setup (inotify limits, proxy config, PATH fix, git identity). The write cost is
    not measured yet.
-7. **puddle trims workspace volumes:** `fstrim` on the volume's mount point when a sandbox is
-   stopped by puddle (before the VM goes down), plus a manual "reclaim space" action per workspace.
+7. **Puddle trims workspace volumes:** `fstrim` on the volume's mount point when a sandbox is
+   stopped by Puddle (before the VM goes down), plus a manual "reclaim space" action per workspace.
    A timer for long-running sandboxes can come later if disk use shows it is needed.
-8. **A second attach is refused cleanly.** puddle tracks which sandbox has a workspace's volume and
+8. **A second attach is refused cleanly.** Puddle tracks which sandbox has a workspace's volume and
    refuses a second attach itself, with a message naming the sandbox that holds it, rather than
    relying on msb's `already attached with an incompatible disk mode`. If msb does refuse a create,
-   puddle removes the stopped sandbox record msb leaves behind (and any orphan `sandboxes\<name>`
+   Puddle removes the stopped sandbox record msb leaves behind (and any orphan `sandboxes\<name>`
    directory a failed create leaves), so the name isn't blocked.
-9. **puddle always passes `kind=disk,size=N`** with `--mount-named`, also for an existing volume
+9. **Puddle always passes `kind=disk,size=N`** with `--mount-named`, also for an existing volume
    (msb 0.7.6 otherwise treats it as a directory mount).
 
 ## Consequences
@@ -84,7 +84,7 @@ Two findings from the rerun put requirements on puddle rather than on the choice
   volume create --kind disk --size N`) or reuse `ws-<id>`, attach, track the attachment, delete with
   the unpushed-work check (the check runs in the guest, so delete needs a running sandbox or a short
   one started for it), remove the volume of a create that never finished, and clean up refused/failed
-  creates. A `ws-*` volume that no workspace in puddle's list claims is kept and reported, never
+  creates. A `ws-*` volume that no workspace in Puddle's list claims is kept and reported, never
   removed: the list may be what is missing or wrong, and the volume may hold the only copy of work.
   Windows path handling mostly drops out. Resizing a volume is not known to be supported by msb; the
   size is set at creation.
@@ -117,7 +117,7 @@ Two findings from the rerun put requirements on puddle rather than on the choice
 - **Power-loss durability** is untested (see Consequences).
 - **Single writer** is only shown for a *running* first sandbox; a second sandbox attaching while
   the first is merely stopped, and whether `msb rm` ever touches a named volume, are untested.
-  puddle's own tracking (8) covers this in practice.
+  Puddle's own tracking (8) covers this in practice.
 - **`core.fsync=committed` cost** on commit-heavy workloads is unmeasured.
 - **#1638** has no fix date. It doesn't affect this decision, but blocks any writable host-folder
   feature until fixed (and re-measured: the speed gap stands regardless).
@@ -131,7 +131,7 @@ Two findings from the rerun put requirements on puddle rather than on the choice
 | **Workspace on the layered rootfs** | Same speed, but dies with the sandbox, ties the work to the image, and can't be trimmed |
 | **Owned or named *directory* volume** | virtiofs, the same backend as the bind mount; expected to be as slow (not measured) |
 | **Dev Drive / ReFS, or `--mount-disk` of a VHDX on one** | Not tested: creating a Dev Drive needs admin, which the reference workstation and probably most managed machines lack. Would only change how fast the disk image sits on the host, not the decision |
-| **WSL2 ext4 shared into the VM** | Puts WSL in the path, which puddle avoids |
+| **WSL2 ext4 shared into the VM** | Puts WSL in the path, which Puddle avoids |
 
 ## Revisit if
 

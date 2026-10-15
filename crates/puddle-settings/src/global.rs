@@ -16,7 +16,7 @@ use crate::{
 /// The current shape of [`GlobalSettings`] documents.
 pub const GLOBAL_SCHEMA_VERSION: u32 = 2;
 
-/// puddle's settings for this user: defaults for every workspace, options that only exist
+/// Puddle's settings for this user: defaults for every workspace, options that only exist
 /// globally, and the consents.
 ///
 /// ```
@@ -37,14 +37,14 @@ pub const GLOBAL_SCHEMA_VERSION: u32 = 2;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct GlobalSettings {
-    /// The value every workspace gets unless it overrides it. Unset values fall back to puddle's
+    /// The value every workspace gets unless it overrides it. Unset values fall back to Puddle's
     /// built-in defaults.
     #[serde(default, skip_serializing_if = "WorkspaceLayer::is_empty")]
     pub workspace_defaults: WorkspaceLayer,
     /// Options for Microsoft's VS Code server (global only).
     #[serde(default, skip_serializing_if = "VsCodeServer::is_empty")]
     pub vscode_server: VsCodeServer,
-    /// How puddle's own window looks and behaves (global only).
+    /// How Puddle's own window looks and behaves (global only).
     #[serde(default, skip_serializing_if = "UiPrefs::is_empty")]
     pub ui: UiPrefs,
     /// What the user agreed to or declined (per user, never per workspace).
@@ -112,9 +112,9 @@ pub struct VsCodeServer {
 }
 
 impl VsCodeServer {
-    /// puddle's default for [`VsCodeServer::telemetry`].
+    /// Puddle's default for [`VsCodeServer::telemetry`].
     pub const DEFAULT_TELEMETRY: bool = false;
-    /// puddle's default for [`VsCodeServer::auto_update`].
+    /// Puddle's default for [`VsCodeServer::auto_update`].
     pub const DEFAULT_AUTO_UPDATE: bool = true;
 
     /// The server in use.
@@ -140,7 +140,7 @@ impl VsCodeServer {
     }
 }
 
-/// Preferences for puddle's own window. They are stored here so they follow the user; the
+/// Preferences for Puddle's own window. They are stored here so they follow the user; the
 /// desktop shell reads the notification and close settings.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct UiPrefs {
@@ -159,7 +159,7 @@ pub struct UiPrefs {
     /// What closing the window does while a workspace runs; default keep running in the tray.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub close_behaviour: Option<CloseBehaviour>,
-    /// Raise the system notification only while puddle's window is not focused; default on.
+    /// Raise the system notification only while Puddle's window is not focused; default on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notify_only_unfocused: Option<bool>,
     /// Show the waiting count on the tray, the taskbar and the window title; default on.
@@ -182,21 +182,21 @@ pub struct UiPrefs {
 }
 
 impl UiPrefs {
-    /// puddle's default for [`UiPrefs::notifications`].
+    /// Puddle's default for [`UiPrefs::notifications`].
     pub const DEFAULT_NOTIFICATIONS: bool = true;
-    /// puddle's default for [`UiPrefs::sound`].
+    /// Puddle's default for [`UiPrefs::sound`].
     pub const DEFAULT_SOUND: bool = false;
-    /// puddle's default for [`UiPrefs::notify_only_unfocused`].
+    /// Puddle's default for [`UiPrefs::notify_only_unfocused`].
     pub const DEFAULT_NOTIFY_ONLY_UNFOCUSED: bool = true;
-    /// puddle's default for [`UiPrefs::badge`].
+    /// Puddle's default for [`UiPrefs::badge`].
     pub const DEFAULT_BADGE: bool = true;
-    /// puddle's default for [`UiPrefs::notify_oom`].
+    /// Puddle's default for [`UiPrefs::notify_oom`].
     pub const DEFAULT_NOTIFY_OOM: bool = true;
-    /// puddle's default for [`UiPrefs::notify_unexpected_stop`].
+    /// Puddle's default for [`UiPrefs::notify_unexpected_stop`].
     pub const DEFAULT_NOTIFY_UNEXPECTED_STOP: bool = true;
-    /// puddle's default for [`UiPrefs::confirm_global_rules`].
+    /// Puddle's default for [`UiPrefs::confirm_global_rules`].
     pub const DEFAULT_CONFIRM_GLOBAL_RULES: bool = true;
-    /// puddle's default for [`UiPrefs::inbox_shortcuts`].
+    /// Puddle's default for [`UiPrefs::inbox_shortcuts`].
     pub const DEFAULT_INBOX_SHORTCUTS: bool = false;
 
     /// The theme in use.

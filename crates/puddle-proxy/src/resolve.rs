@@ -9,7 +9,7 @@
 //!
 //! - **Not allowed** (no rule, or a deny): a stand-in with **no lookup at all**. DNS carries nothing
 //!   out, and a guest asking for a million random names causes no resolver traffic.
-//! - **Blocked by itself** (a toggle that is off, one of puddle's endpoints): a stand-in too; the
+//! - **Blocked by itself** (a toggle that is off, one of Puddle's endpoints): a stand-in too; the
 //!   connect says which toggle would allow it.
 //! - **Allowed**: the name is resolved once here. An answer means a stand-in; "no such name" means
 //!   `NXDOMAIN`, unless the company proxy is in the route and may resolve it where the host can't

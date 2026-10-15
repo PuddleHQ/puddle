@@ -5,8 +5,8 @@ Status: accepted
 
 ## Decision
 
-puddle does not ship or require a base image. A workspace boots from whatever OCI image the team's
-devcontainer already uses, stock `mcr.microsoft.com/devcontainers/*` included. Everything puddle
+Puddle does not ship or require a base image. A workspace boots from whatever OCI image the team's
+devcontainer already uses, stock `mcr.microsoft.com/devcontainers/*` included. Everything Puddle
 needs inside the guest is **injected at sandbox boot**, not baked into an image.
 
 `ghcr.io/infosupport/base-devimage-*` stays upstream's concern and is not carried into this repo.
@@ -23,12 +23,12 @@ thing, and none of them survives the move to a microVM:
 | Node 24, claude-code/codex/copilot/opencode, markitdown, `~/.claude` dirs | Team tooling | A preference, not infrastructure. Belongs in the team's `devcontainer.json` (features, or their own image) |
 
 Owning an image also means owning its release cadence, CVE patching and per-IDE variants, for no
-remaining security benefit. Teams already maintain a devcontainer; puddle should run it, not
+remaining security benefit. Teams already maintain a devcontainer; Puddle should run it, not
 replace it.
 
 ## Consequences
 
-What puddle injects at boot (via `--mount-file` / SDK mounts plus a startup script), and therefore
+What Puddle injects at boot (via `--mount-file` / SDK mounts plus a startup script), and therefore
 must work on an arbitrary Debian/Ubuntu/Alpine-based image:
 
 1. **The vsock shim must be a static binary** (`puddle-agent`, musl, no runtime dependencies). The
@@ -43,7 +43,7 @@ must work on an arbitrary Debian/Ubuntu/Alpine-based image:
    store at boot (`update-ca-certificates` differs between Debian and Alpine), plus
    `NODE_EXTRA_CA_CERTS` and similar for runtimes that ignore the system store.
 4. **`dockerd` for nested containers**: either required from the image (the devcontainers
-   `docker-in-docker` feature) or injected by puddle. A nested-Docker test decides which (see the
+   `docker-in-docker` feature) or injected by Puddle. A nested-Docker test decides which (see the
    update below).
 5. **The IDE server** is never prebaked. VS Code Remote-SSH downloads it through the proxy, so the
    VS Code update hosts become a default allowlist entry. This settles the earlier open question of
@@ -51,14 +51,14 @@ must work on an arbitrary Debian/Ubuntu/Alpine-based image:
 
 Boot-time injection has a cost to watch: anything that has to happen before the user's first
 process (shim up, env written, CA trusted) needs a deterministic startup hook in msb. If msb only
-offers "run this script as the entrypoint", puddle's hook and the image's own entrypoint have to be
+offers "run this script as the entrypoint", Puddle's hook and the image's own entrypoint have to be
 chained explicitly.
 
 ## Supersedes
 
 - The earlier plan to boot Huddle's base image (`ghcr.io/infosupport/base-devimage-<ide>`) as the
   rootfs, and the check that it boots. That check is replaced by "a stock devcontainer image boots
-  and puddle's injected pieces work in it", which the developer-experience and nested-Docker tests
+  and Puddle's injected pieces work in it", which the developer-experience and nested-Docker tests
   cover by running on `mcr.microsoft.com/devcontainers/base:debian`.
 
 ## Update 2026-10-02
@@ -68,6 +68,6 @@ A nested-Docker test run on stock images settled two of the consequences above:
 - **1.** A prototype of the static shim (now `crates/puddle-agent`) is injected with
   `--mount-file` and works unchanged on `devcontainers/base:debian` and `devcontainers/dotnet`.
 - **4.** A stock image plus docker-ce installed in the guest runs the full nested battery, so
-  `dockerd` can come from the team's image (e.g. the `docker-in-docker` feature). puddle supplies
+  `dockerd` can come from the team's image (e.g. the `docker-in-docker` feature). Puddle supplies
   the dedicated `/var/lib/docker` disk and the proxy env for `dockerd` and nested containers
   (`~/.docker/config.json` `proxies`).

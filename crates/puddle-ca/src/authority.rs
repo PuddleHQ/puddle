@@ -31,7 +31,7 @@ const MAX_COMMON_NAME: usize = 64;
 /// ```
 /// use puddle_ca::CaBuilder;
 ///
-/// let ca = CaBuilder::new("puddle proxy CA (workspace demo)").build()?;
+/// let ca = CaBuilder::new("Puddle proxy CA (workspace demo)").build()?;
 /// let leaf = ca.leaf("github.com")?;
 /// assert_eq!(leaf.cert.len(), 1);
 /// assert!(ca.leaf("example.com").is_ok());
@@ -49,7 +49,7 @@ pub struct CaBuilder {
 
 impl CaBuilder {
     /// Default CA lifetime: one year. The CA exists only in memory, so it is replaced at every
-    /// start of puddle long before that.
+    /// start of Puddle long before that.
     pub const DEFAULT_CA_VALIDITY: Duration = Duration::from_hours(365 * 24);
     /// Default leaf lifetime: seven days. A cached leaf is replaced after three quarters of it.
     pub const DEFAULT_LEAF_VALIDITY: Duration = Duration::from_hours(7 * 24);
@@ -358,7 +358,7 @@ mod tests {
     const HOUR: Duration = Duration::from_secs(3600);
 
     fn ca() -> WorkspaceCa {
-        CaBuilder::new("puddle proxy CA (workspace test)")
+        CaBuilder::new("Puddle proxy CA (workspace test)")
             .build()
             .unwrap()
     }
@@ -484,7 +484,7 @@ mod tests {
 
     #[test]
     fn the_cache_evicts_the_least_recently_used_leaf() {
-        let ca = CaBuilder::new("puddle test CA")
+        let ca = CaBuilder::new("Puddle test CA")
             .leaf_cache_capacity(2)
             .build()
             .unwrap();
@@ -502,7 +502,7 @@ mod tests {
 
     #[test]
     fn leaf_validity_is_clamped_to_the_ca() {
-        let ca = CaBuilder::new("puddle test CA")
+        let ca = CaBuilder::new("Puddle test CA")
             .ca_validity(10 * HOUR)
             .leaf_validity(10 * HOUR)
             .backdate(HOUR)

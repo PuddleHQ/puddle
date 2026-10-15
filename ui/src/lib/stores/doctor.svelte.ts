@@ -5,7 +5,7 @@ import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { DoctorReport } from "#lib/welcome/doctor.ts";
 
 /**
- * `unavailable`: this puddle can't run the check (the API answers 503). `failed`: the answer
+ * `unavailable`: this Puddle can't run the check (the API answers 503). `failed`: the answer
  * didn't come, or wasn't a report.
  */
 export type Status = "idle" | "running" | "ready" | "unavailable" | "failed";
@@ -15,7 +15,7 @@ type StoreApi = Pick<ApiClient, "GET">;
 export class DoctorStore {
   report = $state.raw<DoctorReport | null>(null);
   status = $state<Status>("idle");
-  /** Why a run failed, in words: puddle's own reason, or that nothing answered. */
+  /** Why a run failed, in words: Puddle's own reason, or that nothing answered. */
   problem = $state<string | null>(null);
 
   readonly #api: StoreApi;
@@ -42,12 +42,12 @@ export class DoctorStore {
         this.status = "failed";
         this.problem =
           response.status === 408
-            ? "the check took longer than puddle allows."
-            : (error?.message ?? `puddle answered ${response.status}.`);
+            ? "the check took longer than Puddle allows."
+            : (error?.message ?? `Puddle answered ${response.status}.`);
       }
     } catch {
       this.status = "failed";
-      this.problem = "puddle's service isn't answering.";
+      this.problem = "Puddle's service isn't answering.";
     }
   }
 }

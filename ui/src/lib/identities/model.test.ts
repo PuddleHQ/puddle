@@ -204,7 +204,7 @@ describe("checks", () => {
     });
     expect(
       checkOf({ readable: false, problem: null, needs_sign_in: false }),
-    ).toMatchObject({ message: "puddle can't read it" });
+    ).toMatchObject({ message: "Puddle can't read it" });
     const words = (c: Check) => statusWord(c);
     expect(words(UNTESTED)).toBe("Not tested");
     expect(words({ state: "checking" })).toBe("Checking…");

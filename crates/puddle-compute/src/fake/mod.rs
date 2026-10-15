@@ -224,7 +224,7 @@ const MEMINFO: &str = "/proc/meminfo";
 struct State {
     images: BTreeMap<String, ImageConfig>,
     sandboxes: BTreeMap<String, SandboxRecord>,
-    /// Sandboxes puddle didn't create ([`FakeRuntime::add_foreign_sandbox`]): listed only.
+    /// Sandboxes Puddle didn't create ([`FakeRuntime::add_foreign_sandbox`]): listed only.
     foreign: BTreeMap<String, WorkspaceStatus>,
     stale_dirs: BTreeSet<String>,
     volumes: BTreeMap<String, VolumeRecord>,
@@ -442,7 +442,7 @@ impl FakeRuntime {
         }
     }
 
-    /// Adds a sandbox puddle didn't create (another tool's, or one without puddle's owner label).
+    /// Adds a sandbox Puddle didn't create (another tool's, or one without Puddle's owner label).
     /// [`Runtime::list`] shows it with `puddle_owned: false`; no other operation sees it, so a
     /// test can check through [`FakeRuntime::calls`] that nothing touched it. `name` need not be
     /// a valid [`SandboxName`].

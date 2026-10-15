@@ -123,7 +123,7 @@
     <h1 tabindex="-1" bind:this={heading}>Identities</h1>
     <p class="sub">
       Who commits and signs in. An identity is a commit author plus the
-      credentials puddle adds to Git requests as they leave a workspace; the
+      credentials Puddle adds to Git requests as they leave a workspace; the
       secrets stay on this computer and never enter a workspace. A new workspace
       gets the identity that covers its repository, else the default.
     </p>

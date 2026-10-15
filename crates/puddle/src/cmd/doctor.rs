@@ -58,7 +58,7 @@ pub fn run(args: DoctorArgs) -> ExitCode {
     {
         Ok(probe) => probe,
         Err(e) => {
-            eprintln!("puddle: can't find puddle's own folder: {e}");
+            eprintln!("puddle: can't find Puddle's own folder: {e}");
             return ExitCode::FAILURE;
         }
     };

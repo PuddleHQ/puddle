@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! One puddle host process per data folder.
+//! One Puddle host process per data folder.
 //!
 //! [`DataLock::acquire`] takes an exclusive advisory lock on a file in the data folder. The
 //! operating system releases it when the holder exits for any reason, a crash or a kill
@@ -46,8 +46,8 @@ pub enum LockError {
 
 fn held_message(dir: &Path, holder: Option<u32>) -> String {
     let who = holder.map_or_else(
-        || "another puddle process".to_owned(),
-        |pid| format!("another puddle process (process ID {pid})"),
+        || "another Puddle process".to_owned(),
+        |pid| format!("another Puddle process (process ID {pid})"),
     );
     format!(
         "{who} is already using the data folder {}; quit it first (a second one would stop \
@@ -174,7 +174,7 @@ mod tests {
         let err = DataLock::acquire(dir.path()).unwrap_err();
         assert!(matches!(err, LockError::Held { holder: None, .. }), "{err}");
         assert!(
-            err.to_string().contains("another puddle process is"),
+            err.to_string().contains("another Puddle process is"),
             "{err}"
         );
     }

@@ -43,7 +43,7 @@ export type ExportResult =
   | { ok: false; message: string }
   | { ok: false; cancelled: true };
 
-const DOWN = "puddle's service isn't answering.";
+const DOWN = "Puddle's service isn't answering.";
 /** Pages one catch-up reads at most; the rest comes with the next event. */
 const MAX_TAIL_PAGES = 20;
 
@@ -259,7 +259,7 @@ export class AuditStore {
           },
         });
         if (!data)
-          return { ok: false, message: "puddle couldn't read the log." };
+          return { ok: false, message: "Puddle couldn't read the log." };
         for (const entry of data.entries) {
           lines.push(`${JSON.stringify(entry.record satisfies AuditRecord)}\n`);
         }

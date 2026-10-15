@@ -27,7 +27,7 @@ describe("a built-in set", () => {
     expect(screen.getByRole("article", { name: "GitHub" })).toBeInTheDocument();
     expect(screen.getByText("Built in")).toBeInTheDocument();
     expect(screen.getByText("builtin:github")).toBeInTheDocument();
-    expect(screen.getByText(/Updated by puddle/)).toBeInTheDocument();
+    expect(screen.getByText(/Updated by Puddle/)).toBeInTheDocument();
     expect(
       screen.getByRole("switch", { name: "On for every workspace" }),
     ).not.toBeChecked();

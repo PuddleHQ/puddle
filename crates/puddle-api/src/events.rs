@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The event hub: puddle's components emit [`Event`]s into it ([`EventSink`]), and every SSE
+//! The event hub: Puddle's components emit [`Event`]s into it ([`EventSink`]), and every SSE
 //! subscriber gets a copy.
 
 use std::convert::Infallible;

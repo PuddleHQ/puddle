@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! What puddle knows about a service's login: where the token comes back, which fields of the
+//! What Puddle knows about a service's login: where the token comes back, which fields of the
 //! answer are tokens, and which hosts the tokens are for.
 //!
 //! A profile is data. Adding a service is a new entry in [`builtin`], not new code: the token
@@ -73,7 +73,7 @@ pub struct Endpoint {
     pub fields: &'static [Field],
 }
 
-/// A service whose login puddle captures.
+/// A service whose login Puddle captures.
 #[derive(Debug, Clone, Copy)]
 pub struct Profile {
     /// A short name for identifiers: `claude`, `github`.
@@ -234,7 +234,7 @@ pub const GITHUB: Profile = Profile {
     ],
 };
 
-/// The profiles puddle ships.
+/// The profiles Puddle ships.
 #[must_use]
 pub fn builtin() -> &'static [Profile] {
     &[CLAUDE, GITHUB]

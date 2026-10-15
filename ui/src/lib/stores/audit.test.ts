@@ -91,7 +91,7 @@ describe("reading the log", () => {
     await store.load(ALL);
     expect(store.status).toBe("failed");
     expect(store.reloading).toBe(false);
-    expect(store.loadError).toBe("puddle's service isn't answering.");
+    expect(store.loadError).toBe("Puddle's service isn't answering.");
     api.down = false;
     fill(3);
     await store.load(ALL);
@@ -137,7 +137,7 @@ describe("reading the log", () => {
     expect(store.loadError).toBe("Refused.");
     api.down = true;
     await store.loadMore();
-    expect(store.loadError).toBe("puddle's service isn't answering.");
+    expect(store.loadError).toBe("Puddle's service isn't answering.");
     api.down = false;
     await store.loadMore();
     expect(store.entries).toHaveLength(400);

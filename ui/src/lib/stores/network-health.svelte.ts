@@ -7,7 +7,7 @@ import { isNetworkChanged } from "#lib/network/events.ts";
 import type { NetworkHealth } from "#lib/network/model.ts";
 import { live, type LiveSource } from "./live.svelte.ts";
 
-/** `unavailable`: this puddle has no network service (the API answers 503). */
+/** `unavailable`: this Puddle has no network service (the API answers 503). */
 export type Status = "loading" | "ready" | "unavailable" | "failed";
 
 type StoreApi = Pick<ApiClient, "GET">;

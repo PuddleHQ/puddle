@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Effective values: a workspace's override over the global value over puddle's built-in default.
+//! Effective values: a workspace's override over the global value over Puddle's built-in default.
 
 use puddle_types::{LocalCategory, MemoryMib};
 use serde::Serialize;
@@ -14,7 +14,7 @@ pub enum Source {
     Workspace,
     /// The user's global setting.
     Global,
-    /// puddle's built-in default.
+    /// Puddle's built-in default.
     Default,
 }
 
@@ -42,7 +42,7 @@ pub struct Effective {
     pub zoom_hotkeys: Resolved<bool>,
     /// Programmatic clipboard reads in workspace windows.
     pub clipboard_read: Resolved<ClipboardRead>,
-    /// Whether puddle opens an SSH endpoint and an ssh config entry for the workspace.
+    /// Whether Puddle opens an SSH endpoint and an ssh config entry for the workspace.
     pub direct_ssh: Resolved<bool>,
     /// Whether logins made inside the workspace are captured (the real tokens stay on the host).
     pub capture_logins: Resolved<bool>,
@@ -86,7 +86,7 @@ impl EffectiveToggles {
 }
 
 impl Effective {
-    /// puddle's built-in defaults: 8 GiB, every local toggle off, wildcards don't reach
+    /// Puddle's built-in defaults: 8 GiB, every local toggle off, wildcards don't reach
     /// local addresses, 300 s grace, zoom hotkeys on, clipboard reads
     /// ask.
     pub const DEFAULTS: Effective = Effective {
@@ -129,7 +129,7 @@ fn pick<T: Copy>(workspace: Option<T>, global: Option<T>, builtin: Resolved<T>) 
 }
 
 /// The settings `workspace` runs with: its override if set, else the global value if set, else
-/// puddle's default ([`Effective::DEFAULTS`]). `None` resolves a workspace that has no settings
+/// Puddle's default ([`Effective::DEFAULTS`]). `None` resolves a workspace that has no settings
 /// document (yet), i.e. the global values.
 ///
 /// ```

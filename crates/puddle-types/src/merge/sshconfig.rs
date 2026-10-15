@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `ssh_config`: puddle owns one `Include <pattern>` line, so `ssh` reads the drop-in folder
-//! puddle writes into.
+//! `ssh_config`: Puddle owns one `Include <pattern>` line, so `ssh` reads the drop-in folder
+//! Puddle writes into.
 //!
 //! The file is the image's, so nothing else in it is touched: when no `Include` that reaches the
 //! pattern stands before the first `Host` or `Match` (an `Include` inside a block only applies
 //! to that block), the line goes at the very top, behind one comment that says who added it and
 //! why, and every other byte of the file stays where it is. The top is where the distributions
-//! put it, and the first value `ssh` reads for an option wins, so puddle's drop-in then comes
+//! put it, and the first value `ssh` reads for an option wins, so Puddle's drop-in then comes
 //! before the system defaults.
 //!
 //! A file with a NUL byte, invalid UTF-8 or more than [`MAX_MERGE_FILE`] bytes is refused.
 
 use super::{MAX_MERGE_FILE, MergeEntry, MergeRefusal, Merged, Unmerged};
 
-/// The comment above the line puddle adds. Removal finds the pair by it, so it never changes.
+/// The comment above the line Puddle adds. Removal finds the pair by it, so it never changes.
 pub(super) const MARKER: &str = "# Added by Puddle at boot: this image's ssh_config did not read the folder that holds Puddle's ssh settings.";
 
 /// The only key path of this format.
@@ -56,8 +56,8 @@ pub(super) fn apply(
     Ok(format!("{MARKER}\nInclude {wanted}\n{original}"))
 }
 
-/// Removes the pair puddle added; whether the file is empty afterwards. A pair the user edited
-/// or moved is not puddle's any more and stays.
+/// Removes the pair Puddle added; whether the file is empty afterwards. A pair the user edited
+/// or moved is not Puddle's any more and stays.
 pub(super) fn unmerge(existing: &[u8]) -> Result<Unmerged, MergeRefusal> {
     let original = read(Some(existing))?.unwrap_or("");
     let (out, empty) = remove_pair(original);
@@ -255,11 +255,11 @@ mod tests {
         let back = unmerge(&format!("{}{user}", line()));
         assert_eq!(back.merged, Merged::Write(user.as_bytes().to_vec()));
         assert!(!back.empty);
-        // A file puddle created is empty once the pair is gone.
+        // A file Puddle created is empty once the pair is gone.
         let alone = unmerge(&line());
         assert!(alone.empty);
         assert_eq!(alone.merged, Merged::Write(Vec::new()));
-        // The image's own line, an edited pair and a moved line are not puddle's.
+        // The image's own line, an edited pair and a moved line are not Puddle's.
         for file in [DEBIAN, "Host *\nInclude /etc/ssh/ssh_config.d/*.conf\n"] {
             let u = unmerge(file);
             assert_eq!(u.merged, Merged::Unchanged, "{file:?}");

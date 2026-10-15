@@ -243,7 +243,7 @@ pub struct RepoListSeed {
     /// Read this long before now (ms); never read when left out.
     #[serde(default)]
     pub refreshed_ago_ms: Option<u64>,
-    /// The host lets puddle ask again this long from now (ms).
+    /// The host lets Puddle ask again this long from now (ms).
     #[serde(default)]
     pub retry_in_ms: Option<u64>,
     /// Why the newest read is missing or failed.
@@ -451,7 +451,7 @@ pub struct SettingsSeed {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "do", rename_all = "snake_case")]
 pub enum Step {
-    /// Puts an event on the SSE stream, as a component of puddle would. `event` is the wire
+    /// Puts an event on the SSE stream, as a component of Puddle would. `event` is the wire
     /// form: `{"type": "oom_kill", ...}`. New `Event` variants need no change here.
     Emit {
         /// The event.

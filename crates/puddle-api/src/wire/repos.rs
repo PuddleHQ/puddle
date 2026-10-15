@@ -58,7 +58,7 @@ pub enum RepoProblemCode {
     Unreachable,
     /// The host answered something this version does not understand.
     BadAnswer,
-    /// puddle lists repositories on GitHub and Azure DevOps only.
+    /// Puddle lists repositories on GitHub and Azure DevOps only.
     Unsupported,
     /// An Azure DevOps credential that names no organisation.
     OrganisationNeeded,
@@ -116,7 +116,7 @@ pub enum RepoNoteCode {
     OrganisationsMayBeHidden,
     /// A fine-grained token lists only the repositories it was granted.
     FineGrainedToken,
-    /// More repositories exist than puddle reads.
+    /// More repositories exist than Puddle reads.
     Truncated,
     /// The account's author cannot be read from this host: enter it yourself.
     AuthorUnavailable,
@@ -176,7 +176,7 @@ pub struct RepoSource {
     /// Epoch ms the list was read; `null` when it never was.
     #[schema(required = true)]
     pub refreshed_at: Option<u64>,
-    /// Epoch ms the host lets puddle ask again, when it said to wait.
+    /// Epoch ms the host lets Puddle ask again, when it said to wait.
     #[schema(required = true)]
     pub retry_at: Option<u64>,
     /// Why the newest read is missing or failed; `null` when it worked.

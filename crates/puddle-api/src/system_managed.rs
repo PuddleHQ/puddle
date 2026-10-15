@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! System managed: which hosts puddle allows because of the user's own setup (rules spec R-41).
+//! System managed: which hosts Puddle allows because of the user's own setup (rules spec R-41).
 //! Derived from the settings here and handed to the store, at start and after every settings
 //! or consent change, so the allows follow the choices that justify them.
 
@@ -90,15 +90,15 @@ pub(crate) async fn refresh(state: &AppState) {
         }
         (Ok(_), Some(reason)) => state.problems.raise(Problem::new(
             PROBLEM_KEY,
-            "puddle could not read the workspace list, so it allows no hosts for direct SSH",
+            "Puddle could not read the workspace list, so it allows no hosts for direct SSH",
             format!(
                 "{reason}. Hosts that desktop VS Code needs in workspaces with direct SSH are \
-                 blocked until the list can be read; change a setting or restart puddle to try again."
+                 blocked until the list can be read; change a setting or restart Puddle to try again."
             ),
         )),
         (Err(err), _) => state.problems.raise(Problem::new(
             PROBLEM_KEY,
-            "puddle could not update which hosts it allows for your setup",
+            "Puddle could not update which hosts it allows for your setup",
             format!(
                 "{}. The hosts it allowed before stay as they were, so a change you just made to \
                  the editor server or direct SSH may not apply yet; change the setting again to \

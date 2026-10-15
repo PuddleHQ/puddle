@@ -151,7 +151,7 @@ describe("names", () => {
     ["a_b", "Use only lowercase letters, digits and hyphens."],
     ["-a", "Start and end with a letter or digit."],
     ["a-", "Start and end with a letter or digit."],
-    ["m--x", "Names starting with m-- are reserved for puddle's own use."],
+    ["m--x", "Names starting with m-- are reserved for Puddle's own use."],
     ["tauri", '"tauri" is reserved; pick another.'],
     ["ipc", '"ipc" is reserved; pick another.'],
     ["asset", '"asset" is reserved; pick another.'],
@@ -202,7 +202,7 @@ describe("repository URLs", () => {
     ["https://github.com/a b", "The URL must not contain spaces."],
     [
       "https://user:pw@github.com/x.git",
-      "Remove the user name and password from the URL; puddle supplies credentials itself.",
+      "Remove the user name and password from the URL; Puddle supplies credentials itself.",
     ],
     ["https://", "The URL has no host."],
     ["https:///x", "The URL has no host."],

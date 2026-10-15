@@ -108,7 +108,7 @@ export function collect(
 
 export function render(entries: Entry[]): string {
   const lines = [
-    "Third-party software shipped in puddle's user interface.",
+    "Third-party software shipped in Puddle's user interface.",
     "",
   ];
   for (const e of entries) {

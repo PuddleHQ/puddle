@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Hostile-guest cases at tier V that need the product's boot hook: the guest runs puddle's real
+//! Hostile-guest cases at tier V that need the product's boot hook: the guest runs Puddle's real
 //! `puddle-agent` (started by `boot.sh`, from `PUDDLE_AGENT_BIN`, the static build of
-//! `ci/build-agent.sh`) against a real proxy on the host, and puddle's own read-only mounts.
+//! `ci/build-agent.sh`) against a real proxy on the host, and Puddle's own read-only mounts.
 //!
-//! HG-04 and HG-05: a process in the guest asks the agent for a CONNECT to each of puddle's own
+//! HG-04 and HG-05: a process in the guest asks the agent for a CONNECT to each of Puddle's own
 //! listeners, in every loopback spelling, with every local toggle on and an allow rule for the
-//! address; every one is refused as a puddle endpoint. HG-23: every mount puddle puts into the
+//! address; every one is refused as a Puddle endpoint. HG-23: every mount Puddle puts into the
 //! guest refuses writes, whatever root tries, and no host data folder is visible in the guest.
 #![expect(
     clippy::expect_used,
@@ -36,7 +36,7 @@ use puddle_types::{ImageRef, LocalCategory, NullSink, WorkspaceName};
 use puddle_vm_tests::{DEBIAN_DEVCONTAINER, Settings};
 use support::{cleanup, spec};
 
-/// The guest port puddle routes (the agent's default target is `vsock://2:5000`).
+/// The guest port Puddle routes (the agent's default target is `vsock://2:5000`).
 const ROUTE_PORT: u32 = 5000;
 
 const NOW: u64 = 1_800_000_000_000;
@@ -60,7 +60,7 @@ if [ "$length" -gt 0 ]; then
 fi
 "#;
 
-/// A sandbox booted by the real hook with puddle's mounts, the real agent in it and a route.
+/// A sandbox booted by the real hook with Puddle's mounts, the real agent in it and a route.
 struct Booted {
     rt: MsbRuntime,
     sb: GatedSandbox<<MsbRuntime as Runtime>::Sandbox>,
@@ -215,8 +215,8 @@ async fn start_api(endpoints: &PuddleEndpoints) -> puddle_api::RunningApi {
     .spawn()
 }
 
-/// Self-approval through the real agent in a real guest: every listener puddle has bound (the API,
-/// the image-pull proxy and a stand-in for the listeners that come later) is refused as a puddle
+/// Self-approval through the real agent in a real guest: every listener Puddle has bound (the API,
+/// the image-pull proxy and a stand-in for the listeners that come later) is refused as a Puddle
 /// endpoint, in every loopback spelling, with every local toggle on and an allow rule for the
 /// literal address. Nothing is left pending for the user to approve.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -266,7 +266,7 @@ async fn vm_hostile_hg04_hg05_a_guest_cannot_reach_puddles_own_listeners_through
                     .headers
                     .iter()
                     .any(|h| h.starts_with("x-puddle-pending"))
-                && answer.body.contains("puddle's own endpoints");
+                && answer.body.contains("Puddle's own endpoints");
             if !refused {
                 failures.push(format!(
                     "{kind} at {authority}: {:?} {:?} {:?}",
@@ -351,7 +351,7 @@ async fn write_attack(guest: &Booted, target: &str) -> (String, Vec<String>) {
     (report, failures)
 }
 
-/// Every mount puddle puts into the guest refuses writes from root, and the host's data folder is
+/// Every mount Puddle puts into the guest refuses writes from root, and the host's data folder is
 /// not there to see. The mounts are the boot hook's: `boot.sh`, `agent-supervise.sh` and the
 /// agent binary. Root tries to append, truncate, delete, rename and chmod each one, and to
 /// remount it read-write and write again; afterwards the guest's view and the host's files are
@@ -462,7 +462,7 @@ mod windows {
         let guest = boot(&settings, "hg24", Some(&rig.route_path)).await;
         let authority = format!("127.0.0.1:{}", other.local_addr().unwrap().port());
 
-        // Before the attack the route carries the guest's request to puddle's proxy, which
+        // Before the attack the route carries the guest's request to Puddle's proxy, which
         // answers (a registered listener is refused with a reason).
         let before = connect_through_the_agent(&guest, &authority).await;
         assert!(before.status.contains(" 403"), "{:?}", before.status);

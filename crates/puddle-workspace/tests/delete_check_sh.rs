@@ -57,7 +57,7 @@ fn git(dir: &Path, args: &[&str]) {
     );
 }
 
-/// A volume root with: ext4's `lost+found`, puddle's `.puddle`, a checkout with every kind of
+/// A volume root with: ext4's `lost+found`, Puddle's `.puddle`, a checkout with every kind of
 /// unsaved work, a clean checkout, a repo without commits, and a stray file.
 fn volume(root: &Path) -> PathBuf {
     let remote = root.join("remote.git");

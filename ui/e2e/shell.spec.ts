@@ -26,7 +26,7 @@ test.describe("the app shell, served by the real API", () => {
       page.getByRole("heading", { level: 1, name: "Workspaces" }),
     ).toBeVisible();
     await expect(page.getByTestId("pending-badge")).toContainText("1 pending");
-    await expect(page).toHaveTitle("Workspaces - puddle");
+    await expect(page).toHaveTitle("Workspaces - Puddle");
     await expect(page.getByText("1 request waiting.")).toBeVisible();
     expect(await violations()).toEqual([]);
   });
@@ -151,7 +151,7 @@ test.describe("the origin and the token", () => {
   });
 });
 
-isolated.describe("the theme choice is kept by puddle, not by the page", () => {
+isolated.describe("the theme choice is kept by Puddle, not by the page", () => {
   isolated(
     "theme: follows the OS, can be overridden, and the choice survives a reload",
     async ({ page, backend }) => {

@@ -10,7 +10,7 @@ use puddle_compute::{ExecRequest, Runtime, Sandbox, VsockRoute};
 use puddle_ipc::IpcRoot;
 use support::{cleanup, collect_lines, sh, spec, vsock_sweep};
 
-/// The guest port puddle routes.
+/// The guest port Puddle routes.
 const ROUTE_PORT: u32 = 5000;
 
 /// The host's vsock address.
@@ -130,7 +130,7 @@ exit $fail
 }
 
 /// Of a connect sweep over every guest-to-host vsock port, only the routed one accepts, and what
-/// the guest sends arrives on puddle's endpoint; no port of CID 0 (the hypervisor), 1 (the local
+/// the guest sends arrives on Puddle's endpoint; no port of CID 0 (the hypervisor), 1 (the local
 /// address) or 3 (a neighbour or the guest itself) accepts either.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_hostile_hg02_only_the_routed_vsock_port_accepts() {

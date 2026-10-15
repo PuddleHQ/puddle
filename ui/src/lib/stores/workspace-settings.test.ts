@@ -35,7 +35,7 @@ describe("loading", () => {
   });
 
   it("keeps the reason a damaged settings file is refused with, and clears it on a good read", async () => {
-    const reason = "puddle cannot read the settings of workspace demo: x";
+    const reason = "Puddle cannot read the settings of workspace demo: x";
     api.refuse.set("GET /api/settings/workspaces/{workspace}", {
       status: 409,
       error: "settings_unreadable",
@@ -120,7 +120,7 @@ describe("saving", () => {
     api.down = true;
     expect(await settings.change({ memory: 4096 })).toEqual({
       ok: false,
-      message: "puddle's service isn't answering.",
+      message: "Puddle's service isn't answering.",
     });
   });
 

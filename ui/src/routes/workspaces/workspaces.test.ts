@@ -111,7 +111,7 @@ describe("the workspace list", () => {
     await mount();
     expect(
       await screen.findByText(
-        /Couldn't read the workspaces\. puddle's service isn't answering\./,
+        /Couldn't read the workspaces\. Puddle's service isn't answering\./,
       ),
     ).toBeInTheDocument();
   });

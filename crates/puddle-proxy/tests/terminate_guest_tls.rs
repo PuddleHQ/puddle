@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! I tests of what the audit records when the client in the workspace does not accept the
-//! certificate puddle presents for a bound host (the usual cause: a tool with its own list of
+//! certificate Puddle presents for a bound host (the usual cause: a tool with its own list of
 //! roots that does not include the workspace's CA).
 //!
 //! The real-tool test needs `python3` on the path; without it the test skips unless

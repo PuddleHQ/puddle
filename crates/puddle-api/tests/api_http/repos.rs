@@ -84,7 +84,7 @@ async fn the_repositories_come_back_once_each_with_who_reaches_them_and_how_curr
     stale.state = ListState::Stale;
     stale.problem = Some(Problem {
         kind: ProblemKind::RateLimited,
-        message: "GitHub is limiting how fast puddle may ask; puddle waits before it asks again"
+        message: "GitHub is limiting how fast Puddle may ask; Puddle waits before it asks again"
             .to_owned(),
         retry_at: Some(1_700_000_300_000),
         needs_sign_in: false,
@@ -135,7 +135,7 @@ async fn the_repositories_come_back_once_each_with_who_reaches_them_and_how_curr
                 "state": "stale", "refreshed_at": 1_700_000_000_000_u64, "retry_at": 1_700_000_300_000_u64,
                 "problem": {
                     "code": "rate_limited",
-                    "message": "GitHub is limiting how fast puddle may ask; puddle waits before it asks again",
+                    "message": "GitHub is limiting how fast Puddle may ask; Puddle waits before it asks again",
                     "needs_sign_in": false
                 },
                 "notes": [{"code": "organisations_may_be_hidden", "message": "some organisations may be hidden"}],

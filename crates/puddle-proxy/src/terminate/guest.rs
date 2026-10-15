@@ -17,7 +17,7 @@ use rustls::server::{ClientHello, ResolvesServerCert};
 use rustls::sign::CertifiedKey;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-/// The protocol names of ALPN (RFC 7301) puddle speaks on a terminated connection.
+/// The protocol names of ALPN (RFC 7301) Puddle speaks on a terminated connection.
 pub(crate) const ALPN_HTTP11: &[u8] = b"http/1.1";
 pub(crate) const ALPN_H2: &[u8] = b"h2";
 

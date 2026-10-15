@@ -180,7 +180,7 @@ export class WorkspaceActions {
       this.#toasts.push(`Opening ${w.name} in VS Code.`);
     } else {
       this.#toasts.push(
-        message ?? `puddle couldn't open VS Code for ${w.name}.`,
+        message ?? `Puddle couldn't open VS Code for ${w.name}.`,
         {
           tone: "error",
           ms: 8000,

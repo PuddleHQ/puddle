@@ -25,7 +25,7 @@
 <p class="muted" class:padded role="status">
   {#if stale}
     Couldn't refresh {what}.{message ? ` ${message}` : ""} What is shown may be out
-    of date; puddle keeps trying.
+    of date; Puddle keeps trying.
   {:else}
     Couldn't read {what}.{message ? ` ${message}` : ""} Trying again.
   {/if}

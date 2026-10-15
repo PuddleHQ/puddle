@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The environment that makes the msb SDK use puddle's runtime and home, and nothing of the user's.
+//! The environment that makes the msb SDK use Puddle's runtime and home, and nothing of the user's.
 //!
 //! The SDK reads its paths from the process environment, and a user's `MSB_PATH` beats the SDK's
 //! own `set_sdk_msb_path`. msb also reads `MSB_BACKEND`, `MSB_API_URL`,
-//! `MSB_PROFILE` and more, any of which could redirect puddle. So the rule is simple: remove
-//! every `MSB_*` variable, then set exactly the three puddle owns.
+//! `MSB_PROFILE` and more, any of which could redirect Puddle. So the rule is simple: remove
+//! every `MSB_*` variable, then set exactly the three Puddle owns.
 
 use std::ffi::{OsStr, OsString};
 use std::process::Command;
@@ -64,7 +64,7 @@ impl RuntimeEnv {
     }
 
     /// Applies the plan to a child process: removes the user's `MSB_*` variables from what the
-    /// child inherits and sets puddle's.
+    /// child inherits and sets Puddle's.
     pub fn apply_to(&self, command: &mut Command) {
         for name in &self.remove {
             command.env_remove(name);
@@ -74,7 +74,7 @@ impl RuntimeEnv {
         }
     }
 
-    /// Applies the plan to puddle's own process, so the msb SDK (which reads the process
+    /// Applies the plan to Puddle's own process, so the msb SDK (which reads the process
     /// environment) uses the bundled runtime and private home.
     ///
     /// # Safety

@@ -107,15 +107,15 @@ describe("freshness", () => {
       "Nothing read yet. Refresh tries again.",
     );
     expect(freshness(repoSource({ state: "unavailable" }), NOW)).toBe(
-      "puddle cannot list this one. Edit the identity to change its sign-in.",
+      "Puddle cannot list this one. Edit the identity to change its sign-in.",
     );
   });
 });
 
 describe("waiting for a host", () => {
-  it("words when puddle asks again, only while it is in the future", () => {
+  it("words when Puddle asks again, only while it is in the future", () => {
     expect(retryText(repoSource({ retry_at: NOW + 600_000 }), NOW)).toBe(
-      "puddle asks again in 10 minutes.",
+      "Puddle asks again in 10 minutes.",
     );
     expect(retryText(repoSource({ retry_at: NOW - 1 }), NOW)).toBeNull();
     expect(retryText(repoSource(), NOW)).toBeNull();

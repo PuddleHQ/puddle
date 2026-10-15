@@ -3,7 +3,7 @@
 //!
 //! The upstream client (hyper) has already framed and checked the response; what is written here
 //! is rebuilt from its parts: a fresh status line, the end-to-end headers, and framing chosen for
-//! the guest. 3xx responses are passed through like any other: puddle never follows a redirect,
+//! the guest. 3xx responses are passed through like any other: Puddle never follows a redirect,
 //! so a `Location` for another host is the guest's to follow, and it goes through the proxy as a
 //! new `CONNECT`.
 

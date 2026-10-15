@@ -181,7 +181,7 @@ where
         Ok(Err(err)) => {
             if let Some(alert) = super::handshake::rejected_certificate(&err) {
                 outcome.certificate_refused = true;
-                tracing::info!(workspace = %cx.workspace, host = %cx.target.host, alert, "the client in the workspace did not accept puddle's certificate for this host");
+                tracing::info!(workspace = %cx.workspace, host = %cx.target.host, alert, "the client in the workspace did not accept Puddle's certificate for this host");
             } else {
                 tracing::debug!(host = %cx.target.host, error = %err, "guest TLS handshake failed");
             }
@@ -627,7 +627,7 @@ where
     /// Answers the guest with `refusal` in place of the server's `401`. The server's answer is
     /// left unread, so the upstream connection is not used again.
     async fn replace_unauthorized(&mut self, refusal: InjectRefusal) -> Flow {
-        tracing::info!(host = %self.cx.target.host, code = refusal.code(), "401 replaced: the credential for this request was puddle's to choose");
+        tracing::info!(host = %self.cx.target.host, code = refusal.code(), "401 replaced: the credential for this request was Puddle's to choose");
         self.upstream = None;
         self.outcome.refused.get_or_insert(refusal.code());
         self.refuse(&refusal.to_refusal()).await

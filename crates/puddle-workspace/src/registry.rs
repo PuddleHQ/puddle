@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Which sandbox holds which workspace (ADR 0006 point 8). In memory: after a restart puddle
+//! Which sandbox holds which workspace (ADR 0006 point 8). In memory: after a restart Puddle
 //! rebuilds it with [`crate::Workspaces::adopt`] (at reconcile), and running holders are
 //! also seen through the runtime's own holder lookup.
 
@@ -16,7 +16,7 @@ pub enum HoldKind {
     /// The sandbox was created with the workspace: it holds it while it exists, running or not,
     /// because a start attaches the volume again.
     Attached,
-    /// puddle's short-lived maintenance sandbox (delete check, reclaim space).
+    /// Puddle's short-lived maintenance sandbox (delete check, reclaim space).
     Maintenance,
 }
 

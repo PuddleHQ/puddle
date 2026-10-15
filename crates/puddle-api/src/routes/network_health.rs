@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The network-health report: how puddle reaches the internet from this machine.
+//! The network-health report: how Puddle reaches the internet from this machine.
 
 use axum::Json;
 use axum::extract::State;
@@ -9,7 +9,7 @@ use crate::error::ApiError;
 use crate::routes::AppState;
 use crate::wire::NetworkHealth;
 
-/// The proxy setup puddle sees (PAC, WPAD, fixed proxy or environment), how it signs in to the
+/// The proxy setup Puddle sees (PAC, WPAD, fixed proxy or environment), how it signs in to the
 /// company proxy, the company roots copied into workspaces, the route chosen per destination
 /// and whether image pulls go through the pull proxy. Safe to show: it holds no password, token,
 /// proxy credential or PAC script. A client refetches on the `network_changed` event.

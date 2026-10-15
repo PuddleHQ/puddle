@@ -48,11 +48,11 @@ use crate::{HostConfig, HostError, HostWorkspaces, Platform};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Step {
-    /// This process holds the data folder; no other puddle process can start on it.
+    /// This process holds the data folder; no other Puddle process can start on it.
     DataFolderLocked,
     /// The image-pull proxy is bound (not serving yet).
     PullProxyBound,
-    /// The process environment is pinned to puddle's runtime.
+    /// The process environment is pinned to Puddle's runtime.
     EnvironmentPinned,
     /// The bundled runtime is present and of the exact version.
     RuntimeChecked,
@@ -237,7 +237,7 @@ pub trait RuntimeFactory: Send + Sync {
     ) -> impl Future<Output = Result<Self::Runtime, HostError>> + Send;
 }
 
-/// Opens msb in puddle's private home.
+/// Opens msb in Puddle's private home.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MsbFactory;
 
@@ -267,7 +267,7 @@ pub struct HostOptions {
     /// The proxy discovery to use instead of the system's (tests).
     pub discovery: Option<Arc<Discovery>>,
     /// Builds, for each start of a workspace's sandbox, the injector that decides which credential
-    /// is added to a request on a decrypted host. Without one a workspace gets puddle's own Git
+    /// is added to a request on a decrypted host. Without one a workspace gets Puddle's own Git
     /// injector (tests give another, for instance one that adds nothing).
     pub injector: Option<InjectorFactory>,
     /// Where the values of secrets are kept: the pasted tokens of identities and the secrets of
@@ -454,7 +454,7 @@ impl<R: Runtime + Clone> Host<R> {
         let network_health = network_health_of(&egress.chain, &discovery, &clock, &roots);
         network_health.set_tls_left_out(injecting.tls.rejected_roots(), &roots);
         let pull_url = pull.proxy_url();
-        // Image pulls are puddle's own traffic: audited with origin `puddle`, like sandbox traffic.
+        // Image pulls are Puddle's own traffic: audited with origin `puddle`, like sandbox traffic.
         let pull = pull
             .with_upstream(upstream)
             .with_connection_log(connections.clone());
@@ -527,7 +527,7 @@ impl<R: Runtime + Clone> Host<R> {
             .with_endpoints(endpoints.clone());
         let served = serve_api(&config, services).await?;
         steps.push(Step::ApiServing);
-        tracing::info!(url = %served.url, "puddle is up");
+        tracing::info!(url = %served.url, "Puddle is up");
 
         Ok(Self {
             info: served.info,
@@ -591,7 +591,7 @@ impl<R: Runtime + Clone> Host<R> {
         &self.store
     }
 
-    /// Every address puddle itself listens on, which the destination guard keeps guests away
+    /// Every address Puddle itself listens on, which the destination guard keeps guests away
     /// from. Components that open their own listener (the forwarder) register it here.
     #[must_use]
     pub fn endpoints(&self) -> &PuddleEndpoints {
@@ -747,7 +747,7 @@ impl Injecting {
         log: Arc<dyn ConnectionLog>,
     ) -> Arc<Repos> {
         Arc::new(Repos::new(
-            // Listing repositories is puddle's own traffic: audited with origin `puddle`, like an
+            // Listing repositories is Puddle's own traffic: audited with origin `puddle`, like an
             // image pull.
             Arc::new(HostApi::new(chain.clone(), self.tls.clone()).with_connection_log(log)),
             self.secrets.clone(),
@@ -889,7 +889,7 @@ async fn serve_api(config: &HostConfig, services: Services) -> Result<ServedApi,
     Ok(ServedApi { info, url, api })
 }
 
-/// What reconcile works from: the workspaces puddle knows, the sandboxes they own and which of
+/// What reconcile works from: the workspaces Puddle knows, the sandboxes they own and which of
 /// those exist.
 async fn inventory_of<R: Runtime>(
     runtime: &R,
@@ -1002,13 +1002,13 @@ fn reconcile_problems(report: &puddle_lifecycle::ReconcileReport) -> Vec<Problem
         problems.push(Problem::new(
             "reconcile-unknown-volumes",
             format!(
-                "puddle found {} workspace disk{} that no workspace in its list claims",
+                "Puddle found {} workspace disk{} that no workspace in its list claims",
                 names.len(),
                 if names.len() == 1 { "" } else { "s" }
             ),
             format!(
-                "{}. puddle kept them and changed nothing. If the workspace list is missing or \
-                 out of date, restore it and restart puddle; if they belong to workspaces you \
+                "{}. Puddle kept them and changed nothing. If the workspace list is missing or \
+                 out of date, restore it and restart Puddle; if they belong to workspaces you \
                  deleted, remove the volumes yourself once you are sure.",
                 names.join(", ")
             ),
@@ -1019,7 +1019,7 @@ fn reconcile_problems(report: &puddle_lifecycle::ReconcileReport) -> Vec<Problem
         problems.push(Problem::new(
             "reconcile-removed-sandboxes",
             format!(
-                "puddle removed {} sandbox{} that no workspace in its list claims",
+                "Puddle removed {} sandbox{} that no workspace in its list claims",
                 names.len(),
                 if names.len() == 1 { "" } else { "es" }
             ),
@@ -1039,12 +1039,12 @@ fn reconcile_problems(report: &puddle_lifecycle::ReconcileReport) -> Vec<Problem
         problems.push(Problem::new(
             "reconcile-failures",
             format!(
-                "puddle could not clean up {} thing{} an earlier run left",
+                "Puddle could not clean up {} thing{} an earlier run left",
                 what.len(),
                 if what.len() == 1 { "" } else { "s" }
             ),
             format!(
-                "{}. They stay as they are and puddle tries again at its next start.",
+                "{}. They stay as they are and Puddle tries again at its next start.",
                 what.join("; ")
             ),
         ));

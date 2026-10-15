@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The rule sets that ship with puddle, and the hosts puddle allows because of the user's own
+//! The rule sets that ship with Puddle, and the hosts Puddle allows because of the user's own
 //! setup ("System managed"), as data (`docs/spec/rules.md` §7).
 //!
-//! Both only ever allow (R-36): puddle ships no deny list. Their entries are checked by the tests
+//! Both only ever allow (R-36): Puddle ships no deny list. Their entries are checked by the tests
 //! below (R-4, no duplicates) and loaded into memory; nothing is copied into the database, so an
-//! update of puddle updates them.
+//! update of Puddle updates them.
 
 use std::fmt;
 
@@ -31,7 +31,7 @@ macro_rules! entry {
     };
 }
 
-/// A rule set that ships with puddle. Read-only; on or off like any set (R-37).
+/// A rule set that ships with Puddle. Read-only; on or off like any set (R-37).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuiltInSet {
     /// Stable id, `[a-z0-9-]+`; the wire id is `builtin:<slug>`.
@@ -107,12 +107,12 @@ pub fn built_in(slug: &str) -> Option<&'static BuiltInSet> {
     BUILT_IN_SETS.iter().find(|set| set.slug == slug)
 }
 
-/// Why puddle allows a System managed host: a choice the user made (R-41).
+/// Why Puddle allows a System managed host: a choice the user made (R-41).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum SystemReason {
     /// The browser editor runs Microsoft's VS Code server (a global choice the user consented
-    /// to): puddle downloads it from Microsoft, and its extensions come from the Marketplace.
+    /// to): Puddle downloads it from Microsoft, and its extensions come from the Marketplace.
     MicrosoftServer,
     /// The browser editor runs the bundled code-server: its extensions come from Open VSX.
     CodeServer,
@@ -165,7 +165,7 @@ impl SystemReason {
     pub fn describe(self) -> &'static str {
         match self {
             Self::MicrosoftServer => {
-                "You chose Microsoft's VS Code server for the browser editor: puddle downloads it from Microsoft, and its extensions come from the Visual Studio Marketplace."
+                "You chose Microsoft's VS Code server for the browser editor: Puddle downloads it from Microsoft, and its extensions come from the Visual Studio Marketplace."
             }
             Self::CodeServer => {
                 "The browser editor runs the bundled code-server: its extensions come from Open VSX."

@@ -78,7 +78,7 @@
       </label>
       <p class="desc" id="connect-ssh-desc">
         {DIRECT_SSH_HINT}
-        {#if !workspace.direct_ssh}Off: puddle opens no SSH way in and writes no
+        {#if !workspace.direct_ssh}Off: Puddle opens no SSH way in and writes no
           ssh config entry.{/if}
       </p>
       <button

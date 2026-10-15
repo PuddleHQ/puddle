@@ -12,7 +12,7 @@ use crate::routes::AppState;
 use crate::routes::settings::load_global;
 use crate::wire::{DevCertificate, FirstRun, FirstRunRequest};
 
-/// What the certificates step says about a development certificate. puddle does not look for
+/// What the certificates step says about a development certificate. Puddle does not look for
 /// one yet, so this is always "not checked".
 const DEV_CERTIFICATE: DevCertificate = DevCertificate::NotChecked;
 
@@ -31,7 +31,7 @@ fn view(first_run: &puddle_settings::FirstRun) -> FirstRun {
     tag = "first-run",
     responses(
         (status = OK, description = "the flow's state", body = FirstRun),
-        (status = CONFLICT, description = "settings written by a newer puddle (newer_settings), or damaged (settings_unreadable)", body = ApiErrorBody)
+        (status = CONFLICT, description = "settings written by a newer Puddle (newer_settings), or damaged (settings_unreadable)", body = ApiErrorBody)
     )
 )]
 pub(crate) async fn get_first_run(
@@ -51,7 +51,7 @@ pub(crate) async fn get_first_run(
     request_body = FirstRunRequest,
     responses(
         (status = OK, description = "the flow's state after the change", body = FirstRun),
-        (status = CONFLICT, description = "settings written by a newer puddle (newer_settings), or damaged (settings_unreadable)", body = ApiErrorBody)
+        (status = CONFLICT, description = "settings written by a newer Puddle (newer_settings), or damaged (settings_unreadable)", body = ApiErrorBody)
     )
 )]
 pub(crate) async fn put_first_run(

@@ -87,16 +87,16 @@ describe("FirstRunStore", () => {
     expect(await store.complete()).toEqual({
       ok: false,
       message:
-        "These settings were saved by a newer puddle. Update puddle to change them.",
+        "These settings were saved by a newer Puddle. Update Puddle to change them.",
     });
     expect(await store.complete()).toEqual({ ok: false, message: "disk full" });
     expect(await store.complete()).toEqual({
       ok: false,
-      message: "puddle refused that.",
+      message: "Puddle refused that.",
     });
     expect(await store.complete()).toEqual({
       ok: false,
-      message: "puddle's service isn't answering.",
+      message: "Puddle's service isn't answering.",
     });
     expect(store.state).toBeNull();
   });

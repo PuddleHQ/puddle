@@ -477,7 +477,7 @@ async fn puddles_own_connections_have_an_origin_and_the_origin_filter_finds_them
     assert_eq!(entries.len(), 1, "{page}");
     assert_eq!(entries[0]["record"]["origin"], "workspace");
     assert_eq!(entries[0]["record"]["workspace_id"], "box");
-    // Only connection records have an origin; a workspace filter excludes puddle's own.
+    // Only connection records have an origin; a workspace filter excludes Puddle's own.
     let both = api
         .get("/api/audit?origin=puddle&workspace=box")
         .await

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The density setting (comfortable / compact) against the real API on the fixture backend:
-// chosen in Settings, kept by puddle, applied live, still accessible in both densities, with the
+// chosen in Settings, kept by Puddle, applied live, still accessible in both densities, with the
 // layout of each read from computed styles. Waits are on conditions, never on time.
 import type { Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
@@ -43,7 +43,7 @@ const spaceFour = (page: Page) =>
   );
 
 test.describe("the density setting", () => {
-  test("is comfortable by default, changes the whole app live, and puddle keeps it", async ({
+  test("is comfortable by default, changes the whole app live, and Puddle keeps it", async ({
     page,
     backend,
     request,
@@ -94,7 +94,7 @@ test.describe("the density setting", () => {
       ((await view.json()) as { ui: { density: string } }).ui.density,
     ).toBe("compact");
 
-    // A new launch has a new origin: nothing in the page's storage survives, puddle remembers.
+    // A new launch has a new origin: nothing in the page's storage survives, Puddle remembers.
     await page.evaluate(() => localStorage.clear());
     await page.goto("/settings");
     await expect(page.getByLabel("Density", { exact: true })).toHaveValue(

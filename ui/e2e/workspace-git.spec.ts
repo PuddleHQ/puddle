@@ -163,7 +163,7 @@ test("refuses an address it cannot read, in the create form's words, and a repos
   await url.fill("https://github.com/acme");
   await page.getByRole("button", { name: "Add repository" }).click();
   await expect(page.getByRole("alert")).toContainText(
-    "not a repository address puddle can read",
+    "not a repository address Puddle can read",
   );
   await url.fill("https://github.com/acme/web-shop");
   await page.getByRole("button", { name: "Add repository" }).click();

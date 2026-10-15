@@ -2,7 +2,7 @@
 #![cfg_attr(not(windows), forbid(unsafe_code))]
 //! The file-system seams that differ per OS:
 //!
-//! - [`data_dir`]: puddle's per-user data folder, resolved by the `dirs` crate in this one place.
+//! - [`data_dir`]: Puddle's per-user data folder, resolved by the `dirs` crate in this one place.
 //! - [`private`]: owner-only files and folders. On Unix the modes `0600` / `0700`; on Windows an
 //!   explicit, protected ACL with one entry, for the current user.
 //! - [`lock`]: one host process per data folder, an OS lock that dies with its holder.

@@ -19,7 +19,7 @@ pub const STDERR_LIMIT: usize = 8 * 1024;
 pub enum BootFailure {
     /// The image has no `/bin/sh`.
     #[error(
-        "the image has no POSIX shell at /bin/sh, which puddle's boot hook needs; use an image that has one ({detail})"
+        "the image has no POSIX shell at /bin/sh, which Puddle's boot hook needs; use an image that has one ({detail})"
     )]
     NoShell {
         /// What the runtime said.
@@ -60,7 +60,7 @@ pub enum BootError {
     /// The runtime call before the hook failed.
     #[error(transparent)]
     Compute(#[from] ComputeError),
-    /// The hook failed; puddle stopped the sandbox (fail closed: no half-set-up VM runs).
+    /// The hook failed; Puddle stopped the sandbox (fail closed: no half-set-up VM runs).
     #[error("workspace {sandbox:?} failed its boot hook and {}: {failure}", stop_text(.stop_error.as_deref()))]
     Hook {
         /// The sandbox.
@@ -81,7 +81,7 @@ fn stop_text(stop_error: Option<&ComputeError>) -> String {
     }
 }
 
-/// Runs the boot hook and keeps the [`Gate`] in step. One per puddle; cheap to copy.
+/// Runs the boot hook and keeps the [`Gate`] in step. One per Puddle; cheap to copy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BootHook {
     timeout: Duration,
@@ -205,7 +205,7 @@ impl BootHook {
         }
     }
 
-    /// Re-adopts a running sandbox a previous puddle left behind and runs the hook again
+    /// Re-adopts a running sandbox a previous Puddle left behind and runs the hook again
     /// (idempotent: it converges and starts nothing twice).
     ///
     /// # Errors

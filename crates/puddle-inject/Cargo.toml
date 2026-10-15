@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-inject"
-description = "puddle's credential injector for Git hosts: reads the repository and the kind of access from the path, applies the workspace's push and pull lists, picks the identity that covers the repository and adds its credential"
+description = "Puddle's credential injector for Git hosts: reads the repository and the kind of access from the path, applies the workspace's push and pull lists, picks the identity that covers the repository and adds its credential"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

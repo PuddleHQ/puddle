@@ -175,14 +175,14 @@ fn refusal(err: &ChainError, target: &Target) -> Refusal {
         ChainError::AuthRequired { schemes, .. } => Refusal::new(
             "502 Bad Gateway",
             format!(
-                "the company proxy requires sign-in that puddle cannot provide (it offers {})",
+                "the company proxy requires sign-in that Puddle cannot provide (it offers {})",
                 schemes.join(", ")
             ),
         )
         .header("x-puddle-blocked-by", "upstream-auth"),
         ChainError::AuthFailed { .. } => Refusal::new(
             "502 Bad Gateway",
-            "signing in to the company proxy failed; check the proxy credentials in puddle",
+            "signing in to the company proxy failed; check the proxy credentials in Puddle",
         )
         .header("x-puddle-blocked-by", "upstream-auth"),
         _ => Refusal::new(

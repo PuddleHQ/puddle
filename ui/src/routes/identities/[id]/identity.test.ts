@@ -307,7 +307,7 @@ describe("one identity", () => {
       within(confirm).getByRole("button", { name: "Delete Personal" }),
     );
     await waitFor(() =>
-      expect(lastToast()).toBe("puddle couldn't delete that identity."),
+      expect(lastToast()).toBe("Puddle couldn't delete that identity."),
     );
     expect(goto).not.toHaveBeenCalled();
   });

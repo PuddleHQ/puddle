@@ -25,7 +25,7 @@ async function view() {
 describe("the consent wording", () => {
   it("states the download exactly and links Microsoft's server licence", () => {
     expect(MS_POPUP.statement).toBe(
-      "puddle downloads the server from Microsoft",
+      "Puddle downloads the server from Microsoft",
     );
     expect(MS_TERMS_URL).toBe("https://code.visualstudio.com/license/server");
     expect(MS_TERMS_VERSION).toBe(MS_TERMS_URL);

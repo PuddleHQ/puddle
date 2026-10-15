@@ -8,7 +8,7 @@ const roots = (over: Partial<ReturnType<typeof report>["roots"]>) => ({
 });
 
 describe("the development certificate line", () => {
-  it("says puddle uses the one Windows already trusts", () => {
+  it("says Puddle uses the one Windows already trusts", () => {
     const line = devCertificateLine("reusing_existing");
     expect(line.tone).toBe("ok");
     expect(line.title).toBe("Using your existing .NET development certificate");

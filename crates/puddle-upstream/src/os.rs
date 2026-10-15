@@ -36,7 +36,7 @@ pub struct ProxyConfig {
     pub bypass: BypassList,
     /// Where the rules came from.
     pub origin: Origin,
-    /// Parts of the settings puddle could not use (a SOCKS proxy, a malformed entry). What they
+    /// Parts of the settings Puddle could not use (a SOCKS proxy, a malformed entry). What they
     /// covered is missing from the fields above, so those destinations go direct.
     pub problems: Vec<ProxyProblem>,
     /// Why the settings, or a part of them, could not be read, when the fields above are a

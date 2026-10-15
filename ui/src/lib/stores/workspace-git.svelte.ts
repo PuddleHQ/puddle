@@ -21,7 +21,7 @@ export type NewRepo = components["schemas"]["GitRepoRequest"];
 type StoreApi = Pick<ApiClient, "GET" | "POST" | "PUT" | "DELETE">;
 export type Status = "loading" | "ready" | "failed";
 
-const DOWN = "puddle's service isn't answering.";
+const DOWN = "Puddle's service isn't answering.";
 
 export class WorkspaceGitStore {
   git = $state.raw<WorkspaceGit | null>(null);
@@ -104,7 +104,7 @@ export class WorkspaceGitStore {
           ...this.#path(),
           body: { ids },
         }),
-      "puddle refused the change",
+      "Puddle refused the change",
       (git) => {
         this.git = git;
       },
@@ -119,7 +119,7 @@ export class WorkspaceGitStore {
           ...this.#path(),
           body: { identity },
         }),
-      "puddle refused the identity",
+      "Puddle refused the identity",
       (git) => {
         this.git = git;
       },
@@ -137,7 +137,7 @@ export class WorkspaceGitStore {
         return {
           ok: false,
           message: sentence(
-            error?.message ?? "puddle couldn't remove the identity",
+            error?.message ?? "Puddle couldn't remove the identity",
           ),
         };
       }
@@ -159,7 +159,7 @@ export class WorkspaceGitStore {
           ...this.#path(),
           body: switches,
         }),
-      "puddle refused the switch",
+      "Puddle refused the switch",
       (git) => {
         this.git = git;
       },
@@ -174,7 +174,7 @@ export class WorkspaceGitStore {
           ...this.#path(),
           body: repo,
         }),
-      "puddle refused the repository",
+      "Puddle refused the repository",
       () => this.load(this.#name, true),
     );
   }
@@ -187,7 +187,7 @@ export class WorkspaceGitStore {
           params: { path: { id: this.#name, repo: row.id } },
           body: { pull, push },
         }),
-      "puddle refused the change",
+      "Puddle refused the change",
       (updated) => {
         if (this.git) {
           this.git = {
@@ -207,7 +207,7 @@ export class WorkspaceGitStore {
         { params: { path: { id: this.#name, repo: row.id } } },
       );
       if (!response.ok && response.status !== 404) {
-        return { ok: false, message: "puddle couldn't remove the repository." };
+        return { ok: false, message: "Puddle couldn't remove the repository." };
       }
       if (this.git) {
         this.git = {

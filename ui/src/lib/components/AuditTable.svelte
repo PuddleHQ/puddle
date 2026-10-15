@@ -167,7 +167,7 @@
             </button>
           </td>
           <td class="mono" title={row.workspace ?? undefined}>
-            {#if row.workspace === null}<span class="muted">puddle</span
+            {#if row.workspace === null}<span class="muted">Puddle</span
               >{:else}{row.workspace}{/if}
           </td>
           <td>{row.type}</td>

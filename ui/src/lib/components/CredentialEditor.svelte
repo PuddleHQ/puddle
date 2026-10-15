@@ -166,7 +166,7 @@
           <p class="hint">Looking for signed-in accounts&hellip;</p>
         {:else if store.foundStatus === "failed"}
           <p class="hint">
-            puddle couldn't look for signed-in accounts. Paste a token instead.
+            Puddle couldn't look for signed-in accounts. Paste a token instead.
           </p>
         {:else}
           {#if usable.length === 0}
@@ -255,7 +255,7 @@
           : `${id}-token-hint`}
       />
       <p class="hint" id="{id}-token-hint">
-        puddle keeps it in your operating system's credential store and never
+        Puddle keeps it in your operating system's credential store and never
         shows it again.
       </p>
     </div>

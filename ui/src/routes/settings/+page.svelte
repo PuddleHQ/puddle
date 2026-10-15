@@ -170,7 +170,7 @@
     | "notify_unexpected_stop"
     | "confirm_global_rules"
     | "inbox_shortcuts";
-  /** What the control shows: the unsaved edit, else what is stored, else puddle's default. */
+  /** What the control shows: the unsaved edit, else what is stored, else Puddle's default. */
   const uiValue = <K extends keyof Ui>(key: K, fallback: NonNullable<Ui[K]>) =>
     (draft.ui[key] ?? store.view?.ui[key] ?? fallback) as NonNullable<Ui[K]>;
 
@@ -288,11 +288,11 @@
   <p class="muted">Loading settings&hellip;</p>
 {:else if store.status === "newer"}
   <p class="error" role="alert">
-    These settings were saved by a newer puddle. Update puddle to change them.
+    These settings were saved by a newer Puddle. Update Puddle to change them.
   </p>
 {:else if !store.view || !store.consents}
   <div role="alert">
-    <p class="muted">Couldn't read puddle's settings.</p>
+    <p class="muted">Couldn't read Puddle's settings.</p>
     {#if store.reason}<p class="error">{store.reason}</p>{/if}
   </div>
 {:else}
@@ -356,8 +356,8 @@
         {@render uiToggle(
           "notify_only_unfocused",
           "set-unfocused",
-          "Only when puddle is not the window in front",
-          "Off: a notification also shows while you are looking at puddle.",
+          "Only when Puddle is not the window in front",
+          "Off: a notification also shows while you are looking at Puddle.",
           true,
           !uiValue("notifications", true),
         )}
@@ -394,7 +394,7 @@
           <div class="grow">
             <label for="set-close">Closing the window</label>
             <p class="desc">
-              Keeping puddle in the tray lets workspaces keep running, so builds
+              Keeping Puddle in the tray lets workspaces keep running, so builds
               carry on. Quitting from the tray menu stops every workspace.
             </p>
           </div>
@@ -490,11 +490,11 @@
             <span class="restart">{RESTART_NOTE}</span>
             <p class="desc" id="set-capture-desc">
               When you sign in to Claude Code, GitHub or Copilot inside a
-              workspace, puddle keeps the real token on this computer and the
-              workspace gets a stand-in that works only through puddle. On by
+              workspace, Puddle keeps the real token on this computer and the
+              workspace gets a stand-in that works only through Puddle. On by
               default. A workspace can set its own switch; a change takes effect
               when a workspace next starts, and turning it off leaves the logins
-              puddle already kept unused.
+              Puddle already kept unused.
             </p>
           </div>
           <input
@@ -518,7 +518,7 @@
         <div class="setting">
           <div class="grow">
             <p class="desc">
-              The proxy puddle found, how it signs in, and the company
+              The proxy Puddle found, how it signs in, and the company
               certificates workspaces get.
             </p>
           </div>
@@ -735,7 +735,7 @@
       <section class="card" id="s-git" aria-labelledby="h-git">
         <h2 id="h-git">Git and credentials</h2>
         <p>
-          The Git name and email, and the credentials puddle adds to outgoing
+          The Git name and email, and the credentials Puddle adds to outgoing
           requests, are kept as identities. The secret of a credential never
           enters a workspace.
         </p>
@@ -745,8 +745,8 @@
       <section class="card" id="s-priv" aria-labelledby="h-priv">
         <h2 id="h-priv">Privacy</h2>
         <p>
-          puddle sends nothing about you or your use of it. There is no
-          telemetry in this version, and puddle makes no update check.
+          Puddle sends nothing about you or your use of it. There is no
+          telemetry in this version, and Puddle makes no update check.
         </p>
         <p class="muted">
           Traffic from inside your workspaces (including editor and extension
@@ -757,10 +757,10 @@
       <section class="card" id="s-about" aria-labelledby="h-about">
         <h2 id="h-about">About</h2>
         <p>
-          <b>puddle{version ? ` ${version}` : ""}</b
+          <b>Puddle{version ? ` ${version}` : ""}</b
           >{#if versionAsked && !version}
             <span class="muted">
-              (version unavailable: puddle's service didn't say)</span
+              (version unavailable: Puddle's service didn't say)</span
             >{/if}
           <span class="muted"> &middot; GPL-3.0-or-later</span>
         </p>

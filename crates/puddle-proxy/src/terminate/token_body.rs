@@ -2,7 +2,7 @@
 //! The body of a token request or answer: a JSON object or a URL-encoded form, with typed access
 //! to its top-level text fields.
 //!
-//! A login's token endpoint is the one place puddle reads a body: Claude Code posts and answers
+//! A login's token endpoint is the one place Puddle reads a body: Claude Code posts and answers
 //! JSON, `gh` posts and reads a form, and GitHub answers either, by the request's `Accept`. The
 //! format follows the message's own `Content-Type`, in both directions, so no profile says
 //! which one a service uses. Only top-level text fields are read or replaced; every other part of
@@ -135,7 +135,7 @@ impl TokenBody {
 
     /// The text of the top-level field `name`: a JSON string, or a form value decoded. `None`
     /// when there is no such field, it is not text, or (a form) it appears more than once, so
-    /// that what puddle reads is what a server picking the first or the last one would read.
+    /// that what Puddle reads is what a server picking the first or the last one would read.
     #[must_use]
     pub fn text(&self, name: &str) -> Option<Cow<'_, str>> {
         match &self.parsed {

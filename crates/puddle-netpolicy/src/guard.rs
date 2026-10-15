@@ -492,6 +492,12 @@ mod tests {
             block_message(&host, &workspace(), &[BlockReason::SshUnsupported]),
             "SSH is not supported yet; no rule or setting allows it"
         );
+        assert_eq!(
+            block_message(&host, &workspace(), &[BlockReason::UdpUnsupported]),
+            format!(
+                "UDP to {host} is not supported yet; only TCP and DNS leave a workspace, and no rule or setting changes this"
+            )
+        );
         assert!(
             block_message(&host, &workspace(), &[BlockReason::LocalAddress])
                 .contains("local address")

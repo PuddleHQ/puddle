@@ -2,10 +2,13 @@
 //! `GET` and `PUT /api/first-run`: the flag lives in the global settings document and survives
 //! the Settings screen's own saves.
 
-use puddle_api::SettingsRepo;
+use std::sync::Arc;
+
+use puddle_api::wire::DevCertificate;
+use puddle_api::{FakeDevCert, SettingsRepo};
 use serde_json::json;
 
-use crate::common::{START_MS, start};
+use crate::common::{START_MS, start, start_with_dev_cert};
 
 #[tokio::test]
 async fn a_fresh_install_has_not_been_through_the_flow_and_reading_writes_nothing() {
@@ -111,5 +114,38 @@ async fn settings_from_a_newer_puddle_are_left_alone() {
     let reply = api.get("/api/first-run").await;
     assert_eq!(reply.status, 409, "{}", reply.body);
     assert_eq!(reply.error(), "newer_settings");
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_certificates_step_reports_where_the_development_certificate_stands() {
+    let cases = [
+        (DevCertificate::NotChecked, "not_checked"),
+        (DevCertificate::ReusingExisting, "reusing_existing"),
+        (DevCertificate::Trusted, "trusted"),
+        (DevCertificate::NeedsTrust, "needs_trust"),
+        (DevCertificate::TrustDeclined, "trust_declined"),
+        (DevCertificate::TrustFailed, "trust_failed"),
+        (DevCertificate::Unsupported, "unsupported"),
+    ];
+    let fake = Arc::new(FakeDevCert::new(DevCertificate::NotChecked));
+    let api = start_with_dev_cert(fake.clone()).await;
+    for (state, wire) in cases {
+        fake.set(state);
+        let reply = api.get("/api/first-run").await;
+        assert_eq!(reply.json()["dev_certificate"], wire);
+        // Every answer to a PUT carries the same state, including a no-op one.
+        for completed in [true, true, false] {
+            let reply = api
+                .send(
+                    "PUT",
+                    "/api/first-run",
+                    Some(&json!({"completed": completed})),
+                )
+                .await;
+            assert_eq!(reply.status, 200, "{}", reply.body);
+            assert_eq!(reply.json()["dev_certificate"], wire);
+        }
+    }
     api.running.shutdown().await;
 }

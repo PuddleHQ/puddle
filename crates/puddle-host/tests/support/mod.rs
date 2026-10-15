@@ -341,3 +341,4 @@ pub(crate) fn hermetic_options() -> HostOptions {
     options.dev_cert = Some(Arc::new(NoDevCert));
     options
 }
+pub(crate) mod vm;

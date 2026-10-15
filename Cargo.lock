@@ -6035,16 +6035,23 @@ name = "puddle-e2e"
 version = "0.0.0"
 dependencies = [
  "axum",
+ "base64 0.23.1",
  "bytes",
+ "flate2",
  "futures-util",
  "h2",
  "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "puddle-agent",
  "puddle-agent-proto",
  "puddle-api",
+ "puddle-ca",
  "puddle-compute",
  "puddle-compute-msb",
  "puddle-fd-limit",
+ "puddle-inject",
  "puddle-ipc",
  "puddle-netpolicy",
  "puddle-proxy",
@@ -6101,6 +6108,7 @@ dependencies = [
 name = "puddle-host"
 version = "0.0.0"
 dependencies = [
+ "base64 0.23.1",
  "futures-util",
  "microsandbox",
  "puddle-agent-proto",
@@ -6111,6 +6119,7 @@ dependencies = [
  "puddle-compute",
  "puddle-compute-msb",
  "puddle-doctor",
+ "puddle-e2e",
  "puddle-fd-limit",
  "puddle-fs",
  "puddle-guest-env",

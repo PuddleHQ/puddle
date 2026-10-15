@@ -419,7 +419,7 @@ describe("renaming", () => {
     api.down = true;
     expect(await store.rename("b-site", "x")).toEqual({
       ok: false,
-      message: "puddle's service isn't answering.",
+      message: "Puddle's service isn't answering.",
     });
   });
 

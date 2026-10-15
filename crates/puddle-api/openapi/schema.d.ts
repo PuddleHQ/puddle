@@ -7277,7 +7277,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description puddle failed; see its log */
+            /** @description Puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;

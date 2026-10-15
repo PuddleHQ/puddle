@@ -4,7 +4,7 @@
   import { displayNameProblem, type Workspace } from "#lib/workspaces/model.ts";
   import FormDialog from "./FormDialog.svelte";
 
-  // Renames a workspace: only the name puddle shows. `onSubmit` returns the service's refusal as
+  // Renames a workspace: only the name Puddle shows. `onSubmit` returns the service's refusal as
   // text, or `null` when it went through (the dialog then closes).
   let {
     open = $bindable(false),
@@ -59,7 +59,7 @@
 <FormDialog
   bind:open
   title="Rename workspace"
-  description="Only the name puddle shows changes. The workspace keeps running, and its rules, settings and disk stay as they are."
+  description="Only the name Puddle shows changes. The workspace keeps running, and its rules, settings and disk stay as they are."
 >
   <form onsubmit={submit} novalidate>
     <div class="field">

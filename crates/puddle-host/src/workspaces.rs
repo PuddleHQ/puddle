@@ -1668,7 +1668,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             let mut state = self.state();
             if state.closed {
                 return Err(WorkspaceError::Unavailable(
-                    "puddle is shutting down".to_owned(),
+                    "Puddle is shutting down".to_owned(),
                 ));
             }
             puddle_api::check_rename(

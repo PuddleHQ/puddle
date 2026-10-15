@@ -4513,3 +4513,38 @@ async fn a_changed_variable_reaches_the_login_shell_file_of_a_running_workspace_
     );
     host.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_check_that_cannot_run_is_not_a_verdict_on_the_script() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+
+    // Saving: the guest could not set the check up (exit 70). The script is not blamed: the save
+    // is answered as unavailable and nothing is saved.
+    *rig.guest.check_answer.lock().unwrap() = Some((70, ""));
+    let saved = put_shell_init(&api, "acme", "export A=1\n").await;
+    assert_eq!(saved.status, 503, "{}", saved.body);
+    assert!(saved.body.contains("could not run"), "{}", saved.body);
+    assert_eq!(
+        api.get("/api/workspaces/acme/shell-init").await.json()["saved"],
+        false
+    );
+
+    // Starting: the same failure is a problem on the workspace and the start goes on.
+    *rig.guest.check_answer.lock().unwrap() = None;
+    put_shell_init(&api, "acme", "export A=1\n").await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    *rig.guest.check_answer.lock().unwrap() = Some((70, ""));
+    api.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    let problems = problems_of(&api).await;
+    let found = problems.iter().find(|p| p.0 == "shell-init:acme");
+    assert!(found.is_some(), "{problems:?}");
+    assert!(found.unwrap().2.contains("could not check"), "{found:?}");
+    host.shutdown().await;
+}

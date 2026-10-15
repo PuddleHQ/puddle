@@ -1014,13 +1014,15 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             });
         }
         let key = problem_key("shell-init", name);
-        let saved = match inner.kit.shell_init().saved(name) {
-            Ok(saved) => saved,
-            Err(reason) => {
+        let saved = inner
+            .kit
+            .shell_init()
+            .saved(name)
+            .inspect_err(|reason| {
                 tracing::warn!(workspace = %name, %reason, "the shell init was not checked");
-                return;
-            }
-        };
+            })
+            .ok()
+            .flatten();
         let Some(script) = saved else {
             inner.problems.clear(&key);
             return;

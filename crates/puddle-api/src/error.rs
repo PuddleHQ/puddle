@@ -12,6 +12,7 @@ use utoipa::ToSchema;
 use crate::credentials::CredentialsError;
 use crate::doctor::DoctorError;
 use crate::network_health::NetworkHealthError;
+use crate::ports::PortsServiceError;
 use crate::repos::ReposError;
 use crate::settings::SettingsRepoError;
 use crate::workspaces::WorkspaceError;
@@ -261,6 +262,22 @@ impl From<DoctorError> for ApiError {
                 Self::new(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable, m)
             }
             DoctorError::Crashed(_) => Self::internal(&err),
+        }
+    }
+}
+
+impl From<PortsServiceError> for ApiError {
+    fn from(err: PortsServiceError) -> Self {
+        match err {
+            PortsServiceError::Unavailable(m) => {
+                Self::new(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable, m)
+            }
+            PortsServiceError::NotRunning(m) | PortsServiceError::Taken(m) => {
+                Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, m)
+            }
+            PortsServiceError::Invalid(m) => Self::invalid(m),
+            PortsServiceError::NotForwarded(m) => Self::not_found(m),
+            PortsServiceError::Failed(_) => Self::internal(&err),
         }
     }
 }

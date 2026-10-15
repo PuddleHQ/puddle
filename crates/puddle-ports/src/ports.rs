@@ -270,19 +270,6 @@ impl Ports {
         }
     }
 
-    /// The workspace was deleted: its forwards close and its pins go.
-    ///
-    /// # Errors
-    ///
-    /// The pins could not be removed.
-    pub async fn deleted(&self, workspace: &WorkspaceName) -> Result<(), PortsError> {
-        self.stopped(workspace).await;
-        for pin in self.inner.pins.pinned(workspace)? {
-            self.inner.pins.unpin(workspace, pin.guest_port)?;
-        }
-        Ok(())
-    }
-
     /// What the Ports tab shows for `workspace`.
     ///
     /// # Errors

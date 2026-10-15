@@ -7441,3 +7441,90 @@ async fn a_stop_that_fails_leaves_the_workspace_running_and_its_reports_still_co
     session.abort();
     host.shutdown().await;
 }
+
+// ---- ports ---------------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pinned_forward_follows_the_workspace_through_stop_start_and_delete() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    // A port of this computer nobody has right now.
+    let port = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let ports = |reply: support::Reply| reply.json();
+
+    let none = ports(api.get("/api/workspaces/acme/ports").await);
+    assert_eq!(none["running"], true);
+    assert_eq!(none["ports"], json!([]));
+
+    let body = json!({"host_port": port, "pinned": true}).to_string();
+    let put = api.put("/api/workspaces/acme/ports/3000", &body).await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    assert_eq!(
+        put.json(),
+        json!({"guest_port": 3000, "listening": false, "forwarded": true, "pinned": true, "host_port": port, "problem": null})
+    );
+    // It listens on loopback and is one of Puddle's own listeners: no guest may reach it.
+    assert!(tokio::net::TcpStream::connect(addr).await.is_ok());
+    assert_eq!(
+        host.endpoints().find(addr, &puddle_netpolicy::OwnAddresses),
+        Some(EndpointKind::PinnedForward)
+    );
+    // A second workspace-less request for the same port of this computer says who has it.
+    let clash = api
+        .put(
+            "/api/workspaces/acme/ports/4000",
+            &json!({"host_port": port}).to_string(),
+        )
+        .await;
+    assert_eq!(clash.status, 409, "{}", clash.body);
+    assert!(clash.body.contains("already in use by"), "{}", clash.body);
+
+    // Stopping closes the forward and keeps the pin.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(tokio::net::TcpStream::connect(addr).await.is_err());
+    assert_eq!(
+        host.endpoints().find(addr, &puddle_netpolicy::OwnAddresses),
+        None
+    );
+    let stopped = ports(api.get("/api/workspaces/acme/ports").await);
+    assert_eq!(stopped["running"], false);
+    assert_eq!(
+        stopped["ports"],
+        json!([{"guest_port": 3000, "listening": false, "forwarded": false, "pinned": true, "host_port": port, "problem": null}])
+    );
+    let refused = api.put("/api/workspaces/acme/ports/3000", &body).await;
+    assert_eq!(refused.status, 409, "{}", refused.body);
+
+    // The next start puts it back on the same port.
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let back = ports(api.get("/api/workspaces/acme/ports").await);
+    assert_eq!(back["running"], true);
+    assert_eq!(back["ports"][0]["forwarded"], true);
+    assert_eq!(back["ports"][0]["host_port"], port);
+    assert!(tokio::net::TcpStream::connect(addr).await.is_ok());
+
+    // Deleting the workspace removes its pins with it.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let name = WorkspaceName::new("acme").unwrap();
+    assert_eq!(host.store().pinned_ports(&name).unwrap().len(), 1);
+    let delete = api
+        .delete(
+            "/api/workspaces/acme",
+            Some(&json!({"confirm": true}).to_string()),
+        )
+        .await;
+    assert_eq!(delete.status, 202, "{}", delete.body);
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(host.store().pinned_ports(&name).unwrap(), []);
+    host.shutdown().await;
+}

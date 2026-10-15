@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, CredentialService, DevCertService, DoctorService, EventHub,
-    FakeCredentials, FakeLauncher, FakeRepos, FakeWorkspaces, Launcher, MemorySettings,
+    FakeCredentials, FakeLauncher, FakePorts, FakeRepos, FakeWorkspaces, Launcher, MemorySettings,
     NetworkHealthService, RepoService, RunningApi, Services, SettingsRepo,
 };
 use puddle_secrets::MemoryStore;
@@ -41,6 +41,8 @@ pub(crate) struct Api {
     pub(crate) secrets: Arc<MemoryStore>,
     /// The repository lists the API runs on (not wired when the test started without them).
     pub(crate) repos: Arc<FakeRepos>,
+    /// The ports service the API runs on.
+    pub(crate) ports: Arc<FakePorts>,
 }
 
 pub(crate) async fn start() -> Api {
@@ -177,6 +179,8 @@ async fn start_inner(
     } else {
         services
     };
+    let ports = Arc::new(FakePorts::new());
+    let services = services.with_ports(ports.clone());
     let server = ApiServer::bind(config, token.clone(), services)
         .await
         .unwrap();
@@ -195,6 +199,7 @@ async fn start_inner(
         credentials,
         secrets,
         repos,
+        ports,
     }
 }
 

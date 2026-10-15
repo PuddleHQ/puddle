@@ -15,6 +15,7 @@ use crate::dev_cert::DevCertService;
 use crate::doctor::DoctorService;
 use crate::events::EventHub;
 use crate::network_health::NetworkHealthService;
+use crate::ports::PortsService;
 use crate::repos::RepoService;
 use crate::settings::SettingsRepo;
 use crate::workspaces::WorkspaceService;
@@ -30,6 +31,7 @@ mod logins;
 mod meta;
 mod network_health;
 mod pending;
+mod ports;
 mod problems;
 mod repos;
 mod repositories;
@@ -59,6 +61,7 @@ pub(crate) struct AppState {
     pub(crate) doctor: Arc<dyn DoctorService>,
     /// Where the development certificate stands (the first-run flow's certificates step).
     pub(crate) dev_cert: Arc<dyn DevCertService>,
+    pub(crate) ports: Arc<dyn PortsService>,
     /// Becomes `true` when the server shuts down; ends SSE streams.
     pub(crate) shutdown: watch::Receiver<bool>,
 }
@@ -136,6 +139,8 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(credentials::forget_token))
         .routes(routes!(credentials::sign_in))
         .merge(environment_router())
+        .routes(routes!(ports::list_ports))
+        .routes(routes!(ports::forward_port, ports::release_port))
         .routes(routes!(repos::credential_profile))
         .routes(routes!(repos::list_repos))
         .routes(routes!(repos::refresh_repos))

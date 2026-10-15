@@ -44,6 +44,8 @@ struct Spec {
     end_secs: i64,
     key: KeyAccess,
     trusted: bool,
+    /// DNS names in the certificate.
+    names: Vec<&'static str>,
 }
 
 impl Spec {
@@ -56,6 +58,7 @@ impl Spec {
             end_secs: 0,
             key: KeyAccess::Exportable,
             trusted: true,
+            names: vec!["localhost", "*.dev.localhost"],
         }
     }
 
@@ -65,7 +68,11 @@ impl Spec {
         params
             .distinguished_name
             .push(DnType::CommonName, "localhost");
-        params.subject_alt_names = vec![SanType::DnsName("localhost".try_into().unwrap())];
+        params.subject_alt_names = self
+            .names
+            .iter()
+            .map(|n| SanType::DnsName((*n).try_into().unwrap()))
+            .collect();
         params.is_ca = if self.ca {
             IsCa::Ca(BasicConstraints::Unconstrained)
         } else {
@@ -200,6 +207,7 @@ fn a_certificate_without_basic_constraints_is_a_leaf_not_a_ca() {
     // Windows treats a certificate that says nothing as an end-entity certificate.
     let dir = tempfile::tempdir().unwrap();
     let mut params = CertificateParams::default();
+    params.subject_alt_names = vec![SanType::DnsName("localhost".try_into().unwrap())];
     params.is_ca = IsCa::NoCa;
     params.custom_extensions = vec![CustomExtension::from_oid_content(
         &ASPNET_MARKER_OID,
@@ -273,6 +281,22 @@ fn certificates_that_fall_short_are_skipped_with_the_reason() {
                 ..Spec::good()
             },
             SkipReason::NotTrusted,
+        ),
+        (
+            "valid for a real domain",
+            Spec {
+                names: vec!["localhost", "*.example.com"],
+                ..Spec::good()
+            },
+            SkipReason::NamesTooWide("*.example.com".into()),
+        ),
+        (
+            "valid for no name",
+            Spec {
+                names: vec![],
+                ..Spec::good()
+            },
+            SkipReason::NamesTooWide("(none)".into()),
         ),
         (
             "a CA",

@@ -2,7 +2,7 @@
 //! Which existing ASP.NET development certificate puddle reuses (HS-24).
 //!
 //! A certificate is reused only if it carries the marker, is a leaf, is valid now and for at
-//! least [`RENEW_WITHIN`] more, has a private key that can be exported, and is already trusted.
+//! least [`RENEW_WITHIN`] more, is valid for loopback names only, has a private key that can be exported, and is already trusted.
 //! Every certificate with the marker that falls short is reported with the first reason. The
 //! best of the rest is the highest marker version, then the latest expiry.
 
@@ -11,7 +11,7 @@ use std::time::SystemTime;
 
 use crate::select::Fingerprint;
 
-use super::leaf::{RENEW_WITHIN, inspect, unix_secs};
+use super::leaf::{RENEW_WITHIN, ShapeError, check_names, inspect, unix_secs};
 use super::trust::{ExistingCert, KeyAccess};
 
 /// Why an existing development certificate is not reused.
@@ -20,6 +20,9 @@ use super::trust::{ExistingCert, KeyAccess};
 pub enum SkipReason {
     /// It is a certificate authority.
     NotALeaf,
+    /// It is valid for a name outside the localhost set (the first such name): a key that could
+    /// impersonate that must not go into a workspace.
+    NamesTooWide(String),
     /// Its validity has ended.
     Expired,
     /// Its validity has not begun.
@@ -40,6 +43,9 @@ impl fmt::Display for SkipReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotALeaf => f.write_str("it is a certificate authority"),
+            Self::NamesTooWide(name) => {
+                write!(f, "valid for {name}, which is not a localhost name")
+            }
             Self::Expired => f.write_str("expired"),
             Self::NotYetValid => f.write_str("not valid yet"),
             Self::ExpiresSoon => f.write_str("expires within 30 days"),
@@ -86,6 +92,8 @@ pub(crate) fn rank(existing: &[ExistingCert], now: SystemTime) -> Ranking<'_> {
         };
         let reason = if info.is_ca() {
             Some(SkipReason::NotALeaf)
+        } else if let Err(ShapeError::ForeignName(name)) = check_names(&info) {
+            Some(SkipReason::NamesTooWide(name))
         } else if info.not_after <= now {
             Some(SkipReason::Expired)
         } else if info.not_before > now {

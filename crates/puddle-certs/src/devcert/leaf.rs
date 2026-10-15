@@ -209,21 +209,14 @@ pub enum ShapeError {
     ForeignName(String),
 }
 
-/// Whether `der` has the shape puddle ever trusts: a leaf (`CA:false`), carrying the marker, and
-/// valid only for [`DNS_NAMES`] and [`IP_ADDRESSES`]. Trusting anything wider would let a leaked
-/// key impersonate more than loopback.
+/// Whether the certificate is valid for loopback names only: at least one name, every one in
+/// [`DNS_NAMES`] or [`IP_ADDRESSES`]. A key that can impersonate more than that must not be handed to
+/// a workspace.
 ///
 /// # Errors
 ///
-/// The first way it falls short.
-pub fn check_trust_shape(der: &[u8]) -> Result<CertInfo, ShapeError> {
-    let info = inspect(der).map_err(|Unreadable| ShapeError::Unreadable)?;
-    if !matches!(info.basic_constraints, Some((_, false))) {
-        return Err(ShapeError::NotALeaf);
-    }
-    if info.marker_version.is_none() {
-        return Err(ShapeError::NoMarker);
-    }
+/// [`ShapeError::ForeignName`] naming the first name outside the set, or `(none)`.
+pub(crate) fn check_names(info: &CertInfo) -> Result<(), ShapeError> {
     if info.dns_names.is_empty() && info.ip_addresses.is_empty() {
         return Err(ShapeError::ForeignName("(none)".into()));
     }
@@ -241,5 +234,24 @@ pub fn check_trust_shape(der: &[u8]) -> Result<CertInfo, ShapeError> {
     {
         return Err(ShapeError::ForeignName(ip.to_string()));
     }
+    Ok(())
+}
+
+/// Whether `der` has the shape puddle ever trusts: a leaf (`CA:false`), carrying the marker, and
+/// valid only for [`DNS_NAMES`] and [`IP_ADDRESSES`]. Trusting anything wider would let a leaked
+/// key impersonate more than loopback.
+///
+/// # Errors
+///
+/// The first way it falls short.
+pub fn check_trust_shape(der: &[u8]) -> Result<CertInfo, ShapeError> {
+    let info = inspect(der).map_err(|Unreadable| ShapeError::Unreadable)?;
+    if !matches!(info.basic_constraints, Some((_, false))) {
+        return Err(ShapeError::NotALeaf);
+    }
+    if info.marker_version.is_none() {
+        return Err(ShapeError::NoMarker);
+    }
+    check_names(&info)?;
     Ok(info)
 }

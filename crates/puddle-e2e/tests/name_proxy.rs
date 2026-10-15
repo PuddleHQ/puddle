@@ -55,6 +55,14 @@ async fn a_held_name_goes_to_its_server_and_any_other_name_is_connected_to_as_it
     let _ = conn.read_to_end(&mut got).await;
     assert!(!String::from_utf8_lossy(&got).contains("hello from elsewhere"));
 
+    // A client that goes away before it finishes its request is forgotten.
+    drop(
+        TcpStream::connect(("127.0.0.1", proxy.port()))
+            .await
+            .unwrap(),
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
     // Another name: connected to as it stands.
     let (mut conn, line) = connect(&proxy, &format!("127.0.0.1:{elsewhere_port}")).await;
     assert!(line.starts_with("HTTP/1.1 200"), "{line}");

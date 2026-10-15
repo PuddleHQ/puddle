@@ -166,15 +166,33 @@ pub fn git_available() -> bool {
     found
 }
 
+/// The variables git sets for the repository a hook runs in (`git rev-parse --local-env-vars`); none
+/// of them is for the repositories the fake host and its callers make.
+const REPOSITORY_VARIABLES: [&str; 15] = [
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+];
+
 /// A `git` command with the repository variables of a running hook removed and no user or system
 /// configuration, so it behaves the same on every machine.
 #[must_use]
 pub fn clean_git(home: &Path) -> std::process::Command {
     let mut command = std::process::Command::new("git");
-    for (key, _) in std::env::vars_os() {
-        if key.to_string_lossy().starts_with("GIT_") {
-            command.env_remove(key);
-        }
+    for key in REPOSITORY_VARIABLES {
+        command.env_remove(key);
     }
     command
         .env("HOME", home)
@@ -188,11 +206,8 @@ pub fn clean_git(home: &Path) -> std::process::Command {
 
 fn run(mut command: std::process::Command) {
     let output = command.output().unwrap();
-    assert!(
-        output.status.success(),
-        "{command:?}: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{command:?}: {stderr}");
 }
 
 impl GitHost {
@@ -368,7 +383,8 @@ fn tls_config(
 }
 
 async fn accept_loop(listener: TcpListener, acceptor: TlsAcceptor, state: Arc<State>) {
-    while let Ok((tcp, _)) = listener.accept().await {
+    loop {
+        let (tcp, _) = listener.accept().await.unwrap();
         let acceptor = acceptor.clone();
         let state = state.clone();
         tokio::spawn(async move {
@@ -606,10 +622,8 @@ async fn backend(
         body = plain;
     }
     let mut command = Command::new("git");
-    for (key, _) in std::env::vars_os() {
-        if key.to_string_lossy().starts_with("GIT_") {
-            command.env_remove(key);
-        }
+    for key in REPOSITORY_VARIABLES {
+        command.env_remove(key);
     }
     command
         .arg("http-backend")
@@ -664,10 +678,7 @@ fn cgi_response(out: &[u8]) -> Reply {
     let body = out.get(at + gap..).unwrap_or_default().to_vec();
     let mut status = 200;
     let mut builder = Response::builder();
-    for line in head.lines() {
-        let Some((name, value)) = line.split_once(':') else {
-            continue;
-        };
+    for (name, value) in head.lines().filter_map(|line| line.split_once(':')) {
         let value = value.trim();
         if name.eq_ignore_ascii_case("status") {
             status = value
@@ -710,7 +721,8 @@ impl NameProxy {
         let connects = Arc::new(Mutex::new(Vec::new()));
         let seen = connects.clone();
         let task = tokio::spawn(async move {
-            while let Ok((mut client, _)) = listener.accept().await {
+            loop {
+                let (mut client, _) = listener.accept().await.unwrap();
                 let seen = seen.clone();
                 let names = names.clone();
                 tokio::spawn(async move {
@@ -765,5 +777,57 @@ impl NameProxy {
     #[must_use]
     pub fn connects(&self) -> Vec<String> {
         lock(&self.connects).clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn options_name_every_certificate_name_and_the_validity() {
+        let options = GitHostOptions::new("a.test", Versions::Http1)
+            .also_for("b.test")
+            .valid_between(2008, 2012);
+        assert_eq!(options.certificate_names, ["a.test", "b.test"]);
+        assert_eq!(options.valid, (2008, 2012));
+        let options = options.certificate_for("c.test");
+        assert_eq!(options.certificate_names, ["c.test"]);
+    }
+
+    #[test]
+    fn a_path_is_read_as_owner_repository_and_the_rest() {
+        assert_eq!(
+            split_repo("/acme/web.git/info/refs"),
+            Some(("acme/web".to_owned(), "/info/refs"))
+        );
+        for no in [
+            "acme/web.git",
+            "/acme",
+            "/acme/web",
+            "/acme/.git/x",
+            "//web.git/x",
+            "/a/b/c.git/x",
+        ] {
+            assert_eq!(split_repo(no), None, "{no}");
+        }
+    }
+
+    #[test]
+    fn a_cgi_document_becomes_a_response() {
+        let ok = cgi_response(b"Status: 404 Not Found\r\nContent-Type: text/plain\r\n\r\nnope");
+        assert_eq!(ok.status().as_u16(), 404);
+        assert_eq!(ok.headers().get("content-type").unwrap(), "text/plain");
+        // A bare-newline document and a status that is no number.
+        let odd = cgi_response(b"Status: abc\nX-A: 1\n\nbody");
+        assert_eq!(odd.status().as_u16(), 200);
+        assert_eq!(odd.headers().get("x-a").unwrap(), "1");
+        assert_eq!(cgi_response(b"no separator").status().as_u16(), 500);
+    }
+
+    #[test]
+    fn an_lfs_operation_is_read_from_the_body_and_defaults_to_none() {
+        assert_eq!(lfs_operation(br#"{"operation":"upload"}"#), "upload");
+        assert_eq!(lfs_operation(b"not json"), "");
     }
 }

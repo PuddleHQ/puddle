@@ -34,6 +34,7 @@ use crate::schema;
 mod environment;
 mod identities;
 mod sets;
+mod shell_init;
 
 pub use sets::{RuleSetEntryInfo, RuleSetInfo, SystemHost, SystemPlan, parse_rule_set};
 
@@ -704,6 +705,7 @@ impl Store {
                     workspace: workspace.clone(),
                 });
             }
+            shell_init::delete_workspace_rows(tx, workspace)?;
             Ok(WorkspaceDeletion {
                 rules_deleted: rules.len() as u64,
                 pending_expired: expired,

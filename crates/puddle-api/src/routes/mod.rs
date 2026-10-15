@@ -34,6 +34,7 @@ mod repos;
 mod rule_sets;
 mod rules;
 pub(crate) mod settings;
+mod shell_init;
 mod workspaces;
 
 /// What the handlers share.
@@ -135,6 +136,11 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(
             environment::put_workspace_env,
             environment::delete_workspace_env
+        ))
+        .routes(routes!(
+            shell_init::get_shell_init,
+            shell_init::put_shell_init,
+            shell_init::delete_shell_init
         ))
         .routes(routes!(repos::credential_profile))
         .routes(routes!(repos::list_repos))

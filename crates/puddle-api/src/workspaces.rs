@@ -470,6 +470,17 @@ pub enum WorkspaceError {
     Internal(String),
 }
 
+/// What running a shell init in a throwaway shell in the workspace showed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShellInitCheck {
+    /// It parsed and printed nothing.
+    Passed,
+    /// It was not run, for the reason given (the workspace is stopped, say).
+    NotRun(String),
+    /// It does not parse, or printed something, or ran too long: the text says what, for the user.
+    Refused(String),
+}
+
 /// The workspaces resource. Implemented by the application over the runtime, and by
 /// [`crate::FakeWorkspaces`].
 ///
@@ -546,6 +557,21 @@ pub trait WorkspaceService: Send + Sync {
         id: &'a WorkspaceId,
         mode: AttachMode,
     ) -> BoxFuture<'a, Result<Attached, WorkspaceError>>;
+
+    /// Runs a shell init `script` once in a throwaway shell in the running workspace `id` and says
+    /// whether it parsed and printed nothing. The default does not check: a build with no guest
+    /// to run it in.
+    fn check_shell_init<'a>(
+        &'a self,
+        _id: &'a WorkspaceId,
+        _script: &'a str,
+    ) -> BoxFuture<'a, Result<ShellInitCheck, WorkspaceError>> {
+        Box::pin(async {
+            Ok(ShellInitCheck::NotRun(
+                "this Puddle has no workspace to run it in".to_owned(),
+            ))
+        })
+    }
 
     /// Tells the service that settings changed, so it can apply what takes effect at once (the
     /// SSH endpoint of a running workspace opens or closes with its `direct_ssh` setting).
@@ -814,6 +840,16 @@ mod tests {
         for result in all {
             assert!(matches!(result, Err(WorkspaceError::Unavailable(_))));
         }
+    }
+
+    #[tokio::test]
+    async fn a_service_with_no_guest_does_not_check_shell_init() {
+        let id = WorkspaceId::new("w").unwrap();
+        let check = NoWorkspaces.check_shell_init(&id, "echo hi\n").await;
+        assert!(
+            matches!(check, Ok(ShellInitCheck::NotRun(ref why)) if why.contains("no workspace")),
+            "{check:?}"
+        );
     }
 
     #[test]

@@ -190,3 +190,9 @@ crates/puddle-upstream/src/chain.rs | Err(_) => return Err(HopError::slow("conne
 crates/puddle-upstream/src/reroute.rs | destination = %self.destination.host(), | the arguments of a log line are only evaluated with a subscriber that wants the line; the test that reaches it has none
 crates/puddle-upstream/src/reroute.rs | std::future::pending::<()>().await; | the discovery being dropped while a connection still watches it: the holder of the watch keeps the discovery alive (the watch owns an Arc of it), so the receiver never closes
 crates/puddle-api/src/network_health.rs | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {} | needs more failure notices than the channel holds while the forwarder is not running; the arm only keeps the loop going
+crates/puddle-host/src/workspaces.rs | tracing::warn!(workspace = %name, %reason, "the shell init was not checked"); | the database failing on a read of one row; the other branch of the same message is tested
+crates/puddle-host/src/workspaces.rs | Ok(Some(crate::shell_init::timed_out_message())) | needs the runtime to report an exec timeout for the check only; the message itself is tested in shell_init
+crates/puddle-host/src/workspaces.rs | Err(e) => Err(e.to_string()), | the runtime failing the check's exec for a reason other than a timeout; the exit-70 path is tested
+crates/puddle-host/src/shell_init.rs | fn unreachable_path(path: &str) -> GuestPath { | the cold arm of a constant that the unit test proves valid; it cannot run
+crates/puddle-host/src/shell_init.rs | panic!("constant guest path {path:?} is not valid") | the cold arm of a constant that the unit test proves valid; it cannot run
+crates/puddle-host/src/workspaces.rs | }) | closes the logging closure of the database failing on a read of one row; the warn line has its own entry above

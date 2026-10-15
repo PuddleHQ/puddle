@@ -42,6 +42,13 @@ use crate::kind::{MAX_PREAMBLE, StreamKind, parse_preamble};
 use crate::resolve::{self, ResolveAnswer, ResolveQuery};
 use crate::yamux::{VERSION_BYTE, server_config};
 
+/// Longest reason text taken from a capture-unavailable report.
+const MAX_REASON_CHARS: usize = 200;
+
+/// Longest destination address text taken from a UDP refusal report (an IPv6 address with a zone
+/// is under 50).
+const MAX_ADDRESS_CHARS: usize = 64;
+
 /// Name used in [`Event::OomKill`] when the agent couldn't tell which process was killed (its pid
 /// is then 0).
 pub const UNKNOWN_PROCESS: &str = "unknown";
@@ -108,6 +115,33 @@ pub trait StreamHandler: Send + Sync + 'static {
         let _ = query;
         async { ResolveAnswer::Unavailable }
     }
+
+    /// Records that the guest's capture rules refused UDP. The default does nothing: a handler
+    /// without an audit has nowhere to put it. The report is untrusted.
+    fn udp_refused(&self, refusal: UdpRefusal) -> impl Future<Output = ()> + Send {
+        let _ = refusal;
+        async {}
+    }
+
+    /// Tells the handler that something in the guest deleted or changed the capture rules (the
+    /// agent put them back). `table_missing` is `true` for a deleted table. The session logs it
+    /// before calling this; the default does nothing more.
+    fn capture_tampered(&self, table_missing: bool) -> impl Future<Output = ()> + Send {
+        let _ = table_missing;
+        async {}
+    }
+}
+
+/// A report from the guest that UDP was refused: the guest's own claim, cleaned by the host
+/// before it is used.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UdpRefusal {
+    /// The destination address as the guest wrote it.
+    pub address: String,
+    /// The destination port.
+    pub port: u16,
+    /// Datagrams refused since the last report for it.
+    pub count: u32,
 }
 
 /// One proxied guest connection: a yamux stream with its first byte (already read by the host to
@@ -369,7 +403,10 @@ async fn serve_resolve<H: StreamHandler>(
 }
 
 /// Reads control messages until the stream ends or misbehaves. The preamble is already read.
-async fn serve_control<H>(mut reader: BufReader<Prefixed<StreamHandle>>, shared: &Shared<H>) {
+async fn serve_control<H: StreamHandler>(
+    mut reader: BufReader<Prefixed<StreamHandle>>,
+    shared: &Shared<H>,
+) {
     let workspace = &shared.workspace;
     let mut limit = RateLimit::new(
         shared.config.control_burst,
@@ -394,7 +431,7 @@ async fn serve_control<H>(mut reader: BufReader<Prefixed<StreamHandle>>, shared:
             limit.suppressed = 0;
         }
         match AgentMessage::from_line(&line) {
-            Ok(msg) => on_message(msg, shared),
+            Ok(msg) => on_message(msg, shared).await,
             Err(err) => tracing::warn!(%workspace, error = %err, "invalid control message ignored"),
         }
     }
@@ -404,7 +441,7 @@ async fn serve_control<H>(mut reader: BufReader<Prefixed<StreamHandle>>, shared:
     }
 }
 
-fn on_message<H>(msg: AgentMessage, shared: &Shared<H>) {
+async fn on_message<H: StreamHandler>(msg: AgentMessage, shared: &Shared<H>) {
     let workspace = &shared.workspace;
     match msg {
         AgentMessage::Hello {
@@ -427,6 +464,26 @@ fn on_message<H>(msg: AgentMessage, shared: &Shared<H>) {
                 tracing::warn!(%workspace, pid, process = %process, "guest out of memory: process killed");
             }
             shared.sink.emit(event);
+        }
+        AgentMessage::CaptureTampered { table_missing } => {
+            tracing::warn!(%workspace, table_missing, "the guest changed the capture rules; the agent restored them");
+            shared.handler.capture_tampered(table_missing).await;
+        }
+        AgentMessage::CaptureUnavailable { reason } => {
+            let reason = clean(&reason, MAX_REASON_CHARS);
+            tracing::warn!(%workspace, %reason, "the guest could not install its capture rules; tools that ignore the proxy settings fail until it can");
+        }
+        AgentMessage::UdpRefused {
+            address,
+            port,
+            count,
+        } => {
+            let refusal = UdpRefusal {
+                address: clean(&address, MAX_ADDRESS_CHARS),
+                port,
+                count,
+            };
+            shared.handler.udp_refused(refusal).await;
         }
         AgentMessage::Unknown => {
             tracing::debug!(%workspace, "unknown control message ignored");

@@ -11,7 +11,10 @@
 //!   [`puddle_types::Event::OomKill`].
 //!
 //! - answers DNS for tools that ignore the proxy settings, when switched on: a stub on one
-//!   address hands out stand-in addresses and asks the host about each name ([`capture`]).
+//!   address hands out stand-in addresses and asks the host about each name ([`capture`]);
+//! - with capture on (Linux), redirects those tools' connections to a second listener that sends
+//!   them to the proxy by name, installs and guards the rules that do it, and fails other UDP at
+//!   once ([`capture`]).
 //!
 //! - runs the browser editor's server (code-server, read-only from the host) and keeps it running
 //!   ([`editor`]), when the host asks.
@@ -59,6 +62,7 @@ pub struct Agent {
     bridge: watch::Receiver<bridge::BridgeState>,
     stand_ins: Option<capture::table::StandIns>,
     dns: Option<(SocketAddr, SocketAddr)>,
+    capture: Option<SocketAddr>,
     tasks: JoinSet<()>,
     /// Keeps the control stream open when the OOM watch is off.
     _reports: Option<mpsc::Sender<AgentMessage>>,
@@ -112,6 +116,8 @@ impl Agent {
             tasks.spawn(editor::run(editor));
         }
         let (tx, rx) = mpsc::channel(REPORT_QUEUE);
+        let capture =
+            start_capture(&config, stand_ins.as_ref(), &upstream, &tx, &mut tasks).await?;
         tasks.spawn(control::run(upstream, rx));
         let reports = match config.oom {
             Some(sources) => {
@@ -126,6 +132,7 @@ impl Agent {
             bridge,
             stand_ins,
             dns,
+            capture,
             tasks,
             _reports: reports,
         })
@@ -156,6 +163,12 @@ impl Agent {
     #[must_use]
     pub fn dns_addrs(&self) -> Option<(SocketAddr, SocketAddr)> {
         self.dns
+    }
+
+    /// The address the transparent listener is bound to, `None` when capture is off.
+    #[must_use]
+    pub fn capture_addr(&self) -> Option<SocketAddr> {
+        self.capture
     }
 
     /// Follows the Docker bridge listener: every bind and every close is a new state.
@@ -201,6 +214,59 @@ async fn start_dns(
             (table, None)
         }
     }
+}
+
+/// Starts transparent capture when it is on: the listener the redirect sends connections to, the
+/// guard that installs and keeps the rules, and the reader of refused UDP.
+#[cfg(target_os = "linux")]
+async fn start_capture(
+    config: &Config,
+    stand_ins: Option<&capture::table::StandIns>,
+    upstream: &Arc<upstream::Upstream>,
+    reports: &mpsc::Sender<AgentMessage>,
+    tasks: &mut JoinSet<()>,
+) -> io::Result<Option<SocketAddr>> {
+    let (Some(cap), Some(dns), Some(table)) = (&config.capture, &config.dns, stand_ins) else {
+        return Ok(None);
+    };
+    // All addresses: a redirected connection from a container arrives on the bridge address. A
+    // process that dials the port itself has no original destination and is closed at once.
+    let listener = TcpListener::bind(("0.0.0.0", cap.port)).await?;
+    let addr = listener.local_addr()?;
+    tasks.spawn(capture::listen::serve(
+        listener,
+        table.clone(),
+        Arc::clone(upstream),
+    ));
+    if let Some(group) = cap.log_group {
+        tasks.spawn(capture::udp::watch(group, reports.clone()));
+    }
+    let guard = capture::guard::Guard {
+        stub: dns.listen,
+        listen_port: addr.port(),
+        interface: cap.interface.clone(),
+        poll: cap.poll,
+        log_group: cap.log_group,
+    };
+    tasks.spawn(capture::guard::keep(guard, reports.clone()));
+    tracing::info!(listen = %addr, "transparent capture on");
+    Ok(Some(addr))
+}
+
+/// Capture needs the Linux guest's netfilter; elsewhere it is ignored with a warning.
+#[cfg(not(target_os = "linux"))]
+#[expect(clippy::unused_async, reason = "same signature as the Linux version")]
+async fn start_capture(
+    config: &Config,
+    _stand_ins: Option<&capture::table::StandIns>,
+    _upstream: &Arc<upstream::Upstream>,
+    _reports: &mpsc::Sender<AgentMessage>,
+    _tasks: &mut JoinSet<()>,
+) -> io::Result<Option<SocketAddr>> {
+    if config.capture.is_some() {
+        tracing::warn!("transparent capture needs a Linux guest; ignored");
+    }
+    Ok(None)
 }
 
 /// Whether a listener on `listen` accepts connections for `addr`.

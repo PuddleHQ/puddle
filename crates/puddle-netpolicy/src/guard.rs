@@ -194,6 +194,9 @@ pub fn block_message(host: &Host, workspace: &WorkspaceName, reasons: &[BlockRea
                 "{host} is one of Puddle's own endpoints; workspaces never reach them, and no rule or toggle changes this"
             ),
             Some(BlockReason::SshUnsupported) => ssh_unsupported_message(host),
+            Some(BlockReason::UdpUnsupported) => format!(
+                "UDP to {host} is not supported yet; only TCP and DNS leave a workspace, and no rule or setting changes this"
+            ),
             _ => format!("{host} is a local address Puddle does not connect to"),
         };
     }

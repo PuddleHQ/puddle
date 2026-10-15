@@ -368,7 +368,7 @@ enum Opened {
 
 /// Reads what the client sends first: up to [`BANNER_MIN`] bytes, as long as they arrive within
 /// `limit`. An empty answer is a client that waits for the server (or a closed stdin).
-async fn peek<I: AsyncRead + Unpin>(stdin: &mut I, limit: Duration) -> Vec<u8> {
+pub(crate) async fn peek<I: AsyncRead + Unpin>(stdin: &mut I, limit: Duration) -> Vec<u8> {
     let deadline = Instant::now() + limit;
     let mut seen = Vec::new();
     let mut chunk = [0u8; 256];
@@ -381,9 +381,10 @@ async fn peek<I: AsyncRead + Unpin>(stdin: &mut I, limit: Duration) -> Vec<u8> {
     seen
 }
 
-/// Sends the `CONNECT` (with the client's first bytes right behind it) and reads the answer.
-async fn open(settings: &Settings, request: &Request, first: &[u8]) -> io::Result<Opened> {
-    let authority = request.authority();
+/// A `CONNECT` for `authority` with the client's `first` bytes right behind it, and the header that
+/// says "SSH" when they are an SSH identification line, so the proxy decides before it asks about
+/// the destination.
+pub(crate) fn connect_request(authority: &str, first: &[u8]) -> Vec<u8> {
     let mut head = format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n");
     if is_banner(first) {
         let _ = write!(head, "{PROTOCOL_HEADER}: {SSH}\r\n");
@@ -391,6 +392,12 @@ async fn open(settings: &Settings, request: &Request, first: &[u8]) -> io::Resul
     head.push_str("\r\n");
     let mut out = head.into_bytes();
     out.extend_from_slice(first);
+    out
+}
+
+/// Sends the `CONNECT` (with the client's first bytes right behind it) and reads the answer.
+async fn open(settings: &Settings, request: &Request, first: &[u8]) -> io::Result<Opened> {
+    let out = connect_request(&request.authority(), first);
     let mut reader = BufReader::new(TcpStream::connect(settings.proxy).await?);
     reader.get_mut().write_all(&out).await?;
     let (status, body) = tokio::time::timeout(settings.answer, read_answer(&mut reader))
@@ -412,7 +419,9 @@ async fn open(settings: &Settings, request: &Request, first: &[u8]) -> io::Resul
 }
 
 /// The status of the proxy's answer and, for anything but `200`, its body.
-async fn read_answer<R: AsyncBufRead + Unpin>(reader: &mut R) -> io::Result<(u16, Vec<u8>)> {
+pub(crate) async fn read_answer<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+) -> io::Result<(u16, Vec<u8>)> {
     let mut head = Vec::new();
     let mut limited = reader.take(MAX_HEAD);
     loop {

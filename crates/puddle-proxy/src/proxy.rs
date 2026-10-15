@@ -13,7 +13,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use puddle_agent_proto::host::{GuestStream, HostConfig, StreamHandler};
+use puddle_agent_proto::host::{GuestStream, HostConfig, StreamHandler, UdpRefusal};
 use puddle_agent_proto::relay::splice;
 use puddle_agent_proto::resolve::{ResolveAnswer, ResolveQuery};
 use puddle_types::{
@@ -418,6 +418,30 @@ impl StreamHandler for WorkspaceHandler {
     async fn resolve(&self, query: ResolveQuery) -> ResolveAnswer {
         let span = tracing::debug_span!("resolve", workspace = %self.workspace);
         self.resolve_name(query).instrument(span).await
+    }
+
+    async fn udp_refused(&self, refusal: UdpRefusal) {
+        self.record_udp_refusal(&refusal).await;
+    }
+}
+
+impl WorkspaceHandler {
+    /// Audits UDP the guest's capture rules refused: a `blocked` record with reason
+    /// `udp_unsupported`, never a pending row (nothing can approve it). The report is the guest's
+    /// claim, so only a plain IP address is taken as a destination, and the audit's own rate limit
+    /// (R-26) bounds the records.
+    async fn record_udp_refusal(&self, refusal: &UdpRefusal) {
+        let Ok(ip) = refusal.address.parse::<std::net::IpAddr>() else {
+            tracing::debug!(workspace = %self.workspace, "UDP refusal report without an IP address ignored");
+            return;
+        };
+        let request = EgressRequest::new(self.workspace.clone(), Host::Ip(ip), refusal.port);
+        let event = ConnectionEvent::new(
+            &request,
+            ConnectionDecision::Blocked,
+            ConnectionReason::Blocked(BlockReason::UdpUnsupported),
+        );
+        self.proxy.record(event).await;
     }
 }
 

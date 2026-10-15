@@ -4,6 +4,7 @@
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
+#![allow(dead_code, reason = "each test binary uses a different subset")]
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
@@ -15,7 +16,7 @@ use puddle_agent_proto::tokio_yamux::{Control, Session, StreamHandle};
 use puddle_agent_proto::yamux::client_config;
 use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{AnyAddress, StaticPolicy, StaticResolver};
-use puddle_proxy::{Proxy, Route};
+use puddle_proxy::{Proxy, ProxyConfig, Route};
 use puddle_types::{Host, NullSink, WorkspaceName};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -33,12 +34,18 @@ pub(crate) struct Rig {
 }
 
 pub(crate) async fn rig() -> Rig {
+    rig_with(ProxyConfig::default()).await
+}
+
+/// As [`rig`], with `config` for the proxy.
+pub(crate) async fn rig_with(config: ProxyConfig) -> Rig {
     let policy = Arc::new(StaticPolicy::new());
     policy.allow(&Host::parse_normalised("127.0.0.1").unwrap());
     let proxy = Arc::new(
         Proxy::new(policy.clone(), Arc::new(NullSink))
             .with_resolver(Arc::new(StaticResolver::new()))
-            .with_address_check(Arc::new(AnyAddress)),
+            .with_address_check(Arc::new(AnyAddress))
+            .with_config(config),
     );
     let root = IpcRoot::new().unwrap();
     let attacked = proxy.serve_route(
@@ -151,6 +158,30 @@ fn content_length(head: &[u8]) -> usize {
                 .map(|v| v.trim().parse().unwrap())
         })
         .unwrap_or(0)
+}
+
+impl Guest {
+    /// Opens `CONNECT echo` and returns the status code and the stream (open, for the caller to hold).
+    pub(crate) async fn connect_status(&mut self, echo: SocketAddr) -> (u16, StreamHandle) {
+        let mut stream = self.control.open_stream().await.unwrap();
+        stream
+            .write_all(format!("CONNECT {echo} HTTP/1.1\r\n\r\n").as_bytes())
+            .await
+            .unwrap();
+        let mut head = Vec::new();
+        while !head.ends_with(b"\r\n\r\n") {
+            match stream.read_u8().await {
+                Ok(byte) => head.push(byte),
+                Err(_) => break,
+            }
+        }
+        let code = String::from_utf8_lossy(&head)
+            .split(' ')
+            .nth(1)
+            .and_then(|c| c.parse().ok())
+            .unwrap_or(0);
+        (code, stream)
+    }
 }
 
 /// 64 CONNECT requests through the bystander's route, each with an echo round trip; returns how long.

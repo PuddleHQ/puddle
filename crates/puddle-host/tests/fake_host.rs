@@ -4504,3 +4504,40 @@ async fn a_proxy_that_turns_the_sign_in_down_is_one_event_and_a_failed_attempt()
     assert_eq!(report.json()["sign_in"]["attempts"][0]["result"], "failed");
     host.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_credential_store_that_cannot_be_read_at_start_is_a_problem_until_the_next_start() {
+    let rig = Rig::new();
+    rig.secrets.break_it();
+    let host = rig.start().await;
+    let mut raised = false;
+    for _ in 0..200 {
+        raised = host
+            .problems()
+            .list()
+            .iter()
+            .any(|p| p.key == "proxy-sign-in-store");
+        if raised {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(raised, "{:?}", host.problems().list());
+    host.shutdown().await;
+    drop(host);
+
+    // The store is back: the next start reads the sign-ins and raises nothing.
+    rig.secrets.heal();
+    let again = rig.start().await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        again
+            .problems()
+            .list()
+            .iter()
+            .all(|p| p.key != "proxy-sign-in-store"),
+        "{:?}",
+        again.problems().list()
+    );
+    again.shutdown().await;
+}

@@ -663,6 +663,7 @@ fn dir_names(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::MsbConfig;
 
     #[test]
     fn only_the_relay_race_counts_as_a_boot_race() {
@@ -736,6 +737,50 @@ mod tests {
         let bad = std::ffi::OsString::from_vec(vec![0x66, 0xff]);
         let names = dir_names(std::iter::once(Ok((bad, Ok(true))))).unwrap();
         assert_eq!(names.into_iter().collect::<Vec<_>>(), ["f\u{fffd}"]);
+    }
+
+    #[tokio::test]
+    async fn create_refuses_a_mount_outside_the_share_or_of_the_wrong_kind_before_any_vm_work() {
+        use puddle_compute::{FileMount, SandboxSpec};
+        use puddle_types::GuestPath;
+
+        let base = std::env::temp_dir().join(format!("puddle-msb-mounts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let share = base.join("home").join("guest-share");
+        std::fs::create_dir_all(share.join("tree")).unwrap();
+        std::fs::write(share.join("file"), b"x").unwrap();
+        std::fs::write(base.join("secret"), b"x").unwrap();
+        let config = MsbConfig::new(base.join("home"), "/no/msb", "/no/libkrunfw", &share);
+        let rt = MsbRuntime::open(config).await.unwrap();
+
+        let spec = |mount: FileMount| {
+            SandboxSpec::new(
+                SandboxName::new("mounts").unwrap(),
+                ImageRef::new("debian:12").unwrap(),
+            )
+            .with_file_mount(mount)
+        };
+        let guest = || GuestPath::new("/mnt/x").unwrap();
+        let refusal = |mount: FileMount| {
+            let rt = &rt;
+            async move { rt.create(spec(mount)).await.err().unwrap().to_string() }
+        };
+        let outside = refusal(FileMount::read_only_dir(&base, guest())).await;
+        assert!(
+            outside.contains("outside the guest-share root"),
+            "{outside}"
+        );
+        let outside = refusal(FileMount::read_only(base.join("secret"), guest())).await;
+        assert!(
+            outside.contains("outside the guest-share root"),
+            "{outside}"
+        );
+        let wrong = refusal(FileMount::read_only_dir(share.join("file"), guest())).await;
+        assert!(wrong.contains("is not a directory"), "{wrong}");
+        let wrong = refusal(FileMount::read_only(share.join("tree"), guest())).await;
+        assert!(wrong.contains("is not a file"), "{wrong}");
+        drop(rt);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

@@ -115,6 +115,23 @@ async fn the_suite_catches_a_writable_file_or_directory_mount() {
 }
 
 #[tokio::test]
+async fn the_suite_reports_what_a_refused_mount_write_said_when_it_is_not_a_read_only_error() {
+    use puddle_compute::ExecOutput;
+    let rt = FakeRuntime::new();
+    rt.on_exec(
+        |_: &mut puddle_compute::fake::ExecContext<'_>, r: &puddle_compute::ExecRequest| {
+            (r.program == "tee" && r.args.iter().any(|a| a.starts_with("/puddle-ct/")))
+                .then(|| ExecOutput::new(1, "", "Permission denied"))
+        },
+    );
+    let failed = failing_cases(rt).await;
+    assert_eq!(
+        failed,
+        ["file_mount_is_read_only", "dir_mount_is_read_only"]
+    );
+}
+
+#[tokio::test]
 async fn the_suite_catches_a_runtime_that_always_fails() {
     use puddle_compute::ComputeError;
     use puddle_compute::fake::{Fault, Op};

@@ -121,6 +121,15 @@ async fn start_vm_host(tag: &str) -> VmHost {
 }
 
 async fn start_vm_host_with(tag: &str, options: HostOptions) -> VmHost {
+    start_vm_host_config(tag, options, |_| {}).await
+}
+
+/// [`start_vm_host_with`] with `tweak` applied to the host's configuration first.
+async fn start_vm_host_config(
+    tag: &str,
+    options: HostOptions,
+    tweak: impl FnOnce(&mut HostConfig),
+) -> VmHost {
     let _ = tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_ansi(false)
@@ -135,7 +144,8 @@ async fn start_vm_host_with(tag: &str, options: HostOptions) -> VmHost {
         std::env::var_os("PUDDLE_AGENT_BIN")
             .expect("PUDDLE_AGENT_BIN: the static puddle-agent (ci/build-agent.sh)"),
     );
-    let config = harness_config(&settings, &pair, &root, agent);
+    let mut config = harness_config(&settings, &pair, &root, agent);
+    tweak(&mut config);
     let factory = HarnessFactory {
         settings: settings.clone(),
         msb: pair.msb.clone(),
@@ -1434,4 +1444,172 @@ async fn vm_host_a_second_process_on_the_same_data_folder_is_refused_and_the_vm_
         )
         .unwrap(),
     );
+}
+
+/// Waits until the editor server in the guest answers its health check.
+async fn editor_up(runtime: &MsbRuntime, sandbox: &WorkspaceName) {
+    guest(
+        runtime,
+        sandbox,
+        "for i in $(seq 1 120); do \
+             [ \"$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:41337/healthz)\" = 200 ] && exit 0; \
+             sleep 1; \
+         done; \
+         echo \"no editor server; agent log:\"; tail -n 20 /run/puddle/agent.log; exit 1",
+    )
+    .await;
+}
+
+/// K tier. The bundled code-server runs in the guest, started by the agent from the read-only
+/// mount: it listens on loopback with a password only its owner can read, signs a client in, and
+/// keeps its data on the workspace volume, so a rebuilt sandbox finds it again. (The Windows tier
+/// needs the bundle's executable bits to survive the host's file system; that run is a follow-up.)
+#[cfg(not(windows))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox() {
+    let release = std::path::PathBuf::from(std::env::var_os("PUDDLE_CODE_SERVER_DIR").expect(
+        "PUDDLE_CODE_SERVER_DIR: the unpacked code-server release (ci/fetch-code-server.sh)",
+    ));
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host_config("edit", HostOptions::default(), |config| {
+        config.guest.code_server = Some(release);
+    })
+    .await;
+
+    let name = format!("{}-edit", settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    host.store()
+        .add_rule(&NewRule {
+            scope: Scope::Workspace(sandbox.clone()),
+            pattern: Pattern::parse(REPO_HOST).unwrap(),
+            effect: Effect::Allow,
+            expires_at: None,
+            created_by: Actor::Cli,
+        })
+        .unwrap();
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "repo_url": REPO, "memory_mib": 2048}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+
+    editor_up(&runtime, &sandbox).await;
+    let data = format!("/workspaces/{name}/.puddle/code-server");
+    // The release is read-only in the guest, and the password is the owner's alone.
+    let mount = guest(
+        &runtime,
+        &sandbox,
+        "touch /puddle/code-server/x 2>&1; test -x /puddle/code-server/lib/node && echo node-runs",
+    )
+    .await;
+    assert!(
+        mount.contains("Read-only file system") && mount.contains("node-runs"),
+        "{mount}"
+    );
+    let first_password = guest(
+        &runtime,
+        &sandbox,
+        "stat -c %a /run/puddle/editor-password; cat /run/puddle/editor-password",
+    )
+    .await;
+    let (mode, password) = first_password.split_once('\n').unwrap();
+    assert_eq!(mode, "600");
+    assert_eq!(password.len(), 64, "{password}");
+    let password = password.to_owned();
+    // A client without the password is sent to the login page, with it gets in, and the password
+    // is on no command line (the pattern's first character is bracketed so grep does not match itself).
+    let signed_in = guest(
+        &runtime,
+        &sandbox,
+        "pw=$(cat /run/puddle/editor-password); pat=$(printf %s \"$pw\" | sed 's/^./[&]/'); \
+         curl -s -o /dev/null -w 'anonymous %{http_code} %{redirect_url}\\n' http://127.0.0.1:41337/; \
+         curl -s -c /tmp/jar -o /dev/null -w 'login %{http_code}\\n' -d \"password=$pw\" http://127.0.0.1:41337/login; \
+         curl -s -b /tmp/jar -o /dev/null -w 'signed-in %{http_code} %{redirect_url}\\n' http://127.0.0.1:41337/; \
+         cat /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' ' ' >/tmp/cmdlines; \
+         grep -c \"$pat\" /tmp/cmdlines | sed 's/^/on-command-lines /'; \
+         grep -q '[-]-reconnection-grace-time 300' /tmp/cmdlines && echo grace-300",
+    )
+    .await;
+    for expected in [
+        "anonymous 302 http://127.0.0.1:41337/login",
+        "login 302",
+        // Signed in, the client is sent to the folder the editor opens.
+        format!("signed-in 302 http://127.0.0.1:41337/?folder=/workspaces/{name}").as_str(),
+        "on-command-lines 0",
+        "grace-300",
+    ] {
+        assert!(
+            signed_in.contains(expected),
+            "{expected} missing in {signed_in}"
+        );
+    }
+
+    // Data on the volume: the server made its folders there, and a marker we add stays.
+    guest(
+        &runtime,
+        &sandbox,
+        &format!(
+            "test -d {data}/user-data && test -d {data}/extensions \
+             && mkdir -p {data}/extensions/puddle-marker && echo kept >{data}/extensions/puddle-marker/marker \
+             && echo old-sandbox >/tmp/old-sandbox"
+        ),
+    )
+    .await;
+
+    // Rebuild the sandbox: a changed variable makes the next start create a new sandbox on the
+    // same volume.
+    let changed = api
+        .put(
+            &format!("/api/workspaces/{name}/env/REBUILD"),
+            &json!({"kind": "plain", "value": "1"}).to_string(),
+        )
+        .await;
+    assert_eq!(changed.status, 200, "{}", changed.body);
+    for step in ["stop", "start"] {
+        let reply = api
+            .post(&format!("/api/workspaces/{name}/{step}"), "")
+            .await;
+        assert_eq!(reply.status, 202, "{}", reply.body);
+        let end = events
+            .until(ended(name_static), Duration::from_secs(300))
+            .await;
+        assert_eq!(end["step"], "done", "{end}");
+    }
+    editor_up(&runtime, &sandbox).await;
+    let after = guest(
+        &runtime,
+        &sandbox,
+        &format!(
+            "test -e /tmp/old-sandbox && echo same-sandbox; cat {data}/extensions/puddle-marker/marker; \
+             test -d {data}/user-data && echo user-data-kept; cat /run/puddle/editor-password"
+        ),
+    )
+    .await;
+    assert!(
+        !after.contains("same-sandbox"),
+        "the sandbox was not rebuilt: {after}"
+    );
+    assert!(
+        after.contains("kept\n") && after.contains("user-data-kept"),
+        "{after}"
+    );
+    assert!(
+        !after.contains(&password),
+        "the password is new for every start: {after}"
+    );
+
+    host.shutdown().await;
 }

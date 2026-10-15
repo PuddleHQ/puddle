@@ -191,6 +191,12 @@ jobs:
           MSB_BUILD_DIR="$RUNNER_TEMP/msb-build" ci/fetch-msb.sh "$RUNNER_TEMP/msb"
           echo "PUDDLE_VM_RUNTIME_DIR=$RUNNER_TEMP/msb" >> "$GITHUB_ENV"
           echo "PUDDLE_VM_ROOT=$RUNNER_TEMP/pvm" >> "$GITHUB_ENV"
+      # The browser editor's server, mounted read-only into the guests that the host tests start.
+      - name: code-server (pinned release; download, verify)
+        if: steps.kvm.outputs.ok == 'true'
+        run: |
+          ci/fetch-code-server.sh "$RUNNER_TEMP/code-server"
+          echo "PUDDLE_CODE_SERVER_DIR=$RUNNER_TEMP/code-server" >> "$GITHUB_ENV"
       - name: the test archive and the guest agent from the build job
         if: steps.kvm.outputs.ok == 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

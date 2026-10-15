@@ -1,8 +1,8 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "puddle",
-    "description": "puddle's local API: pending requests, rules, audit, settings, consents and the event stream. Listens on 127.0.0.1 only. Every request needs `Authorization: Bearer <token>` (from the connection file), a `Host` of `127.0.0.1:<port>` or `localhost:<port>`, and no foreign `Origin`.",
+    "title": "Puddle",
+    "description": "Puddle's local API: pending requests, rules, audit, settings, consents and the event stream. Listens on 127.0.0.1 only. Every request needs `Authorization: Bearer <token>` (from the connection file), a `Host` of `127.0.0.1:<port>` or `localhost:<port>`, and no foreign `Origin`.",
     "contact": {
       "name": "Tijs van Kampen",
       "email": "puddle@tijsvankampen.be"
@@ -184,7 +184,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -235,7 +235,7 @@
             }
           },
           "409": {
-            "description": "written by a newer puddle (newer_settings), or damaged (settings_unreadable)",
+            "description": "written by a newer Puddle (newer_settings), or damaged (settings_unreadable)",
             "content": {
               "application/json": {
                 "schema": {
@@ -255,7 +255,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -272,7 +272,7 @@
         "tags": [
           "consents"
         ],
-        "summary": "Records the user's answer to a consent prompt, with the terms version shown. puddle stamps\nthe time.",
+        "summary": "Records the user's answer to a consent prompt, with the terms version shown. Puddle stamps\nthe time.",
         "operationId": "put_consent",
         "parameters": [
           {
@@ -337,7 +337,7 @@
             }
           },
           "409": {
-            "description": "written by a newer puddle (newer_settings), or damaged (settings_unreadable)",
+            "description": "written by a newer Puddle (newer_settings), or damaged (settings_unreadable)",
             "content": {
               "application/json": {
                 "schema": {
@@ -367,7 +367,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -448,7 +448,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -519,7 +519,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -610,7 +610,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -637,7 +637,7 @@
         "tags": [
           "identities"
         ],
-        "summary": "Starts a sign-in the user finishes outside puddle: `gh` shows a one-time code and an address,\nGit Credential Manager opens its own window. Only from a click; a request from a workspace\nnever does this. Check the credential until it reads; puddle ends an unfinished sign-in after\nfive minutes.",
+        "summary": "Starts a sign-in the user finishes outside Puddle: `gh` shows a one-time code and an address,\nGit Credential Manager opens its own window. Only from a click; a request from a workspace\nnever does this. Check the credential until it reads; Puddle ends an unfinished sign-in after\nfive minutes.",
         "operationId": "sign_in",
         "requestBody": {
           "content": {
@@ -701,7 +701,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -792,7 +792,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -877,7 +877,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -904,7 +904,7 @@
         "tags": [
           "doctor"
         ],
-        "summary": "Checks this computer for what puddle needs (virtualization, the hypervisor, the bundled\nruntime, a test boot) and says the exact fix for each problem. It needs no administrator\nrights. With the test boot it takes a few seconds and up to about 30; checks that overlap run\none after another.",
+        "summary": "Checks this computer for what Puddle needs (virtualization, the hypervisor, the bundled\nruntime, a test boot) and says the exact fix for each problem. It needs no administrator\nrights. With the test boot it takes a few seconds and up to about 30; checks that overlap run\none after another.",
         "operationId": "doctor",
         "parameters": [
           {
@@ -969,7 +969,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -1040,7 +1040,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -1132,7 +1132,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -1215,7 +1215,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -1307,7 +1307,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -1358,7 +1358,7 @@
             }
           },
           "409": {
-            "description": "settings written by a newer puddle (newer_settings), or damaged (settings_unreadable)",
+            "description": "settings written by a newer Puddle (newer_settings), or damaged (settings_unreadable)",
             "content": {
               "application/json": {
                 "schema": {
@@ -1378,7 +1378,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -1437,7 +1437,7 @@
             }
           },
           "409": {
-            "description": "settings written by a newer puddle (newer_settings), or damaged (settings_unreadable)",
+            "description": "settings written by a newer Puddle (newer_settings), or damaged (settings_unreadable)",
             "content": {
               "application/json": {
                 "schema": {
@@ -1457,7 +1457,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -1474,11 +1474,11 @@
         "tags": [
           "service"
         ],
-        "summary": "puddle's version and the API contract's version.",
+        "summary": "Puddle's version and the API contract's version.",
         "operationId": "health",
         "responses": {
           "200": {
-            "description": "puddle is up",
+            "description": "Puddle is up",
             "content": {
               "application/json": {
                 "schema": {
@@ -1518,7 +1518,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -1579,7 +1579,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -1668,7 +1668,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -1729,7 +1729,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -1798,7 +1798,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -1879,7 +1879,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -1962,7 +1962,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -2073,7 +2073,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -2155,7 +2155,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -2238,7 +2238,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -2299,7 +2299,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -2316,7 +2316,7 @@
         "tags": [
           "network"
         ],
-        "summary": "The proxy setup puddle sees (PAC, WPAD, fixed proxy or environment), how it signs in to the\ncompany proxy, the company roots copied into workspaces, the route chosen per destination\nand whether image pulls go through the pull proxy. Safe to show: it holds no password, token,\nproxy credential or PAC script. A client refetches on the `network_changed` event.",
+        "summary": "The proxy setup Puddle sees (PAC, WPAD, fixed proxy or environment), how it signs in to the\ncompany proxy, the company roots copied into workspaces, the route chosen per destination\nand whether image pulls go through the pull proxy. Safe to show: it holds no password, token,\nproxy credential or PAC script. A client refetches on the `network_changed` event.",
         "operationId": "network_health",
         "responses": {
           "200": {
@@ -2360,7 +2360,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -2452,7 +2452,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -2535,7 +2535,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -2648,7 +2648,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -2761,7 +2761,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -2778,7 +2778,7 @@
         "tags": [
           "service"
         ],
-        "summary": "What puddle did on its own that failed and has not been put right: a sweep that could not\nwrite, a clean-up that left something behind, a step at start-up that did not finish. Each\nentry names what went wrong and what to do; one ends by itself when its cause does. A client\nrefetches on the `problems_changed` event.",
+        "summary": "What Puddle did on its own that failed and has not been put right: a sweep that could not\nwrite, a clean-up that left something behind, a step at start-up that did not finish. Each\nentry names what went wrong and what to do; one ends by itself when its cause does. A client\nrefetches on the `problems_changed` event.",
         "operationId": "list_problems",
         "responses": {
           "200": {
@@ -2822,7 +2822,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -2947,7 +2947,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -3038,7 +3038,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -3109,7 +3109,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -3188,7 +3188,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -3290,7 +3290,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -3380,7 +3380,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -3482,7 +3482,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -3543,7 +3543,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -3622,7 +3622,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -3705,7 +3705,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -3808,7 +3808,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -3859,7 +3859,7 @@
             }
           },
           "409": {
-            "description": "written by a newer puddle (newer_settings), or damaged (settings_unreadable)",
+            "description": "written by a newer Puddle (newer_settings), or damaged (settings_unreadable)",
             "content": {
               "application/json": {
                 "schema": {
@@ -3879,7 +3879,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -3894,7 +3894,7 @@
         "tags": [
           "settings"
         ],
-        "summary": "Replaces the global settings listed in the body; `null` falls back to puddle's default.\nConsents are changed through `/api/consents`.",
+        "summary": "Replaces the global settings listed in the body; `null` falls back to Puddle's default.\nConsents are changed through `/api/consents`.",
         "operationId": "put_global",
         "requestBody": {
           "content": {
@@ -3938,7 +3938,7 @@
             }
           },
           "409": {
-            "description": "written by a newer puddle (newer_settings), or damaged (settings_unreadable)",
+            "description": "written by a newer Puddle (newer_settings), or damaged (settings_unreadable)",
             "content": {
               "application/json": {
                 "schema": {
@@ -3968,7 +3968,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -4040,7 +4040,7 @@
             }
           },
           "409": {
-            "description": "written by a newer puddle (newer_settings), or damaged (settings_unreadable)",
+            "description": "written by a newer Puddle (newer_settings), or damaged (settings_unreadable)",
             "content": {
               "application/json": {
                 "schema": {
@@ -4060,7 +4060,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -4140,7 +4140,7 @@
             }
           },
           "409": {
-            "description": "written by a newer puddle (newer_settings), or damaged (settings_unreadable)",
+            "description": "written by a newer Puddle (newer_settings), or damaged (settings_unreadable)",
             "content": {
               "application/json": {
                 "schema": {
@@ -4170,7 +4170,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -4231,7 +4231,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -4320,7 +4320,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -4412,7 +4412,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -4522,7 +4522,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -4539,7 +4539,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "Opens a running workspace in VS Code: on the desktop (puddle opens it) or in the browser\n(the response has the URL, the caller opens it).",
+        "summary": "Opens a running workspace in VS Code: on the desktop (Puddle opens it) or in the browser\n(the response has the URL, the caller opens it).",
         "operationId": "attach_workspace",
         "parameters": [
           {
@@ -4624,7 +4624,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -4706,7 +4706,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -4788,7 +4788,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -4899,7 +4899,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -4991,7 +4991,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -5083,7 +5083,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -5195,7 +5195,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -5297,7 +5297,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -5380,7 +5380,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -5472,7 +5472,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -5584,7 +5584,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -5684,7 +5684,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -5776,7 +5776,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -5868,7 +5868,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -5960,7 +5960,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -6052,7 +6052,7 @@
             }
           },
           "500": {
-            "description": "puddle failed; see its log",
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -6232,7 +6232,7 @@
           },
           "opened": {
             "type": "boolean",
-            "description": "Whether puddle opened an editor itself (desktop mode, when it worked)."
+            "description": "Whether Puddle opened an editor itself (desktop mode, when it worked)."
           },
           "url": {
             "type": [
@@ -6569,7 +6569,7 @@
                   "string",
                   "null"
                 ],
-                "description": "The workspace; `null` for puddle's own connections (`origin` is `puddle`)."
+                "description": "The workspace; `null` for Puddle's own connections (`origin` is `puddle`)."
               }
             }
           },
@@ -6972,7 +6972,7 @@
           },
           {
             "type": "object",
-            "description": "A puddle update changed a built-in set's entries.",
+            "description": "A Puddle update changed a built-in set's entries.",
             "required": [
               "ts",
               "set_id",
@@ -7099,7 +7099,7 @@
             }
           }
         ],
-        "description": "One audit record (rules spec R-24): a tagged union on `type`. `host`, `path` and the like come\nfrom the guest, so escape them when rendering. Records written by an older puddle lack the\nfields added since, which read as `null`."
+        "description": "One audit record (rules spec R-24): a tagged union on `type`. `host`, `path` and the like come\nfrom the guest, so escape them when rendering. Records written by an older Puddle lack the\nfields added since, which read as `null`."
       },
       "AuditRule": {
         "type": "object",
@@ -7257,7 +7257,7 @@
       },
       "CheckResult": {
         "type": "object",
-        "description": "Whether puddle can read a credential's value now. Never the value.",
+        "description": "Whether Puddle can read a credential's value now. Never the value.",
         "required": [
           "readable",
           "problem",
@@ -7409,7 +7409,7 @@
       },
       "ConsentRequest": {
         "type": "object",
-        "description": "Records the user's answer to a consent prompt. puddle stamps the time.",
+        "description": "Records the user's answer to a consent prompt. Puddle stamps the time.",
         "required": [
           "decision",
           "terms_version"
@@ -7430,7 +7430,7 @@
       },
       "Consents": {
         "type": "object",
-        "description": "Every consent puddle asks for.",
+        "description": "Every consent Puddle asks for.",
         "required": [
           "telemetry",
           "crash_reports",
@@ -7534,7 +7534,7 @@
           },
           {
             "type": "object",
-            "description": "A token the user pasted, kept in the OS credential store under puddle's own name.",
+            "description": "A token the user pasted, kept in the OS credential store under Puddle's own name.",
             "required": [
               "id",
               "host",
@@ -7743,7 +7743,7 @@
       },
       "DevCertificate": {
         "type": "string",
-        "description": "What puddle knows about a development certificate on this computer (the ASP.NET one that\n`dotnet dev-certs` makes), for the one line the certificates step shows.",
+        "description": "What Puddle knows about a development certificate on this computer (the ASP.NET one that\n`dotnet dev-certs` makes), for the one line the certificates step shows.",
         "enum": [
           "not_checked",
           "reusing_existing"
@@ -7785,7 +7785,7 @@
           },
           "id": {
             "type": "string",
-            "description": "Which check, as a stable `snake_case` code (`virtualization`, `hypervisor`, `runtime`,\n`test_boot`, ...). A newer puddle may add codes: show an unknown one by its title."
+            "description": "Which check, as a stable `snake_case` code (`virtualization`, `hypervisor`, `runtime`,\n`test_boot`, ...). A newer Puddle may add codes: show an unknown one by its title."
           },
           "status": {
             "$ref": "#/components/schemas/DoctorStatus",
@@ -7874,7 +7874,7 @@
       },
       "EffectiveSettings": {
         "type": "object",
-        "description": "The values a workspace gets: its override, else the global value, else puddle's default.",
+        "description": "The values a workspace gets: its override, else the global value, else Puddle's default.",
         "required": [
           "memory",
           "local_toggles",
@@ -8442,7 +8442,7 @@
           },
           {
             "type": "object",
-            "description": "A workspace asked for a credential and the source of it cannot supply one (not signed in,\nor the sign-in ran out). The user signs in from puddle; a request never opens a sign-in\nwindow. Global: every subscriber gets it. Names only, never a value.",
+            "description": "A workspace asked for a credential and the source of it cannot supply one (not signed in,\nor the sign-in ran out). The user signs in from Puddle; a request never opens a sign-in\nwindow. Global: every subscriber gets it. Names only, never a value.",
             "required": [
               "host",
               "source",
@@ -8507,7 +8507,7 @@
           },
           {
             "type": "object",
-            "description": "A Git host answered a workspace's request with `401` and no identity covers the owner, so\npuddle added no credential and the server's answer reached the workspace as it is. Sent\nonly when the workspace's own tool did not retry with a credential of its own soon after.\n`repo` is the table's spelling, as in [`Event::GitAccessDenied`].",
+            "description": "A Git host answered a workspace's request with `401` and no identity covers the owner, so\nPuddle added no credential and the server's answer reached the workspace as it is. Sent\nonly when the workspace's own tool did not retry with a credential of its own soon after.\n`repo` is the table's spelling, as in [`Event::GitAccessDenied`].",
             "required": [
               "workspace",
               "host",
@@ -8542,7 +8542,7 @@
           },
           {
             "type": "object",
-            "description": "A login made inside a workspace could not be captured, or one puddle kept could not be\nused (`kind` says which). The service is one of puddle's built-in login profiles, never\nanything the guest sent. Names only, never a value.",
+            "description": "A login made inside a workspace could not be captured, or one Puddle kept could not be\nused (`kind` says which). The service is one of Puddle's built-in login profiles, never\nanything the guest sent. Names only, never a value.",
             "required": [
               "workspace",
               "service",
@@ -8602,7 +8602,7 @@
               "epoch": {
                 "type": "integer",
                 "format": "int64",
-                "description": "The network epoch that began; it only grows while puddle runs.",
+                "description": "The network epoch that began; it only grows while Puddle runs.",
                 "minimum": 0
               },
               "type": {
@@ -8615,7 +8615,7 @@
           },
           {
             "type": "object",
-            "description": "The list of background problems changed (something puddle does on its own failed, or the\ncause went away). Carries no data: refetch `GET /api/problems`. Global: every subscriber\ngets it.",
+            "description": "The list of background problems changed (something Puddle does on its own failed, or the\ncause went away). Carries no data: refetch `GET /api/problems`. Global: every subscriber\ngets it.",
             "required": [
               "type"
             ],
@@ -8735,7 +8735,7 @@
       },
       "FoundAccounts": {
         "type": "object",
-        "description": "What puddle found signed in on this computer.",
+        "description": "What Puddle found signed in on this computer.",
         "required": [
           "accounts",
           "problems"
@@ -8933,7 +8933,7 @@
         "properties": {
           "ui": {
             "$ref": "#/components/schemas/UiPrefs",
-            "description": "Preferences for puddle's window."
+            "description": "Preferences for Puddle's window."
           },
           "vscode_server": {
             "$ref": "#/components/schemas/VsCodeServer",
@@ -8963,14 +8963,14 @@
           },
           "ui": {
             "$ref": "#/components/schemas/UiPrefs",
-            "description": "Preferences for puddle's window."
+            "description": "Preferences for Puddle's window."
           },
           "unknown_fields": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Fields in the stored document this puddle doesn't know (written by a newer one); they\nare kept."
+            "description": "Fields in the stored document this Puddle doesn't know (written by a newer one); they\nare kept."
           },
           "vscode_server": {
             "$ref": "#/components/schemas/VsCodeServer",
@@ -8984,7 +8984,7 @@
       },
       "Health": {
         "type": "object",
-        "description": "The API's identity, for a client to check it reached puddle.",
+        "description": "The API's identity, for a client to check it reached Puddle.",
         "required": [
           "version",
           "api_version"
@@ -8996,7 +8996,7 @@
           },
           "version": {
             "type": "string",
-            "description": "puddle's version."
+            "description": "Puddle's version."
           }
         }
       },
@@ -9213,7 +9213,7 @@
           "open_limit": {
             "type": "integer",
             "format": "int64",
-            "description": "The most open requests puddle lists for one workspace. A workspace with this many has a\nfull list: a new host it asks about is answered as waiting but gets no row until the user\nanswers some (rules spec R-45).",
+            "description": "The most open requests Puddle lists for one workspace. A workspace with this many has a\nfull list: a new host it asks about is answered as waiting but gets no row until the user\nanswers some (rules spec R-45).",
             "minimum": 0
           }
         }
@@ -9256,7 +9256,7 @@
       },
       "LocalCategory": {
         "type": "string",
-        "description": "A class of local destination with its own toggle. Everything outside these is public.\n\nA toggle only *permits* its category; each destination still needs an allow rule or an\napproval. puddle's own endpoints are not a category: no toggle reaches them.\n\nNon-exhaustive: a \"company network\" category may follow.",
+        "description": "A class of local destination with its own toggle. Everything outside these is public.\n\nA toggle only *permits* its category; each destination still needs an allow rule or an\napproval. Puddle's own endpoints are not a category: no toggle reaches them.\n\nNon-exhaustive: a \"company network\" category may follow.",
         "enum": [
           "loopback",
           "private",
@@ -9329,7 +9329,7 @@
       },
       "NetworkHealth": {
         "type": "object",
-        "description": "`GET /api/network-health`: everything puddle knows about how it reaches the internet.",
+        "description": "`GET /api/network-health`: everything Puddle knows about how it reaches the internet.",
         "required": [
           "generated_at",
           "proxy",
@@ -9735,7 +9735,7 @@
         "properties": {
           "detail": {
             "type": "string",
-            "description": "What puddle did about it and what the user can do. It can quote tool output: escape it\nwhen rendering."
+            "description": "What Puddle did about it and what the user can do. It can quote tool output: escape it\nwhen rendering."
           },
           "key": {
             "type": "string",
@@ -9749,7 +9749,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/WorkspaceName",
-                "description": "The workspace it is about, or `null` when it is about puddle."
+                "description": "The workspace it is about, or `null` when it is about Puddle."
               },
               {
                 "type": "null"
@@ -9776,7 +9776,7 @@
       },
       "ProxyDetected": {
         "type": "string",
-        "description": "What puddle found out about the proxy setup.",
+        "description": "What Puddle found out about the proxy setup.",
         "enum": [
           "pac",
           "wpad",
@@ -9788,7 +9788,7 @@
       },
       "ProxyMode": {
         "type": "string",
-        "description": "Where puddle gets its proxy setting from.",
+        "description": "Where Puddle gets its proxy setting from.",
         "enum": [
           "system",
           "direct",
@@ -9826,7 +9826,7 @@
       },
       "ProxyReport": {
         "type": "object",
-        "description": "The proxy setup puddle sees.",
+        "description": "The proxy setup Puddle sees.",
         "required": [
           "mode",
           "detected",
@@ -9890,7 +9890,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "Epoch ms when the last change was noticed; `null` when none since puddle started.",
+            "description": "Epoch ms when the last change was noticed; `null` when none since Puddle started.",
             "minimum": 0
           },
           "mode": {
@@ -9935,7 +9935,7 @@
         "properties": {
           "active": {
             "type": "boolean",
-            "description": "Image pulls go through puddle's pull proxy (where the rules and the guard apply)."
+            "description": "Image pulls go through Puddle's pull proxy (where the rules and the guard apply)."
           },
           "via_upstream": {
             "type": "boolean",
@@ -10207,7 +10207,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "Epoch ms the host lets puddle ask again, when it said to wait.",
+            "description": "Epoch ms the host lets Puddle ask again, when it said to wait.",
             "minimum": 0
           },
           "state": {
@@ -10379,7 +10379,7 @@
       },
       "RootsReport": {
         "type": "object",
-        "description": "The company roots puddle copied into workspaces.",
+        "description": "The company roots Puddle copied into workspaces.",
         "required": [
           "synced",
           "synced_at",
@@ -10409,7 +10409,7 @@
             "items": {
               "$ref": "#/components/schemas/SkippedRoot"
             },
-            "description": "Company certificates puddle's own TLS checks could not use (the checks that guard a\nworkspace's credentials on the way out): a server that chains to one fails with an unknown\nissuer. Workspaces still get them; this is only about what puddle itself verifies."
+            "description": "Company certificates Puddle's own TLS checks could not use (the checks that guard a\nworkspace's credentials on the way out): a server that chains to one fails with an unknown\nissuer. Workspaces still get them; this is only about what Puddle itself verifies."
           },
           "roots": {
             "type": "integer",
@@ -10426,7 +10426,7 @@
           },
           "synced": {
             "type": "boolean",
-            "description": "Whether the host's certificate stores have been read (false until the first sync, and\non systems where puddle has no store to read)."
+            "description": "Whether the host's certificate stores have been read (false until the first sync, and\non systems where Puddle has no store to read)."
           },
           "synced_at": {
             "type": [
@@ -10449,7 +10449,7 @@
       },
       "RouteDecision": {
         "type": "object",
-        "description": "The route puddle chose for one destination in this network epoch.",
+        "description": "The route Puddle chose for one destination in this network epoch.",
         "required": [
           "scheme",
           "host",
@@ -10747,7 +10747,7 @@
             "items": {
               "$ref": "#/components/schemas/SystemManagedHost"
             },
-            "description": "The hosts puddle allows because of your setup, each with its reason. Your own rules\ndecide first: a deny of yours blocks one."
+            "description": "The hosts Puddle allows because of your setup, each with its reason. Your own rules\ndecide first: a deny of yours blocks one."
           }
         }
       },
@@ -10859,7 +10859,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "Built-in sets: epoch ms when a puddle update last changed the entries; `null` if never.",
+            "description": "Built-in sets: epoch ms when a Puddle update last changed the entries; `null` if never.",
             "minimum": 0
           },
           "created_at": {
@@ -10949,7 +10949,7 @@
       },
       "SettingsLayer": {
         "type": "object",
-        "description": "The settings every workspace has. On a global document they are the defaults for every\nworkspace; on a workspace they override those. `null` means \"not set here\": the next level (the\nglobal value, then puddle's default) applies.",
+        "description": "The settings every workspace has. On a global document they are the defaults for every\nworkspace; on a workspace they override those. `null` means \"not set here\": the next level (the\nglobal value, then Puddle's default) applies.",
         "required": [
           "memory",
           "local_toggles",
@@ -10966,7 +10966,7 @@
               "boolean",
               "null"
             ],
-            "description": "Whether a login made inside the workspace (Claude Code, `gh`, Copilot CLI) is captured:\npuddle keeps the real token on the host and the workspace holds a stand-in that works\nonly through puddle. On by default; applies at the workspace's next start."
+            "description": "Whether a login made inside the workspace (Claude Code, `gh`, Copilot CLI) is captured:\nPuddle keeps the real token on the host and the workspace holds a stand-in that works\nonly through Puddle. On by default; applies at the workspace's next start."
           },
           "clipboard_read": {
             "oneOf": [
@@ -10984,7 +10984,7 @@
               "boolean",
               "null"
             ],
-            "description": "Whether puddle opens an SSH way into the workspace for the user's own tools (desktop\nVS Code, a terminal `ssh`). Off by default; while off there is no SSH endpoint and no ssh\nconfig entry. Turning it on marks the workspace trusted."
+            "description": "Whether Puddle opens an SSH way into the workspace for the user's own tools (desktop\nVS Code, a terminal `ssh`). Off by default; while off there is no SSH endpoint and no ssh\nconfig entry. Turning it on marks the workspace trusted."
           },
           "local_toggles": {
             "$ref": "#/components/schemas/LocalToggles",
@@ -11071,7 +11071,7 @@
       },
       "SignInReport": {
         "type": "object",
-        "description": "How puddle signs in to the company proxy.",
+        "description": "How Puddle signs in to the company proxy.",
         "required": [
           "methods",
           "attempts"
@@ -11089,7 +11089,7 @@
             "items": {
               "type": "string"
             },
-            "description": "The schemes puddle can answer a proxy with, lower case (`negotiate`, `ntlm`, `basic`).\nEmpty: puddle can not sign in to a proxy on this system."
+            "description": "The schemes Puddle can answer a proxy with, lower case (`negotiate`, `ntlm`, `basic`).\nEmpty: Puddle can not sign in to a proxy on this system."
           }
         },
         "additionalProperties": false
@@ -11121,7 +11121,7 @@
       },
       "SignInStarted": {
         "type": "object",
-        "description": "What the user does to finish a sign-in puddle started. Poll the credential's check to learn\nwhen it worked; puddle ends a sign-in nobody finished after five minutes.",
+        "description": "What the user does to finish a sign-in Puddle started. Poll the credential's check to learn\nwhen it worked; Puddle ends a sign-in nobody finished after five minutes.",
         "required": [
           "code",
           "url"
@@ -11172,7 +11172,7 @@
       },
       "StoreTokenRequest": {
         "type": "object",
-        "description": "A token the user pasted. It is kept in the operating system's credential store under puddle's\nown name and never read back through the API.",
+        "description": "A token the user pasted. It is kept in the operating system's credential store under Puddle's\nown name and never read back through the API.",
         "required": [
           "host",
           "token"
@@ -11254,7 +11254,7 @@
       },
       "SystemManagedHost": {
         "type": "object",
-        "description": "One host puddle allows because of your setup, and why.",
+        "description": "One host Puddle allows because of your setup, and why.",
         "required": [
           "pattern",
           "note",
@@ -11294,7 +11294,7 @@
       },
       "SystemReason": {
         "type": "string",
-        "description": "Why puddle allows a System managed host: a choice you made.",
+        "description": "Why Puddle allows a System managed host: a choice you made.",
         "enum": [
           "microsoft_server",
           "code_server",
@@ -11303,7 +11303,7 @@
       },
       "ThemeChoice": {
         "type": "string",
-        "description": "The colour theme of puddle's window.",
+        "description": "The colour theme of Puddle's window.",
         "enum": [
           "system",
           "light",
@@ -11338,7 +11338,7 @@
       },
       "UiPrefs": {
         "type": "object",
-        "description": "Preferences for puddle's own window. `null` means puddle's default.",
+        "description": "Preferences for Puddle's own window. `null` means Puddle's default.",
         "required": [
           "theme",
           "density",
@@ -11408,7 +11408,7 @@
               "boolean",
               "null"
             ],
-            "description": "Notify only while puddle's window is not focused (default on)."
+            "description": "Notify only while Puddle's window is not focused (default on)."
           },
           "notify_oom": {
             "type": [
@@ -11447,7 +11447,7 @@
       },
       "VsCodeServer": {
         "type": "object",
-        "description": "Options for the VS Code server in the guest. `null` means puddle's default.",
+        "description": "Options for the VS Code server in the guest. `null` means Puddle's default.",
         "required": [
           "server",
           "telemetry",
@@ -11459,7 +11459,7 @@
               "boolean",
               "null"
             ],
-            "description": "Whether puddle updates the server (default on)."
+            "description": "Whether Puddle updates the server (default on)."
           },
           "server": {
             "oneOf": [
@@ -11826,7 +11826,7 @@
     },
     {
       "name": "network",
-      "description": "How puddle reaches the internet: proxy, sign-in, company roots"
+      "description": "How Puddle reaches the internet: proxy, sign-in, company roots"
     },
     {
       "name": "identities",

@@ -3,11 +3,11 @@
 //!
 //! The SDK 0.7.7 pulls only inside `create`; its image crate does the work, so the adapter calls
 //! it the same way `create` does: cache first, then the registry with the backend's registry
-//! settings (anonymous unless puddle's `config.json` says otherwise, which it doesn't), plus
-//! puddle's registry roots ([`crate::MsbConfig::registry_roots`]).
+//! settings (anonymous unless Puddle's `config.json` says otherwise, which it doesn't), plus
+//! Puddle's registry roots ([`crate::MsbConfig::registry_roots`]).
 //!
 //! The registry client's proxy is the SDK backend's own setting (`LocalBackendBuilder::registry_proxy`,
-//! from [`crate::MsbConfig::registry_proxy`]): puddle's image-pull proxy (`puddle_proxy::PullProxy`).
+//! from [`crate::MsbConfig::registry_proxy`]): Puddle's image-pull proxy (`puddle_proxy::PullProxy`).
 //! It comes back in the resolved registry settings and replaces the process environment for the
 //! client, so nothing sets `HTTPS_PROXY`.
 
@@ -76,13 +76,13 @@ fn chain(err: &dyn std::error::Error) -> String {
     text
 }
 
-/// msb's configured CA certificates (PEM each) followed by puddle's registry roots.
+/// msb's configured CA certificates (PEM each) followed by Puddle's registry roots.
 fn with_roots(mut configured: Vec<Vec<u8>>, roots: &[String]) -> Vec<Vec<u8>> {
     configured.extend(roots.iter().map(|pem| pem.as_bytes().to_vec()));
     configured
 }
 
-/// The OCI config as puddle's [`ImageConfig`]. `ENV` entries without `=` are kept with an empty
+/// The OCI config as Puddle's [`ImageConfig`]. `ENV` entries without `=` are kept with an empty
 /// value; labels are sorted by key.
 pub(crate) fn convert(config: microsandbox_image::ImageConfig) -> ImageConfig {
     ImageConfig {

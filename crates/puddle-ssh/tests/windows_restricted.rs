@@ -201,7 +201,7 @@ async fn ho1_a_restricted_bridge_is_refused_with_a_reason() {
     assert!(matches!(err, BridgeError::AccessDenied { .. }), "{err:?}");
     assert!(
         err.to_string()
-            .contains("only the user running puddle, from an unrestricted process, may connect"),
+            .contains("only the user running Puddle, from an unrestricted process, may connect"),
         "{err}"
     );
     endpoint.close().await;

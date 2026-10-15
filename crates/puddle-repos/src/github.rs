@@ -189,7 +189,7 @@ fn next_page(
     match own {
         Some(rest) => Ok(Some(format!("{}{}{}", endpoint.base, listing, rest))),
         None => Err(Problem::bad_answer(
-            "a next page on another address, which puddle does not follow",
+            "a next page on another address, which Puddle does not follow",
         )),
     }
 }
@@ -221,7 +221,7 @@ fn read_page(
             .map(|kept| kept.page.clone())
             .ok_or_else(|| {
                 Problem::bad_answer(
-                    "GitHub said a page is unchanged that puddle had not asked about",
+                    "GitHub said a page is unchanged that Puddle had not asked about",
                 )
             });
     }
@@ -290,7 +290,7 @@ pub(crate) async fn list(
             notes.push(Note::new(
                 NoteKind::Truncated,
                 format!(
-                    "puddle reads the first {} repositories and there are more: enter the address of \
+                    "Puddle reads the first {} repositories and there are more: enter the address of \
                      one that is missing",
                     MAX_PAGES * 100
                 ),

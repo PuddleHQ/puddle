@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Unix: sockets mode `0600` inside a fresh directory mode `0700`.
 //!
-//! The directory is the real barrier: it is created by puddle under a random name (`mkdir` fails
+//! The directory is the real barrier: it is created by Puddle under a random name (`mkdir` fails
 //! on an existing path and never follows a symlink in the last component), so no other user can
 //! reach, replace or pre-create anything in it. The socket's own mode is defence in depth.
 

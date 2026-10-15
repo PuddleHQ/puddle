@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The msb runtime puddle ships with: where it lives, the environment that makes the SDK use
+//! The msb runtime Puddle ships with: where it lives, the environment that makes the SDK use
 //! it and nothing else, and the check that it is exactly the version this build was made for.
 //!
-//! puddle never uses a user's own msb. At startup it:
+//! Puddle never uses a user's own msb. At startup it:
 //!
-//! 1. builds a [`RuntimeLayout`]: the bundled runtime folder (next to `puddle.exe`) and puddle's
+//! 1. builds a [`RuntimeLayout`]: the bundled runtime folder (next to `puddle.exe`) and Puddle's
 //!    private `MSB_HOME`, so images and volumes never mix with a user's own msb;
 //! 2. opens the runtime with [`BundledRuntime::open`], which refuses a missing `msb` binary or one
 //!    whose embedded version isn't exactly [`BUILT_FOR`] (both versions named in the error);
@@ -13,7 +13,7 @@
 //!    `MSB_HOME` and `MSB_CONFIG_PATH`. Apply it to the process before any thread starts
 //!    ([`RuntimeEnv::apply_to_process`]) or to a child [`std::process::Command`];
 //!
-//! Image pulls go through puddle's pull proxy by an explicit setting on the registry client
+//! Image pulls go through Puddle's pull proxy by an explicit setting on the registry client
 //! (`microsandbox_image::RegistryBuilder::proxy`, set from `puddle-compute-msb`'s
 //! `MsbConfig::with_registry_proxy`), not through the environment: the per-run token never
 //! enters the process environment, so no child process inherits it.

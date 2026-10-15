@@ -147,15 +147,15 @@ impl Store {
 }
 
 /// A finished second's excess of `connection` records that [`Store::flush_limits`] took out of
-/// memory: the workspace (`None` for puddle's own), its start and count.
+/// memory: the workspace (`None` for Puddle's own), its start and count.
 struct Flushed(Option<WorkspaceName>, u64, u64);
 
-/// puddle's rules, pending requests and audit log, in one SQLite database.
+/// Puddle's rules, pending requests and audit log, in one SQLite database.
 pub struct Store {
     conn: Mutex<Connection>,
     rules: RwLock<Arc<RuleIndex>>,
     workspaces: Mutex<HashMap<WorkspaceName, WorkspaceState>>,
-    /// The connection limit of puddle's own connections, which have no workspace.
+    /// The connection limit of Puddle's own connections, which have no workspace.
     puddle_connections: Mutex<ConnectionWindow>,
     clock: Arc<dyn Clock>,
     limits: Limits,
@@ -189,7 +189,7 @@ impl Store {
     /// Opens (creating if needed) the database at `path` and migrates it.
     ///
     /// # Errors
-    /// [`StoreError`] if the file can't be opened, is from a newer puddle, or holds invalid rows.
+    /// [`StoreError`] if the file can't be opened, is from a newer Puddle, or holds invalid rows.
     pub fn open(path: &Path, clock: Arc<dyn Clock>, limits: Limits) -> Result<Self, StoreError> {
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "wal")?;
@@ -1017,7 +1017,7 @@ fn audit_query_sql(
     }
     match filter.origin {
         None => {}
-        // A connection record names a workspace unless puddle made the connection itself.
+        // A connection record names a workspace unless Puddle made the connection itself.
         Some(ConnectionOrigin::Puddle) => {
             clause("type = 'connection' AND workspace_id IS NULL", None);
         }

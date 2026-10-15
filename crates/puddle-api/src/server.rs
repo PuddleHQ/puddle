@@ -139,7 +139,7 @@ pub struct Services {
     /// The system check. [`Services::new`] starts with [`NoDoctor`], which answers 503; set the
     /// real one with [`Services::with_doctor`].
     pub doctor: Arc<dyn DoctorService>,
-    /// The registry of puddle's own listeners that the workspace proxy's guard consults. The API
+    /// The registry of Puddle's own listeners that the workspace proxy's guard consults. The API
     /// registers its address here when it binds, so a workspace can't reach it even with the
     /// loopback toggle on. [`Services::new`] starts with an empty registry of its own; give the
     /// one the proxy uses with [`Services::with_endpoints`].

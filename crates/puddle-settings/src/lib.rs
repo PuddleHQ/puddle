@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! puddle's settings model: the global settings, per-workspace overrides, the consent
+//! Puddle's settings model: the global settings, per-workspace overrides, the consent
 //! store, and how a stored document is versioned, migrated and read back. No storage and no API:
 //! a store keeps the documents ([`GlobalSettings::to_document`] gives a JSON value), the API
 //! serves them.
@@ -19,8 +19,8 @@
 //! # Resolution
 //!
 //! Every per-workspace setting has three levels: the workspace's override, the global value, and
-//! puddle's built-in default. A level that is unset (`None`, absent in the document) passes on to
-//! the next one, so a user who never touched a setting follows puddle's default even when a later
+//! Puddle's built-in default. A level that is unset (`None`, absent in the document) passes on to
+//! the next one, so a user who never touched a setting follows Puddle's default even when a later
 //! version changes it. [`resolve`] is the only place that applies this rule.
 //!
 //! ```
@@ -45,12 +45,12 @@
 //! - **Missing version** means version 1, so `{}` is a valid document with every value unset.
 //! - **Older version**: migrations run in order, one step per version; [`Loaded::migrated_from`]
 //!   says it happened, so the caller can write the upgraded document back.
-//! - **Newer version** (written by a newer puddle): refused with [`SettingsError::NewerSchema`].
+//! - **Newer version** (written by a newer Puddle): refused with [`SettingsError::NewerSchema`].
 //!   A version bump means a field changed meaning, so guessing would be wrong.
 //! - **Unknown fields** are kept, not dropped and not rejected: they come back out of
 //!   `to_document` unchanged, and [`Loaded::unknown_fields`] lists them for a warning. So an
 //!   additive field (new, optional, absent means "as before") needs no version bump, and an
-//!   older puddle that reads and rewrites a newer document of the same version keeps it.
+//!   older Puddle that reads and rewrites a newer document of the same version keeps it.
 //! - **Invalid values** (a memory size out of range, an unknown enum value) fail the whole
 //!   document with [`SettingsError::Invalid`]; nothing is half-applied.
 //!

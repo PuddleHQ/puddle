@@ -2,14 +2,14 @@
 //! Corporate root sync.
 //!
 //! Behind a TLS-inspecting corporate proxy, every HTTPS call in the guest fails unless the guest
-//! trusts the company's root. puddle copies every root an admin or the user deliberately added
+//! trusts the company's root. Puddle copies every root an admin or the user deliberately added
 //! on the Windows host into the guest at boot, next to (never instead of) the image's own roots.
 //!
 //! | Step | Piece |
 //! |---|---|
 //! | read the host stores (`Root`/`CA` `.Default`, `.GroupPolicy`, `.Enterprise`; `Disallowed`) | [`read_host_stores`] → [`StoreSnapshot`] |
 //! | select: roots, intermediates they issued, minus Disallowed (by certificate or key), minus expired, each once | [`CorporateRoots::select`] |
-//! | guest files, env and boot step, together with puddle's own CAs ([`puddle_ca::TrustBundle`]) | [`GuestTrust`] |
+//! | guest files, env and boot step, together with Puddle's own CAs ([`puddle_ca::TrustBundle`]) | [`GuestTrust`] |
 //!
 //! In the guest, `boot.sh` writes the files, runs `update-ca-certificates` when one of them
 //! changed (the system store, for curl, git, apt, Go, .NET, Python `ssl`), then runs the step

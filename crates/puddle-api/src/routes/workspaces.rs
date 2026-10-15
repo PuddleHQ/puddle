@@ -318,7 +318,7 @@ pub(crate) async fn delete_workspace(
     Ok((StatusCode::ACCEPTED, Json(view(&state, record).await)))
 }
 
-/// Opens a running workspace in VS Code: on the desktop (puddle opens it) or in the browser
+/// Opens a running workspace in VS Code: on the desktop (Puddle opens it) or in the browser
 /// (the response has the URL, the caller opens it).
 #[utoipa::path(
     post,
@@ -340,7 +340,7 @@ pub(crate) async fn attach_workspace(
     let id = workspace_id(&id)?;
     let mode = crate::AttachMode::from(body.mode);
     if mode == crate::AttachMode::Desktop {
-        // Desktop editors connect over SSH, which puddle only opens when the user allowed it.
+        // Desktop editors connect over SSH, which Puddle only opens when the user allowed it.
         // A workspace that is not up gets the service's own "start it first" answer.
         let record = state.workspaces.get(&id).await?;
         let up = record.busy.is_none() && record.status == puddle_types::WorkspaceStatus::Running;

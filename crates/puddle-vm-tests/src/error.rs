@@ -39,7 +39,7 @@ pub enum HarnessError {
         /// The rejected value, cut to 64 characters.
         value: String,
     },
-    /// A prefixed sandbox name isn't a valid puddle sandbox name.
+    /// A prefixed sandbox name isn't a valid Puddle sandbox name.
     #[error("invalid sandbox name for tag {tag:?}: {reason}")]
     InvalidName {
         /// The tag the test asked for, cut to 64 characters.

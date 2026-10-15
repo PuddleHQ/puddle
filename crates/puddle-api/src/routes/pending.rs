@@ -30,7 +30,7 @@ pub(crate) struct PendingQuery {
 
 /// The local category a destination is in by itself: an IP literal's class, or a name such as
 /// `localhost` or the metadata names. Other names are classified by what they resolve to, which
-/// puddle only knows when the connection is made.
+/// Puddle only knows when the connection is made.
 fn local_category(host: &Host) -> Option<LocalCategory> {
     match host {
         Host::Ip(ip) => classify_ip(*ip).category(),

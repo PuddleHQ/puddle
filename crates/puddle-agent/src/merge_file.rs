@@ -10,13 +10,13 @@
 //! ```
 //!
 //! `<guest-path>` names the file in the hook's records, `<file>` is where it is on disk (the same
-//! path in a VM). The result is one line on stdout: `changed`, `unchanged`, `removed` (puddle
+//! path in a VM). The result is one line on stdout: `changed`, `unchanged`, `removed` (Puddle
 //! deleted a file it had created) or `left: <reason>` (the file can't be parsed: it is not
 //! touched). Exit status 1 is an I/O error (message on stderr), 2 bad usage.
 //!
-//! A small state file per guest path (in `<state-dir>`) records the keys puddle owned at the
-//! last apply and whether puddle created the file, so a later apply drops keys puddle no longer
-//! owns, and `remove` deletes exactly puddle's keys (and the file, if puddle created it and
+//! A small state file per guest path (in `<state-dir>`) records the keys Puddle owned at the
+//! last apply and whether Puddle created the file, so a later apply drops keys Puddle no longer
+//! owns, and `remove` deletes exactly Puddle's keys (and the file, if Puddle created it and
 //! nothing else is left).
 //!
 //! The file is rewritten atomically (temporary file, then rename) with its mode and owner kept;
@@ -38,10 +38,10 @@ use serde::{Deserialize, Serialize};
 pub enum Action {
     /// Set the owned keys (the spec comes on stdin); create the file with `mode` if missing.
     Apply {
-        /// Permission bits for a file puddle creates.
+        /// Permission bits for a file Puddle creates.
         mode: u32,
     },
-    /// Remove the keys puddle owned (no provider lists the file any more).
+    /// Remove the keys Puddle owned (no provider lists the file any more).
     Remove,
     /// Drop the record only (the file is now written whole by a replace).
     Forget,
@@ -99,7 +99,7 @@ pub enum Outcome {
     Changed,
     /// Nothing needed writing.
     Unchanged,
-    /// puddle deleted the file it had created.
+    /// Puddle deleted the file it had created.
     Removed,
     /// The file is left as it is, for this reason.
     Left(String),
@@ -166,7 +166,7 @@ pub fn run(request: &Request, stdin: impl Read) -> Result<Outcome, MergeFileErro
             let spec: MergeSpec =
                 serde_json::from_slice(&input).map_err(|e| MergeFileError::Spec(e.to_string()))?;
             let applied = apply(request, &spec, mode);
-            // The line in `ssh_config` only improves a message: a file puddle can't read or
+            // The line in `ssh_config` only improves a message: a file Puddle can't read or
             // write is left as it is, with a notice, and never stops the boot.
             match applied {
                 Err(e @ MergeFileError::Io { .. }) if spec.format() == MergeFormat::SshConfig => {
@@ -348,7 +348,7 @@ fn state_path(request: &Request) -> PathBuf {
 fn read_state(request: &Request) -> Result<Option<State>, MergeFileError> {
     let path = state_path(request);
     match fs::read(&path) {
-        // An unreadable or foreign record counts as none: puddle then owns nothing yet.
+        // An unreadable or foreign record counts as none: Puddle then owns nothing yet.
         Ok(bytes) => Ok(serde_json::from_slice::<State>(&bytes)
             .ok()
             .filter(|s| s.path == request.key)),
@@ -471,7 +471,7 @@ mod tests {
             fs::metadata(&r.file).unwrap().permissions().mode() & 0o7777,
             0o600
         );
-        // Not created by puddle: removing the keys keeps the file, exactly as it was.
+        // Not created by Puddle: removing the keys keeps the file, exactly as it was.
         assert_eq!(run(&r, io::empty()).unwrap(), Outcome::Changed);
         assert_eq!(fs::read_to_string(&r.file).unwrap(), LOGIN);
     }
@@ -668,7 +668,7 @@ mod tests {
             why.starts_with("left: ") && why.contains("not a regular file"),
             "{why}"
         );
-        // The same failure for a file puddle needs, such as the Docker config, stays an error.
+        // The same failure for a file Puddle needs, such as the Docker config, stays an error.
         let r = req(&d, Action::Apply { mode: 0o640 });
         fs::create_dir_all(&r.file).unwrap();
         assert!(run(&r, docker().as_slice()).is_err());

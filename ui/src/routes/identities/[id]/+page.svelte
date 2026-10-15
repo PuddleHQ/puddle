@@ -161,7 +161,7 @@
                 <p class="problem" role="status">{check.message}</p>
               {:else if check.state === "ok"}
                 <p class="muted" role="status">
-                  puddle can read it. (It checks that a token comes back, and
+                  Puddle can read it. (It checks that a token comes back, and
                   never shows it.)
                 </p>
               {/if}

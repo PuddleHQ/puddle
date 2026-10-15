@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `Alt-Svc` on responses puddle decrypts: the HTTP/3 alternatives are removed.
+//! `Alt-Svc` on responses Puddle decrypts: the HTTP/3 alternatives are removed.
 //!
 //! A workspace has no UDP path out, so a client that is told "this server speaks HTTP/3" would
 //! try it, fail and only then use TCP. Removing the `h3` entries (and the draft and Google
 //! variants of them) spares it the attempt; every other entry, and every other field, goes to the
-//! guest as the server sent it. A spliced connection is not touched: puddle does not see inside it,
+//! guest as the server sent it. A spliced connection is not touched: Puddle does not see inside it,
 //! and the client falls back on its own when its QUIC attempt fails.
 
 use ::http::HeaderMap;

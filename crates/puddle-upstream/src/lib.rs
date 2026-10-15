@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The company proxy in front of puddle.
+//! The company proxy in front of Puddle.
 //!
 //! Many networks only let a machine out through an HTTP proxy, chosen per URL by a PAC script or
 //! WPAD, and some proxies demand Windows sign-in. This crate holds the host side of that:
@@ -20,7 +20,7 @@
 //!   passed, `CONNECT` and absolute-form through proxies, fallback to the next hop when one is
 //!   unreachable, and the `407` loop on one connection with [`ProxyAuth`] ([`BasicAuth`] from
 //!   configured credentials; SSPI is [`NegotiateAuth`]). [`host::connect`] is the same for
-//!   puddle's own requests.
+//!   Puddle's own requests.
 //! - [`TlsClient`]: TLS on top of such a connection, verified by the platform's verifier plus
 //!   the corporate roots ([`tls_connect`]).
 //!

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Git identities: who commits (the author) and which credential puddle adds on the way out,
+//! Git identities: who commits (the author) and which credential Puddle adds on the way out,
 //! per host and per owner or organisation (`docs/arch/spec/credentials.md` §7 and §8).
 //!
 //! An [`Identity`] never holds a secret: a [`CredentialBinding`] names a [`SourceSpec`], the place

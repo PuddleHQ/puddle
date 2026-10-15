@@ -163,13 +163,13 @@ describe("CreateWorkspaceDialog", () => {
   );
 
   it("shows any other refusal for the whole form, and keeps what was typed", async () => {
-    mount({ ok: false, message: "puddle's service isn't answering." });
+    mount({ ok: false, message: "Puddle's service isn't answering." });
     await screen.findByRole("dialog");
     await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
     await fireEvent.click(submit());
     await vi.waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(
-        "puddle's service isn't answering.",
+        "Puddle's service isn't answering.",
       ),
     );
     expect(field("Git repository (HTTPS)").value).toBe(

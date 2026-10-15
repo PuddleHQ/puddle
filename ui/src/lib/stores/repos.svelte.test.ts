@@ -85,7 +85,7 @@ describe("load", () => {
     api.down = true;
     await lists.load({});
     expect(lists.status).toBe("failed");
-    expect(lists.message).toBe("puddle's service isn't answering.");
+    expect(lists.message).toBe("Puddle's service isn't answering.");
   });
 
   it("never lets a slow older answer replace a newer one", async () => {
@@ -186,7 +186,7 @@ describe("more", () => {
     await lists.load({ limit: 1 });
     api.down = true;
     await lists.more();
-    expect(lists.message).toBe("puddle's service isn't answering.");
+    expect(lists.message).toBe("Puddle's service isn't answering.");
     expect(lists.listing?.repos).toHaveLength(1);
   });
 
@@ -246,7 +246,7 @@ describe("refresh", () => {
     await lists.load({});
     api.down = true;
     await lists.refresh();
-    expect(lists.message).toBe("puddle's service isn't answering.");
+    expect(lists.message).toBe("Puddle's service isn't answering.");
   });
 
   it("does not touch a screen that is gone", async () => {

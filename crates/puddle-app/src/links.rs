@@ -24,7 +24,7 @@ pub fn open_failed(url: &Url, reason: &str) -> Problem {
     Problem::new(
         PROBLEM_KEY,
         format!(
-            "puddle could not open a link in your browser ({})",
+            "Puddle could not open a link in your browser ({})",
             where_to(url)
         ),
         format!(
@@ -40,8 +40,8 @@ pub fn open_failed(url: &Url, reason: &str) -> Problem {
 pub fn refused(url: &Url) -> Problem {
     Problem::new(
         PROBLEM_KEY,
-        format!("puddle did not follow a link ({}:)", url.scheme()),
-        "puddle only opens web addresses (http or https) from this window, so nothing was opened.",
+        format!("Puddle did not follow a link ({}:)", url.scheme()),
+        "Puddle only opens web addresses (http or https) from this window, so nothing was opened.",
     )
 }
 

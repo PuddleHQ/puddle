@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! A registry that cancels an HTTP/2 stream in the middle of a layer download (`RST_STREAM`
 //! with `CANCEL`, as a CDN does now and then) must not fail the pull: the adapter's real
-//! `pull_image` goes through puddle's [`PullProxy`] to a TLS registry that speaks only HTTP/2,
+//! `pull_image` goes through Puddle's [`PullProxy`] to a TLS registry that speaks only HTTP/2,
 //! the first download of the layer is cut after part of its bytes, and the pull comes back with
 //! the image's config after the layer's download resumed with a `Range` request instead of
 //! restarting. A registry that never stops cancelling ends in an error that says why.

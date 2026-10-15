@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# cargo-about: third-party notices for puddle's own dependency tree (`cargo xtask notices`).
+# cargo-about: third-party notices for Puddle's own dependency tree (`cargo xtask notices`).
 # `accepted` mirrors deny.toml's licence allow list: cargo-deny decides what may be used, this
 # only says which licence of an `OR` expression to attribute. Our own crates are publish = false.
 accepted = [
@@ -25,7 +25,7 @@ accepted = [
     "CDLA-Permissive-2.0",
     "Unlicense",
 ]
-# The platforms puddle ships for (host on Windows, guest agent on Linux musl) and develops on.
+# The platforms Puddle ships for (host on Windows, guest agent on Linux musl) and develops on.
 targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"]
 ignore-dev-dependencies = true
 ignore-build-dependencies = false

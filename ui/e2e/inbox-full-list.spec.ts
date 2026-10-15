@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The inbox when a workspace has as many waiting requests as puddle lists (1000): the notice
+// The inbox when a workspace has as many waiting requests as Puddle lists (1000): the notice
 // says so, a new host past the limit gets no row until the user answers some, and nothing
 // else changes. Against the real API on the fixture backend, with the real store's limit.
 import type { Page } from "@playwright/test";
@@ -34,7 +34,7 @@ test.describe("a workspace with a full list of waiting requests", () => {
 
     const notice = page.getByRole("status").filter({ hasText: "flood has" });
     await expect(notice).toContainText(
-      `flood has ${LIMIT} waiting requests, the most puddle lists`,
+      `flood has ${LIMIT} waiting requests, the most Puddle lists`,
     );
     await expect(rows(page)).toHaveCount(LIMIT);
     await expect(rows(page).filter({ hasText: `n${LIMIT}.` })).toHaveCount(0);

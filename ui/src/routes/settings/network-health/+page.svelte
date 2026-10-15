@@ -45,7 +45,7 @@
     <p class="crumb"><a href="/settings#s-net">&larr; Settings</a></p>
     <h1 bind:this={heading} tabindex="-1">Network health</h1>
     <p class="sub">
-      How puddle reaches the internet from this computer: the proxy it found,
+      How Puddle reaches the internet from this computer: the proxy it found,
       how it signs in, and the company certificates workspaces get. Passwords
       and tokens are never shown.
     </p>
@@ -63,11 +63,11 @@
   <p class="muted" role="status">Loading&hellip;</p>
 {:else if store.status === "failed"}
   <p class="error" role="alert">
-    Couldn't read the network report. puddle's service isn't answering.
+    Couldn't read the network report. Puddle's service isn't answering.
   </p>
 {:else if store.status === "unavailable" && !report}
   <p class="muted" role="status">
-    This puddle can't report on the network yet.
+    This Puddle can't report on the network yet.
   </p>
 {:else if report}
   <section class="card" aria-labelledby="h-summary">
@@ -137,7 +137,7 @@
           >
           (change number {report.proxy.epoch})
         {:else}
-          None since puddle started
+          None since Puddle started
         {/if}
       </dd>
     </dl>
@@ -169,7 +169,7 @@
   <section class="card" aria-labelledby="h-sign">
     <h2 id="h-sign">Signing in to the proxy</h2>
     <p>
-      puddle can answer with:
+      Puddle can answer with:
       {#if report.sign_in.methods.length === 0}
         <b>nothing</b>. It cannot sign in to a proxy on this system.
       {:else}
@@ -265,7 +265,7 @@
         {/each}
       </ul>
     {/if}
-    <h3>Left out of puddle's own TLS checks</h3>
+    <h3>Left out of Puddle's own TLS checks</h3>
     {#if report.roots.left_out_of_tls.length === 0}
       <p class="muted">No certificate was left out.</p>
     {:else}
@@ -294,7 +294,7 @@
   <section class="card" aria-labelledby="h-pull">
     <h2 id="h-pull">Image downloads</h2>
     <dl>
-      <dt>Through puddle's pull proxy</dt>
+      <dt>Through Puddle's pull proxy</dt>
       <dd>
         {report.pull_proxy.active ? "Yes" : "No"}
       </dd>
@@ -308,7 +308,7 @@
   <section class="card" aria-labelledby="h-routes">
     <h2 id="h-routes">Routes chosen</h2>
     <p class="desc">
-      How puddle reached each destination since the last network change, in
+      How Puddle reached each destination since the last network change, in
       order of preference. At most 100.
     </p>
     {#if report.routes.length === 0}

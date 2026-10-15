@@ -18,12 +18,12 @@ use crate::registry::{HoldKind, Holder, Registry};
 use crate::trim::{self, TrimReport, tail};
 use crate::{Layout, WorkspaceError, checkout_name};
 
-/// Prefix of puddle's short-lived maintenance sandboxes: `m--<workspace id>` (fits the 63
+/// Prefix of Puddle's short-lived maintenance sandboxes: `m--<workspace id>` (fits the 63
 /// characters of a sandbox name for the longest workspace id). Reconcile may remove
 /// leftovers with this prefix.
 pub const MAINTENANCE_PREFIX: &str = "m--";
 
-/// Whether `name` is one of puddle's maintenance sandboxes.
+/// Whether `name` is one of Puddle's maintenance sandboxes.
 #[must_use]
 pub fn is_maintenance_name(name: &str) -> bool {
     name.strip_prefix(MAINTENANCE_PREFIX)
@@ -114,10 +114,10 @@ enum JobOutput {
 /// The workspace lifecycle (ADR 0006): one named disk volume `ws-<id>` per workspace, mounted at
 /// `/workspaces/<id>` (see [`Layout`]), attached to one sandbox at a time.
 ///
-/// Holder tracking is puddle's own (point 8): a sandbox created with a workspace holds it until
+/// Holder tracking is Puddle's own (point 8): a sandbox created with a workspace holds it until
 /// [`Workspaces::sandbox_removed`], running or stopped, and any other attach is refused with
 /// [`WorkspaceError::InUse`] naming it, before msb is asked. A running holder the registry doesn't
-/// know (another puddle, or one before a restart) is found through the runtime's own holder
+/// know (another Puddle, or one before a restart) is found through the runtime's own holder
 /// lookup. The registry lives in memory; reconcile rebuilds it with [`Workspaces::adopt`].
 ///
 /// Generic over the runtime: every method takes the [`Runtime`] it works on.
@@ -143,7 +143,7 @@ impl Workspaces {
         &self.config
     }
 
-    /// Who holds workspace `id`, as far as puddle tracks it.
+    /// Who holds workspace `id`, as far as Puddle tracks it.
     #[must_use]
     pub fn holder(&self, id: &WorkspaceId) -> Option<Holder> {
         self.registry.holder(id)
@@ -338,7 +338,7 @@ impl Workspaces {
         }
     }
 
-    /// Creates puddle's directory on the volume (see [`Layout`]); run after every boot. Idempotent.
+    /// Creates Puddle's directory on the volume (see [`Layout`]); run after every boot. Idempotent.
     ///
     /// # Errors
     ///
@@ -496,7 +496,7 @@ impl Workspaces {
         Ok(report)
     }
 
-    /// Stops `sandbox` the puddle way: `fstrim` on every workspace it owns first (ADR 0006
+    /// Stops `sandbox` the Puddle way: `fstrim` on every workspace it owns first (ADR 0006
     /// point 7), then [`Sandbox::stop`]. A failed trim is logged and reported, and the stop goes
     /// ahead. A sandbox that is already down is just stopped (a no-op).
     ///
@@ -584,7 +584,7 @@ impl Workspaces {
         id: &WorkspaceId,
     ) -> Result<DeleteReport, WorkspaceError> {
         let Some(info) = self.volume_if_any(rt, id).await? else {
-            // The volume is gone (lost or removed outside puddle): nothing to inspect, nothing
+            // The volume is gone (lost or removed outside Puddle): nothing to inspect, nothing
             // to lose. The caller only asks about workspaces it lists.
             return Ok(DeleteReport {
                 workspace: id.clone(),
@@ -793,7 +793,7 @@ impl Workspaces {
         match &info.holder {
             None => Ok(None),
             Some(name) => SandboxName::new(name).map(Some).map_err(|_| {
-                // Not a name puddle could have made: someone else's sandbox has it.
+                // Not a name Puddle could have made: someone else's sandbox has it.
                 WorkspaceError::InUse {
                     workspace: id.to_string(),
                     holder: name.clone(),

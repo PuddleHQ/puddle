@@ -98,7 +98,7 @@ describe("a workspace's rule sets", () => {
     await waitFor(() => expect(toasts.items.at(-1)?.message).toBe("Boom."));
   });
 
-  it("says when nothing is allowed by puddle itself", () => {
+  it("says when nothing is allowed by Puddle itself", () => {
     store.system = [];
     render(WorkspaceSets, { props: { store, workspace: "api" } } as never);
     expect(

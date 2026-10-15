@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The seam where puddle reads a login's token exchange.
+//! The seam where Puddle reads a login's token exchange.
 //!
 //! Everything else on a terminated connection streams; a token endpoint is the one place the
 //! proxy reads bodies. A workspace's [`ExchangeRewriter`] is asked, for each request, whether it is

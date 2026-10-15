@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The host side of the identities screens: which accounts are already signed in on this computer,
-//! whether puddle can read a credential now, a pasted token's entry in the OS credential store, and
+//! whether Puddle can read a credential now, a pasted token's entry in the OS credential store, and
 //! signing in on a click ([`CredentialService`]). [`HostCredentials`] runs the real sources;
 //! [`FakeCredentials`] answers from what a test or the UI fixture put in it.
 //!
@@ -60,7 +60,7 @@ pub trait CredentialService: Send + Sync {
     /// Removes a pasted token; one that is already gone counts as removed.
     fn forget_token(&self, id: StoredId) -> BoxFuture<'_, Result<(), CredentialsError>>;
 
-    /// Starts a sign-in the user finishes outside puddle. Only ever from a click.
+    /// Starts a sign-in the user finishes outside Puddle. Only ever from a click.
     fn sign_in(&self, source: SourceSpec) -> BoxFuture<'_, Result<SignInStart, CredentialsError>>;
 }
 

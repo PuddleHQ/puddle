@@ -18,7 +18,7 @@ pub(crate) struct DoctorQuery {
     boot: Option<bool>,
 }
 
-/// Checks this computer for what puddle needs (virtualization, the hypervisor, the bundled
+/// Checks this computer for what Puddle needs (virtualization, the hypervisor, the bundled
 /// runtime, a test boot) and says the exact fix for each problem. It needs no administrator
 /// rights. With the test boot it takes a few seconds and up to about 30; checks that overlap run
 /// one after another.

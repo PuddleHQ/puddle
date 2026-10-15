@@ -50,9 +50,9 @@ fn text_report_has_the_fix_line() {
     let text = String::from_utf8(out.stdout).unwrap();
     assert!(text.starts_with("puddle doctor (puddle "), "{text}");
     assert!(text.contains("FAIL  Bundled runtime"), "{text}");
-    assert!(text.contains("fix:  Reinstall puddle"), "{text}");
+    assert!(text.contains("fix:  Reinstall Puddle"), "{text}");
     assert!(
-        text.contains("to fix before puddle can run sandboxes"),
+        text.contains("to fix before Puddle can run sandboxes"),
         "{text}"
     );
 }

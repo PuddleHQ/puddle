@@ -34,7 +34,7 @@ use crate::refusal::{HELLO, Head, read_head};
 /// The relay's read size.
 const CHUNK: usize = 64 * 1024;
 
-/// How long the bridge waits for the endpoint's [`HELLO`]. puddle sends it as
+/// How long the bridge waits for the endpoint's [`HELLO`]. Puddle sends it as
 /// soon as it accepts, before deciding anything, so only a hung or foreign endpoint misses it.
 pub const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -44,7 +44,7 @@ pub const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 pub enum BridgeError {
     /// Nothing listens at the endpoint.
     #[error(
-        "no puddle SSH endpoint at {endpoint}: the workspace is not running, or puddle is not (start it in puddle and connect again)"
+        "no Puddle SSH endpoint at {endpoint}: the workspace is not running, or Puddle is not (start it in Puddle and connect again)"
     )]
     NotFound {
         /// The endpoint.
@@ -52,7 +52,7 @@ pub enum BridgeError {
     },
     /// The endpoint refused this process.
     #[error(
-        "access to the SSH endpoint {endpoint} was denied: only the user running puddle, from an unrestricted process, may connect"
+        "access to the SSH endpoint {endpoint} was denied: only the user running Puddle, from an unrestricted process, may connect"
     )]
     AccessDenied {
         /// The endpoint.
@@ -61,7 +61,7 @@ pub enum BridgeError {
     /// Connecting failed otherwise.
     #[error("could not connect to the SSH endpoint")]
     Connect(#[source] IpcError),
-    /// puddle refused to serve this client.
+    /// Puddle refused to serve this client.
     #[error("{reason}")]
     Refused {
         /// Why, as one printable line.
@@ -69,14 +69,14 @@ pub enum BridgeError {
     },
     /// The endpoint took the connection but didn't answer.
     #[error(
-        "the SSH endpoint did not answer within {waited:?}: puddle may be stuck or the workspace's endpoint is gone (restart the workspace in puddle and connect again)"
+        "the SSH endpoint did not answer within {waited:?}: Puddle may be stuck or the workspace's endpoint is gone (restart the workspace in Puddle and connect again)"
     )]
     NoAnswer {
         /// How long the bridge waited.
         waited: Duration,
     },
-    /// Something other than puddle answered.
-    #[error("the SSH endpoint did not answer as puddle does")]
+    /// Something other than Puddle answered.
+    #[error("the SSH endpoint did not answer as Puddle does")]
     NotPuddle,
     /// Reading from the endpoint failed mid-session.
     #[error("the connection to the workspace broke")]

@@ -12,7 +12,7 @@ use puddle_types::Host;
 /// A pattern covers names *below* its suffix, never the suffix itself, and needs at least two
 /// labels (`*.com` is refused): the set is the only limit on which names the per-workspace
 /// certificate authority signs a leaf for (the CA has no name constraint), so a wide pattern would
-/// widen what puddle impersonates.
+/// widen what Puddle impersonates.
 ///
 /// ```
 /// use puddle_proxy::TerminationSet;

@@ -181,7 +181,7 @@ pub enum ChainError {
         /// Its reason phrase.
         reason: String,
     },
-    /// A proxy wants authentication puddle cannot give (no implementation speaks the schemes it
+    /// A proxy wants authentication Puddle cannot give (no implementation speaks the schemes it
     /// offers, or no credentials are configured).
     #[error("proxy {proxy} requires authentication ({})", schemes.join(", "))]
     AuthRequired {

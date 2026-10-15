@@ -12,11 +12,11 @@ use utoipa::ToSchema;
 pub enum DoctorStatus {
     /// Fine.
     Ok,
-    /// Worth knowing; puddle works.
+    /// Worth knowing; Puddle works.
     Info,
-    /// puddle works, with a limitation the text explains.
+    /// Puddle works, with a limitation the text explains.
     Warn,
-    /// puddle can't run workspaces until this is fixed.
+    /// Puddle can't run workspaces until this is fixed.
     Fail,
     /// Not checked, because an earlier check failed or it doesn't apply.
     Skipped,
@@ -39,7 +39,7 @@ impl From<puddle_doctor::Status> for DoctorStatus {
 #[serde(deny_unknown_fields)]
 pub struct DoctorCheck {
     /// Which check, as a stable `snake_case` code (`virtualization`, `hypervisor`, `runtime`,
-    /// `test_boot`, ...). A newer puddle may add codes: show an unknown one by its title.
+    /// `test_boot`, ...). A newer Puddle may add codes: show an unknown one by its title.
     pub id: String,
     /// The check's name for people.
     pub title: String,

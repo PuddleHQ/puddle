@@ -133,7 +133,7 @@ describe("root layout", () => {
     expect(health.start).toHaveBeenCalledTimes(1);
     expect(live.subscribe).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("region", { name: "Notices" })).toBeInTheDocument();
-    expect(document.title).toBe("Inbox - puddle");
+    expect(document.title).toBe("Inbox - Puddle");
     unmount();
   });
 
@@ -149,10 +149,10 @@ describe("root layout", () => {
 
   it("names an erroring service and a paused event stream", () => {
     live.problem = "failing";
-    live.problemDetail = "puddle's service hit an error (status 500).";
+    live.problemDetail = "Puddle's service hit an error (status 500).";
     const { unmount } = render(Layout, { children: (() => {}) as never });
     expect(screen.getByRole("status")).toHaveTextContent(
-      "puddle's service hit an error (status 500). Retrying.",
+      "Puddle's service hit an error (status 500). Retrying.",
     );
     unmount();
     live.problem = null;
@@ -170,13 +170,13 @@ describe("root layout", () => {
       screen.queryByRole("navigation", { name: "Main" }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("main")).toBeInTheDocument();
-    expect(document.title).toBe("System check - puddle");
+    expect(document.title).toBe("System check - Puddle");
   });
 
   it("puts the pending count in the document title", () => {
     live.pending = 2;
     render(Layout, { children: (() => {}) as never });
-    expect(document.title).toBe("Inbox (2) - puddle");
+    expect(document.title).toBe("Inbox (2) - Puddle");
   });
 });
 

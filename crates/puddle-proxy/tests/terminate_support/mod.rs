@@ -523,7 +523,7 @@ pub(crate) fn workspace(name: &str) -> WorkspaceName {
 /// A workspace's CA.
 pub(crate) fn workspace_ca(name: &str) -> Arc<WorkspaceCa> {
     Arc::new(
-        CaBuilder::new(&format!("puddle test CA ({name})"))
+        CaBuilder::new(&format!("Puddle test CA ({name})"))
             .build()
             .unwrap(),
     )

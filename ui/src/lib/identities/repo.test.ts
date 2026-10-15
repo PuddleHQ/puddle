@@ -51,7 +51,7 @@ describe("parseRepoUrl", () => {
       /Remove the user name/,
     );
     expect(message("https://github.com/a")).toMatch(
-      /not a repository address puddle can read/,
+      /not a repository address Puddle can read/,
     );
   });
 

@@ -33,7 +33,7 @@ const heading = (page: Page, name: string) =>
   page.getByRole("heading", { level: 1, name });
 
 const STEPS = [
-  ["/welcome", "Welcome to puddle"],
+  ["/welcome", "Welcome to Puddle"],
   ["/welcome/check", "System check"],
   ["/welcome/certificates", "Certificates"],
   ["/welcome/connect", "How do you want to connect?"],
@@ -51,8 +51,8 @@ test("a fresh install is led through every step and then opens on the workspaces
 
   await page.goto("/");
   await expect(page).toHaveURL(/\/welcome$/);
-  await expect(heading(page, "Welcome to puddle")).toBeFocused();
-  await expect(page).toHaveTitle("Welcome - puddle");
+  await expect(heading(page, "Welcome to Puddle")).toBeFocused();
+  await expect(page).toHaveTitle("Welcome - Puddle");
   // The app's own navigation stays out of the flow.
   await expect(page.getByRole("navigation", { name: "Main" })).toHaveCount(0);
   await expect(
@@ -167,7 +167,7 @@ test("a blocking finding stops the flow until it is fixed, and the report can be
 
   await page.goto("/welcome/check");
   await expect(
-    page.getByText("1 problem to fix before puddle can run workspaces."),
+    page.getByText("1 problem to fix before Puddle can run workspaces."),
   ).toBeVisible();
   await expect(
     page.getByText("Turn on virtualization in your UEFI setup."),
@@ -230,7 +230,7 @@ test("the first workspace can be skipped", async ({
   await expect(page.getByText("shop-api")).toHaveCount(0);
 });
 
-test("the certificates step counts the company roots puddle will add", async ({
+test("the certificates step counts the company roots Puddle will add", async ({
   page,
   backend,
   request,

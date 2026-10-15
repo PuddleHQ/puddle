@@ -138,7 +138,7 @@ describe("network health page", () => {
     );
   });
 
-  it("says plainly when a state is one this version of puddle cannot name", () => {
+  it("says plainly when a state is one this version of Puddle cannot name", () => {
     const r = report();
     r.proxy.detected = "unknown";
     r.proxy.mode = "unknown";
@@ -167,17 +167,17 @@ describe("network health page", () => {
     render(Page);
     expect(
       within(section("Proxy setup")).getByText(
-        "A kind of setup this version of puddle doesn't recognise",
+        "A kind of setup this version of Puddle doesn't recognise",
       ),
     ).toBeInTheDocument();
     expect(
       within(section("Proxy setup")).getByText(
-        "A source this version of puddle doesn't recognise",
+        "A source this version of Puddle doesn't recognise",
       ),
     ).toBeInTheDocument();
     expect(
       within(section("Signing in to the proxy")).getByText(
-        "An ending this version of puddle doesn't recognise",
+        "An ending this version of Puddle doesn't recognise",
       ),
     ).toBeInTheDocument();
     expect(
@@ -185,7 +185,7 @@ describe("network health page", () => {
     ).toBeInTheDocument();
     expect(
       within(section("Routes chosen")).getByText(
-        "A way of choosing this version of puddle doesn't recognise",
+        "A way of choosing this version of Puddle doesn't recognise",
       ),
     ).toBeInTheDocument();
   });
@@ -235,7 +235,7 @@ describe("network health page", () => {
       within(section("Proxy setup")).getByText("30 s"),
     ).toBeInTheDocument();
     expect(
-      within(section("Proxy setup")).getByText("None since puddle started"),
+      within(section("Proxy setup")).getByText("None since Puddle started"),
     ).toBeInTheDocument();
     expect(
       within(section("Company certificates")).getByText("Not read yet."),
@@ -250,7 +250,7 @@ describe("network health page", () => {
     ).toBeInTheDocument();
   });
 
-  it("lists the certificates left out of puddle's own TLS checks, with the reason", () => {
+  it("lists the certificates left out of Puddle's own TLS checks, with the reason", () => {
     const r = report();
     r.roots.left_out_of_tls = [
       {
@@ -265,7 +265,7 @@ describe("network health page", () => {
     expect(screen.getByText("1 problem found.")).toBeInTheDocument();
     const list = within(section("Company certificates"));
     expect(
-      list.getByText("Left out of puddle's own TLS checks"),
+      list.getByText("Left out of Puddle's own TLS checks"),
     ).toBeInTheDocument();
     expect(list.getByText(/Corp CA/)).toBeInTheDocument();
     expect(list.getByText(/\(no name\)/)).toBeInTheDocument();
@@ -283,7 +283,7 @@ describe("network health page", () => {
     ).toBeInTheDocument();
   });
 
-  it("lists a proxy setting puddle cannot use among the problems, drawn as text", () => {
+  it("lists a proxy setting Puddle cannot use among the problems, drawn as text", () => {
     const r = report();
     r.proxy.problems = [
       {
@@ -297,7 +297,7 @@ describe("network health page", () => {
     expect(screen.getByText("1 problem found.")).toBeInTheDocument();
     expect(
       screen.getByText(
-        /puddle can't use part of the proxy settings: the HTTPS_PROXY variable \("<b>socks5/,
+        /Puddle can't use part of the proxy settings: the HTTPS_PROXY variable \("<b>socks5/,
       ),
     ).toBeInTheDocument();
   });

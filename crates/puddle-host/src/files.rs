@@ -194,7 +194,7 @@ impl WorkspaceBook {
         })?;
         if file.version > BOOK_VERSION {
             return Err(Self::error(format!(
-                "{} was written by a newer puddle (version {})",
+                "{} was written by a newer Puddle (version {})",
                 self.path.display(),
                 file.version
             )));
@@ -337,7 +337,7 @@ mod tests {
             book.load()
                 .unwrap_err()
                 .to_string()
-                .contains("newer puddle")
+                .contains("newer Puddle")
         );
         let bad = json!({"version": 1, "workspaces": [{
             "id": "Not A Name", "name": "x", "repo_url": "u", "image": "i", "memory_mib": 1,

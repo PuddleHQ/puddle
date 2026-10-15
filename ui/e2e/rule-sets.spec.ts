@@ -40,7 +40,7 @@ test.beforeEach(async ({ backend }) => {
   await backend.control.reset("default");
 });
 
-test("System managed lists what puddle allows for the editor, with the reason", async ({
+test("System managed lists what Puddle allows for the editor, with the reason", async ({
   page,
   backend,
 }) => {

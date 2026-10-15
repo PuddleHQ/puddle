@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The host certificate stores puddle reads, and a snapshot of their contents.
+//! The host certificate stores Puddle reads, and a snapshot of their contents.
 //!
 //! Which stores: every root an admin or the user deliberately added,
 //! so the physical `Root` stores `.Default`, `.GroupPolicy` and `.Enterprise` (Intune lands in

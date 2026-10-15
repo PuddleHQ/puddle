@@ -40,7 +40,7 @@ pub struct RuleSetInfo {
     pub overrides: Vec<(WorkspaceName, bool)>,
     /// Its entries.
     pub entries: Vec<RuleSetEntryInfo>,
-    /// Built-in sets: when a puddle update last changed the entries (R-36), else `None`.
+    /// Built-in sets: when a Puddle update last changed the entries (R-36), else `None`.
     pub changed_at: Option<u64>,
     /// Sets the user made: when.
     pub created_at: Option<u64>,
@@ -80,7 +80,7 @@ pub struct RuleSetEntryInfo {
     pub expires_at: Option<u64>,
 }
 
-/// One host puddle allows because of the user's setup (R-40, R-41).
+/// One host Puddle allows because of the user's setup (R-40, R-41).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemHost {
     /// The pattern as written in the catalogue (`*.gallery.vsassets.io`).
@@ -103,7 +103,7 @@ pub struct SystemPlan {
 }
 
 /// The set with this wire id (`builtin:<slug>`, `user:<id>`, `system`), if it parses. A built-in
-/// slug must be one this puddle ships.
+/// slug must be one this Puddle ships.
 ///
 /// ```
 /// use puddle_store::parse_rule_set;
@@ -217,7 +217,7 @@ fn load_reasons(
     Ok(out)
 }
 
-/// Records what a puddle update changed in the built-in sets since this database last saw them
+/// Records what a Puddle update changed in the built-in sets since this database last saw them
 /// (R-36): one `rule_set_changed` per changed set. A set seen for the first time is only noted.
 pub(super) fn note_built_in_changes(conn: &mut Connection, now: u64) -> Result<(), StoreError> {
     let tx = conn.transaction()?;

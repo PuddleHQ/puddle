@@ -344,7 +344,7 @@ test.describe("live", () => {
     await expect(rowFor(page, "live.example.com")).toBeVisible({
       timeout: 20_000,
     });
-    await expect(page).toHaveTitle("Inbox (2) - puddle");
+    await expect(page).toHaveTitle("Inbox (2) - Puddle");
     await expect(page.getByTestId("pending-badge")).toContainText("2 pending");
     await ask(backend, "shop", "live.example.com", { repeat: 2 });
     await expect(rowFor(page, "live.example.com")).toContainText("3 attempts", {
@@ -382,12 +382,12 @@ test.describe("live", () => {
   }) => {
     await ask(backend, "shop", "badge.example.com");
     await openInbox(page, backend);
-    await expect(page).toHaveTitle("Inbox (2) - puddle");
+    await expect(page).toHaveTitle("Inbox (2) - Puddle");
     await rowFor(page, "badge.example.com")
       .getByRole("button", { name: /^Allow/ })
       .click();
     await expect(rowFor(page, "badge.example.com")).toHaveCount(0);
-    await expect(page).toHaveTitle("Inbox (1) - puddle");
+    await expect(page).toHaveTitle("Inbox (1) - Puddle");
     await expect(page.getByTestId("pending-badge")).toContainText("1 pending");
   });
 

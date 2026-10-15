@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! puddle's local HTTP API axum on `127.0.0.1`, an SSE event stream, and the
+//! Puddle's local HTTP API axum on `127.0.0.1`, an SSE event stream, and the
 //! `OpenAPI` contract the UI and CLI are generated from (ADR 0004).
 //!
 //! # Security

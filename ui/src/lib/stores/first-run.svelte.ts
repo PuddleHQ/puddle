@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Whether the first-run flow has been through, as the API keeps it (in puddle's settings).
+// Whether the first-run flow has been through, as the API keeps it (in Puddle's settings).
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
 
@@ -33,7 +33,7 @@ export class FirstRunStore {
     }
   }
 
-  /** Records that the flow was finished or skipped; says why when puddle could not keep that. */
+  /** Records that the flow was finished or skipped; says why when Puddle could not keep that. */
   async complete(): Promise<{ ok: true } | { ok: false; message: string }> {
     try {
       const { data, error } = await this.#api.PUT("/api/first-run", {
@@ -44,15 +44,15 @@ export class FirstRunStore {
           ok: false,
           message:
             error?.error === "newer_settings"
-              ? "These settings were saved by a newer puddle. Update puddle to change them."
-              : (error?.message ?? "puddle refused that."),
+              ? "These settings were saved by a newer Puddle. Update Puddle to change them."
+              : (error?.message ?? "Puddle refused that."),
         };
       }
       this.state = data;
       this.status = "ready";
       return { ok: true };
     } catch {
-      return { ok: false, message: "puddle's service isn't answering." };
+      return { ok: false, message: "Puddle's service isn't answering." };
     }
   }
 }

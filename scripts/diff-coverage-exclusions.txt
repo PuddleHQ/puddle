@@ -52,7 +52,7 @@ crates/puddle-fs/src/private/unix.rs | Err(CheckError::Io(err)) => Err(err), | t
 crates/puddle-host/src/data_folder.rs | Err(err) => return Err(refuse(&store, &err)), | creating the database file failing for a reason other than it existing (disk full, permission); not reproducible without a failing file system
 crates/puddle-host/src/data_folder.rs | changed = %changed.join("; "), | a field of the one log line; the line is only evaluated with a tracing subscriber installed, and tests install none
 crates/puddle-secrets/src/keyring_store.rs | * | the OS credential store exists on a desktop session or the Windows job, not on the Linux gate host; `the_os_store_round_trips_a_test_owned_entry` runs there against a test-owned entry and skips where no store exists
-crates/puddle-api/src/wire/identities.rs | _ => return None, | the arm for a source kind a newer puddle adds to the non-exhaustive enum; no such kind exists yet
+crates/puddle-api/src/wire/identities.rs | _ => return None, | the arm for a source kind a newer Puddle adds to the non-exhaustive enum; no such kind exists yet
 crates/puddle-store/src/store/identities.rs | )?; | the closing line of a statement that spans lines: the error branch of a SQLite failure inside a transaction; not reproducible against an in-memory database
 crates/puddle-store/src/store/identities.rs | other => return Err(corrupt(format!("unknown signing {other}"))), | the column has a CHECK that allows only none, so a database cannot hold another value
 crates/puddle-secrets/src/discovery.rs | return Vec::new(); | the two host names are literals that always parse; the guard exists only to avoid an unwrap
@@ -137,5 +137,11 @@ crates/puddle-agent/src/vsock.rs | std::env::var_os("PUDDLE_REQUIRE_VSOCK").is_n
 crates/puddle-api/src/routes/identities.rs | .inspect_err(|err| tracing::warn!(%err, "the pasted tokens in use could not be listed")) | a damaged environment-secret row makes the list of ids in use unreadable; the API cannot damage a row, and the store's own test (`the_ids_in_use_are_not_listed_when_a_secret_row_is_damaged`) covers the error it returns
 crates/puddle-api/src/routes/identities.rs | None => true, | same row: every token is reported as left when the list of ids in use cannot be read
 crates/puddle-host/src/vault.rs | tracing::warn!(%err, "credential store sweep skipped: the rows could not be read"); | a damaged environment-secret row makes the list of ids in use unreadable; only the store's own test can damage one (`the_ids_in_use_are_not_listed_when_a_secret_row_is_damaged`), and the arm only names the cause for the problem the user sees
-crates/puddle-host/src/vault.rs | "puddle could not read which tokens and secrets it still uses" | same arm: the cause it reports
+crates/puddle-host/src/vault.rs | "Puddle could not read which tokens and secrets it still uses" | same arm: the cause it reports
 crates/puddle-host/src/vault.rs | })?; | same arm: the closing line of the call that returns early
+crates/puddle-host/src/workspaces.rs | "this Puddle has no desktop shell to open an editor from", | a message no test reaches; the line only changed the spelling of the product name
+crates/puddle-host/src/workspaces.rs | "Puddle is shutting down".to_owned(), | a message no test reaches; the line only changed the spelling of the product name
+crates/puddle-host/src/workspaces.rs | return Err("Puddle is shutting down".to_owned()); | a message no test reaches; the line only changed the spelling of the product name
+crates/puddle/src/cmd/doctor.rs | eprintln!("puddle: can't find Puddle's own folder: {e}"); | a message no test reaches; the line only changed the spelling of the product name
+crates/puddle/src/cmd/serve.rs | println!("Puddle is up at {}", host.url()); | a message no test reaches; the line only changed the spelling of the product name
+crates/xtask/src/lib.rs | inventory.render("The Rust crates in Puddle's own programs, with their licences."), | a message no test reaches; the line only changed the spelling of the product name

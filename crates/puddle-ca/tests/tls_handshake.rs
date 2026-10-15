@@ -31,7 +31,7 @@ fn provider() -> Arc<rustls::crypto::CryptoProvider> {
 
 fn workspace_ca() -> Arc<WorkspaceCa> {
     Arc::new(
-        CaBuilder::new("puddle proxy CA (workspace t)")
+        CaBuilder::new("Puddle proxy CA (workspace t)")
             .build()
             .unwrap(),
     )

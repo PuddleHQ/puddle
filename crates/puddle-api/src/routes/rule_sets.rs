@@ -26,7 +26,7 @@ fn user_set(text: &str) -> Result<i64, ApiError> {
     match set_id(text)? {
         RuleSetId::User(id) => Ok(id),
         _ => Err(ApiError::invalid(format!(
-            "{text} ships with puddle and can't be changed; switch it off instead"
+            "{text} ships with Puddle and can't be changed; switch it off instead"
         ))),
     }
 }
@@ -48,7 +48,7 @@ fn wire_system_hosts(
                 tracing::warn!(
                     host = pattern,
                     reason = ?reason,
-                    "System managed host left out: this puddle does not know its reason"
+                    "System managed host left out: this Puddle does not know its reason"
                 );
             }
             shown

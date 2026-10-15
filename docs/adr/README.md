@@ -1,6 +1,6 @@
 # Architecture decision records
 
-Why puddle is built the way it is. One file per decision, numbered in order; a later ADR that
+Why Puddle is built the way it is. One file per decision, numbered in order; a later ADR that
 changes an earlier one says so at the top of both ("amended by" / "Amends").
 
 | ADR | Decision | Status |

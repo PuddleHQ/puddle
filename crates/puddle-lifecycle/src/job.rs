@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The kill-on-close job object puddle and every process it starts run in (Windows).
+//! The kill-on-close job object Puddle and every process it starts run in (Windows).
 //!
 //! [`contain_this_process`] creates one job with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, puts the
 //! current process in it, and keeps the only handle until the process ends. Children inherit
 //! the job, msb's VMM processes included (the SDK starts them without
 //! `CREATE_BREAKAWAY_FROM_JOB` and adds them to a nested per-sandbox job of its own), and the
-//! job doesn't allow breakaway. When puddle ends in any way, `TerminateProcess` included, the
+//! job doesn't allow breakaway. When Puddle ends in any way, `TerminateProcess` included, the
 //! handle closes and Windows kills everything left in the job.
 //!
 //! This is the one place to add job limits (UI restrictions, a process count) for a
@@ -16,13 +16,13 @@ use crate::LifecycleError;
 /// What [`contain_this_process`] did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Containment {
-    /// This process is now in puddle's kill-on-close job (or already was).
+    /// This process is now in Puddle's kill-on-close job (or already was).
     Contained,
     /// Not Windows: nothing to do.
     NotNeeded,
 }
 
-/// Puts this process in puddle's kill-on-close job (see the module docs). Call it once, before
+/// Puts this process in Puddle's kill-on-close job (see the module docs). Call it once, before
 /// starting any child process; later calls do nothing.
 ///
 /// # Errors

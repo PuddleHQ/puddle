@@ -15,7 +15,7 @@
 //!    event tells the user no identity covers the owner, once the workspace's own tool has had a
 //!    moment to retry with a credential it holds). A
 //!    source that cannot supply the secret: `502` (the cache the secret is read through raises the
-//!    sign-in notice). A `401` to the credential puddle added becomes a `403` and a sign-in notice:
+//!    sign-in notice). A `401` to the credential Puddle added becomes a `403` and a sign-in notice:
 //!    the workspace holds no credential to answer it with.
 
 use std::collections::HashMap;
@@ -41,7 +41,7 @@ use crate::source::{CredentialSource, GitSettings};
 const MAX_LFS_BATCH: usize = 256 * 1024;
 
 /// What the guest reads when the store offers a way to choose that this reading does not know.
-const UNCHOOSABLE: &str = "puddle could not choose a credential for this request";
+const UNCHOOSABLE: &str = "Puddle could not choose a credential for this request";
 
 /// A notice about the same thing is raised at most once in this long, however many requests
 /// meet it (a Git client retries).
@@ -107,7 +107,7 @@ impl GitInjector {
                     400,
                     "bad_git_path",
                     format!(
-                        "this request names a Git repository in a way puddle cannot read safely ({why}); nothing was sent to {host}. Use the repository's plain address"
+                        "this request names a Git repository in a way Puddle cannot read safely ({why}); nothing was sent to {host}. Use the repository's plain address"
                     ),
                 );
             }
@@ -121,7 +121,7 @@ impl GitInjector {
                     502,
                     "git_settings_unavailable",
                     format!(
-                        "puddle could not read this workspace's Git settings ({err}); nothing was sent to {host}"
+                        "Puddle could not read this workspace's Git settings ({err}); nothing was sent to {host}"
                     ),
                 );
             }
@@ -144,7 +144,7 @@ impl GitInjector {
             } => self.inject(identity, binding, &path).await,
             // No identity covers it: it goes out as the workspace sent it, so a token the workspace
             // supplies after the server's `401` (a credential helper, `.netrc`, the address's user
-            // name and password) is used as it would be without puddle.
+            // name and password) is used as it would be without Puddle.
             CredentialChoice::Uncovered => {
                 tracing::info!(workspace = %self.workspace, host = %path.host, owner = %path.owner, "no identity covers this owner; the request goes out without a credential");
                 // A private repository answers `401`; if the tool then has no credential either,
@@ -163,12 +163,12 @@ impl GitInjector {
                     409,
                     "credential_ambiguous",
                     format!(
-                        "{labels} both cover {}/{}; narrow one in puddle",
+                        "{labels} both cover {}/{}; narrow one in Puddle",
                         path.host, path.owner
                     ),
                 )
             }
-            // A choice a later puddle adds: nothing it says is trusted.
+            // A choice a later Puddle adds: nothing it says is trusted.
             _ => refuse(502, "credential_unavailable", UNCHOOSABLE),
         }
     }
@@ -254,7 +254,7 @@ impl GitInjector {
                 502,
                 "credential_unavailable",
                 format!(
-                    "the credential of identity {} is not for {named}; fix the identity in puddle",
+                    "the credential of identity {} is not for {named}; fix the identity in Puddle",
                     identity.label
                 ),
             );
@@ -266,9 +266,9 @@ impl GitInjector {
                 // The cache the source is read through says when a sign-in is needed (and the host
                 // turns that into a notice), so it is not said twice here.
                 let advice = if err.needs_sign_in() {
-                    "sign in to it in puddle"
+                    "sign in to it in Puddle"
                 } else {
-                    "check it in puddle"
+                    "check it in Puddle"
                 };
                 return refuse(
                     502,
@@ -287,7 +287,7 @@ impl GitInjector {
                 502,
                 "credential_unavailable",
                 format!(
-                    "the credential of identity {} for {named} is not a usable header value; replace it in puddle",
+                    "the credential of identity {} for {named} is not a usable header value; replace it in Puddle",
                     identity.label
                 ),
             );
@@ -341,7 +341,7 @@ impl GitInjector {
         })
     }
 
-    /// What a `401` to the credential puddle added becomes.
+    /// What a `401` to the credential Puddle added becomes.
     fn rejected(&self, identity: &Identity, source: &SourceSpec, path: &GitPath) -> Unauthorized {
         let credentials = Arc::clone(&self.credentials);
         let events = Arc::clone(&self.events);
@@ -364,7 +364,7 @@ impl GitInjector {
                 403,
                 "credential_rejected",
                 format!(
-                    "{host} did not accept the credential of identity {label} ({}) for {named}; sign in again or check that the token can reach it, in puddle",
+                    "{host} did not accept the credential of identity {label} ({}) for {named}; sign in again or check that the token can reach it, in Puddle",
                     source.describe()
                 ),
             )

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! `puddle ssh-bridge <endpoint>`: the `ProxyCommand` that connects `ssh` (or VS Code) to a
-//! workspace's SSH endpoint. puddle's ssh config file names the endpoint; the relay rules are
+//! workspace's SSH endpoint. Puddle's ssh config file names the endpoint; the relay rules are
 //! in [`puddle_ssh::bridge`].
 
 use std::error::Error;

@@ -27,7 +27,7 @@ pub enum EnvScope {
 pub enum EnvKind {
     /// The workspace gets the value as it is.
     Plain,
-    /// The workspace gets a stand-in; puddle adds the real value on the way out to the secret's
+    /// The workspace gets a stand-in; Puddle adds the real value on the way out to the secret's
     /// hosts only.
     Secret,
 }

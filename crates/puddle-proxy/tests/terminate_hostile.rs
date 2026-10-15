@@ -2,7 +2,7 @@
 //! Hostile-guest and hostile-upstream cases for terminated connections (tier P): a guest that
 //! lies about the host, smuggles requests, or sends malformed framing; an upstream with a bad
 //! certificate, an oversized or slow response, or a response that is more than it should be.
-//! In every case no credential may leave puddle for the wrong place, and no other connection may
+//! In every case no credential may leave Puddle for the wrong place, and no other connection may
 //! notice.
 mod terminate_support;
 

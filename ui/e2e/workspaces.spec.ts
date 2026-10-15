@@ -700,7 +700,7 @@ test.describe("the detail page", () => {
     );
     await expect(page.getByText("ws-web-shop")).toBeVisible();
     await expect(
-      page.getByText("global default").or(page.getByText("puddle's default")),
+      page.getByText("global default").or(page.getByText("Puddle's default")),
     ).toBeVisible();
     await expect(page.getByRole("region", { name: "Network" })).toContainText(
       /\d+ waiting · 3 workspace rules/,

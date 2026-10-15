@@ -7,11 +7,11 @@ FAIL  Hypervisor          the hypervisor query failed
 ok    Bundled runtime     msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)
 FAIL  Runtime starts      msb was killed by a signal instead of answering
       fix:  If endpoint security (EDR or antivirus) runs on this PC, check its log for msb: it
-            may have stopped the process. Otherwise reinstall puddle and include the lines below
+            may have stopped the process. Otherwise reinstall Puddle and include the lines below
             when you report it.
 skip  Test boot           not checked: no usable hypervisor
 
-2 problems to fix before puddle can run sandboxes. (1.2 s)
+2 problems to fix before Puddle can run sandboxes. (1.2 s)
 
 ---
 {
@@ -44,7 +44,7 @@ skip  Test boot           not checked: no usable hypervisor
       "status": "fail",
       "summary": "msb was killed by a signal instead of answering",
       "finding": "launch_exited",
-      "fix": "If endpoint security (EDR or antivirus) runs on this PC, check its log for msb: it may have stopped the process. Otherwise reinstall puddle and include the lines below when you report it."
+      "fix": "If endpoint security (EDR or antivirus) runs on this PC, check its log for msb: it may have stopped the process. Otherwise reinstall Puddle and include the lines below when you report it."
     },
     {
       "id": "test_boot",

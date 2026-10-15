@@ -2,7 +2,7 @@
 //! Shared by the tests that run `git` (or scripts that do) on the host.
 //!
 //! Under a git hook (the pre-push gates run the tests) git exports `GIT_DIR`, `GIT_INDEX_FILE`
-//! and friends. Every `git` the tests spawn would then act on puddle's own repository whatever
+//! and friends. Every `git` the tests spawn would then act on Puddle's own repository whatever
 //! its working directory is: `git init --bare` in a temp dir rewrites that repository's
 //! `core.bare`. [`command`] and [`git_command`] drop every inherited `GIT_*` variable.
 #![allow(dead_code, reason = "each test binary uses a part of this module")]

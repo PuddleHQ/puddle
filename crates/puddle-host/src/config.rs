@@ -41,7 +41,7 @@ impl std::fmt::Debug for ApiSettings {
     }
 }
 
-/// How puddle reaches the internet through the company's network.
+/// How Puddle reaches the internet through the company's network.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct UpstreamSettings {

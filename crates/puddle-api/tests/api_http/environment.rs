@@ -432,7 +432,7 @@ async fn what_is_refused_says_why_and_never_quotes_a_secret() {
         reply.json()["message"].as_str().unwrap().to_owned()
     };
 
-    // Names puddle owns, and names that are not names.
+    // Names Puddle owns, and names that are not names.
     for (name, says) in [
         ("PATH", "image"),
         ("PUDDLE_ROOT", "PUDDLE_"),
@@ -445,7 +445,7 @@ async fn what_is_refused_says_why_and_never_quotes_a_secret() {
         let message = refused(&reply);
         assert!(message.contains(says), "{name}: {message}");
     }
-    // Names puddle adds to are the user's.
+    // Names Puddle adds to are the user's.
     for name in [
         "JAVA_TOOL_OPTIONS",
         "MAVEN_ARGS",

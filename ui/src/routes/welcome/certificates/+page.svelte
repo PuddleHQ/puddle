@@ -23,7 +23,7 @@
 
 <StepHeading
   title="Certificates"
-  lead="How puddle makes HTTPS work inside your workspaces. Nothing to decide here."
+  lead="How Puddle makes HTTPS work inside your workspaces. Nothing to decide here."
 />
 
 <ul class="lines" aria-label="Certificates">
@@ -38,7 +38,7 @@
   {/each}
 </ul>
 <p class="more">
-  puddle shows this once. The details are in
+  Puddle shows this once. The details are in
   <a href="/settings/network-health">Settings &rsaquo; Network health</a>.
 </p>
 

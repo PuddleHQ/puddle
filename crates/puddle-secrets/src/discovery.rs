@@ -13,7 +13,7 @@ use crate::error::{SourceError, Tool};
 use crate::name::{AccountName, HostName, OrgName};
 use crate::run::{TOOL_TIMEOUT, ToolPaths, run};
 
-/// The listing commands puddle may run. A closed list: `az account list` joins it with the `az` source.
+/// The listing commands Puddle may run. A closed list: `az account list` joins it with the `az` source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum Listing {

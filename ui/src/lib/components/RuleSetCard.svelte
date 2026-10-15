@@ -63,7 +63,7 @@
       >{set.id}</span
     >
     {#if set.changed_at !== null}
-      <span class="chip warn">Updated by puddle {changed(set.changed_at)}</span>
+      <span class="chip warn">Updated by Puddle {changed(set.changed_at)}</span>
     {/if}
   </header>
   {#if set.description !== ""}<p class="desc">{set.description}</p>{/if}

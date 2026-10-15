@@ -20,7 +20,7 @@ beforeEach(() => {
   notices = new LoginNotices(new InAppNotifier(center));
 });
 
-describe("a login puddle could not capture", () => {
+describe("a login Puddle could not capture", () => {
   it.each([
     "store_unavailable",
     "unexpected_answer",
@@ -47,7 +47,7 @@ describe("a login puddle could not capture", () => {
   });
 });
 
-describe("a problem puddle has no name for", () => {
+describe("a problem Puddle has no name for", () => {
   it("says there is a problem without claiming what it is", () => {
     notices.handle(problem("unknown"));
     const notice = center.items[0]!;
@@ -56,7 +56,7 @@ describe("a problem puddle has no name for", () => {
   });
 });
 
-describe("a login puddle kept and cannot use", () => {
+describe("a login Puddle kept and cannot use", () => {
   it("says the tool will ask for a new sign-in when a kept login cannot be read", () => {
     notices.handle(problem("unreadable", "GitHub"));
     const notice = center.items[0]!;

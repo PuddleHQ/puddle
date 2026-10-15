@@ -46,7 +46,7 @@ puddle-repos = { path = "crates/puddle-repos" }
 puddle-logins = { path = "crates/puddle-logins" }
 
 # External
-# msb SDK from puddle's fork, tag `v<release>-puddle.N`. The SDK and the bundled runtime
+# msb SDK from Puddle's fork, tag `v<release>-puddle.N`. The SDK and the bundled runtime
 # move together: `puddle-runtime` reads its expected runtime version from this pin in
 # Cargo.lock, and the CI VM jobs and `cargo xtask runtime` read the tag from there too
 # (`ci/msb-tag.sh`), so the three `tag =` values below are the only place the version is written.
@@ -67,7 +67,7 @@ serde = { version = "1.0.228", default-features = false, features = ["std", "der
 serde_json = "1.0.149"
 sha2 = "0.11"
 # The OS credential store (Credential Manager, Keychain, Secret Service over D-Bus in pure Rust),
-# used only for tokens the user pastes into puddle.
+# used only for tokens the user pastes into Puddle.
 keyring = "4.2"
 zeroize = "1.9"
 rust-embed = { version = "8.12", default-features = false, features = ["mime-guess"] }
@@ -177,7 +177,7 @@ unimplemented = "warn"
 unwrap_used = "warn"
 wildcard_dependencies = "warn"
 
-# The msb fork's own `[patch.crates-io]` doesn't reach puddle (patches apply only in the root
+# The msb fork's own `[patch.crates-io]` doesn't reach Puddle (patches apply only in the root
 # workspace), so its libkrun, russh and imago forks are repeated here, pinned to the commits the
 # fork tag's Cargo.lock pins (a branch would follow later pushes, which the tag's msb wasn't built
 # with). libkrun: TijsVK/libkrun tag `msb_krun-v0.1.41-puddle.2` (msb_krun 0.1.41 + fixes); russh:

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Where a workspace lives in the guest: the volume's mount point, the checkouts below it and
-//! puddle's own directory beside them.
+//! Puddle's own directory beside them.
 //!
 //! ```text
 //! /workspaces/<id>/            the volume root (ext4); never cloned into, it holds .puddle
 //!   ├── lost+found/            only if mkfs made one (msb 0.7.7's doesn't); ignored
-//!   ├── .puddle/               puddle-owned (code-server data, a later ~/.vscode-server); the
+//!   ├── .puddle/               Puddle-owned (code-server data, a later ~/.vscode-server); the
 //!   │                          delete check ignores it
 //!   └── <repo>/                a git checkout (one or more), what the IDE opens
 //! ```
@@ -20,7 +20,7 @@ use crate::WorkspaceError;
 /// Where every workspace volume is mounted: `/workspaces/<id>` (ADR 0006).
 pub const WORKSPACES_ROOT: &str = "/workspaces";
 
-/// puddle's own directory on the volume, beside the checkouts.
+/// Puddle's own directory on the volume, beside the checkouts.
 pub const PUDDLE_DIR: &str = ".puddle";
 
 /// ext4's recovery directory; ignored at the volume root (msb 0.7.7's mkfs doesn't make one).
@@ -59,7 +59,7 @@ impl Layout {
         &self.mount
     }
 
-    /// puddle's own directory, `/workspaces/<id>/.puddle`.
+    /// Puddle's own directory, `/workspaces/<id>/.puddle`.
     ///
     /// # Errors
     ///
@@ -83,7 +83,7 @@ impl Layout {
         self.child(name)
     }
 
-    /// The command that creates puddle's directory (owner-only), run as root after every boot
+    /// The command that creates Puddle's directory (owner-only), run as root after every boot
     /// of a sandbox with this workspace. Idempotent.
     ///
     /// # Errors

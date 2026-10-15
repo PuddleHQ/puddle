@@ -117,7 +117,7 @@ async fn an_unmatched_name_is_pending_and_never_resolved() {
     assert_eq!(header(&first, "x-puddle-decision"), Some("pending"));
     assert_eq!(header(&first, "x-puddle-pending"), Some("1"));
     assert!(
-        first.message.contains("waiting for approval in puddle"),
+        first.message.contains("waiting for approval in Puddle"),
         "{}",
         first.message
     );
@@ -141,7 +141,7 @@ async fn an_unlisted_request_still_says_it_is_waiting() {
     assert!(
         refusal
             .message
-            .contains("not listed for approval in puddle yet")
+            .contains("not listed for approval in Puddle yet")
             && refusal.message.contains("retry")
             && !refusal.message.contains("denied"),
         "{}",
@@ -273,7 +273,7 @@ async fn a_blocked_decision_from_the_policy_is_never_pending() {
         Some("puddle_endpoint")
     );
     assert_eq!(header(&refusal, "x-puddle-pending"), None);
-    assert!(refusal.message.contains("puddle's own endpoints"));
+    assert!(refusal.message.contains("Puddle's own endpoints"));
 }
 
 #[tokio::test]
@@ -576,7 +576,7 @@ fn config_builders_set_their_field() {
 }
 
 // The real guard (`puddle_netpolicy::NetPolicy`) in the proxy: the local-destination toggles,
-// exact-only allows after a wildcard, and puddle's own listeners.
+// exact-only allows after a wildcard, and Puddle's own listeners.
 
 mod guard {
     use std::sync::atomic::AtomicUsize;
@@ -973,7 +973,7 @@ mod guard {
         for h in ["127.0.0.1", "localhost", "self.example"] {
             let refusal = admit(&p, &request(h)).await.unwrap_err();
             assert_eq!(blocked(&refusal), Some("puddle_endpoint"), "{h}");
-            assert!(refusal.message.contains("puddle's own endpoints"), "{h}");
+            assert!(refusal.message.contains("Puddle's own endpoints"), "{h}");
         }
         assert_eq!(policy.pending().len(), 0);
         // Literal and `localhost` were refused before the rules.

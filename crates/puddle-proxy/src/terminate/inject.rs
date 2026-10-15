@@ -287,7 +287,7 @@ pub(crate) fn body_too_large(limit: usize) -> Refusal {
     Refusal::new(
         "413 Content Too Large",
         format!(
-            "this request's body is over {limit} bytes, more than puddle reads before it decides; send smaller requests"
+            "this request's body is over {limit} bytes, more than Puddle reads before it decides; send smaller requests"
         ),
     )
     .coded("body_too_large")

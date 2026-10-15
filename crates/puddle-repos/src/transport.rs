@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The real route to a Git host: puddle's own connection through the company proxy chain, TLS
+//! The real route to a Git host: Puddle's own connection through the company proxy chain, TLS
 //! checked the way the host's own programs check it, then one HTTP/1.1 request.
 //!
 //! Nothing is guarded the way a workspace's request is: the destination is the credential's own
@@ -28,7 +28,7 @@ use crate::api::{Api, ApiReply, ApiRequest, MAX_BODY, TransportError};
 /// The time one request may take, connection and TLS included.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// Requests over puddle's own route. Cheap to share.
+/// Requests over Puddle's own route. Cheap to share.
 pub struct HostApi {
     chain: Arc<Chain>,
     tls: TlsClient,
@@ -54,7 +54,7 @@ impl HostApi {
         }
     }
 
-    /// The same, recording every request in `log` as puddle's own connection (origin `puddle`,
+    /// The same, recording every request in `log` as Puddle's own connection (origin `puddle`,
     /// the Git host, and whether it worked), like an image pull.
     #[must_use]
     pub fn with_connection_log(mut self, log: Arc<dyn ConnectionLog>) -> Self {
@@ -108,7 +108,7 @@ impl Api for HostApi {
 }
 
 impl HostApi {
-    /// Writes the request as a `connection` record of puddle's own. A write that fails is the
+    /// Writes the request as a `connection` record of Puddle's own. A write that fails is the
     /// log's to report; the listing is not affected.
     fn record(&self, host: &str, path: &str, result: &Result<ApiReply, TransportError>) {
         let (name, port) = split_port(host);

@@ -90,7 +90,7 @@ pub enum ProblemKind {
     Unreachable,
     /// The host answered something this version does not understand.
     BadAnswer,
-    /// puddle lists repositories for GitHub and Azure DevOps only.
+    /// Puddle lists repositories for GitHub and Azure DevOps only.
     Unsupported,
     /// An Azure DevOps credential that names no organisation.
     OrganisationNeeded,
@@ -148,7 +148,7 @@ impl Problem {
     pub(crate) fn bad_answer(what: impl std::fmt::Display) -> Self {
         Self::new(
             ProblemKind::BadAnswer,
-            format!("the host answered something puddle does not understand: {what}"),
+            format!("the host answered something Puddle does not understand: {what}"),
         )
     }
 }
@@ -163,7 +163,7 @@ pub enum NoteKind {
     OrganisationsMayBeHidden,
     /// A fine-grained token lists only the repositories it was granted.
     FineGrainedToken,
-    /// More repositories exist than puddle reads.
+    /// More repositories exist than Puddle reads.
     Truncated,
     /// The account's author cannot be read from this host.
     AuthorUnavailable,
@@ -230,7 +230,7 @@ pub struct SourceList {
     pub state: ListState,
     /// When it was read (epoch milliseconds); `None` when it never was.
     pub refreshed_at: Option<u64>,
-    /// When the host lets puddle ask again (epoch milliseconds), when it said to wait.
+    /// When the host lets Puddle ask again (epoch milliseconds), when it said to wait.
     pub retry_at: Option<u64>,
     /// Why the newest read is missing or failed.
     pub problem: Option<Problem>,

@@ -211,7 +211,7 @@ async fn a_second_attach_is_refused_naming_the_holder_running_or_stopped() {
     let err = w.create(&rt, &id, spec("two"), None).await.unwrap_err();
     assert!(matches!(err, WorkspaceError::InUse { ref holder, .. } if holder == "one"));
 
-    // puddle refused before msb was asked, so nothing was left under the refused name.
+    // Puddle refused before msb was asked, so nothing was left under the refused name.
     assert_eq!(targets(&rt, Op::Create).len(), creates_before);
     assert_eq!(names(&rt).await, ["one"]);
 }
@@ -221,7 +221,7 @@ async fn a_running_holder_puddle_does_not_track_is_found_through_the_runtime() {
     let rt = FakeRuntime::new();
     let w = Workspaces::default();
     let id = ws("acme");
-    // Another puddle (or one before a restart) created this one.
+    // Another Puddle (or one before a restart) created this one.
     rt.create_volume(VolumeSpec {
         name: id.volume_name(),
         size: DiskSize::gib(1),
@@ -259,7 +259,7 @@ async fn adopted_attachments_block_like_created_ones() {
     let id = ws("acme");
     let sb = w.create(&rt, &id, spec("one"), None).await.unwrap();
     sb.stop().await.unwrap();
-    // A restarted puddle: empty registry, rebuilt by reconcile.
+    // A restarted Puddle: empty registry, rebuilt by reconcile.
     let fresh = Workspaces::default();
     fresh.adopt(&id, &name("one"));
     let err = fresh.create(&rt, &id, spec("two"), None).await.unwrap_err();
@@ -320,7 +320,7 @@ async fn an_abort_removes_the_record_a_refused_attach_leaves_and_keeps_an_old_vo
 
     let att = w.prepare(&rt, &id, &name("box"), None).await.unwrap();
     assert!(!att.created_volume());
-    // A racing sandbox outside puddle grabs the volume between prepare and create.
+    // A racing sandbox outside Puddle grabs the volume between prepare and create.
     let _racer = rt
         .create(spec("racer").with_volume(att.mount().clone()))
         .await

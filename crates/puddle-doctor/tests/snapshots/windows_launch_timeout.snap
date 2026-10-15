@@ -11,7 +11,7 @@ FAIL  Runtime starts        msb didn't answer within 10.0 s
 skip  Test boot             not checked: the runtime doesn't start
 ok    Global Secure Access  client not installed
 
-1 problem to fix before puddle can run sandboxes. (1.2 s)
+1 problem to fix before Puddle can run sandboxes. (1.2 s)
 
 ---
 {

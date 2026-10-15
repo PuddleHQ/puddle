@@ -13,7 +13,7 @@
 //! Where the stand-ins are swapped back is the proxy's ([`puddle_proxy::StandIns`]): in the headers
 //! of requests to the profile's hosts, and nowhere else.
 //!
-//! If a login cannot be captured (the answer is not in a form puddle reads, the token is bound to
+//! If a login cannot be captured (the answer is not in a form Puddle reads, the token is bound to
 //! a key, the credential store is not there) the answer goes to the tool as it is, so the tool
 //! keeps working, and the user is told that this login is not protected.
 
@@ -44,7 +44,7 @@ pub enum Problem {
     /// The operating system's credential store did not take the token, so the answer went to the
     /// tool as it was.
     StoreUnavailable,
-    /// The service's answer was not in a form puddle reads (not JSON or a form, compressed, or
+    /// The service's answer was not in a form Puddle reads (not JSON or a form, compressed, or
     /// larger than a token answer is), so it went to the tool as it was.
     UnexpectedAnswer,
     /// A token cannot be copied: a length or a character a stand-in cannot have.
@@ -52,10 +52,10 @@ pub enum Problem {
     /// The service ties its tokens to a key of the tool's own (`DPoP`), which a stand-in cannot
     /// stand in for.
     BoundToken,
-    /// A login puddle kept earlier could not be read back at the workspace's start; the tool will
+    /// A login Puddle kept earlier could not be read back at the workspace's start; the tool will
     /// ask for a new sign-in.
     Unreadable,
-    /// Capture is off for the workspace, but puddle still holds a login it kept while capture
+    /// Capture is off for the workspace, but Puddle still holds a login it kept while capture
     /// was on: the stand-ins in the workspace are no longer swapped, so the services refuse them.
     CaptureOff,
 }
@@ -66,7 +66,7 @@ pub trait LoginNotices: Send + Sync {
     fn problem(&self, workspace: &WorkspaceName, profile: &Profile, problem: Problem);
 }
 
-/// A login puddle holds for a workspace, as the user is shown it: no value.
+/// A login Puddle holds for a workspace, as the user is shown it: no value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Kept {
     /// The profile's short name (`claude`).
@@ -333,7 +333,7 @@ impl Logins {
         }
     }
 
-    /// With capture off: tells the user, once per service, that puddle still holds a login it
+    /// With capture off: tells the user, once per service, that Puddle still holds a login it
     /// kept earlier. A store that does not answer says nothing: with capture off there is nothing
     /// to protect, and one call that did not answer is enough to know.
     async fn tell_about_kept_logins(&self) {
@@ -351,7 +351,7 @@ impl Logins {
         }
     }
 
-    /// The logins puddle holds for this workspace (the ones registered since its start), without
+    /// The logins Puddle holds for this workspace (the ones registered since its start), without
     /// any value.
     #[must_use]
     pub fn kept(&self) -> Vec<Kept> {

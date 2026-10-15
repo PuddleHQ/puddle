@@ -18,7 +18,7 @@
 //! connect timeout.
 //!
 //! reqwest's and hyper's own system-proxy support reads only HKCU `ProxyServer`: no PAC, WPAD,
-//! machine proxy or policy. Nothing in puddle uses it for routing.
+//! machine proxy or policy. Nothing in Puddle uses it for routing.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -45,11 +45,11 @@ pub enum Mode {
     System,
     /// Never use a proxy.
     Direct,
-    /// puddle's own setting, ignoring the system.
+    /// Puddle's own setting, ignoring the system.
     Manual(ManualProxy),
 }
 
-/// A proxy chosen in puddle's settings.
+/// A proxy chosen in Puddle's settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManualProxy {
     /// Proxy list: `host:port` for every scheme, or `http=h:p;https=h:p`.
@@ -97,7 +97,7 @@ pub enum RouteSource {
     Manual,
     /// A PAC script or WPAD answered.
     Pac,
-    /// A PAC answered with entries puddle cannot use only (SOCKS, HTTPS proxy): direct instead.
+    /// A PAC answered with entries Puddle cannot use only (SOCKS, HTTPS proxy): direct instead.
     PacUnsupported,
     /// The operating system's static proxy.
     System,
@@ -220,7 +220,7 @@ impl Discovery {
     pub fn new(os: Arc<dyn OsProxy>, config: Config) -> Arc<Self> {
         let (epochs, _) = watch::channel(0);
         for problem in manual_problems(&config.mode) {
-            tracing::warn!(problem = %problem.detail, "proxy setting puddle cannot use; what it covers goes direct");
+            tracing::warn!(problem = %problem.detail, "proxy setting Puddle cannot use; what it covers goes direct");
         }
         Arc::new(Self {
             os,
@@ -473,7 +473,7 @@ impl Discovery {
                             note(why.clone());
                         }
                         for problem in &config.problems {
-                            tracing::warn!(problem = %problem.detail, "proxy setting puddle cannot use; what it covers goes direct");
+                            tracing::warn!(problem = %problem.detail, "proxy setting Puddle cannot use; what it covers goes direct");
                         }
                         config
                     }
@@ -591,20 +591,20 @@ enum PacOutcome {
     Unavailable,
 }
 
-/// What in puddle's own proxy setting cannot be used; empty in the other modes.
+/// What in Puddle's own proxy setting cannot be used; empty in the other modes.
 fn manual_problems(mode: &Mode) -> Vec<ProxyProblem> {
     let Mode::Manual(manual) = mode else {
         return Vec::new();
     };
     if manual.proxy_server.trim().is_empty() {
         return vec![ProxyProblem::unusable(
-            "the proxy fixed in puddle's settings is empty",
+            "the proxy fixed in Puddle's settings is empty",
         )];
     }
     ProxyRules::parse_with_problems(&manual.proxy_server)
         .1
         .into_iter()
-        .map(|why| ProxyProblem::unusable(format!("the proxy fixed in puddle's settings: {why}")))
+        .map(|why| ProxyProblem::unusable(format!("the proxy fixed in Puddle's settings: {why}")))
         .collect()
 }
 

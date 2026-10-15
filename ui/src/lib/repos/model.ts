@@ -74,14 +74,14 @@ export function freshness(source: RepoSource, now: number): string {
     case "failed":
       return "Nothing read yet. Refresh tries again.";
     case "unavailable":
-      return "puddle cannot list this one. Edit the identity to change its sign-in.";
+      return "Puddle cannot list this one. Edit the identity to change its sign-in.";
   }
 }
 
-/** When puddle may ask again, when the host said to wait. */
+/** When Puddle may ask again, when the host said to wait. */
 export function retryText(source: RepoSource, now: number): string | null {
   if (source.retry_at === null || source.retry_at <= now) return null;
-  return `puddle asks again ${relativeTime(source.retry_at, now)}.`;
+  return `Puddle asks again ${relativeTime(source.retry_at, now)}.`;
 }
 
 /** The milliseconds until the soonest time a list may be read again, or `null` when none waits. */

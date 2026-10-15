@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The host side of the repository lists and the account profile ([`RepoService`]): which
 //! repositories each identity's credentials reach, and who a credential's account is, to prefill
-//! an identity. [`Repos`] reads them from the Git hosts over puddle's own route; [`FakeRepos`]
+//! an identity. [`Repos`] reads them from the Git hosts over Puddle's own route; [`FakeRepos`]
 //! answers from what a test or the UI fixture put in it.
 //!
 //! No method returns a secret, and nothing here reaches a workspace: the lists are read on the

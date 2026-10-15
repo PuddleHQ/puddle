@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Where the bundled runtime and puddle's private msb home live.
+//! Where the bundled runtime and Puddle's private msb home live.
 
 use std::path::{Path, PathBuf};
 
 use crate::RuntimeError;
 use crate::platform::HostOs;
 
-/// The runtime folder's name, next to the puddle executable.
+/// The runtime folder's name, next to the Puddle executable.
 pub const RUNTIME_DIR_NAME: &str = "runtime";
 
 /// The msb executable's file name on this platform (the [`HostOs::runtime_files`] table).
@@ -18,14 +18,14 @@ pub const MSB_FILE_NAME: &str = HostOs::current().runtime_files().msb;
 /// ([`HostOs::libkrunfw_versioned`]; [`RuntimeLayout::required_files`] doesn't list it).
 pub const LIBKRUNFW_FILE_NAME: &str = HostOs::current().runtime_files().libkrunfw;
 
-/// The msb home's name inside puddle's data folder.
+/// The msb home's name inside Puddle's data folder.
 const HOME_DIR_NAME: &str = "msb";
 
 /// The config file inside the msb home (msb's own default name, so a plain `msb` pointed at this
 /// home reads the same file).
 const CONFIG_FILE_NAME: &str = "config.json";
 
-/// The two folders puddle's runtime uses, both absolute.
+/// The two folders Puddle's runtime uses, both absolute.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeLayout {
     runtime_dir: PathBuf,
@@ -39,7 +39,7 @@ impl RuntimeLayout {
     /// # Errors
     ///
     /// [`RuntimeError::RelativePath`] if either isn't absolute: msb would resolve it against
-    /// whatever directory puddle happens to run in.
+    /// whatever directory Puddle happens to run in.
     pub fn new(runtime_dir: PathBuf, home: PathBuf) -> Result<Self, RuntimeError> {
         for path in [&runtime_dir, &home] {
             if !path.is_absolute() {
@@ -50,7 +50,7 @@ impl RuntimeLayout {
     }
 
     /// The installed layout: the runtime in `<folder of exe>/runtime`, the home in
-    /// `<data_dir>/msb`. `exe` is normally [`std::env::current_exe`]; `data_dir` is puddle's
+    /// `<data_dir>/msb`. `exe` is normally [`std::env::current_exe`]; `data_dir` is Puddle's
     /// per-user data folder ([`puddle_fs::data_dir`]; [`RuntimeLayout::installed_for_user`]
     /// resolves it).
     ///
@@ -84,7 +84,7 @@ impl RuntimeLayout {
         &self.runtime_dir
     }
 
-    /// puddle's private msb home (`MSB_HOME`).
+    /// Puddle's private msb home (`MSB_HOME`).
     #[must_use]
     pub fn home(&self) -> &Path {
         &self.home
@@ -114,7 +114,7 @@ impl RuntimeLayout {
         files
     }
 
-    /// msb's config file inside puddle's home (`MSB_CONFIG_PATH`); without it msb falls back to
+    /// msb's config file inside Puddle's home (`MSB_CONFIG_PATH`); without it msb falls back to
     /// `~/.microsandbox/config.json`.
     #[must_use]
     pub fn config_path(&self) -> PathBuf {

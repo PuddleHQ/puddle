@@ -203,7 +203,7 @@ fn root_pem(cn: &str) -> (Vec<u8>, String) {
 }
 
 fn puddle_ca() -> CaCertificate {
-    CaBuilder::new("puddle proxy CA (test)")
+    CaBuilder::new("Puddle proxy CA (test)")
         .build()
         .unwrap()
         .certificate()
@@ -286,7 +286,7 @@ fn first_boot_appends_roots_and_puddle_cas_to_the_distro_bundle_each_once() {
         // The system bundle got them too (through update-ca-certificates).
         let system = g.read("/etc/ssl/certs/ca-certificates.crt");
         assert!(system.contains(&body(&corp)[..60]));
-        // Node's extra file: host roots and puddle's CA only.
+        // Node's extra file: host roots and Puddle's CA only.
         assert_eq!(counts(&g.read(EXTRA_CAS_PATH)).len(), 3);
         let env = g.read(ENV_FILE_GUEST);
         assert!(

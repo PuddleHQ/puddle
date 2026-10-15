@@ -41,10 +41,10 @@ impl fmt::Display for PendingId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum RuleSetId {
-    /// "System managed": the hosts puddle allows because of the user's own setup choices
+    /// "System managed": the hosts Puddle allows because of the user's own setup choices
     /// (the browser editor server, direct SSH). Never switched by hand, only derived.
     System,
-    /// A set that ships with puddle, by its stable slug.
+    /// A set that ships with Puddle, by its stable slug.
     BuiltIn(&'static str),
     /// A set the user made, by its row id.
     User(i64),
@@ -127,7 +127,7 @@ pub enum Decision {
         pattern: PatternKind,
     },
     /// A rule set's deny decided (R-39). Only sets the user made can deny, so there is always
-    /// a rule row: puddle ships no deny list.
+    /// a rule row: Puddle ships no deny list.
     SetDeny {
         /// The set.
         set: RuleSetId,
@@ -169,7 +169,7 @@ impl Decision {
 pub enum BlockReason {
     /// SSH through the proxy isn't supported yet (F-8; audit reason `ssh_unsupported`).
     SshUnsupported,
-    /// The destination is one of puddle's own endpoints (`puddle_endpoint`).
+    /// The destination is one of Puddle's own endpoints (`puddle_endpoint`).
     PuddleEndpoint,
     /// Every address of the destination is local and the checker has no toggles to offer
     /// (`local_address`): the fail-closed fallback of a proxy without a toggle-aware address
@@ -179,7 +179,7 @@ pub enum BlockReason {
     /// `toggle:<category>`). When several categories are off, this names the first one in
     /// [`LocalCategory::ALL`] order; the block message lists them all.
     LocalToggle(LocalCategory),
-    /// The destination is local and puddle could not read the settings that say whether it may
+    /// The destination is local and Puddle could not read the settings that say whether it may
     /// be reached, so every local destination stays blocked (`settings_unreadable`). Fixing the
     /// settings lifts it; no toggle does.
     SettingsUnreadable,

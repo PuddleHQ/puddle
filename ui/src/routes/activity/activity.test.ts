@@ -222,7 +222,7 @@ describe("the activity page", () => {
       api.down = true;
       render(ActivityPage);
       await screen.findByText(
-        /Couldn't read the activity log\. puddle's service isn't answering\./,
+        /Couldn't read the activity log\. Puddle's service isn't answering\./,
       );
       api.down = false;
       await fireEvent.click(screen.getByRole("button", { name: "Try again" }));

@@ -5,12 +5,12 @@ use axum::Json;
 
 use crate::wire::Health;
 
-/// puddle's version and the API contract's version.
+/// Puddle's version and the API contract's version.
 #[utoipa::path(
     get,
     path = "/api/health",
     tag = "service",
-    responses((status = OK, description = "puddle is up", body = Health))
+    responses((status = OK, description = "Puddle is up", body = Health))
 )]
 pub(crate) async fn health() -> Json<Health> {
     Json(Health {

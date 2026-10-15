@@ -179,7 +179,7 @@ describe("connecting", () => {
     actions.confirmTrust();
     await expect
       .poll(() => messages())
-      .toEqual(["puddle's service isn't answering."]);
+      .toEqual(["Puddle's service isn't answering."]);
   });
 });
 
@@ -212,7 +212,7 @@ describe("opening in VS Code", () => {
     actions.openDesktop(w("trusted"));
     await expect
       .poll(() => messages())
-      .toEqual(["puddle couldn't open VS Code for trusted."]);
+      .toEqual(["Puddle couldn't open VS Code for trusted."]);
   });
 
   it("a refused attach (direct SSH off) is an error toast", async () => {

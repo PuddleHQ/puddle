@@ -189,7 +189,7 @@ fn unsupported(host: &str) -> Problem {
     Problem::new(
         ProblemKind::Unsupported,
         format!(
-            "puddle lists repositories on GitHub and Azure DevOps; {host} is neither: enter the \
+            "Puddle lists repositories on GitHub and Azure DevOps; {host} is neither: enter the \
              address of its repository in the create form"
         ),
     )
@@ -251,7 +251,7 @@ fn plan(identities: &[Identity], only: Option<IdentityId>) -> Vec<(Meta, Plan)> 
                     Plan::Cannot(Problem::new(
                         ProblemKind::WrongTarget,
                         format!(
-                            "this credential is for {}, not {host}; puddle does not send it there: edit \
+                            "this credential is for {}, not {host}; Puddle does not send it there: edit \
                              the credential so its source and its host agree",
                             scope.host
                         ),
@@ -293,7 +293,7 @@ fn organisation_needed() -> Problem {
     Problem::new(
         ProblemKind::OrganisationNeeded,
         "Azure DevOps shows the organisations of an account only to a Microsoft Entra sign-in, \
-         and puddle lists the organisations a credential names; add the organisation to what \
+         and Puddle lists the organisations a credential names; add the organisation to what \
          this credential covers",
     )
 }
@@ -618,7 +618,7 @@ fn limited_until(until: u64) -> Problem {
         retry_at: Some(until),
         ..Problem::new(
             ProblemKind::RateLimited,
-            "the host is limiting requests; puddle asks again once it allows",
+            "the host is limiting requests; Puddle asks again once it allows",
         )
     }
 }
@@ -632,7 +632,7 @@ fn azure_profile(source: &SourceSpec) -> Profile {
         notes: vec![Note::new(
             NoteKind::AuthorUnavailable,
             "Azure DevOps lets only a Microsoft Entra sign-in read an account's profile, and \
-             puddle does not read it yet: enter the author yourself",
+             Puddle does not read it yet: enter the author yourself",
         )],
         ..Profile::default()
     }

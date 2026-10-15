@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-/// A host OS puddle knows the runtime layout of (not necessarily one it supports).
+/// A host OS Puddle knows the runtime layout of (not necessarily one it supports).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HostOs {
     /// Windows: `msb.exe` and `libkrunfw.dll` side by side.
@@ -87,7 +87,7 @@ impl HostOs {
 pub struct RuntimeFiles {
     /// The msb executable.
     pub msb: &'static str,
-    /// The firmware library as puddle installs it (the SONAME msb's SDK config can point at).
+    /// The firmware library as Puddle installs it (the SONAME msb's SDK config can point at).
     pub libkrunfw: &'static str,
     /// What every release name of the firmware library starts with, for finding it in a folder
     /// (`libkrunfw.so.5.6.1`, `libkrunfw.so.5`, `libkrunfw.so`).
@@ -103,7 +103,7 @@ pub struct RuntimeFiles {
 /// architecture (macOS Apple Silicon guests are `aarch64`, and have no Rosetta).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GuestArch {
-    /// 64-bit x86 (`x86_64`): the only guest puddle builds and tests today.
+    /// 64-bit x86 (`x86_64`): the only guest Puddle builds and tests today.
     X86_64,
     /// 64-bit Arm (`aarch64`): named so every table has the row; nothing is built for it yet.
     Aarch64,
@@ -146,7 +146,7 @@ impl GuestArch {
         }
     }
 
-    /// Whether puddle builds and tests guests of this architecture today.
+    /// Whether Puddle builds and tests guests of this architecture today.
     #[must_use]
     pub const fn is_built(self) -> bool {
         matches!(self, Self::X86_64)

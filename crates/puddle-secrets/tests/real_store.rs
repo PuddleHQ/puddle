@@ -7,7 +7,7 @@
 //! store fails the test instead.
 //!
 //! Every test that writes more than a random-id entry files it under a service name of its own
-//! (`KeyringStore::named`) and deletes what it wrote, so a developer's own puddle entries are never
+//! (`KeyringStore::named`) and deletes what it wrote, so a developer's own Puddle entries are never
 //! read or changed.
 #![allow(
     clippy::unwrap_used,

@@ -9,7 +9,7 @@ use url::Url;
 
 use crate::navigation::{Navigation, OriginPolicy};
 
-/// The main window's label. puddle's one capability file names this label and grants it nothing;
+/// The main window's label. Puddle's one capability file names this label and grants it nothing;
 /// workspace windows get labels of their own (`vs-<workspace>`), never this one.
 pub const MAIN_LABEL: &str = "main";
 
@@ -96,7 +96,7 @@ pub fn open_main<R: Runtime, M: Manager<R>>(
     let origin = start.origin().ascii_serialization();
     let on_new_window_open = open.clone();
     let builder = WebviewWindowBuilder::new(manager, MAIN_LABEL, WebviewUrl::External(start))
-        .title("puddle")
+        .title("Puddle")
         .inner_size(1280.0, 800.0)
         .min_inner_size(900.0, 600.0)
         .initialization_script(init_script(&origin, token))

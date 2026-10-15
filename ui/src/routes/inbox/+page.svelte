@@ -192,7 +192,7 @@
   <p class="full" role="status">
     <b
       ><span class="mono">{workspace}</span> has {pending.openLimit} waiting requests</b
-    >, the most puddle lists. If it asks about more hosts, they are listed once
+    >, the most Puddle lists. If it asks about more hosts, they are listed once
     you answer some. Allowing or denying a domain with its subdomains clears
     many at once.
   </p>

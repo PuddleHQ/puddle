@@ -465,7 +465,7 @@ async fn an_unannounced_connect_to_port_22_is_an_ordinary_destination_until_it_s
 
 #[tokio::test]
 async fn the_hosts_direct_ssh_into_a_workspace_needs_still_pass_https_untouched() {
-    // Direct SSH into a workspace (an editor's Remote-SSH) is puddle's own endpoint and never
+    // Direct SSH into a workspace (an editor's Remote-SSH) is Puddle's own endpoint and never
     // reaches this proxy. What the editor's server does inside the workspace afterwards is HTTPS to
     // the hosts the direct-SSH setting allows: the refusal of the workspace's own SSH leaves it
     // alone, while an SSH client to the same host is still refused.

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Reconcile at start: clean up after a puddle that died without its shutdown.
+//! Reconcile at start: clean up after a Puddle that died without its shutdown.
 //!
-//! puddle-owned means: a sandbox the runtime lists with [`SandboxInfo::puddle_owned`] (msb: the
+//! Puddle-owned means: a sandbox the runtime lists with [`SandboxInfo::puddle_owned`] (msb: the
 //! owner label) **and** a valid [`SandboxName`]; a stale directory with a valid [`SandboxName`]
-//! (it has no record that could carry the label; puddle's msb home is private); a volume
+//! (it has no record that could carry the label; Puddle's msb home is private); a volume
 //! named `ws-<workspace id>`. Everything else is foreign and only reported.
 //!
 //! A workspace volume holds work that may exist nowhere else, so reconcile removes one only when
@@ -12,7 +12,7 @@
 //! of workspaces must never cost a workspace its data (principle 7, "your work is never lost by
 //! accident").
 //!
-//! A puddle-owned maintenance sandbox (`m--<workspace id>`) only lives while puddle checks
+//! A Puddle-owned maintenance sandbox (`m--<workspace id>`) only lives while Puddle checks
 //! or trims a workspace, so one found at start is always a leftover: it is stopped and removed
 //! even if the inventory lists it. After reconcile, [`adopt_workspaces`] rebuilds the workspace
 //! holder registry (it lives in memory) from the inventory.
@@ -25,20 +25,20 @@ use puddle_workspace::{Workspaces, is_maintenance_name};
 
 use crate::shutdown::{ShutdownConfig, StopOutcome, trim_and_stop};
 
-/// What puddle's own records say exists: the sandboxes and workspaces it knows. A puddle-owned
+/// What Puddle's own records say exists: the sandboxes and workspaces it knows. A Puddle-owned
 /// sandbox record the runtime has and this doesn't list is stale and removed. Workspace volumes
 /// are different: only those of [`Inventory::interrupted`] are removed; any other volume this
 /// doesn't list is kept and reported.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Inventory {
-    /// Sandboxes puddle has a record of; their runtime records are kept.
+    /// Sandboxes Puddle has a record of; their runtime records are kept.
     pub sandboxes: BTreeSet<SandboxName>,
-    /// Workspaces puddle has a record of; their `ws-*` volumes are kept.
+    /// Workspaces Puddle has a record of; their `ws-*` volumes are kept.
     pub workspaces: BTreeSet<WorkspaceId>,
-    /// The sandbox each known workspace is attached to, from puddle's store; read by
+    /// The sandbox each known workspace is attached to, from Puddle's store; read by
     /// [`adopt_workspaces`].
     pub attached: BTreeMap<WorkspaceId, SandboxName>,
-    /// Workspaces whose create started and never finished (puddle stopped in the middle of
+    /// Workspaces whose create started and never finished (Puddle stopped in the middle of
     /// it). Their volumes hold only what that create made, nothing the user worked on, and are
     /// removed. A workspace in [`Inventory::workspaces`] too counts as known and is kept.
     pub interrupted: BTreeSet<WorkspaceId>,
@@ -58,9 +58,9 @@ pub struct Failure {
 /// What [`reconcile`] did. Every list is in name order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ReconcileReport {
-    /// Running sandboxes a previous puddle left behind, now trimmed and stopped.
+    /// Running sandboxes a previous Puddle left behind, now trimmed and stopped.
     pub stopped: Vec<SandboxName>,
-    /// Records of sandboxes puddle no longer knows, removed.
+    /// Records of sandboxes Puddle no longer knows, removed.
     pub removed: Vec<SandboxName>,
     /// Known sandboxes found `Crashed`: kept, and reported so the UI can say so.
     pub crashed: Vec<SandboxName>,
@@ -81,12 +81,12 @@ pub struct ReconcileReport {
     pub failures: Vec<Failure>,
 }
 
-/// Brings the runtime in line with `inventory` after a puddle that may have died: stops every
-/// puddle-owned sandbox still running (`fstrim` first), removes puddle-owned records and stale
-/// directories puddle doesn't know, then removes the `ws-*` volumes of creates that never
+/// Brings the runtime in line with `inventory` after a Puddle that may have died: stops every
+/// Puddle-owned sandbox still running (`fstrim` first), removes Puddle-owned records and stale
+/// directories Puddle doesn't know, then removes the `ws-*` volumes of creates that never
 /// finished (only when no running sandbox holds them). Any other `ws-*` volume no known
-/// workspace claims is kept and reported. Foreign names are never touched. Run it before puddle starts any sandbox
-/// and while no other puddle runs (single instance).
+/// workspace claims is kept and reported. Foreign names are never touched. Run it before Puddle starts any sandbox
+/// and while no other Puddle runs (single instance).
 ///
 /// # Errors
 ///
@@ -139,7 +139,7 @@ pub async fn reconcile<R: Runtime>(
             continue;
         }
         if let Some(holder) = volume.holder {
-            // Only a sandbox that is still running holds a volume, and every puddle-owned one
+            // Only a sandbox that is still running holds a volume, and every Puddle-owned one
             // was stopped above, so this holder is foreign (or its stop failed).
             report.failures.push(Failure {
                 item: name.to_string(),
@@ -199,7 +199,7 @@ pub fn adopt_workspaces(
     adopted
 }
 
-/// The sandbox's name if puddle owns it.
+/// The sandbox's name if Puddle owns it.
 fn owned(info: &SandboxInfo) -> Option<SandboxName> {
     if info.puddle_owned {
         info.sandbox_name()
@@ -218,7 +218,7 @@ async fn reconcile_sandbox<R: Runtime>(
 ) {
     let mut down = status.is_down();
     if !down {
-        // Left running by a puddle that died (VMs never outlive puddle). Starting,
+        // Left running by a Puddle that died (VMs never outlive Puddle). Starting,
         // Draining and Paused are treated the same: stop is the only way back to a known state.
         match runtime.get(&name).await {
             Ok(handle) => match trim_and_stop(&handle, &[], config).await.1 {

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Events puddle reports to the user (API/SSE, tray, logs), and the sink they go into.
+//! Events Puddle reports to the user (API/SSE, tray, logs), and the sink they go into.
 
 use std::fmt;
 use std::sync::{Mutex, PoisonError};
@@ -180,7 +180,7 @@ pub enum Event {
         reason: String,
     },
     /// A workspace asked for a credential and the source of it cannot supply one (not signed in,
-    /// or the sign-in ran out). The user signs in from puddle; a request never opens a sign-in
+    /// or the sign-in ran out). The user signs in from Puddle; a request never opens a sign-in
     /// window. Global: every subscriber gets it. Names only, never a value.
     CredentialSignInNeeded {
         /// The Git host the workspace was talking to.
@@ -204,7 +204,7 @@ pub enum Event {
         access: GitAccess,
     },
     /// A Git host answered a workspace's request with `401` and no identity covers the owner, so
-    /// puddle added no credential and the server's answer reached the workspace as it is. Sent
+    /// Puddle added no credential and the server's answer reached the workspace as it is. Sent
     /// only when the workspace's own tool did not retry with a credential of its own soon after.
     /// `repo` is the table's spelling, as in [`Event::GitAccessDenied`].
     GitNoIdentity {
@@ -217,8 +217,8 @@ pub enum Event {
         /// `repo`, or `project/repo` on Azure DevOps.
         repo: String,
     },
-    /// A login made inside a workspace could not be captured, or one puddle kept could not be
-    /// used (`kind` says which). The service is one of puddle's built-in login profiles, never
+    /// A login made inside a workspace could not be captured, or one Puddle kept could not be
+    /// used (`kind` says which). The service is one of Puddle's built-in login profiles, never
     /// anything the guest sent. Names only, never a value.
     LoginProblem {
         /// The workspace the login is in.
@@ -238,10 +238,10 @@ pub enum Event {
     /// The network or the system's proxy settings changed (after a quiet period), so what
     /// `GET /api/network-health` showed may be out of date. Global: every subscriber gets it.
     NetworkChanged {
-        /// The network epoch that began; it only grows while puddle runs.
+        /// The network epoch that began; it only grows while Puddle runs.
         epoch: u64,
     },
-    /// The list of background problems changed (something puddle does on its own failed, or the
+    /// The list of background problems changed (something Puddle does on its own failed, or the
     /// cause went away). Carries no data: refetch `GET /api/problems`. Global: every subscriber
     /// gets it.
     ProblemsChanged {},
@@ -291,7 +291,7 @@ pub enum LoginProblemKind {
     /// The operating system's credential store did not take the token: the workspace got the real
     /// token, so the login works but is not protected.
     StoreUnavailable,
-    /// The service's answer was in a form puddle does not read: the workspace got the real token.
+    /// The service's answer was in a form Puddle does not read: the workspace got the real token.
     UnexpectedAnswer,
     /// The token has a length or a character a stand-in cannot copy: the workspace got the real
     /// token.
@@ -299,14 +299,14 @@ pub enum LoginProblemKind {
     /// The service ties its tokens to a key of the tool's own, which a stand-in cannot stand in
     /// for: the workspace got the real token.
     BoundToken,
-    /// A login puddle kept earlier could not be read back when the workspace started: the tool
+    /// A login Puddle kept earlier could not be read back when the workspace started: the tool
     /// asks for a new sign-in.
     Unreadable,
-    /// Login capture is off for the workspace but puddle still holds logins it kept while capture
+    /// Login capture is off for the workspace but Puddle still holds logins it kept while capture
     /// was on, so the stand-ins in the workspace are not swapped and the services refuse them:
     /// turn capture on again, or sign in again.
     CaptureOff,
-    /// A problem this version of puddle has no name for. Nothing is known about it, so the notice
+    /// A problem this version of Puddle has no name for. Nothing is known about it, so the notice
     /// says only that the login may not work or may not be protected.
     Unknown,
 }

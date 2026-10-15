@@ -82,7 +82,7 @@ async fn the_token_never_appears_in_logs() {
 
     let logs = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
     assert!(
-        logs.contains("request without puddle's credentials refused")
+        logs.contains("request without Puddle's credentials refused")
             && logs.contains("image-pull connection")
             && logs.contains("image pull blocked")
             && logs.contains("pull proxy bound"),

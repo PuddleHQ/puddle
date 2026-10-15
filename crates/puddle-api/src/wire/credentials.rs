@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! What the identities screens ask the host about credentials (credentials spec §3, §8): the
-//! accounts already signed in on this computer, whether puddle can read one now, a pasted token
+//! accounts already signed in on this computer, whether Puddle can read one now, a pasted token
 //! (write-only), and signing in on a click. No response carries a secret value, and the one request
 //! that carries one never echoes it.
 
@@ -74,7 +74,7 @@ pub struct FoundProblem {
     pub message: String,
 }
 
-/// What puddle found signed in on this computer.
+/// What Puddle found signed in on this computer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct FoundAccounts {
     /// The accounts, without duplicates.
@@ -91,7 +91,7 @@ pub struct CheckRequest {
     pub source: CredentialSource,
 }
 
-/// Whether puddle can read a credential's value now. Never the value.
+/// Whether Puddle can read a credential's value now. Never the value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct CheckResult {
     /// True when the source gave a value.
@@ -133,7 +133,7 @@ pub(crate) fn source_problem(err: &SourceError) -> String {
     }
 }
 
-/// A token the user pasted. It is kept in the operating system's credential store under puddle's
+/// A token the user pasted. It is kept in the operating system's credential store under Puddle's
 /// own name and never read back through the API.
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -187,8 +187,8 @@ pub struct SignInRequest {
     pub source: CredentialSource,
 }
 
-/// What the user does to finish a sign-in puddle started. Poll the credential's check to learn
-/// when it worked; puddle ends a sign-in nobody finished after five minutes.
+/// What the user does to finish a sign-in Puddle started. Poll the credential's check to learn
+/// when it worked; Puddle ends a sign-in nobody finished after five minutes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct SignInStarted {
     /// The one-time code to type at `url`; `null` when the tool opens its own window.

@@ -11,7 +11,7 @@ fn puddle(args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_puddle"))
         .args(args)
         .output()
-        .expect("the puddle binary runs")
+        .expect("the Puddle binary runs")
 }
 
 #[test]

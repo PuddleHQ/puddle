@@ -220,7 +220,7 @@ async fn start_and_adopt_rerun_the_hook_and_stop_closes_the_gate() {
     assert_eq!(hook.runs(), 2, "the hook runs on every start");
     assert_eq!(gate.state(), GateState::Ready);
 
-    // A new puddle re-adopts the running sandbox and runs the hook again.
+    // A new Puddle re-adopts the running sandbox and runs the hook again.
     let adopted = boot.adopt(&rt, &name("e"), &plan(), &gate).await.unwrap();
     assert_eq!(hook.runs(), 3);
     assert!(!adopted.ungated().owns_lifecycle());

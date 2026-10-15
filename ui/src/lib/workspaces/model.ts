@@ -136,7 +136,7 @@ export function nameProblem(name: string): string | null {
   if (name.startsWith("-") || name.endsWith("-"))
     return "Start and end with a letter or digit.";
   if (name.startsWith("m--"))
-    return "Names starting with m-- are reserved for puddle's own use.";
+    return "Names starting with m-- are reserved for Puddle's own use.";
   if (RESERVED_NAMES.has(name)) return `"${name}" is reserved; pick another.`;
   return null;
 }
@@ -161,7 +161,7 @@ export function repoUrlProblem(raw: string): string | null {
   if (!/^https:\/\//i.test(url)) return "Use an https:// URL.";
   const authority = url.slice(8).split(/[/?#]/)[0] ?? "";
   if (authority.includes("@"))
-    return "Remove the user name and password from the URL; puddle supplies credentials itself.";
+    return "Remove the user name and password from the URL; Puddle supplies credentials itself.";
   const host = authority.includes(":")
     ? authority.slice(0, authority.lastIndexOf(":"))
     : authority;

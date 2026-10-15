@@ -4,7 +4,7 @@
 //! A tool that logs in inside a workspace (`claude` and `/login`, `gh auth login`,
 //! `copilot login`) ends with a call to the service's token endpoint, which answers with the
 //! tokens the tool then stores on the workspace's disk, where anything running in the workspace
-//! can read them. With capture on, puddle's proxy reads that one answer ([`Logins`] is its
+//! can read them. With capture on, Puddle's proxy reads that one answer ([`Logins`] is its
 //! [`puddle_proxy::ExchangeRewriter`]): the real tokens go to the operating system's credential
 //! store, and the tool is given stand-ins that look like them ([`stand_in_for`]). The proxy swaps
 //! a stand-in for the real token in requests to the service's hosts and nowhere else (the

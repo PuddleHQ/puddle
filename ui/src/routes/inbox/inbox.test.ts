@@ -129,7 +129,7 @@ describe("the inbox page", () => {
     inbox.down = true;
     const view = render(InboxPage);
     await screen.findByText(
-      /Couldn't read the requests\. puddle's service isn't answering\./,
+      /Couldn't read the requests\. Puddle's service isn't answering\./,
     );
     view.unmount();
     reset();
@@ -190,7 +190,7 @@ describe("the inbox page", () => {
     );
     const notice = document.querySelector(".full");
     expect(notice).toHaveTextContent(
-      "demo has 3 waiting requests, the most puddle lists.",
+      "demo has 3 waiting requests, the most Puddle lists.",
     );
     expect(notice).toHaveTextContent("listed once you answer some");
     expect(notice).not.toHaveTextContent("other");
@@ -334,7 +334,7 @@ describe("deciding with the buttons", () => {
       await screen.findByRole("button", { name: /^Undo: / }),
     );
     expect(
-      await screen.findByText("puddle couldn't undo that."),
+      await screen.findByText("Puddle couldn't undo that."),
     ).toBeInTheDocument();
     reset();
   });

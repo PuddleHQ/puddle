@@ -9,7 +9,7 @@ use crate::HostError;
 
 /// The machine-level steps of [`crate::prepare`], in the order it calls them.
 pub trait Platform: Send + Sync {
-    /// Pins the process environment: removes every `MSB_*` variable and sets the three puddle
+    /// Pins the process environment: removes every `MSB_*` variable and sets the three Puddle
     /// owns. Must run before any other thread starts.
     ///
     /// # Errors

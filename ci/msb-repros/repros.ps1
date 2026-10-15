@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-# repros.ps1 - regression tests for the puddle fork's msb fixes (fork-only file).
+# repros.ps1 - regression tests for the Puddle fork's msb fixes (fork-only file).
 #
-# Each case is the repro from puddle's upstream-issues/msb-* folder turned into a pass/fail test.
+# Each case is the repro from Puddle's upstream-issues/msb-* folder turned into a pass/fail test.
 # A case PASSES when msb behaves as fixed and FAILS (with the evidence lines) when the bug shows.
 # Stock msb v0.7.7 fails all five; v0.7.7-puddle.2 and later fork tags pass.
 #

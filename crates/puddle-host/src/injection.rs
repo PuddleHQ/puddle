@@ -59,7 +59,7 @@ impl std::fmt::Debug for InjectorInputs {
 pub type InjectorFactory =
     Arc<dyn Fn(&InjectorInputs, &WorkspaceName) -> Arc<dyn Injector> + Send + Sync>;
 
-/// The injector a workspace gets when the host was given no factory: puddle's own, for Git hosts.
+/// The injector a workspace gets when the host was given no factory: Puddle's own, for Git hosts.
 /// It reads the workspace's identities and lists from the store for each request, and the secret
 /// of an identity from the cache at the moment it is needed.
 fn git_injector(inputs: &InjectorInputs, workspace: &WorkspaceName) -> Arc<dyn Injector> {
@@ -242,7 +242,7 @@ impl Injection {
         let _one_at_a_time = self.syncing.lock().unwrap_or_else(PoisonError::into_inner);
         let git = self.git(workspace)?;
         // The common name shows in the guest's trust store and in a tool's error message.
-        let name: String = format!("puddle CA for {workspace}")
+        let name: String = format!("Puddle CA for {workspace}")
             .chars()
             .take(64)
             .collect();
@@ -392,7 +392,7 @@ impl Injection {
             }
             Err(format!(
                 "the stored value of {} could not be removed from the operating system's credential \
-                 store; remove it there (it is filed under puddle)",
+                 store; remove it there (it is filed under Puddle)",
                 left.join(", ")
             ))
         })
@@ -1155,7 +1155,7 @@ mod tests {
         let decision = injector.decide(&context, &view).await;
         assert!(matches!(&decision, InjectDecision::Refuse(refusal)
                 if refusal.code() == "credential_unavailable"
-                    && refusal.message().contains("sign in to it in puddle")));
+                    && refusal.message().contains("sign in to it in Puddle")));
         for _ in 0..200 {
             if !events.0.lock().unwrap().is_empty() {
                 break;
@@ -1420,7 +1420,7 @@ mod tests {
                 ..
             }
         )));
-        // The login still works, as it would without puddle: nothing was captured.
+        // The login still works, as it would without Puddle: nothing was captured.
         assert!(claude_answer(&terminations, &ws).await.is_none());
     }
 

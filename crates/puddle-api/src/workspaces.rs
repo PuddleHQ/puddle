@@ -130,7 +130,7 @@ impl RepoUrl {
         let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
         if authority.contains('@') {
             return Err(
-                "remove the user name and password from the URL; puddle supplies credentials itself"
+                "remove the user name and password from the URL; Puddle supplies credentials itself"
                     .into(),
             );
         }
@@ -303,7 +303,7 @@ pub enum AttachMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Attached {
-    /// Whether puddle opened an editor itself (desktop mode, when it worked).
+    /// Whether Puddle opened an editor itself (desktop mode, when it worked).
     pub opened: bool,
     /// Where the browser editor is, in browser mode.
     pub url: Option<String>,
@@ -360,7 +360,7 @@ pub enum WorkspaceError {
     /// The service can't do it now (no runtime, not wired in).
     #[error("{0}")]
     Unavailable(String),
-    /// puddle failed; the text goes to the log, not to the client.
+    /// Puddle failed; the text goes to the log, not to the client.
     #[error("{0}")]
     Internal(String),
 }

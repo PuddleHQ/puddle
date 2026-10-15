@@ -10,7 +10,7 @@ use std::net::IpAddr;
 
 use crate::ValidationError;
 
-/// Longest DNS name puddle accepts, in bytes, without a trailing dot.
+/// Longest DNS name Puddle accepts, in bytes, without a trailing dot.
 pub const MAX_NAME_LEN: usize = 253;
 /// Longest DNS label, in bytes.
 pub const MAX_LABEL_LEN: usize = 63;
@@ -18,7 +18,7 @@ pub const MAX_LABEL_LEN: usize = 63;
 const WHAT_NAME: &str = "host name";
 const WHAT_IP: &str = "ip literal";
 
-/// A DNS name in puddle's normal form: lower-case ASCII (IDNA already applied), LDH labels of
+/// A DNS name in Puddle's normal form: lower-case ASCII (IDNA already applied), LDH labels of
 /// 1 to 63 bytes, no trailing dot, at most 253 bytes, last label not all digits (such a name
 /// reads as an IPv4 address to many resolvers).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]

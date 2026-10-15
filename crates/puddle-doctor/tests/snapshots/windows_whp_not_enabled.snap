@@ -15,7 +15,7 @@ FAIL  Runtime starts        msb can't load a DLL it needs (0xC0000135)
 skip  Test boot             not checked: no usable hypervisor
 ok    Global Secure Access  client not installed
 
-2 problems to fix before puddle can run sandboxes. (1.2 s)
+2 problems to fix before Puddle can run sandboxes. (1.2 s)
 
 ---
 {

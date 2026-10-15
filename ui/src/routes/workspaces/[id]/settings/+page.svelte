@@ -235,7 +235,7 @@
         <div class="grow">
           <label for="ws-direct-ssh">{DIRECT_SSH_LABEL}</label>
           <p class="desc" id="ws-direct-ssh-desc">
-            {DIRECT_SSH_HINT} While it is off, puddle opens no SSH way in and writes
+            {DIRECT_SSH_HINT} While it is off, Puddle opens no SSH way in and writes
             no ssh config entry. It applies at once.
             <span class="chip">{sourceLabel(effective.direct_ssh.source)}</span>
           </p>
@@ -260,11 +260,11 @@
           <label for="ws-capture">Keep logins made in this workspace</label>
           <p class="desc" id="ws-capture-desc">
             When you sign in to Claude Code, GitHub or Copilot inside this
-            workspace, puddle keeps the real token on this computer. The
-            workspace gets a stand-in that works only through puddle, so while
+            workspace, Puddle keeps the real token on this computer. The
+            workspace gets a stand-in that works only through Puddle, so while
             capture works nothing running in the workspace can copy your login.
             A change takes effect when the workspace next starts; turning it off
-            leaves the logins puddle already kept unused, so sign in again in
+            leaves the logins Puddle already kept unused, so sign in again in
             the workspace.
             <span class="chip"
               >{sourceLabel(effective.capture_logins.source)}</span

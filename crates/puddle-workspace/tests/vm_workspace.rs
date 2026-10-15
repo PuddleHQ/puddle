@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The workspace lifecycle on real microVMs (K on Linux KVM, W on Windows WHP).
 //!
-//! - a clone through the route (guest git → `puddle-agent` → vsock route → puddle's proxy → a
+//! - a clone through the route (guest git → `puddle-agent` → vsock route → Puddle's proxy → a
 //!   local git server) survives stop, sandbox removal and a new sandbox on the same workspace;
 //! - a VMM kill during commits, with the boot hook's `core.fsync=committed`, leaves a repository
 //!   that passes `git fsck --full`, 5 of 5 times;
@@ -47,7 +47,7 @@ use tokio::net::TcpListener;
 mod common;
 use common::git_command;
 
-/// The guest port puddle routes; the agent's default target.
+/// The guest port Puddle routes; the agent's default target.
 const ROUTE_PORT: u32 = 5000;
 /// The agent's listener in the guest.
 const GUEST_PROXY: &str = "http://127.0.0.1:3128";
@@ -269,7 +269,7 @@ fn host_repo(root: &Path) -> String {
     String::from_utf8(out.stdout).unwrap().trim().to_owned()
 }
 
-/// puddle's proxy on one route, allowing only the git host (resolved to loopback).
+/// Puddle's proxy on one route, allowing only the git host (resolved to loopback).
 fn proxy_route(root: &IpcRoot, sandbox: &SandboxName) -> Route {
     let policy = Arc::new(StaticPolicy::new());
     policy.allow(&Host::parse_normalised(GIT_HOST).unwrap());

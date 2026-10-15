@@ -6,13 +6,13 @@ info  Code integrity        memory integrity (HVCI) on; App Control policy for p
 FAIL  Bundled runtime       you aren't allowed to read or run C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe
       fix:  The file's permissions deny your account. Restore the inherited permissions:
               icacls "C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe" /reset
-            (as administrator if puddle is installed for all users), or reinstall puddle.
+            (as administrator if Puddle is installed for all users), or reinstall Puddle.
       from: Access is denied. (os error 5)
 skip  Runtime starts        not checked: the bundled runtime isn't usable
 skip  Test boot             not checked: the runtime doesn't start
 ok    Global Secure Access  client not installed
 
-1 problem to fix before puddle can run sandboxes. (1.2 s)
+1 problem to fix before Puddle can run sandboxes. (1.2 s)
 
 ---
 {
@@ -42,7 +42,7 @@ ok    Global Secure Access  client not installed
       "status": "fail",
       "summary": "you aren't allowed to read or run C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe",
       "finding": "runtime_permissions",
-      "fix": "The file's permissions deny your account. Restore the inherited permissions:\n  icacls \"C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe\" /reset\n(as administrator if puddle is installed for all users), or reinstall puddle.",
+      "fix": "The file's permissions deny your account. Restore the inherited permissions:\n  icacls \"C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe\" /reset\n(as administrator if Puddle is installed for all users), or reinstall Puddle.",
       "detail": "Access is denied. (os error 5)"
     },
     {

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The runtime's NOTICE file: what is bundled, under which licence, what puddle changed in msb
+//! The runtime's NOTICE file: what is bundled, under which licence, what Puddle changed in msb
 //! (Apache-2.0 §4(b)), and the written offer for the firmware's source (GPL-2.0 §3(b)).
 
 use std::fmt::Write as _;
@@ -24,20 +24,20 @@ pub fn render(facts: &ForkFacts, os: HostOs, firmware_files: &str) -> String {
     let kernel_series = fw.kernel_version.split('.').next().unwrap_or_default();
     let mut out = format!(
         "\
-puddle bundled runtime: NOTICE
+Puddle bundled runtime: NOTICE
 ==============================
 
-This folder contains the msb runtime that puddle runs its sandboxes with. It is not part of
-puddle's own source code and keeps its own licences. The licence texts are in this folder.
+This folder contains the msb runtime that Puddle runs its sandboxes with. It is not part of
+Puddle's own source code and keeps its own licences. The licence texts are in this folder.
 
 1. msb (microsandbox) - Apache-2.0 (Apache-2.0.txt)
 ---------------------------------------------------
 
 {msb} is built from https://github.com/{fork} at tag {tag}, a fork of microsandbox
 (https://github.com/{upstream}, tag {upstream_tag}), by the microsandbox authors. microsandbox ships
-no NOTICE file of its own. \"microsandbox\" is its authors' name; puddle is not affiliated with them.
+no NOTICE file of its own. \"microsandbox\" is its authors' name; Puddle is not affiliated with them.
 
-Modified files (Apache-2.0 section 4(b)): puddle changed msb. The changes are exactly these commits
+Modified files (Apache-2.0 section 4(b)): Puddle changed msb. The changes are exactly these commits
 on top of {upstream_tag}, each viewable at https://github.com/{fork}/commit/<sha>:
 ",
         fork = facts.fork_repo,
@@ -75,13 +75,13 @@ will give anyone who asks a complete machine-readable copy of the corresponding 
 libkrunfw {lv} and of the Linux {kv} kernel it contains (the libkrunfw source at commit
 {commit}, the kernel source, the patches and the kernel configuration used), on a medium
 customarily used for software interchange, for a charge no more than our cost of physically
-performing the distribution. Ask {contact}, naming puddle and runtime {tag}.
+performing the distribution. Ask {contact}, naming Puddle and runtime {tag}.
 This offer is valid for anyone in receipt of this runtime.
 
-3. puddle
+3. Puddle
 ---------
 
-puddle itself is GPL-3.0-or-later. Its third-party crates are listed in THIRD-PARTY-puddle.txt.
+Puddle itself is GPL-3.0-or-later. Its third-party crates are listed in THIRD-PARTY-puddle.txt.
 ",
         lv = fw.libkrunfw_version,
         kv = fw.kernel_version,

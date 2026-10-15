@@ -4,7 +4,7 @@
 //! hypervisor made a VM, the guest kernel and msb's agent came up, and a program ran inside.
 //!
 //! It needs no image download and no network. msb runs with a throwaway `MSB_HOME`, so the test
-//! leaves nothing in puddle's real one. The runtime logs at `debug`; when a boot fails and a keep
+//! leaves nothing in Puddle's real one. The runtime logs at `debug`; when a boot fails and a keep
 //! folder is given, its `logs/` folder (runtime, kernel and exec logs) is copied there first.
 
 use std::path::Path;
@@ -70,7 +70,7 @@ pub fn probe_x86_64() -> Vec<u8> {
 }
 
 /// The probe program for guests of `arch`, or `None` while none is written for it. Only
-/// [`GuestArch::X86_64`] has one (it is the only guest puddle builds, [`GuestArch::is_built`]); an
+/// [`GuestArch::X86_64`] has one (it is the only guest Puddle builds, [`GuestArch::is_built`]); an
 /// `aarch64` probe goes here when that guest does.
 #[must_use]
 pub fn probe_for(arch: GuestArch) -> Option<Vec<u8>> {
@@ -308,7 +308,7 @@ mod tests {
     fn the_probe_is_chosen_by_guest_architecture() {
         assert_eq!(probe_for(GuestArch::X86_64), Some(probe_x86_64()));
         assert_eq!(probe_for(GuestArch::Aarch64), None);
-        // Every architecture puddle builds guests for has a probe.
+        // Every architecture Puddle builds guests for has a probe.
         for arch in [GuestArch::X86_64, GuestArch::Aarch64] {
             assert_eq!(probe_for(arch).is_some(), arch.is_built(), "{arch}");
         }

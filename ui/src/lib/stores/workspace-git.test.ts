@@ -148,7 +148,7 @@ describe("identities of a workspace", () => {
     const store = make();
     await store.load("web");
     api.down = true;
-    const down = { ok: false, message: "puddle's service isn't answering." };
+    const down = { ok: false, message: "Puddle's service isn't answering." };
     expect(await store.attach(2)).toEqual(down);
     expect(await store.detach(1)).toEqual(down);
     expect(await store.setIdentities([1])).toEqual(down);
@@ -217,7 +217,7 @@ describe("switches and the table", () => {
     api.refuse = { status: 500, message: "x" };
     expect(await store.removeRepo(repoRow(1))).toEqual({
       ok: false,
-      message: "puddle couldn't remove the repository.",
+      message: "Puddle couldn't remove the repository.",
     });
   });
 });

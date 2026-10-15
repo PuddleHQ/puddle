@@ -113,7 +113,7 @@ async fn vmm_pid(env: &VmEnv, name: &SandboxName) -> u32 {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The host role: a minimal puddle.
+// The host role: a minimal Puddle.
 
 /// Plays the host when [`ROLE`] says so; as a normal test it does nothing.
 #[test]
@@ -299,7 +299,7 @@ impl Host {
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt as _;
-            // A console of its own, like a terminal window the user started puddle in.
+            // A console of its own, like a terminal window the user started Puddle in.
             cmd.creation_flags(windows_sys::Win32::System::Threading::CREATE_NEW_CONSOLE);
         }
         let mut child = cmd.spawn().expect("start host");
@@ -441,7 +441,7 @@ async fn hard_kill_rounds(suffix: &str, kill: impl Fn(&mut Host)) {
         gone_after.push(took);
         let _ = host.exit_code(Duration::from_secs(30));
 
-        // The next puddle start.
+        // The next Puddle start.
         let report = reconcile(&world.rt, &inventory, &ShutdownConfig::default())
             .await
             .expect("reconcile");
@@ -590,7 +590,7 @@ async fn vm_reconcile_touches_only_what_puddle_owns() {
     let env = &world.env;
     let sb = |tag: &str| env.sandbox_name(tag).unwrap();
 
-    // puddle-owned: known and stopped, unknown and stopped, unknown and left running.
+    // Puddle-owned: known and stopped, unknown and stopped, unknown and left running.
     for tag in ["known", "unknown"] {
         rt.create(spec(&sb(tag)))
             .await
@@ -600,7 +600,7 @@ async fn vm_reconcile_touches_only_what_puddle_owns() {
             .unwrap();
     }
     let left_running = rt.create(spec(&sb("running"))).await.unwrap();
-    // Foreign: created without puddle's owner label, then stopped.
+    // Foreign: created without Puddle's owner label, then stopped.
     let foreign = sb("foreign");
     env.scope(Box::pin(async {
         let s = env
@@ -614,7 +614,7 @@ async fn vm_reconcile_touches_only_what_puddle_owns() {
             .expect("stop foreign");
     }))
     .await;
-    // Stale directories: one with a puddle name, one foreign.
+    // Stale directories: one with a Puddle name, one foreign.
     let sandboxes_dir = env.settings().home().join("sandboxes");
     std::fs::create_dir_all(sandboxes_dir.join(sb("stale").as_str())).unwrap();
     std::fs::create_dir_all(sandboxes_dir.join("Foreign_Dir")).unwrap();

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Shared types for puddle's crates: identifiers, wire types and errors that cross crate
+//! Shared types for Puddle's crates: identifiers, wire types and errors that cross crate
 //! boundaries. Keep this crate small and free of I/O, so every other crate can depend on it.
 //!
 //! | Item | What |
 //! |---|---|
 //! | [`WorkspaceName`], [`SandboxName`], [`WorkspaceId`], [`VolumeName`], [`ImageRef`] | validated names; workspace, sandbox and volume names are DNS labels |
 //! | [`GuestPath`], [`GuestFile`], [`GuestEnv`] | what providers put into a guest; the boot hook applies them |
-//! | [`ApplyKind`], [`MergeSpec`], [`unmerge`] | merged files: puddle owns only some keys of a user's file; the engine `puddle-agent` runs in the guest |
+//! | [`ApplyKind`], [`MergeSpec`], [`unmerge`] | merged files: Puddle owns only some keys of a user's file; the engine `puddle-agent` runs in the guest |
 //! | [`MemoryMib`] | guest memory size: 256 MiB to 1 TiB, default 8 GiB (the setting is in `puddle-settings`) |
-//! | [`Problem`], [`Problems`] | what puddle did on its own that failed, listed until its cause goes away |
+//! | [`Problem`], [`Problems`] | what Puddle did on its own that failed, listed until its cause goes away |
 //! | [`WorkspaceStatus`], [`Event`], [`EventSink`] | workspace states and the user-facing event stream (incl. [`Event::OomKill`]) |
 //! | [`Host`], [`DomainName`] | a normalised egress destination (the proxy normalises, everyone else validates) |
 //! | [`EgressRequest`], [`Decision`], [`Policy`] | what the proxy asks the rules engine and what it gets back |
@@ -59,10 +59,10 @@ pub use policy::{
 };
 pub use problems::{Problem, Problems};
 
-/// puddle's version, from the workspace manifest.
+/// Puddle's version, from the workspace manifest.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// The line a puddle binary prints for `--version`: the program name and puddle's version.
+/// The line a Puddle binary prints for `--version`: the program name and Puddle's version.
 ///
 /// ```
 /// assert_eq!(puddle_types::version_line("puddle"), format!("puddle {}", puddle_types::VERSION));

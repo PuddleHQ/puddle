@@ -25,7 +25,7 @@ impl ReconnectionGrace {
     pub const MIN: ReconnectionGrace = ReconnectionGrace(30);
     /// Longest accepted grace: one day.
     pub const MAX: ReconnectionGrace = ReconnectionGrace(24 * 60 * 60);
-    /// puddle's default: 300 s.
+    /// Puddle's default: 300 s.
     pub const DEFAULT: ReconnectionGrace = ReconnectionGrace(300);
 
     /// Checks `secs` and wraps it.
@@ -90,7 +90,7 @@ impl From<ReconnectionGrace> for u32 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClipboardRead {
-    /// Show puddle's prompt.
+    /// Show Puddle's prompt.
     #[default]
     Ask,
     /// Allow without a prompt.
@@ -111,7 +111,7 @@ pub enum ServerChoice {
     Microsoft,
 }
 
-/// The colour theme of puddle's window.
+/// The colour theme of Puddle's window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeChoice {
@@ -124,7 +124,7 @@ pub enum ThemeChoice {
     Dark,
 }
 
-/// How much room puddle's window leaves around its content.
+/// How much room Puddle's window leaves around its content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DensityChoice {
@@ -135,14 +135,14 @@ pub enum DensityChoice {
     Compact,
 }
 
-/// What closing puddle's window does while a workspace runs.
+/// What closing Puddle's window does while a workspace runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CloseBehaviour {
     /// Keep running in the tray, so workspaces keep working.
     #[default]
     Tray,
-    /// Quit puddle (and stop the workspaces).
+    /// Quit Puddle (and stop the workspaces).
     Quit,
 }
 

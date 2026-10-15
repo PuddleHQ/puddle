@@ -109,7 +109,7 @@ try {
   }
   check(
     "a fresh install opens the first-run welcome screen, without the sidebar",
-    welcome?.path === "/welcome" && welcome.title === "Welcome - puddle" && welcome.heading === "Welcome to puddle" && welcome.skip && welcome.links === 0,
+    welcome?.path === "/welcome" && welcome.title === "Welcome - Puddle" && welcome.heading === "Welcome to Puddle" && welcome.skip && welcome.links === 0,
     JSON.stringify(welcome),
   );
   await run(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === "Skip setup")?.click(); return true;`);
@@ -130,7 +130,7 @@ try {
     return { status: r.status, body: await r.json() };`).catch((err) => ({ error: String(err) }));
   check("the API records that the setup is done", recorded?.status === 200 && recorded.body?.completed === true, JSON.stringify(recorded));
   check("served from 127.0.0.1", /^http:\/\/127\.0\.0\.1:\d+$/.test(shell?.origin ?? ""), shell?.origin);
-  check("title carries the app name", /puddle/.test(shell?.title ?? ""), shell?.title);
+  check("title carries the app name", /Puddle/.test(shell?.title ?? ""), shell?.title);
 
   const token = await run(`const t = window.__PUDDLE__ && window.__PUDDLE__.token;
     return { type: typeof t, length: t ? t.length : 0, frozen: Object.isFrozen(window.__PUDDLE__) };`);

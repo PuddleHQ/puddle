@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The image-pull proxy (interim design): the listener puddle's own registry traffic
+//! The image-pull proxy (interim design): the listener Puddle's own registry traffic
 //! goes through, so image pulls take the same way out as everything else.
 //!
-//! msb's registry client (run inside puddle by the msb adapter) is given this listener as its
+//! msb's registry client (run inside Puddle by the msb adapter) is given this listener as its
 //! proxy, with a per-run token as the URL's userinfo (`http://puddle:<token>@127.0.0.1:<port>`),
 //! through the SDK's own setting (`puddle_compute_msb::MsbConfig::with_registry_proxy`),
 //! not through `HTTPS_PROXY`: the token is never in the process environment, so no child process
 //! inherits it. Then:
 //!
-//! - **Only puddle gets in.** The listener binds `127.0.0.1` only, and every request must carry
+//! - **Only Puddle gets in.** The listener binds `127.0.0.1` only, and every request must carry
 //!   `Proxy-Authorization: Basic` for `puddle:<token>`; anything else is a `407` and the
 //!   connection is closed. The token is 256 random bits, compared in constant time, and never
 //!   logged (`Debug` and `Display` redact it; the log lines carry host and port only).
 //! - **Guests never reach it.** It registers itself in [`PuddleEndpoints`] as
 //!   [`EndpointKind::PullProxy`], so the workspace proxy's guard blocks it.
-//! - **No rules, but the guard.** Pulls are puddle's own requests, not a workspace's, so the rules
+//! - **No rules, but the guard.** Pulls are Puddle's own requests, not a workspace's, so the rules
 //!   engine isn't asked and no pending row is written. The address guard still
-//!   applies: puddle's own endpoints (this listener included), cloud metadata, link-local and
+//!   applies: Puddle's own endpoints (this listener included), cloud metadata, link-local and
 //!   special addresses are blocked. Private and loopback addresses are allowed by default, so a
 //!   company registry on an internal address and a developer's `localhost:5000` registry work
 //!   ([`PullProxy::with_local_access`] changes that).
@@ -72,7 +72,7 @@ const USER: &str = "puddle";
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
 /// What a pull may reach besides public addresses, unless [`PullProxy::with_local_access`] says
-/// otherwise: private networks (a company registry) and loopback (a local registry). puddle's own
+/// otherwise: private networks (a company registry) and loopback (a local registry). Puddle's own
 /// endpoints stay blocked whatever this says.
 #[must_use]
 pub fn default_pull_access() -> LocalAccess {
@@ -224,7 +224,7 @@ impl PullProxy {
         self
     }
 
-    /// Which local address categories pulls may reach. puddle's own endpoints are blocked
+    /// Which local address categories pulls may reach. Puddle's own endpoints are blocked
     /// whatever this says.
     #[must_use]
     pub fn with_local_access(mut self, access: LocalAccess) -> Self {
@@ -395,7 +395,7 @@ fn authorised(head: &Head, credentials: &str) -> bool {
 fn unauthorised() -> Refusal {
     Refusal::new(
         "407 Proxy Authentication Required",
-        "this is puddle's image-pull proxy; only puddle may use it",
+        "this is Puddle's image-pull proxy; only Puddle may use it",
     )
     .header("proxy-authenticate", "Basic realm=\"puddle\"")
 }
@@ -428,7 +428,7 @@ async fn serve(shared: &Shared, stream: TcpStream) {
         }
     };
     if !authorised(&head, &shared.credentials) {
-        tracing::warn!("image-pull proxy: request without puddle's credentials refused");
+        tracing::warn!("image-pull proxy: request without Puddle's credentials refused");
         refuse(reader.get_mut(), &unauthorised()).await;
         return;
     }
@@ -522,7 +522,7 @@ async fn relay(
     }
 }
 
-/// Marks a pull that puddle allowed but could not carry out (no address, nothing to connect to,
+/// Marks a pull that Puddle allowed but could not carry out (no address, nothing to connect to,
 /// a company proxy that refused): the record says it failed instead of reading as a pull that
 /// went through. A refusal that already decided the record (a blocked address) is left alone.
 fn note_failure(event: &mut ConnectionEvent, refusal: &Refusal) {
@@ -543,7 +543,7 @@ fn verdict(guard: &NetPolicy, access: LocalAccess, addr: SocketAddr) -> Result<(
         AddressClass::Public => Ok(()),
         AddressClass::Local { category, .. } if access.is_on(category) => Ok(()),
         AddressClass::Local { category, .. } => Err(BlockReason::LocalToggle(category)),
-        // puddle's own endpoints, and any class this version doesn't know.
+        // Puddle's own endpoints, and any class this version doesn't know.
         _ => Err(BlockReason::PuddleEndpoint),
     }
 }
@@ -657,7 +657,7 @@ fn blocked(
     event.reason = ConnectionReason::Blocked(reason);
     tracing::info!(%host, port, %reason, "image pull blocked");
     let what = match reason {
-        BlockReason::PuddleEndpoint => "one of puddle's own endpoints".to_owned(),
+        BlockReason::PuddleEndpoint => "one of Puddle's own endpoints".to_owned(),
         BlockReason::LocalToggle(category) => format!("a {} address", category.describe()),
         _ => "an address image pulls may not reach".to_owned(),
     };
@@ -856,7 +856,7 @@ mod tests {
                 .contains(&("x-puddle-blocked", "puddle_endpoint".to_owned()))
         );
         assert!(
-            r.message.contains("puddle's own endpoints"),
+            r.message.contains("Puddle's own endpoints"),
             "{}",
             r.message
         );

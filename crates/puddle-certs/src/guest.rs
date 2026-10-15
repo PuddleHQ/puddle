@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! What the guest gets: the synced roots and puddle's CAs as boot files, the step that builds
+//! What the guest gets: the synced roots and Puddle's CAs as boot files, the step that builds
 //! the full bundle in the guest, and the environment that points tools at it.
 
 use std::collections::BTreeSet;
@@ -13,7 +13,7 @@ use crate::select::{CorporateRoots, Fingerprint};
 /// `update-ca-certificates`' input so the system store gets them (Debian, Ubuntu, Alpine).
 pub const HOST_CA_DIR: &str = "/usr/local/share/ca-certificates/puddle-host";
 
-/// Every extra CA (synced host certificates, then puddle's CAs), each once:
+/// Every extra CA (synced host certificates, then Puddle's CAs), each once:
 /// `NODE_EXTRA_CA_CERTS`, which adds to Node's built-in roots.
 pub const EXTRA_CAS_PATH: &str = "/etc/puddle/extra-cas.pem";
 
@@ -31,7 +31,7 @@ pub const BUNDLE_STEP_SH: &str = include_str!("../guest/ca-bundle.sh");
 /// one store set, short enough to read.
 const NAME_HEX: usize = 16;
 
-/// The guest side of root sync for one workspace: the host's synced roots plus puddle's own CAs
+/// The guest side of root sync for one workspace: the host's synced roots plus Puddle's own CAs
 /// ([`TrustBundle`], a list so a dev CA is one more entry).
 ///
 /// Hand [`GuestTrust::guest_files`], [`GuestTrust::env`] and [`GuestTrust::boot_step`] to the
@@ -52,7 +52,7 @@ pub struct GuestTrust {
 }
 
 impl GuestTrust {
-    /// The trust for a workspace from the host's `corporate` roots and puddle's CAs.
+    /// The trust for a workspace from the host's `corporate` roots and Puddle's CAs.
     #[must_use]
     pub fn new(corporate: &CorporateRoots, puddle: &TrustBundle) -> Self {
         Self {
@@ -75,7 +75,7 @@ impl GuestTrust {
     /// hook sees no change and skips `update-ca-certificates`):
     ///
     /// 1. one file per synced host certificate under [`HOST_CA_DIR`];
-    /// 2. puddle's CA files ([`TrustBundle::guest_files`]);
+    /// 2. Puddle's CA files ([`TrustBundle::guest_files`]);
     /// 3. [`EXTRA_CAS_PATH`];
     /// 4. the step script at [`BUNDLE_STEP_PATH`] (mode `0755`).
     ///
@@ -130,7 +130,7 @@ impl GuestTrust {
         (!self.is_empty()).then(|| path(BUNDLE_STEP_PATH))
     }
 
-    /// The text of [`EXTRA_CAS_PATH`]: host certificates, then puddle's CAs, each once (a dev CA
+    /// The text of [`EXTRA_CAS_PATH`]: host certificates, then Puddle's CAs, each once (a dev CA
     /// the user also added to their Windows store is not repeated).
     fn extra_cas(&self) -> String {
         let mut seen = BTreeSet::new();
@@ -186,7 +186,7 @@ mod tests {
     }
 
     fn puddle_ca() -> CaCertificate {
-        CaBuilder::new("puddle test CA")
+        CaBuilder::new("Puddle test CA")
             .build()
             .unwrap()
             .certificate()
@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn a_ca_present_on_both_sides_is_listed_once() {
         let ca = puddle_ca();
-        // The user also trusted puddle's CA in Windows (a dev CA).
+        // The user also trusted Puddle's CA in Windows (a dev CA).
         let corp = corporate(&[ca.der().to_vec(), root_der("Corp")]);
         let trust = GuestTrust::new(&corp, &TrustBundle::new().with(ca));
         let extra = text(&trust.guest_files(), EXTRA_CAS_PATH);

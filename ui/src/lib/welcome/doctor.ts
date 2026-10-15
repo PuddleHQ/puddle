@@ -31,7 +31,7 @@ export const failures = (report: DoctorReport): DoctorCheck[] =>
 export const warnings = (report: DoctorReport): DoctorCheck[] =>
   report.checks.filter((check) => check.status === "warn");
 
-/** A failed check means puddle cannot run workspaces: the flow does not go on until it is fixed. */
+/** A failed check means Puddle cannot run workspaces: the flow does not go on until it is fixed. */
 export const isBlocked = (report: DoctorReport): boolean =>
   failures(report).length > 0;
 
@@ -44,7 +44,7 @@ export function verdict(report: DoctorReport): string {
   const warns = warnings(report).length;
   if (fails > 0) {
     const also = warns > 0 ? `; ${plural(warns, "warning")}` : "";
-    return `${plural(fails, "problem")} to fix before puddle can run workspaces${also}.`;
+    return `${plural(fails, "problem")} to fix before Puddle can run workspaces${also}.`;
   }
   if (warns > 0) {
     return `No problems found; ${plural(warns, "warning")} to know about.`;

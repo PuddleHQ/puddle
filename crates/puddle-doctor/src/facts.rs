@@ -12,7 +12,7 @@ pub enum Os {
     Windows,
     /// Linux: KVM (a supported second host).
     Linux,
-    /// macOS: the probes exist so the report names it, but puddle doesn't run there yet: the
+    /// macOS: the probes exist so the report names it, but Puddle doesn't run there yet: the
     /// hypervisor check says "not supported yet".
     MacOs,
     /// Anything else: only the portable checks.

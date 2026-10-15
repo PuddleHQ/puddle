@@ -64,7 +64,7 @@ async function pressSave(page: Page) {
   await expect(page.getByText(/Settings saved/)).toBeVisible();
 }
 
-test("shows every section with puddle's defaults, no CSP violations", async ({
+test("shows every section with Puddle's defaults, no CSP violations", async ({
   page,
   backend,
 }) => {
@@ -142,7 +142,7 @@ test("the licences open on request and are scrollable by keyboard", async ({
   expect(await axeViolations(page)).toEqual([]);
 });
 
-test("the theme is kept by puddle: it comes back after the page forgets everything", async ({
+test("the theme is kept by Puddle: it comes back after the page forgets everything", async ({
   page,
   backend,
   request,
@@ -242,14 +242,14 @@ test("the Save bar stays on screen, its buttons are big enough, and the screen h
   expect(await axeViolations(page)).toEqual([]);
 });
 
-test("the notification and inbox switches start at puddle's defaults, are saved together and survive a reload", async ({
+test("the notification and inbox switches start at Puddle's defaults, are saved together and survive a reload", async ({
   page,
   backend,
   request,
 }) => {
   await openSettings(page, backend);
   const labels = {
-    notify_only_unfocused: "Only when puddle is not the window in front",
+    notify_only_unfocused: "Only when Puddle is not the window in front",
     badge: "Show the number of waiting requests",
     notify_oom: "A workspace runs out of memory",
     notify_unexpected_stop: "A workspace stops on its own",
@@ -377,7 +377,7 @@ test.describe("Microsoft's VS Code server", () => {
     await page.getByLabel("Server", { exact: true }).selectOption("microsoft");
     const dialog = page.getByRole("dialog");
     await expect(dialog).toContainText(
-      "puddle downloads the server from Microsoft",
+      "Puddle downloads the server from Microsoft",
     );
     await expect(
       dialog.getByRole("link", { name: /licence terms/ }),

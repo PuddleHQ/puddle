@@ -34,7 +34,7 @@ export const NAV: readonly NavItem[] = [
   { href: "/settings", label: "Settings", icon: Settings as Component },
 ];
 
-export const APP_NAME = "puddle";
+export const APP_NAME = "Puddle";
 
 /** The section a path belongs to (`/rules/123` belongs to `/rules`). */
 export function sectionFor(pathname: string): NavItem | undefined {
@@ -43,7 +43,7 @@ export function sectionFor(pathname: string): NavItem | undefined {
   );
 }
 
-/** `Inbox (3) - puddle`: the document title, with the pending count when there is one. */
+/** `Inbox (3) - Puddle`: the document title, with the pending count when there is one. */
 export function documentTitle(pathname: string, pending: number): string {
   if (isWelcome(pathname)) {
     return `${stepFor(pathname)?.label ?? "Welcome"} - ${APP_NAME}`;

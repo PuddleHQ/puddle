@@ -3,19 +3,19 @@ puddle doctor (puddle 0.1.0, windows x86_64)
 ok    CPU virtualization    on (the hypervisor uses it)
 ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
 info  Code integrity        memory integrity (HVCI) on; App Control policy for programs off
-info  Job object            puddle runs in a job object that doesn't let child processes leave it
-      note: Usual under CI runners and some IDE or remote shells. puddle keeps its VM processes
+info  Job object            Puddle runs in a job object that doesn't let child processes leave it
+      note: Usual under CI runners and some IDE or remote shells. Puddle keeps its VM processes
             in its own job, so this only matters if "Test boot" fails with access denied.
 ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
 ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
 FAIL  Test boot             msb exited with 1: access denied starting the VM process inside this job object
-      fix:  The job object puddle was started in (see "Job object") doesn't let the VM process
+      fix:  The job object Puddle was started in (see "Job object") doesn't let the VM process
             leave it. Run puddle doctor from a normal terminal; on a CI runner, start it through
             a process outside the step's job.
       from: error: io error: Access is denied. (os error 5)
 ok    Global Secure Access  client not installed
 
-1 problem to fix before puddle can run sandboxes. (1.2 s)
+1 problem to fix before Puddle can run sandboxes. (1.2 s)
 
 ---
 {
@@ -43,9 +43,9 @@ ok    Global Secure Access  client not installed
     {
       "id": "job_object",
       "status": "info",
-      "summary": "puddle runs in a job object that doesn't let child processes leave it",
+      "summary": "Puddle runs in a job object that doesn't let child processes leave it",
       "finding": "job_without_breakaway",
-      "fix": "Usual under CI runners and some IDE or remote shells. puddle keeps its VM processes in its own job, so this only matters if \"Test boot\" fails with access denied."
+      "fix": "Usual under CI runners and some IDE or remote shells. Puddle keeps its VM processes in its own job, so this only matters if \"Test boot\" fails with access denied."
     },
     {
       "id": "runtime",
@@ -62,7 +62,7 @@ ok    Global Secure Access  client not installed
       "status": "fail",
       "summary": "msb exited with 1: access denied starting the VM process inside this job object",
       "finding": "boot_blocked_by_job",
-      "fix": "The job object puddle was started in (see \"Job object\") doesn't let the VM process leave it. Run puddle doctor from a normal terminal; on a CI runner, start it through a process outside the step's job.",
+      "fix": "The job object Puddle was started in (see \"Job object\") doesn't let the VM process leave it. Run puddle doctor from a normal terminal; on a CI runner, start it through a process outside the step's job.",
       "detail": "error: io error: Access is denied. (os error 5)"
     },
     {

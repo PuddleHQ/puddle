@@ -13,7 +13,7 @@ use puddle_types::{MemoryMib, SandboxName, VolumeName};
 use puddle_vm_tests::VmEnv;
 use support::{cleanup, collect_lines, path, sh, spec, vsock_sweep};
 
-/// The guest port puddle routes.
+/// The guest port Puddle routes.
 const ROUTE_PORT: u32 = 5000;
 
 /// The host's vsock address.
@@ -219,7 +219,7 @@ async fn vm_mount_sources_outside_the_share_are_refused() {
     );
 }
 
-/// The fork's SSH server (SDK, in puddle's process) reports a signal-killed command as a failure:
+/// The fork's SSH server (SDK, in Puddle's process) reports a signal-killed command as a failure:
 /// it sends no exit status, so OpenSSH exits 255 and the SDK client reads `-1`; a normal exit
 /// code still arrives as is (msb fork `359f1585`). The reason
 /// [`puddle_compute::Capabilities::ssh_reports_signal_exit`] is `true` on the fork.

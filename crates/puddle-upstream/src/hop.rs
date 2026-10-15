@@ -17,7 +17,7 @@ pub enum ParseError {
     /// The host is empty or contains characters no host name has.
     #[error("bad host in proxy address")]
     BadHost,
-    /// A scheme puddle cannot speak to a proxy (`https`, `socks5`, ...).
+    /// A scheme Puddle cannot speak to a proxy (`https`, `socks5`, ...).
     #[error("unsupported proxy scheme {0:?}")]
     UnsupportedScheme(String),
 }
@@ -267,7 +267,7 @@ impl Destination {
     }
 
     /// The URL handed to a PAC script: `scheme://host/`, with the port only when it isn't the
-    /// scheme's default (as a browser would). No path or query: puddle never sees them for a
+    /// scheme's default (as a browser would). No path or query: Puddle never sees them for a
     /// `CONNECT`, and must not log or send them for plain HTTP either.
     #[must_use]
     pub fn pac_url(&self) -> String {

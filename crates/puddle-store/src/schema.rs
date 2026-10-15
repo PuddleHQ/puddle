@@ -178,7 +178,7 @@ CREATE TABLE rule_set_switches (
 ) STRICT;
 CREATE UNIQUE INDEX rule_set_switches_key ON rule_set_switches (rule_set, ifnull(sandbox_id, ''));
 
--- Why puddle allows its System managed hosts, as last derived from the user's setup, so a
+-- Why Puddle allows its System managed hosts, as last derived from the user's setup, so a
 -- restart with the same setup changes (and records) nothing.
 CREATE TABLE system_reasons (
     sandbox_id TEXT,
@@ -338,13 +338,13 @@ CREATE TABLE git_defaults (
 /// Brings `conn` to [`SCHEMA_VERSION`] and returns the version it started at.
 ///
 /// # Errors
-/// [`StoreError::SchemaTooNew`] for a database written by a newer puddle (never downgraded),
+/// [`StoreError::SchemaTooNew`] for a database written by a newer Puddle (never downgraded),
 /// or the SQLite error of a failed migration (which is rolled back).
 pub(crate) fn migrate(conn: &mut Connection) -> Result<u32, StoreError> {
     migrate_with(conn, MIGRATIONS)
 }
 
-/// Migrates only up to `version`, to build the database an older puddle left behind.
+/// Migrates only up to `version`, to build the database an older Puddle left behind.
 #[cfg(test)]
 pub(crate) fn migrate_up_to(conn: &mut Connection, version: usize) -> Result<u32, StoreError> {
     migrate_with(conn, &MIGRATIONS[..version])
@@ -477,7 +477,7 @@ mod tests {
         conn
     }
 
-    /// A database a puddle from before the rename left behind: rows in every table that names the
+    /// A database a Puddle from before the rename left behind: rows in every table that names the
     /// owner, then migrated.
     #[test]
     fn v4_renames_the_owner_everywhere_and_keeps_the_rows() {

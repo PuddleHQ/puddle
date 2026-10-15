@@ -444,7 +444,7 @@ async fn a_login_that_cannot_be_captured_still_works_and_the_user_is_told() {
         [Problem::StoreUnavailable]
     );
     assert_eq!(login.registry.len(), 0);
-    // The tool uses its real token as it would without puddle.
+    // The tool uses its real token as it would without Puddle.
     assert_eq!(
         api_call(&login, ACCESS_1).await.as_deref(),
         Some(format!("Bearer {ACCESS_1}").as_str())

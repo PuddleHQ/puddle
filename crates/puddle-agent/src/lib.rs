@@ -2,7 +2,7 @@
 //! Guest agent (`puddle-agent`): a static binary inside each sandbox (ADR 0005) that
 //!
 //! - listens for proxy clients (`HTTP(S)_PROXY`) and
-//!   carries each connection to puddle's proxy as one yamux stream over vsock ([`serve`],
+//!   carries each connection to Puddle's proxy as one yamux stream over vsock ([`serve`],
 //!   [`upstream`]);
 //! - also listens on the Docker bridge address (`172.17.0.1:3128`) while a bridge owns it, so
 //!   containers inside the sandbox reach the same proxy ([`bridge`]);

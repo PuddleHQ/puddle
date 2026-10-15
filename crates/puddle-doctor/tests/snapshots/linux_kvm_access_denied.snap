@@ -10,11 +10,11 @@ ok    Bundled runtime     msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)
 FAIL  Runtime starts      the file's permissions don't let you run msb
       fix:  Make it readable and executable again:
               chmod a+rx "/opt/puddle/runtime/msb"
-            or reinstall puddle.
+            or reinstall Puddle.
       from: Permission denied (os error 13)
 skip  Test boot           not checked: no usable hypervisor
 
-2 problems to fix before puddle can run sandboxes. (1.2 s)
+2 problems to fix before Puddle can run sandboxes. (1.2 s)
 
 ---
 {
@@ -47,7 +47,7 @@ skip  Test boot           not checked: no usable hypervisor
       "status": "fail",
       "summary": "the file's permissions don't let you run msb",
       "finding": "runtime_permissions",
-      "fix": "Make it readable and executable again:\n  chmod a+rx \"/opt/puddle/runtime/msb\"\nor reinstall puddle.",
+      "fix": "Make it readable and executable again:\n  chmod a+rx \"/opt/puddle/runtime/msb\"\nor reinstall Puddle.",
       "detail": "Permission denied (os error 13)"
     },
     {

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! What the injector asks of the rest of puddle: the workspace's Git settings, and the secret a
+//! What the injector asks of the rest of Puddle: the workspace's Git settings, and the secret a
 //! source holds. Two small traits, so the injector is tested without a store or a `gh`.
 
 use std::fmt;
@@ -30,7 +30,7 @@ pub trait GitSettings: Send + Sync + fmt::Debug {
     fn current(&self) -> BoxFuture<'_, Result<WorkspaceGit, SettingsError>>;
 }
 
-/// The settings of one workspace in puddle's store.
+/// The settings of one workspace in Puddle's store.
 #[derive(Debug, Clone)]
 pub struct StoreSettings {
     store: Arc<Store>,

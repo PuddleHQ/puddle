@@ -33,7 +33,7 @@ export async function useIdentities(
   if (git.git === null) {
     return {
       ok: false,
-      message: "puddle couldn't read which identities the workspace has.",
+      message: "Puddle couldn't read which identities the workspace has.",
     };
   }
   const have = idsOf(git.git);

@@ -136,7 +136,7 @@ impl RuntimeFactory for FakeFactory {
     }
 }
 
-/// The scripted guest: answers every command puddle runs in a sandbox.
+/// The scripted guest: answers every command Puddle runs in a sandbox.
 #[derive(Default)]
 struct Guest {
     commands: Mutex<Vec<String>>,
@@ -302,7 +302,7 @@ struct TestUi;
 impl UiAssets for TestUi {
     fn get(&self, path: &str) -> Option<UiFile> {
         (path.is_empty() || path == "index.html")
-            .then(|| UiFile::new(&b"<html>puddle test ui</html>"[..], "text/html"))
+            .then(|| UiFile::new(&b"<html>Puddle test ui</html>"[..], "text/html"))
     }
 }
 
@@ -559,7 +559,7 @@ async fn the_daemon_serves_the_api_the_ui_and_the_event_stream() {
     assert_eq!(api.get("/api/health").await.status, 200);
     let ui = api.request("GET", "/", None, false).await;
     assert_eq!(ui.status, 200);
-    assert!(ui.body.contains("puddle test ui"), "{}", ui.body);
+    assert!(ui.body.contains("Puddle test ui"), "{}", ui.body);
 
     // The connection file names this host.
     let info =
@@ -2466,7 +2466,7 @@ async fn a_credential_for_any_host_applies_to_the_running_workspace_with_no_rest
         calls_of(&rig, "Stop"),
     );
 
-    // A host the workspace has never used, on a host puddle's default list does not have.
+    // A host the workspace has never used, on a host Puddle's default list does not have.
     let gitlab = make_identity(&api, "Ada", "gitlab.com", &[]).await;
     attach(&api, "acme", gitlab).await;
     eventually("gitlab.com decrypted", || {
@@ -2575,7 +2575,7 @@ async fn the_commit_authors_in_the_running_guest_follow_the_identities() {
     host.shutdown().await;
 }
 
-/// The guest is Linux, so no byte puddle puts into it may be a carriage return, whatever line
+/// The guest is Linux, so no byte Puddle puts into it may be a carriage return, whatever line
 /// ends the host's own text uses (the certificate text of a Windows build ends its lines with
 /// CRLF unless it is made with LF on purpose).
 #[tokio::test(flavor = "multi_thread")]
@@ -3208,7 +3208,7 @@ async fn a_workspace_starts_with_its_variables_and_a_stand_in_for_each_secret_an
     assert!(npm.starts_with("puddle-secret-NPM_TOKEN-"), "{npm}");
     assert!(key.starts_with("puddle-secret-API_KEY-"), "{key}");
     assert_eq!(npm, stand_in_of(&host, "acme", "NPM_TOKEN"));
-    // puddle's own variables are still there beside them.
+    // Puddle's own variables are still there beside them.
     assert_eq!(env.get("HTTPS_PROXY"), Some("http://127.0.0.1:3128"));
     // Login shells see the same through the env file.
     let files = rig.guest.plan_files(rig.guest.boots() - 1);
@@ -3483,7 +3483,7 @@ async fn a_stand_in_is_the_same_at_every_start_so_files_the_workspace_wrote_with
         1,
         "same environment, so the same sandbox restarted"
     );
-    // The stand-in survives a restart of puddle too: it is in the database.
+    // The stand-in survives a restart of Puddle too: it is in the database.
     host.shutdown().await;
     // The next start is a new process: the first one's hold on the data folder ends.
     drop(host);
@@ -3555,8 +3555,8 @@ async fn the_variables_puddle_adds_to_keep_the_users_value_and_the_ones_it_owns_
         json!({"kind": "plain", "value": "/data/docker"}),
     )
     .await;
-    // A name puddle owns cannot be set through the API; a hand-edited database row is ignored in
-    // favour of puddle's own value.
+    // A name Puddle owns cannot be set through the API; a hand-edited database row is ignored in
+    // favour of Puddle's own value.
     host.store()
         .set_env(
             &puddle_store::EnvScope::Global,

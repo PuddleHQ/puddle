@@ -46,7 +46,7 @@ describe("AuditTable", () => {
     render(AuditTable, { entries: many(3), hasMore: true, now: NOW });
     expect(screen.getByRole("table")).toHaveAttribute("aria-rowcount", "-1");
   });
-  it("shows puddle for a record that is about no workspace", () => {
+  it("shows Puddle for a record that is about no workspace", () => {
     render(AuditTable, {
       entries: [
         {
@@ -61,7 +61,7 @@ describe("AuditTable", () => {
       ],
       now: NOW,
     });
-    expect(screen.getByText("puddle")).toBeInTheDocument();
+    expect(screen.getByText("Puddle")).toBeInTheDocument();
     expect(screen.getByText("5 older records deleted")).toBeInTheDocument();
   });
   it("draws only a window of a long list, with the rest as padding", () => {

@@ -25,7 +25,7 @@ fn rejected() -> Unauthorized {
         InjectRefusal::new(
             403,
             "credential_rejected",
-            "the server did not accept the credential puddle added",
+            "the server did not accept the credential Puddle added",
         )
     })
 }

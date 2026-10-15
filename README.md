@@ -1,14 +1,14 @@
-# puddle
+# Puddle
 
 Rubber ducks welcome.
 
-puddle runs each devcontainer workspace in its own microVM on Windows (Linux hosts from v1), with
-puddle's own proxy as the only way out of the VM. Outbound connections go to domains you allowed,
+Puddle runs each devcontainer workspace in its own microVM on Windows (Linux hosts from v1), with
+Puddle's own proxy as the only way out of the VM. Outbound connections go to domains you allowed,
 per workspace or globally; anything else waits in an approval inbox until you allow or deny it. It
 is a native Rust program with a Tauri desktop app, built and tested on Windows and Linux, and builds
 on [microsandbox](https://github.com/superradcompany/microsandbox) for the microVMs.
 
-The idea follows [Huddle](https://github.com/infosupport/huddle); puddle is written from scratch and
+The idea follows [Huddle](https://github.com/infosupport/huddle); Puddle is written from scratch and
 shares no code with it.
 
 **Status:** early development, no release yet. The Cargo workspace and its quality gates are in
@@ -46,6 +46,6 @@ problems: [SECURITY.md](SECURITY.md).
 
 Copyright (C) 2026 Tijs van Kampen and contributors.
 
-puddle is free software under the GNU General Public License, version 3 or (at your option) any later
+Puddle is free software under the GNU General Public License, version 3 or (at your option) any later
 version: see [LICENSE](LICENSE). SPDX: `GPL-3.0-or-later`. Bundled third-party components keep
 their own licences.

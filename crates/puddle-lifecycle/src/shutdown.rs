@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The sandboxes puddle runs, and stopping all of them when puddle exits.
+//! The sandboxes Puddle runs, and stopping all of them when Puddle exits.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -16,7 +16,7 @@ use crate::trim::{TrimOutcome, trim_request};
 pub struct ShutdownConfig {
     /// How long `fstrim` may run before the stop goes ahead anyway.
     pub trim_timeout: Duration,
-    /// How long a stop may take before puddle gives up on it and reports
+    /// How long a stop may take before Puddle gives up on it and reports
     /// [`StopOutcome::TimedOut`]. The msb adapter itself kills a VM that doesn't stop
     /// gracefully within 30 s, so this is a backstop.
     pub stop_timeout: Duration,
@@ -125,8 +125,8 @@ struct State<S> {
     closed: bool,
 }
 
-/// The owning handles of the sandboxes puddle runs. Each one is trimmed and stopped by
-/// [`Lifecycle::shutdown`]; until then dropping the `Lifecycle` (or puddle dying) ends the VMs
+/// The owning handles of the sandboxes Puddle runs. Each one is trimmed and stopped by
+/// [`Lifecycle::shutdown`]; until then dropping the `Lifecycle` (or Puddle dying) ends the VMs
 /// without a stop.
 pub struct Lifecycle<R: Runtime> {
     runtime: R,

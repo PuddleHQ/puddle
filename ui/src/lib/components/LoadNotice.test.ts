@@ -20,7 +20,7 @@ describe("LoadNotice", () => {
       props: { what: "the rules", message: null, stale: true },
     });
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Couldn't refresh the rules. What is shown may be out of date; puddle keeps trying.",
+      "Couldn't refresh the rules. What is shown may be out of date; Puddle keeps trying.",
     );
   });
 });

@@ -6,8 +6,8 @@
 //!   and upstream's firmware under `libkrunfw.so.5` and the versioned name msb looks for. Downloads
 //!   are checksum verified, the embedded msb version is checked against the tag, and `licenses/`
 //!   holds the licence texts, the NOTICE (fork commits, written offer) and the third-party notices
-//!   of msb's and puddle's dependency trees.
-//! - `notices`: puddle's own third-party notices; `--check` only verifies that every shipped
+//!   of msb's and Puddle's dependency trees.
+//! - `notices`: Puddle's own third-party notices; `--check` only verifies that every shipped
 //!   dependency has a licence entry (a `scripts/check.sh` gate).
 //! - `openapi`: writes the API contract (`openapi.json`) and its TypeScript types
 //!   ([`openapi`]); `--check` fails when either committed file is stale (a `scripts/check.sh`
@@ -49,13 +49,13 @@ commands:
                                    (ci/fetch-msb.sh builds it); the fork releases no Linux msb
             --pins <file>          runtime pin list (default: ci/msb-runtime.sha256), where the Linux
                                    firmware version comes from
-            --tag <tag>            fork tag (default: v<BUILT_FOR>, the version this puddle runs)
+            --tag <tag>            fork tag (default: v<BUILT_FOR>, the version this Puddle runs)
             --upstream-tag <tag>   upstream base tag (default: derived from a -puddle.N tag)
             --fork <owner/name>    fork repository (default: TijsVK/microsandbox)
             --upstream <owner/name> upstream repository (default: superradcompany/microsandbox)
             --from <dir>           take the parts from a folder instead of GitHub
             --offline              no network for cargo
-  notices   puddle's third-party notices
+  notices   Puddle's third-party notices
             --check                only check that every dependency has a licence entry
             --out <file>           output file (default: <target>/THIRD-PARTY-puddle.txt)
             --offline              no network for cargo
@@ -68,7 +68,7 @@ commands:
 pub const DEFAULT_FORK: &str = "TijsVK/microsandbox";
 /// Upstream msb.
 pub const DEFAULT_UPSTREAM: &str = "superradcompany/microsandbox";
-/// The targets puddle ships binaries for (host on Windows, guest agent on Linux musl) or develops on.
+/// The targets Puddle ships binaries for (host on Windows, guest agent on Linux musl) or develops on.
 pub const PUDDLE_TARGETS: [&str; 3] = [
     "x86_64-pc-windows-msvc",
     "x86_64-unknown-linux-gnu",
@@ -191,7 +191,7 @@ fn openapi_command(opts: &Options) -> Result<String> {
     Ok(report.line())
 }
 
-/// puddle's own inventory, computed with cargo-about.
+/// Puddle's own inventory, computed with cargo-about.
 fn puddle_inventory(cargo: &Cargo) -> Result<Inventory> {
     let root = workspace_root();
     cargo.inventory(
@@ -219,7 +219,7 @@ fn notices(opts: &Options) -> Result<String> {
     );
     std::fs::write(
         &out,
-        inventory.render("The Rust crates in puddle's own programs, with their licences."),
+        inventory.render("The Rust crates in Puddle's own programs, with their licences."),
     )
     .map_err(|e| XtaskError::io(format!("writing {}", out.display()), e))?;
     Ok(format!("wrote {}", out.display()))
@@ -315,7 +315,7 @@ fn runtime_target(opts: &Options, tag: &str) -> Result<assemble::Target> {
     }
 }
 
-/// A fixture folder may carry puddle's inventory too (`puddle-about.json`, `puddle-tree.txt`),
+/// A fixture folder may carry Puddle's inventory too (`puddle-about.json`, `puddle-tree.txt`),
 /// so tests and offline runs don't need cargo-about.
 fn fixture_puddle_inventory(dir: &Path) -> Option<Result<Inventory>> {
     let about = std::fs::read_to_string(dir.join("puddle-about.json")).ok()?;

@@ -11,7 +11,7 @@ use crate::error::{HarnessError, clip};
 /// A short name every sandbox and directory of one run starts with.
 ///
 /// Lowercase letters, digits and `-`, starting with a letter, at most [`RunPrefix::MAX_LEN`]
-/// characters, so `<prefix>-<tag>` stays a valid puddle sandbox name (a DNS label) and the private
+/// characters, so `<prefix>-<tag>` stays a valid Puddle sandbox name (a DNS label) and the private
 /// home path stays short (msb's Unix sockets live under it).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunPrefix(String);
@@ -74,7 +74,7 @@ impl RunPrefix {
     ///
     /// # Errors
     ///
-    /// [`HarnessError::InvalidName`] when the result isn't a valid puddle sandbox name.
+    /// [`HarnessError::InvalidName`] when the result isn't a valid Puddle sandbox name.
     pub fn sandbox_name(&self, tag: &str) -> Result<SandboxName, HarnessError> {
         SandboxName::new(&format!("{}-{tag}", self.0)).map_err(|e| HarnessError::InvalidName {
             tag: clip(tag),

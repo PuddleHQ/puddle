@@ -94,7 +94,7 @@ export function clipboardOptions(
 const SOURCE_WORDS: Record<Source, string> = {
   workspace: "this workspace",
   global: "global setting",
-  default: "puddle's default",
+  default: "Puddle's default",
 };
 
 /** Where a value in effect comes from, in words for a chip. */

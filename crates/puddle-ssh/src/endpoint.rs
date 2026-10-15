@@ -25,7 +25,7 @@ const WRITE_LIMIT: Duration = Duration::from_secs(5);
 
 /// What an [`SshEndpoint`] serves its clients with.
 ///
-/// puddle's implementation is [`GatedSandbox`]: a client is admitted once the sandbox's boot
+/// Puddle's implementation is [`GatedSandbox`]: a client is admitted once the sandbox's boot
 /// hook has returned 0 (waiting while it boots) and then gets its own SSH connection from the
 /// runtime. Tests implement it with other servers.
 pub trait SshTarget: Send + Sync + 'static {

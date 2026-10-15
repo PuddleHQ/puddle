@@ -2,7 +2,7 @@
 //! TLS termination for the hosts a workspace has a credential for.
 //!
 //! Almost every connection through the proxy is spliced: the guest and the real server talk TLS
-//! to each other and puddle sees only the name. A *bound* host is the exception, so that a
+//! to each other and Puddle sees only the name. A *bound* host is the exception, so that a
 //! credential can be added to the request without ever entering the workspace. For those hosts, and
 //! only those, the proxy is the TLS server the guest sees (with a certificate from the
 //! workspace's own CA, `puddle-ca`) and a verifying TLS client to the real server.
@@ -31,7 +31,7 @@
 //!   hyper, one request per stream, with the same checks (`Host`/`:authority`, target, framing)
 //!   and limits of its own (streams, header list, resets, header-read time).
 //!   A client that refuses the certificate (it does not trust the workspace's CA) is recorded with
-//!   the audit reason `guest_tls_rejected`; the rule's decision stands, since puddle blocked nothing.
+//!   the audit reason `guest_tls_rejected`; the rule's decision stands, since Puddle blocked nothing.
 //! - **Requests**: a request for another host (`Host`, `:authority` or an absolute target) is
 //!   `421`; an ambiguous one is `400`. The [`Injector`] is asked the same way on both versions.
 //! - **Upstream leg**: one connection per guest connection, never shared, verified against the
@@ -85,7 +85,7 @@ pub use set::{PatternError, TerminationSet};
 pub use stand_in::{StandIn, StandInError, StandInOrigin, StandIns, secret_stand_in};
 pub use token_body::{BodyFormat, TokenBody, TokenBodyError};
 
-/// Hosts puddle decrypts by default: GitHub and Azure DevOps, for git and Git LFS. Not
+/// Hosts Puddle decrypts by default: GitHub and Azure DevOps, for git and Git LFS. Not
 /// `api.github.com` (the `gh` CLI and gists would become an exfiltration channel with a
 /// credential), nor any package registry.
 pub const DEFAULT_TERMINATED_HOSTS: [&str; 3] =

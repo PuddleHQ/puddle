@@ -66,7 +66,7 @@ test("lists the identities with author, credentials, default and use; the sideba
   const personal = row(page, "Personal");
   await expect(personal).not.toContainText("Default");
   await expect(personal).toContainText("the rest of github.com");
-  await expect(page).toHaveTitle("Identities - puddle");
+  await expect(page).toHaveTitle("Identities - Puddle");
   expect(await csp()).toEqual([]);
 });
 

@@ -212,7 +212,7 @@ async fn settings_from_a_newer_puddle_are_a_conflict_and_left_alone() {
             reply.json()["message"]
                 .as_str()
                 .unwrap()
-                .contains("update puddle")
+                .contains("update Puddle")
         );
     }
     assert_eq!(api.settings.load_global().unwrap(), Some(newer));
@@ -397,7 +397,7 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
     api.running.shutdown().await;
 }
 
-/// A settings document a puddle from before the rename left behind: its defaults show under the new
+/// A settings document a Puddle from before the rename left behind: its defaults show under the new
 /// name and the document is written back in the current shape.
 #[tokio::test]
 async fn global_settings_stored_under_the_old_name_are_read_and_rewritten() {

@@ -2,9 +2,9 @@
 //! What the endpoint says before SSH starts: a hello, then the SSH banner or a refusal line.
 //!
 //! On accept the endpoint at once writes [`HELLO`] (the bridge strips it; `ssh` never sees it),
-//! so the bridge can bound its wait for a live puddle instead of hanging on an endpoint nobody
+//! so the bridge can bound its wait for a live Puddle instead of hanging on an endpoint nobody
 //! serves. Then an SSH server speaks first (`SSH-2.0-…`), so the next bytes are either that
-//! banner or, when puddle refuses the client (sandbox stopped, boot failed), one line
+//! banner or, when Puddle refuses the client (sandbox stopped, boot failed), one line
 //! `puddle-refused: <reason>\r\n` followed by a close. The bridge prints the reason instead of
 //! leaving `ssh` with a bare "connection closed".
 //!

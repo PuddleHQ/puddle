@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! puddle's per-user data folder.
+//! Puddle's per-user data folder.
 
 use std::path::{Path, PathBuf};
 
@@ -23,7 +23,7 @@ pub enum DataDirError {
     },
 }
 
-/// puddle's per-user data folder for this OS (see the crate documentation for the table). The
+/// Puddle's per-user data folder for this OS (see the crate documentation for the table). The
 /// folder isn't created.
 ///
 /// # Errors

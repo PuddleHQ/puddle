@@ -122,7 +122,7 @@ describe("the flow's frame", () => {
     expect(
       items.filter((li) => li.getAttribute("aria-current") === "step"),
     ).toEqual([items[3]]);
-    expect(screen.getByText("puddle")).toBeInTheDocument();
+    expect(screen.getByText("Puddle")).toBeInTheDocument();
   });
 
   it("leaves the step bar out when the system check runs on its own from Settings", () => {
@@ -137,7 +137,7 @@ describe("welcome step", () => {
   it("greets, and goes on to the system check", () => {
     render(Welcome);
     expect(
-      screen.getByRole("heading", { level: 1, name: "Welcome to puddle" }),
+      screen.getByRole("heading", { level: 1, name: "Welcome to Puddle" }),
     ).toHaveFocus();
     expect(screen.getByRole("link", { name: "Get started" })).toHaveAttribute(
       "href",
@@ -160,7 +160,7 @@ describe("welcome step", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));
     await waitFor(() => expect(nav.goto).toHaveBeenCalledWith("/workspaces"));
     expect(toasts.items[0]?.message).toMatch(
-      /newer puddle.*may show again next time/,
+      /newer Puddle.*may show again next time/,
     );
     expect(toasts.items[0]?.tone).toBe("error");
   });
@@ -191,7 +191,7 @@ describe("certificates step", () => {
     );
   });
 
-  it("says once that puddle uses an existing .NET development certificate", async () => {
+  it("says once that Puddle uses an existing .NET development certificate", async () => {
     h.firstRun.state = {
       ...h.firstRun.state,
       dev_certificate: "reusing_existing",
@@ -268,7 +268,7 @@ describe("look step", () => {
     });
     await fireEvent.click(radio("Light"));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "The theme changed here but puddle couldn't save it. No.",
+      "The theme changed here but Puddle couldn't save it. No.",
     );
     h.prefs.refuse.set("PUT /api/settings", {
       status: 422,
@@ -278,7 +278,7 @@ describe("look step", () => {
     await fireEvent.click(radio("Compact"));
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(
-        "The density changed here but puddle couldn't save it.",
+        "The density changed here but Puddle couldn't save it.",
       ),
     );
   });
@@ -358,7 +358,7 @@ describe("first workspace step", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Skip" }));
     await waitFor(() => expect(nav.goto).toHaveBeenCalledWith("/workspaces"));
     expect(toasts.items[0]?.message).toMatch(
-      /newer puddle.*may show again next time/,
+      /newer Puddle.*may show again next time/,
     );
   });
 });

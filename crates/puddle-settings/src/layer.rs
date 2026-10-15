@@ -43,12 +43,12 @@ pub struct WorkspaceLayer {
     /// Programmatic clipboard reads in workspace windows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clipboard_read: Option<ClipboardRead>,
-    /// Whether puddle opens an SSH way into the workspace for the user's own tools (desktop
+    /// Whether Puddle opens an SSH way into the workspace for the user's own tools (desktop
     /// VS Code, a terminal `ssh`). Off means no SSH endpoint and no ssh config entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub direct_ssh: Option<bool>,
     /// Whether a login made inside the workspace (Claude Code, GitHub's `gh` and Copilot CLI) is
-    /// captured: puddle keeps the real token on the host and the workspace holds a stand-in.
+    /// captured: Puddle keeps the real token on the host and the workspace holds a stand-in.
     /// Applies at the workspace's next start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture_logins: Option<bool>,
@@ -71,7 +71,7 @@ impl WorkspaceLayer {
 }
 
 /// One toggle per local-destination category. A toggle only *permits* its category: the
-/// allowlist still decides each destination. puddle's default for each is off.
+/// allowlist still decides each destination. Puddle's default for each is off.
 ///
 /// One field per [`LocalCategory`], named by its [`LocalCategory::key`] (a test checks this), so
 /// the stored names and the classifier's categories can't drift apart. Read a toggle by category
@@ -122,7 +122,7 @@ impl LocalToggles {
             LocalCategory::LinkLocal => self.link_local,
             LocalCategory::Metadata => self.metadata,
             LocalCategory::Special => self.special,
-            // A category this version has no field for is unset, so it resolves to puddle's
+            // A category this version has no field for is unset, so it resolves to Puddle's
             // default (off). `every_category_has_its_field` fails until a field is added.
             _ => None,
         }

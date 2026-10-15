@@ -366,7 +366,7 @@ describe("the identities list", () => {
       }),
     );
     await waitFor(() =>
-      expect(lastToast()).toBe("puddle couldn't delete that identity."),
+      expect(lastToast()).toBe("Puddle couldn't delete that identity."),
     );
     expect(api.identities).toHaveLength(3);
   });

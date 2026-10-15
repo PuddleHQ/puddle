@@ -155,7 +155,7 @@ impl ProxyConfig {
     }
 }
 
-/// The egress proxy: one per puddle process, shared by every workspace's route.
+/// The egress proxy: one per Puddle process, shared by every workspace's route.
 ///
 /// ```
 /// # use std::sync::Arc;
@@ -194,7 +194,7 @@ impl Proxy {
     /// A proxy that asks `policy`, resolves with the OS resolver, and reports agent events (OOM
     /// kills) to `sink`. Its address check is a [`NetPolicy`] with every local toggle off and no
     /// registered endpoints: public addresses only. The host program passes its own
-    /// [`NetPolicy`] (settings-backed toggles, puddle's endpoint registry) with
+    /// [`NetPolicy`] (settings-backed toggles, Puddle's endpoint registry) with
     /// [`Self::with_address_check`], and its audit (the store) with
     /// [`Self::with_connection_log`]; until then connections are not recorded.
     #[must_use]
@@ -427,7 +427,7 @@ pub(crate) struct Refusal {
     pub(crate) status: std::borrow::Cow<'static, str>,
     pub(crate) headers: Vec<(&'static str, String)>,
     pub(crate) message: String,
-    /// The reason the connection record carries, for a refusal puddle made on purpose (not an
+    /// The reason the connection record carries, for a refusal Puddle made on purpose (not an
     /// upstream failure): also sent as `x-puddle-blocked`.
     pub(crate) code: Option<&'static str>,
 }
@@ -445,7 +445,7 @@ impl Refusal {
         }
     }
 
-    /// Marks this refusal as one puddle made on purpose: the connection record gets `code` as its
+    /// Marks this refusal as one Puddle made on purpose: the connection record gets `code` as its
     /// reason, and the guest reads it in `x-puddle-blocked`.
     pub(crate) fn coded(mut self, code: &'static str) -> Self {
         self.code = Some(code);
@@ -1047,10 +1047,10 @@ fn allowed(
                 "403 Forbidden",
                 match outcome {
                     PendingOutcome::Unlisted => format!(
-                        "{host} is not listed for approval in puddle yet: this workspace already has more waiting requests than puddle lists. Answer some of them in puddle, then retry and this one is listed"
+                        "{host} is not listed for approval in Puddle yet: this workspace already has more waiting requests than Puddle lists. Answer some of them in Puddle, then retry and this one is listed"
                     ),
                     _ => format!(
-                        "{host} is waiting for approval in puddle; approve it there, then retry"
+                        "{host} is waiting for approval in Puddle; approve it there, then retry"
                     ),
                 },
             )

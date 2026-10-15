@@ -106,7 +106,7 @@ export class GlobalSettings {
           ? {
               ok: false,
               message:
-                "These settings were saved by a newer puddle. Update puddle to change them.",
+                "These settings were saved by a newer Puddle. Update Puddle to change them.",
             }
           : refused(error?.message);
       }
@@ -120,11 +120,11 @@ export class GlobalSettings {
 
 const refused = (message?: string): SaveResult => ({
   ok: false,
-  message: message ?? "puddle couldn't save that.",
+  message: message ?? "Puddle couldn't save that.",
 });
 const unreachable = (): SaveResult => ({
   ok: false,
-  message: "puddle's service isn't answering.",
+  message: "Puddle's service isn't answering.",
 });
 
 export const globalSettings = new GlobalSettings();

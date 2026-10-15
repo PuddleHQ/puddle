@@ -25,14 +25,14 @@ export interface RepoListsDeps {
   now?: () => number;
 }
 
-const DOWN = "puddle's service isn't answering.";
+const DOWN = "Puddle's service isn't answering.";
 const PAGE = 100;
 
 export class RepoLists {
   /** The newest answer; kept on show while a newer one is read. */
   listing = $state.raw<RepoListing | null>(null);
   status = $state<RepoStatus>("idle");
-  /** A read has taken longer than a moment: show that puddle is still asking the Git host. */
+  /** A read has taken longer than a moment: show that Puddle is still asking the Git host. */
   slow = $state(false);
   refreshing = $state(false);
   loadingMore = $state(false);
@@ -75,7 +75,7 @@ export class RepoLists {
         this.#schedule();
       } else {
         this.message = sentence(
-          error?.message ?? "puddle couldn't read the lists",
+          error?.message ?? "Puddle couldn't read the lists",
         );
         this.status = "failed";
       }
@@ -127,7 +127,7 @@ export class RepoLists {
       });
       if (!data) {
         this.message = sentence(
-          error?.message ?? "puddle couldn't refresh the lists",
+          error?.message ?? "Puddle couldn't refresh the lists",
         );
         return;
       }

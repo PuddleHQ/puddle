@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Windows only: puddle's SSPI sign-in against a fake corporate proxy whose server side
+//! Windows only: Puddle's SSPI sign-in against a fake corporate proxy whose server side
 //! is Windows' own SSPI (`AcceptSecurityContext`). So the tokens are checked by the real NTLM and
 //! Negotiate packages, as the logged-on user of the runner, instead of by a stand-in that
 //! "accepts anything" (Squid's `ntlm_fake_auth` sends a Type 2 Windows rejects).

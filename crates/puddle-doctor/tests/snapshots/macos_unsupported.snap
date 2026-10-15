@@ -1,14 +1,14 @@
 puddle doctor (puddle 0.1.0, macos x86_64)
 
 info  CPU virtualization  unknown
-FAIL  Hypervisor          puddle doesn't support macOS yet
-      fix:  Run puddle on Windows 10/11 or Linux with KVM for now. macOS on Apple Silicon is
+FAIL  Hypervisor          Puddle doesn't support macOS yet
+      fix:  Run Puddle on Windows 10/11 or Linux with KVM for now. macOS on Apple Silicon is
             being explored.
 ok    Bundled runtime     msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)
 ok    Runtime starts      msb 0.7.7-puddle.2 (0.0 s)
 skip  Test boot           not checked: no usable hypervisor
 
-1 problem to fix before puddle can run sandboxes. (1.2 s)
+1 problem to fix before Puddle can run sandboxes. (1.2 s)
 
 ---
 {
@@ -26,9 +26,9 @@ skip  Test boot           not checked: no usable hypervisor
     {
       "id": "hypervisor",
       "status": "fail",
-      "summary": "puddle doesn't support macOS yet",
+      "summary": "Puddle doesn't support macOS yet",
       "finding": "unsupported_os",
-      "fix": "Run puddle on Windows 10/11 or Linux with KVM for now. macOS on Apple Silicon is being explored."
+      "fix": "Run Puddle on Windows 10/11 or Linux with KVM for now. macOS on Apple Silicon is being explored."
     },
     {
       "id": "runtime",

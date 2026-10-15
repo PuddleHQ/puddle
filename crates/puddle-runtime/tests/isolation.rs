@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! A user's own msb setup never leaks into puddle: their `MSB_*` variables are dropped and an
+//! A user's own msb setup never leaks into Puddle: their `MSB_*` variables are dropped and an
 //! `msb` on `PATH` is never what runs. nextest runs each test in its own
 //! process, so changing the process environment here is safe.
 #![expect(
@@ -75,7 +75,7 @@ fn users_msb_variables_are_replaced_in_the_process() {
     ] {
         assert_eq!(std::env::var_os(gone), None, "{gone} survived");
     }
-    // Idempotent: a second plan only replaces puddle's own three.
+    // Idempotent: a second plan only replaces Puddle's own three.
     let again = RuntimeEnv::plan(&layout, std::env::vars_os());
     let removed: Vec<_> = again
         .removed()
@@ -95,8 +95,8 @@ fn the_dev_override_variable_is_read_from_the_environment() {
     assert_eq!(DevOverride::from_env(), DevOverride::requested());
 }
 
-/// Runs msb the way puddle does, with a user's `MSB_*` set and a fake `msb` first on `PATH`: only
-/// the bundled one runs, and it sees puddle's variables, not the user's.
+/// Runs msb the way Puddle does, with a user's `MSB_*` set and a fake `msb` first on `PATH`: only
+/// the bundled one runs, and it sees Puddle's variables, not the user's.
 #[cfg(unix)]
 #[test]
 fn a_fake_msb_on_path_never_runs() {

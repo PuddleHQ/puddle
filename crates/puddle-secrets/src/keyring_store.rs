@@ -6,25 +6,25 @@ use crate::name::StoredId;
 use crate::secret::Secret;
 use crate::store::{SecretStore, StoreError};
 
-/// Service name every puddle entry is filed under; the entry's user is `credential:<id>`.
+/// Service name every Puddle entry is filed under; the entry's user is `credential:<id>`.
 const SERVICE: &str = "puddle";
 
-/// The platform's credential store, under puddle's own name or, for a test, one of its own.
+/// The platform's credential store, under Puddle's own name or, for a test, one of its own.
 #[derive(Debug, Default, Clone)]
 pub struct KeyringStore {
-    /// `None` is puddle's own [`SERVICE`].
+    /// `None` is Puddle's own [`SERVICE`].
     service: Option<String>,
 }
 
 impl KeyringStore {
-    /// The store under puddle's own service name.
+    /// The store under Puddle's own service name.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// The store under `service` instead, so a test that writes real entries (an index, a long
-    /// value) never meets the ones the user's puddle keeps.
+    /// value) never meets the ones the user's Puddle keeps.
     #[must_use]
     pub fn named(service: impl Into<String>) -> Self {
         Self {

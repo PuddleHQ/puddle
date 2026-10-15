@@ -42,7 +42,7 @@ impl std::fmt::Debug for MsbRuntime {
     }
 }
 
-/// msb's status as puddle's.
+/// msb's status as Puddle's.
 pub(crate) fn status(s: SdkStatus) -> WorkspaceStatus {
     match s {
         SdkStatus::Created => WorkspaceStatus::Created,
@@ -476,7 +476,7 @@ impl Runtime for MsbRuntime {
                 .map(|h| SandboxInfo {
                     name: h.name().to_owned(),
                     status: status(h.status_snapshot()),
-                    // A record whose stored config can't be read is not claimed as puddle's.
+                    // A record whose stored config can't be read is not claimed as Puddle's.
                     puddle_owned: h.config().is_ok_and(|c| {
                         c.spec.labels.get(OWNER_LABEL).map(String::as_str)
                             == Some(OWNER_LABEL_VALUE)
@@ -634,7 +634,7 @@ impl Runtime for MsbRuntime {
 
 /// The directory names among `entries` (name, whether it is a directory). An entry that cannot
 /// be read is an error, since leaving it out would hide a possible stale directory; one that
-/// vanished meanwhile is skipped. A name that is not UTF-8 cannot be one of puddle's: it is listed
+/// vanished meanwhile is skipped. A name that is not UTF-8 cannot be one of Puddle's: it is listed
 /// lossily, so reconcile reports it as foreign instead of the whole listing failing.
 fn dir_names(
     entries: impl Iterator<Item = std::io::Result<(std::ffi::OsString, std::io::Result<bool>)>>,

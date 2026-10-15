@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# puddle's boot hook. puddle runs it as root through the runtime's
+# Puddle's boot hook. Puddle runs it as root through the runtime's
 # exec after every create and every start, and serves no SSH or exec to anyone until it exits 0.
 #
 #   /bin/sh /puddle/boot.sh [ENTRYPOINT CMD...] < plan
@@ -14,7 +14,7 @@
 # Exit status: 0 ready; 1 a step failed; 2 bad usage or plan. Errors go to stderr, one line
 # starting with "puddle-boot: error:"; progress goes to stdout and /run/puddle/boot.log.
 #
-# PUDDLE_ROOT is for the unit tests only (puddle always passes it empty): it relocates every file
+# PUDDLE_ROOT is for the unit tests only (Puddle always passes it empty): it relocates every file
 # the hook reads or writes, so the tests run it against a fake root. Process checks use the live
 # /proc either way.
 set -u
@@ -105,7 +105,7 @@ setk kernel.unprivileged_bpf_disabled 1
 say "sysctls set"
 
 # --- 3. Files, applied in plan order ----------------------------------------------------------
-# Two kinds: puddle_file writes a whole file puddle owns; puddle_merge sets only puddle's keys in
+# Two kinds: puddle_file writes a whole file Puddle owns; puddle_merge sets only Puddle's keys in
 # a file that belongs to the user, through the agent binary's `merge-file`, which parses
 # the file (this script can't) and leaves one it can't parse untouched.
 GIT_INCLUDE=
@@ -122,7 +122,7 @@ merge_result() { # merge_result <path> <tool output>
     case $2 in
     changed | removed)
         printf '%s\n' "$1" >>"$RUN/changed"
-        say "$1: puddle's own lines were $2 (everything else in the file is as it was)"
+        say "$1: Puddle's own lines were $2 (everything else in the file is as it was)"
         ;;
     unchanged) ;;
     left:*) say "$1 left as it is: ${2#left: }" ;;
@@ -195,31 +195,31 @@ if [ -f "$STATE/boot-files" ]; then
 fi
 mv -f "$RUN/files.new" "$STATE/boot-files" || die "cannot record the files written"
 
-# Merged files an earlier plan listed and this one doesn't: remove only puddle's keys (and the
-# file, if puddle created it and nothing else is left). One that is written whole now only loses
+# Merged files an earlier plan listed and this one doesn't: remove only Puddle's keys (and the
+# file, if Puddle created it and nothing else is left). One that is written whole now only loses
 # its record. Without the tool, the record waits for a boot that has it.
 if [ -f "$STATE/merge-files" ]; then
     while IFS= read -r p; do
         [ -n "$p" ] || continue
         grep -Fxq -- "$p" "$RUN/merge.new" && continue
         if [ -z "$MERGE_TOOL" ] || [ ! -x "$ROOT$MERGE_TOOL" ]; then
-            say "puddle's keys stay in $p for now: no merge tool at ${MERGE_TOOL:-(none)}"
+            say "Puddle's keys stay in $p for now: no merge tool at ${MERGE_TOOL:-(none)}"
             printf '%s\n' "$p" >>"$RUN/merge.new"
         elif grep -Fxq -- "$p" "$STATE/boot-files"; then
             out=$("$ROOT$MERGE_TOOL" merge-file forget "$STATE/merge" "$p" </dev/null 2>&1) ||
                 die "cannot drop the merge record of $p: $out"
         else
             out=$("$ROOT$MERGE_TOOL" merge-file remove "$STATE/merge" "$p" "$ROOT$p" </dev/null 2>&1) ||
-                die "cannot remove puddle's keys from $p: $out"
+                die "cannot remove Puddle's keys from $p: $out"
             merge_result "$p" "$out"
-            case $out in left:*) ;; *) say "puddle's keys removed from $p (no longer in the plan): $out" ;; esac
+            case $out in left:*) ;; *) say "Puddle's keys removed from $p (no longer in the plan): $out" ;; esac
         fi
     done <"$STATE/merge-files"
 fi
 mv -f "$RUN/merge.new" "$STATE/merge-files" || die "cannot record the files merged"
 say "files applied ($(grep -c '' "$RUN/changed") changed)"
 
-# git reads puddle's settings through one include in the system config, which works whether or
+# git reads Puddle's settings through one include in the system config, which works whether or
 # not git is installed yet and never touches the image's own entries.
 if [ -n "$GIT_INCLUDE" ]; then
     gc=$ROOT/etc/gitconfig
@@ -290,7 +290,7 @@ for step in "$HERE"/boot.d/*.sh; do
     say "step ${step##*/} ran"
 done
 
-# --- 6. The image's own ENTRYPOINT (+CMD), after setup, with puddle's env, detached -------------
+# --- 6. The image's own ENTRYPOINT (+CMD), after setup, with Puddle's env, detached -------------
 if [ "$#" -gt 0 ]; then
     if alive "$RUN/entrypoint.pid"; then
         say "entrypoint already running"

@@ -119,9 +119,9 @@ pub(crate) async fn forget_token(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Starts a sign-in the user finishes outside puddle: `gh` shows a one-time code and an address,
+/// Starts a sign-in the user finishes outside Puddle: `gh` shows a one-time code and an address,
 /// Git Credential Manager opens its own window. Only from a click; a request from a workspace
-/// never does this. Check the credential until it reads; puddle ends an unfinished sign-in after
+/// never does this. Check the credential until it reads; Puddle ends an unfinished sign-in after
 /// five minutes.
 #[utoipa::path(
     post,

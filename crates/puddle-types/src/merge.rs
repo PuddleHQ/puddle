@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Merged guest files: puddle owns only some keys of a file that otherwise belongs to the user.
+//! Merged guest files: Puddle owns only some keys of a file that otherwise belongs to the user.
 //!
-//! A [`MergeSpec`] names the keys puddle owns and their values. Applying it to the file in the
+//! A [`MergeSpec`] names the keys Puddle owns and their values. Applying it to the file in the
 //! guest sets those keys and keeps everything else, byte for byte: the file is edited in place
 //! (only the owned values are rewritten or inserted), not parsed and re-serialised. Removing the
 //! keys again (when no provider lists the file any more) deletes exactly them. A file that can't
@@ -52,13 +52,13 @@ pub enum MergeFormat {
     /// An object at the top level; the user's comments stay where they are. Values in a
     /// [`MergeEntry`] are plain JSON.
     Jsonc,
-    /// OpenSSH's `ssh_config`: puddle owns one `Include <pattern>` line (key path `["Include"]`,
+    /// OpenSSH's `ssh_config`: Puddle owns one `Include <pattern>` line (key path `["Include"]`,
     /// the value is the pattern), added at the top when no `Include` before the first `Host` or
     /// `Match` reads that pattern. The rest of the file keeps its bytes.
     SshConfig,
 }
 
-/// One key puddle owns, as a path from the top level (`["proxies", "default"]`), and its value
+/// One key Puddle owns, as a path from the top level (`["proxies", "default"]`), and its value
 /// in the format's syntax.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeEntry {
@@ -99,7 +99,7 @@ impl MergeEntry {
     }
 }
 
-/// The keys puddle owns in one file, and their values. See the module docs.
+/// The keys Puddle owns in one file, and their values. See the module docs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "RawSpec", into = "RawSpec")]
 pub struct MergeSpec {
@@ -144,7 +144,7 @@ pub enum Merged {
 pub struct Unmerged {
     /// What to do with the file.
     pub merged: Merged,
-    /// Whether the top-level object is empty afterwards (the caller may delete a file puddle
+    /// Whether the top-level object is empty afterwards (the caller may delete a file Puddle
     /// created).
     pub empty: bool,
 }
@@ -168,7 +168,7 @@ pub enum MergeRefusal {
     #[error("the top level of the file is not an object")]
     NotAnObject,
     /// A key on an owned path holds something other than an object.
-    #[error("{key} in the file is not an object, so puddle's keys can't go below it")]
+    #[error("{key} in the file is not an object, so Puddle's keys can't go below it")]
     Conflict {
         /// The key path, joined with `.`.
         key: String,
@@ -183,7 +183,7 @@ pub enum MergeRefusal {
     #[error("the file contains a NUL byte")]
     NulByte,
     /// The engine's self-check failed (a bug); the file is left alone.
-    #[error("the merged file failed puddle's consistency check")]
+    #[error("the merged file failed Puddle's consistency check")]
     Inconsistent,
 }
 
@@ -260,7 +260,7 @@ impl MergeSpec {
         self.entries.iter().map(|e| e.key.clone()).collect()
     }
 
-    /// The file as puddle writes it when none exists.
+    /// The file as Puddle writes it when none exists.
     #[must_use]
     pub fn fresh(&self) -> Vec<u8> {
         match self.apply(None, &[]) {
@@ -271,7 +271,7 @@ impl MergeSpec {
     }
 
     /// Applies the spec to `existing` (`None`: no file, or an empty one): removes the keys in
-    /// `previous` (what puddle owned at the last boot) that this spec no longer owns, then sets
+    /// `previous` (what Puddle owned at the last boot) that this spec no longer owns, then sets
     /// every owned key. Everything else in the file keeps its bytes.
     ///
     /// # Errors

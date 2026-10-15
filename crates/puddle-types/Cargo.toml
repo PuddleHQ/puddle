@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-types"
-description = "Shared types for puddle's crates: validated names, guest files and env, memory size, events, errors"
+description = "Shared types for Puddle's crates: validated names, guest files and env, memory size, events, errors"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -231,7 +231,7 @@ describe("identities on a workspace", () => {
       ),
     ).toHaveTextContent("listed no repository and chose no identity");
     expect(
-      screen.getByText(/not a repository address puddle can read/),
+      screen.getByText(/not a repository address Puddle can read/),
     ).toBeInTheDocument();
     // Adding something makes the line go away: it only describes an empty start.
     api.git["odd"]!.repos = [repoRow(1)];
@@ -360,7 +360,7 @@ describe("the repository table", () => {
       }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "puddle couldn't remove the repository.",
+      "Puddle couldn't remove the repository.",
     );
   });
 
@@ -426,7 +426,7 @@ describe("adding a repository", () => {
     });
     await add();
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "not a repository address puddle can read",
+      "not a repository address Puddle can read",
     );
     expect(api.calls).not.toContain("POST /api/workspaces/{id}/git/repos");
   });

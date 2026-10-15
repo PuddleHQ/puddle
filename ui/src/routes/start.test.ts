@@ -47,7 +47,7 @@ describe("the start page", () => {
     );
   });
 
-  it("opens the workspace list when puddle can't say, so its problems show there", async () => {
+  it("opens the workspace list when Puddle can't say, so its problems show there", async () => {
     expect(await redirectsTo({ error: { error: "internal" } })).toBe(
       "/workspaces",
     );

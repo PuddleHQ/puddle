@@ -489,7 +489,7 @@ async fn a_missing_endpoint_says_so() {
     };
     assert_eq!(endpoint, &path);
     let msg = err.to_string();
-    assert!(msg.starts_with("no puddle SSH endpoint at "), "{msg}");
+    assert!(msg.starts_with("no Puddle SSH endpoint at "), "{msg}");
     assert!(msg.contains("the workspace is not running"), "{msg}");
 }
 

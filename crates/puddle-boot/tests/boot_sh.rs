@@ -127,7 +127,7 @@ fn boot_applies_every_step() {
             "it's $HOME `x` \\ \"q\"\nline2"
         );
 
-        // git: one include, fsync and identity in puddle's file.
+        // git: one include, fsync and identity in Puddle's file.
         assert_eq!(
             fr.read("/etc/gitconfig"),
             format!("[include]\n\tpath = {GIT_CONFIG_GUEST}\n")
@@ -550,10 +550,10 @@ fn merged_files_go_through_the_merge_tool_and_lose_only_puddles_keys_when_droppe
         let file = merged(DOCKER);
         let out = fr.run(&plan_with(vec![file.clone()]));
         assert!(out.status.success(), "{}", show(&out));
-        // The log says which file got puddle's lines.
+        // The log says which file got Puddle's lines.
         assert!(
             String::from_utf8_lossy(&out.stdout).contains(&format!(
-                "{DOCKER}: puddle's own lines were changed (everything else in the file is as it was)"
+                "{DOCKER}: Puddle's own lines were changed (everything else in the file is as it was)"
             )),
             "{}",
             show(&out)
@@ -574,14 +574,14 @@ fn merged_files_go_through_the_merge_tool_and_lose_only_puddles_keys_when_droppe
         );
         assert!(!fr.read("/var/lib/puddle/boot-files").contains(DOCKER));
 
-        // The provider stops listing it: the tool removes puddle's keys; the file isn't deleted
+        // The provider stops listing it: the tool removes Puddle's keys; the file isn't deleted
         // by the hook.
         let out = fr.run(&plan_with(vec![]));
         assert!(out.status.success(), "{}", show(&out));
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(
             stdout.contains(&format!(
-                "puddle's keys removed from {DOCKER} (no longer in the plan): changed"
+                "Puddle's keys removed from {DOCKER} (no longer in the plan): changed"
             )),
             "{stdout}"
         );

@@ -42,7 +42,7 @@
 
 <StepHeading
   title="System check"
-  lead="puddle checks what it needs on this computer. Nothing here needs administrator rights."
+  lead="Puddle checks what it needs on this computer. Nothing here needs administrator rights."
 />
 
 <div class="status" aria-live="polite">
@@ -52,12 +52,12 @@
     </p>
   {:else if doctor.status === "unavailable"}
     <p class="muted">
-      This puddle can't run the system check, so there is nothing to show here.
+      This Puddle can't run the system check, so there is nothing to show here.
       You can go on.
     </p>
   {:else if doctor.status === "failed"}
     <p class="error" role="alert">
-      puddle couldn't run the system check: {doctor.problem}
+      Puddle couldn't run the system check: {doctor.problem}
     </p>
   {/if}
 </div>
@@ -98,7 +98,7 @@
     <p class="muted" role="status">Report copied.</p>
   {:else if copied === "no"}
     <p class="error" role="alert">
-      The browser didn't let puddle copy. Select the technical details instead.
+      The browser didn't let Puddle copy. Select the technical details instead.
     </p>
   {/if}
 {/if}
@@ -128,8 +128,8 @@
 </div>
 {#if blocked && !fromSettings}
   <p class="muted">
-    puddle can't run workspaces here until the problems are fixed. Setup comes
-    back the next time you open puddle, or run the check again from Settings.
+    Puddle can't run workspaces here until the problems are fixed. Setup comes
+    back the next time you open Puddle, or run the check again from Settings.
   </p>
 {/if}
 

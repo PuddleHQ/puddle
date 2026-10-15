@@ -74,10 +74,10 @@ pub use workspaces::{
 // ---------------------------------------------------------------------------------------------
 // Service
 
-/// The API's identity, for a client to check it reached puddle.
+/// The API's identity, for a client to check it reached Puddle.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Health {
-    /// puddle's version.
+    /// Puddle's version.
     pub version: String,
     /// The API contract's version ([`crate::API_VERSION`]).
     pub api_version: String,
@@ -131,7 +131,7 @@ pub enum Actor {
     Ui,
     /// The HTTP API.
     Api,
-    /// puddle itself (expiry, workspace deletion).
+    /// Puddle itself (expiry, workspace deletion).
     System,
 }
 
@@ -272,7 +272,7 @@ pub struct InboxGroup {
 pub struct Inbox {
     /// The groups.
     pub groups: Vec<InboxGroup>,
-    /// The most open requests puddle lists for one workspace. A workspace with this many has a
+    /// The most open requests Puddle lists for one workspace. A workspace with this many has a
     /// full list: a new host it asks about is answered as waiting but gets no row until the user
     /// answers some (rules spec R-45).
     pub open_limit: u64,
@@ -763,7 +763,7 @@ pub enum ConnectionOrigin {
     /// A workspace's connection.
     #[default]
     Workspace,
-    /// puddle's own connection on the host, such as an image pull; it has no workspace.
+    /// Puddle's own connection on the host, such as an image pull; it has no workspace.
     Puddle,
 }
 
@@ -809,7 +809,7 @@ pub enum RuleDeleteReason {
 }
 
 /// One audit record (rules spec R-24): a tagged union on `type`. `host`, `path` and the like come
-/// from the guest, so escape them when rendering. Records written by an older puddle lack the
+/// from the guest, so escape them when rendering. Records written by an older Puddle lack the
 /// fields added since, which read as `null`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -819,7 +819,7 @@ pub enum AuditRecord {
     Connection {
         /// Epoch ms.
         ts: u64,
-        /// The workspace; `null` for puddle's own connections (`origin` is `puddle`).
+        /// The workspace; `null` for Puddle's own connections (`origin` is `puddle`).
         #[schema(required = true)]
         workspace_id: Option<String>,
         /// Whose connection it is. Records written before it existed read as `workspace`.
@@ -992,7 +992,7 @@ pub enum AuditRecord {
         /// Who switched it.
         actor: String,
     },
-    /// A puddle update changed a built-in set's entries.
+    /// A Puddle update changed a built-in set's entries.
     RuleSetChanged {
         /// Epoch ms.
         ts: u64,
@@ -1348,7 +1348,7 @@ impl AuditType {
 
 /// The settings every workspace has. On a global document they are the defaults for every
 /// workspace; on a workspace they override those. `null` means "not set here": the next level (the
-/// global value, then puddle's default) applies.
+/// global value, then Puddle's default) applies.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SettingsLayer {
@@ -1376,15 +1376,15 @@ pub struct SettingsLayer {
     #[serde(default)]
     #[schema(required = true)]
     pub clipboard_read: Option<ClipboardRead>,
-    /// Whether puddle opens an SSH way into the workspace for the user's own tools (desktop
+    /// Whether Puddle opens an SSH way into the workspace for the user's own tools (desktop
     /// VS Code, a terminal `ssh`). Off by default; while off there is no SSH endpoint and no ssh
     /// config entry. Turning it on marks the workspace trusted.
     #[serde(default)]
     #[schema(required = true)]
     pub direct_ssh: Option<bool>,
     /// Whether a login made inside the workspace (Claude Code, `gh`, Copilot CLI) is captured:
-    /// puddle keeps the real token on the host and the workspace holds a stand-in that works
-    /// only through puddle. On by default; applies at the workspace's next start.
+    /// Puddle keeps the real token on the host and the workspace holds a stand-in that works
+    /// only through Puddle. On by default; applies at the workspace's next start.
     #[serde(default)]
     #[schema(required = true)]
     pub capture_logins: Option<bool>,
@@ -1523,7 +1523,7 @@ impl From<ClipboardRead> for settings::ClipboardRead {
     }
 }
 
-/// Options for the VS Code server in the guest. `null` means puddle's default.
+/// Options for the VS Code server in the guest. `null` means Puddle's default.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct VsCodeServer {
@@ -1536,7 +1536,7 @@ pub struct VsCodeServer {
     #[serde(default)]
     #[schema(required = true)]
     pub telemetry: Option<bool>,
-    /// Whether puddle updates the server (default on).
+    /// Whether Puddle updates the server (default on).
     #[serde(default)]
     #[schema(required = true)]
     pub auto_update: Option<bool>,
@@ -1570,7 +1570,7 @@ impl From<ServerChoice> for settings::ServerChoice {
     }
 }
 
-/// The colour theme of puddle's window.
+/// The colour theme of Puddle's window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeChoice {
@@ -1636,7 +1636,7 @@ impl From<DensityChoice> for settings::DensityChoice {
 pub enum CloseBehaviour {
     /// Keep running in the tray.
     Tray,
-    /// Quit puddle.
+    /// Quit Puddle.
     Quit,
 }
 
@@ -1658,7 +1658,7 @@ impl From<CloseBehaviour> for settings::CloseBehaviour {
     }
 }
 
-/// Preferences for puddle's own window. `null` means puddle's default.
+/// Preferences for Puddle's own window. `null` means Puddle's default.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UiPrefs {
@@ -1683,7 +1683,7 @@ pub struct UiPrefs {
     #[serde(default)]
     #[schema(required = true)]
     pub close_behaviour: Option<CloseBehaviour>,
-    /// Notify only while puddle's window is not focused (default on).
+    /// Notify only while Puddle's window is not focused (default on).
     #[serde(default)]
     #[schema(required = true)]
     pub notify_only_unfocused: Option<bool>,
@@ -1764,7 +1764,7 @@ pub enum SettingSource {
     Workspace,
     /// The global setting.
     Global,
-    /// puddle's built-in default.
+    /// Puddle's built-in default.
     Default,
 }
 
@@ -1827,7 +1827,7 @@ pub struct EffectiveToggles {
     pub special: ResolvedBool,
 }
 
-/// The values a workspace gets: its override, else the global value, else puddle's default.
+/// The values a workspace gets: its override, else the global value, else Puddle's default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct EffectiveSettings {
     /// Guest memory in MiB.
@@ -1902,11 +1902,11 @@ pub struct GlobalSettingsView {
     pub workspace_defaults: SettingsLayer,
     /// VS Code server options.
     pub vscode_server: VsCodeServer,
-    /// Preferences for puddle's window.
+    /// Preferences for Puddle's window.
     pub ui: UiPrefs,
     /// The effective values for a workspace with no overrides.
     pub effective: EffectiveSettings,
-    /// Fields in the stored document this puddle doesn't know (written by a newer one); they
+    /// Fields in the stored document this Puddle doesn't know (written by a newer one); they
     /// are kept.
     pub unknown_fields: Vec<String>,
 }
@@ -1921,7 +1921,7 @@ pub struct GlobalSettingsRequest {
     /// VS Code server options.
     #[serde(default)]
     pub vscode_server: VsCodeServer,
-    /// Preferences for puddle's window.
+    /// Preferences for Puddle's window.
     #[serde(default)]
     pub ui: UiPrefs,
 }
@@ -2027,7 +2027,7 @@ impl From<&settings::Consent> for Consent {
     }
 }
 
-/// Every consent puddle asks for.
+/// Every consent Puddle asks for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Consents {
     /// Usage telemetry.
@@ -2080,7 +2080,7 @@ pub enum ConsentDecision {
     Declined,
 }
 
-/// Records the user's answer to a consent prompt. puddle stamps the time.
+/// Records the user's answer to a consent prompt. Puddle stamps the time.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConsentRequest {
@@ -2631,7 +2631,7 @@ mod tests {
                 stored
             );
         }
-        // A reason a later puddle added is left out rather than failing the page.
+        // A reason a later Puddle added is left out rather than failing the page.
         let newer = serde_json::json!({"type": "system_managed_changed", "ts": 1,
             "workspace_id": null, "added": ["zed"], "removed": []});
         let record: store::AuditRecord = serde_json::from_value(newer).unwrap();
@@ -2676,7 +2676,7 @@ mod tests {
         let back = serde_json::to_value(AuditRecord::from(record)).unwrap();
         assert_eq!(back["origin"], "workspace");
         assert_eq!(back["workspace_id"], "box");
-        // puddle's own connection: no workspace.
+        // Puddle's own connection: no workspace.
         let mut own = back;
         own["origin"] = "puddle".into();
         own["workspace_id"] = Value::Null;

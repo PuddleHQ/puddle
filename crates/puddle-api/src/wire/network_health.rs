@@ -9,21 +9,21 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-/// Where puddle gets its proxy setting from.
+/// Where Puddle gets its proxy setting from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ProxyMode {
     /// Follow the operating system, then the `HTTP(S)_PROXY` variables.
     System,
-    /// Never use a proxy (puddle's setting).
+    /// Never use a proxy (Puddle's setting).
     Direct,
-    /// A proxy typed into puddle's settings.
+    /// A proxy typed into Puddle's settings.
     Manual,
     /// A source of the setting this build cannot name; the report does not guess.
     Unknown,
 }
 
-/// What puddle found out about the proxy setup.
+/// What Puddle found out about the proxy setup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ProxyDetected {
@@ -31,7 +31,7 @@ pub enum ProxyDetected {
     Pac,
     /// Automatic detection (WPAD) is on and no PAC address is set.
     Wpad,
-    /// A fixed proxy in the system settings (or puddle's manual setting).
+    /// A fixed proxy in the system settings (or Puddle's manual setting).
     Static,
     /// A fixed proxy from the `HTTP(S)_PROXY` variables.
     Env,
@@ -51,7 +51,7 @@ pub enum PacState {
     NotAsked,
     /// It has answered.
     Answering,
-    /// It could not be fetched; puddle uses the other settings and asks again later.
+    /// It could not be fetched; Puddle uses the other settings and asks again later.
     Unreachable,
     /// A setup this build cannot name, so whether a PAC is involved is not known; the report does not guess.
     Unknown,
@@ -71,10 +71,10 @@ pub struct DeadProxy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ProxyProblemKind {
-    /// A proxy setting puddle cannot use (a SOCKS proxy, a malformed entry, a list with nothing
+    /// A proxy setting Puddle cannot use (a SOCKS proxy, a malformed entry, a list with nothing
     /// usable in it). What it covers goes direct, or through the entries that are fine.
     UnusableSetting,
-    /// puddle cannot, or can no longer, see changes of the proxy settings or the network, so its
+    /// Puddle cannot, or can no longer, see changes of the proxy settings or the network, so its
     /// routes stay as they are until it restarts.
     ChangesNotNoticed,
     /// A kind this version of the API does not know; the detail says what it is.
@@ -91,7 +91,7 @@ pub struct ProxyProblem {
     pub detail: String,
 }
 
-/// The proxy setup puddle sees.
+/// The proxy setup Puddle sees.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProxyReport {
@@ -121,7 +121,7 @@ pub struct ProxyReport {
     pub problems: Vec<ProxyProblem>,
     /// The network epoch; it grows each time a network or settings change is noticed.
     pub epoch: u64,
-    /// Epoch ms when the last change was noticed; `null` when none since puddle started.
+    /// Epoch ms when the last change was noticed; `null` when none since Puddle started.
     #[schema(required = true)]
     pub last_change_at: Option<u64>,
     /// Proxies marked unreachable.
@@ -132,13 +132,13 @@ pub struct ProxyReport {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SignInResult {
-    /// The proxy asked, and puddle answered.
+    /// The proxy asked, and Puddle answered.
     SignedIn,
     /// The proxy let the request through without asking.
     NotRequired,
     /// The proxy refused the credentials or the token.
     Failed,
-    /// The proxy asks for something puddle cannot give (a scheme it does not speak, or a
+    /// The proxy asks for something Puddle cannot give (a scheme it does not speak, or a
     /// password nobody configured).
     Unsupported,
     /// An ending this build cannot name; the report does not guess.
@@ -163,12 +163,12 @@ pub struct SignInAttempt {
     pub at: u64,
 }
 
-/// How puddle signs in to the company proxy.
+/// How Puddle signs in to the company proxy.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SignInReport {
-    /// The schemes puddle can answer a proxy with, lower case (`negotiate`, `ntlm`, `basic`).
-    /// Empty: puddle can not sign in to a proxy on this system.
+    /// The schemes Puddle can answer a proxy with, lower case (`negotiate`, `ntlm`, `basic`).
+    /// Empty: Puddle can not sign in to a proxy on this system.
     pub methods: Vec<String>,
     /// The latest attempt per proxy, newest first.
     pub attempts: Vec<SignInAttempt>,
@@ -216,12 +216,12 @@ pub struct SkippedRoot {
     pub reason: String,
 }
 
-/// The company roots puddle copied into workspaces.
+/// The company roots Puddle copied into workspaces.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RootsReport {
     /// Whether the host's certificate stores have been read (false until the first sync, and
-    /// on systems where puddle has no store to read).
+    /// on systems where Puddle has no store to read).
     pub synced: bool,
     /// Epoch ms of the last read; `null` when none.
     #[schema(required = true)]
@@ -236,9 +236,9 @@ pub struct RootsReport {
     pub skipped: Vec<SkippedRoot>,
     /// Stores that could not be read, with the system's reason.
     pub unreadable_stores: Vec<String>,
-    /// Company certificates puddle's own TLS checks could not use (the checks that guard a
+    /// Company certificates Puddle's own TLS checks could not use (the checks that guard a
     /// workspace's credentials on the way out): a server that chains to one fails with an unknown
-    /// issuer. Workspaces still get them; this is only about what puddle itself verifies.
+    /// issuer. Workspaces still get them; this is only about what Puddle itself verifies.
     pub left_out_of_tls: Vec<SkippedRoot>,
 }
 
@@ -246,7 +246,7 @@ pub struct RootsReport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PullProxyReport {
-    /// Image pulls go through puddle's pull proxy (where the rules and the guard apply).
+    /// Image pulls go through Puddle's pull proxy (where the rules and the guard apply).
     pub active: bool,
     /// The pull proxy reaches the internet through the company proxy setup above.
     pub via_upstream: bool,
@@ -258,13 +258,13 @@ pub struct PullProxyReport {
 pub enum RouteSource {
     /// The destination is this machine.
     Loopback,
-    /// puddle's setting is "no proxy".
+    /// Puddle's setting is "no proxy".
     Disabled,
-    /// puddle's own proxy setting.
+    /// Puddle's own proxy setting.
     Manual,
     /// A PAC script or WPAD answered.
     Pac,
-    /// A PAC answered with entries puddle cannot use (SOCKS, HTTPS proxy): direct instead.
+    /// A PAC answered with entries Puddle cannot use (SOCKS, HTTPS proxy): direct instead.
     PacUnsupported,
     /// The system's fixed proxy.
     System,
@@ -278,7 +278,7 @@ pub enum RouteSource {
     Unknown,
 }
 
-/// The route puddle chose for one destination in this network epoch.
+/// The route Puddle chose for one destination in this network epoch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RouteDecision {
@@ -294,7 +294,7 @@ pub struct RouteDecision {
     pub source: RouteSource,
 }
 
-/// `GET /api/network-health`: everything puddle knows about how it reaches the internet.
+/// `GET /api/network-health`: everything Puddle knows about how it reaches the internet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NetworkHealth {

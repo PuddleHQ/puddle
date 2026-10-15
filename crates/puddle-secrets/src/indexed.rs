@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! A store that remembers which ids it holds, so values nothing refers to any more can be found.
 //!
-//! The OS credential stores cannot list what puddle put in them. A value is left behind when a
+//! The OS credential stores cannot list what Puddle put in them. A value is left behind when a
 //! delete fails, or when the process stops between writing the value and writing the row that
 //! names it, and without a list nobody ever removes it. [`IndexedStore`] keeps that list as one
 //! more entry in the store underneath: an id is written to it before its value, and taken out

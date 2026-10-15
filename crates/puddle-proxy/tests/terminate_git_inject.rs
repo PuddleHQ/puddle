@@ -457,7 +457,7 @@ async fn a_source_that_cannot_supply_its_secret_is_a_502_never_a_401_and_the_ser
         Some("credential_unavailable")
     );
     assert!(
-        answer.text().contains("sign in to it in puddle"),
+        answer.text().contains("sign in to it in Puddle"),
         "{}",
         answer.text()
     );

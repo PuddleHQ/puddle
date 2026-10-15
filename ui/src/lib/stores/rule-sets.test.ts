@@ -47,7 +47,7 @@ describe("reading", () => {
     const store = make();
     await store.refresh();
     expect(store.status).toBe("failed");
-    expect(store.loadError).toBe("puddle's service isn't answering.");
+    expect(store.loadError).toBe("Puddle's service isn't answering.");
     api.down = false;
     api.sets = [mine(1)];
     await store.refresh();
@@ -56,7 +56,7 @@ describe("reading", () => {
     await store.refresh();
     expect(store.status).toBe("ready");
     expect(store.sets).toHaveLength(1);
-    expect(store.loadError).toBe("puddle's service isn't answering.");
+    expect(store.loadError).toBe("Puddle's service isn't answering.");
   });
 
   it("treats an error answer like a failure", async () => {
@@ -124,7 +124,7 @@ describe("changing", () => {
     api.refuse = { status: 500, message: "boom" };
     expect(await store.remove("user:1")).toEqual({
       ok: false,
-      message: "puddle couldn't delete that rule set.",
+      message: "Puddle couldn't delete that rule set.",
     });
     api.refuse = { status: 422, message: "System managed can't be switched" };
     expect(await store.switchSet("user:1", null, true)).toEqual({
@@ -136,7 +136,7 @@ describe("changing", () => {
   it("says when the service is down", async () => {
     const store = make();
     api.down = true;
-    const down = { ok: false, message: "puddle's service isn't answering." };
+    const down = { ok: false, message: "Puddle's service isn't answering." };
     expect(await store.create("x", "")).toEqual(down);
     expect(await store.rename("user:1", "x", "")).toEqual(down);
     expect(await store.remove("user:1")).toEqual(down);

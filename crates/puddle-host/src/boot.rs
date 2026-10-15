@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! What every sandbox is built from: puddle's boot files, the egress route and the guest's proxy
+//! What every sandbox is built from: Puddle's boot files, the egress route and the guest's proxy
 //! and trust configuration.
 
 use std::path::{Path, PathBuf};
@@ -41,9 +41,9 @@ pub(crate) struct GuestInputs<'a> {
     pub(crate) ca: &'a CaCertificate,
     /// The commit authors: the fallback and the rules by remote.
     pub(crate) authors: &'a Authors,
-    /// The user's variables for this workspace, a secret as its stand-in. They sit under puddle's
+    /// The user's variables for this workspace, a secret as its stand-in. They sit under Puddle's
     /// own (the proxy and trust variables win), except that a `JAVA_TOOL_OPTIONS`, `MAVEN_ARGS`,
-    /// `GRADLE_USER_HOME` or `DOCKER_CONFIG` of the user's is kept and puddle's setting is added to
+    /// `GRADLE_USER_HOME` or `DOCKER_CONFIG` of the user's is kept and Puddle's setting is added to
     /// it, as it is to the image's.
     pub(crate) env: &'a GuestEnv,
 }
@@ -101,7 +101,7 @@ impl BootKit {
         image: &ImageConfig,
         guest: &GuestInputs<'_>,
     ) -> Result<(BootPlan, GuestEnv), String> {
-        // The user's variables count as the image's here, so the few that puddle adds to (not
+        // The user's variables count as the image's here, so the few that Puddle adds to (not
         // replaces) keep the user's value and the files that follow `GRADLE_USER_HOME` and
         // `DOCKER_CONFIG` land where the user pointed them.
         let mut image_env = image.env.clone();
@@ -130,7 +130,7 @@ impl BootKit {
         Ok((plan, env))
     }
 
-    /// The spec of a new sandbox: image, memory, environment, the route and puddle's mounts.
+    /// The spec of a new sandbox: image, memory, environment, the route and Puddle's mounts.
     pub(crate) fn spec(
         &self,
         name: &WorkspaceName,

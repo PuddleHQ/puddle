@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The machine's listening sockets and process tree, for the hostile-guest sweep that asks
-//! "does puddle, or the runtime it started, listen on anything but loopback?".
+//! "does Puddle, or the runtime it started, listen on anything but loopback?".
 //!
 //! The parsers take the text of `netstat -ano` and of a process listing, so they run (and are
 //! tested) on every OS; `listening_sockets` and `process_table` call the Windows tools.

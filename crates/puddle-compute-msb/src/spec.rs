@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! [`puddle_compute::SandboxSpec`] to the SDK's `SandboxBuilder`, and the list of every SDK option
-//! puddle sets or leaves at its default ([`SDK_OPTIONS`], input for the escape-hardening review).
+//! Puddle sets or leaves at its default ([`SDK_OPTIONS`], input for the escape-hardening review).
 
 use microsandbox::Sandbox;
 use microsandbox::sandbox::{
@@ -10,22 +10,22 @@ use puddle_compute::{NetworkPolicy, SandboxSpec};
 
 use crate::{OWNER_LABEL, OWNER_LABEL_VALUE};
 
-/// Whether puddle sets an SDK option, and to what.
+/// Whether Puddle sets an SDK option, and to what.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SdkSetting {
-    /// puddle sets it, to this.
+    /// Puddle sets it, to this.
     Set(&'static str),
-    /// puddle leaves it; this is the SDK's default (msb 0.7.7).
+    /// Puddle leaves it; this is the SDK's default (msb 0.7.7).
     Default(&'static str),
 }
 
-/// One SDK option and what puddle does with it.
+/// One SDK option and what Puddle does with it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SdkOption {
     /// Where the option lives: `SandboxBuilder::<method>`, `MountBuilder::…`, `exec`, `ssh`,
     /// `LocalBackend`, `config.json`.
     pub option: &'static str,
-    /// What puddle does.
+    /// What Puddle does.
     pub setting: SdkSetting,
     /// Why.
     pub why: &'static str,
@@ -55,7 +55,7 @@ pub const GUEST_OPEN_FILES_SOFT: u64 = 65_536;
 pub const GUEST_OPEN_FILES_HARD: u64 = 1_048_576;
 
 /// Every `SandboxBuilder` option of SDK 0.7.7 (and the mount, exec, SSH and backend options the
-/// adapter touches), with what puddle does. `SandboxBuilder` entries are kept in step with
+/// adapter touches), with what Puddle does. `SandboxBuilder` entries are kept in step with
 /// [`builder`] by a unit test: every method it calls is listed as [`SdkSetting::Set`] and
 /// nothing else is.
 pub const SDK_OPTIONS: &[SdkOption] = &[
@@ -83,7 +83,7 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
     set(
         "SandboxBuilder::label",
         "dev.puddle.owner=puddle",
-        "reconcile touches only puddle's sandboxes",
+        "reconcile touches only Puddle's sandboxes",
     ),
     set(
         "SandboxBuilder::disable_network",
@@ -153,7 +153,7 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
         "global default",
         "msb logs under the private home",
     ),
-    default("SandboxBuilder::detached", "false", "VMs die with puddle"),
+    default("SandboxBuilder::detached", "false", "VMs die with Puddle"),
     default(
         "SandboxBuilder::disable_metrics_sample / metrics_sample_interval",
         "msb default sampling",
@@ -181,8 +181,8 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
     ),
     set(
         "LocalBackendBuilder::registry_proxy (RegistryBuilder::proxy in pull_image)",
-        "puddle's image-pull proxy with a per-run token (MsbConfig::registry_proxy)",
-        "pulls take puddle's way out; an explicit client setting, so the token is not in the process environment and the user's proxy variables are not read",
+        "Puddle's image-pull proxy with a per-run token (MsbConfig::registry_proxy)",
+        "pulls take Puddle's way out; an explicit client setting, so the token is not in the process environment and the user's proxy variables are not read",
     ),
     default("SandboxBuilder::slug", "unset", "cloud only"),
     default(
@@ -209,17 +209,17 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
     default(
         "SandboxBuilder::user",
         "image USER",
-        "puddle runs its exec calls as root explicitly",
+        "Puddle runs its exec calls as root explicitly",
     ),
     default(
         "SandboxBuilder::network / proxy / prepend_network_policy_rules",
         "unset (network disabled)",
-        "puddle's own proxy is the chokepoint",
+        "Puddle's own proxy is the chokepoint",
     ),
     default(
         "SandboxBuilder::port / port_bind / port_udp / port_udp_bind",
         "none",
-        "no published ports; forwards go through puddle",
+        "no published ports; forwards go through Puddle",
     ),
     default(
         "SandboxBuilder::vsock_dgram / vsock_route",
@@ -229,7 +229,7 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
     default(
         "SandboxBuilder::secret / secret_entry / secret_env / secret_violation_action",
         "none",
-        "credentials are injected by puddle's proxy",
+        "credentials are injected by Puddle's proxy",
     ),
     default(
         "SandboxBuilder::envs / labels",
@@ -274,7 +274,7 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
     default(
         "MountBuilder::follow_root_symlinks",
         "false",
-        "a planted symlink can't redirect a mount; sources are also resolved by puddle",
+        "a planted symlink can't redirect a mount; sources are also resolved by Puddle",
     ),
     // exec, SSH, backend, config.json
     set(
@@ -299,7 +299,7 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
     ),
     set(
         "LocalBackend::home / config_path",
-        "puddle's private msb home and its config.json",
+        "Puddle's private msb home and its config.json",
         "never the user's ~/.microsandbox",
     ),
     default(
@@ -314,7 +314,7 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
     ),
 ];
 
-/// The SDK builder for `spec`: every option puddle sets, nothing else (see [`SDK_OPTIONS`]).
+/// The SDK builder for `spec`: every option Puddle sets, nothing else (see [`SDK_OPTIONS`]).
 /// File mount sources must already have passed [`crate::MsbConfig::check_mount_source`].
 #[must_use]
 pub fn builder(spec: &SandboxSpec) -> SandboxBuilder {
@@ -386,7 +386,7 @@ mod tests {
                 called.insert(name);
             }
         }
-        // Calls on puddle's own types and on the nested mount/volume builders.
+        // Calls on Puddle's own types and on the nested mount/volume builders.
         for ours in [
             "get",
             "as_str",

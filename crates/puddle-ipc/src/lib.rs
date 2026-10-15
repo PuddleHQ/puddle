@@ -2,13 +2,13 @@
 //! Per-workspace host endpoints that only the current user can open.
 //!
 //! msb connects each guest vsock route to a host endpoint: a named pipe on Windows, a Unix socket
-//! elsewhere. puddle gives every workspace its own endpoint, so the endpoint a connection arrives on
+//! elsewhere. Puddle gives every workspace its own endpoint, so the endpoint a connection arrives on
 //! *is* the workspace's identity. This crate makes those endpoints safe to rely on:
 //!
 //! | Threat | Windows | Linux |
 //! |---|---|---|
 //! | Another user or a restricted process opens the endpoint | explicit DACL granting the current user's SID only (no Everyone/anonymous read); remote clients rejected | socket file `0600` inside a fresh `0700` directory |
-//! | A process creates the name first (squatting) | 128-bit random name; the first instance is created with `FILE_FLAG_FIRST_PIPE_INSTANCE`; an existing name is refused ([`IpcError::NameTaken`]); one of puddle's instances exists for as long as the [`Listener`] lives | a fresh directory with a random name that only puddle can write; `bind` fails on an existing path |
+//! | A process creates the name first (squatting) | 128-bit random name; the first instance is created with `FILE_FLAG_FIRST_PIPE_INSTANCE`; an existing name is refused ([`IpcError::NameTaken`]); one of Puddle's instances exists for as long as the [`Listener`] lives | a fresh directory with a random name that only Puddle can write; `bind` fails on an existing path |
 //!
 //! # Use
 //!
@@ -57,7 +57,7 @@ pub use error::IpcError;
 /// kernel's listen backlog plays this role.
 pub const PIPE_ACCEPTORS: usize = 32;
 
-/// Where puddle's endpoints live, and the access rule they get.
+/// Where Puddle's endpoints live, and the access rule they get.
 ///
 /// On Windows this holds the owner-only security descriptor for the current user. On Unix it
 /// owns a fresh `0700` directory that holds the sockets; the directory is removed when the last

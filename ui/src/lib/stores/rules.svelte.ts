@@ -39,7 +39,7 @@ export interface RulesDeps {
   onDecidedElsewhere?: () => void;
 }
 
-const DOWN = "puddle's service isn't answering.";
+const DOWN = "Puddle's service isn't answering.";
 
 export class RulesStore {
   rules = $state.raw<Rule[]>([]);
@@ -108,7 +108,7 @@ export class RulesStore {
         return {
           ok: false,
           field,
-          message: sentence(error?.message ?? "puddle refused the rule"),
+          message: sentence(error?.message ?? "Puddle refused the rule"),
         };
       }
       this.rules = [data, ...this.rules.filter((r) => r.id !== data.id)];
@@ -133,7 +133,7 @@ export class RulesStore {
         }
         return {
           ok: false,
-          message: sentence(error?.message ?? "puddle refused the change"),
+          message: sentence(error?.message ?? "Puddle refused the change"),
         };
       }
       this.rules = this.rules.map((r) => (r.id === id ? data : r));
@@ -150,7 +150,7 @@ export class RulesStore {
         params: { path: { id } },
       });
       if (!response.ok && response.status !== 404) {
-        return { ok: false, message: "puddle couldn't delete that rule." };
+        return { ok: false, message: "Puddle couldn't delete that rule." };
       }
       this.rules = this.rules.filter((r) => r.id !== id);
       return { ok: true };

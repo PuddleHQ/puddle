@@ -26,12 +26,12 @@ pub enum ConnectionDecision {
     Deny,
     /// Refused while waiting for the user.
     Pending,
-    /// Refused regardless of rules (toggle off, puddle's own endpoint, unsupported protocol,
+    /// Refused regardless of rules (toggle off, Puddle's own endpoint, unsupported protocol,
     /// rules unavailable).
     Blocked,
 }
 
-/// Who the connection belongs to (R-24): a workspace's traffic, or puddle's own (image pulls
+/// Who the connection belongs to (R-24): a workspace's traffic, or Puddle's own (image pulls
 /// through the pull proxy, which have no workspace). Records written before this existed read as
 /// [`ConnectionOrigin::Workspace`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -42,7 +42,7 @@ pub enum ConnectionOrigin {
     #[default]
     #[serde(alias = "sandbox")]
     Workspace,
-    /// puddle's own connection, made on the host and not for any workspace.
+    /// Puddle's own connection, made on the host and not for any workspace.
     Puddle,
 }
 
@@ -79,12 +79,12 @@ pub enum ConnectionReason {
     Blocked(BlockReason),
     /// The rules could not be checked; the proxy failed closed.
     PolicyUnavailable,
-    /// puddle's own request, which no rule decides (an image pull that passed the address guard).
+    /// Puddle's own request, which no rule decides (an image pull that passed the address guard).
     PuddleRequest,
     /// A terminated TLS connection's client asked for a name other than the one it
     /// `CONNECT`ed to (or none): the handshake was refused and nothing went upstream.
     SniMismatch,
-    /// A terminated TLS connection's client refused puddle's certificate for the host (it does not
+    /// A terminated TLS connection's client refused Puddle's certificate for the host (it does not
     /// trust the workspace's CA). Nothing is blocked: the decision of the rule stands.
     GuestTlsRejected,
     /// The workspace already had its limit of open connections, so this one was refused with a
@@ -96,10 +96,10 @@ pub enum ConnectionReason {
     /// to keep a flood of them from filling the audit (R-26).
     Merged,
     /// On a decrypted connection the credential rules refused a request, or the server's `401`
-    /// to a request whose credential puddle chose was answered with puddle's own refusal. The
+    /// to a request whose credential Puddle chose was answered with Puddle's own refusal. The
     /// text is the refusal's machine-readable code.
     Refused(&'static str),
-    /// puddle's own request (a repository listing) that could not be completed: the code says
+    /// Puddle's own request (a repository listing) that could not be completed: the code says
     /// why (`unreachable`, `tls`, `timeout`, `too_large`, `protocol`, `bad_token`, or
     /// `host_refused` for a 401 or 403, `rate_limited` for a 429, `host_error` for any other error
     /// status).
@@ -189,7 +189,7 @@ impl HttpRequestLine {
 pub struct ConnectionEvent {
     /// Whose connection it is.
     pub origin: ConnectionOrigin,
-    /// The workspace it came from (the route's); `None` for puddle's own connections.
+    /// The workspace it came from (the route's); `None` for Puddle's own connections.
     pub workspace: Option<WorkspaceName>,
     /// The requested host.
     pub host: Host,
@@ -256,7 +256,7 @@ impl ConnectionEvent {
         }
     }
 
-    /// An event for a connection puddle makes itself (no workspace, origin
+    /// An event for a connection Puddle makes itself (no workspace, origin
     /// [`ConnectionOrigin::Puddle`]), with no row, credential, request line or bytes.
     #[must_use]
     pub fn puddle(

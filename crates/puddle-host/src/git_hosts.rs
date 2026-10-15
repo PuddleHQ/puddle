@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! What the Git hosts are called in URLs: the names puddle decrypts for a credential, and the
+//! What the Git hosts are called in URLs: the names Puddle decrypts for a credential, and the
 //! remote URLs that belong to an owner (which choose the commit author).
 //!
 //! Azure DevOps has two names for one thing, `dev.azure.com/{org}` and `{org}.visualstudio.com`,
@@ -13,10 +13,10 @@ use puddle_store::{Identity, WorkspaceGit};
 const AZURE_DEVOPS: &str = "dev.azure.com";
 const AZURE_DEVOPS_LEGACY: &str = "visualstudio.com";
 
-/// The only port puddle decrypts.
+/// The only port Puddle decrypts.
 const HTTPS_PORT: &str = "443";
 
-/// The names puddle decrypts for a credential on `host` (a name, with a port only when the host
+/// The names Puddle decrypts for a credential on `host` (a name, with a port only when the host
 /// is not on 443): the host itself, and for Azure DevOps its `*.visualstudio.com` names. A host
 /// on another port gets none, because only port 443 is terminated.
 pub(crate) fn decrypt_patterns(host: &str) -> Vec<String> {
@@ -399,7 +399,7 @@ mod tests {
         }
 
         /// Writes the plan's git files under `root` as the guest would have them, and a system
-        /// config that includes puddle's, the way `boot.sh` does.
+        /// config that includes Puddle's, the way `boot.sh` does.
         fn install(root: &Path, authors: &Authors) {
             let mut builder = BootPlan::builder(&ImageConfig::default());
             if let Some(fallback) = &authors.fallback {

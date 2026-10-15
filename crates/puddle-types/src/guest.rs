@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! What puddle puts into a guest: paths, files and environment variables.
+//! What Puddle puts into a guest: paths, files and environment variables.
 //!
 //! Providers (proxy config, corporate roots, the per-workspace CA) produce [`GuestFile`]s and
 //! [`GuestEnv`]; the boot hook applies them as a list and holds no provider logic itself.
@@ -151,13 +151,13 @@ pub struct GuestFile {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ApplyKind {
-    /// puddle owns the whole file: written atomically at every boot, replacing what is there,
+    /// Puddle owns the whole file: written atomically at every boot, replacing what is there,
     /// and deleted when no provider lists it any more.
     #[default]
     Replace,
-    /// The file is the user's; puddle owns only the keys in the spec. They are set at
+    /// The file is the user's; Puddle owns only the keys in the spec. They are set at
     /// every boot and removed when no provider lists the file any more; everything else stays.
-    /// A file that can't be parsed is left alone. The file's mode applies when puddle creates it.
+    /// A file that can't be parsed is left alone. The file's mode applies when Puddle creates it.
     Merge(MergeSpec),
 }
 
@@ -176,8 +176,8 @@ impl GuestFile {
         }
     }
 
-    /// A merged file at `path`: puddle owns only the keys in `spec` (see [`ApplyKind::Merge`]).
-    /// [`GuestFile::contents`] is the file as puddle writes it when none exists.
+    /// A merged file at `path`: Puddle owns only the keys in `spec` (see [`ApplyKind::Merge`]).
+    /// [`GuestFile::contents`] is the file as Puddle writes it when none exists.
     ///
     /// ```
     /// use puddle_types::{ApplyKind, GuestFile, GuestPath, MergeEntry, MergeFormat, MergeSpec};

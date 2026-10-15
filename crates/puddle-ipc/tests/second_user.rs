@@ -107,7 +107,7 @@ async fn hostile_hg24_a_second_user_cannot_add_an_instance_to_a_live_route() {
     // Control: the account can create pipes in general (a name of its own), so the two refusals
     // below come from the route's descriptor.
     create(format!("{control}-own"), true).unwrap();
-    // The attack: a second server instance on puddle's route name, to catch clients that connect
+    // The attack: a second server instance on Puddle's route name, to catch clients that connect
     // to the route (a squatter among the instances).
     assert_access_denied(create(path.display().to_string(), false));
     assert_access_denied(create(path.display().to_string(), true));
@@ -126,7 +126,7 @@ async fn hostile_hg24_a_route_name_a_second_user_created_first_is_refused() {
     let endpoint = root.endpoint().unwrap();
     let name = endpoint.path().to_path_buf();
 
-    // The squatter creates puddle's name before puddle binds it (with a descriptor of its own).
+    // The squatter creates Puddle's name before Puddle binds it (with a descriptor of its own).
     let squatter: io::Result<NamedPipeServer> = user.run({
         let name = name.clone();
         move || {
@@ -141,7 +141,7 @@ async fn hostile_hg24_a_route_name_a_second_user_created_first_is_refused() {
     assert!(matches!(err, IpcError::NameTaken { .. }), "{err}");
     assert!(err.to_string().contains(&endpoint.to_string()), "{err}");
 
-    // With the squatter gone the same name binds, and the owner's client reaches puddle's listener.
+    // With the squatter gone the same name binds, and the owner's client reaches Puddle's listener.
     drop(squatter);
     let listener = root.bind(&endpoint).unwrap();
     let echo = spawn_echo(listener);

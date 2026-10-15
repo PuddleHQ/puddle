@@ -49,7 +49,7 @@ repository existed; the points that decided it are summarised below.
 
 ## Revisit if
 
-A second frontend-fluent developer joins and will own the UI long-term, **or** puddle has to ship
+A second frontend-fluent developer joins and will own the UI long-term, **or** Puddle has to ship
 the same portal to central/server deployments as well as the desktop app — at which point fleet
 views return and the UI is no longer five screens. Reopening then is a new decision with new
 information, not a reversal of this one.

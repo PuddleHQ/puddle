@@ -1,14 +1,14 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
-  /** Fields in a stored settings document that this puddle doesn't know (dotted paths). */
+  /** Fields in a stored settings document that this Puddle doesn't know (dotted paths). */
   let { fields }: { fields: readonly string[] } = $props();
 </script>
 
 {#if fields.length > 0}
   <p class="unknown" role="status">
-    The stored settings contain fields this puddle doesn't know:
+    The stored settings contain fields this Puddle doesn't know:
     <span class="mono">{fields.join(", ")}</span>. They are kept but have no
-    effect. A misspelt name is the usual cause; a newer puddle may have written
+    effect. A misspelt name is the usual cause; a newer Puddle may have written
     them.
   </p>
 {/if}

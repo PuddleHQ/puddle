@@ -731,7 +731,7 @@ async fn read_whole_body(
 }
 
 /// The refusal that replaces the server's answer when it is a `401` for a request whose
-/// credential was puddle's to choose.
+/// credential was Puddle's to choose.
 fn unauthorized_answer<B>(
     shared: &Shared,
     response: &Response<B>,
@@ -741,7 +741,7 @@ fn unauthorized_answer<B>(
         return None;
     }
     let refusal = unauthorized?.refusal()?;
-    tracing::info!(host = %shared.cx.target.host, code = refusal.code(), "401 replaced: the credential for this request was puddle's to choose");
+    tracing::info!(host = %shared.cx.target.host, code = refusal.code(), "401 replaced: the credential for this request was Puddle's to choose");
     Some(refusal.to_refusal())
 }
 

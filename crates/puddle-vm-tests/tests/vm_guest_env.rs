@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The VM bar for the guest proxy config (tier K): with puddle's boot-time proxy config (`puddle-guest-env`) in a tools
+//! The VM bar for the guest proxy config (tier K): with Puddle's boot-time proxy config (`puddle-guest-env`) in a tools
 //! image, each tool by name reaches a local fixture through the proxy route.
 //!
 //! The guest's proxy listener is played by a fixture in the guest on the agent's address
@@ -466,7 +466,7 @@ async fn ssh_config_without_include(sb: &Sandbox) -> String {
     out
 }
 
-/// After the merge: the file is the stripped original behind the line puddle adds, a second merge
+/// After the merge: the file is the stripped original behind the line Puddle adds, a second merge
 /// changes nothing, and `ssh` now reads the drop-in.
 async fn check_ssh_config_include(sb: &Sandbox, before: &str) {
     let (_, after) = root_shell(sb, "cat /etc/ssh/ssh_config").await;

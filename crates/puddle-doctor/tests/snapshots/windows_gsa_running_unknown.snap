@@ -9,9 +9,9 @@ ok    Test boot             a test VM booted and ran a program in 1.1 s
 warn  Global Secure Access  Microsoft Entra Global Secure Access client installed (running state unknown)
       note: Microsoft documents that this client doesn't tunnel virtual machines' traffic and
             isn't supported on devices that host VMs. Sandboxes have no network of their own:
-            their traffic leaves through puddle's proxy, an ordinary program on this PC, which
+            their traffic leaves through Puddle's proxy, an ordinary program on this PC, which
             the client handles like any other app. If company resources reached through Global
-            Secure Access don't work from a sandbox, this limitation is the likely cause; puddle
+            Secure Access don't work from a sandbox, this limitation is the likely cause; Puddle
             can't change it.
 
 No problems found; 1 warning to know about. (1.2 s)
@@ -59,7 +59,7 @@ No problems found; 1 warning to know about. (1.2 s)
       "status": "warn",
       "summary": "Microsoft Entra Global Secure Access client installed (running state unknown)",
       "finding": "global_secure_access_installed",
-      "fix": "Microsoft documents that this client doesn't tunnel virtual machines' traffic and isn't supported on devices that host VMs. Sandboxes have no network of their own: their traffic leaves through puddle's proxy, an ordinary program on this PC, which the client handles like any other app. If company resources reached through Global Secure Access don't work from a sandbox, this limitation is the likely cause; puddle can't change it."
+      "fix": "Microsoft documents that this client doesn't tunnel virtual machines' traffic and isn't supported on devices that host VMs. Sandboxes have no network of their own: their traffic leaves through Puddle's proxy, an ordinary program on this PC, which the client handles like any other app. If company resources reached through Global Secure Access don't work from a sandbox, this limitation is the likely cause; Puddle can't change it."
     }
   ],
   "elapsed_ms": 1234

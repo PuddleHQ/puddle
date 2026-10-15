@@ -204,7 +204,7 @@ mod tests {
                 supported: 3
             }
         );
-        assert!(err.to_string().contains("newer puddle"), "{err}");
+        assert!(err.to_string().contains("newer Puddle"), "{err}");
     }
 
     #[test]

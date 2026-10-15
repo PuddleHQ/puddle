@@ -4,7 +4,7 @@
 //! A test "corporate" root, selected from a store snapshot as the Windows export would, signs a
 //! fixture HTTPS server inside the guest. Before the sync curl refuses it; after the root-sync
 //! files, `update-ca-certificates` and the bundle step, curl, Node and Python all trust it, with
-//! and without puddle's env, and the image's own roots are still in the bundle. A second step
+//! and without Puddle's env, and the image's own roots are still in the bundle. A second step
 //! run changes nothing.
 //!
 //! The steps are applied by plain exec, in `boot.sh`'s order, not through `boot.sh` itself: on
@@ -74,7 +74,7 @@ struct Fixture {
 fn fixture() -> Fixture {
     let mut root = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
     root.distinguished_name
-        .push(rcgen::DnType::CommonName, "puddle corporate test root");
+        .push(rcgen::DnType::CommonName, "Puddle corporate test root");
     root.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
     root.key_usages = vec![
         rcgen::KeyUsagePurpose::KeyCertSign,
@@ -99,8 +99,8 @@ fn fixture() -> Fixture {
     );
     let corporate = CorporateRoots::select(&snapshot, SystemTime::now());
     assert_eq!(corporate.certificates().len(), 1);
-    // And puddle's own proxy CA next to it, as in a real sandbox.
-    let proxy_ca = CaBuilder::new("puddle proxy CA (VM test)").build().unwrap();
+    // And Puddle's own proxy CA next to it, as in a real sandbox.
+    let proxy_ca = CaBuilder::new("Puddle proxy CA (VM test)").build().unwrap();
     let bundle = TrustBundle::new().with(proxy_ca.certificate().clone());
     Fixture {
         trust: GuestTrust::new(&corporate, &bundle),
@@ -199,7 +199,7 @@ echo \"dupes: $(awk '/BEGIN/{{k=\"\"}} !/-----/{{k=k $0}} /END/{{print k}}' /etc
             .split_whitespace()
             .filter_map(|w| w.parse().ok())
             .collect();
-        // The distro bundle (already with the synced root and puddle's CA, through
+        // The distro bundle (already with the synced root and Puddle's CA, through
         // update-ca-certificates) equals the merged one: nothing lost, nothing twice.
         assert!(counts[0] > 100, "distro roots missing: {bundle_line}");
         assert_eq!(counts[0], counts[1], "{bundle_line}");

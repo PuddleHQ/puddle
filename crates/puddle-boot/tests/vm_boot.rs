@@ -157,7 +157,7 @@ async fn check_boot<S: Sandbox>(
                 .contains("fsync = committed")
         );
     }
-    // Machine settings, and no credential helper anywhere puddle writes.
+    // Machine settings, and no credential helper anywhere Puddle writes.
     let (_, ms) = sh(sb, "cat /root/.vscode-server/data/Machine/settings.json").await;
     assert!(ms.contains("\"process\"") && ms.contains("\"remote.autoForwardPortsFallback\": 0"));
     let (code, _) = sh(
@@ -267,7 +267,7 @@ async fn write_guest<S: Sandbox>(sb: &GatedSandbox<S>, path: &str, text: &str) {
 }
 
 /// The Docker CLI config from `puddle-guest-env` is merged, so a `docker login` survives
-/// restarts byte for byte; when the provider stops listing it only puddle's keys go; a file the
+/// restarts byte for byte; when the provider stops listing it only Puddle's keys go; a file the
 /// merge tool can't parse is left alone and the boot goes on. On Alpine (busybox ash runs the
 /// hook; the static agent is the merge tool).
 async fn check_merge() {
@@ -303,7 +303,7 @@ async fn check_merge() {
     let gate = Gate::new();
     let hook = BootHook::new();
 
-    // Boot 1: puddle creates the file (0600: it will hold credentials).
+    // Boot 1: Puddle creates the file (0600: it will hold credentials).
     let sb = hook.create(rt, spec, &with, &gate).await.unwrap();
     let (_, created) = sh(&sb, &format!("cat {DOCKER}")).await;
     assert_eq!(
@@ -316,7 +316,7 @@ async fn check_merge() {
     write_guest(&sb, DOCKER, &login).await;
     sb.stop().await.unwrap();
 
-    // Boots 2 and 3: the login is still there, byte for byte, and so are puddle's proxies.
+    // Boots 2 and 3: the login is still there, byte for byte, and so are Puddle's proxies.
     for boot in [2, 3] {
         let sb = hook.start(rt, &name, &with, &gate).await.unwrap();
         let report = &sb.boot_report().stdout;
@@ -329,7 +329,7 @@ async fn check_merge() {
         sb.stop().await.unwrap();
     }
 
-    // Boot 4: no provider lists the file: puddle's keys go, the login stays.
+    // Boot 4: no provider lists the file: Puddle's keys go, the login stays.
     let sb = hook.start(rt, &name, &without, &gate).await.unwrap();
     let (_, text) = sh(&sb, &format!("cat {DOCKER}")).await;
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -381,7 +381,7 @@ async fn check_machine_merge() {
     let gate = Gate::new();
     let hook = BootHook::new();
 
-    // Boot 1: puddle creates the file; the user then edits it.
+    // Boot 1: Puddle creates the file; the user then edits it.
     let sb = hook.create(rt, spec, &plan, &gate).await.unwrap();
     let (_, created) = sh(&sb, &format!("cat {MACHINE}")).await;
     assert!(
@@ -391,7 +391,7 @@ async fn check_machine_merge() {
     write_guest(&sb, MACHINE, USER).await;
     sb.stop().await.unwrap();
 
-    // Boot 2: the user's keys and comments stay, puddle's arrive, the guard wins.
+    // Boot 2: the user's keys and comments stay, Puddle's arrive, the guard wins.
     let sb = hook.start(rt, &name, &plan, &gate).await.unwrap();
     let (_, merged) = sh(&sb, &format!("cat {MACHINE}")).await;
     assert!(

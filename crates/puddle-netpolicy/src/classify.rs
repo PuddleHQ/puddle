@@ -25,7 +25,7 @@ pub enum AddressClass {
         /// Why, for the audit (`rfc1918`, `nat64`, `metadata`, ...).
         rule: &'static str,
     },
-    /// One of puddle's own listeners. Not host loopback: no toggle reaches it, and
+    /// One of Puddle's own listeners. Not host loopback: no toggle reaches it, and
     /// a later per-workspace unblock would key on this class. Only
     /// [`crate::NetPolicy::classify`] gives it, since it needs the port and the registry.
     PuddleEndpoint(EndpointKind),

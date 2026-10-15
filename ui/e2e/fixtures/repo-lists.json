@@ -260,7 +260,7 @@
       "retry_in_ms": 600000,
       "problem": {
         "code": "rate_limited",
-        "message": "GitHub says this account asked too often. puddle asks again in 10 minutes; the list below is from 15 minutes ago."
+        "message": "GitHub says this account asked too often. Puddle asks again in 10 minutes; the list below is from 15 minutes ago."
       },
       "notes": [
         {

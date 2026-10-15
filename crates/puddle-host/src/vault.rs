@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The credential store puddle keeps its values in, and the clean-up of what nothing names.
+//! The credential store Puddle keeps its values in, and the clean-up of what nothing names.
 
 use std::sync::Arc;
 
@@ -21,7 +21,7 @@ const SWEEP_PROBLEM: &str = "credential-store-sweep";
 fn sweep(vault: &dyn SecretStore, store: &Store) -> Result<Sweep, &'static str> {
     let in_use = store.secret_ids_in_use().map_err(|err| {
         tracing::warn!(%err, "credential store sweep skipped: the rows could not be read");
-        "puddle could not read which tokens and secrets it still uses"
+        "Puddle could not read which tokens and secrets it still uses"
     })?;
     vault.sweep_orphans(&|id| in_use.contains(id)).map_err(|_| {
         tracing::warn!("credential store sweep skipped: the store did not answer");
@@ -47,20 +47,20 @@ fn report(outcome: Result<Sweep, &'static str>, problems: &Problems) {
             problems.raise(Problem::new(
                 SWEEP_PROBLEM,
                 format!(
-                    "puddle could not remove {stuck} leftover {} from the credential store",
+                    "Puddle could not remove {stuck} leftover {} from the credential store",
                     if stuck == 1 { "value" } else { "values" }
                 ),
-                "They belong to nothing in puddle any more, for example a token you pasted and \
-                 never saved, or one left by a delete. Unlock the credential store if it is locked; puddle tries again the \
+                "They belong to nothing in Puddle any more, for example a token you pasted and \
+                 never saved, or one left by a delete. Unlock the credential store if it is locked; Puddle tries again the \
                  next time it starts.",
             ));
         }
         Err(why) => problems.raise(Problem::new(
             SWEEP_PROBLEM,
-            "puddle could not clean up the credential store",
+            "Puddle could not clean up the credential store",
             format!(
                 "{why}, so tokens left over from a delete or a pasted token you never saved stay \
-                 where they are. puddle tries again the next time it starts."
+                 where they are. Puddle tries again the next time it starts."
             ),
         )),
     }
@@ -223,7 +223,7 @@ mod tests {
         assert_eq!(raised[0].key, SWEEP_PROBLEM);
         assert_eq!(
             raised[0].title,
-            "puddle could not remove 1 leftover value from the credential store"
+            "Puddle could not remove 1 leftover value from the credential store"
         );
         assert!(disk.get(&id("tok-gone")).unwrap().is_none());
 

@@ -108,7 +108,7 @@ describe("refresh", () => {
     inbox.down = true;
     await store.refresh();
     expect(store.status).toBe("failed");
-    expect(store.loadError).toBe("puddle's service isn't answering.");
+    expect(store.loadError).toBe("Puddle's service isn't answering.");
     inbox.down = false;
     inbox.add(request(1));
     await store.refresh();
@@ -119,7 +119,7 @@ describe("refresh", () => {
     expect(store.status).toBe("ready");
     expect(store.count).toBe(1);
     // The list is kept, but the screen is told it may be out of date.
-    expect(store.loadError).toBe("puddle's service isn't answering.");
+    expect(store.loadError).toBe("Puddle's service isn't answering.");
   });
 
   it("treats a non-OK answer like a failure", async () => {
@@ -130,7 +130,7 @@ describe("refresh", () => {
     })) as never;
     await store.refresh();
     expect(store.status).toBe("failed");
-    expect(store.loadError).toBe("puddle's service hit an error (status 500).");
+    expect(store.loadError).toBe("Puddle's service hit an error (status 500).");
   });
 
   it("shares a run between concurrent calls and runs once more afterwards", async () => {
@@ -500,7 +500,7 @@ describe("decide", () => {
     ).toMatchObject({
       ok: false,
       reason: "failed",
-      message: "puddle's service isn't answering.",
+      message: "Puddle's service isn't answering.",
     });
   });
 
@@ -512,7 +512,7 @@ describe("decide", () => {
     expect(
       await store.decide(rowOf(store, 1), narrowest("allow"), false),
     ).toMatchObject({
-      message: "puddle's service refused the decision.",
+      message: "Puddle's service refused the decision.",
     });
   });
 });
@@ -552,7 +552,7 @@ describe("undo", () => {
     })) as never;
     expect(await store.undo(r.decided)).toEqual({
       ok: false,
-      message: "puddle couldn't undo that.",
+      message: "Puddle couldn't undo that.",
     });
     inbox.down = true;
     inbox.DELETE = (async () => {

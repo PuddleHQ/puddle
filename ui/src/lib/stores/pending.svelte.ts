@@ -347,7 +347,7 @@ export class PendingStore {
         return {
           ok: false,
           reason: "failed",
-          message: error?.message ?? "puddle's service refused the decision.",
+          message: error?.message ?? "Puddle's service refused the decision.",
         };
       }
       const closed = new Set<number>([data.request.id, ...data.also_closed]);
@@ -371,7 +371,7 @@ export class PendingStore {
       return {
         ok: false,
         reason: "failed",
-        message: "puddle's service isn't answering.",
+        message: "Puddle's service isn't answering.",
       };
     }
   }
@@ -384,12 +384,12 @@ export class PendingStore {
       });
       // 404: someone else already deleted it, which is what the user wanted.
       if (!response.ok && response.status !== 404) {
-        return { ok: false, message: "puddle couldn't undo that." };
+        return { ok: false, message: "Puddle couldn't undo that." };
       }
       this.decided = this.decided.filter((d) => d.ruleId !== decided.ruleId);
       return { ok: true };
     } catch {
-      return { ok: false, message: "puddle's service isn't answering." };
+      return { ok: false, message: "Puddle's service isn't answering." };
     }
   }
 

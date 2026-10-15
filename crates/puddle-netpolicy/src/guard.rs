@@ -27,7 +27,7 @@ pub enum AddressVerdict {
     Block(BlockReason),
 }
 
-/// The destination guard: address classes, the workspace's local toggles and puddle's own
+/// The destination guard: address classes, the workspace's local toggles and Puddle's own
 /// endpoints. Cheap to share (`Arc`); every check reads the workspace's current settings.
 ///
 /// ```
@@ -74,7 +74,7 @@ impl NetPolicy {
         }
     }
 
-    /// Uses `endpoints` as the registry of puddle's own listeners.
+    /// Uses `endpoints` as the registry of Puddle's own listeners.
     #[must_use]
     pub fn with_endpoints(mut self, endpoints: PuddleEndpoints) -> Self {
         self.endpoints = endpoints;
@@ -88,13 +88,13 @@ impl NetPolicy {
         self
     }
 
-    /// The registry of puddle's own listeners, to register them into.
+    /// The registry of Puddle's own listeners, to register them into.
     #[must_use]
     pub fn endpoints(&self) -> &PuddleEndpoints {
         &self.endpoints
     }
 
-    /// The class of `addr`: one of puddle's own endpoints first (whatever its address class),
+    /// The class of `addr`: one of Puddle's own endpoints first (whatever its address class),
     /// then the address's class.
     #[must_use]
     pub fn classify(&self, addr: SocketAddr) -> AddressClass {
@@ -156,7 +156,7 @@ fn verdict(class: AddressClass, access: LocalAccess) -> AddressVerdict {
         }
         AddressClass::Local { .. } if access.wildcards_reach_local() => AddressVerdict::Allow,
         AddressClass::Local { category, .. } => AddressVerdict::ExactOnly(category),
-        // puddle's own endpoints, and any class this version doesn't know: blocked.
+        // Puddle's own endpoints, and any class this version doesn't know: blocked.
         _ => AddressVerdict::Block(BlockReason::PuddleEndpoint),
     }
 }
@@ -185,16 +185,16 @@ pub fn block_message(host: &Host, workspace: &WorkspaceName, reasons: &[BlockRea
     toggles.dedup();
     if reasons.contains(&BlockReason::SettingsUnreadable) {
         return format!(
-            "{host} is a local address, and puddle could not read its settings, so every local address stays blocked until they can be read. The Settings page says what is wrong; once the settings are readable again, the toggles apply as set"
+            "{host} is a local address, and Puddle could not read its settings, so every local address stays blocked until they can be read. The Settings page says what is wrong; once the settings are readable again, the toggles apply as set"
         );
     }
     if toggles.is_empty() {
         return match reasons.first() {
             Some(BlockReason::PuddleEndpoint) => format!(
-                "{host} is one of puddle's own endpoints; workspaces never reach them, and no rule or toggle changes this"
+                "{host} is one of Puddle's own endpoints; workspaces never reach them, and no rule or toggle changes this"
             ),
             Some(BlockReason::SshUnsupported) => ssh_unsupported_message(host),
-            _ => format!("{host} is a local address puddle does not connect to"),
+            _ => format!("{host} is a local address Puddle does not connect to"),
         };
     }
     let what = toggles
@@ -381,7 +381,7 @@ mod tests {
         assert_eq!(check(&on, "10.0.0.1", 80), None);
         assert_eq!(check(&on, "localhost", 80), None);
         assert_eq!(check(&on, "metadata", 80), None);
-        // puddle's own endpoints, by literal or by `localhost`, whatever the toggles.
+        // Puddle's own endpoints, by literal or by `localhost`, whatever the toggles.
         assert_eq!(
             check(&on, "127.0.0.1", 7070),
             Some(BlockReason::PuddleEndpoint)
@@ -434,7 +434,7 @@ mod tests {
         assert_eq!(g.check_target(&workspace(), &ip("10.0.0.5"), 80), reason);
         assert_eq!(g.check_target(&workspace(), &ip("localhost"), 80), reason);
         assert_eq!(g.check_target(&workspace(), &ip("127.0.0.1"), 80), reason);
-        // Public addresses and puddle's own endpoints are unaffected.
+        // Public addresses and Puddle's own endpoints are unaffected.
         assert_eq!(
             g.check_address(&workspace(), sa("93.184.216.34:443")),
             AddressVerdict::Allow
@@ -483,7 +483,7 @@ mod tests {
         );
         assert!(
             block_message(&host, &workspace(), &[BlockReason::PuddleEndpoint])
-                .contains("puddle's own endpoints")
+                .contains("Puddle's own endpoints")
         );
         assert_eq!(
             block_message(&host, &workspace(), &[BlockReason::SshUnsupported]),

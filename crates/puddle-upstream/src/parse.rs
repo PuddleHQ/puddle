@@ -9,9 +9,9 @@ use crate::hop::{Destination, Hop, ProxyAddr, Scheme};
 /// A PAC answer read into hops.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PacAnswer {
-    /// The hops puddle can use, in order.
+    /// The hops Puddle can use, in order.
     pub hops: Vec<Hop>,
-    /// Entries left out because puddle cannot speak them (`SOCKS`, `HTTPS` proxies, garbage).
+    /// Entries left out because Puddle cannot speak them (`SOCKS`, `HTTPS` proxies, garbage).
     pub skipped: usize,
 }
 
@@ -40,7 +40,7 @@ pub fn parse_pac_answer(text: &str) -> PacAnswer {
 
 /// Which proxy serves which scheme. Read from the common list syntax (`host:port` for every
 /// scheme, or `http=h:p;https=h:p;ftp=h:p;socks=h:p`, as WinINet and WinHTTP store it and as a
-/// puddle setting may spell it), or built from environment variables.
+/// Puddle setting may spell it), or built from environment variables.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ProxyRules {
     all: Option<ProxyAddr>,
@@ -61,7 +61,7 @@ impl ProxyRules {
         self.all.is_none() && self.http.is_none() && self.https.is_none()
     }
 
-    /// Reads the list syntax. Entries puddle cannot use (`ftp=`, `socks=`, bad ports) are ignored;
+    /// Reads the list syntax. Entries Puddle cannot use (`ftp=`, `socks=`, bad ports) are ignored;
     /// [`ProxyRules::parse_with_problems`] says which and why.
     #[must_use]
     pub fn parse(text: &str) -> Self {
@@ -72,7 +72,7 @@ impl ProxyRules {
     /// `http=`, `https=` or bare entry that is not a usable proxy address, and one when the list
     /// names no usable proxy at all (it holds only SOCKS or FTP proxies, or nothing readable).
     /// `ftp=` and `socks=` entries next to a usable one are not problems: a WinINet list names
-    /// them as a matter of course and puddle only proxies HTTP and HTTPS. The texts carry no
+    /// them as a matter of course and Puddle only proxies HTTP and HTTPS. The texts carry no
     /// credential.
     #[must_use]
     pub fn parse_with_problems(text: &str) -> (Self, Vec<String>) {

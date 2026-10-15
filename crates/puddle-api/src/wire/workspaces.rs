@@ -158,14 +158,14 @@ pub struct NewWorkspaceRequest {
     pub memory_mib: Option<u32>,
 }
 
-/// Names starting with this are puddle's own short-lived maintenance workspaces.
+/// Names starting with this are Puddle's own short-lived maintenance workspaces.
 const RESERVED_PREFIX: &str = "m--";
 
 impl NewWorkspaceRequest {
     pub(crate) fn into_new(self) -> Result<domain::NewWorkspace, ApiError> {
         if self.name.as_str().starts_with(RESERVED_PREFIX) {
             return Err(ApiError::invalid(format!(
-                "names starting with {RESERVED_PREFIX} are reserved for puddle"
+                "names starting with {RESERVED_PREFIX} are reserved for Puddle"
             )));
         }
         let repo_url = domain::RepoUrl::parse(&self.repo_url).map_err(ApiError::invalid)?;
@@ -315,7 +315,7 @@ pub struct AttachRequest {
 /// What an attach did.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct AttachResponse {
-    /// Whether puddle opened an editor itself (desktop mode, when it worked).
+    /// Whether Puddle opened an editor itself (desktop mode, when it worked).
     pub opened: bool,
     /// Where the browser editor is, in browser mode; the caller opens it.
     #[schema(required = true)]

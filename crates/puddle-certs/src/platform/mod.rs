@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Reading the host's certificate stores: `CryptoAPI` on Windows, nothing elsewhere (only Windows
-//! has the admin- and user-added root stores puddle syncs).
+//! has the admin- and user-added root stores Puddle syncs).
 
 use crate::store::{StoreError, StoreSnapshot, StoreSource};
 

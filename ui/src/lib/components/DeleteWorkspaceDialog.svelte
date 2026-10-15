@@ -53,7 +53,7 @@
       >
       <AlertDialog.Description class="confirm-detail">
         {#if check.volume_missing}
-          This removes the workspace from puddle. Its disk is already gone, so
+          This removes the workspace from Puddle. Its disk is already gone, so
           there is nothing left to lose.
         {:else}
           This removes the workspace and everything on its disk. It can't be
@@ -72,7 +72,7 @@
         </p>
       {:else if check.clean && check.errors.length === 0}
         <p class="clean">
-          puddle found nothing unsaved: no uncommitted changes, unpushed commits
+          Puddle found nothing unsaved: no uncommitted changes, unpushed commits
           or stashes.
         </p>
       {:else}
@@ -101,7 +101,7 @@
           </ul>
           {#if check.errors.length > 0}
             <div class="notice">
-              <b>puddle couldn't check everything:</b>
+              <b>Puddle couldn't check everything:</b>
               <ul>
                 {#each check.errors as message, i (i)}
                   <li>{message}</li>

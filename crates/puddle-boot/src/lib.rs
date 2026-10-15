@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The boot hook and the readiness gate.
 //!
-//! msb's `create()` and `start()` run no image workload, so puddle sets every sandbox up itself:
+//! msb's `create()` and `start()` run no image workload, so Puddle sets every sandbox up itself:
 //! after every create, start and re-adoption it runs `guest/boot.sh` as root through exec, and it
 //! serves no SSH and no exec to anyone until the hook returns 0.
 //!

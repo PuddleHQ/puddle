@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! TLS from the host to a real server: puddle's side of a terminated connection, and of its own
+//! TLS from the host to a real server: Puddle's side of a terminated connection, and of its own
 //! requests.
 //!
 //! The server's certificate is checked the way the host's own programs check it, so a host on a
@@ -36,7 +36,7 @@ pub struct TlsSetupError(String);
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum TlsConnectError {
-    /// The name is not a valid DNS name (an IP literal is refused too: puddle verifies names).
+    /// The name is not a valid DNS name (an IP literal is refused too: Puddle verifies names).
     #[error("{0:?} is not a valid server name")]
     InvalidName(String),
     /// The server's certificate was not accepted: unknown issuer, expired, wrong name, ... The
@@ -72,7 +72,7 @@ pub struct RejectedRoot {
     pub reason: String,
 }
 
-/// A TLS client with puddle's verification policy. Cheap to clone; build one per process.
+/// A TLS client with Puddle's verification policy. Cheap to clone; build one per process.
 #[derive(Clone)]
 pub struct TlsClient {
     config: Arc<ClientConfig>,
@@ -87,7 +87,7 @@ impl std::fmt::Debug for TlsClient {
 
 impl TlsClient {
     /// A client that trusts what the platform trusts plus `extra_roots` (the corporate roots
-    /// puddle syncs into the guest, and any the caller adds). A root the verifier cannot use is
+    /// Puddle syncs into the guest, and any the caller adds). A root the verifier cannot use is
     /// left out, with a warning, rather than failing every connection: it is listed in
     /// [`TlsClient::rejected_roots`], and a site that chains to it fails with an unknown issuer.
     ///
@@ -209,7 +209,7 @@ impl TlsClient {
     }
 }
 
-/// Connects `stream` to `server_name` over TLS with `client`: [`TlsClient::connect`] for puddle's
+/// Connects `stream` to `server_name` over TLS with `client`: [`TlsClient::connect`] for Puddle's
 /// own requests, after [`crate::host::connect`] made the connection.
 ///
 /// # Errors

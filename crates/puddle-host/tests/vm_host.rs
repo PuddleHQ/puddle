@@ -374,13 +374,13 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
     let end = events
         .until(ended(name_static), Duration::from_secs(600))
         .await;
-    // The clone went through puddle's own certificate for github.com: git trusted it.
+    // The clone went through Puddle's own certificate for github.com: git trusted it.
     assert_eq!(end["step"], "done", "{end}");
     let termination = host
         .workspaces()
         .termination(&sandbox)
         .expect("a CA while it runs");
-    let ca_name = format!("puddle CA for {name}");
+    let ca_name = format!("Puddle CA for {name}");
 
     // github.com is decrypted and the guest trusts its certificate; example.com is spliced and
     // shows its real issuer; gitlab.com has no identity yet, so it is spliced too.
@@ -388,10 +388,13 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
     assert!(github.contains(&ca_name), "{github}");
     for site in ["example.com", "gitlab.com"] {
         let issuer = guest(&runtime, &sandbox, &issuer_script(site)).await;
-        assert!(!issuer.contains("puddle"), "{site}: {issuer}");
+        assert!(
+            !issuer.to_lowercase().contains("puddle"),
+            "{site}: {issuer}"
+        );
     }
 
-    // The guest holds the CA certificate and no key anywhere puddle writes.
+    // The guest holds the CA certificate and no key anywhere Puddle writes.
     let files = guest(
         &runtime,
         &sandbox,
@@ -487,7 +490,7 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
         "work@example.org"
     );
     let issuer = guest(&runtime, &sandbox, &issuer_script("example.com")).await;
-    assert!(!issuer.contains("puddle"), "{issuer}");
+    assert!(!issuer.to_lowercase().contains("puddle"), "{issuer}");
     let _ = work;
 
     // Stopping drops the CA: nothing is decrypted for a stopped workspace.
@@ -851,13 +854,13 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
     assert_eq!(search.trim(), "files=[] processes=[0]", "{search}");
 
     // Only the hosts the secrets name are decrypted; the rest keep their real certificate.
-    let ca_name = format!("puddle CA for {name}");
+    let ca_name = format!("Puddle CA for {name}");
     for site in ["example.com", "example.org"] {
         let issuer = guest(&runtime, &sandbox, &issuer_script(site)).await;
         assert!(issuer.contains(&ca_name), "{site}: {issuer}");
     }
     let net = guest(&runtime, &sandbox, &issuer_script("example.net")).await;
-    assert!(!net.contains("puddle"), "{net}");
+    assert!(!net.to_lowercase().contains("puddle"), "{net}");
 
     // A request toward a secret's own host with its stand-in: the proxy swaps the real value in
     // (the record says a credential was added, by name), and the guest still sees only the stand-in.
@@ -959,7 +962,7 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
     assert!(spliced, "example.net stayed in the decrypt set");
     assert_eq!(secrets.ids().len(), 2);
     let net = guest(&runtime, &sandbox, &issuer_script("example.net")).await;
-    assert!(!net.contains("puddle"), "{net}");
+    assert!(!net.to_lowercase().contains("puddle"), "{net}");
 
     let stop = api.post(&format!("/api/workspaces/{name}/stop"), "").await;
     assert_eq!(stop.status, 202, "{}", stop.body);
@@ -972,7 +975,7 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
 }
 
 /// Login capture on a real guest. With capture on (the default) the hosts of the Claude Code and
-/// GitHub logins are decrypted from the workspace's start: the guest trusts puddle's certificate
+/// GitHub logins are decrypted from the workspace's start: the guest trusts Puddle's certificate
 /// there, a request works over HTTP/2 where the real server speaks it, and a request to a token
 /// endpoint reaches the real server and the server's own error answer comes back untouched, with
 /// no notice (an answer with no token in it is nothing to capture). A workspace that turns capture
@@ -1025,14 +1028,14 @@ async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_al
         .await;
     assert_eq!(end["step"], "done", "{end}");
 
-    // On by default: the login hosts show puddle's certificate, every other host its own.
-    let ca_name = format!("puddle CA for {name}");
+    // On by default: the login hosts show Puddle's certificate, every other host its own.
+    let ca_name = format!("Puddle CA for {name}");
     for site in ["platform.claude.com", "api.anthropic.com", "api.github.com"] {
         let issuer = guest(&runtime, &sandbox, &issuer_script(site)).await;
         assert!(issuer.contains(&ca_name), "{site}: {issuer}");
     }
     let example = guest(&runtime, &sandbox, &issuer_script("example.com")).await;
-    assert!(!example.contains("puddle"), "{example}");
+    assert!(!example.to_lowercase().contains("puddle"), "{example}");
 
     // An ordinary request on a decrypted login host works, over HTTP/2 where the server speaks it.
     // `/rate_limit` and not `/zen`: an unauthenticated address gets 60 API calls an hour and a
@@ -1116,7 +1119,10 @@ async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_al
     assert_eq!(end["step"], "done", "{end}");
     for site in ["platform.claude.com", "api.anthropic.com", "api.github.com"] {
         let issuer = guest(&runtime, &sandbox, &issuer_script(site)).await;
-        assert!(!issuer.contains("puddle"), "{site}: {issuer}");
+        assert!(
+            !issuer.to_lowercase().contains("puddle"),
+            "{site}: {issuer}"
+        );
     }
     let down = host.shutdown().await;
     assert!(down.sandboxes.all_stopped(), "{down:?}");

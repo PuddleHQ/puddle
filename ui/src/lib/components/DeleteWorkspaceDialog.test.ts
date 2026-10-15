@@ -97,7 +97,7 @@ describe("DeleteWorkspaceDialog", () => {
       }),
     });
     const dialog = await screen.findByRole("alertdialog");
-    expect(dialog).toHaveTextContent("puddle couldn't check everything");
+    expect(dialog).toHaveTextContent("Puddle couldn't check everything");
     expect(dialog).toHaveTextContent("git failed in demo");
     expect(dialog).toHaveTextContent("not everything could be checked");
     expect(

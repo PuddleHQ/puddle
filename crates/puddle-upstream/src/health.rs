@@ -17,9 +17,9 @@ pub const MAX_ROUTE_SAMPLES: usize = 100;
 pub enum ModeKind {
     /// The operating system, then the environment.
     System,
-    /// No proxy, by puddle's setting.
+    /// No proxy, by Puddle's setting.
     Direct,
-    /// A proxy typed into puddle's settings.
+    /// A proxy typed into Puddle's settings.
     Manual,
 }
 
@@ -31,7 +31,7 @@ pub enum Detected {
     Pac,
     /// Automatic detection (WPAD) is on, with no PAC address.
     Wpad,
-    /// A fixed proxy in the system settings, or in puddle's.
+    /// A fixed proxy in the system settings, or in Puddle's.
     Static,
     /// A fixed proxy from `HTTP(S)_PROXY`.
     Env,
@@ -43,10 +43,10 @@ pub enum Detected {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ProxyProblemKind {
-    /// A proxy setting puddle cannot use (a SOCKS proxy, a malformed entry, a list with nothing
+    /// A proxy setting Puddle cannot use (a SOCKS proxy, a malformed entry, a list with nothing
     /// usable in it). What the setting covers goes direct, or through the entries that are fine.
     UnusableSetting,
-    /// puddle cannot, or can no longer, see changes of the proxy settings or the network, so its
+    /// Puddle cannot, or can no longer, see changes of the proxy settings or the network, so its
     /// routes stay as they are until it restarts.
     ChangesNotNoticed,
 }
@@ -62,7 +62,7 @@ pub struct ProxyProblem {
 }
 
 impl ProxyProblem {
-    /// A setting puddle cannot use, with `detail` naming it and why.
+    /// A setting Puddle cannot use, with `detail` naming it and why.
     #[must_use]
     pub fn unusable(detail: impl Into<String>) -> Self {
         Self {
@@ -71,7 +71,7 @@ impl ProxyProblem {
         }
     }
 
-    /// Changes that puddle does not see, with `detail` saying why.
+    /// Changes that Puddle does not see, with `detail` saying why.
     #[must_use]
     pub fn changes_not_noticed(detail: impl Into<String>) -> Self {
         Self {
@@ -122,7 +122,7 @@ pub struct ProxyHealth {
     pub bypass_entries: usize,
     /// Why the system settings could not be read (all of them or a part), cleaned.
     pub settings_error: Option<String>,
-    /// What in the setup does not work as set: settings puddle cannot use and changes it cannot
+    /// What in the setup does not work as set: settings Puddle cannot use and changes it cannot
     /// see. Cleaned. Empty when all is as configured.
     pub problems: Vec<ProxyProblem>,
     /// The network epoch number; it grows whenever the OS reports a change.

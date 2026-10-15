@@ -119,7 +119,7 @@ pub struct Manifest {
 }
 
 /// Builds the runtime folder of `target` at `out` for the msb version `expected` (exact embedded
-/// version), with `puddle` as the inventory of puddle's own tree.
+/// version), with `puddle` as the inventory of Puddle's own tree.
 ///
 /// # Errors
 ///
@@ -292,7 +292,7 @@ fn build(
     )?;
     write(
         &licenses.join("THIRD-PARTY-puddle.txt"),
-        puddle.render("The Rust crates in puddle's own programs, with their licences."),
+        puddle.render("The Rust crates in Puddle's own programs, with their licences."),
     )?;
 
     let manifest = Manifest {

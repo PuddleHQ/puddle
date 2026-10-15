@@ -1,7 +1,7 @@
 # Rules spec: firewall rules, pending requests, audit
 
 Status: draft for the `puddle-store` rules engine and SQLite store, 2026-10-06.
-Written fresh from puddle's own design decisions and threat model. No upstream Huddle rules, store
+Written fresh from Puddle's own design decisions and threat model. No upstream Huddle rules, store
 or test code was used.
 
 Every numbered rule (`R-n`) gets at least one named test in `puddle-store` (`r07_expired_rule_never_matches`, etc.).
@@ -37,7 +37,7 @@ a binding never allows a host, and a toggle never allows a destination (R-14).
 
 - **R-1 Nothing is pre-decided.** A fresh install has no rules, allow or deny. Every request
   with no matching rule becomes pending (§3); there is no built-in deny list. The built-in rule
-  sets ship switched off (R-36); the one thing puddle allows by itself is the short System managed
+  sets ship switched off (R-36); the one thing Puddle allows by itself is the short System managed
   list, derived from the user's own setup choices and shown with a reason for every host
   (R-40, R-41). *Note added 2026-10-08.*
 - **R-2 Exact rules** match the identical normalised host or IP literal, on any port. Port rules are
@@ -92,10 +92,10 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   `GET /api/inbox` reports the cap (`open_limit`), and the inbox says when a workspace has that many
   waiting, so a host that is not listed is never a silent one.
 - **R-47 The refusal says the request is waiting.** The 403 body says in words that the host is
-  waiting for approval in puddle and that the tool should retry once it is approved; the headers
+  waiting for approval in Puddle and that the tool should retry once it is approved; the headers
   keep `x-puddle-decision: pending` and, when a row exists, `x-puddle-pending: <id>`. For an
   `unlisted` request (R-45) the body says instead that the host is not listed for approval yet
-  because puddle holds more waiting requests for the workspace than it lists, and that answering some
+  because Puddle holds more waiting requests for the workspace than it lists, and that answering some
   lists this one on the next try. The connection
   is not held open ("parked"); that stays a later option.
 - **R-14 Local destinations** (the proxy applies this after resolving an allowed name; the engine supplies
@@ -105,7 +105,7 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   and only it). A suffix allow is treated as no match, and if no address is admitted the request
   goes pending for the exact name, unless the "wildcards reach local addresses"
   setting is on (global default off, per-workspace override *(default)*). The IP check only looks
-  up rules (`Policy::lookup`); it never writes a pending row for the address. puddle's own
+  up rules (`Policy::lookup`); it never writes a pending row for the address. Puddle's own
   endpoints are blocked whatever rules or toggles say, and never become pending. So is SSH from a
   workspace, which is not supported yet (reason `ssh_unsupported`, R-24): the proxy recognises it by
   the client's identification line on any port and refuses it before any rule is asked, so no rule
@@ -178,7 +178,7 @@ readable as JSONL (one record per line).
   `rule_expired` (with the full rule), `audit_trimmed` (`deleted_records`, `oldest_ts_kept`), and
   the rule set records of R-43. Records written by earlier versions still read: `pending_suppressed`
   (`workspace_id`, `count`) and `pending_expired` with reason `stale`; nothing writes them any more.
-  On a decrypted host whose client refuses puddle's certificate (it does not
+  On a decrypted host whose client refuses Puddle's certificate (it does not
   trust the workspace's CA) the decision stays what the rule said and the reason is `guest_tls_rejected`.
   The proxy writes one `connection` record per request whose destination it parsed, when the
   connection ends; a request refused before that (bad request, head too large or too slow) has no
@@ -196,7 +196,7 @@ readable as JSONL (one record per line).
   never credentials; `null` when no upstream route is configured or nothing connected), and when
   it is a proxy hop `resolved_ip` is the address sent to the proxy, or `null` if the proxy was told
   the name (or this host could not resolve it). *Added 2026-10-07 (additive).*
-  `origin` says whose connection it is: `workspace` (a workspace's, the default) or `puddle` (puddle's
+  `origin` says whose connection it is: `workspace` (a workspace's, the default) or `puddle` (Puddle's
   own, made on the host with no workspace: image pulls through the pull proxy). A `puddle` record has
   `workspace_id: null`, `reason: puddle_request` when the address guard let it through and the pull connected
   (`puddle_request_failed:unreachable` or `:timeout` when it could not resolve or connect; a block
@@ -213,7 +213,7 @@ readable as JSONL (one record per line).
   capped at 256 MiB *(default)*; the sweeper deletes the oldest records first and writes one
   `audit_trimmed` record per trim. Per workspace, `connection` records are limited to 200 per second
   *(default)*; the excess is counted and written as one `connection` record with
-  `reason: suppressed` and a `count` per second. puddle's own connections (`origin: puddle`) share one limit of the same size.
+  `reason: suppressed` and a `count` per second. Puddle's own connections (`origin: puddle`) share one limit of the same size.
   Per workspace, the `connection` records written while a request waited (decision `pending`) are also
   capped at 5000 *(default)*: the sweeper deletes the oldest ones past it, hosts and all, and writes one
   `connection` record with `reason: merged` and the number deleted as `count`. A flood of requests nobody answers cannot
@@ -226,7 +226,7 @@ readable as JSONL (one record per line).
   `blocked`, `expired`) exists for `connection` (its `decision`), `pending_created` (`pending`),
   `pending_decided` (`allow` or `deny`) and `pending_expired` (`expired`); every other record has
   none and never matches an `outcome` filter. `origin` (`workspace` or `puddle`) matches `connection`
-  records only (a puddle record is one without a workspace); every other record has no origin and
+  records only (a Puddle record is one without a workspace); every other record has no origin and
   never matches. *`origin` added 2026-10-07.* Pages are at most 500 records: newest first, paged
   back with `before`, or oldest first from `after` to follow the tail.
 - **R-29 Events.** After each commit the store emits, per change: `pending_opened` (a new open
@@ -236,7 +236,7 @@ readable as JSONL (one record per line).
   managed) and `audit_appended` (once per commit that wrote audit records, with the
   newest id). Events carry ids and counts, not decisions: a client that missed some refetches.
   A failed change emits nothing. `network_changed` (with the new network epoch) is not a store
-  event: puddle sends it when the network or the system's proxy settings change, and a client
+  event: Puddle sends it when the network or the system's proxy settings change, and a client
   refetches `GET /api/network-health`.
 
 ## 6. Name lookups from a guest that ignores the proxy settings
@@ -253,7 +253,7 @@ store.
   without recording: no pending row, no audit record, no counter. The pending row and the deny
   come from the connection that follows (R-10), by name.
 - **R-31 A name that no rule allows is not looked up.** An unmatched name, a denied name and a name
-  blocked by itself (R-14: a toggle that is off, one of puddle's endpoints) all get a stand-in
+  blocked by itself (R-14: a toggle that is off, one of Puddle's endpoints) all get a stand-in
   and cause **no** lookup on any resolver, so DNS is not a way out and a guest asking for many
   random names causes no resolver traffic. The connection that follows is refused with the
   usual reason. Record types other than `A` (`TXT`, `SRV`, `MX`) of such a name are answered
@@ -304,16 +304,16 @@ clients use the stand-in at once.
 ## 7. Rule sets and System managed
 
 A **rule set** is a named bundle of entries switched on or off as one. *Built-in* sets ship with
-puddle; the user makes *their own*. **System managed** is a separate, read-only list: the hosts
-puddle allows because of choices the user made (which browser editor server, direct SSH), each
+Puddle; the user makes *their own*. **System managed** is a separate, read-only list: the hosts
+Puddle allows because of choices the user made (which browser editor server, direct SSH), each
 with its reason. The user's own global and workspace rules (§1) are called *own rules* below. These
 rules are tested in `puddle-store` (`rule_sets_spec`, the engine's property tests), the proxy and
 the API. *Added 2026-10-08.*
 
 - **R-36 Built-in sets ship off, only allow, and update with puddle.** A built-in set is data in
-  puddle (an id `builtin:<slug>`, a name, a description, entries with a note each), checked at
+  Puddle (an id `builtin:<slug>`, a name, a description, entries with a note each), checked at
   build time against R-4 and for duplicates. It is read-only and never copied into the database, so
-  an update of puddle updates it. puddle ships no deny list: built-in entries only allow. Each
+  an update of Puddle updates it. Puddle ships no deny list: built-in entries only allow. Each
   ships switched off. When an update changes a set's entries, the store writes one
   `rule_set_changed` record (`added`, `removed`) when it opens, and the set shows when it changed.
 - **R-37 Switches.** Every set has a switch for every workspace and an override per workspace, each
@@ -340,7 +340,7 @@ the API. *Added 2026-10-08.*
   host with its reason in words and where it applies (every workspace or one). Nothing in it is
   stored as a rule or hidden. To block one of its hosts, the user adds an own deny (R-39); to
   remove the reason, the user changes the choice behind it.
-- **R-41 System managed follows the setup.** puddle derives it from the settings at start and
+- **R-41 System managed follows the setup.** Puddle derives it from the settings at start and
   after every settings or consent change, and stores only the reasons (so a restart with the same
   setup changes and records nothing):
 
@@ -372,5 +372,5 @@ the API. *Added 2026-10-08.*
 
 The AI judge (no field or placeholder until its flow is designed), subscribed lists (a rule set
 fetched from a URL), path rules (after v1), port rules, and the "Dangerous settings" unblock of
-puddle's endpoints (later). Address classification, name normalisation and the 403 body belong to
+Puddle's endpoints (later). Address classification, name normalisation and the 403 body belong to
 the proxy and `puddle-netpolicy`; the API and CLI shape of R-15 to `puddle-api` and `puddle`.

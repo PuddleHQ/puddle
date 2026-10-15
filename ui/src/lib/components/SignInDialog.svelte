@@ -7,10 +7,10 @@
   } from "#lib/stores/identities.svelte.ts";
   import FormDialog from "./FormDialog.svelte";
 
-  // The step after the user clicked Sign in: puddle started the sign-in, the user finishes it
-  // outside puddle (a one-time code typed at an address, or Git Credential Manager's own window),
+  // The step after the user clicked Sign in: Puddle started the sign-in, the user finishes it
+  // outside Puddle (a one-time code typed at an address, or Git Credential Manager's own window),
   // and this dialog asks the credential every few seconds whether it reads yet. Closing it stops
-  // asking; puddle ends the sign-in itself after five minutes.
+  // asking; Puddle ends the sign-in itself after five minutes.
   let {
     open = $bindable(false),
     credential,
@@ -75,10 +75,10 @@
   {:else if !start}
     <p role="status">Starting the sign-in&hellip;</p>
   {:else if state === "done"}
-    <p role="status"><b>Signed in.</b> puddle can read this credential now.</p>
+    <p role="status"><b>Signed in.</b> Puddle can read this credential now.</p>
   {:else if state === "expired"}
     <p role="status">
-      The sign-in wasn't finished in time and puddle ended it. Close this and
+      The sign-in wasn't finished in time and Puddle ended it. Close this and
       try again.
     </p>
   {:else}
@@ -92,13 +92,13 @@
       <p class="code" data-testid="sign-in-code">{start.code}</p>
     {:else}
       <p>
-        puddle asked Git Credential Manager to open its sign-in window. Finish
+        Puddle asked Git Credential Manager to open its sign-in window. Finish
         signing in there; Git Credential Manager keeps the result, as it does
         for Git itself. If no window appears, close this and try again.
       </p>
     {/if}
     <p class="hint" role="status">
-      Waiting for you to finish. puddle checks every few seconds and stops after
+      Waiting for you to finish. Puddle checks every few seconds and stops after
       five minutes.
     </p>
   {/if}

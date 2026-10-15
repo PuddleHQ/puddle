@@ -38,7 +38,7 @@ pub enum CredentialSource {
         #[schema(required = true)]
         username: Option<String>,
     },
-    /// A token the user pasted, kept in the OS credential store under puddle's own name.
+    /// A token the user pasted, kept in the OS credential store under Puddle's own name.
     Stored {
         /// The entry's id.
         id: String,

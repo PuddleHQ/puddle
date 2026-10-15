@@ -94,7 +94,7 @@ impl Launcher for NoLauncher {
     ) -> BoxFuture<'a, Result<(), LaunchError>> {
         Box::pin(async {
             Err(LaunchError::new(
-                "this puddle has no desktop shell to open an editor from",
+                "this Puddle has no desktop shell to open an editor from",
             ))
         })
     }
@@ -205,7 +205,7 @@ impl<R: Runtime + Clone> std::fmt::Debug for HostWorkspaces<R> {
 
 /// The way out after the workspace list could not be saved; the error already names the file.
 const SAVE_HINT: &str =
-    "check the free disk space and that puddle may write that file, then try again";
+    "check the free disk space and that Puddle may write that file, then try again";
 
 /// What a failed create or start tells the user about what it could not clean up: the reason it
 /// failed first, then what is still there and how it goes away.
@@ -214,7 +214,7 @@ fn with_leftovers(reason: String, leftovers: &[String]) -> String {
         return reason;
     }
     format!(
-        "{reason}; puddle could not clean up after it: {}. puddle removes a sandbox no workspace \
+        "{reason}; Puddle could not clean up after it: {}. Puddle removes a sandbox no workspace \
          claims at its next start, and keeps a volume it does not know, listing it then",
         leftovers.join("; ")
     )
@@ -304,7 +304,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let mut interrupted = false;
         for stored in restored {
             if stored.creating {
-                // A create that never finished (puddle died in it): there is no workspace, and
+                // A create that never finished (Puddle died in it): there is no workspace, and
                 // reconcile removes the half-made volume.
                 tracing::warn!(workspace = %stored.id, "dropping a workspace whose create never finished");
                 interrupted = true;
@@ -321,7 +321,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             record.memory = MemoryMib::new(stored.memory_mib).map_err(|e| HostError::State {
                 what: "the workspace list",
                 reason: format!(
-                    "workspace {name} has an invalid memory size ({e}); fix it in workspaces.json in puddle's data folder, or remove that entry (its volume is kept)"
+                    "workspace {name} has an invalid memory size ({e}); fix it in workspaces.json in Puddle's data folder, or remove that entry (its volume is kept)"
                 ),
             })?;
             record.created_at = stored.created_at;
@@ -492,7 +492,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let mut state = self.state();
         if state.closed {
             return Err(WorkspaceError::Unavailable(
-                "puddle is shutting down".to_owned(),
+                "Puddle is shutting down".to_owned(),
             ));
         }
         let slot = state.slots.get_mut(id).ok_or_else(|| not_found(id))?;
@@ -887,7 +887,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.inner.problems.raise(
             Problem::new(
                 key,
-                format!("puddle could not clear the stale git lock files in {name}"),
+                format!("Puddle could not clear the stale git lock files in {name}"),
                 format!(
                     "{why}. The workspace started, but git may say \"Another git process seems to \
                      be running\" until the .lock files in the repository's .git folder are \
@@ -898,7 +898,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         );
     }
 
-    /// After a boot: puddle's directory and stale locks on the volume, the SSH endpoint, and the
+    /// After a boot: Puddle's directory and stale locks on the volume, the SSH endpoint, and the
     /// handle the lifecycle stops at exit.
     async fn settle(&self, record: &WorkspaceRecord) -> Result<(), String> {
         let inner = &self.inner;
@@ -923,7 +923,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .await
             .map_err(|e| e.to_string())?;
         if inner.lifecycle.manage(handle, vec![mount]).is_err() {
-            return Err("puddle is shutting down".to_owned());
+            return Err("Puddle is shutting down".to_owned());
         }
         // Direct SSH is off unless the user allowed it: then there is no endpoint to connect to
         // and no ssh config entry, however the guest behaves.
@@ -1324,7 +1324,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .await
             .map_err(|e| e.to_string())?;
         self.quiesce(&record.name, true).await;
-        // What the workspace held in puddle's settings goes with it: its rules, its identities,
+        // What the workspace held in Puddle's settings goes with it: its rules, its identities,
         // its environment and the values of its own secrets.
         inner.injection.forget(&record.name).await;
         Ok(())
@@ -1376,7 +1376,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 Some(memory) => memory,
                 None => self.default_memory().map_err(|reason| {
                     WorkspaceError::Conflict(format!(
-                        "{reason}, so puddle can't tell how much memory the new workspace gets; \
+                        "{reason}, so Puddle can't tell how much memory the new workspace gets; \
                          fix or reset the settings, or choose a memory size for it"
                     ))
                 })?,
@@ -1402,7 +1402,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             {
                 return Err(WorkspaceError::Conflict(format!(
                     "a volume named {volume} already exists, left from an earlier workspace, and may hold its work; \
-                     {} was not created. Choose another name; puddle does not reuse or delete that volume",
+                     {} was not created. Choose another name; Puddle does not reuse or delete that volume",
                     new.name
                 )));
             }
@@ -1410,7 +1410,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 let mut state = self.state();
                 if state.closed {
                     return Err(WorkspaceError::Unavailable(
-                        "puddle is shutting down".to_owned(),
+                        "Puddle is shutting down".to_owned(),
                     ));
                 }
                 if state.slots.contains_key(&id) {

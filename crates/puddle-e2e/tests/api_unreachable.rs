@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! A hostile guest tries puddle's own API through the real proxy: the guest agent's CONNECT to the
+//! A hostile guest tries Puddle's own API through the real proxy: the guest agent's CONNECT to the
 //! API's address and port is refused with a reason, whatever the loopback toggle and the rules
 //! say.
 //!
@@ -130,7 +130,7 @@ async fn connect_via(agent: SocketAddr, authority: &str) -> io::Result<(u16, Vec
 async fn a_guest_cannot_reach_the_api_even_with_every_local_toggle_on_and_an_allow_rule() {
     let rig = rig().await;
     let port = rig.api.local_addr().port();
-    // An exact allow for the literal doesn't help either: puddle's own listeners come first.
+    // An exact allow for the literal doesn't help either: Puddle's own listeners come first.
     rig.store
         .add_rule(&NewRule {
             scope: Scope::Global,
@@ -159,7 +159,7 @@ async fn a_guest_cannot_reach_the_api_even_with_every_local_toggle_on_and_an_all
             "{authority}: {headers:?}"
         );
         assert!(
-            body.contains("puddle's own endpoints"),
+            body.contains("Puddle's own endpoints"),
             "{authority}: the refusal must say why: {body:?}"
         );
     }

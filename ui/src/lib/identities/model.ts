@@ -77,7 +77,7 @@ export function checkOf(result: CheckResult): Check {
     ? { state: "ok" }
     : {
         state: "problem",
-        message: result.problem ?? "puddle can't read it",
+        message: result.problem ?? "Puddle can't read it",
         needsSignIn: result.needs_sign_in,
       };
 }

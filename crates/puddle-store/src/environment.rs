@@ -30,15 +30,15 @@ pub const MAX_SECRET_VALUE_CHARS: usize = 8 * 1024;
 pub const MAX_ENTRIES_PER_SCOPE: usize = 256;
 /// The most bytes of names and plain values one scope holds, so the environment of a process
 /// stays far below what a kernel accepts (2 MiB with the arguments) with the global scope and
-/// puddle's own variables on top.
+/// Puddle's own variables on top.
 pub const MAX_SCOPE_BYTES: usize = 256 * 1024;
 /// The most hosts one secret lists.
 pub const MAX_SECRET_HOSTS: usize = 32;
 
-/// Names puddle sets in every workspace for the proxy and the trust of its CA. A workspace whose
-/// tools read these still routes through puddle, so the user's value would only break that; the
+/// Names Puddle sets in every workspace for the proxy and the trust of its CA. A workspace whose
+/// tools read these still routes through Puddle, so the user's value would only break that; the
 /// user's `JAVA_TOOL_OPTIONS`, `MAVEN_ARGS`, `GRADLE_USER_HOME` and `DOCKER_CONFIG` are not here
-/// because puddle adds to them instead of replacing them. A test in `puddle-host` compares this
+/// because Puddle adds to them instead of replacing them. A test in `puddle-host` compares this
 /// list with what the guest is actually given.
 pub const PUDDLE_OWNED_NAMES: [&str; 18] = [
     "CARGO_NET_GIT_FETCH_WITH_CLI",
@@ -100,7 +100,7 @@ fn invalid(what: impl Into<String>) -> StoreError {
 }
 
 /// The name of an environment variable: a shell identifier of at most 64 characters, not one
-/// puddle sets itself.
+/// Puddle sets itself.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct EnvName(String);
@@ -110,7 +110,7 @@ impl EnvName {
     ///
     /// # Errors
     /// [`StoreError::EnvInvalid`] for an empty, long or odd name, a name starting `PUDDLE_`, `PATH`,
-    /// or a name puddle sets in every workspace ([`PUDDLE_OWNED_NAMES`]); the text says which.
+    /// or a name Puddle sets in every workspace ([`PUDDLE_OWNED_NAMES`]); the text says which.
     pub fn new(name: &str) -> Result<Self, StoreError> {
         if name.is_empty() {
             return Err(invalid("a variable needs a name"));
@@ -131,17 +131,17 @@ impl EnvName {
         }
         if name.starts_with("PUDDLE_") {
             return Err(invalid(format!(
-                "{name} is reserved: names starting PUDDLE_ belong to puddle"
+                "{name} is reserved: names starting PUDDLE_ belong to Puddle"
             )));
         }
         if name == "PATH" {
             return Err(invalid(
-                "PATH comes from the workspace's image and puddle does not replace it; add a folder to it from your shell's start-up file instead".to_owned(),
+                "PATH comes from the workspace's image and Puddle does not replace it; add a folder to it from your shell's start-up file instead".to_owned(),
             ));
         }
         if PUDDLE_OWNED_NAMES.contains(&name) {
             return Err(invalid(format!(
-                "puddle sets {name} in every workspace so its tools use puddle's proxy and trust its certificate, so it can't be changed here; give one tool its own setting on its command line instead"
+                "Puddle sets {name} in every workspace so its tools use Puddle's proxy and trust its certificate, so it can't be changed here; give one tool its own setting on its command line instead"
             )));
         }
         Ok(Self(name.to_owned()))
@@ -149,7 +149,7 @@ impl EnvName {
 
     /// A name that is already stored, to find or remove it: only the shape is checked. A release
     /// that later owns a name an earlier one let through must not make that variable unlistable
-    /// or unremovable; at start puddle's own value wins over a stored one of the same name.
+    /// or unremovable; at start Puddle's own value wins over a stored one of the same name.
     ///
     /// # Errors
     /// [`StoreError::EnvInvalid`] when it is not shaped like a variable name.
@@ -213,7 +213,7 @@ impl SecretHost {
         // A `.` prefix is rule syntax; a secret's host list has one spelling.
         if text.starts_with('.') || text.contains(['/', ':', '@', ' ']) {
             return Err(invalid(format!(
-                "{text:?} is not a host name: give a name such as api.example.com, or *.example.com for every name below it; puddle decrypts port 443 only"
+                "{text:?} is not a host name: give a name such as api.example.com, or *.example.com for every name below it; Puddle decrypts port 443 only"
             )));
         }
         let lower = text.to_ascii_lowercase();
@@ -488,7 +488,7 @@ mod tests {
     fn a_name_puddle_owns_is_refused_with_the_reason() {
         for name in PUDDLE_OWNED_NAMES {
             let err = EnvName::new(name).unwrap_err().to_string();
-            assert!(err.contains("puddle sets"), "{name}: {err}");
+            assert!(err.contains("Puddle sets"), "{name}: {err}");
         }
         assert!(
             EnvName::new("PUDDLE_ROOT")

@@ -15,7 +15,7 @@ fn puddle(args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_puddle"))
         .args(args)
         .output()
-        .expect("the puddle binary runs")
+        .expect("the Puddle binary runs")
 }
 
 #[test]
@@ -42,7 +42,7 @@ fn a_missing_endpoint_fails_with_a_message_on_stderr() {
     assert_eq!(out.stdout, b"");
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(
-        stderr.starts_with(&format!("puddle: no puddle SSH endpoint at {gone}")),
+        stderr.starts_with(&format!("puddle: no Puddle SSH endpoint at {gone}")),
         "{stderr}"
     );
 }

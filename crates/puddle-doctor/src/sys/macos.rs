@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! macOS probes. puddle doesn't run on macOS yet, so the hypervisor is
+//! macOS probes. Puddle doesn't run on macOS yet, so the hypervisor is
 //! reported as unsupported and the report says so; Hypervisor.framework checks (Apple Silicon
 //! only, the `com.apple.security.hypervisor` entitlement) come with that work.
 

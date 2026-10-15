@@ -9,7 +9,7 @@ use puddle_types::{GuestEnv, GuestPath, ImageRef, MemoryMib, SandboxName, Volume
 
 use crate::ComputeError;
 
-/// The guest's network. puddle only ever uses [`NetworkPolicy::None`]: the guest has no network
+/// The guest's network. Puddle only ever uses [`NetworkPolicy::None`]: the guest has no network
 /// interface at all, and its only way out is the vsock routes in [`SandboxSpec::routes`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
@@ -20,7 +20,7 @@ pub enum NetworkPolicy {
 }
 
 impl NetworkPolicy {
-    /// The only policy puddle uses: no network.
+    /// The only policy Puddle uses: no network.
     #[must_use]
     pub fn none() -> Self {
         Self::None
@@ -50,7 +50,7 @@ impl VsockRoute {
 }
 
 /// A host file mounted **read-only** at a guest path (virtiofs; a guest write gets `EROFS`).
-/// puddle uses these for the agent binary, the boot hook and its inputs.
+/// Puddle uses these for the agent binary, the boot hook and its inputs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileMount {
     /// The file on the host.
@@ -179,7 +179,7 @@ pub struct SandboxSpec {
     pub name: SandboxName,
     /// The OCI image.
     pub image: ImageRef,
-    /// Guest memory (`--memory`; puddle never sets a max-memory).
+    /// Guest memory (`--memory`; Puddle never sets a max-memory).
     pub memory: MemoryMib,
     /// Virtual CPUs; `None` = the runtime's default.
     pub cpus: Option<u8>,

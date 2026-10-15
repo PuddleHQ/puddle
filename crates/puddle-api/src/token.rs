@@ -178,7 +178,7 @@ impl ConnectionInfo {
         })?;
         if parsed.version != FILE_VERSION {
             return Err(format_err(format!(
-                "version {} is not supported (this puddle reads {FILE_VERSION})",
+                "version {} is not supported (this Puddle reads {FILE_VERSION})",
                 parsed.version
             )));
         }
@@ -215,7 +215,7 @@ pub enum ConnectionFileError {
         /// How it is open to others.
         exposed: puddle_fs::private::Exposed,
     },
-    /// The file isn't a connection file this puddle understands.
+    /// The file isn't a connection file this Puddle understands.
     #[error("connection file {}: {reason}", path.display())]
     Format {
         /// The connection file.

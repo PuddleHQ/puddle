@@ -69,7 +69,7 @@ pub struct HostNetworkHealth {
     chain: Option<Arc<Chain>>,
     clock: Arc<dyn Clock>,
     roots: RwLock<Option<RootsState>>,
-    /// Company certificates puddle's own TLS client could not use.
+    /// Company certificates Puddle's own TLS client could not use.
     left_out_of_tls: RwLock<Vec<SkippedRoot>>,
     pull: RwLock<PullProxyReport>,
 }

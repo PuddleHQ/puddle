@@ -6,6 +6,11 @@ use crate::store::{StoreError, StoreSnapshot, StoreSource};
 
 #[cfg(windows)]
 mod windows;
+#[cfg(windows)]
+mod windows_trust;
+
+#[cfg(windows)]
+pub use windows_trust::WindowsTrust;
 
 /// Reads `sources` into a snapshot (see [`crate::read_host_stores`]).
 #[cfg(windows)]

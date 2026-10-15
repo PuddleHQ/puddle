@@ -32,6 +32,7 @@
 #![cfg_attr(not(windows), forbid(unsafe_code))]
 
 mod der;
+pub mod devcert;
 mod guest;
 mod platform;
 mod select;

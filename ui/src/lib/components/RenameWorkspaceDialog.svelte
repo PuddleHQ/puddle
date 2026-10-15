@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { untrack } from "svelte";
   import { displayNameProblem, type Workspace } from "#lib/workspaces/model.ts";
   import FormDialog from "./FormDialog.svelte";
 
@@ -29,12 +30,16 @@
   );
   const shown = $derived(problem ?? refusal);
 
+  // Start from the current name each time the dialog opens, not each time the live record is
+  // replaced (a refusal makes the page read the list again, and must not wipe the refusal).
+  let wasOpen = false;
   $effect(() => {
-    if (open) {
-      text = workspace.display_name;
+    if (open && !wasOpen) {
+      text = untrack(() => workspace.display_name);
       refusal = null;
       touched = false;
     }
+    wasOpen = open;
   });
 
   async function submit(event: SubmitEvent) {

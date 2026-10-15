@@ -817,7 +817,10 @@ test.describe("renaming", () => {
       busy: null,
     });
     // The list shows it too, and finds the workspace by its name still.
-    await page.getByRole("link", { name: "Workspaces", exact: true }).click();
+    await page
+      .locator("#main")
+      .getByRole("link", { name: "Workspaces", exact: true })
+      .click();
     await expect(card(page, "Web shop (prod)")).toBeVisible();
     await expect(card(page, "web-shop")).toHaveCount(0);
     await expect(
@@ -864,10 +867,11 @@ test.describe("renaming", () => {
     });
     expect(raced.status()).toBe(200);
     await form.getByLabel("Name").fill("racing");
-    await expect(form.getByRole("alert")).toHaveCount(0);
+    // Normally the page has not heard yet and the service refuses; if its poll ran first, the form
+    // refuses as you type. Either way the dialog says so and stays open.
     await form.getByRole("button", { name: "Save" }).click();
     await expect(form.getByRole("alert")).toContainText(
-      "another workspace is already called Racing",
+      /already called "?Racing/i,
     );
     await expect(form).toBeVisible();
     // The workspace's own name is free for it.

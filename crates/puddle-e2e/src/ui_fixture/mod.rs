@@ -25,8 +25,8 @@ use std::time::Duration;
 use puddle_api::wire::{FoundAccount, FoundVia};
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, ConnectionInfo, CredentialService, DoctorService, EventHub,
-    FakeCredentials, FakeDoctor, FakeLauncher, FakeNetworkHealth, FakeWorkspaces, Found, FoundList,
-    Launcher, Listing, MemorySettings, NetworkHealthService, Operation, RemoteNote, RepoFindings,
+    FakeCredentials, FakeDoctor, FakeLauncher, FakeNetworkHealth, FakePorts, FakeWorkspaces, Found, FoundList,
+    Launcher, Listing, MemorySettings, NetworkHealthService, Operation, PortsService, RemoteNote, RepoFindings,
     RepoService, RepositoryDraft, RunningApi, Services, SettingsRepo, StartFolder, Unsaved,
     WorkspaceRecord, check_repositories,
 };
@@ -166,6 +166,8 @@ struct State {
     doctor: Arc<FakeDoctor>,
     /// The background problems the API lists; kept here so they outlive a rebind of the API.
     problems: Arc<Problems>,
+    /// Every workspace's ports: nothing listens until a test or scenario says so.
+    ports: Arc<FakePorts>,
     api: Option<RunningApi>,
 }
 
@@ -235,6 +237,7 @@ impl Fixture {
             repos,
             doctor,
             problems,
+            ports: Arc::new(FakePorts::new()),
             api: None,
         };
         state.seed(scenario)?;
@@ -259,7 +262,8 @@ impl Fixture {
             .with_secret_store(state.secrets.clone())
             .with_repos(state.repos.clone() as Arc<dyn RepoService>)
             .with_doctor(state.doctor.clone() as Arc<dyn DoctorService>)
-            .with_problems(state.problems.clone());
+            .with_problems(state.problems.clone())
+            .with_ports(state.ports.clone() as Arc<dyn PortsService>);
             match ApiServer::bind(
                 ApiConfig::with_port(self.port.load(Ordering::SeqCst)),
                 self.token.clone(),

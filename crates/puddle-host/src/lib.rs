@@ -41,6 +41,7 @@ mod injection;
 mod logins;
 mod paths;
 mod platform;
+mod ports;
 mod process_env;
 mod proxy_passwords;
 mod settings_read;

@@ -30,6 +30,7 @@ mod first_run;
 mod identities;
 mod logins;
 mod network_health;
+mod ports;
 mod repos;
 mod repositories;
 mod rule_sets;
@@ -60,6 +61,7 @@ pub use network_health::{
     ProxyReport, PullProxyReport, RootKind, RootsReport, RouteDecision, RouteSource, SignInAttempt,
     SignInReport, SignInResult, SkippedRoot, SyncedRoot,
 };
+pub use ports::{PortEntry, PortForwardRequest, WorkspacePorts};
 pub use repos::{
     AccountProfile, AccountProfileRequest, RepoListState, RepoListing, RepoNote, RepoNoteCode,
     RepoProblem, RepoProblemCode, RepoRefreshRequest, RepoRole, RepoSource, RepoSources, RepoView,

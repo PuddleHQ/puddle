@@ -27,6 +27,7 @@ use puddle_compute::{Runtime, SandboxInfo};
 use puddle_fs::DataLock;
 use puddle_lifecycle::{Inventory, Lifecycle, ShutdownReport, adopt_workspaces, reconcile};
 use puddle_netpolicy::{LocalAccess, NetPolicy, PuddleEndpoints};
+use puddle_ports::Ports;
 use puddle_proxy::{Proxy, ProxyUrl, PullProxy, PullRoute, Terminations, Upstream};
 use puddle_repos::{HostApi, Repos};
 use puddle_secrets::{SecretCache, SecretStore, Sources, ToolPaths};
@@ -43,6 +44,7 @@ use crate::dev_cert::{DevCertSource, host_dev_cert};
 use crate::doctor::system_doctor;
 use crate::files::{FileSettings, WorkspaceBook};
 use crate::injection::{Injection, InjectorFactory, InjectorInputs, forward_sign_in_needed};
+use crate::ports::{HostPorts, StorePins};
 use crate::ssh_config::SshSetup;
 use crate::workspaces::{Parts, known_ids};
 use crate::{HostConfig, HostError, HostWorkspaces, Platform, ProxyPasswords, VsCodeLauncher};
@@ -474,6 +476,11 @@ impl<R: Runtime + Clone> Host<R> {
         // sandbox proxy and the pull proxy alike.
         let connections = Arc::new(ConnectionRecorder::new(store.clone(), problems.clone()));
         let reports = Arc::new(ReportDesk::new(problems.clone()));
+        let ports = Ports::new(
+            endpoints.clone(),
+            Arc::new(StorePins::new(store.clone())),
+            events.clone() as Arc<dyn EventSink>,
+        );
         let egress = Egress::build(
             &config,
             &options,
@@ -481,7 +488,12 @@ impl<R: Runtime + Clone> Host<R> {
             &endpoints,
             &connections,
             &events,
-            EgressParts::new(injecting.termination(), &proxy_passwords, &reports),
+            EgressParts::new(
+                injecting.termination(),
+                &proxy_passwords,
+                &reports,
+                &ports,
+            ),
         );
         let (proxy, upstream, discovery) = (egress.proxy, egress.upstream, egress.discovery);
         let network_health = network_health_of(&egress.chain, &discovery, &clock, &roots);
@@ -561,6 +573,7 @@ impl<R: Runtime + Clone> Host<R> {
                 injection: injecting.injection.clone(),
                 problems: problems.clone(),
                 reports,
+                ports: ports.clone(),
             },
             stored,
             &status,
@@ -582,6 +595,7 @@ impl<R: Runtime + Clone> Host<R> {
         .with_repos(injecting.repos(&egress.chain, &clock, connections.clone()))
         .with_doctor(system_doctor(&config.layout, &config.expected_runtime))
         .with_dev_cert(dev_cert)
+        .with_ports(Arc::new(HostPorts::new(ports)))
         .with_endpoints(endpoints.clone());
         let served = serve_api(&config, services).await?;
         steps.push(Step::ApiServing);
@@ -913,6 +927,7 @@ struct EgressParts {
     proxy_passwords: Arc<ProxyPasswords>,
     /// Where the guest agents' reports go.
     reports: Arc<ReportDesk>,
+    ports: Ports,
 }
 
 impl EgressParts {
@@ -920,12 +935,14 @@ impl EgressParts {
         (terminations, tls): (Arc<Terminations>, TlsClient),
         proxy_passwords: &Arc<ProxyPasswords>,
         reports: &Arc<ReportDesk>,
+        ports: &Ports,
     ) -> Self {
         Self {
             terminations,
             tls,
             proxy_passwords: proxy_passwords.clone(),
             reports: reports.clone(),
+            ports: ports.clone(),
         }
     }
 }
@@ -953,6 +970,7 @@ impl Egress {
             tls,
             proxy_passwords,
             reports,
+            ports,
         } = parts;
         let discovery = options.discovery.clone().unwrap_or_else(|| {
             Discovery::new(
@@ -982,7 +1000,8 @@ impl Egress {
             .with_address_check(Arc::new(guard))
             .with_upstream(upstream.clone())
             .with_termination(terminations, tls)
-            .with_agent_reports(reports),
+            .with_agent_reports(reports)
+            .with_guest_watcher(Arc::new(ports)),
         );
         Self {
             proxy,

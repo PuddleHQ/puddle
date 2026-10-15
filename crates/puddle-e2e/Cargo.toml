@@ -53,6 +53,7 @@ puddle-fd-limit = { workspace = true }
 puddle-inject = { workspace = true, features = ["testing"] }
 puddle-ipc = { workspace = true }
 puddle-netpolicy = { workspace = true }
+puddle-ports = { workspace = true }
 puddle-proxy = { workspace = true, features = ["testing"] }
 puddle-upstream = { workspace = true, features = ["testing"] }
 puddle-vm-tests = { workspace = true }

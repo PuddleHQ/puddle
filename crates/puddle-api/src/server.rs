@@ -31,6 +31,7 @@ use crate::doctor::{DoctorService, NoDoctor};
 use crate::error::ApiError;
 use crate::events::EventHub;
 use crate::network_health::{NetworkHealthService, NoNetworkHealth};
+use crate::ports::{NoPorts, PortsService};
 use crate::repos::{NoRepos, RepoService};
 use crate::routes::{AppState, api_router, slow_router};
 use crate::settings::SettingsRepo;
@@ -143,6 +144,9 @@ pub struct Services {
     /// Where the development certificate stands. [`Services::new`] starts with [`NoDevCert`],
     /// which says "not checked"; set the real one with [`Services::with_dev_cert`].
     pub dev_cert: Arc<dyn DevCertService>,
+    /// A workspace's ports and forwards. [`Services::new`] starts with [`NoPorts`], which answers
+    /// 503; set the real one with [`Services::with_ports`].
+    pub ports: Arc<dyn PortsService>,
     /// The registry of Puddle's own listeners that the workspace proxy's guard consults. The API
     /// registers its address here when it binds, so a workspace can't reach it even with the
     /// loopback toggle on. [`Services::new`] starts with an empty registry of its own; give the
@@ -172,6 +176,7 @@ impl Services {
             repos: Arc::new(NoRepos),
             doctor: Arc::new(NoDoctor),
             dev_cert: Arc::new(NoDevCert),
+            ports: Arc::new(NoPorts),
             endpoints: PuddleEndpoints::new(),
         }
     }
@@ -222,6 +227,13 @@ impl Services {
     #[must_use]
     pub fn with_doctor(mut self, doctor: Arc<dyn DoctorService>) -> Self {
         self.doctor = doctor;
+        self
+    }
+
+    /// These services with this ports implementation.
+    #[must_use]
+    pub fn with_ports(mut self, ports: Arc<dyn PortsService>) -> Self {
+        self.ports = ports;
         self
     }
 
@@ -302,6 +314,7 @@ impl ApiServer {
             repos: services.repos,
             doctor: services.doctor,
             dev_cert: services.dev_cert,
+            ports: services.ports,
             shutdown,
         };
         // System managed follows the stored setup from the first request on (rules spec R-41).

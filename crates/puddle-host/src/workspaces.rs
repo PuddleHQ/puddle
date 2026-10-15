@@ -37,6 +37,7 @@ use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
 use puddle_compute::{ComputeError, DiskSize, ExecRequest, ImageConfig, Runtime, Sandbox as _};
 use puddle_lifecycle::Lifecycle;
+use puddle_ports::Ports;
 use puddle_proxy::Route;
 use puddle_settings::{ReconnectionGrace, WorkspaceSettings, resolve};
 use puddle_ssh::SshEndpoint;
@@ -126,6 +127,7 @@ pub(crate) struct Parts<R: Runtime + Clone> {
     pub(crate) problems: Arc<Problems>,
     /// The guest agents' reports, which a run of a workspace opens and closes.
     pub(crate) reports: Arc<ReportDesk>,
+    pub(crate) ports: Ports,
 }
 
 struct Slot {
@@ -204,6 +206,7 @@ struct Inner<R: Runtime + Clone> {
     injection: Arc<Injection>,
     problems: Arc<Problems>,
     reports: Arc<ReportDesk>,
+    ports: Ports,
     state: Mutex<State>,
     live: tokio::sync::Mutex<BTreeMap<WorkspaceName, Live<R>>>,
     tasks: tokio::sync::Mutex<JoinSet<()>>,
@@ -404,6 +407,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 injection: parts.injection,
                 problems: parts.problems,
                 reports: parts.reports,
+                ports: parts.ports,
                 state: Mutex::new(State {
                     slots,
                     closed: false,
@@ -1558,6 +1562,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         if missed {
             self.environment_changed(name).await;
         }
+        // From here ports can be forwarded, and the pinned forwards come back.
+        self.inner.ports.started(name).await;
         Ok(())
     }
 
@@ -1797,6 +1803,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// handle. The route stays (the sandbox may start again); `drop_route` ends it too.
     async fn quiesce(&self, name: &WorkspaceName, drop_route: bool) {
         self.inner.lifecycle.release(&name.sandbox_name());
+        // Its forwards close; the pinned ones come back at the next start.
+        self.inner.ports.stopped(name).await;
         // The CA belongs to one start: a stopped or failed sandbox decrypts nothing.
         self.inner.injection.end(name);
         self.inner.problems.clear(&problem_key("ssh", name));

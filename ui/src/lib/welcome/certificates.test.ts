@@ -21,8 +21,8 @@ describe("the development certificate line", () => {
       [
         "needs_trust",
         "info",
-        "Development certificate: Windows will ask once",
-        /asks you once/,
+        "Development certificate: not trusted yet",
+        /hasn't asked Windows/,
       ],
       [
         "trust_declined",

@@ -1303,6 +1303,23 @@ impl AgentReports for KeptReports {
     }
 }
 
+/// What a workspace's agent told the watcher.
+#[derive(Default)]
+struct Watched {
+    link: std::sync::Mutex<Option<(WorkspaceName, puddle_agent_proto::forward::GuestLink)>>,
+    ports: std::sync::Mutex<Vec<(WorkspaceName, Vec<u16>)>>,
+}
+
+impl puddle_agent_proto::host::GuestWatcher for Watched {
+    fn link(&self, workspace: &WorkspaceName, link: puddle_agent_proto::forward::GuestLink) {
+        *self.link.lock().unwrap() = Some((workspace.clone(), link));
+    }
+
+    fn ports(&self, workspace: &WorkspaceName, ports: Vec<u16>) {
+        self.ports.lock().unwrap().push((workspace.clone(), ports));
+    }
+}
+
 #[tokio::test]
 async fn an_agent_report_is_about_the_workspace_of_its_route_whatever_it_says() {
     let reports = Arc::new(KeptReports::default());
@@ -1347,4 +1364,41 @@ async fn an_agent_report_is_about_the_workspace_of_its_route_whatever_it_says() 
             ),
         ]
     );
+}
+
+#[tokio::test]
+async fn the_guest_watcher_gets_the_link_and_the_ports_of_the_routes_workspace() {
+    use puddle_agent_proto::AgentMessage;
+    use puddle_agent_proto::control::PREAMBLE;
+    let watched = Arc::new(Watched::default());
+    let proxy = Arc::new(
+        Proxy::new(Arc::new(StaticPolicy::new()), Arc::new(NullSink))
+            .with_guest_watcher(watched.clone()),
+    );
+    let root = IpcRoot::new().unwrap();
+    let route = proxy.serve_route(root.listen().unwrap(), workspace("box"));
+    let mut guest = Guest::connect(&route).await;
+    let mut control = guest.stream().await;
+    control.write_all(PREAMBLE).await.unwrap();
+    // Whatever name the guest might claim, the workspace is the route's.
+    control
+        .write_all(&AgentMessage::hello().to_line().unwrap())
+        .await
+        .unwrap();
+    control
+        .write_all(&AgentMessage::ports([8080, 3000]).to_line().unwrap())
+        .await
+        .unwrap();
+    for _ in 0..500 {
+        if !watched.ports.lock().unwrap().is_empty() && watched.link.lock().unwrap().is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        *watched.ports.lock().unwrap(),
+        [(workspace("box"), vec![3000, 8080])]
+    );
+    let linked = watched.link.lock().unwrap().take().map(|(name, _)| name);
+    assert_eq!(linked, Some(workspace("box")));
 }

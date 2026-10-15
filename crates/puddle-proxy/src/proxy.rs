@@ -16,6 +16,8 @@ use std::time::Duration;
 use puddle_agent_proto::host::{
     AgentReport, AgentReports, GuestStream, HostConfig, StreamHandler, UdpRefusal,
 };
+use puddle_agent_proto::forward::GuestLink;
+use puddle_agent_proto::host::{GuestStream, GuestWatcher, HostConfig, StreamHandler, UdpRefusal};
 use puddle_agent_proto::relay::splice;
 use puddle_agent_proto::resolve::{ResolveAnswer, ResolveQuery};
 use puddle_types::{
@@ -222,6 +224,7 @@ pub struct Proxy {
     log: Arc<dyn ConnectionLog>,
     upstream: Option<Upstream>,
     terminations: Option<TerminationConfig>,
+    guest: Option<Arc<dyn GuestWatcher>>,
     pub(crate) sink: Arc<dyn EventSink>,
     reports: Option<Arc<dyn AgentReports>>,
     pub(crate) config: ProxyConfig,
@@ -252,6 +255,7 @@ impl Proxy {
             log: Arc::new(NullConnectionLog),
             upstream: None,
             terminations: None,
+            guest: None,
             sink,
             reports: None,
             config: ProxyConfig::default(),
@@ -315,6 +319,14 @@ impl Proxy {
         tls: puddle_upstream::TlsClient,
     ) -> Self {
         self.terminations = Some(TerminationConfig { source, tls });
+        self
+    }
+
+    /// Passes what each workspace's agent says about the guest (the way to open a stream to it,
+    /// the ports it listens on) to `watcher`. Without one the proxy ignores both.
+    #[must_use]
+    pub fn with_guest_watcher(mut self, watcher: Arc<dyn GuestWatcher>) -> Self {
+        self.guest = Some(watcher);
         self
     }
 
@@ -485,6 +497,18 @@ impl StreamHandler for WorkspaceHandler {
             reports.report(&self.workspace, report);
         }
         std::future::ready(())
+    }
+
+    async fn guest_link(&self, link: GuestLink) {
+        if let Some(watcher) = &self.proxy.guest {
+            watcher.link(&self.workspace, link);
+        }
+    }
+
+    async fn guest_ports(&self, ports: Vec<u16>) {
+        if let Some(watcher) = &self.proxy.guest {
+            watcher.ports(&self.workspace, ports);
+        }
     }
 }
 

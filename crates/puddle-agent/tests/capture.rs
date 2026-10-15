@@ -36,6 +36,14 @@ use tokio::process::Command;
 
 const CHILD: &str = "PUDDLE_CAPTURE_NETNS";
 
+/// `sudo` drops the environment, and with it the coverage run's profile path: pass it on by hand so
+/// the code that runs in the namespace is counted.
+fn profile_env() -> Option<String> {
+    std::env::var("LLVM_PROFILE_FILE")
+        .ok()
+        .map(|path| format!("LLVM_PROFILE_FILE={path}"))
+}
+
 /// Runs the calling test again inside a fresh network namespace and returns `false` (the caller
 /// returns); inside the namespace returns `true` and the caller runs its body.
 async fn enter(test: &str) -> bool {
@@ -52,6 +60,7 @@ async fn enter(test: &str) -> bool {
             .args(&runner[1..])
             .arg("env")
             .arg(format!("{CHILD}=1"))
+            .args(profile_env())
             .arg(&exe)
             .args(["--exact", test, "--nocapture", "--test-threads=1"])
             .kill_on_drop(true)
@@ -680,8 +689,12 @@ async fn the_rules_outlive_the_agent_and_come_back_with_the_same_stand_ins() {
     start_host(&socket, &seen);
     let table = dir.0.join("table");
     let start = || {
-        Command::new(env!("CARGO_BIN_EXE_puddle-agent"))
-            .env_clear()
+        let mut command = Command::new(env!("CARGO_BIN_EXE_puddle-agent"));
+        command.env_clear();
+        if let Some(path) = std::env::var_os("LLVM_PROFILE_FILE") {
+            command.env("LLVM_PROFILE_FILE", path);
+        }
+        command
             .env(
                 "PUDDLE_AGENT_TARGET",
                 format!("unix://{}", socket.display()),

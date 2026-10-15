@@ -248,29 +248,10 @@ impl GitHost {
         self.addr
     }
 
-    /// The name the host answers to.
-    #[must_use]
-    pub fn name(&self) -> &str {
-        &self.state.name
-    }
-
     /// The root that signed the host's certificate.
     #[must_use]
     pub fn root(&self) -> &CertificateDer<'static> {
         &self.root
-    }
-
-    /// The root as PEM.
-    #[must_use]
-    pub fn root_pem(&self) -> String {
-        let b64 = base64::engine::general_purpose::STANDARD.encode(self.root.as_ref());
-        let mut pem = String::from("-----BEGIN CERTIFICATE-----\n");
-        for line in b64.as_bytes().chunks(64) {
-            pem.push_str(std::str::from_utf8(line).unwrap());
-            pem.push('\n');
-        }
-        pem.push_str("-----END CERTIFICATE-----\n");
-        pem
     }
 
     /// A folder for the caller's own files, removed with the host.
@@ -291,7 +272,7 @@ impl GitHost {
 
     /// Makes a bare repository `owner/name` (`name` without `.git`) on branch `main` with one
     /// commit holding `README`, and `private` or not.
-    pub fn add_repo(&self, repo: &str, private: bool) -> PathBuf {
+    pub fn add_repo(&self, repo: &str, private: bool) {
         let path = self.repo_path(repo);
         std::fs::create_dir_all(&path).unwrap();
         let home = self.scratch().join("home");
@@ -328,7 +309,6 @@ impl GitHost {
         if private {
             lock(&self.state.private).insert(repo.to_owned());
         }
-        path
     }
 
     /// The bare repository `owner/name`.
@@ -341,20 +321,6 @@ impl GitHost {
     #[must_use]
     pub fn seen(&self) -> Vec<Seen> {
         lock(&self.state.seen).clone()
-    }
-
-    /// The `Authorization` headers of every request answered so far (one entry per request, the
-    /// first header or `None`).
-    #[must_use]
-    pub fn authorizations(&self) -> Vec<Option<String>> {
-        self.seen()
-            .iter()
-            .map(|s| {
-                s.headers_named("authorization")
-                    .first()
-                    .map(|v| (*v).to_owned())
-            })
-            .collect()
     }
 
     /// The stored LFS object `oid`, if one was uploaded.

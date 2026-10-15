@@ -11,7 +11,6 @@
 //! guest, the CA's shape, two workspaces that do not share what one decrypts, and a guest whose
 //! clock lies.
 #![expect(
-    clippy::expect_used,
     clippy::unwrap_used,
     reason = "VM test: a failed step fails the test; measurements go to stderr"
 )]
@@ -152,7 +151,7 @@ async fn create(vm: &VmHost, name: &str, repo_url: &str) {
     let end = events
         .until(ended(name_static), Duration::from_secs(600))
         .await;
-    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(end.get("step"), Some(&json!("done")), "{end}");
 }
 
 /// A bare repository's branch, read on the fake host.
@@ -500,9 +499,9 @@ async fn vm_git_the_ca_holds_no_key_and_two_workspaces_share_neither_ca_nor_cred
     assert_eq!(after.len(), mid + 1);
     assert_eq!(
         after
-            .get(before..mid)
-            .unwrap()
             .iter()
+            .skip(before)
+            .take(mid - before)
             .map(|r| r.headers_named("authorization"))
             .collect::<Vec<_>>(),
         [[basic(WORK)]],

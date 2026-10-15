@@ -262,6 +262,38 @@ fn agent_is_back_within_a_second_after_kill_9() {
 }
 
 #[test]
+fn the_agent_starts_with_the_plans_settings_and_a_restarted_one_has_the_latest() {
+    let fr = FakeRoot::new(&shells()[0]);
+    let plan = |value: &str| {
+        BootPlan::builder(&ImageConfig::default())
+            .agent_env("PUDDLE_AGENT_TEST", value)
+            .build()
+            .unwrap()
+    };
+    // Spaces, quotes, `$` and a backslash reach the agent as they are.
+    let odd = "a b 'q' \"d\" $HOME \\ end";
+    assert!(fr.run(&plan(odd)).status.success());
+    assert_eq!(fr.agent_saw(), [odd]);
+    // A second boot while the supervisor runs changes what the next start sees.
+    assert!(fr.run(&plan("second")).status.success());
+    kill9(fr.agent_pids()[0]);
+    let back = FakeRoot::wait_for(Duration::from_secs(3), || fr.agent_saw().len() == 2);
+    assert!(back.is_some(), "agent not restarted: {:?}", fr.agent_saw());
+    assert_eq!(fr.agent_saw(), [odd, "second"]);
+    assert!(!fr.path("/run/puddle/agent.env.new").exists());
+    // A plan without settings clears them.
+    assert!(
+        fr.run(&BootPlan::builder(&ImageConfig::default()).build().unwrap())
+            .status
+            .success()
+    );
+    kill9(fr.agent_pids()[1]);
+    let back = FakeRoot::wait_for(Duration::from_secs(3), || fr.agent_saw().len() == 3);
+    assert!(back.is_some());
+    assert_eq!(fr.agent_saw().last().map(String::as_str), Some("unset"));
+}
+
+#[test]
 fn entrypoint_is_chained_once_with_puddle_env_and_workdir() {
     for sh in shells() {
         let fr = FakeRoot::new(&sh);

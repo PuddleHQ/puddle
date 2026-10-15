@@ -45,12 +45,13 @@ fi
 
 mkdir -p "$RUN" "$STATE" || die "cannot create $RUN and $STATE"
 : >"$LOG"
-rm -f "$RUN/boot.done" "$RUN/triggers" "$RUN/steps" "$RUN/entry-env" "$RUN/changed" "$RUN/files.new" "$RUN/merge.new"
+rm -f "$RUN/boot.done" "$RUN/triggers" "$RUN/steps" "$RUN/entry-env" "$RUN/changed" "$RUN/files.new" "$RUN/merge.new" "$RUN/agent.env.new"
 : >"$RUN/changed"
 : >"$RUN/files.new"
 : >"$RUN/merge.new"
 : >"$RUN/triggers"
 : >"$RUN/steps"
+: >"$RUN/agent.env.new"
 
 
 boot_id=unknown
@@ -172,6 +173,7 @@ merge_result() { # merge_result <path> <tool output>
     puddle_step() { printf '%s\n' "$1" >>"$RUN/steps"; }
     puddle_git_include() { GIT_INCLUDE=$1; }
     puddle_agent() { AGENT=$1 AGENT_PORT=$2; }
+    puddle_agent_env() { printf '%s=%s\n' "$1" "$2" >>"$RUN/agent.env.new"; }
     puddle_entrypoint_env() { printf '%s\n' "$1" >>"$RUN/entry-env"; }
     puddle_entrypoint_cwd() { ENTRY_CWD=$1; }
     puddle_plan_end() { PLAN_DONE=1; }
@@ -180,6 +182,9 @@ merge_result() { # merge_result <path> <tool output>
 # shellcheck source=/dev/null
 . "$PLAN"
 [ "$PLAN_DONE" = 1 ] || die "the plan did not reach puddle_plan_end" 2
+# The agent's settings: the supervisor reads this file before every start of the agent, so a
+# restarted agent has them; replaced whole, so a restart between two boots never sees half of it.
+mv -f "$RUN/agent.env.new" "$RUN/agent.env" || die "cannot record the agent's settings"
 
 # Files an earlier plan wrote whole that this one doesn't: remove them (a provider was switched
 # off). One that is merged now stays (the merge kept its content).
@@ -262,9 +267,9 @@ if [ -n "$AGENT" ]; then
     else
         # Its own session and no inherited stdout/stderr, so the exec that started us can end.
         if command -v setsid >/dev/null 2>&1; then
-            setsid /bin/sh "$HERE/agent-supervise.sh" "$ROOT$AGENT" </dev/null >>"$RUN/agent.log" 2>&1 &
+            setsid /bin/sh "$HERE/agent-supervise.sh" --env-file "$RUN/agent.env" "$ROOT$AGENT" </dev/null >>"$RUN/agent.log" 2>&1 &
         else
-            /bin/sh "$HERE/agent-supervise.sh" "$ROOT$AGENT" </dev/null >>"$RUN/agent.log" 2>&1 &
+            /bin/sh "$HERE/agent-supervise.sh" --env-file "$RUN/agent.env" "$ROOT$AGENT" </dev/null >>"$RUN/agent.log" 2>&1 &
         fi
         printf '%s %s\n' "$boot_id" "$!" >"$RUN/supervisor.pid"
         say "agent supervisor started"

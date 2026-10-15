@@ -44,7 +44,9 @@ mod ssh_target;
 mod vault;
 mod workspaces;
 
-pub use config::{AGENT_FILE_NAME, ApiSettings, GuestSettings, HostConfig, UpstreamSettings};
+pub use config::{
+    AGENT_FILE_NAME, ApiSettings, CODE_SERVER_DIR_NAME, GuestSettings, HostConfig, UpstreamSettings,
+};
 pub use error::HostError;
 pub use files::FileSettings;
 pub use host::{

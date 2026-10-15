@@ -5833,6 +5833,7 @@ name = "puddle-agent"
 version = "0.0.0"
 dependencies = [
  "futures-util",
+ "getrandom 0.4.3",
  "libc",
  "proptest",
  "puddle-agent-proto",
@@ -10269,12 +10270,14 @@ dependencies = [
 name = "xtask"
 version = "0.0.0"
 dependencies = [
+ "flate2",
  "object",
  "puddle-api",
  "puddle-runtime",
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "tar",
  "tempfile",
  "thiserror 2.0.21",
 ]

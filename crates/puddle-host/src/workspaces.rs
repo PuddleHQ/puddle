@@ -25,6 +25,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
+use puddle_agent_proto::editor::EditorServer;
 use puddle_api::{
     AttachMode, Attached, DEFAULT_IMAGE, DeleteCheck, LaunchError, Launcher, Listing, NewWorkspace,
     Operation, RepoFindings, WorkspaceError, WorkspaceRecord, WorkspaceService,
@@ -34,7 +35,7 @@ use puddle_ca::CaCertificate;
 use puddle_compute::{ComputeError, DiskSize, ImageConfig, Runtime, Sandbox as _};
 use puddle_lifecycle::Lifecycle;
 use puddle_proxy::Route;
-use puddle_settings::{WorkspaceSettings, resolve};
+use puddle_settings::{ReconnectionGrace, WorkspaceSettings, resolve};
 use puddle_ssh::SshEndpoint;
 use puddle_store::Clock;
 use puddle_types::{
@@ -143,6 +144,9 @@ struct GuestState {
     /// The user's variables the guest was started with, a secret as its stand-in. A change to
     /// them reaches the guest at its next start, so a re-planned boot keeps these.
     env: GuestEnv,
+    /// How the browser editor's server runs in it; `None` when the host bundles none. The grace
+    /// is the setting as of this start.
+    editor: Option<EditorServer>,
 }
 
 /// What a sandbox owns while this process serves it.
@@ -678,7 +682,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             Err(reason) => return Err(self.abort_attachment(attachment, reason).await),
         };
         // The CA comes after the route: a start that fails here has nothing else to take back.
-        let (plan, env, guest) = match self.plan_guest(name, config).await {
+        let (plan, env, guest) = match self.plan_guest(&record.id, name, config).await {
             Ok(ready) => ready,
             Err(reason) => {
                 route.shutdown().await;
@@ -723,13 +727,16 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// and its environment. A start that fails after this must call `Injection::end`.
     async fn plan_guest(
         &self,
+        id: &WorkspaceId,
         name: &WorkspaceName,
         image: ImageConfig,
     ) -> Result<(puddle_boot::BootPlan, GuestEnv, GuestState), String> {
         let inner = &self.inner;
         let capture = crate::logins::capture_enabled(inner.settings.as_ref(), name);
+        let editor = inner.kit.editor(id, self.reconnection_grace(name))?;
         let began = inner.injection.begin(name, capture).await?;
         let state = GuestState {
+            editor,
             image,
             ca: began.certificate,
             authors: authors(&began.git),
@@ -741,6 +748,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 ca: &state.ca,
                 authors: &state.authors,
                 env: &state.env,
+                editor: state.editor.as_ref(),
             },
         ) {
             Ok((plan, env)) => Ok((plan, env, state)),
@@ -835,6 +843,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             ca: &guest.ca,
             authors,
             env: &guest.env,
+            editor: guest.editor.as_ref(),
         };
         let (plan, _) = kit.plan(&guest.image, &inputs)?;
         kit.hook()
@@ -946,6 +955,24 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             Err(reason) => {
                 tracing::warn!(workspace = %name, %reason, "direct SSH stays off: the settings cannot be read");
                 false
+            }
+        }
+    }
+
+    /// The browser editor's reconnection grace for `name`, in seconds: the settings' value, the
+    /// default when they cannot be read (the editor is not worth a failed start).
+    fn reconnection_grace(&self, name: &WorkspaceName) -> u32 {
+        let settings = self.inner.settings.as_ref();
+        let read = || {
+            let global = crate::settings_read::global(settings)?;
+            let own = crate::settings_read::workspace(settings, name)?;
+            Ok::<_, String>(resolve(&global, Some(&own)).reconnection_grace.value)
+        };
+        match read() {
+            Ok(grace) => grace.secs(),
+            Err(reason) => {
+                tracing::warn!(workspace = %name, %reason, "the editor keeps the default reconnection grace: the settings cannot be read");
+                ReconnectionGrace::DEFAULT.secs()
             }
         }
     }
@@ -1209,7 +1236,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let name = &record.name;
         let image = ImageRef::new(&record.image).map_err(|e| e.to_string())?;
         let config = self.image_config(&image).await?;
-        let (plan, _, guest) = self.plan_guest(name, config).await?;
+        let (plan, _, guest) = self.plan_guest(&record.id, name, config).await?;
         let made_with = inner
             .live
             .lock()

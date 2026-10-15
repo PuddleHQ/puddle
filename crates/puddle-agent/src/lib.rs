@@ -13,6 +13,9 @@
 //! - answers DNS for tools that ignore the proxy settings, when switched on: a stub on one
 //!   address hands out stand-in addresses and asks the host about each name ([`capture`]).
 //!
+//! - runs the browser editor's server (code-server, read-only from the host) and keeps it running
+//!   ([`editor`]), when the host asks.
+//!
 //! It also applies merged guest files for the boot hook ([`merge_file`]) and is the `ProxyCommand`
 //! of the guest's `ssh` ([`connect`]), which today only refuses: SSH is not supported yet.
 //!
@@ -26,6 +29,7 @@ pub mod cli;
 pub mod config;
 pub mod connect;
 pub mod control;
+pub mod editor;
 #[cfg(target_os = "linux")]
 mod ifaddrs;
 pub mod merge_file;
@@ -105,6 +109,9 @@ impl Agent {
             }
             None => (None, None),
         };
+        if let Some(editor) = config.editor.clone() {
+            tasks.spawn(editor::run(editor));
+        }
         let (tx, rx) = mpsc::channel(REPORT_QUEUE);
         tasks.spawn(control::run(upstream, rx));
         let reports = match config.oom {

@@ -4,6 +4,7 @@
   import CreateWorkspaceDialog from "./CreateWorkspaceDialog.svelte";
   import DeleteWorkspaceDialog from "./DeleteWorkspaceDialog.svelte";
   import DirectSshDialog from "./DirectSshDialog.svelte";
+  import RenameWorkspaceDialog from "./RenameWorkspaceDialog.svelte";
   import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
   import { workspaceActions as actions } from "#lib/stores/workspace-actions.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
@@ -15,6 +16,13 @@
     actions.connectOpen && actions.connectFor
       ? (workspaces.list.find((w) => w.id === actions.connectFor?.id) ??
           actions.connectFor)
+      : null,
+  );
+  // The rename dialog shows the live workspace, so a clash with a name set elsewhere shows at once.
+  const renaming = $derived(
+    actions.renameOpen && actions.renaming
+      ? (workspaces.list.find((w) => w.id === actions.renaming?.id) ??
+          actions.renaming)
       : null,
   );
   const server = $derived(
@@ -42,15 +50,24 @@
 <!-- The trust text, said once when direct SSH is turned on for a workspace. -->
 <DirectSshDialog
   bind:open={actions.trustOpen}
-  words={trustWordsFor(actions.trustFor?.name ?? "this workspace")}
+  words={trustWordsFor(actions.trustFor?.display_name ?? "this workspace")}
   onConfirm={actions.confirmTrust}
   onCancel={actions.cancelTrust}
 />
 
+{#if renaming}
+  <RenameWorkspaceDialog
+    bind:open={actions.renameOpen}
+    workspace={renaming}
+    all={workspaces.list}
+    onSubmit={(text) => actions.submitRename(renaming, text)}
+  />
+{/if}
+
 {#if actions.deleting}
   <DeleteWorkspaceDialog
     bind:open={actions.deleteOpen}
-    name={actions.deleting.workspace.name}
+    name={actions.deleting.workspace.display_name}
     check={actions.deleting.check}
     working={actions.deleting.working}
     error={actions.deleting.error}

@@ -776,7 +776,13 @@ export interface paths {
         delete: operations["delete_workspace"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Renames a workspace: sets the display name the UI shows. Only the label changes (the id, the
+         *     name, the volume and the sandbox stay), so it works on a running workspace and restarts
+         *     nothing. A name another workspace already goes by (ignoring case) is refused with 409, and so
+         *     is a rename while the workspace is being created or deleted.
+         */
+        patch: operations["rename_workspace"];
         trace?: never;
     };
     "/api/workspaces/{id}/attach": {
@@ -2648,6 +2654,14 @@ export interface components {
             /** @description The pull proxy reaches the internet through the company proxy setup above. */
             via_upstream: boolean;
         };
+        /** @description `PATCH /api/workspaces/{id}`. */
+        RenameWorkspaceRequest: {
+            /**
+             * @description The new display name: 1 to 60 characters, spaces at the ends dropped, no line breaks.
+             *     `null` goes back to the workspace's name. Required, so an empty body never resets it.
+             */
+            display_name: string | null;
+        };
         /** @description What one checkout holds that is not on a remote. */
         RepoFindings: {
             /** @description Whether nothing in it would be lost. */
@@ -3296,6 +3310,11 @@ export interface components {
              * @description What the disk holds in MiB; `null` when not known.
              */
             disk_used_mib: number | null;
+            /**
+             * @description What the user calls the workspace: the name until they rename it (`PATCH
+             *     /api/workspaces/{id}`). Show this one; `name` and `id` never change.
+             */
+            display_name: string;
             /**
              * @deprecated
              * @description Deprecated and always `false`: the first-connect notice is the "Allow direct SSH"
@@ -7169,6 +7188,96 @@ export interface operations {
                 };
             };
             /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    rename_workspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameWorkspaceRequest"];
+            };
+        };
+        responses: {
+            /** @description the renamed workspace */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description another workspace has that name, or this one is being created or deleted */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description empty, too long or contains control characters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
             500: {
                 headers: {
                     [name: string]: unknown;

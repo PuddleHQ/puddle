@@ -218,10 +218,46 @@ export function diskLabel(w: Workspace): string {
     : `${formatMib(w.disk_used_mib)} of ${formatMib(w.disk_size_mib)} used`;
 }
 
-/** Names order the list; the API already sorts by id, the store sorts again after a change. */
+/** What the user calls them orders the list; the store sorts again after a rename. */
 export function sortWorkspaces(list: readonly Workspace[]): Workspace[] {
-  return [...list].sort((a, b) => a.name.localeCompare(b.name));
+  return [...list].sort(
+    (a, b) =>
+      a.display_name.localeCompare(b.display_name) ||
+      a.name.localeCompare(b.name),
+  );
 }
+
+/** Longest display name, in characters (the API counts characters, not bytes). */
+export const MAX_DISPLAY_NAME_LENGTH = 60;
+
+/**
+ * The reason `text` can't be `workspace`'s new display name, or `null` when it can. Another
+ * workspace's name, ignoring case, is a clash (the API refuses it too: 409).
+ */
+export function displayNameProblem(
+  text: string,
+  workspace: Workspace,
+  all: readonly Workspace[],
+): string | null {
+  const shown = text.trim();
+  if (shown === "") return "Give the workspace a name.";
+  if ([...shown].length > MAX_DISPLAY_NAME_LENGTH)
+    return `Use at most ${MAX_DISPLAY_NAME_LENGTH} characters.`;
+  if (/\p{Cc}/u.test(shown))
+    return "Use a single line, without control characters.";
+  const clash = all.find(
+    (w) =>
+      w.id !== workspace.id &&
+      w.display_name.toLowerCase() === shown.toLowerCase(),
+  );
+  return clash
+    ? `Another workspace is already called "${clash.display_name}".`
+    : null;
+}
+
+/** A rename goes through while the workspace is settled; it is only a label, so up or down is fine. */
+export const canRename = (w: Workspace): boolean =>
+  w.busy !== "creating" && w.busy !== "deleting";
 
 /** What a delete would lose, as sentences for the confirm dialog. */
 export interface LossLine {

@@ -21,6 +21,8 @@ import {
   parseMemoryGib,
   repoUrlProblem,
   sortWorkspaces,
+  canRename,
+  displayNameProblem,
   statusLabel,
   operationOfStep,
   statusTone,
@@ -258,6 +260,50 @@ describe("the list", () => {
     const input = [workspace("b"), workspace("a"), workspace("c")];
     expect(sortWorkspaces(input).map((w) => w.name)).toEqual(["a", "b", "c"]);
     expect(input.map((w) => w.name)).toEqual(["b", "a", "c"]);
+  });
+});
+
+describe("display names", () => {
+  const all = [workspace("a", { display_name: "Web shop" }), workspace("b")];
+  const problem = (text: string) => displayNameProblem(text, all[1]!, all);
+
+  it("sorts the list by what the user calls the workspaces", () => {
+    expect(sortWorkspaces(all).map((w) => w.name)).toEqual(["b", "a"]);
+    expect(
+      sortWorkspaces([
+        workspace("z", { display_name: "Same" }),
+        workspace("y", { display_name: "Same" }),
+      ]).map((w) => w.name),
+    ).toEqual(["y", "z"]);
+  });
+
+  it("accepts a name, trimmed, with spaces, capitals and other scripts", () => {
+    for (const ok of ["Web", "  Web 2  ", "Café 日本", "é".repeat(60), "b"])
+      expect(problem(ok), ok).toBeNull();
+  });
+
+  it("says what is wrong, in words for the person typing", () => {
+    expect(problem("")).toBe("Give the workspace a name.");
+    expect(problem("   ")).toBe("Give the workspace a name.");
+    expect(problem("x".repeat(61))).toBe("Use at most 60 characters.");
+    expect(problem("two\nlines")).toBe(
+      "Use a single line, without control characters.",
+    );
+    expect(problem("web SHOP")).toBe(
+      'Another workspace is already called "Web shop".',
+    );
+  });
+
+  it("is not a clash with the workspace's own name", () => {
+    expect(displayNameProblem("web shop", all[0]!, all)).toBeNull();
+  });
+
+  it("allows a rename whenever the workspace is not being created or deleted", () => {
+    expect(canRename(workspace("w", { busy: null }))).toBe(true);
+    for (const busy of ["starting", "stopping", "reclaiming"] as const)
+      expect(canRename(workspace("w", { busy })), busy).toBe(true);
+    for (const busy of ["creating", "deleting"] as const)
+      expect(canRename(workspace("w", { busy })), busy).toBe(false);
   });
 });
 

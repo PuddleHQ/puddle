@@ -66,6 +66,53 @@ describe("start, stop and reclaim", () => {
   });
 });
 
+describe("renaming", () => {
+  it("opens the dialog for a workspace", () => {
+    actions.openRename(w("up"));
+    expect(actions.renameOpen).toBe(true);
+    expect(actions.renaming?.id).toBe("up");
+  });
+
+  it("sends the trimmed name, shows it everywhere and says so", async () => {
+    expect(await actions.submitRename(w("up"), "  Web shop ")).toBeNull();
+    expect(api.bodies.at(-1)).toEqual({ display_name: "Web shop" });
+    expect(w("up").display_name).toBe("Web shop");
+    expect(messages()).toEqual(["Renamed to Web shop."]);
+    // The words that follow use the new name.
+    await actions.openDesktop(w("trusted"));
+    expect(
+      settledMessage({
+        name: "up",
+        label: w("up").display_name,
+        operation: "stopping",
+        failed: false,
+        detail: null,
+      }),
+    ).toBe("Stopped Web shop.");
+  });
+
+  it("typing the workspace's own name again goes back to it", async () => {
+    await actions.submitRename(w("up"), "Web shop");
+    expect(await actions.submitRename(w("up"), "up")).toBeNull();
+    expect(api.bodies.at(-1)).toEqual({ display_name: null });
+    expect(w("up").display_name).toBe("up");
+  });
+
+  it("changes nothing, and asks nothing, when the name is the same", async () => {
+    const before = api.calls.length;
+    expect(await actions.submitRename(w("up"), " up ")).toBeNull();
+    expect(api.calls).toHaveLength(before);
+    expect(messages()).toEqual([]);
+  });
+
+  it("hands the service's refusal back to the dialog, with no toast", async () => {
+    const message = await actions.submitRename(w("up"), "DOWN");
+    expect(message).toContain("already called down");
+    expect(messages()).toEqual([]);
+    expect(w("up").display_name).toBe("up");
+  });
+});
+
 describe("connecting", () => {
   it("opens the connect step for a workspace and opens nothing yet", () => {
     actions.connect(w("up"));
@@ -356,12 +403,14 @@ describe("the rest", () => {
   it("toasts the end of an operation, and a failure as an error", () => {
     actions.settled({
       name: "up",
+      label: "up",
       operation: "starting",
       failed: false,
       detail: null,
     });
     actions.settled({
       name: "up",
+      label: "up",
       operation: "stopping",
       failed: true,
       detail: "no",
@@ -401,6 +450,20 @@ describe("settledMessage", () => {
       "Something went wrong with w.",
     ],
   ] as const)("%j", (rest, text) => {
-    expect(settledMessage({ name: "w", ...rest })).toBe(text);
+    expect(settledMessage({ name: "w", label: "w", ...rest })).toBe(text);
+  });
+
+  it("speaks of the workspace by the name the user gave it", () => {
+    const settled = {
+      name: "w",
+      label: "Web shop",
+      operation: "starting",
+      failed: false,
+      detail: null,
+    } as const;
+    expect(settledMessage(settled)).toBe("Web shop is running.");
+    expect(settledMessage({ ...settled, failed: true })).toBe(
+      "Starting Web shop failed.",
+    );
   });
 });

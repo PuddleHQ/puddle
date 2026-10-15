@@ -110,6 +110,10 @@
     <section class="card" aria-labelledby="status-h">
       <h2 id="status-h">Status</h2>
       <dl>
+        {#if workspace.display_name !== workspace.name}
+          <dt>Identifier</dt>
+          <dd class="mono">{workspace.name}</dd>
+        {/if}
         <dt>State</dt>
         <dd><StatusChip status={workspace.status} busy={workspace.busy} /></dd>
         <dt>Created</dt>

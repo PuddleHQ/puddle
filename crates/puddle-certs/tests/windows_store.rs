@@ -313,16 +313,27 @@ fn dev_cert(tag: &str, policy: &str) -> TestCert {
         .unwrap()
         .as_nanos();
     let file = std::env::temp_dir().join(format!("puddle-devcert-{tag}-{nanos}.cer"));
+    // `Stop` makes a failed cmdlet fail the script: without it a failed New-SelfSignedCertificate
+    // left `$c` empty, Export-Certificate wrote no file and the script still exited 0. The named
+    // mutex lets one test process at a time create a certificate: nextest starts the tests as
+    // separate processes, all creating CNG keys in the same user store in the same seconds.
     let thumbprint = powershell(&format!(
-        "$c = New-SelfSignedCertificate -Subject 'CN=puddle devcert {tag} {nanos}' -DnsName localhost \
-         -KeyAlgorithm ECDSA_nistP256 -KeyExportPolicy {policy} -CertStoreLocation Cert:\\CurrentUser\\My \
-         -NotAfter (Get-Date).AddDays(90) -TextExtension @('1.3.6.1.4.1.311.84.1.1={{hex}}06'); \
-         Export-Certificate -Cert $c -FilePath '{}' | Out-Null; $c.Thumbprint",
+        "$ErrorActionPreference = 'Stop'; \
+         $gate = New-Object System.Threading.Mutex($false, 'Global\\puddle-devcert-tests'); \
+         try {{ [void]$gate.WaitOne() }} catch [System.Threading.AbandonedMutexException] {{ }}; \
+         try {{ \
+           $c = New-SelfSignedCertificate -Subject 'CN=puddle devcert {tag} {nanos}' -DnsName localhost \
+             -KeyAlgorithm ECDSA_nistP256 -KeyExportPolicy {policy} -CertStoreLocation Cert:\\CurrentUser\\My \
+             -NotAfter (Get-Date).AddDays(90) -TextExtension @('1.3.6.1.4.1.311.84.1.1={{hex}}06'); \
+           Export-Certificate -Cert $c -FilePath '{}' | Out-Null; \
+           $c.Thumbprint \
+         }} finally {{ $gate.ReleaseMutex() }}",
         file.display()
     ))
     .unwrap_or_else(|e| panic!("making a development certificate: {e}"))
     .trim()
     .to_owned();
+    assert!(!thumbprint.is_empty(), "no thumbprint for {tag}");
     let der = std::fs::read(&file).unwrap();
     TestCert {
         der,
@@ -350,11 +361,31 @@ fn an_exportable_development_certificate_is_found_and_its_key_exports() {
     assert!(!ours.trusted, "it is in My only");
 
     let key = WindowsTrust.export_key(&cert.der).unwrap();
-    // PKCS#8: SEQUENCE { INTEGER 0, SEQUENCE { OID .. }, OCTET STRING }.
+    // PKCS#8 (RFC 5958): SEQUENCE { INTEGER version, SEQUENCE algorithm, OCTET STRING key,
+    // [0] attributes OPTIONAL, [1] public key OPTIONAL }. CNG adds optional trailing fields
+    // (the first CI run saw four elements), so the three required ones are checked and the rest
+    // may only be those two context tags.
     let (_, parsed) = x509_parser::der_parser::parse_der(key.pkcs8_der()).unwrap();
     let items = parsed.as_sequence().unwrap();
-    assert_eq!(items.len(), 3, "a PrivateKeyInfo");
-    assert_eq!(items[0].as_u32().unwrap(), 0);
+    let tags: Vec<_> = items.iter().map(|i| i.header.tag().0).collect();
+    eprintln!("exported PKCS#8 element tags {tags:?}");
+    assert!(
+        (3..=5).contains(&items.len()),
+        "a PrivateKeyInfo: tags {tags:?}"
+    );
+    assert_eq!(items[0].as_u32().unwrap(), 0, "version");
+    assert!(items[1].as_sequence().is_ok(), "algorithm identifier");
+    assert!(
+        items[2].as_slice().is_ok_and(|k| !k.is_empty()),
+        "private key"
+    );
+    for extra in &items[3..] {
+        assert!(
+            extra.header.class() == x509_parser::der_parser::ber::Class::ContextSpecific
+                && extra.header.tag().0 <= 1,
+            "optional trailing field: tags {tags:?}"
+        );
+    }
     // ring is strict about the key's layout; when it accepts it, it must be the certificate's key.
     if let Ok(pair) = rcgen::KeyPair::try_from(key.pkcs8_der()) {
         let (_, x509) = x509_parser::parse_x509_certificate(&cert.der).unwrap();
@@ -435,7 +466,14 @@ fn the_machine_roots_count_as_trusted_and_an_unknown_certificate_does_not() {
 /// The generated leaf is offered to `CurrentUser\Root`. A person is asked once there; the hosted
 /// runner is refused ("UI is not allowed"), so this only checks that every answer is a reported
 /// state with the leaf still handed over, and removes the leaf if the runner did add it.
+///
+/// Ignored on the runner: the add is in-process (`CertAddCertificateContextToStore`), so unlike
+/// the PowerShell import it is not refused: it opens the Windows confirmation dialog on the
+/// runner's desktop and waits for a click nobody gives (the first CI run hit the 120 s limit).
+/// That the dialog is the only thing in the way is a person's check: run it by hand on a
+/// workstation and click No or Yes. The states themselves are tested over a fake store.
 #[test]
+#[ignore = "adding the leaf to CurrentUser\\Root opens a confirmation dialog nobody clicks on a hosted runner; run it by hand on a workstation with --run-ignored"]
 fn asking_for_trust_ends_in_a_reported_state_never_a_crash() {
     if !enabled() {
         return;

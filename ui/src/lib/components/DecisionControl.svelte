@@ -1,7 +1,18 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
-  import { narrowest, type Choice, type Target } from "#lib/decision/model.ts";
+  import {
+    everywhere,
+    narrowest,
+    type Choice,
+    type Target,
+  } from "#lib/decision/model.ts";
   import "#lib/theme/controls.css";
+
+  // Ctrl+click (Cmd+click on a Mac) decides for every workspace and skips the chevron.
+  const choose = (effect: "allow" | "deny", event: MouseEvent) =>
+    onDecide(
+      event.ctrlKey || event.metaKey ? everywhere(effect) : narrowest(effect),
+    );
 
   // Allow and Deny one click for this workspace, the exact host,
   // permanently; the chevron asks for the rest (every workspace, subdomains, duration), which
@@ -34,8 +45,8 @@
         type="button"
         class="btn allow main"
         aria-label="Allow {target.host} for {workspace}"
-        title="Allow for {workspace}, this host only, permanently (A)"
-        onclick={() => onDecide(narrowest("allow"))}
+        title="Allow for {workspace}, this host only, permanently (A). Ctrl+click: every workspace"
+        onclick={(event) => choose("allow", event)}
       >
         Allow
       </button>
@@ -55,8 +66,8 @@
     type="button"
     class="btn deny"
     aria-label="Deny {target.host} for {workspace}"
-    title="Deny for {workspace}, this host only, permanently (D)"
-    onclick={() => onDecide(narrowest("deny"))}
+    title="Deny for {workspace}, this host only, permanently (D). Ctrl+click: every workspace"
+    onclick={(event) => choose("deny", event)}
   >
     Deny
   </button>

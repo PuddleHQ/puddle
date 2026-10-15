@@ -172,6 +172,29 @@ test.describe("deciding", () => {
     ).toMatchObject({ effect: "deny", scope: { type: "global" } });
   });
 
+  test("Ctrl+click on Deny skips the chevron and asks about every workspace", async ({
+    page,
+    request,
+    backend,
+  }) => {
+    await ask(backend, "shop", "ctrl.example.com");
+    await openInbox(page, backend);
+    const row = rowFor(page, "ctrl.example.com");
+    await row
+      .getByRole("button", { name: /^Deny ctrl\.example\.com/ })
+      .click({ modifiers: ["Control"] });
+    await expect(
+      page.getByRole("alertdialog", { name: "Deny for every workspace?" }),
+    ).toContainText("Deny ctrl.example.com for every workspace, permanently");
+    await page.getByRole("button", { name: "Deny in every workspace" }).click();
+    await expect(row).toHaveCount(0);
+    expect(
+      (await rules(request, backend)).find(
+        (r) => r.pattern === "ctrl.example.com",
+      ),
+    ).toMatchObject({ effect: "deny", scope: { type: "global" } });
+  });
+
   test("a suffix rule covers the registrable domain and closes the other rows it decides", async ({
     page,
     request,

@@ -5,6 +5,7 @@ import {
   build,
   describe as describeChoice,
   durationPhrase,
+  everywhere,
   isIpLiteral,
   narrowest,
   needsConfirm,
@@ -213,5 +214,15 @@ describe("into a rule set (R-38)", () => {
     expect(describeChoice(into(false), target, "demo")).toBe(
       "Allow api.registry.example.co.uk in rule set Client X (which is on for demo), permanently",
     );
+  });
+});
+
+describe("everywhere (Ctrl+click)", () => {
+  it("is the narrowest choice widened to every workspace, and still needs the confirmation", () => {
+    for (const effect of ["allow", "deny"] as const) {
+      const choice = everywhere(effect);
+      expect(choice).toEqual({ ...narrowest(effect), scope: "global" });
+      expect(needsConfirm(choice)).toBe(true);
+    }
   });
 });

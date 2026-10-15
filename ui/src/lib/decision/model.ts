@@ -66,6 +66,11 @@ export function narrowest(effect: Effect): Choice {
   };
 }
 
+/** Ctrl+click's choice: every workspace, the exact host, permanent. Still needs the confirmation. */
+export function everywhere(effect: Effect): Choice {
+  return { ...narrowest(effect), scope: "global" };
+}
+
 /**
  * The suffix a "everything under ..." choice would send, or `null` when there is none: the host
  * is already the registrable domain, or the host is an IP literal (no names under it).

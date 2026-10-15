@@ -483,6 +483,49 @@ describe("every workspace needs a confirm", () => {
     expect(inbox.rules[0]?.scope).toEqual({ type: "global" });
   });
 
+  it("Ctrl+click on Allow asks first, then decides for every workspace", async () => {
+    seed();
+    await ready();
+    await fireEvent.click(
+      screen.getByRole("button", { name: /^Allow a\.example\.com for/ }),
+      { ctrlKey: true },
+    );
+    const confirm = await screen.findByRole("alertdialog");
+    expect(confirm).toHaveTextContent(
+      "Allow a.example.com for every workspace, permanently",
+    );
+    expect(inbox.calls.filter((c) => c.startsWith("POST"))).toEqual([]);
+    await fireEvent.click(
+      within(confirm).getByRole("button", { name: "Allow in every workspace" }),
+    );
+    await vi.waitFor(() => expect(inbox.rules).toHaveLength(1));
+    expect(inbox.rules[0]?.scope).toEqual({ type: "global" });
+  });
+
+  it("Ctrl+click decides at once, still sending the confirmation, when the Settings switch is off", async () => {
+    const fake = new FakeSettings();
+    fake.ui.confirm_global_rules = false;
+    globalSettings.view = {
+      effective: {} as never,
+      ui: fake.ui,
+      unknown_fields: [],
+      vscode_server: fake.vscode,
+      workspace_defaults: fake.layer,
+    };
+    seed();
+    await ready();
+    await fireEvent.click(
+      screen.getByRole("button", { name: /^Deny a\.example\.com for/ }),
+      { ctrlKey: true },
+    );
+    await vi.waitFor(() => expect(inbox.rules).toHaveLength(1));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(inbox.rules[0]).toMatchObject({
+      effect: "deny",
+      scope: { type: "global" },
+    });
+  });
+
   it("words a global deny as a deny", async () => {
     await chooseGlobal("Deny");
     const confirm = await screen.findByRole("alertdialog");

@@ -7,7 +7,7 @@
 //! (IPv4 first, then IPv6). The agent refuses its own ports (the proxy, the capture listener, the
 //! editor server): they are plumbing, and a forward to the proxy would hand the host's user the
 //! guest's route out. Streams are bounded in number, and a stream that says nothing is dropped
-//! after [`ANSWER_TIMEOUT`](puddle_agent_proto::forward::ANSWER_TIMEOUT).
+//! after the protocol's answer timeout (`puddle_agent_proto::forward::ANSWER_TIMEOUT`).
 
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};

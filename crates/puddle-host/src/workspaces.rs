@@ -317,15 +317,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             let id = WorkspaceId::new(&stored.id).map_err(|e| state(&e))?;
             let name = WorkspaceName::new(&stored.name).map_err(|e| state(&e))?;
             let mut record = WorkspaceRecord::new(id.clone(), name.clone(), stored.repo_url);
+            // The book's load already refused a bad display name (`files.rs`), so `ok()` drops nothing.
             record.display_name = stored
                 .display_name
                 .as_deref()
-                .map(DisplayName::parse)
-                .transpose()
-                .map_err(|e| HostError::State {
-                    what: "the workspace list",
-                    reason: format!("workspace {name} has a bad display name: {e}"),
-                })?;
+                .and_then(|shown| DisplayName::parse(shown).ok());
             record.image = stored.image;
             record.memory = MemoryMib::new(stored.memory_mib).map_err(|e| HostError::State {
                 what: "the workspace list",

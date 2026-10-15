@@ -113,6 +113,7 @@ GIT_INCLUDE=
 MERGE_TOOL=
 AGENT=
 AGENT_PORT=
+CAPTURE=off
 ENTRY_CWD=
 PLAN_DONE=
 
@@ -174,6 +175,9 @@ merge_result() { # merge_result <path> <tool output>
     puddle_git_include() { GIT_INCLUDE=$1; }
     puddle_agent() { AGENT=$1 AGENT_PORT=$2; }
     puddle_agent_env() { printf '%s=%s\n' "$1" "$2" >>"$RUN/agent.env.new"; }
+    puddle_capture() { # puddle_capture on|off
+        case $1 in on | off) CAPTURE=$1 ;; *) die "bad capture mode '$1' in the plan" 2 ;; esac
+    }
     puddle_entrypoint_env() { printf '%s\n' "$1" >>"$RUN/entry-env"; }
     puddle_entrypoint_cwd() { ENTRY_CWD=$1; }
     puddle_plan_end() { PLAN_DONE=1; }
@@ -184,6 +188,7 @@ merge_result() { # merge_result <path> <tool output>
 [ "$PLAN_DONE" = 1 ] || die "the plan did not reach puddle_plan_end" 2
 # The agent's settings: the supervisor reads this file before every start of the agent, so a
 # restarted agent has them; replaced whole, so a restart between two boots never sees half of it.
+printf 'PUDDLE_AGENT_CAPTURE=%s\n' "$CAPTURE" >>"$RUN/agent.env.new"
 mv -f "$RUN/agent.env.new" "$RUN/agent.env" || die "cannot record the agent's settings"
 
 # Files an earlier plan wrote whole that this one doesn't: remove them (a provider was switched
@@ -284,6 +289,56 @@ if [ -n "$AGENT" ]; then
         sleep "$TICK"
     done
     say "agent listening on 127.0.0.1:$AGENT_PORT"
+fi
+
+# --- 4b. The resolver: the stub first, the guest's own entries kept ------------------------------
+# With capture on, the agent makes dummy0 with the stub's address and answers DNS there. The
+# resolver is pointed at it only once the stub answers, so a guest whose kernel can't take the
+# rules keeps the DNS it had. `nameserver 198.18.0.1` goes first and every other line stays (their
+# DNS is redirected to the stub as well, so they only matter when the stub is down). The file is
+# rewritten in place, not replaced: it may be a link or a mount, and msb's agentd or the image owns it.
+STUB_NS='nameserver 198.18.0.1'
+RESOLV=$ROOT/etc/resolv.conf
+
+# 010012C6:0035 is 198.18.0.1:53 in /proc/net/udp.
+stub_up() { grep -Eq '^ *[0-9]+: 010012C6:0035 ' "$ROOT/proc/net/udp" 2>/dev/null; }
+
+# resolver_merge on|off: the file with the stub's line first (on) or without it (off), every
+# other line as it was.
+resolver_merge() {
+    tmp=$RUN/resolv.new
+    : >"$tmp" || die "cannot write $tmp"
+    if [ "$1" = on ]; then printf '%s\n' "$STUB_NS" >"$tmp"; fi
+    if [ -f "$RESOLV" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+            [ "$line" = "$STUB_NS" ] && continue
+            printf '%s\n' "$line" >>"$tmp"
+        done <"$RESOLV"
+    fi
+    if [ -f "$RESOLV" ] && same "$tmp" "$RESOLV"; then return 0; fi
+    if cat "$tmp" >"$RESOLV" 2>/dev/null; then
+        say "resolv.conf: puddle's nameserver line is $1"
+    else
+        say "resolv.conf is not writable; the guest keeps its resolver"
+    fi
+}
+
+if [ -n "$AGENT" ] && [ "$CAPTURE" = on ]; then
+    i=0
+    until stub_up; do
+        i=$((i + 1))
+        [ "$i" -le $((10 * TICKS_PER_S)) ] || break
+        sleep "$TICK"
+    done
+    if stub_up; then
+        say "stub DNS answering on 198.18.0.1:53"
+        resolver_merge on
+    else
+        say "capture is not up after 10 s (the agent log says why); resolv.conf is as it was"
+    fi
+elif [ -f "$RESOLV" ] && grep -Fxq -- "$STUB_NS" "$RESOLV"; then
+    # Capture was on in an earlier boot and is off now: give back the line the hook added.
+    resolver_merge off
 fi
 
 # --- 5. Extension steps: every boot.d/*.sh next to this script, in name order ------

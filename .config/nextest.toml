@@ -61,11 +61,11 @@ filter = "test(/(^|::)vm_radar_/)"
 slow-timeout = { period = "600s", terminate-after = 12 }
 
 # The transparency suite moves a gibibyte each way and lets a reader take a minute: a slow runner
-# must not turn "finishes in 30 s" into a kill.
+# must not turn "finishes in 30 s" into a kill (a gibibyte each way took 250 s on four busy CPUs).
 [[profile.default.overrides]]
 filter = "binary(transparency) & package(puddle-e2e)"
-slow-timeout = { period = "60s", terminate-after = 6 }
+slow-timeout = { period = "60s", terminate-after = 10 }
 
 [[profile.ci.overrides]]
 filter = "binary(transparency) & package(puddle-e2e)"
-slow-timeout = { period = "60s", terminate-after = 6 }
+slow-timeout = { period = "60s", terminate-after = 10 }

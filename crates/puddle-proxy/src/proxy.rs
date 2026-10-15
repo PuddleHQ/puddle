@@ -499,16 +499,18 @@ impl StreamHandler for WorkspaceHandler {
         std::future::ready(())
     }
 
-    async fn guest_link(&self, link: GuestLink) {
+    fn guest_link(&self, link: GuestLink) -> impl Future<Output = ()> + Send {
         if let Some(watcher) = &self.proxy.guest {
             watcher.link(&self.workspace, link);
         }
+        std::future::ready(())
     }
 
-    async fn guest_ports(&self, ports: Vec<u16>) {
+    fn guest_ports(&self, ports: Vec<u16>) -> impl Future<Output = ()> + Send {
         if let Some(watcher) = &self.proxy.guest {
             watcher.ports(&self.workspace, ports);
         }
+        std::future::ready(())
     }
 }
 

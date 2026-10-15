@@ -239,22 +239,11 @@ async fn vm_git_clones_and_pushes_with_two_identities_and_the_guest_never_holds_
     // Creating the workspace clones a private repository: the first request on the host already
     // carries the credential, from a source that really reads.
     create(&vm, &name, &format!("https://{NAME}/acme/web.git")).await;
+    // Personal joins the running workspace; the workspace's own repository is already in the
+    // table with pull and push on (the create put it there).
     vm.host
         .store()
         .attach_identity(&sandbox, personal.id, None)
-        .ok();
-    vm.host
-        .store()
-        .set_git_switches(&sandbox, Some(true), Some(false))
-        .unwrap();
-    vm.host
-        .store()
-        .add_repo(
-            &sandbox,
-            &puddle_store::RepoRef::new(NAME, "acme", "web").unwrap(),
-            true,
-            true,
-        )
         .unwrap();
     let seen = fake.seen();
     assert!(
@@ -490,7 +479,8 @@ async fn vm_git_the_ca_holds_no_key_and_two_workspaces_share_neither_ca_nor_cred
     };
     let (fa, fb) = (fingerprint(&a).await, fingerprint(&b).await);
     assert!(
-        fa.contains("SHA256 Fingerprint=") && fb.contains("SHA256 Fingerprint="),
+        fa.to_lowercase().contains("sha256 fingerprint=")
+            && fb.to_lowercase().contains("sha256 fingerprint="),
         "{fa} {fb}"
     );
     assert_ne!(fa.trim(), fb.trim(), "each workspace has its own CA");

@@ -16,6 +16,7 @@
 )]
 
 mod support;
+mod vm_support;
 
 use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime};
@@ -31,8 +32,8 @@ use puddle_store::{
 use puddle_types::WorkspaceName;
 use puddle_upstream::{Discovery, FakeOs, ProxyConfig, ProxyRules};
 use serde_json::json;
-use support::vm::{HarnessPlatform, VmHost, guest, guest_within, start_vm_host_platform};
 use support::{Api, ended};
+use vm_support::{HarnessPlatform, VmHost, guest, guest_within, start_vm_host_platform};
 
 const NAME: &str = "bound.test";
 const WORK: &str = "KCANARY-WORK-7d41c9e2b0a8";

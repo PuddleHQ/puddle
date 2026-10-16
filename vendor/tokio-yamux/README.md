@@ -14,12 +14,12 @@ Node's `socket.end()` do. The same stall hits an upload when the server half-clo
 (frame channel of 8 full), so a guest client that reads slowly or not at all (a paused download, a tool
 that extracts while it downloads) stalled every other connection on the same session, for as long as it
 stayed behind. One in four connections on the agent's default of 4 sessions. The session now keeps
-reading, bounds what each stream holds to its window (resetting a peer that ignores it) and what
+reading, bounds the data each stream holds to its window (resetting a peer that ignores it) and what
 all of them hold to four windows. Regression tests:
 
 - `crates/puddle-agent/tests/relay.rs`: `a_client_that_stops_reading_does_not_stall_the_other_connections_of_its_session`
 - `crates/puddle-agent-proto/tests/yamux_window.rs`: `a_stream_sent_past_its_window_while_unread_is_reset_and_the_session_goes_on`
-- `crates/puddle-e2e/tests/transparency.rs`: `a_client_reading_one_kibibyte_a_second_for_a_minute_is_not_cut_off`
+  and `a_stream_holding_a_full_window_and_a_close_while_unread_still_reads_to_the_end`
 
 **What is not here:** upstream's tests, benches and examples. The regression tests live in the
 product's own crates and move 40 MiB through a half-closed connection:
@@ -28,5 +28,5 @@ product's own crates and move 40 MiB through a half-closed connection:
 - `crates/puddle-agent/tests/relay.rs`: `a_client_that_half_closes_still_gets_a_download_larger_than_the_stream_window`
   and `a_server_that_half_closes_still_gets_an_upload_larger_than_the_stream_window` (the guest agent)
 
-**Removal:** see `NOTICE`. When it is time, delete this directory and the patch entry, run the three
-tests above (five now), then `cargo update -p tokio-yamux` to take the new release.
+**Removal:** see `NOTICE`. When it is time, delete this directory and the patch entry, run every
+test named above, then `cargo update -p tokio-yamux` to take the new release.

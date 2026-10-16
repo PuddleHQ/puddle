@@ -522,19 +522,23 @@ where
                 self.streams.remove(&stream_id);
             }
         }
-        self.account_pending(cx)?;
+        self.account_pending();
 
         Ok(())
     }
 
-    /// puddle: totals what the frames held for slow streams weigh. A stream holding more than its
-    /// receive window has a peer that ignores the window: that stream is reset and its frames
-    /// dropped, and the session goes on. (Without this, the only bound on what slow streams hold
-    /// was to stop reading the socket, which stalled every other stream of the session.)
-    fn account_pending(&mut self, _cx: &mut Context) -> Result<(), io::Error> {
+    /// puddle: totals what the frames held for slow streams weigh. A stream holding more data than
+    /// its receive window has a peer that ignores the window: that stream is reset and its frames
+    /// dropped, and the session goes on. Only data counts here: a peer within the window may still
+    /// queue frames without data (its close, window updates) behind a full window. (Without this,
+    /// the only bound on what slow streams hold was to stop reading the socket, which stalled every
+    /// other stream of the session.)
+    fn account_pending(&mut self) {
         let mut held: HashMap<StreamId, usize> = HashMap::new();
         for frame in &self.read_pending_frames {
-            *held.entry(frame.stream_id()).or_default() += pending_weight(frame);
+            if frame.ty() == Type::Data {
+                *held.entry(frame.stream_id()).or_default() += frame.length() as usize;
+            }
         }
         let window = self.config.max_stream_window_size as usize;
         for (stream_id, weight) in &held {
@@ -553,7 +557,6 @@ where
         self.read_pending_frames
             .retain(|f| held.get(&f.stream_id()).is_none_or(|w| *w <= window));
         self.read_pending_bytes = self.read_pending_frames.iter().map(pending_weight).sum();
-        Ok(())
     }
 
     // Send message to stream (Data/WindowUpdate)

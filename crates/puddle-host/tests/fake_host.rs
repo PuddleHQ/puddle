@@ -5181,6 +5181,45 @@ async fn a_variable_set_before_the_first_boot_returns_reaches_the_guest_once_it_
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_variable_set_while_a_stopped_workspace_boots_again_reaches_the_guest_once_it_is_up() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let booted = rig.guest.boots();
+    let store = host.store().clone();
+    during_the_next_boot_from_another_thread(&rig, move || {
+        store
+            .set_env(
+                &puddle_store::EnvScope::Workspace(name("acme")),
+                &puddle_store::EnvName::new("EDITOR").unwrap(),
+                puddle_store::EnvDraft::plain("vim").unwrap(),
+            )
+            .unwrap();
+    });
+
+    let start = api.post("/api/workspaces/acme/start", "").await;
+    assert_eq!(start.status, 202, "{}", start.body);
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+
+    rig.guest.boots_reach(booted + 2).await;
+    let restarted = pem_of(
+        &rig.guest.plan_files(booted),
+        "/etc/profile.d/01-puddle-env.sh",
+    );
+    assert!(!restarted.contains("EDITOR"), "{restarted}");
+    let rerun = pem_of(
+        &rig.guest.plan_files(booted + 1),
+        "/etc/profile.d/01-puddle-env.sh",
+    );
+    assert!(rerun.contains("export EDITOR='vim'"), "{rerun}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_identity_attached_before_the_first_boot_returns_reaches_the_guest_once_it_is_up() {
     let rig = Rig::new();
     let host = rig.start().await;

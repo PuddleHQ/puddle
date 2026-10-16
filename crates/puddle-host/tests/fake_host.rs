@@ -1919,7 +1919,7 @@ async fn a_workspace_list_with_a_bad_display_name_stops_the_start() {
     let err = Host::start(
         prepared,
         &FakeFactory::new(&rig.runtime, &rig.log),
-        HostOptions::default(),
+        hermetic_options(),
     )
     .await
     .unwrap_err();

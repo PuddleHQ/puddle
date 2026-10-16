@@ -1,8 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# puddle's guest development certificate step: makes .NET's own tooling accept the certificate
-# puddle put in /etc/puddle/dev-cert (the system store, Node's extra CAs and the bundle already
+# Puddle's guest development certificate step: makes .NET's own tooling accept the certificate
+# Puddle put in /etc/puddle/dev-cert (the system store, Node's extra CAs and the bundle already
 # have it). If the image has the .NET SDK and openssl, the certificate and key are imported as
 # the user's ASP.NET development certificate and trusted for .NET's check, so Kestrel serves it
 # and `dotnet dev-certs https --check --trust` passes.

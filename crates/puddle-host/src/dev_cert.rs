@@ -16,7 +16,7 @@ use puddle_store::Clock;
 /// Where a workspace's guest gets the development certificate from, at every boot.
 pub trait GuestCertSource: Send + Sync {
     /// The certificate and key for the next boot, or `None` when there is none to give (the
-    /// reason is logged). May block: the system can ask the user once (the first time puddle's
+    /// reason is logged). May block: the system can ask the user once (the first time Puddle's
     /// own certificate is trusted), so callers run it off the async threads.
     fn guest_cert(&self) -> Option<GuestDevCert>;
 }

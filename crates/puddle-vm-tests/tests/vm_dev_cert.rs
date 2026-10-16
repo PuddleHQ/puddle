@@ -141,7 +141,7 @@ echo \"curl-system: $(env -u CURL_CA_BUNDLE -u SSL_CERT_FILE -u SSL_CERT_DIR cur
 echo \"curl-wildcard: $(curl -sS -o /dev/null -w '%{{http_code}}' --resolve app.dev.localhost:8443:127.0.0.1 https://app.dev.localhost:8443/)\"
 echo \"curl-ip: $(curl -sS -o /dev/null -w '%{{http_code}}' https://127.0.0.1:8443/)\"
 echo \"node: $({NODE_GET})\"
-echo \"vite-style: $(test -r \\\"$DEV_CERT_PEM\\\" && test -r \\\"$DEV_KEY_PEM\\\" && echo readable)\""
+echo \"vite-style: $(test -r \"$DEV_CERT_PEM\" && test -r \"$DEV_KEY_PEM\" && echo readable)\""
     )
 }
 

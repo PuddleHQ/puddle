@@ -13,7 +13,8 @@ Changed by Puddle, two changes:
    whose reader is behind (its frame channel holds 8), so one slow reader stalls every other stream of
    the session until it catches up. Now the session keeps reading while the queued frames weigh less than
    four windows (`PENDING_WINDOWS`), counts the data each stream holds, and resets a stream that holds
-   more data than its own window (a peer that ignores the window), instead of stopping. Beyond four windows
+   more data than its own window (a peer that ignores the window), instead of stopping; the reader of
+   that stream gets a connection-reset error. Beyond four windows
    queued in all, it stops reading as before. The memory a stream that does not read can hold is its
    window, which the peer was already allowed to send.
 

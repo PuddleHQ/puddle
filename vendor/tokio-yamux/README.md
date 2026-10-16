@@ -14,8 +14,10 @@ Node's `socket.end()` do. The same stall hits an upload when the server half-clo
 (frame channel of 8 full), so a guest client that reads slowly or not at all (a paused download, a tool
 that extracts while it downloads) stalled every other connection on the same session, for as long as it
 stayed behind. One in four connections on the agent's default of 4 sessions. The session now keeps
-reading, bounds the data each stream holds to its window (resetting a peer that ignores it) and what
-all of them hold to four windows. Regression tests:
+reading, bounds the data each stream holds to its window (a peer that ignores it gets that stream
+reset, and the stream's reader gets a connection-reset error, never a clean end) and what all of them
+hold to four windows. Past four windows held by streams that do not read, the session stops reading as
+before: five paused downloads of a full window each on one session still stall it. Regression tests:
 
 - `crates/puddle-agent/tests/relay.rs`: `a_client_that_stops_reading_does_not_stall_the_other_connections_of_its_session`
 - `crates/puddle-agent-proto/tests/yamux_window.rs`: `a_stream_sent_past_its_window_while_unread_is_reset_and_the_session_goes_on`

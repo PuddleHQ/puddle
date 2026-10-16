@@ -65,18 +65,21 @@ async fn open(
 async fn a_stream_sent_past_its_window_while_unread_is_reset_and_the_session_goes_on() {
     let (peer, ours) = duplex(1 << 20);
     let mut session = Session::new_server(ours, server_config());
-    // The accepted streams are kept and never read: the application is slow.
+    // The accepted streams are kept and not read while the peer sends: the application is slow.
+    let (first_tx, first_rx) = tokio::sync::oneshot::channel();
     let held = tokio::spawn(async move {
+        let mut first_tx = Some(first_tx);
         let mut streams = Vec::new();
         while let Some(Ok(stream)) = session.next().await {
-            streams.push(stream);
+            match first_tx.take() {
+                Some(tx) => drop(tx.send(stream)),
+                None => streams.push(stream),
+            }
         }
     });
-    let (mut rx, mut tx) = {
-        let (r, w) = tokio::io::split(peer);
-        (r, w)
-    };
+    let (mut rx, mut tx) = tokio::io::split(peer);
     open(&mut tx, &mut rx, 1).await;
+    let mut first = first_rx.await.unwrap();
 
     // Twice the window in 1 MiB frames, from a peer that ignores the window it was given.
     let body = vec![0u8; 1 << 20];
@@ -98,6 +101,17 @@ async fn a_stream_sent_past_its_window_while_unread_is_reset_and_the_session_goe
 
     // The session still opens another stream.
     open(&mut tx, &mut rx, 3).await;
+    // The reader of the reset stream gets an error, not a clean end that looks complete.
+    let mut got = Vec::new();
+    let read = tokio::time::timeout(Duration::from_secs(20), first.read_to_end(&mut got))
+        .await
+        .unwrap();
+    assert_eq!(
+        read.map_err(|e| e.kind()).err(),
+        Some(std::io::ErrorKind::ConnectionReset),
+        "read {} bytes and then a clean end",
+        got.len()
+    );
     held.abort();
 }
 

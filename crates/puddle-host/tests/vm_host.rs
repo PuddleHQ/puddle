@@ -1829,6 +1829,15 @@ async fn refusal_matrix(
 #[expect(clippy::print_stderr, reason = "the radar's table goes to stderr")]
 async fn radar(tag: &str, terminate: bool) {
     let (vm, sandbox, api) = radar_workspace(tag, terminate).await;
+    // The run means nothing if the registries are not decrypted when they should be (or are when
+    // they should not be): the issuer the guest sees says which.
+    let issuer = guest(&vm.runtime, &sandbox, &issuer_script("registry.npmjs.org")).await;
+    eprintln!("RADAR issuer {}", issuer.trim());
+    assert_eq!(
+        issuer.contains(&format!("Puddle CA for {}", sandbox.as_str())),
+        terminate,
+        "registry.npmjs.org decrypted is not {terminate}: {issuer}"
+    );
     let out = {
         let handle = vm.runtime.get(&sandbox.sandbox_name()).await.unwrap();
         let out = handle

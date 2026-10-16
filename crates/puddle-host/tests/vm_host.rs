@@ -1591,6 +1591,7 @@ fn audit_summary(records: &[serde_json::Value]) -> String {
 const RADAR_SCRIPT: &str = r#"
 set -u
 export DEBIAN_FRONTEND=noninteractive
+df -PmT | awk 'NR > 1 && $2 != "devtmpfs" {print "RADAR mount=" $7 " type=" $2 " size_mib=" $3 " free_mib=" $5}'
 step() {
   name=$1; shift
   t0=$(date +%s.%N)
@@ -1851,8 +1852,9 @@ async fn radar(tag: &str, terminate: bool) {
     let failing: Vec<&str> = out
         .lines()
         .filter(|l| {
+            let mut words = l.split_whitespace();
             l.starts_with("RADAR step=")
-                && !(l.contains(" rc=0 ") && l.ends_with("suspicious_lines=0"))
+                && !(words.clone().any(|w| w == "rc=0") && words.any(|w| w == "suspicious_lines=0"))
         })
         .collect();
     assert!(

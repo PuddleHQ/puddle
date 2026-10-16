@@ -547,7 +547,12 @@ where
                     "substream({}) holds {} bytes past its window, reset, session.ty={:?}",
                     stream_id, weight, self.ty
                 );
-                self.streams.remove(stream_id);
+                // The stream's channel is full, but a new sender has a slot of its own in it, so
+                // the reader sees the reset as an error instead of a clean end of the stream.
+                if let Some(sender) = self.streams.remove(stream_id) {
+                    let reset = Frame::new_window_update(Flags::from(Flag::Rst), *stream_id, 0);
+                    let _ = sender.clone().try_send(reset);
+                }
                 let mut flags = Flags::from(Flag::Ack);
                 flags.add(Flag::Rst);
                 self.write_pending_frames

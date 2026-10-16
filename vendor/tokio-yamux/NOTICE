@@ -12,8 +12,8 @@ Changed by Puddle, two changes:
 2. `src/session.rs`. 0.3.20 stops reading the session's socket while any frame is queued for a stream
    whose reader is behind (its frame channel holds 8), so one slow reader stalls every other stream of
    the session until it catches up. Now the session keeps reading while the queued frames weigh less than
-   four windows (`PENDING_WINDOWS`), counts what each stream holds, and resets a stream that holds more
-   than its own window (a peer that ignores the window), instead of stopping. Beyond four windows
+   four windows (`PENDING_WINDOWS`), counts the data each stream holds, and resets a stream that holds
+   more data than its own window (a peer that ignores the window), instead of stopping. Beyond four windows
    queued in all, it stops reading as before. The memory a stream that does not read can hold is its
    window, which the peer was already allowed to send.
 
@@ -34,5 +34,5 @@ workspace `Cargo.toml`, when either of these is true:
 Until then, every tokio-yamux version bump re-applies both changes to the new release.
 
 Condition 1 above covers the first change only. For the second, the release must also keep reading a
-session whose slow streams hold less than their windows (check: the two tests named in `README.md`
-under the session change pass against the registry crate).
+session whose slow streams hold less than their windows (check: the three tests named in `README.md`
+under the second fix pass against the registry crate).

@@ -22,6 +22,7 @@ before: five paused downloads of a full window each on one session still stall i
 - `crates/puddle-agent/tests/relay.rs`: `a_client_that_stops_reading_does_not_stall_the_other_connections_of_its_session`
 - `crates/puddle-agent-proto/tests/yamux_window.rs`: `a_stream_sent_past_its_window_while_unread_is_reset_and_the_session_goes_on`
   and `a_stream_holding_a_full_window_and_a_close_while_unread_still_reads_to_the_end`
+- `crates/puddle-e2e/tests/transparency.rs`: `a_client_reading_one_kibibyte_a_second_for_a_minute_is_not_cut_off`
 
 **What is not here:** upstream's tests, benches and examples. The regression tests live in the
 product's own crates and move 40 MiB through a half-closed connection:

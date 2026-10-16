@@ -274,7 +274,7 @@ pub(crate) fn capture_logs() -> Arc<std::sync::Mutex<Vec<u8>>> {
     Arc::clone(logs)
 }
 
-/// The development certificate the host gives its guests: puddle's own leaf in a folder of the
+/// The development certificate the host gives its guests: Puddle's own leaf in a folder of the
 /// test's, with no trust implementation, so nothing touches the machine's certificate stores.
 /// Off until a test turns it on.
 pub(crate) struct TestDevCert {

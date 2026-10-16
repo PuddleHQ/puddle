@@ -1600,10 +1600,10 @@ step() {
   timeout 1500 bash -c "$*" > "/tmp/radar-$name.log" 2>&1
   rc=$?
   t1=$(date +%s.%N)
-  bad=$(grep -c -i -E 'Err:|W: Failed|^E: |retrying|will retry|timed out|ETIMEDOUT|ECONNRESET|EPIPE|reset by peer|connection refused|EAI_AGAIN|unexpected eof|stalled|handshake|certificate verify|SSL_ERROR|SSL certificate problem|x509: |PKIX|spurious network error|i/o timeout|dial tcp|could not transfer|transfer failed|but failed' "/tmp/radar-$name.log")
+  bad=$(grep -c -i -E 'Err:|W: Failed|^E: |retrying|will retry|timed out|ETIMEDOUT|ECONNRESET|EPIPE|reset by peer|connection refused|EAI_AGAIN|unexpected eof|\bstalled|handshake|certificate verify|SSL_ERROR|SSL certificate problem|x509: |PKIX|spurious network error|i/o timeout|dial tcp|could not transfer|transfer failed|but failed' "/tmp/radar-$name.log")
   echo "RADAR step=$name rc=$rc secs=$(awk "BEGIN {printf \"%.1f\", $t1 - $t0}") suspicious_lines=$bad disk_free_mib=$(df -Pm / | awk 'NR==2 {print $4}')"
   if [ "$rc" != 0 ] || [ "$bad" != 0 ]; then
-    grep -i -E 'Err:|W: Failed|^E: |retrying|will retry|timed out|ETIMEDOUT|ECONNRESET|EPIPE|reset by peer|connection refused|EAI_AGAIN|unexpected eof|stalled|handshake|certificate verify|SSL_ERROR|SSL certificate problem|x509: |PKIX|spurious network error|i/o timeout|dial tcp|could not transfer|transfer failed|but failed' "/tmp/radar-$name.log" | head -8 | sed 's/^/  | /'
+    grep -i -E 'Err:|W: Failed|^E: |retrying|will retry|timed out|ETIMEDOUT|ECONNRESET|EPIPE|reset by peer|connection refused|EAI_AGAIN|unexpected eof|\bstalled|handshake|certificate verify|SSL_ERROR|SSL certificate problem|x509: |PKIX|spurious network error|i/o timeout|dial tcp|could not transfer|transfer failed|but failed' "/tmp/radar-$name.log" | head -8 | sed 's/^/  | /'
     tail -5 "/tmp/radar-$name.log" | sed 's/^/  > /'
   fi
 }
@@ -1685,7 +1685,7 @@ echo "RADAR maven_jars=$(find ~/.m2/repository -name '*.jar' | wc -l)"
 /// TLS handshake (their trust check runs after it) or close without a certificate alert, so the
 /// audit shows an ordinary connection. Listed so the test fails when a tool outside the list goes
 /// silent and when a listed one starts to be seen.
-const SILENT_REFUSALS: &[&str] = &["node"];
+const SILENT_REFUSALS: &[&str] = &["node", "java"];
 
 /// One probe per tool. Each is given a trust list without the workspace's CA (an unrelated root),
 /// goes through the proxy like the tool would, and asks the decrypted registry for its front page.
@@ -1725,7 +1725,7 @@ public class Probe {
 }
 "#;
     let setup = format!(
-        "set -u; cp /usr/share/ca-certificates/mozilla/ISRG_Root_X1.crt /tmp/other.pem; \
+        "set -u; mkdir -p /tmp/no-roots; cp /usr/share/ca-certificates/mozilla/ISRG_Root_X1.crt /tmp/other.pem; \
          rm -f /tmp/other.jks; keytool -importcert -noprompt -alias isrg -file /tmp/other.pem \
          -keystore /tmp/other.jks -storepass changeit >/dev/null 2>&1; \
          cat > /tmp/probe.js <<'EOF'\n{probe_js}\nEOF\n\
@@ -1737,7 +1737,7 @@ public class Probe {
         ("setup", setup),
         (
             "curl",
-            format!("curl -sS --max-time 30 --cacert /tmp/other.pem {url}"),
+            format!("curl -sS --max-time 30 --cacert /tmp/other.pem --capath /tmp/no-roots {url}"),
         ),
         ("node", "node /tmp/probe.js".to_owned()),
         (

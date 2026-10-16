@@ -1468,6 +1468,7 @@ const RADAR_HOSTS: &[&str] = &[
     "sum.golang.org",
     "repo.maven.apache.org",
     "repo1.maven.org",
+    "storage.googleapis.com",
 ];
 
 /// Hosts served over TLS among [`RADAR_HOSTS`] (apt uses plain HTTP).
@@ -1591,6 +1592,7 @@ fn audit_summary(records: &[serde_json::Value]) -> String {
 const RADAR_SCRIPT: &str = r#"
 set -u
 export DEBIAN_FRONTEND=noninteractive
+env | grep -i -E '^(https?|no|all)_proxy=' | sed 's/^/RADAR env /'
 df -PmT | awk 'NR > 1 && $2 != "devtmpfs" {print "RADAR mount=" $7 " type=" $2 " size_mib=" $3 " free_mib=" $5}'
 step() {
   name=$1; shift
@@ -1598,10 +1600,10 @@ step() {
   timeout 1500 bash -c "$*" > "/tmp/radar-$name.log" 2>&1
   rc=$?
   t1=$(date +%s.%N)
-  bad=$(grep -c -i -E 'Err:|W: Failed|^E: |retrying|will retry|timed out|ETIMEDOUT|ECONNRESET|EPIPE|reset by peer|connection refused|EAI_AGAIN|unexpected eof|stalled|handshake|certificate verify|SSL_ERROR|SSL certificate problem|x509|PKIX|spurious network error|i/o timeout|dial tcp|could not transfer|transfer failed' "/tmp/radar-$name.log")
+  bad=$(grep -c -i -E 'Err:|W: Failed|^E: |retrying|will retry|timed out|ETIMEDOUT|ECONNRESET|EPIPE|reset by peer|connection refused|EAI_AGAIN|unexpected eof|stalled|handshake|certificate verify|SSL_ERROR|SSL certificate problem|x509: |PKIX|spurious network error|i/o timeout|dial tcp|could not transfer|transfer failed|but failed' "/tmp/radar-$name.log")
   echo "RADAR step=$name rc=$rc secs=$(awk "BEGIN {printf \"%.1f\", $t1 - $t0}") suspicious_lines=$bad disk_free_mib=$(df -Pm / | awk 'NR==2 {print $4}')"
   if [ "$rc" != 0 ] || [ "$bad" != 0 ]; then
-    grep -i -E 'Err:|W: Failed|^E: |retrying|will retry|timed out|ETIMEDOUT|ECONNRESET|EPIPE|reset by peer|connection refused|EAI_AGAIN|unexpected eof|stalled|handshake|certificate verify|SSL_ERROR|SSL certificate problem|x509|PKIX|spurious network error|i/o timeout|dial tcp|could not transfer|transfer failed' "/tmp/radar-$name.log" | head -8 | sed 's/^/  | /'
+    grep -i -E 'Err:|W: Failed|^E: |retrying|will retry|timed out|ETIMEDOUT|ECONNRESET|EPIPE|reset by peer|connection refused|EAI_AGAIN|unexpected eof|stalled|handshake|certificate verify|SSL_ERROR|SSL certificate problem|x509: |PKIX|spurious network error|i/o timeout|dial tcp|could not transfer|transfer failed|but failed' "/tmp/radar-$name.log" | head -8 | sed 's/^/  | /'
     tail -5 "/tmp/radar-$name.log" | sed 's/^/  > /'
   fi
 }
@@ -1756,10 +1758,14 @@ public class Probe {
 
 /// Runs each probe as root and reads the audit record the connection left: the exit code, what the
 /// tool said, and the audit reason (`guest_tls_rejected` when the proxy saw the certificate alert).
-/// Returns one line per tool and the tools whose refusal the audit did not show.
-async fn refusal_matrix(vm: &VmHost, sandbox: &WorkspaceName) -> (Vec<String>, Vec<String>) {
+/// Returns one line per tool, the tools whose refusal the audit did not show, and the tools that
+/// trusted the certificate (none should: the caller fails on them once everything is printed).
+async fn refusal_matrix(
+    vm: &VmHost,
+    sandbox: &WorkspaceName,
+) -> (Vec<String>, Vec<String>, Vec<String>) {
     let handle = vm.runtime.get(&sandbox.sandbox_name()).await.unwrap();
-    let (mut lines, mut silent) = (Vec::new(), Vec::new());
+    let (mut lines, mut silent, mut trusted) = (Vec::new(), Vec::new(), Vec::new());
     for (tool, script) in refusal_probes() {
         let count = |records: &[serde_json::Value]| {
             records
@@ -1806,15 +1812,13 @@ async fn refusal_matrix(vm: &VmHost, sandbox: &WorkspaceName) -> (Vec<String>, V
             "{tool}: exit={} audit_reason={reason} tool said: {first_line}",
             out.status.code
         ));
-        assert!(
-            !out.status.success(),
-            "{tool} trusted a certificate it should have refused: {said}"
-        );
-        if reason != "guest_tls_rejected" {
+        if out.status.success() {
+            trusted.push(format!("{tool}: {said}"));
+        } else if reason != "guest_tls_rejected" {
             silent.push(tool.to_owned());
         }
     }
-    (lines, silent)
+    (lines, silent, trusted)
 }
 
 /// The real tools at their widest, cold, through the real proxy and the real agent (the discovery
@@ -1841,9 +1845,9 @@ async fn radar(tag: &str, terminate: bool) {
     };
     eprintln!("{out}");
     let refusals = if terminate {
-        let (lines, silent) = refusal_matrix(&vm, &sandbox).await;
+        let (lines, silent, trusted) = refusal_matrix(&vm, &sandbox).await;
         eprintln!("refused certificate, by tool:\n{}", lines.join("\n"));
-        Some(silent)
+        Some((silent, trusted))
     } else {
         None
     };
@@ -1861,7 +1865,11 @@ async fn radar(tag: &str, terminate: bool) {
         failing.is_empty(),
         "steps that failed or retried: {failing:#?}"
     );
-    if let Some(silent) = refusals {
+    if let Some((silent, trusted)) = refusals {
+        assert!(
+            trusted.is_empty(),
+            "tools that trusted a certificate they should have refused: {trusted:#?}"
+        );
         assert_eq!(
             silent, SILENT_REFUSALS,
             "the tools whose refused certificate the audit did not show changed"

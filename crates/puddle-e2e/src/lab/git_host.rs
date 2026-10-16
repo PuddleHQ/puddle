@@ -216,12 +216,6 @@ impl GitHost {
         Self::start_with(&GitHostOptions::new(name, versions)).await
     }
 
-    /// Starts the host answering to `name` with a certificate that is valid for `cert_name`
-    /// instead (a host whose certificate names another host).
-    pub async fn start_named(name: &str, cert_name: &str, versions: Versions) -> Self {
-        Self::start_with(&GitHostOptions::new(name, versions).certificate_for(cert_name)).await
-    }
-
     /// Starts the host the options describe.
     pub async fn start_with(options: &GitHostOptions) -> Self {
         let name = options.name.as_str();

@@ -5,7 +5,8 @@
 //!
 //! These tests change the stores of the user running them, so they only run where `CI` or
 //! `PUDDLE_STORE_TESTS` is set; elsewhere they pass without doing anything. Every certificate
-//! they add is removed again, pass or fail.
+//! they add is removed again, pass or fail. The stores are one state for the whole machine, so
+//! the tests take turns: each holds [`lock_stores`] from start to end.
 #![cfg(windows)]
 #![expect(
     clippy::unwrap_used,
@@ -14,6 +15,7 @@
     reason = "test helpers outside #[test] fns: a failed setup fails the test"
 )]
 
+use std::fs::File;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime};
@@ -37,7 +39,17 @@ const LM_ROOT_GP: StoreSource = StoreSource::new(
 /// a hung dialog must fail the test, not hang the job.
 const POWERSHELL_LIMIT: Duration = Duration::from_secs(90);
 
-fn enabled() -> bool {
+/// Held for a test's whole run: a test that reads the stores must not see another test's
+/// certificate come and go between two reads. A file lock, so it holds across nextest's test
+/// processes and `cargo test`'s threads alike; the OS releases it when a test process dies.
+fn lock_stores() -> File {
+    let file = File::create(std::env::temp_dir().join("puddle-store-tests.lock")).unwrap();
+    file.lock().unwrap();
+    file
+}
+
+/// The lock when the store tests run here, `None` when they are skipped.
+fn enabled() -> Option<File> {
     let on = std::env::var_os("CI").is_some() || std::env::var_os("PUDDLE_STORE_TESTS").is_some();
     if !on {
         // The tests edit the machine's certificate stores, so they run where CI is set or where the
@@ -48,8 +60,9 @@ fn enabled() -> bool {
             "PUDDLE_REQUIRE_STORE_TESTS is set but the store tests are not enabled (set CI or PUDDLE_STORE_TESTS)"
         );
         eprintln!("skipped: changes the certificate stores; set PUDDLE_STORE_TESTS=1 to run");
+        return None;
     }
-    on
+    Some(lock_stores())
 }
 
 /// Runs a PowerShell script; `Ok(stdout)` on exit 0, `Err(output)` otherwise or on timeout.
@@ -214,9 +227,9 @@ const LM_GP_ROOT_KEY: &str = "HKLM:\\SOFTWARE\\Policies\\Microsoft\\SystemCertif
 #[test]
 #[ignore = "adding a root to CurrentUser\\Root asks for confirmation in a dialog, which a hosted runner refuses; run it by hand on a workstation with --run-ignored"]
 fn a_current_user_root_is_exported_when_one_can_be_added() {
-    if !enabled() {
+    let Some(_stores) = enabled() else {
         return;
-    }
+    };
     let trusted = test_root("user");
     let _cleanup = Cleanup(vec![(&trusted, vec!["Cert:\\CurrentUser\\Root"], vec![])]);
     try_add(&trusted, "Cert:\\CurrentUser\\Root")
@@ -230,9 +243,9 @@ fn a_current_user_root_is_exported_when_one_can_be_added() {
 
 #[test]
 fn a_root_in_current_user_disallowed_is_not_exported() {
-    if !enabled() {
+    let Some(_stores) = enabled() else {
         return;
-    }
+    };
     let banned = test_root("banned");
     let _cleanup = Cleanup(vec![(
         &banned,
@@ -271,9 +284,9 @@ fn a_root_in_current_user_disallowed_is_not_exported() {
 
 #[test]
 fn machine_and_group_policy_roots_are_exported() {
-    if !enabled() {
+    let Some(_stores) = enabled() else {
         return;
-    }
+    };
     let intune = test_root("machine");
     let gpo = test_root("gpo");
     let _cleanup = Cleanup(vec![
@@ -292,6 +305,7 @@ fn machine_and_group_policy_roots_are_exported() {
 
 #[test]
 fn reading_the_stores_twice_gives_the_same_selection() {
+    let _stores = lock_stores();
     let now = SystemTime::now();
     let one = CorporateRoots::select(&read_host_stores().unwrap(), now);
     let two = CorporateRoots::select(&read_host_stores().unwrap(), now);
@@ -314,20 +328,14 @@ fn dev_cert(tag: &str, policy: &str) -> TestCert {
         .as_nanos();
     let file = std::env::temp_dir().join(format!("puddle-devcert-{tag}-{nanos}.cer"));
     // `Stop` makes a failed cmdlet fail the script: without it a failed New-SelfSignedCertificate
-    // left `$c` empty, Export-Certificate wrote no file and the script still exited 0. The named
-    // mutex lets one test process at a time create a certificate: nextest starts the tests as
-    // separate processes, all creating CNG keys in the same user store in the same seconds.
+    // left `$c` empty, Export-Certificate wrote no file and the script still exited 0.
     let thumbprint = powershell(&format!(
         "$ErrorActionPreference = 'Stop'; \
-         $gate = New-Object System.Threading.Mutex($false, 'Global\\puddle-devcert-tests'); \
-         try {{ [void]$gate.WaitOne() }} catch [System.Threading.AbandonedMutexException] {{ }}; \
-         try {{ \
-           $c = New-SelfSignedCertificate -Subject 'CN=puddle devcert {tag} {nanos}' -DnsName localhost \
-             -KeyAlgorithm ECDSA_nistP256 -KeyExportPolicy {policy} -CertStoreLocation Cert:\\CurrentUser\\My \
-             -NotAfter (Get-Date).AddDays(90) -TextExtension @('1.3.6.1.4.1.311.84.1.1={{hex}}06'); \
-           Export-Certificate -Cert $c -FilePath '{}' | Out-Null; \
-           $c.Thumbprint \
-         }} finally {{ $gate.ReleaseMutex() }}",
+         $c = New-SelfSignedCertificate -Subject 'CN=puddle devcert {tag} {nanos}' -DnsName localhost \
+           -KeyAlgorithm ECDSA_nistP256 -KeyExportPolicy {policy} -CertStoreLocation Cert:\\CurrentUser\\My \
+           -NotAfter (Get-Date).AddDays(90) -TextExtension @('1.3.6.1.4.1.311.84.1.1={{hex}}06'); \
+         Export-Certificate -Cert $c -FilePath '{}' | Out-Null; \
+         $c.Thumbprint",
         file.display()
     ))
     .unwrap_or_else(|e| panic!("making a development certificate: {e}"))
@@ -343,14 +351,17 @@ fn dev_cert(tag: &str, policy: &str) -> TestCert {
 }
 
 const CU_MY: &str = "Cert:\\CurrentUser\\My";
+/// `New-SelfSignedCertificate` also leaves a copy in the user's intermediate store, which the
+/// corporate-root selection reads; the cleanup removes it there too.
+const CU_CA: &str = "Cert:\\CurrentUser\\CA";
 
 #[test]
 fn an_exportable_development_certificate_is_found_and_its_key_exports() {
-    if !enabled() {
+    let Some(_stores) = enabled() else {
         return;
-    }
+    };
     let cert = dev_cert("exportable", "Exportable");
-    let _cleanup = Cleanup(vec![(&cert, vec![CU_MY], vec![])]);
+    let _cleanup = Cleanup(vec![(&cert, vec![CU_MY, CU_CA], vec![])]);
 
     let found = WindowsTrust.existing().unwrap();
     let ours = found
@@ -400,12 +411,12 @@ fn an_exportable_development_certificate_is_found_and_its_key_exports() {
 
 #[test]
 fn keys_that_cannot_be_exported_in_plain_form_are_reported_so() {
-    if !enabled() {
+    let Some(_stores) = enabled() else {
         return;
-    }
+    };
     for policy in ["ExportableEncrypted", "NonExportable"] {
         let cert = dev_cert(policy, policy);
-        let _cleanup = Cleanup(vec![(&cert, vec![CU_MY], vec![])]);
+        let _cleanup = Cleanup(vec![(&cert, vec![CU_MY, CU_CA], vec![])]);
         let found = WindowsTrust.existing().unwrap();
         let ours = found.iter().find(|c| c.der == cert.der).unwrap();
         assert!(
@@ -419,14 +430,14 @@ fn keys_that_cannot_be_exported_in_plain_form_are_reported_so() {
 
 #[test]
 fn a_trusted_exportable_development_certificate_is_reused() {
-    if !enabled() {
+    let Some(_stores) = enabled() else {
         return;
-    }
+    };
     let cert = dev_cert("reuse", "Exportable");
     // Machine roots are part of the user's trusted roots; the runner is elevated.
     let _cleanup = Cleanup(vec![(
         &cert,
-        vec![CU_MY, "Cert:\\LocalMachine\\Root"],
+        vec![CU_MY, CU_CA, "Cert:\\LocalMachine\\Root"],
         vec![],
     )]);
     add(&cert, "Cert:\\LocalMachine\\Root");
@@ -450,9 +461,9 @@ fn a_trusted_exportable_development_certificate_is_reused() {
 
 #[test]
 fn the_machine_roots_count_as_trusted_and_an_unknown_certificate_does_not() {
-    if !enabled() {
+    let Some(_stores) = enabled() else {
         return;
-    }
+    };
     let snapshot = read_host_stores().unwrap();
     let machine_root = snapshot
         .certs()
@@ -475,9 +486,9 @@ fn the_machine_roots_count_as_trusted_and_an_unknown_certificate_does_not() {
 #[test]
 #[ignore = "adding the leaf to CurrentUser\\Root opens a confirmation dialog nobody clicks on a hosted runner; run it by hand on a workstation with --run-ignored"]
 fn asking_for_trust_ends_in_a_reported_state_never_a_crash() {
-    if !enabled() {
+    let Some(_stores) = enabled() else {
         return;
-    }
+    };
     let data = tempfile::tempdir().unwrap();
     let manager = DevCertManager::new(data.path(), WindowsTrust);
     let report = manager.ensure(SystemTime::now()).unwrap();

@@ -194,12 +194,8 @@ impl Interceptor {
     #[must_use]
     pub fn start_on_ports(names: &[(String, Option<u16>)]) -> Option<Self> {
         let root = Root::generate(&Prefix::new("root"));
-        let mitm = Mitm::spawn(
-            "interceptor",
-            Some(&root),
-            &[],
-            &[split_dns(&borrowed(names))],
-        )?;
+        let addon = split_dns(&borrowed(names));
+        let mitm = Mitm::spawn("interceptor", Some(&root), &[], &[addon])?;
         Some(Self { mitm, root })
     }
 

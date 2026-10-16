@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! What the VM tests of the host share (`vm_host.rs`, `vm_capture.rs`): a host on a real msb
-//! runtime in the test's own scratch home, and a command run as root in a workspace's guest.
+//! What the VM tests of the host share (`vm_host.rs`, `vm_capture.rs`, `vm_git.rs`): a host on a
+//! real msb runtime in the test's own scratch home, and a command run as root in a workspace's guest.
 #![expect(
     clippy::expect_used,
     clippy::unwrap_used,
-    reason = "VM test: a failed step fails the test"
+    reason = "VM test: a failed step fails the test; measurements go to stderr"
 )]
 #![allow(dead_code, reason = "each test binary uses some of the helpers")]
 
@@ -24,7 +24,11 @@ use puddle_upstream::Mode;
 use puddle_vm_tests::{RuntimePair, Settings, test_owner};
 
 /// The harness has set the environment and checked the runtime pair already.
-pub(crate) struct HarnessPlatform;
+#[derive(Default)]
+pub(crate) struct HarnessPlatform {
+    /// The corporate roots the host reports (the guest trusts them, the upstream TLS leg uses them).
+    pub(crate) roots: CorporateRoots,
+}
 
 impl Platform for HarnessPlatform {
     fn pin_environment(&self, _: &RuntimeLayout) -> Result<(), HostError> {
@@ -36,12 +40,12 @@ impl Platform for HarnessPlatform {
     }
 
     fn corporate_roots(&self) -> Result<CorporateRoots, HostError> {
-        Ok(CorporateRoots::default())
+        Ok(self.roots.clone())
     }
 }
 
 /// Opens msb over the harness's private home and runtime pair.
-struct HarnessFactory {
+pub(crate) struct HarnessFactory {
     settings: Settings,
     msb: std::path::PathBuf,
     libkrunfw: std::path::PathBuf,
@@ -113,6 +117,16 @@ pub(crate) async fn start_vm_host_config(
     options: HostOptions,
     tweak: impl FnOnce(&mut HostConfig),
 ) -> VmHost {
+    start_vm_host_platform(tag, options, &HarnessPlatform::default(), tweak).await
+}
+
+/// [`start_vm_host_config`] over `platform` (a host that reports corporate roots, say).
+pub(crate) async fn start_vm_host_platform(
+    tag: &str,
+    options: HostOptions,
+    platform: &HarnessPlatform,
+    tweak: impl FnOnce(&mut HostConfig),
+) -> VmHost {
     let _ = tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_ansi(false)
@@ -135,7 +149,7 @@ pub(crate) async fn start_vm_host_config(
         libkrunfw: pair.libkrunfw.clone(),
         opened: std::sync::Mutex::new(None),
     };
-    let prepared = prepare(config, &HarnessPlatform).unwrap();
+    let prepared = prepare(config, platform).unwrap();
     let secrets = std::sync::Arc::new(MemoryStore::new());
     let mut options = options;
     options.secret_store = Some(secrets.clone());
@@ -155,13 +169,19 @@ pub(crate) async fn start_vm_host_config(
 
 /// Runs `script` as root in the guest and returns what it printed; fails the test if it fails.
 pub(crate) async fn guest(runtime: &MsbRuntime, sandbox: &WorkspaceName, script: &str) -> String {
+    guest_within(runtime, sandbox, script, Duration::from_secs(120)).await
+}
+
+/// [`guest`] with its own time limit (a search of the whole disk takes longer than a command).
+pub(crate) async fn guest_within(
+    runtime: &MsbRuntime,
+    sandbox: &WorkspaceName,
+    script: &str,
+    limit: Duration,
+) -> String {
     let handle = runtime.get(&sandbox.sandbox_name()).await.unwrap();
     let out = handle
-        .exec(
-            ExecRequest::sh(script)
-                .as_user("root")
-                .with_timeout(Duration::from_secs(120)),
-        )
+        .exec(ExecRequest::sh(script).as_user("root").with_timeout(limit))
         .await
         .unwrap();
     assert!(

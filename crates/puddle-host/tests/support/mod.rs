@@ -269,4 +269,3 @@ pub(crate) fn capture_logs() -> std::sync::Arc<std::sync::Mutex<Vec<u8>>> {
     );
     Arc::clone(logs)
 }
-pub(crate) mod vm;

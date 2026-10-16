@@ -29,11 +29,6 @@ use puddle_store::{
 use puddle_types::{WorkspaceName, WorkspaceStatus};
 use puddle_vm_tests::{RuntimePair, Settings};
 use serde_json::json;
-#[cfg(not(windows))]
-use support::vm::start_vm_host_config;
-use support::vm::{
-    HarnessPlatform, VmHost, guest, harness_config, start_vm_host, start_vm_host_with,
-};
 use support::{Api, TestDevCert, ended, hermetic_options};
 #[cfg(not(windows))]
 use vm_support::start_vm_host_config;

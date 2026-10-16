@@ -6,6 +6,7 @@
 )]
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -81,7 +82,12 @@ impl Drop for Guest {
 
 impl Guest {
     pub(crate) async fn connect(route: &Route) -> Self {
-        let conn = puddle_ipc::connect(route.endpoint().path()).await.unwrap();
+        Self::connect_at(route.endpoint().path()).await
+    }
+
+    /// A guest on the route whose endpoint is `path` (from another process, which has no [`Route`]).
+    pub(crate) async fn connect_at(path: &Path) -> Self {
+        let conn = puddle_ipc::connect(path).await.unwrap();
         let mut session = Session::new_client(conn, client_config());
         let control = session.control();
         let driver = tokio::spawn(async move { while let Some(Ok(_)) = session.next().await {} });

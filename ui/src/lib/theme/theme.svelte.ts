@@ -20,6 +20,8 @@ import {
  */
 class ThemeState {
   choice = $state<ThemeChoice>("system");
+  /** Counts the choices made, so `sync()` can tell one came in while it read. */
+  #chosen = 0;
 
   init(): void {
     this.choice = loadTheme(browserStorage());
@@ -28,16 +30,18 @@ class ThemeState {
 
   /** Applies the choice stored in the settings, once they are read. */
   async sync(): Promise<void> {
+    const chosen = this.#chosen;
     await globalSettings.load(true);
     const view = globalSettings.view;
     if (!view) return; // not readable: the hint stays
+    if (this.#chosen !== chosen) return; // chosen meanwhile: newer than what was read
     const stored = view.ui.theme ?? "system";
     if (isThemeChoice(stored)) this.#apply(stored);
   }
 
   /** Applies a choice at once and stores it in the settings; on failure it still applies this time and the result says why it was not saved. */
   async set(choice: ThemeChoice): Promise<SaveResult> {
-    this.#apply(choice);
+    this.preview(choice);
     if (!globalSettings.view) await globalSettings.load(true);
     if (!globalSettings.view) {
       return {
@@ -53,6 +57,7 @@ class ThemeState {
 
   /** Applies a choice without storing it: the Settings screen shows it until Save or Discard. */
   preview(choice: ThemeChoice): void {
+    this.#chosen++;
     this.#apply(choice);
   }
 

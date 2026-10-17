@@ -72,8 +72,8 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
     ),
     set(
         "SandboxBuilder::cpus",
-        "spec cpus, only when given",
-        "otherwise msb's default (1 vCPU)",
+        "spec cpus, only when given (the workspace's cpus setting, applied at create)",
+        "otherwise msb's default (1 vCPU); changes apply at the next start via modify().cpus().next_start()",
     ),
     set(
         "SandboxBuilder::env",
@@ -131,7 +131,11 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
         "unset: the SDK makes it equal to memory (no hotplug reserve)",
         "never above memory; set_memory pins it to the new size via modify(); VM test checks the stored config",
     ),
-    default("SandboxBuilder::max_cpus", "unset", "no CPU hotplug"),
+    default(
+        "SandboxBuilder::max_cpus",
+        "unset: the SDK makes it equal to cpus (no hotplug reserve)",
+        "never above cpus; set_cpus pins it to the new count via modify()",
+    ),
     default(
         "SandboxBuilder::cpu_placement / placement_profile",
         "unset",
@@ -451,6 +455,27 @@ mod tests {
         let runtime = include_str!("runtime.rs");
         assert_eq!(runtime.matches(&call).count(), 1);
         assert!(runtime.contains(&format!(".memory(mib){call}mib)")));
+    }
+
+    #[test]
+    fn max_cpus_is_only_ever_pinned_to_the_cpu_count() {
+        let spec_source = include_str!("spec.rs");
+        let builder_fn = &spec_source[spec_source.find("pub fn builder(").unwrap()..];
+        assert!(!builder_fn[..builder_fn.find("\n}\n").unwrap()].contains("max_cpus"));
+        let call = format!(".{}(", "max_cpus");
+        for (file, source) in [
+            ("lib.rs", include_str!("lib.rs")),
+            ("config.rs", include_str!("config.rs")),
+            ("error.rs", include_str!("error.rs")),
+            ("image.rs", include_str!("image.rs")),
+            ("sandbox.rs", include_str!("sandbox.rs")),
+            ("volume.rs", include_str!("volume.rs")),
+        ] {
+            assert!(!source.contains(&call), "{file} sets max-cpus");
+        }
+        let runtime = include_str!("runtime.rs");
+        assert_eq!(runtime.matches(&call).count(), 1);
+        assert!(runtime.contains(&format!(".cpus(count){call}count)")));
     }
 
     #[test]

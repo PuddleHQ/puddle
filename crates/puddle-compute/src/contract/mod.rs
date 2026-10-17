@@ -556,6 +556,7 @@ macro_rules! contract_tests {
             ssh_server_speaks_first,
             routes_and_no_network_are_accepted,
             memory_change_applies_at_next_start,
+            cpus_change_applies_at_next_start,
         );
     };
     (@cases $env:path; $($case:ident),* $(,)?) => {

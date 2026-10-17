@@ -5,7 +5,9 @@
 use std::future::Future;
 use std::time::{Duration, Instant};
 
-use puddle_types::{GuestEnv, GuestPath, ImageRef, MemoryMib, SandboxName, WorkspaceStatus};
+use puddle_types::{
+    CpuCount, GuestEnv, GuestPath, ImageRef, MemoryMib, SandboxName, WorkspaceStatus,
+};
 use tokio::io::AsyncReadExt;
 
 use super::{Case, STEP_TIMEOUT};
@@ -75,6 +77,7 @@ cases! {
     ssh_server_speaks_first => "observed on msb 0.7.6 (SSH banner); full SSH exec is covered by the VM tests",
     routes_and_no_network_are_accepted => "observed on msb 0.7.6 (network spec accepted); guest network behaviour is covered by the VM tests",
     memory_change_applies_at_next_start => "the memory setting: modify().memory().next_start() on msb, checked by the VM tests",
+    cpus_change_applies_at_next_start => "the cpus setting: modify().cpus().next_start() on msb, checked by the VM tests",
 }
 
 /// Awaits a runtime call with [`STEP_TIMEOUT`] and turns its error into a case failure.
@@ -905,6 +908,57 @@ async fn memory_change_applies_at_next_start<R: Runtime>(c: &Case<'_, R>) -> Out
     let err = fails(
         "set memory of an unknown sandbox",
         rt.set_memory(&c.sandbox("nope")?, MemoryMib::MIN),
+    )
+    .await?;
+    check!(
+        matches!(err, ComputeError::NotFound { .. }),
+        "want NotFound, got {err:?}"
+    );
+    Ok(())
+}
+
+/// How many CPUs the guest has online, from `/sys/devices/system/cpu/online` (`0`, `0-3`,
+/// `0,2-3`).
+async fn online_cpus<S: Sandbox>(sb: &S) -> Result<u32, String> {
+    let online = read_file(sb, "/sys/devices/system/cpu/online")
+        .await?
+        .ok_or("can't read /sys/devices/system/cpu/online")?;
+    online
+        .trim()
+        .split(',')
+        .map(|part| match part.split_once('-') {
+            Some((first, last)) => first
+                .parse::<u32>()
+                .and_then(|first| last.parse::<u32>().map(|last| last + 1 - first)),
+            None => part.parse::<u32>().map(|_| 1),
+        })
+        .sum::<Result<u32, _>>()
+        .map_err(|e| format!("can't read the CPU range {online:?}: {e}"))
+}
+
+async fn cpus_change_applies_at_next_start<R: Runtime>(c: &Case<'_, R>) -> Outcome {
+    let rt = c.runtime();
+    let name = c.sandbox("a")?;
+    let two = CpuCount::new(2).map_err(|e| e.to_string())?;
+    let sb = step("create with 1 CPU", rt.create(spec(c, &name).with_cpus(1))).await?;
+    let before = online_cpus(&sb).await?;
+    check!(before == 1, "created with 1 CPU, the guest has {before}");
+    step("set cpus to 2", rt.set_cpus(&name, two)).await?;
+    let running = online_cpus(&sb).await?;
+    check!(
+        running == before,
+        "the running sandbox changed its CPUs: {before} -> {running}"
+    );
+    step("stop", sb.stop()).await?;
+    let sb = step("start", rt.start(&name)).await?;
+    let after = online_cpus(&sb).await?;
+    check!(
+        after == 2,
+        "after the restart the guest has {after} CPUs, want 2"
+    );
+    let err = fails(
+        "set cpus of an unknown sandbox",
+        rt.set_cpus(&c.sandbox("nope")?, CpuCount::MIN),
     )
     .await?;
     check!(

@@ -383,7 +383,7 @@ mod tests {
         let doc = json!({
             "schema_version": 2,
             "rule_sets": ["trackers"],
-            "workspace_defaults": { "cpus": 2, "local_toggles": { "vpn": true } },
+            "workspace_defaults": { "swap": 2, "local_toggles": { "vpn": true } },
             "vscode_server": { "channel": "insiders" },
             "consents": {
                 "usage_survey": { "state": "granted" },
@@ -395,7 +395,7 @@ mod tests {
             loaded.unknown_fields,
             [
                 "rule_sets",
-                "workspace_defaults.cpus",
+                "workspace_defaults.swap",
                 "workspace_defaults.local_toggles.vpn",
                 "vscode_server.channel",
                 "consents.usage_survey",

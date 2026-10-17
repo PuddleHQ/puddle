@@ -14,7 +14,7 @@ use puddle_compute::{
     Capabilities, ComputeError, ImageConfig, Runtime, SandboxInfo, SandboxSpec, VolumeInfo,
     VolumeSpec,
 };
-use puddle_types::{ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus};
+use puddle_types::{CpuCount, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus};
 
 use crate::error::{map, runtime};
 use crate::sandbox::{MsbSandbox, boot_id};
@@ -465,6 +465,24 @@ impl Runtime for MsbRuntime {
             self.sdk(change.apply())
                 .await
                 .map_err(|e| map("set memory of", name.as_str(), e))?;
+            Ok(())
+        })
+    }
+
+    fn set_cpus(
+        &self,
+        name: &SandboxName,
+        cpus: CpuCount,
+    ) -> impl Future<Output = Result<(), ComputeError>> + Send {
+        Box::pin(async move {
+            let record = self.existing(name).await?;
+            let count = cpus.get();
+            // The SDK keeps max-cpus at least at cpus, but a decrease would leave the old count as
+            // a hotplug reserve; pinning it to the new count keeps "no hotplug" (max == cpus).
+            let change = record.modify().cpus(count).max_cpus(count).next_start();
+            self.sdk(change.apply())
+                .await
+                .map_err(|e| map("set cpus of", name.as_str(), e))?;
             Ok(())
         })
     }

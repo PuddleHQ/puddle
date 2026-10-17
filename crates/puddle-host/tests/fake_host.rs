@@ -1113,6 +1113,62 @@ async fn a_new_workspace_gets_the_memory_the_settings_name() {
     again.shutdown().await;
 }
 
+/// The CPUs the fake guest of `name` has online, as the fake's `/sys/devices/system/cpu/online`.
+async fn online_cpus(rig: &Rig, name: &str) -> String {
+    use puddle_compute::Sandbox as _;
+    let sandbox = WorkspaceName::new(name).unwrap().sandbox_name();
+    let out = rig
+        .runtime
+        .get(&sandbox)
+        .await
+        .unwrap()
+        .exec(ExecRequest::new("cat", ["/sys/devices/system/cpu/online"]))
+        .await
+        .unwrap();
+    out.stdout_text().trim().to_owned()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_workspace_boots_with_the_cpus_the_settings_name_and_a_change_applies_at_the_next_start()
+{
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let global = api
+        .request(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"workspace_defaults": {"cpus": 2}}).to_string()),
+            true,
+        )
+        .await;
+    assert_eq!(global.status, 200, "{}", global.body);
+    create(&api, &mut events, "acme").await;
+    assert_eq!(online_cpus(&rig, "acme").await, "0-1", "the global default");
+
+    let own = api
+        .request(
+            "PUT",
+            "/api/settings/workspaces/acme",
+            Some(&json!({"overrides": {"cpus": 4}}).to_string()),
+            true,
+        )
+        .await;
+    assert_eq!(own.status, 200, "{}", own.body);
+    assert_eq!(
+        online_cpus(&rig, "acme").await,
+        "0-1",
+        "a running workspace keeps its CPUs"
+    );
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(online_cpus(&rig, "acme").await, "0-3", "its own override");
+    host.shutdown().await;
+}
+
 /// Puts a damaged global settings file where the host reads it, before the host starts.
 fn damage_global_settings(rig: &Rig) -> PathBuf {
     let dir = rig.dir.path().join("data").join("settings");
@@ -1306,6 +1362,14 @@ impl Runtime for SlowPull {
         name: &SandboxName,
     ) -> impl Future<Output = Result<Self::Sandbox, puddle_compute::ComputeError>> + Send {
         self.0.get(name)
+    }
+
+    fn set_cpus(
+        &self,
+        name: &SandboxName,
+        cpus: puddle_types::CpuCount,
+    ) -> impl Future<Output = Result<(), puddle_compute::ComputeError>> + Send {
+        self.0.set_cpus(name, cpus)
     }
 
     fn set_memory(

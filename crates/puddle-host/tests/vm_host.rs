@@ -152,6 +152,88 @@ async fn vm_host_creates_a_workspace_with_progress_and_stops_cleanly() {
     assert_eq!(record.status, WorkspaceStatus::Stopped);
 }
 
+/// A workspace boots with the CPU count the settings name (the global default here), and a change
+/// in its own settings reaches the guest at the next start and not before: `nproc` in the guest
+/// says how many CPUs it really has.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_boots_a_workspace_with_the_cpus_the_settings_name() {
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host("cpus").await;
+    let name = format!("{}-cpus", settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    host.store()
+        .add_rule(&NewRule {
+            scope: Scope::Workspace(sandbox.clone()),
+            pattern: Pattern::parse(REPO_HOST).unwrap(),
+            effect: Effect::Allow,
+            expires_at: None,
+            created_by: Actor::Cli,
+        })
+        .unwrap();
+    let api = Api::new(host.url(), host.token());
+    let global = api
+        .put(
+            "/api/settings",
+            &json!({"workspace_defaults": {"cpus": 2}}).to_string(),
+        )
+        .await;
+    assert_eq!(global.status, 200, "{}", global.body);
+
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "repo_url": REPO, "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let nproc = |what: &'static str| {
+        let (runtime, sandbox) = (&runtime, &sandbox);
+        async move {
+            let said = guest_within(runtime, sandbox, "nproc", Duration::from_secs(60)).await;
+            eprintln!("nproc {what}: {}", said.trim());
+            said.trim().to_owned()
+        }
+    };
+    assert_eq!(nproc("with the global default").await, "2");
+
+    let own = api
+        .put(
+            &format!("/api/settings/workspaces/{name}"),
+            &json!({"overrides": {"cpus": 3}}).to_string(),
+        )
+        .await;
+    assert_eq!(own.status, 200, "{}", own.body);
+    assert_eq!(
+        nproc("after the change, before a restart").await,
+        "2",
+        "a running workspace keeps its CPUs"
+    );
+    api.post(&format!("/api/workspaces/{name}/stop"), "").await;
+    let end = events
+        .until(ended(name_static), Duration::from_secs(120))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    api.post(&format!("/api/workspaces/{name}/start"), "").await;
+    let end = events
+        .until(ended(name_static), Duration::from_secs(300))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(nproc("after the restart").await, "3");
+
+    let down = host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
 /// The issuer curl saw on `https://<host>/`, which also proves the connection worked.
 fn issuer_script(host: &str) -> String {
     format!("curl -sv -o /dev/null --max-time 60 https://{host}/ 2>&1 | grep -i 'issuer:'")

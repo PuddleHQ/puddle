@@ -17,6 +17,7 @@ const noLayer = (): S["SettingsLayer"] => ({
     special: null,
   },
   memory: null,
+  cpus: null,
   reconnection_grace: null,
   wildcards_reach_local: null,
   zoom_hotkeys: null,
@@ -110,6 +111,10 @@ export class FakeSettings {
         memory: {
           value: l.memory ?? 8192,
           source: l.memory === null ? "default" : "global",
+        },
+        cpus: {
+          value: l.cpus ?? 1,
+          source: l.cpus === null ? "default" : "global",
         },
         local_toggles: {
           loopback: this.pick(l.local_toggles.loopback),

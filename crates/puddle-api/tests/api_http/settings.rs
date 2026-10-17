@@ -10,6 +10,7 @@ use crate::common::{START_MS, start};
 fn null_layer() -> Value {
     json!({
         "memory": null,
+        "cpus": null,
         "local_toggles": {"loopback": null, "private": null, "link_local": null, "metadata": null, "special": null},
         "wildcards_reach_local": null,
         "reconnection_grace": null,
@@ -40,6 +41,7 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
     assert_eq!(view["unknown_fields"], json!([]));
     let e = &view["effective"];
     assert_eq!(e["memory"], json!({"value": 8192, "source": "default"}));
+    assert_eq!(e["cpus"], json!({"value": 1, "source": "default"}));
     assert_eq!(e["reconnection_grace"]["value"], 300);
     assert_eq!(e["clipboard_read"]["value"], "ask");
     assert_eq!(e["local_toggles"]["metadata"]["value"], false);
@@ -65,7 +67,7 @@ async fn global_and_workspace_values_resolve_in_order() {
             "PUT",
             "/api/settings",
             Some(&json!({
-                "workspace_defaults": {"memory": 4096, "local_toggles": {"private": true}},
+                "workspace_defaults": {"memory": 4096, "cpus": 2, "local_toggles": {"private": true}},
                 "vscode_server": {"telemetry": true}
             })),
         )
@@ -74,13 +76,17 @@ async fn global_and_workspace_values_resolve_in_order() {
     let view = reply.json();
     assert_eq!(view["workspace_defaults"]["memory"], 4096);
     assert_eq!(view["effective"]["memory"]["source"], "global");
+    assert_eq!(
+        view["effective"]["cpus"],
+        json!({"value": 2, "source": "global"})
+    );
     assert_eq!(view["vscode_server"]["telemetry"], true);
 
     let reply = api
         .send(
             "PUT",
             "/api/settings/workspaces/big",
-            Some(&json!({"overrides": {"memory": 16384, "clipboard_read": "deny", "capture_logins": false}})),
+            Some(&json!({"overrides": {"memory": 16384, "cpus": 4, "clipboard_read": "deny", "capture_logins": false}})),
         )
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
@@ -89,6 +95,10 @@ async fn global_and_workspace_values_resolve_in_order() {
     assert_eq!(
         view["effective"]["memory"],
         json!({"value": 16384, "source": "workspace"})
+    );
+    assert_eq!(
+        view["effective"]["cpus"],
+        json!({"value": 4, "source": "workspace"})
     );
     assert_eq!(view["effective"]["clipboard_read"]["source"], "workspace");
     assert_eq!(
@@ -105,6 +115,7 @@ async fn global_and_workspace_values_resolve_in_order() {
     let plain = api.get("/api/settings/workspaces/plain").await.json();
     assert_eq!(plain["overrides"], null_layer());
     assert_eq!(plain["effective"]["memory"]["value"], 4096);
+    assert_eq!(plain["effective"]["cpus"]["value"], 2);
     assert_eq!(plain["effective"]["capture_logins"]["value"], true);
     let name = WorkspaceName::new("plain").unwrap();
     assert_eq!(api.settings.load_workspace(&name).unwrap(), None);
@@ -114,7 +125,7 @@ async fn global_and_workspace_values_resolve_in_order() {
         api.settings.load_global().unwrap().unwrap(),
         json!({
             "schema_version": 2,
-            "workspace_defaults": {"memory": 4096, "local_toggles": {"private": true}},
+            "workspace_defaults": {"memory": 4096, "cpus": 2, "local_toggles": {"private": true}},
             "vscode_server": {"telemetry": true}
         })
     );
@@ -130,9 +141,11 @@ async fn out_of_range_and_unknown_settings_are_refused() {
     let api = start().await;
     for body in [
         json!({"workspace_defaults": {"memory": 1}}),
+        json!({"workspace_defaults": {"cpus": 0}}),
+        json!({"workspace_defaults": {"cpus": 33}}),
         json!({"workspace_defaults": {"reconnection_grace": 5}}),
         json!({"workspace_defaults": {"clipboard_read": "sometimes"}}),
-        json!({"workspace_defaults": {"cpus": 4}}),
+        json!({"workspace_defaults": {"swap": 4}}),
         json!({"consents": {}}),
     ] {
         let reply = api.send("PUT", "/api/settings", Some(&body)).await;
@@ -151,7 +164,7 @@ async fn unknown_stored_fields_are_listed_and_kept() {
     let api = start().await;
     api.settings
         .save_global(
-            json!({"schema_version": 1, "rule_sets": ["x"], "workspace_defaults": {"cpus": 2}}),
+            json!({"schema_version": 1, "rule_sets": ["x"], "workspace_defaults": {"swap": 2}}),
         )
         .unwrap();
     let name = WorkspaceName::new("box").unwrap();
@@ -161,7 +174,7 @@ async fn unknown_stored_fields_are_listed_and_kept() {
     let view = api.get("/api/settings").await.json();
     assert_eq!(
         view["unknown_fields"],
-        json!(["rule_sets", "workspace_defaults.cpus"])
+        json!(["rule_sets", "workspace_defaults.swap"])
     );
     let reply = api
         .send(
@@ -173,7 +186,7 @@ async fn unknown_stored_fields_are_listed_and_kept() {
     assert_eq!(reply.status, 200);
     let stored = api.settings.load_global().unwrap().unwrap();
     assert_eq!(stored["rule_sets"], json!(["x"]));
-    assert_eq!(stored["workspace_defaults"]["cpus"], 2);
+    assert_eq!(stored["workspace_defaults"]["swap"], 2);
     assert_eq!(stored["workspace_defaults"]["zoom_hotkeys"], false);
 
     let view = api.get("/api/settings/workspaces/box").await.json();

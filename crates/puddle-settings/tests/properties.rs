@@ -11,11 +11,15 @@ use puddle_settings::{
     ReconnectionGrace, Resolved, SettingsError, Source, TermsVersion, UnixMillis,
     WORKSPACE_SCHEMA_VERSION, WorkspaceLayer, WorkspaceSettings, resolve,
 };
-use puddle_types::MemoryMib;
+use puddle_types::{CpuCount, MemoryMib};
 use serde_json::{Value, json};
 
 fn memory() -> impl Strategy<Value = MemoryMib> {
     (MemoryMib::MIN.get()..=MemoryMib::MAX.get()).prop_map(|m| MemoryMib::new(m).unwrap())
+}
+
+fn cpus() -> impl Strategy<Value = CpuCount> {
+    (CpuCount::MIN.get()..=CpuCount::MAX.get()).prop_map(|c| CpuCount::new(u32::from(c)).unwrap())
 }
 
 fn grace() -> impl Strategy<Value = ReconnectionGrace> {
@@ -34,6 +38,7 @@ fn clipboard() -> impl Strategy<Value = ClipboardRead> {
 fn layer() -> impl Strategy<Value = WorkspaceLayer> {
     (
         proptest::option::of(memory()),
+        proptest::option::of(cpus()),
         proptest::array::uniform5(proptest::option::of(any::<bool>())),
         proptest::option::of(any::<bool>()),
         proptest::option::of(grace()),
@@ -41,22 +46,25 @@ fn layer() -> impl Strategy<Value = WorkspaceLayer> {
         proptest::option::of(clipboard()),
         proptest::option::of(any::<bool>()),
     )
-        .prop_map(|(memory, toggles, wild, grace, zoom, clip, direct_ssh)| {
-            let mut l = WorkspaceLayer::default();
-            l.memory = memory;
-            let [loopback, private, link_local, metadata, special] = toggles;
-            l.local_toggles.loopback = loopback;
-            l.local_toggles.private = private;
-            l.local_toggles.link_local = link_local;
-            l.local_toggles.metadata = metadata;
-            l.local_toggles.special = special;
-            l.wildcards_reach_local = wild;
-            l.reconnection_grace = grace;
-            l.zoom_hotkeys = zoom;
-            l.clipboard_read = clip;
-            l.direct_ssh = direct_ssh;
-            l
-        })
+        .prop_map(
+            |(memory, cpus, toggles, wild, grace, zoom, clip, direct_ssh)| {
+                let mut l = WorkspaceLayer::default();
+                l.memory = memory;
+                l.cpus = cpus;
+                let [loopback, private, link_local, metadata, special] = toggles;
+                l.local_toggles.loopback = loopback;
+                l.local_toggles.private = private;
+                l.local_toggles.link_local = link_local;
+                l.local_toggles.metadata = metadata;
+                l.local_toggles.special = special;
+                l.wildcards_reach_local = wild;
+                l.reconnection_grace = grace;
+                l.zoom_hotkeys = zoom;
+                l.clipboard_read = clip;
+                l.direct_ssh = direct_ssh;
+                l
+            },
+        )
 }
 
 fn consent() -> impl Strategy<Value = Consent> {
@@ -123,6 +131,7 @@ fn check_rule(g: &GlobalSettings, s: Option<&WorkspaceSettings>) {
     let glob = &g.workspace_defaults;
     let builtin = Effective::DEFAULTS;
     expect(eff.memory, over.memory, glob.memory, builtin.memory.value);
+    expect(eff.cpus, over.cpus, glob.cpus, builtin.cpus.value);
     expect(
         eff.local_toggles.loopback,
         over.local_toggles.loopback,
@@ -199,6 +208,7 @@ proptest! {
         let mut full = s;
         let o = &mut full.overrides;
         o.memory.get_or_insert(MemoryMib::DEFAULT);
+        o.cpus.get_or_insert(CpuCount::MAX);
         o.local_toggles.loopback.get_or_insert(true);
         o.local_toggles.private.get_or_insert(true);
         o.local_toggles.link_local.get_or_insert(true);
@@ -283,6 +293,7 @@ fn arb_json() -> impl Strategy<Value = Value> {
         Just("workspace_defaults".to_owned()),
         Just("overrides".to_owned()),
         Just("memory".to_owned()),
+        Just("cpus".to_owned()),
         Just("local_toggles".to_owned()),
         Just("consents".to_owned()),
         Just("telemetry".to_owned()),

@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use puddle_types::{LocalCategory, MemoryMib};
+use puddle_types::{CpuCount, LocalCategory, MemoryMib};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -28,6 +28,9 @@ pub struct WorkspaceLayer {
     /// Guest memory, msb's `--memory`; applies at the workspace's next start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory: Option<MemoryMib>,
+    /// Guest vCPUs, msb's `--cpus`; applies at the workspace's next start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpus: Option<CpuCount>,
     /// Local-destination toggles, one per address category.
     #[serde(default, skip_serializing_if = "LocalToggles::is_empty")]
     pub local_toggles: LocalToggles,
@@ -150,6 +153,7 @@ mod tests {
     fn set_values_use_the_documented_names() {
         let l = WorkspaceLayer {
             memory: Some(MemoryMib::new(1024).unwrap()),
+            cpus: Some(CpuCount::new(2).unwrap()),
             local_toggles: LocalToggles {
                 metadata: Some(false),
                 ..LocalToggles::default()
@@ -164,7 +168,7 @@ mod tests {
         };
         assert_eq!(
             serde_json::to_string(&l).unwrap(),
-            r#"{"memory":1024,"local_toggles":{"metadata":false},"wildcards_reach_local":true,"reconnection_grace":60,"zoom_hotkeys":false,"clipboard_read":"deny","direct_ssh":true,"capture_logins":false}"#
+            r#"{"memory":1024,"cpus":2,"local_toggles":{"metadata":false},"wildcards_reach_local":true,"reconnection_grace":60,"zoom_hotkeys":false,"clipboard_read":"deny","direct_ssh":true,"capture_logins":false}"#
         );
         assert_eq!(
             serde_json::from_str::<WorkspaceLayer>(&serde_json::to_string(&l).unwrap()).unwrap(),
@@ -183,6 +187,8 @@ mod tests {
     fn invalid_values_are_rejected_through_the_flattened_map() {
         assert!(serde_json::from_str::<WorkspaceLayer>(r#"{"memory":1}"#).is_err());
         assert!(serde_json::from_str::<WorkspaceLayer>(r#"{"memory":"8192"}"#).is_err());
+        assert!(serde_json::from_str::<WorkspaceLayer>(r#"{"cpus":0}"#).is_err());
+        assert!(serde_json::from_str::<WorkspaceLayer>(r#"{"cpus":33}"#).is_err());
         assert!(
             serde_json::from_str::<WorkspaceLayer>(r#"{"local_toggles":{"private":"yes"}}"#)
                 .is_err()
@@ -194,7 +200,7 @@ mod tests {
     #[test]
     fn unknown_fields_are_kept_and_listed() {
         let l: WorkspaceLayer = serde_json::from_str(
-            r#"{"cpus":4,"local_toggles":{"private":true,"vpn":true},"memory":2048}"#,
+            r#"{"swap":4,"local_toggles":{"private":true,"vpn":true},"memory":2048}"#,
         )
         .unwrap();
         assert_eq!(l.memory.unwrap().get(), 2048);
@@ -205,12 +211,12 @@ mod tests {
         assert_eq!(
             unknown,
             [
-                "workspace_defaults.cpus",
+                "workspace_defaults.swap",
                 "workspace_defaults.local_toggles.vpn"
             ]
         );
         let back = serde_json::to_value(&l).unwrap();
-        assert_eq!(back["cpus"], 4);
+        assert_eq!(back["swap"], 4);
         assert_eq!(back["local_toggles"]["vpn"], true);
     }
 

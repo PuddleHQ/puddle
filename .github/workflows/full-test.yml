@@ -19,8 +19,10 @@ on:
 permissions:
   contents: read
 
+# Keyed on the label too: another label added to the pull request starts a run that skips its job,
+# and must not cancel a radar that is running.
 concurrency:
-  group: full-test-${{ github.ref }}
+  group: full-test-${{ github.ref }}-${{ github.event.label.name || github.event_name }}
   cancel-in-progress: true
 
 env:
@@ -35,7 +37,7 @@ jobs:
     name: real-tool radar (KVM, msb microVMs)
     if: ${{ github.event_name != 'pull_request' || github.event.label.name == 'full-test' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: KVM

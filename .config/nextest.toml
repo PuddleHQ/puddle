@@ -43,6 +43,9 @@ path = "junit.xml"
 # still runs alone.
 [test-groups]
 vm = { max-threads = 1 }
+# The transparency suite's cases run one at a time: each asserts no stall over a few seconds, and a
+# gibibyte moving next to them in a debug build is CPU contention, not a stall.
+transparency = { max-threads = 1 }
 
 [[profile.default.overrides]]
 filter = "test(/(^|::)vm_/) | binary(/^vm_/)"
@@ -55,17 +58,20 @@ test-group = "vm"
 slow-timeout = { period = "120s", terminate-after = 5 }
 
 # The real-tool radar (`vm_radar_*`, never run by the per-pull-request jobs): package managers
-# fetch thousands of packages through the whole stack, so a test may run for up to two hours.
+# fetch thousands of packages through the whole stack, so a test may run for up to an hour (a run
+# took about 35 minutes on a busy host).
 [[profile.vm.overrides]]
 filter = "test(/(^|::)vm_radar_/)"
-slow-timeout = { period = "600s", terminate-after = 12 }
+slow-timeout = { period = "600s", terminate-after = 6 }
 
 # The transparency suite moves a gibibyte each way and lets a reader take a minute: a slow runner
 # must not turn "finishes in 30 s" into a kill (a gibibyte each way took 250 s on four busy CPUs).
 [[profile.default.overrides]]
 filter = "binary(transparency) & package(puddle-e2e)"
+test-group = "transparency"
 slow-timeout = { period = "60s", terminate-after = 10 }
 
 [[profile.ci.overrides]]
 filter = "binary(transparency) & package(puddle-e2e)"
+test-group = "transparency"
 slow-timeout = { period = "60s", terminate-after = 10 }

@@ -155,12 +155,22 @@ pub(crate) async fn start_vm_host_config(
 
 /// Runs `script` as root in the guest and returns what it printed; fails the test if it fails.
 pub(crate) async fn guest(runtime: &MsbRuntime, sandbox: &WorkspaceName, script: &str) -> String {
+    guest_within(runtime, sandbox, script, Duration::from_secs(120)).await
+}
+
+/// [`guest`] with its own time limit, for a script that may take longer than two minutes.
+pub(crate) async fn guest_within(
+    runtime: &MsbRuntime,
+    sandbox: &WorkspaceName,
+    script: &str,
+    timeout: Duration,
+) -> String {
     let handle = runtime.get(&sandbox.sandbox_name()).await.unwrap();
     let out = handle
         .exec(
             ExecRequest::sh(script)
                 .as_user("root")
-                .with_timeout(Duration::from_secs(120)),
+                .with_timeout(timeout),
         )
         .await
         .unwrap();

@@ -201,17 +201,12 @@ impl GitSetup for StoreGitSetup {
         repositories: &'a [NewRepository],
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            let (store, name, list) =
-                (self.store.clone(), workspace.clone(), repositories.to_vec());
-            // A task that could not run leaves the answer without entries; the error is logged.
-            let started = blocking(move || {
-                Ok(list
-                    .iter()
-                    .map(|repository| start_one(&store, &name, repository))
-                    .collect::<Vec<_>>())
-            })
-            .await
-            .unwrap_or_default();
+            // On this thread, not a blocking task: a few small writes, and a task that could not
+            // run would leave repositories set up without the answer saying which.
+            let started = repositories
+                .iter()
+                .map(|repository| start_one(&self.store, workspace, repository))
+                .collect();
             *self.started.lock().unwrap_or_else(PoisonError::into_inner) = started;
         })
     }

@@ -137,15 +137,15 @@ fn allow(vm: &VmHost, sandbox: &WorkspaceName, hosts: &[&str]) {
     }
 }
 
-/// Creates the workspace `name` from `repo_url` and waits until it is up.
-async fn create(vm: &VmHost, name: &str, repo_url: &str) {
+/// Creates the workspace `name` with the one repository `url` and waits until it is up.
+async fn create(vm: &VmHost, name: &str, url: &str) {
     let api = Api::new(vm.host.url(), vm.host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.to_owned().into_boxed_str());
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repo_url": repo_url, "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "repositories": [{"url": url}], "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);

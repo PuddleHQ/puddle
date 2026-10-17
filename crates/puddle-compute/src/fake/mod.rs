@@ -18,6 +18,8 @@
 //! - The SSH server writes an `SSH-2.0-` identification line first.
 //! - Every boot writes `/proc/meminfo` with `MemTotal` = the spec's memory, so a
 //!   [`Runtime::set_memory`] shows only after the next start.
+//! - Every boot writes `/sys/devices/system/cpu/online` as the CPU range the spec's cpus make
+//!   (`0` for one, `0-3` for four), so a [`Runtime::set_cpus`] shows only after the next start.
 //!
 //! Test controls: [`FakeRuntime::inject`] makes the next matching call(s) fail
 //! ([`Fault`]), [`FakeRuntime::calls`] returns every call in order, [`FakeRuntime::on_exec`]
@@ -50,7 +52,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use puddle_types::{ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus};
+use puddle_types::{CpuCount, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub use self::exec::{ExecContext, ExecHandler, FsError};
@@ -80,6 +82,8 @@ pub enum Op {
     Get,
     /// [`Runtime::set_memory`].
     SetMemory,
+    /// [`Runtime::set_cpus`].
+    SetCpus,
     /// [`Runtime::list`].
     List,
     /// [`Runtime::remove`].
@@ -214,11 +218,22 @@ impl SandboxRecord {
             MEMINFO.to_owned(),
             format!("MemTotal:       {kib} kB\n").into_bytes(),
         );
+        let last = self.spec.cpus.unwrap_or(1).saturating_sub(1);
+        let online = if last == 0 {
+            "0\n".to_owned()
+        } else {
+            format!("0-{last}\n")
+        };
+        self.files
+            .insert(CPUS_ONLINE.to_owned(), online.into_bytes());
     }
 }
 
 /// Where the fake writes `MemTotal` at every boot.
 const MEMINFO: &str = "/proc/meminfo";
+
+/// Where the fake writes the online CPU range at every boot.
+const CPUS_ONLINE: &str = "/sys/devices/system/cpu/online";
 
 #[derive(Default)]
 struct State {
@@ -659,6 +674,21 @@ impl Runtime for FakeRuntime {
                     sandbox: name.to_string(),
                 })?;
         record.spec.memory = memory;
+        Ok(())
+    }
+
+    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
+    async fn set_cpus(&self, name: &SandboxName, cpus: CpuCount) -> Result<(), ComputeError> {
+        let mut state = self.lock();
+        state.enter(Op::SetCpus, Some(name.as_str()), None)?;
+        let record =
+            state
+                .sandboxes
+                .get_mut(name.as_str())
+                .ok_or_else(|| ComputeError::NotFound {
+                    sandbox: name.to_string(),
+                })?;
+        record.spec.cpus = Some(cpus.get());
         Ok(())
     }
 

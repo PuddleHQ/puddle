@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Effective values: a workspace's override over the global value over Puddle's built-in default.
 
-use puddle_types::{LocalCategory, MemoryMib};
+use puddle_types::{CpuCount, LocalCategory, MemoryMib};
 use serde::Serialize;
 
 use crate::{ClipboardRead, GlobalSettings, LocalToggles, ReconnectionGrace, WorkspaceSettings};
@@ -32,6 +32,8 @@ pub struct Resolved<T> {
 pub struct Effective {
     /// Guest memory.
     pub memory: Resolved<MemoryMib>,
+    /// Guest vCPUs.
+    pub cpus: Resolved<CpuCount>,
     /// Local-destination toggles.
     pub local_toggles: EffectiveToggles,
     /// Whether wildcard allows reach local addresses.
@@ -86,11 +88,12 @@ impl EffectiveToggles {
 }
 
 impl Effective {
-    /// Puddle's built-in defaults: 8 GiB, every local toggle off, wildcards don't reach
+    /// Puddle's built-in defaults: 8 GiB, one vCPU, every local toggle off, wildcards don't reach
     /// local addresses, 300 s grace, zoom hotkeys on, clipboard reads
     /// ask.
     pub const DEFAULTS: Effective = Effective {
         memory: default(MemoryMib::DEFAULT),
+        cpus: default(CpuCount::DEFAULT),
         local_toggles: EffectiveToggles {
             loopback: default(false),
             private: default(false),
@@ -154,6 +157,7 @@ pub fn resolve(global: &GlobalSettings, workspace: Option<&WorkspaceSettings>) -
     // Destructured so a new layer field doesn't compile until it is resolved here.
     let crate::WorkspaceLayer {
         memory,
+        cpus,
         local_toggles,
         wildcards_reach_local,
         reconnection_grace,
@@ -173,6 +177,7 @@ pub fn resolve(global: &GlobalSettings, workspace: Option<&WorkspaceSettings>) -
     } = local_toggles;
     Effective {
         memory: pick(*memory, g.memory, d.memory),
+        cpus: pick(*cpus, g.cpus, d.cpus),
         local_toggles: EffectiveToggles {
             loopback: pick(
                 *loopback,

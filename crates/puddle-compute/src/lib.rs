@@ -14,6 +14,7 @@
 //! | create and boot | [`Runtime::create`] with a [`SandboxSpec`] → owning [`Sandbox`] handle |
 //! | boot again | [`Runtime::start`] → owning handle |
 //! | memory for the next start | [`Runtime::set_memory`] |
+//! | vCPUs for the next start | [`Runtime::set_cpus`] |
 //! | re-adopt a running sandbox | [`Runtime::get`] → non-owning handle |
 //! | list / delete | [`Runtime::list`], [`Runtime::remove`] |
 //! | clean up after failed creates | [`Runtime::stale_dirs`], [`Runtime::remove_stale_dir`] |

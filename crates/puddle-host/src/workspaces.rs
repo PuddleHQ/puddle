@@ -40,8 +40,8 @@ use puddle_settings::{ReconnectionGrace, WorkspaceSettings, resolve};
 use puddle_ssh::SshEndpoint;
 use puddle_store::Clock;
 use puddle_types::{
-    Event, EventSink, GuestEnv, ImageRef, MemoryMib, Problem, Problems, WorkspaceId, WorkspaceName,
-    WorkspaceStatus, WorkspaceStep,
+    CpuCount, Event, EventSink, GuestEnv, ImageRef, MemoryMib, Problem, Problems, WorkspaceId,
+    WorkspaceName, WorkspaceStatus, WorkspaceStep,
 };
 
 use crate::ssh_target::{ReportingTarget, report_no_endpoint};
@@ -644,6 +644,21 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Ok(resolve(&global, None::<&WorkspaceSettings>).memory.value)
     }
 
+    /// The vCPUs for `name`: its override over the global default over one. The default when the
+    /// settings cannot be read (a workspace is not worth a failed start over a CPU count).
+    fn cpus(&self, name: &WorkspaceName) -> CpuCount {
+        let settings = self.inner.settings.as_ref();
+        let read = || {
+            let global = crate::settings_read::global(settings)?;
+            let own = crate::settings_read::workspace(settings, name)?;
+            Ok::<_, String>(resolve(&global, Some(&own)).cpus.value)
+        };
+        read().unwrap_or_else(|reason| {
+            tracing::warn!(workspace = %name, %reason, "the workspace boots with the default CPU count: the settings cannot be read");
+            CpuCount::DEFAULT
+        })
+    }
+
     /// The image config of `image`, pulling it if needed.
     async fn image_config(&self, image: &ImageRef) -> Result<ImageConfig, String> {
         self.inner
@@ -728,7 +743,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
         };
         let spec = attachment
-            .add_to(inner.kit.spec(name, image, record.memory, &env, &route))
+            .add_to(
+                inner
+                    .kit
+                    .spec(name, image, record.memory, &env, &route)
+                    .with_cpus(self.cpus(name).get()),
+            )
             .with_file_mount(inner.kit.shell_init().mount(id));
         let gate = Gate::new();
         match inner
@@ -1556,6 +1576,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         inner
             .runtime
             .set_memory(&name.sandbox_name(), record.memory)
+            .await
+            .map_err(|e| e.to_string())?;
+        // The cpus setting applies at the next start, like the memory.
+        inner
+            .runtime
+            .set_cpus(&name.sandbox_name(), self.cpus(name))
             .await
             .map_err(|e| e.to_string())?;
         inner

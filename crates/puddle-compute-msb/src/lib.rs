@@ -19,6 +19,7 @@
 //! | No stale directory after a failed create | a create that fails removes the sandbox directory it left (an upstream msb bug, still present in stock 0.7.7; the fork fixes it in `0ad1ef63`, and the contract suite checks it), so [`puddle_compute::Capabilities::stale_dir_fixed`] is `true` |
 //! | Mount sources | every file or directory mount's host path must lie under [`MsbConfig::guest_share`] |
 //! | Memory | `--memory` from the spec at create; [`puddle_compute::Runtime::set_memory`] persists a new size for the next start; `--max-memory` is never set |
+//! | CPUs | `--cpus` from the spec at create (when given); [`puddle_compute::Runtime::set_cpus`] persists a new count for the next start; `--max-cpus` is never set apart from that pin |
 //!
 //! # SDK options
 //!

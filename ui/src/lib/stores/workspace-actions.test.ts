@@ -150,6 +150,7 @@ describe("connecting", () => {
         special: null,
       },
       memory: 4096,
+      cpus: null,
       reconnection_grace: null,
       wildcards_reach_local: null,
       zoom_hotkeys: null,

@@ -1830,6 +1830,8 @@ export interface components {
             capture_logins: components["schemas"]["ResolvedBool"];
             /** @description Clipboard reads. */
             clipboard_read: components["schemas"]["ResolvedClipboardRead"];
+            /** @description Guest vCPUs. */
+            cpus: components["schemas"]["ResolvedNumber"];
             /** @description Whether direct SSH is on. */
             direct_ssh: components["schemas"]["ResolvedBool"];
             /** @description Local destination toggles. */
@@ -3158,6 +3160,11 @@ export interface components {
              */
             capture_logins: boolean | null;
             clipboard_read: components["schemas"]["ClipboardRead"] | null;
+            /**
+             * Format: int32
+             * @description Guest vCPUs (1 to 32); applies at the next start.
+             */
+            cpus: number | null;
             /**
              * @description Whether Puddle opens an SSH way into the workspace for the user's own tools (desktop
              *     VS Code, a terminal `ssh`). Off by default; while off there is no SSH endpoint and no ssh

@@ -8269,6 +8269,7 @@
         "description": "The values a workspace gets: its override, else the global value, else Puddle's default.",
         "required": [
           "memory",
+          "cpus",
           "local_toggles",
           "wildcards_reach_local",
           "reconnection_grace",
@@ -8285,6 +8286,10 @@
           "clipboard_read": {
             "$ref": "#/components/schemas/ResolvedClipboardRead",
             "description": "Clipboard reads."
+          },
+          "cpus": {
+            "$ref": "#/components/schemas/ResolvedNumber",
+            "description": "Guest vCPUs."
           },
           "direct_ssh": {
             "$ref": "#/components/schemas/ResolvedBool",
@@ -11429,6 +11434,7 @@
         "description": "The settings every workspace has. On a global document they are the defaults for every\nworkspace; on a workspace they override those. `null` means \"not set here\": the next level (the\nglobal value, then Puddle's default) applies.",
         "required": [
           "memory",
+          "cpus",
           "local_toggles",
           "wildcards_reach_local",
           "reconnection_grace",
@@ -11455,6 +11461,16 @@
                 "type": "null"
               }
             ]
+          },
+          "cpus": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Guest vCPUs (1 to 32); applies at the next start.",
+            "maximum": 32,
+            "minimum": 1
           },
           "direct_ssh": {
             "type": [

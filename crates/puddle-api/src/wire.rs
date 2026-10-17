@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use puddle_settings as settings;
 use puddle_store as store;
-use puddle_types::{MemoryMib, WorkspaceName};
+use puddle_types::{CpuCount, MemoryMib, WorkspaceName};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -1393,6 +1393,10 @@ pub struct SettingsLayer {
     #[serde(default)]
     #[schema(required = true, minimum = 256, maximum = 1_048_576)]
     pub memory: Option<u32>,
+    /// Guest vCPUs (1 to 32); applies at the next start.
+    #[serde(default)]
+    #[schema(required = true, minimum = 1, maximum = 32)]
+    pub cpus: Option<u8>,
     /// Which local destination categories may be approved (all off by default).
     #[serde(default)]
     #[schema(required = true)]
@@ -1431,6 +1435,7 @@ impl From<&settings::WorkspaceLayer> for SettingsLayer {
     fn from(layer: &settings::WorkspaceLayer) -> Self {
         Self {
             memory: layer.memory.map(MemoryMib::get),
+            cpus: layer.cpus.map(CpuCount::get),
             local_toggles: (&layer.local_toggles).into(),
             wildcards_reach_local: layer.wildcards_reach_local,
             reconnection_grace: layer
@@ -1450,6 +1455,7 @@ impl SettingsLayer {
         let invalid = |err: puddle_types::ValidationError| ApiError::invalid(err.to_string());
         let Self {
             memory,
+            cpus,
             local_toggles,
             wildcards_reach_local,
             reconnection_grace,
@@ -1459,6 +1465,10 @@ impl SettingsLayer {
             capture_logins,
         } = self;
         layer.memory = memory.map(MemoryMib::new).transpose().map_err(invalid)?;
+        layer.cpus = cpus
+            .map(|c| CpuCount::new(u32::from(c)))
+            .transpose()
+            .map_err(invalid)?;
         local_toggles.apply_to(&mut layer.local_toggles);
         layer.wildcards_reach_local = wildcards_reach_local;
         layer.reconnection_grace = reconnection_grace
@@ -1869,6 +1879,8 @@ pub struct EffectiveToggles {
 pub struct EffectiveSettings {
     /// Guest memory in MiB.
     pub memory: ResolvedNumber,
+    /// Guest vCPUs.
+    pub cpus: ResolvedNumber,
     /// Local destination toggles.
     pub local_toggles: EffectiveToggles,
     /// Whether suffix rules reach local addresses.
@@ -1889,6 +1901,7 @@ impl From<settings::Effective> for EffectiveSettings {
     fn from(e: settings::Effective) -> Self {
         let settings::Effective {
             memory,
+            cpus,
             local_toggles,
             wildcards_reach_local,
             reconnection_grace,
@@ -1908,6 +1921,10 @@ impl From<settings::Effective> for EffectiveSettings {
             memory: ResolvedNumber {
                 value: memory.value.get(),
                 source: memory.source.into(),
+            },
+            cpus: ResolvedNumber {
+                value: u32::from(cpus.value.get()),
+                source: cpus.source.into(),
             },
             local_toggles: EffectiveToggles {
                 loopback: rb(loopback),
@@ -2201,6 +2218,7 @@ mod tests {
             "schema_version": 1,
             "overrides": {
                 "memory": 1024,
+                "cpus": 2,
                 "local_toggles": {
                     "loopback": true, "private": false, "link_local": true,
                     "metadata": false, "special": true
@@ -2233,21 +2251,21 @@ mod tests {
     #[test]
     fn settings_layer_round_trips_and_keeps_unknown_stored_fields() {
         let mut stored = settings::WorkspaceSettings::from_document(
-            json!({"overrides": {"cpus": 4, "memory": 2048}}),
+            json!({"overrides": {"swap": 4, "memory": 2048}}),
         )
         .unwrap()
         .settings;
         let wire = SettingsLayer::from(&full_layer());
         wire.clone().apply_to(&mut stored.overrides).unwrap();
         assert_eq!(SettingsLayer::from(&stored.overrides), wire);
-        assert_eq!(stored.to_document()["overrides"]["cpus"], 4);
+        assert_eq!(stored.to_document()["overrides"]["swap"], 4);
         // Clearing every value leaves only the unknown field.
         SettingsLayer::default()
             .apply_to(&mut stored.overrides)
             .unwrap();
         assert_eq!(
             stored.to_document(),
-            json!({"schema_version": 1, "overrides": {"cpus": 4}})
+            json!({"schema_version": 1, "overrides": {"swap": 4}})
         );
     }
 
@@ -2257,6 +2275,14 @@ mod tests {
         for bad in [
             SettingsLayer {
                 memory: Some(1),
+                ..SettingsLayer::default()
+            },
+            SettingsLayer {
+                cpus: Some(0),
+                ..SettingsLayer::default()
+            },
+            SettingsLayer {
+                cpus: Some(33),
                 ..SettingsLayer::default()
             },
             SettingsLayer {

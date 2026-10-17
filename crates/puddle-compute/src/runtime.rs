@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::future::Future;
 
-use puddle_types::{ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus};
+use puddle_types::{CpuCount, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{ComputeError, DiskSize, ExecOutput, ExecRequest, SandboxSpec};
@@ -203,6 +203,19 @@ pub trait Runtime: Send + Sync + 'static {
         &self,
         name: &SandboxName,
         memory: MemoryMib,
+    ) -> impl Future<Output = Result<(), ComputeError>> + Send;
+
+    /// Sets the vCPUs a sandbox boots with from its **next** start on (the cpus setting,
+    /// `--cpus`). A running sandbox keeps its current count until it is stopped and started
+    /// again; Puddle never enables CPU hotplug, so the maximum equals the count.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::NotFound`].
+    fn set_cpus(
+        &self,
+        name: &SandboxName,
+        cpus: CpuCount,
     ) -> impl Future<Output = Result<(), ComputeError>> + Send;
 
     /// Every sandbox the runtime knows, in name order, including ones Puddle didn't create.

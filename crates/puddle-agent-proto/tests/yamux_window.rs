@@ -182,3 +182,48 @@ async fn a_stream_holding_a_full_window_and_a_close_while_unread_still_reads_to_
     driver.abort();
     drain.abort();
 }
+
+/// A stream that only writes, and whose own read side nobody polls, still sends more than its
+/// window: the peer's window updates wake the writer by themselves. A proxy that forwards one
+/// plain-HTTP response this way read nothing from the guest after the request, and the download
+/// stopped for good once the first window was spent.
+#[tokio::test]
+async fn a_stream_that_is_only_written_sends_past_its_window() {
+    let (client_io, server_io) = duplex(1 << 20);
+    let mut client = Session::new_client(client_io, puddle_agent_proto::yamux::client_config());
+    let mut control = client.control();
+    let client_driver = tokio::spawn(async move { while client.next().await.is_some() {} });
+    let mut server = Session::new_server(server_io, server_config());
+    let total = 3 * STREAM_WINDOW as usize;
+    let reader = tokio::spawn(async move {
+        let mut stream = server.next().await.unwrap().unwrap();
+        let driver = tokio::spawn(async move { while server.next().await.is_some() {} });
+        let mut buf = vec![0u8; 1 << 20];
+        let mut got = 0;
+        while got < total {
+            let n = stream.read(&mut buf).await.unwrap();
+            assert!(n > 0, "the stream ended after {got} bytes");
+            got += n;
+        }
+        driver.abort();
+        got
+    });
+    let mut stream = control.open_stream().await.unwrap();
+    let chunk = vec![1u8; 1 << 20];
+    let wrote = tokio::time::timeout(Duration::from_secs(20), async {
+        for _ in 0..total >> 20 {
+            stream.write_all(&chunk).await.unwrap();
+        }
+    })
+    .await;
+    assert!(
+        wrote.is_ok(),
+        "the writer stopped at the end of a window and nothing woke it"
+    );
+    let got = tokio::time::timeout(Duration::from_secs(20), reader)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(got, total);
+    client_driver.abort();
+}

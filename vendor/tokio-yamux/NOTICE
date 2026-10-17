@@ -8,7 +8,9 @@ Changed by Puddle, two changes:
 
 1. `src/stream.rs`. A stream whose peer has closed its sending half (a FIN) still handles the peer's
    window updates, so the half-closed connection can move more than one window of data in the other
-   direction.
+   direction. A writer blocked on a full window is woken by the peer's window update even when
+   nobody reads the stream: the stream's frame channel holds one waker that wakes both its reader
+   and its writer (0.3.20 woke the writer only through the reader).
 2. `src/session.rs`. 0.3.20 stops reading the session's socket while any frame is queued for a stream
    whose reader is behind (its frame channel holds 8), so one slow reader stalls every other stream of
    the session until it catches up. Now the session keeps reading while the queued frames weigh less than
@@ -28,8 +30,9 @@ workspace `Cargo.toml`, when either of these is true:
 
 1. A tokio-yamux release newer than 0.3.20 handles window updates after the peer's FIN. Check: in
    that release's `src/stream.rs`, `recv_frames` and `try_recv_frames` no longer return early for
-   `StreamState::RemoteClosing`, and `poll_write` wakes on a window update then. The three tests
-   named in `README.md` pass against the registry crate (delete the patch entry, run them).
+   `StreamState::RemoteClosing`, and `poll_write` wakes on a window update whether or not the stream
+   is read. The tests named in `README.md` for the first fix pass against the registry crate (delete
+   the patch entry, run them).
 2. A fork pinned by `rev` replaces it (decided by the project owner).
 
 Until then, every tokio-yamux version bump re-applies both changes to the new release.

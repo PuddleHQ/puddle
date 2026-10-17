@@ -6,12 +6,13 @@ use futures::{
     Stream,
     channel::mpsc::{Receiver, UnboundedSender},
     stream::FusedStream,
-    task::Waker,
+    task::{ArcWake, AtomicWaker, Waker, waker},
 };
 
 use std::{
     io,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
 
@@ -44,11 +45,24 @@ pub struct StreamHandle {
     // (if the sender closed means session closed the stream should close too)
     frame_receiver: Receiver<Frame>,
 
-    // when the cache is sent, a writable notification is issued
-    writeable_wake: Option<Waker>,
+    // puddle: the reader and the writer of this stream, and the one waker the frame channel holds,
+    // which wakes both: a window update must reach a writer whose read side nobody polls.
+    wakers: Arc<Wakers>,
+    channel_waker: Waker,
+}
 
-    // when the cache is received by write, a readable notification is issued
-    readable_wake: Option<Waker>,
+/// The tasks parked on one stream: its reader and its writer.
+#[derive(Debug, Default)]
+struct Wakers {
+    read: AtomicWaker,
+    write: AtomicWaker,
+}
+
+impl ArcWake for Wakers {
+    fn wake_by_ref(arc_self: &Arc<Self>) {
+        arc_self.read.wake();
+        arc_self.write.wake();
+    }
 }
 
 impl StreamHandle {
@@ -61,6 +75,7 @@ impl StreamHandle {
         max_window_size: u32,
     ) -> StreamHandle {
         assert!(state == StreamState::Init || state == StreamState::SynReceived);
+        let wakers = Arc::new(Wakers::default());
         StreamHandle {
             id,
             state,
@@ -70,8 +85,8 @@ impl StreamHandle {
             read_buf: Vec::new(),
             unbound_event_sender,
             frame_receiver,
-            writeable_wake: None,
-            readable_wake: None,
+            channel_waker: waker(Arc::clone(&wakers)),
+            wakers,
         }
     }
 
@@ -245,9 +260,7 @@ impl StreamHandle {
             .checked_add(frame.length())
             .ok_or(Error::InvalidMsgType)?;
         // wake writer continue
-        if let Some(waker) = self.writeable_wake.take() {
-            waker.wake()
-        }
+        self.wakers.write.wake();
         Ok(())
     }
 
@@ -270,7 +283,7 @@ impl StreamHandle {
         Ok(())
     }
 
-    fn recv_frames(&mut self, cx: &mut Context) -> Result<bool, Error> {
+    fn recv_frames(&mut self) -> Result<bool, Error> {
         trace!("stream-handle({}) recv_frames", self.id);
         let mut has_new_frame = false;
         loop {
@@ -285,7 +298,8 @@ impl StreamHandle {
                 return Err(Error::SubStreamRemoteClosing);
             }
 
-            match Pin::new(&mut self.frame_receiver).as_mut().poll_next(cx) {
+            let mut cx = Context::from_waker(&self.channel_waker);
+            match Pin::new(&mut self.frame_receiver).as_mut().poll_next(&mut cx) {
                 Poll::Ready(Some(frame)) => {
                     self.handle_frame(frame)?;
                     has_new_frame = true;
@@ -339,9 +353,7 @@ impl StreamHandle {
                 if (self.state == StreamState::RemoteClosing && state != StreamState::RemoteClosing)
                     || (should_wake_read && buf_len != self.read_buf.len())
                 {
-                    if let Some(waker) = self.readable_wake.take() {
-                        waker.wake();
-                    }
+                    self.wakers.read.wake();
                 }
 
                 Ok(())
@@ -349,9 +361,7 @@ impl StreamHandle {
             Err(e) => {
                 // if state change to RemoteClosing, wake read
                 if self.state == StreamState::RemoteClosing && state != StreamState::RemoteClosing {
-                    if let Some(waker) = self.readable_wake.take() {
-                        waker.wake();
-                    }
+                    self.wakers.read.wake();
                 }
 
                 Err(e)
@@ -391,9 +401,9 @@ impl StreamHandle {
             return Poll::Ready(Ok(0));
         }
 
-        self.readable_wake = Some(cx.waker().clone());
+        self.wakers.read.register(cx.waker());
         if let Err(Error::UnexpectedFlag | Error::RecvWindowExceeded | Error::InvalidMsgType) =
-            self.recv_frames(cx)
+            self.recv_frames()
         {
             // read flag error or read data error
             self.send_go_away();
@@ -448,9 +458,9 @@ impl AsyncRead for StreamHandle {
             return Poll::Ready(Ok(()));
         }
 
-        self.readable_wake = Some(cx.waker().clone());
+        self.wakers.read.register(cx.waker());
         if let Err(Error::UnexpectedFlag | Error::RecvWindowExceeded | Error::InvalidMsgType) =
-            self.recv_frames(cx)
+            self.recv_frames()
         {
             // read flag error or read data error
             self.send_go_away();
@@ -549,20 +559,22 @@ impl AsyncWrite for StreamHandle {
             _ => (),
         }
 
-        // puddle: after the peer's FIN nobody polls this stream for reading, so nothing else would
-        // wake this writer when the peer opens the window again: listen for the update here.
-        if self.send_window == 0
-            && self.state == StreamState::RemoteClosing
-            && self.recv_frames(cx).is_err()
-        {
-            return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
-        }
-
+        // puddle: nobody may be polling this stream for reading (the peer sent its FIN, or the
+        // application only writes), so the writer itself listens for the window update.
         if self.send_window == 0 {
-            // register writer context waker
-            // when write buf become empty, it can wake the upper layer to write the message again
-            self.writeable_wake = Some(cx.waker().clone());
-            return Poll::Pending;
+            self.wakers.write.register(cx.waker());
+            if let Err(err) = self.recv_frames() {
+                if matches!(
+                    err,
+                    Error::UnexpectedFlag | Error::RecvWindowExceeded | Error::InvalidMsgType
+                ) {
+                    self.send_go_away();
+                }
+                return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
+            }
+            if self.send_window == 0 {
+                return Poll::Pending;
+            }
         }
         // Allow n = 0, send an empty frame to remote
         let n = ::std::cmp::min(self.send_window as usize, buf.len());
@@ -1130,20 +1142,9 @@ mod test {
         });
     }
 
-    // Regression test: when send_window == 0 (write side blocked), a window-update
-    // frame from the remote must travel via the READ path—not the write path—to
-    // unblock the write side.
-    //
-    // Correct flow (with fix):
-    //   window_update arrives → frame_receiver wakes read_waker (read path owns it)
-    //   → poll_read processes handle_window_update → send_window increases
-    //   → writeable_wake.wake() → write_waker notified → write side can proceed.
-    //
-    // Buggy flow (old code):
-    //   recv_frames(write_cx) stored write_waker in frame_receiver, overwriting read_waker.
-    //   window_update arrives → write_waker notified → write task itself drains the frame,
-    //   which accidentally works for the write side, BUT the read task's waker is now gone.
-    //   Any subsequent DATA frame would silently wake the stale write_waker → read hangs.
+    // Regression test: when send_window == 0 (write side blocked), a window-update frame from the
+    // remote wakes the writer itself (puddle: also when nobody polls the read side, which the
+    // upstream design, where only the read path received frames, left stuck), and the reader too.
     //
     // This test is fully deterministic via custom flag-wakers and manual polling.
     #[test]
@@ -1180,11 +1181,7 @@ mod test {
                     .is_pending()
             );
 
-            // Step 2: poll_write → send_window == 0 → parks.
-            //   OLD: recv_frames(write_cx) first OVERWRITES frame_receiver's waker with
-            //        write_waker.  Then send_window==0 → writeable_wake = write_waker.
-            //   NEW: try_recv_frames() does NOT touch frame_receiver waker.
-            //        send_window==0 → writeable_wake = write_waker.
+            // Step 2: poll_write → send_window == 0 → parks, its waker kept apart from the reader's.
             assert!(
                 Pin::new(&mut stream)
                     .poll_write(&mut write_cx, b"ping")
@@ -1192,23 +1189,11 @@ mod test {
             );
 
             // Step 3: inject a window-update frame (simulates remote granting more window).
-            // This synchronously wakes whoever is registered in frame_receiver.
-            //   OLD (bug): write_waker → write_fw.woken() == true BEFORE we poll_read.
-            //              But frame_receiver now holds write_waker (stale once write is done).
-            //   NEW (fix): read_waker → read_fw.woken() == true.
+            // The channel's waker wakes both parked tasks.
             let wu = Frame::new_window_update(Flags::default(), 1, 65535);
             frame_sender.send(wu).await.unwrap();
-
-            // With the fix, the read_waker must be the one notified.
-            assert!(
-                read_fw.woken(),
-                "BUG: read_waker was overwritten; window-update woke write_waker instead. \
-                 The read path cannot process the window-update → write side stays stuck."
-            );
-            assert!(
-                !write_fw.woken(),
-                "write_waker must not be in frame_receiver; it should only be in writeable_wake"
-            );
+            assert!(read_fw.woken(), "the parked reader must be woken");
+            assert!(write_fw.woken(), "the parked writer must be woken");
 
             // Step 4: simulate the read task re-polling after being woken.
             // poll_read processes the window-update frame via handle_window_update,

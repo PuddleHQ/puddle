@@ -140,7 +140,17 @@ impl HostConfig {
     /// folders are not absolute.
     pub fn installed_for_user(exe: &Path) -> Result<Self, HostError> {
         let data = puddle_fs::data_dir().map_err(|e| HostError::DataDir(e.to_string()))?;
-        let layout = RuntimeLayout::installed(exe, &data)?;
+        Self::installed(exe, &data)
+    }
+
+    /// The installed layout with state in `data` instead of the per-user data folder: the runtime
+    /// and the guest agent beside `exe`.
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::Runtime`] when the folders are not absolute.
+    pub fn installed(exe: &Path, data: &Path) -> Result<Self, HostError> {
+        let layout = RuntimeLayout::installed(exe, data)?;
         let agent = layout.runtime_dir().join(AGENT_FILE_NAME);
         let mut guest = GuestSettings::new(agent);
         let code_server = layout.runtime_dir().join(CODE_SERVER_DIR_NAME);
@@ -182,5 +192,21 @@ mod tests {
         assert_eq!(config.expected_runtime, RuntimeVersion::built_for());
         assert!(config.guest.git_identity.is_none());
         assert!(format!("{:?}", config.api).contains("connection_file"));
+    }
+
+    #[test]
+    fn the_installed_layout_keeps_state_in_the_given_folder_and_the_runtime_beside_the_exe() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = dir.path().join("app");
+        let data = dir.path().join("data");
+        let config = HostConfig::installed(&app.join("puddle-app"), &data).unwrap();
+        assert_eq!(config.paths.data(), data);
+        assert_eq!(config.layout.runtime_dir(), app.join("runtime"));
+        assert_eq!(
+            config.guest.agent_binary,
+            app.join("runtime").join(AGENT_FILE_NAME)
+        );
+        assert_eq!(config.guest.code_server, None);
+        assert_eq!(config.api.connection_file, Some(data.join("api.json")));
     }
 }

@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The fixture backend (until the real host is wired in): the real API router on in-memory services, with
-//! one pending request seeded so the inbox has something to show. All data is fictional.
+//! The fixture backend, for developing the window: the real API router on in-memory services, with
+//! one pending request seeded so the inbox has something to show. All data is fictional. It runs no
+//! workspaces, so its shutdown only stops the API.
 
 use std::sync::Arc;
 
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, Services, SettingsRepo,
 };
+use puddle_host::{HostShutdown, Step};
 use puddle_store::{Limits, Store, SystemClock};
 use puddle_types::{EgressRequest, Host, Problems, SuffixAllows, WorkspaceName};
 
@@ -41,5 +43,19 @@ pub(crate) async fn start(port: u16) -> Result<Backend, BackendError> {
     let server =
         ApiServer::bind(ApiConfig::with_port(port), ApiToken::generate()?, services).await?;
     let info = server.connection_info();
-    Backend::new(info, events, problems, server.spawn())
+    let running = server.spawn();
+    Backend::new(
+        info,
+        events,
+        problems,
+        Box::new(move || {
+            Box::pin(async move {
+                running.shutdown().await;
+                HostShutdown {
+                    steps: vec![Step::ApiStopped],
+                    ..HostShutdown::default()
+                }
+            })
+        }),
+    )
 }

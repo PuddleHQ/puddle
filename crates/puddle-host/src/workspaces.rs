@@ -496,8 +496,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Returns how many had to be ended.
     pub(crate) async fn finish_operations(&self, grace: Duration) -> usize {
         let mut count = self.inner.running.subscribe();
-        let idle = tokio::time::timeout(grace, count.wait_for(|n| *n == 0)).await;
-        if idle.is_ok() {
+        // Only whether it went idle: the borrow `wait_for` returns must not live across the
+        // awaits below, or the shutdown future could not move between threads.
+        let idle = tokio::time::timeout(grace, count.wait_for(|n| *n == 0))
+            .await
+            .is_ok();
+        if idle {
             return 0;
         }
         let ended = *self.inner.running.borrow();

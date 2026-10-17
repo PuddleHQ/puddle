@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-app"
-description = "The desktop shell a Tauri 2 window around the SPA that puddle-api serves, with the backend in-process"
+description = "The desktop shell: a Tauri 2 window around the SPA that puddle-api serves, with the Puddle host in-process"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,10 +12,9 @@ publish.workspace = true
 build = "build.rs"
 
 [features]
-# The backend is the in-memory fixture (one seeded pending request) until the real host wiring
-# lands (it will be replaced by the shared fixture backend). Without the feature the
-# shell refuses to start (there is nothing to show).
-default = ["fixture"]
+# Adds the in-memory fixture backend (the real API on in-memory services with one seeded pending
+# request), for developing the window and for the smoke test; a debug build shows it when
+# `PUDDLE_APP_FIXTURE=1` is set. Without the feature the shell always runs the host.
 fixture = ["dep:puddle-store"]
 
 [lib]
@@ -29,6 +28,9 @@ path = "src/main.rs"
 [dependencies]
 # `embedded-ui`: the SPA is part of the binary (build `ui/` first, `scripts/check.sh ui`).
 puddle-api = { workspace = true, features = ["embedded-ui"] }
+puddle-compute = { workspace = true }
+puddle-host = { workspace = true, features = ["embedded-ui"] }
+puddle-lifecycle = { workspace = true }
 puddle-store = { workspace = true, optional = true }
 puddle-types = { workspace = true }
 serde_json = { workspace = true }
@@ -46,6 +48,11 @@ url = { workspace = true }
 tauri-build = { workspace = true }
 
 [dev-dependencies]
+puddle-certs = { workspace = true }
+puddle-compute = { workspace = true, features = ["fake"] }
+puddle-runtime = { workspace = true }
+puddle-secrets = { workspace = true }
+puddle-upstream = { workspace = true, features = ["testing"] }
 tauri = { workspace = true, features = ["test"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "time"] }

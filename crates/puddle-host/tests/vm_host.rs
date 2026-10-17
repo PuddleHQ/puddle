@@ -1810,6 +1810,17 @@ wall slow
     ),
 ];
 
+/// The guest's one vCPU carries both directions, so a gibibyte down costs about what one up does.
+/// The floor keeps a fast upload from making the bar a coin toss. When the session went over every
+/// frame it held for each frame it received, a download took six times the upload.
+fn assert_download_keeps_up(down: f64, plain_down: f64, up: f64, out: &str) {
+    let bar = 2.0 * up.max(5.0);
+    assert!(
+        down <= bar && plain_down <= bar,
+        "a gibibyte took {down} s down ({plain_down} s as plain HTTP) against {up} s up: {out}"
+    );
+}
+
 /// The transparency bar from inside a real VM: what the heaviest package managers do (see
 /// [`TRANSPARENCY_PARTS`]) goes from the guest through the agent, the vsock route, the proxy and
 /// the rules engine to a server on the host. No failure, and no connection slower than 5 s.
@@ -1896,6 +1907,12 @@ async fn vm_host_transparency_bar_curl_at_its_widest_through_agent_and_proxy() {
     assert_eq!(value("plain_download_bytes"), "1073741824", "{out}");
     assert_eq!(value("plain_download_code"), "200", "{out}");
     assert_eq!(value("upload_code"), "200", "{out}");
+    assert_download_keeps_up(
+        seconds("download_s"),
+        seconds("plain_download_s"),
+        seconds("upload_s"),
+        &out,
+    );
     assert_eq!(value("slow_others_ok"), "20", "{out}");
     // 28 is curl's "operation timed out": the slow reader was still reading at --max-time.
     assert_eq!(value("slow_curl_exit"), "28", "{out}");

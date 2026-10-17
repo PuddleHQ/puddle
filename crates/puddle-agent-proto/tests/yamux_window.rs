@@ -271,7 +271,7 @@ async fn a_window_of_small_frames_held_for_a_late_reader_moves_in_linear_time() 
     })
     .await;
     let Ok((held, got)) = moved else {
-        panic!("a window of {FRAME}-byte frames for a late reader did not move in 5 s",);
+        panic!("a window of {FRAME}-byte frames for a late reader did not move in 5 s");
     };
     eprintln!(
         "{} frames held in {held:?}, read out by {:?}",

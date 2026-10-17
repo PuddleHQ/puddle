@@ -1603,10 +1603,10 @@ step() {
   timeout 1500 bash -c "$*" > "/tmp/radar-$name.log" 2>&1
   rc=$?
   t1=$(date +%s.%N)
-  bad=$(grep -c -i -E 'Err:|W: Failed|^E: |retrying|will retry|timed out|ETIMEDOUT|ECONNRESET|EPIPE|reset by peer|connection refused|EAI_AGAIN|unexpected eof|\bstalled|handshake fail|handshake_failure|certificate verify|SSL_ERROR|SSL certificate problem|x509: |PKIX|spurious network error|i/o timeout|dial tcp|could not transfer|transfer failed|but failed' "/tmp/radar-$name.log")
+  bad=$(grep -c -i -E 'Err:|W: Failed|^E: |retrying|will retry|timed out|ETIMEDOUT|ECONNRESET|EPIPE|reset by peer|connection refused|EAI_AGAIN|unexpected eof|\bstalled|handshake fail|handshake_failure|handshake (timeout|error)|handshakeexception|certificate verify|SSL_ERROR|SSL certificate problem|x509: |PKIX|spurious network error|i/o timeout|dial tcp|could not transfer|transfer failed|but failed' "/tmp/radar-$name.log")
   echo "RADAR step=$name rc=$rc secs=$(awk "BEGIN {printf \"%.1f\", $t1 - $t0}") suspicious_lines=$bad disk_free_mib=$(df -Pm / | awk 'NR==2 {print $4}')"
   if [ "$rc" != 0 ] || [ "$bad" != 0 ]; then
-    grep -i -E 'Err:|W: Failed|^E: |retrying|will retry|timed out|ETIMEDOUT|ECONNRESET|EPIPE|reset by peer|connection refused|EAI_AGAIN|unexpected eof|\bstalled|handshake fail|handshake_failure|certificate verify|SSL_ERROR|SSL certificate problem|x509: |PKIX|spurious network error|i/o timeout|dial tcp|could not transfer|transfer failed|but failed' "/tmp/radar-$name.log" | head -8 | sed 's/^/  | /'
+    grep -i -E 'Err:|W: Failed|^E: |retrying|will retry|timed out|ETIMEDOUT|ECONNRESET|EPIPE|reset by peer|connection refused|EAI_AGAIN|unexpected eof|\bstalled|handshake fail|handshake_failure|handshake (timeout|error)|handshakeexception|certificate verify|SSL_ERROR|SSL certificate problem|x509: |PKIX|spurious network error|i/o timeout|dial tcp|could not transfer|transfer failed|but failed' "/tmp/radar-$name.log" | head -8 | sed 's/^/  | /'
     tail -5 "/tmp/radar-$name.log" | sed 's/^/  > /'
   fi
 }

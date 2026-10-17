@@ -18,7 +18,9 @@ Changed by Puddle, two changes:
    more data than its own window (a peer that ignores the window), instead of stopping; the reader of
    that stream gets a connection-reset error. Beyond four windows
    queued in all, it stops reading as before. The memory a stream that does not read can hold is its
-   window, which the peer was already allowed to send.
+   window, which the peer was already allowed to send. The frames waiting for a stream are kept per
+   stream with their weight counted as they come and go, so a new frame costs the same however many
+   are waiting; 0.3.20 went over every waiting frame of every stream for each frame it received.
 
 The diff is `diff -u` of `src/stream.rs` and `src/session.rs` against the 0.3.20 release (the commits
 that vendored the crate show the first change, the unchanged copy, then the fix).
@@ -38,5 +40,6 @@ workspace `Cargo.toml`, when either of these is true:
 Until then, every tokio-yamux version bump re-applies both changes to the new release.
 
 Condition 1 above covers the first change only. For the second, the release must also keep reading a
-session whose slow streams hold less than their windows (check: the three tests named in `README.md`
-under the second fix pass against the registry crate).
+session whose slow streams hold less than their windows, and spend constant work per frame received
+however many wait (check: the four tests named in `README.md` under the second fix pass against the
+registry crate).

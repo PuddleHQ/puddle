@@ -26,11 +26,16 @@ stayed behind. One in four connections on the agent's default of 4 sessions. The
 reading, bounds the data each stream holds to its window (a peer that ignores it gets that stream
 reset, and the stream's reader gets a connection-reset error, never a clean end) and what all of them
 hold to four windows. Past four windows held by streams that do not read, the session stops reading as
-before: five paused downloads of a full window each on one session still stall it. Regression tests:
+before: five paused downloads of a full window each on one session still stall it. The frames
+waiting for a slow stream are held per stream, and their weight is counted as they come and go: 0.3.20
+went over every waiting frame for each frame received, so a reader that fell a window behind (2 048
+frames of 8 KiB) made each new frame cost thousands of steps, and a gibibyte down to a one-vCPU guest
+took 30 s against 5 s up. Regression tests:
 
 - `crates/puddle-agent/tests/relay.rs`: `a_client_that_stops_reading_does_not_stall_the_other_connections_of_its_session`
-- `crates/puddle-agent-proto/tests/yamux_window.rs`: `a_stream_sent_past_its_window_while_unread_is_reset_and_the_session_goes_on`
-  and `a_stream_holding_a_full_window_and_a_close_while_unread_still_reads_to_the_end`
+- `crates/puddle-agent-proto/tests/yamux_window.rs`: `a_stream_sent_past_its_window_while_unread_is_reset_and_the_session_goes_on`,
+  `a_stream_holding_a_full_window_and_a_close_while_unread_still_reads_to_the_end` and
+  `a_window_of_small_frames_held_for_a_late_reader_moves_in_linear_time`
 - `crates/puddle-e2e/tests/transparency.rs`: `a_client_reading_one_kibibyte_a_second_for_a_minute_is_not_cut_off`
 
 **What is not here:** upstream's tests, benches and examples. The regression tests live in the

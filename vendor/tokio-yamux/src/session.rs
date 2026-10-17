@@ -4,7 +4,7 @@
 #[cfg(not(target_family = "wasm"))]
 use std::time::Instant;
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque, hash_map::Entry},
+    collections::{BTreeMap, HashMap, VecDeque, hash_map::Entry},
     io,
     pin::Pin,
     task::{Context, Poll},
@@ -49,6 +49,45 @@ fn pending_weight(frame: &Frame) -> usize {
     }
 }
 
+/// puddle: the frames held for one stream whose channel is full, oldest first, and what they weigh.
+#[derive(Default)]
+struct Backlog {
+    frames: VecDeque<Frame>,
+    /// The data the frames carry: a peer within the stream's window never sends more than it.
+    data: usize,
+    /// The sum of their `pending_weight`.
+    weight: usize,
+}
+
+impl Backlog {
+    fn data_of(frame: &Frame) -> usize {
+        if frame.ty() == Type::Data {
+            frame.length() as usize
+        } else {
+            0
+        }
+    }
+
+    fn push_back(&mut self, frame: Frame) {
+        self.data += Self::data_of(&frame);
+        self.weight += pending_weight(&frame);
+        self.frames.push_back(frame);
+    }
+
+    fn push_front(&mut self, frame: Frame) {
+        self.data += Self::data_of(&frame);
+        self.weight += pending_weight(&frame);
+        self.frames.push_front(frame);
+    }
+
+    fn pop_front(&mut self) -> Option<Frame> {
+        let frame = self.frames.pop_front()?;
+        self.data -= Self::data_of(&frame);
+        self.weight -= pending_weight(&frame);
+        Some(frame)
+    }
+}
+
 /// puddle: how many receive windows a session holds for streams that are not reading before it
 /// stops reading its socket. A stream that does not read holds at most its own window (a peer that
 /// sends more is reset); the session only stops reading when streams together hold more than this.
@@ -88,10 +127,8 @@ pub struct Session<T> {
     pending_streams: VecDeque<StreamHandle>,
     // The buffer which will send to underlying network
     write_pending_frames: VecDeque<Frame>,
-    // The buffer which will distribute to sub streams
-    read_pending_frames: VecDeque<Frame>,
-    // puddle: what `read_pending_frames` holds, by `pending_weight`, as of the last distribution
-    read_pending_bytes: usize,
+    // puddle: frames for streams whose channel was full, per stream, to distribute in order
+    backlogs: HashMap<StreamId, Backlog>,
 
     // Why can unbound channel be used here?
     //
@@ -196,8 +233,7 @@ where
             streams: HashMap::default(),
             pending_streams: VecDeque::default(),
             write_pending_frames: VecDeque::default(),
-            read_pending_frames: VecDeque::default(),
-            read_pending_bytes: 0,
+            backlogs: HashMap::default(),
             event_sender,
             event_receiver,
             control_sender,
@@ -233,7 +269,7 @@ where
 
     // Send all pending frames to remote streams
     fn flush(&mut self, cx: &mut Context) -> Result<(), io::Error> {
-        if !self.read_pending_frames.is_empty() || !self.write_pending_frames.is_empty() {
+        if !self.backlogs.is_empty() || !self.write_pending_frames.is_empty() {
             self.send_all(cx)?;
             self.distribute_to_substream(cx)?;
         }
@@ -425,149 +461,155 @@ where
         Ok(())
     }
 
-    /// Try send buffer to all sub streams
-    fn distribute_to_substream(&mut self, cx: &mut Context) -> Result<(), io::Error> {
-        let mut block_substream = HashSet::new();
-        let new = if self.read_pending_frames.len() > BUF_SHRINK_THRESHOLD {
-            VecDeque::with_capacity(BUF_SHRINK_THRESHOLD)
-        } else {
-            VecDeque::new()
-        };
-
-        let buf = ::std::mem::replace(&mut self.read_pending_frames, new);
-        for frame in buf {
-            let stream_id = frame.stream_id();
-            // Guarantee the order in which messages are sent
-            if block_substream.contains(&stream_id) {
-                trace!("substream({}) blocked", stream_id);
-                self.read_pending_frames.push_back(frame);
-                continue;
-            }
-            if frame.flags().contains(Flag::Syn) {
-                if self.local_go_away {
-                    let flags = Flags::from(Flag::Rst);
-                    let frame = Frame::new_window_update(flags, stream_id, 0);
-                    self.send_frame(cx, frame)?;
-                    debug!(
-                        "substream({}) local go away send Reset to remote, session.ty={:?}",
-                        stream_id, self.ty
-                    );
-                    // TODO: should report error?
-                    return Ok(());
-                }
-                if self.streams.len() < self.config.max_stream_count
-                    && self.pending_streams.len() < self.config.accept_backlog
-                {
-                    debug!(
-                        "substream({}) accepted, session.ty={:?}",
-                        stream_id, self.ty
-                    );
-                    let stream = match self.create_stream(Some(stream_id)) {
-                        Ok(stream) => stream,
-                        Err(_) => {
-                            self.send_go_away_with_code(cx, GoAwayCode::ProtocolError)?;
-                            return Ok(());
-                        }
-                    };
-                    self.pending_streams.push_back(stream);
-                } else {
-                    // close the stream immediately
-                    debug!("substream({}) closed, session.ty={:?}", stream_id, self.ty);
-                    let mut flags = Flags::from(Flag::Ack);
-                    flags.add(Flag::Rst);
-                    let frame = Frame::new_window_update(flags, stream_id, 0);
-                    self.write_pending_frames.push_back(frame);
-                }
-            }
-            let disconnected = {
-                match self.streams.get_mut(&stream_id) {
-                    Some(frame_sender) => match frame_sender.poll_ready(cx) {
-                        Poll::Ready(Ok(())) => match frame_sender.try_send(frame) {
-                            Ok(_) => false,
-                            Err(err) => {
-                                if err.is_full() {
-                                    trace!("substream({}) try_send but full", stream_id);
-                                    self.read_pending_frames.push_back(err.into_inner());
-                                    block_substream.insert(stream_id);
-                                    false
-                                } else {
-                                    debug!("substream({}) try_send but failed: {}", stream_id, err);
-                                    true
-                                }
-                            }
-                        },
-                        Poll::Pending => {
-                            trace!("substream({}) poll_ready but pending", stream_id);
-                            self.read_pending_frames.push_back(frame);
-                            block_substream.insert(stream_id);
-                            false
-                        }
-                        Poll::Ready(Err(err)) => {
-                            debug!("substream({}) poll_ready but failed: {}", stream_id, err);
-                            true
-                        }
-                    },
-                    _ => {
-                        // TODO: stream already closed ?
-                        debug!(
-                            "substream({}) should exist but not, may drop by self",
-                            stream_id
-                        );
-                        false
-                    }
-                }
-            };
-            if disconnected {
-                debug!("substream({}) removed, session.ty={:?}", stream_id, self.ty);
-                self.streams.remove(&stream_id);
-            }
-        }
-        self.account_pending();
-
-        Ok(())
-    }
-
-    /// puddle: totals what the frames held for slow streams weigh. A stream holding more data than
-    /// its receive window has a peer that ignores the window: that stream is reset and its frames
-    /// dropped, and the session goes on. Only data counts here: a peer within the window may still
-    /// queue frames without data (its close, window updates) behind a full window. (Without this,
-    /// the only bound on what slow streams hold was to stop reading the socket, which stalled every
-    /// other stream of the session.)
-    fn account_pending(&mut self) {
-        let mut held: HashMap<StreamId, usize> = HashMap::new();
-        for frame in &self.read_pending_frames {
-            if frame.ty() == Type::Data {
-                *held.entry(frame.stream_id()).or_default() += frame.length() as usize;
-            }
-        }
-        let window = self.config.max_stream_window_size as usize;
-        for (stream_id, weight) in &held {
-            if *weight > window {
+    /// puddle: hands a frame to its stream, or gives it back when the stream's channel is full.
+    fn deliver(&mut self, cx: &mut Context, frame: Frame) -> Result<Option<Frame>, io::Error> {
+        let stream_id = frame.stream_id();
+        if frame.flags().contains(Flag::Syn) {
+            if self.local_go_away {
+                let flags = Flags::from(Flag::Rst);
+                let frame = Frame::new_window_update(flags, stream_id, 0);
+                self.send_frame(cx, frame)?;
                 debug!(
-                    "substream({}) holds {} bytes past its window, reset, session.ty={:?}",
-                    stream_id, weight, self.ty
+                    "substream({}) local go away send Reset to remote, session.ty={:?}",
+                    stream_id, self.ty
                 );
-                // The stream's channel is full, but a new sender has a slot of its own in it, so
-                // the reader sees the reset as an error instead of a clean end of the stream.
-                if let Some(sender) = self.streams.remove(stream_id) {
-                    let reset = Frame::new_window_update(Flags::from(Flag::Rst), *stream_id, 0);
-                    let _ = sender.clone().try_send(reset);
-                }
+                // TODO: should report error?
+                return Ok(None);
+            }
+            if self.streams.len() < self.config.max_stream_count
+                && self.pending_streams.len() < self.config.accept_backlog
+            {
+                debug!(
+                    "substream({}) accepted, session.ty={:?}",
+                    stream_id, self.ty
+                );
+                let stream = match self.create_stream(Some(stream_id)) {
+                    Ok(stream) => stream,
+                    Err(_) => {
+                        self.send_go_away_with_code(cx, GoAwayCode::ProtocolError)?;
+                        return Ok(None);
+                    }
+                };
+                self.pending_streams.push_back(stream);
+            } else {
+                // close the stream immediately
+                debug!("substream({}) closed, session.ty={:?}", stream_id, self.ty);
                 let mut flags = Flags::from(Flag::Ack);
                 flags.add(Flag::Rst);
-                self.write_pending_frames
-                    .push_back(Frame::new_window_update(flags, *stream_id, 0));
+                let frame = Frame::new_window_update(flags, stream_id, 0);
+                self.write_pending_frames.push_back(frame);
             }
         }
-        self.read_pending_frames
-            .retain(|f| held.get(&f.stream_id()).is_none_or(|w| *w <= window));
-        self.read_pending_bytes = self.read_pending_frames.iter().map(pending_weight).sum();
+        let Some(frame_sender) = self.streams.get_mut(&stream_id) else {
+            // TODO: stream already closed ?
+            debug!(
+                "substream({}) should exist but not, may drop by self",
+                stream_id
+            );
+            return Ok(None);
+        };
+        match frame_sender.poll_ready(cx) {
+            Poll::Ready(Ok(())) => match frame_sender.try_send(frame) {
+                Ok(()) => Ok(None),
+                Err(err) if err.is_full() => {
+                    trace!("substream({}) try_send but full", stream_id);
+                    Ok(Some(err.into_inner()))
+                }
+                Err(err) => {
+                    debug!("substream({}) try_send but failed: {}", stream_id, err);
+                    self.remove_stream(stream_id);
+                    Ok(None)
+                }
+            },
+            Poll::Pending => {
+                trace!("substream({}) poll_ready but pending", stream_id);
+                Ok(Some(frame))
+            }
+            Poll::Ready(Err(err)) => {
+                debug!("substream({}) poll_ready but failed: {}", stream_id, err);
+                self.remove_stream(stream_id);
+                Ok(None)
+            }
+        }
+    }
+
+    /// puddle: forgets a stream and the frames held for it.
+    fn remove_stream(&mut self, stream_id: StreamId) -> Option<Sender<Frame>> {
+        self.backlogs.remove(&stream_id);
+        self.streams.remove(&stream_id)
+    }
+
+    /// puddle: what the frames held for streams weigh, by `pending_weight`.
+    fn held_weight(&self) -> usize {
+        self.backlogs.values().map(|b| b.weight).sum()
+    }
+
+    /// puddle: holds a frame for a stream whose channel is full, behind the frames it already holds.
+    /// A stream holding more data than its receive window has a peer that ignores the window: that
+    /// stream is reset and its frames dropped, and the session goes on. Only data counts against the
+    /// window: a peer within it may still queue frames without data (its close, window updates)
+    /// behind a full window.
+    fn hold(&mut self, frame: Frame) {
+        let stream_id = frame.stream_id();
+        let backlog = self.backlogs.entry(stream_id).or_default();
+        backlog.push_back(frame);
+        if backlog.data > self.config.max_stream_window_size as usize {
+            debug!(
+                "substream({}) holds {} bytes past its window, reset, session.ty={:?}",
+                stream_id, backlog.data, self.ty
+            );
+            // The stream's channel is full, but a new sender has a slot of its own in it, so
+            // the reader sees the reset as an error instead of a clean end of the stream.
+            if let Some(sender) = self.remove_stream(stream_id) {
+                let reset = Frame::new_window_update(Flags::from(Flag::Rst), stream_id, 0);
+                let _ = sender.clone().try_send(reset);
+            }
+            let mut flags = Flags::from(Flag::Ack);
+            flags.add(Flag::Rst);
+            self.write_pending_frames
+                .push_back(Frame::new_window_update(flags, stream_id, 0));
+        }
+    }
+
+    /// puddle: moves the frames held for streams into their channels, in order, as far as each
+    /// channel takes them. The work is the frames moved plus one try per stream still behind, so a
+    /// slow reader with a full window held costs nothing per frame of the other streams.
+    fn distribute_to_substream(&mut self, cx: &mut Context) -> Result<(), io::Error> {
+        let behind: Vec<StreamId> = self.backlogs.keys().copied().collect();
+        for stream_id in behind {
+            while let Some(frame) = self
+                .backlogs
+                .get_mut(&stream_id)
+                .and_then(Backlog::pop_front)
+            {
+                if let Some(frame) = self.deliver(cx, frame)? {
+                    // Still full: back in front, where it was.
+                    self.backlogs
+                        .entry(stream_id)
+                        .or_default()
+                        .push_front(frame);
+                    break;
+                }
+            }
+            if self
+                .backlogs
+                .get(&stream_id)
+                .is_some_and(|b| b.frames.is_empty())
+            {
+                self.backlogs.remove(&stream_id);
+            }
+        }
+        Ok(())
     }
 
     // Send message to stream (Data/WindowUpdate)
     fn handle_stream_message(&mut self, cx: &mut Context, frame: Frame) -> Result<(), io::Error> {
-        self.read_pending_frames.push_back(frame);
-        self.distribute_to_substream(cx)?;
+        // Guarantee the order in which messages are sent: behind what the stream already holds.
+        if self.backlogs.contains_key(&frame.stream_id()) {
+            self.hold(frame);
+        } else if let Some(frame) = self.deliver(cx, frame)? {
+            self.hold(frame);
+        }
         Ok(())
     }
 
@@ -647,7 +689,7 @@ where
                 self.send_frame(cx, frame)?;
             }
             StreamEvent::Closed(stream_id) => {
-                self.streams.remove(&stream_id);
+                self.remove_stream(stream_id);
                 if self.streams.capacity() - self.streams.len() > BUF_SHRINK_THRESHOLD {
                     self.streams.shrink_to_fit();
                 }
@@ -710,12 +752,12 @@ where
         }
 
         if log_enabled!(log::Level::Trace)
-            && !(self.write_pending_frames.is_empty() && self.read_pending_frames.is_empty())
+            && !(self.write_pending_frames.is_empty() && self.backlogs.is_empty())
         {
             trace!(
-                "yamux::Session write_pending_frames: {}, read_pending_frames: {}",
+                "yamux::Session write_pending_frames: {}, streams behind: {}",
                 self.write_pending_frames.len(),
-                self.read_pending_frames.len()
+                self.backlogs.len()
             );
         }
 
@@ -761,13 +803,14 @@ where
             }
 
             let mut is_pending = self.control_poll(cx)?.is_pending();
-            if self.read_pending_bytes < PENDING_WINDOWS * self.config.max_stream_window_size as usize {
+            let held = self.held_weight();
+            if held < PENDING_WINDOWS * self.config.max_stream_window_size as usize {
                 is_pending &= self.recv_frames(cx)?.is_pending();
             } else {
                 trace!(
-                    "[{:?}] skip recv_frames while read_pending_frames is backpressured: {}",
+                    "[{:?}] skip recv_frames while held frames are backpressured: {}",
                     self.ty,
-                    self.read_pending_bytes
+                    held
                 );
             }
             is_pending &= self.recv_events(cx)?.is_pending();
@@ -1330,13 +1373,17 @@ mod test {
                 ))
                 .unwrap();
             session.streams.insert(stream_id, frame_sender);
-            session.read_pending_frames.push_back(Frame::new_data(
-                Flags::from(Flag::Ack),
-                stream_id,
-                bytes::BytesMut::from(&[1][..]),
-            ));
+            session
+                .backlogs
+                .entry(stream_id)
+                .or_default()
+                .push_back(Frame::new_data(
+                    Flags::from(Flag::Ack),
+                    stream_id,
+                    bytes::BytesMut::from(&[1][..]),
+                ));
 
-            assert_eq!(session.read_pending_frames.len(), 1);
+            assert_eq!(session.backlogs[&stream_id].frames.len(), 1);
 
             let mut client = Framed::new(
                 remote,
@@ -1352,7 +1399,7 @@ mod test {
             assert!(Pin::new(&mut session).poll_next(&mut cx).is_pending());
             // puddle: the session keeps reading while the streams that do not read hold less than
             // PENDING_WINDOWS windows, so one slow stream does not stop the others.
-            assert_eq!(session.read_pending_frames.len(), 2);
+            assert_eq!(session.backlogs[&stream_id].frames.len(), 2);
         });
     }
 

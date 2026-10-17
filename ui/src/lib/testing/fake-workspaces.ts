@@ -163,10 +163,7 @@ export class FakeWorkspaces {
         o.memory === null
           ? resolved(this.globalMemory, "global")
           : resolved(o.memory, "workspace"),
-      cpus: resolved(
-        o.cpus ?? 1,
-        o.cpus === null ? "default" : "workspace",
-      ),
+      cpus: resolved(o.cpus ?? 1, o.cpus === null ? "default" : "workspace"),
       reconnection_grace: resolved(300, "default"),
       wildcards_reach_local: resolved(false, "default"),
       zoom_hotkeys: resolved(true, "default"),

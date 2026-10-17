@@ -182,13 +182,16 @@ async fn upload(conn: &mut BufReader<TcpStream>, bytes: u64) -> io::Result<Trans
     })
 }
 
-/// Reads to the end of the source's stream, checking every byte.
+/// Reads to the end of the source's stream, checking every byte; a read that waits longer than
+/// [`STALL`] fails the transfer instead of hanging it.
 async fn download(conn: &mut BufReader<TcpStream>, bytes: u64) -> io::Result<Transfer> {
     let started = Instant::now();
     let mut buf = vec![0u8; CHUNK];
     let (mut got, mut worst_gap, mut last) = (0u64, Duration::ZERO, Instant::now());
     loop {
-        let n = conn.read(&mut buf).await?;
+        let n = tokio::time::timeout(STALL, conn.read(&mut buf))
+            .await
+            .map_err(|_| io::Error::other(format!("no byte for {STALL:?} after {got} bytes")))??;
         if n == 0 {
             break;
         }
@@ -397,6 +400,81 @@ async fn a_gibibyte_goes_up_and_a_gibibyte_comes_down_with_no_stall() {
     let through = download(&mut conn, GIB).await.unwrap();
     let plain = download(&mut direct(source).await, GIB).await.unwrap();
     report("1 GiB download", &through, &plain);
+}
+
+/// A server that answers any request with a head and `bytes` of the pattern, then closes (it sees
+/// the proxy's `Connection: close`).
+async fn http_source(bytes: u64) -> SocketAddr {
+    let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (conn, _) = listener.accept().await.unwrap();
+            tokio::spawn(async move {
+                let mut conn = BufReader::new(conn);
+                let mut line = String::new();
+                while conn.read_line(&mut line).await.is_ok_and(|n| n > 2) {
+                    line.clear();
+                }
+                let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {bytes}\r\n\r\n");
+                if conn.get_mut().write_all(head.as_bytes()).await.is_err() {
+                    return;
+                }
+                let mut left = bytes;
+                while left > 0 {
+                    let n = usize::try_from(left.min(CHUNK as u64)).unwrap();
+                    if conn.get_mut().write_all(&pattern()[..n]).await.is_err() {
+                        return;
+                    }
+                    left -= n as u64;
+                }
+                let _ = conn.get_mut().shutdown().await;
+            });
+        }
+    });
+    addr
+}
+
+/// Sends `request` and reads the response head up to its body; returns the `Content-Length`.
+async fn response_head(conn: &mut BufReader<TcpStream>, request: &str) -> u64 {
+    conn.get_mut().write_all(request.as_bytes()).await.unwrap();
+    let mut status = String::new();
+    conn.read_line(&mut status).await.unwrap();
+    assert_eq!(status, "HTTP/1.1 200 OK\r\n");
+    let mut length = None;
+    loop {
+        let mut line = String::new();
+        conn.read_line(&mut line).await.unwrap();
+        if line == "\r\n" {
+            return length.expect("a Content-Length");
+        }
+        if let Some(value) = line.strip_prefix("Content-Length: ") {
+            length = Some(value.trim().parse().unwrap());
+        }
+    }
+}
+
+/// apt's way: a plain `GET http://...` with no tunnel, which the proxy forwards (reading nothing
+/// more from the client once the request is in) while 256 MiB come down, sixteen stream windows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_large_plain_http_response_comes_down_with_no_stall() {
+    const SIZE: u64 = 256 << 20;
+    let rig = rig().await;
+    allow(&rig.store, "echo.test");
+    let source = http_source(SIZE).await;
+    let port = source.port();
+    let mut conn = direct(rig.agent.local_addr()).await;
+    let request =
+        format!("GET http://echo.test:{port}/big HTTP/1.1\r\nHost: echo.test:{port}\r\n\r\n");
+    assert_eq!(response_head(&mut conn, &request).await, SIZE);
+    let through = download(&mut conn, SIZE).await.unwrap();
+    let mut conn = direct(source).await;
+    assert_eq!(
+        response_head(&mut conn, "GET /big HTTP/1.1\r\n\r\n").await,
+        SIZE
+    );
+    let plain = download(&mut conn, SIZE).await.unwrap();
+    report("256 MiB plain-HTTP download", &through, &plain);
 }
 
 /// A client that has closed its sending side still receives the whole answer, and a server that

@@ -16,7 +16,8 @@ only writes to a stream (the proxy forwarding a plain-HTTP response, which reads
 guest after the request) stalled for good once the window was spent, at 16 MiB to 24 MiB of the
 download. The channel's waker now wakes the reader and the writer both, so a writer gets its window
 update whether or not anyone reads. Regression tests: `crates/puddle-agent-proto/tests/yamux_window.rs`
-`a_stream_that_is_only_written_sends_past_its_window` and `crates/puddle-proxy/tests/plain_http_window.rs`.
+`a_stream_that_is_only_written_sends_past_its_window`, `crates/puddle-proxy/tests/plain_http_window.rs`
+and the transparency suite's `a_large_plain_http_response_comes_down_with_no_stall`.
 
 **Second fix, why:** the session stopped reading its socket as soon as one stream's reader fell behind
 (frame channel of 8 full), so a guest client that reads slowly or not at all (a paused download, a tool

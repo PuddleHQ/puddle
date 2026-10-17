@@ -1236,6 +1236,7 @@ async fn transparency_fixture() -> u16 {
                     }
                     let request = line.trim_end().to_owned();
                     let mut length = 0u64;
+                    let mut close = false;
                     loop {
                         let mut header = String::new();
                         if conn.read_line(&mut header).await.is_ok_and(|n| n == 0) {
@@ -1244,11 +1245,11 @@ async fn transparency_fixture() -> u16 {
                         if header == "\r\n" {
                             break;
                         }
-                        if let Some(value) =
-                            header.to_ascii_lowercase().strip_prefix("content-length:")
-                        {
+                        let header = header.to_ascii_lowercase();
+                        if let Some(value) = header.strip_prefix("content-length:") {
                             length = value.trim().parse().unwrap_or(0);
                         }
+                        close |= header.trim_end() == "connection: close";
                     }
                     let mut parts = request.split(' ');
                     let (method, path) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
@@ -1308,7 +1309,7 @@ async fn transparency_fixture() -> u16 {
                             .await
                             .is_ok()
                     };
-                    if !ok {
+                    if !ok || close {
                         return;
                     }
                 }
@@ -1331,11 +1332,12 @@ wall() { echo "$1_wall=$(( ($(date +%s%N) - t0) / 1000000 ))ms"; }
 
 /// What the guest runs for the transparency bar, as curl at its widest: `curl` is the one tool the
 /// image is sure to have, and it does what the package managers do (parallel transfers, one
-/// connection reused for many requests, big bodies each way, a reader that is slow). Each part is
-/// its own exec with a time limit above its curl limits, so a slow part fails on its own numbers
-/// and the parts before it are already printed; one limit for all of them once timed out the
-/// whole script on a hosted Windows runner whose parts were each within their bars. A gibibyte
-/// gets 120 s each way, about three times the slowest seen (35 s up on that runner, one vCPU).
+/// connection reused for many requests, big bodies each way, plain HTTP as apt sends it, a reader
+/// that is slow). Each part is its own exec with a time limit above its curl limits, so a slow part
+/// fails on its own numbers and the parts before it are already printed; one limit for all of them
+/// once timed out the whole script on a hosted Windows runner whose parts were each within their
+/// bars. A gibibyte gets 120 s each way, about three times the slowest seen (35 s up on that runner,
+/// one vCPU).
 /// Each part prints `key=value` words; the test asserts them.
 const TRANSPARENCY_PARTS: &[(&str, u64, &str)] = &[
     (
@@ -1369,6 +1371,14 @@ wall keepalive
         150,
         r#"
 curl -s "${PROXY[@]}" -o /dev/null --max-time 120 -w 'download_bytes=%{size_download} download_s=%{time_total} download_code=%{http_code}\n' "$U/bytes/1073741824"
+"#,
+    ),
+    (
+        "plain_download",
+        150,
+        r#"
+# apt's way: a plain `GET http://` that the proxy forwards, no tunnel.
+curl -s -x http://127.0.0.1:3128 --noproxy '' -o /dev/null --max-time 120 -w 'plain_download_bytes=%{size_download} plain_download_s=%{time_total} plain_download_code=%{http_code}\n' "$U/bytes/1073741824"
 "#,
     ),
     (
@@ -1483,6 +1493,8 @@ async fn vm_host_transparency_bar_curl_at_its_widest_through_agent_and_proxy() {
     assert!(seconds("keepalive_slowest") < 5.0, "{out}");
     assert_eq!(value("download_bytes"), "1073741824", "{out}");
     assert_eq!(value("download_code"), "200", "{out}");
+    assert_eq!(value("plain_download_bytes"), "1073741824", "{out}");
+    assert_eq!(value("plain_download_code"), "200", "{out}");
     assert_eq!(value("upload_code"), "200", "{out}");
     assert_eq!(value("slow_others_ok"), "20", "{out}");
     // 28 is curl's "operation timed out": the slow reader was still reading at --max-time.

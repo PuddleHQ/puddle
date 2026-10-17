@@ -73,8 +73,10 @@ pub(crate) struct Copies {
     root: PathBuf,
     store: Arc<Store>,
     /// One writer at a time: a save and a start both publish, and one's cleanup of the folder
-    /// would remove the other's half-written file.
-    writing: Mutex<()>,
+    /// would remove the other's half-written file. Holds the workspaces deleted since their
+    /// last start, so a save that found a workspace just before its delete cannot make the
+    /// folder again.
+    writing: Mutex<BTreeSet<WorkspaceId>>,
 }
 
 impl Copies {
@@ -83,7 +85,7 @@ impl Copies {
         Self {
             root,
             store,
-            writing: Mutex::new(()),
+            writing: Mutex::new(BTreeSet::new()),
         }
     }
 
@@ -97,7 +99,8 @@ impl Copies {
     }
 
     /// Makes `id`'s folder hold exactly the text saved for `name` (an empty file when there is
-    /// none) and nothing else.
+    /// none) and nothing else. For a start: a workspace made again under a deleted id gets its
+    /// folder from here.
     ///
     /// # Errors
     /// A message for the user when the database cannot be read or the folder cannot be written.
@@ -106,8 +109,35 @@ impl Copies {
         id: &WorkspaceId,
         name: &WorkspaceName,
     ) -> Result<Published, String> {
+        self.write(id, name, true)
+    }
+
+    /// Like [`Copies::publish`], for a save: nothing is written for a workspace that was deleted
+    /// and not started since.
+    ///
+    /// # Errors
+    /// A message for the user when the database cannot be read or the folder cannot be written.
+    pub(crate) fn refresh(
+        &self,
+        id: &WorkspaceId,
+        name: &WorkspaceName,
+    ) -> Result<Published, String> {
+        self.write(id, name, false)
+    }
+
+    fn write(
+        &self,
+        id: &WorkspaceId,
+        name: &WorkspaceName,
+        revive: bool,
+    ) -> Result<Published, String> {
         // Held from the read of the text, so a later save is never overwritten by an older one.
-        let _one_at_a_time = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut deleted = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+        if revive {
+            deleted.remove(id);
+        } else if deleted.contains(id) {
+            return Ok(Published::Clean);
+        }
         let wanted = self
             .store
             .shell_init(name)
@@ -130,7 +160,8 @@ impl Copies {
 
     /// Removes `id`'s folder (the workspace is gone). A folder that is not there is fine.
     pub(crate) fn forget(&self, id: &WorkspaceId) {
-        let _one_at_a_time = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut deleted = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+        deleted.insert(id.clone());
         let dir = self.dir(id);
         if let Err(e) = fs::remove_dir_all(&dir)
             && e.kind() != std::io::ErrorKind::NotFound
@@ -460,6 +491,52 @@ mod tests {
         copies.forget(&id("w1"));
         assert!(!dir.path().join("w1").exists());
         copies.forget(&id("w1"));
+    }
+
+    #[test]
+    fn a_save_that_picked_the_workspace_before_its_delete_does_not_bring_the_folder_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let (copies, store) = copies(dir.path());
+        copies.publish(&id("w1"), &name("alpha")).unwrap();
+        // The save event found the workspace, then the delete ran to its end.
+        copies.forget(&id("w1"));
+        copies.forget(&id("w1"));
+        store
+            .set_shell_init(&name("alpha"), &ShellInitText::new("export A=1").unwrap())
+            .unwrap();
+        assert_eq!(
+            copies.refresh(&id("w1"), &name("alpha")),
+            Ok(Published::Clean)
+        );
+        assert_eq!(
+            copies.refresh(&id("w1"), &name("alpha")),
+            Ok(Published::Clean)
+        );
+        assert!(!dir.path().join("w1").exists());
+    }
+
+    #[test]
+    fn a_workspace_made_again_under_a_deleted_id_is_not_blocked_after_its_first_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let (copies, store) = copies(dir.path());
+        copies.publish(&id("w1"), &name("alpha")).unwrap();
+        copies.forget(&id("w1"));
+        store
+            .set_shell_init(&name("alpha"), &ShellInitText::new("export A=2").unwrap())
+            .unwrap();
+        copies.publish(&id("w1"), &name("alpha")).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.path().join("w1/init.sh")).unwrap(),
+            "export A=2\n"
+        );
+        store
+            .set_shell_init(&name("alpha"), &ShellInitText::new("export A=3").unwrap())
+            .unwrap();
+        copies.refresh(&id("w1"), &name("alpha")).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.path().join("w1/init.sh")).unwrap(),
+            "export A=3\n"
+        );
     }
 
     #[test]

@@ -240,13 +240,25 @@ jobs:
           TMP: ${{ runner.temp }}
         run: scripts/check.sh ui-e2e
       # The desktop shell starts on the installed WebView2 and its main window shows the SPA from
-      # the in-process backend; driven over WebView2's DevTools Protocol, no extra tools.
-      - name: desktop shell smoke test (WebView2)
+      # the in-process backend; driven over WebView2's DevTools Protocol, no extra tools. First on
+      # the in-memory fixture (the first-run flow and a seeded request), then on the Puddle host.
+      - name: desktop shell smoke test (WebView2, fixture backend)
         if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
         shell: pwsh
         run: |
           cargo build -p puddle-app --all-features --locked
           $env:PUDDLE_APP_EXE = Join-Path $PWD 'target\debug\puddle-app.exe'
+          node crates/puddle-app/e2e/smoke.mjs
+      # The host needs the bundled runtime beside the program (the fork's msb.exe and libkrunfw.dll,
+      # checksums pinned); no machine boots, so WHP is not needed.
+      - name: desktop shell smoke test (WebView2, Puddle host)
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        shell: pwsh
+        run: |
+          bash ci/fetch-msb.sh target/debug/runtime
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:PUDDLE_APP_EXE = Join-Path $PWD 'target\debug\puddle-app.exe'
+          $env:SMOKE_BACKEND = 'host'
           node crates/puddle-app/e2e/smoke.mjs
       - name: upload UI test results
         if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}

@@ -5,28 +5,57 @@
 // command. WebView2 (Windows) only: WebKitGTK has no DevTools Protocol (Linux needs WebKitWebDriver,
 // see the brief's follow-ups). Plain Node 24, no npm packages.
 //
-// Environment: PUDDLE_APP_EXE (the built shell), CDP_PORT (default 9333).
+// Two backends (SMOKE_BACKEND):
+// - `fixture` (default): the in-memory fixture (a debug build with the `fixture` feature); the
+//   fixture's seeded pending request must show in the sidebar.
+// - `host`: the Puddle host, with the runtime folder beside the program (`runtime\msb.exe` and
+//   `libkrunfw.dll`) and a fresh data folder; the system check must answer, and closing the window
+//   must run the quit sequence and end the program by itself.
+//
+// Environment: PUDDLE_APP_EXE (the built shell), CDP_PORT (default 9333), SMOKE_BACKEND.
 // tauri-driver + msedgedriver was tried first and failed with "DevToolsActivePort file doesn't
 // exist" on windows-2025 ; driving WebView2 over the DevTools Protocol works without either driver.
 import { spawn, spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const exe = process.env.PUDDLE_APP_EXE;
 if (!exe) throw new Error("set PUDDLE_APP_EXE to the built puddle-app");
 const port = Number(process.env.CDP_PORT ?? 9333);
+const backend = process.env.SMOKE_BACKEND ?? "fixture";
+if (!["fixture", "host"].includes(backend)) throw new Error(`SMOKE_BACKEND must be fixture or host, not ${backend}`);
 
-const app = spawn(exe, [], {
-  stdio: ["ignore", "inherit", "inherit"],
-  env: {
-    ...process.env,
-    PUDDLE_APP_DEBUG_PORT: String(port),
-  },
+const env = { ...process.env, PUDDLE_APP_DEBUG_PORT: String(port) };
+let scratch;
+if (backend === "fixture") {
+  env.PUDDLE_APP_FIXTURE = "1";
+} else {
+  scratch = mkdtempSync(join(tmpdir(), "puddle-smoke-"));
+  env.PUDDLE_APP_DATA_DIR = join(scratch, "data");
+  // No machine boots in this test, so the guest agent only has to exist.
+  env.PUDDLE_AGENT_BIN = join(scratch, "puddle-agent");
+  writeFileSync(env.PUDDLE_AGENT_BIN, "stand-in agent\n");
+}
+console.log(`backend: ${backend}`);
+
+const app = spawn(exe, [], { stdio: ["ignore", "inherit", "pipe"], env });
+let appLog = "";
+app.stderr.on("data", (chunk) => {
+  appLog += chunk;
+  process.stderr.write(chunk);
 });
 let appExited = false;
-app.on("exit", (code) => {
-  appExited = true;
-  console.log(`puddle-app exited (${code})`);
-});
+let appExitCode;
+const exited = new Promise((resolve) =>
+  app.on("exit", (code) => {
+    appExited = true;
+    appExitCode = code;
+    console.log(`puddle-app exited (${code})`);
+    resolve();
+  }),
+);
 
 const failures = [];
 function check(name, ok, detail = "") {
@@ -136,12 +165,22 @@ try {
     return { type: typeof t, length: t ? t.length : 0, frozen: Object.isFrozen(window.__PUDDLE__) };`);
   check("the page holds a 64-character token, frozen", token.type === "string" && token.length === 64 && token.frozen);
 
-  let badge = "";
-  for (let i = 0; i < 100 && !badge.includes("1 pending"); i++) {
-    badge = await run(`const b = document.querySelector('[data-testid="pending-badge"]'); return b ? b.textContent : "";`);
-    if (!badge.includes("1 pending")) await sleep(300);
+  if (backend === "fixture") {
+    let badge = "";
+    for (let i = 0; i < 100 && !badge.includes("1 pending"); i++) {
+      badge = await run(`const b = document.querySelector('[data-testid="pending-badge"]'); return b ? b.textContent : "";`);
+      if (!badge.includes("1 pending")) await sleep(300);
+    }
+    check("the fixture's pending request shows in the sidebar badge", badge.includes("1 pending"), badge.trim());
+  } else {
+    // The fixture answers 503 here: only the host runs the system check.
+    const doctor = await run(`const r = await fetch("/api/doctor?boot=false", { headers: { Authorization: "Bearer " + window.__PUDDLE__.token } });
+      const body = await r.json(); return { status: r.status, checks: (body.checks ?? []).map((c) => c.id + "=" + c.status) };`).catch((err) => ({ error: String(err) }));
+    check("the host answers the system check", doctor?.status === 200 && doctor.checks.length > 0, JSON.stringify(doctor));
+    const list = await run(`const r = await fetch("/api/workspaces", { headers: { Authorization: "Bearer " + window.__PUDDLE__.token } });
+      return { status: r.status, body: await r.json() };`).catch((err) => ({ error: String(err) }));
+    check("the host's workspace list is empty on a fresh data folder", list?.status === 200 && list.body?.workspaces?.length === 0, JSON.stringify(list));
   }
-  check("the fixture's pending request shows in the sidebar badge", badge.includes("1 pending"), badge.trim());
   const banner = await run(`const s = document.querySelector('[role="status"]'); return s ? s.textContent : "";`);
   check("no 'can't sign in' banner", !banner.includes("can't sign in"), banner.trim());
 
@@ -159,6 +198,19 @@ try {
   for (const r of refused.results) {
     check(`invoke ${r.cmd} is refused`, r.refused && /not allowed/i.test(r.message), r.message.split("\n")[0]);
   }
+  if (backend === "host") {
+    // What the close button does: the window closes, the app quits and runs the quit sequence.
+    page.close();
+    page = undefined;
+    spawnSync("powershell", ["-NoProfile", "-Command", `(Get-Process -Id ${app.pid}).CloseMainWindow() | Out-Null`], { stdio: "inherit" });
+    await Promise.race([exited, sleep(90_000)]);
+    check("closing the window ends the program by itself", appExited && appExitCode === 0, `exited: ${appExited}, code: ${appExitCode}`);
+    check(
+      "the quit stopped the workspaces before the API",
+      /stopped.*WorkspacesStopped.*ApiStopped/.test(appLog),
+      appLog.split("\n").filter((l) => l.includes("stopped")).join(" | "),
+    );
+  }
 } catch (err) {
   check("the smoke test ran to the end", false, String(err?.stack ?? err));
 } finally {
@@ -167,6 +219,7 @@ try {
     // The whole tree: WebView2's processes are children of the app.
     spawnSync("taskkill", ["/PID", String(app.pid), "/T", "/F"], { stdio: "ignore" });
   }
+  if (scratch) rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
 }
 
 if (failures.length > 0) {

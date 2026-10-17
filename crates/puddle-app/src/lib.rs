@@ -17,8 +17,14 @@
 //!   go to the default browser, called from Rust; everything else is dropped. A link that goes
 //!   nowhere (the opener failed, or the window refused it) is raised as a background problem
 //!   ([`links`]), which the page shows as a notice.
+//! * The backend is the Puddle host, the same one `puddle serve` runs, in this process
+//!   ([`backend::Source`]). Its synchronous phase runs in [`run`] before Tauri starts a thread,
+//!   inside the job that ends the workspaces' machines with the shell if it dies. A debug build
+//!   with the `fixture` feature shows the in-memory fixture instead when `PUDDLE_APP_FIXTURE=1`.
+//! * Quitting runs [`shell::stop`]: the workspaces' editor windows close, then the host trims and
+//!   stops every workspace before its API ends.
 //! * Tray, notifications, badges and close behaviour come later: they run in Rust, driven from
-//!   [`backend::Backend::events`]. The real backend and the workspace quit sequence come later.
+//!   [`backend::Backend::events`].
 #![forbid(unsafe_code)]
 
 pub mod backend;

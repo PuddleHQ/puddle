@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Wiring: plugins, the backend and the main window, and the exit hook.
+//! Wiring: plugins, the backend and the main window, and the exit hook (the quit sequence).
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use puddle_host::{HostShutdown, SystemPlatform};
+use puddle_lifecycle::LifecycleError;
 use puddle_types::Problems;
 use tauri::{AppHandle, Manager, RunEvent, Runtime};
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
-use crate::backend::{Backend, BackendError};
+use crate::backend::{Backend, BackendError, Source};
 use crate::links;
 use crate::window::{MAIN_LABEL, OpenExternal, Refused, open_main};
 
@@ -23,6 +25,9 @@ pub enum ShellError {
     /// Tauri failed.
     #[error("the window system failed: {0}")]
     Tauri(#[from] tauri::Error),
+    /// The shell couldn't put itself in the job that ends the workspaces' machines with it.
+    #[error("cannot start: {0}")]
+    Containment(#[from] LifecycleError),
 }
 
 /// How a run differs from the defaults. Development conveniences only; a release build ignores
@@ -40,6 +45,15 @@ pub struct Options {
     /// A port for WebView2's DevTools Protocol (`PUDDLE_APP_DEBUG_PORT`), which the smoke test
     /// drives the window through. Windows only.
     pub debug_port: Option<u16>,
+    /// Show the in-memory fixture instead of running the host (`PUDDLE_APP_FIXTURE=1`; builds with
+    /// the `fixture` feature).
+    pub fixture: bool,
+    /// The host's data folder instead of the per-user one (`PUDDLE_APP_DATA_DIR`), so a test run
+    /// or a second developer instance has state of its own.
+    pub data_dir: Option<PathBuf>,
+    /// The guest agent instead of the one in the runtime folder (`PUDDLE_AGENT_BIN`, as for
+    /// `puddle serve`).
+    pub agent: Option<PathBuf>,
 }
 
 impl Options {
@@ -56,6 +70,9 @@ impl Options {
                 debug_port: std::env::var("PUDDLE_APP_DEBUG_PORT")
                     .ok()
                     .and_then(|v| v.parse().ok()),
+                fixture: std::env::var_os("PUDDLE_APP_FIXTURE").is_some_and(|v| v == "1"),
+                data_dir: std::env::var_os("PUDDLE_APP_DATA_DIR").map(PathBuf::from),
+                agent: std::env::var_os("PUDDLE_AGENT_BIN").map(PathBuf::from),
             }
         } else {
             Self::default()
@@ -104,16 +121,30 @@ fn refuser(problems: &Arc<Problems>) -> Refused {
     Arc::new(move |url: &Url| links::report_refused(&problems, url))
 }
 
-/// Starts the backend and opens the main window, then keeps the backend for the exit hook.
+/// Starts the backend `source` names and opens the main window on it.
 ///
 /// # Errors
 ///
-/// [`ShellError`] if the backend or the window can't start.
-pub fn start<R: Runtime>(app: &AppHandle<R>, options: &Options) -> Result<(), ShellError> {
-    let backend = tauri::async_runtime::block_on(Backend::start(options.port))?;
-    if let Some(file) = &options.connection_file {
-        backend.write_connection_file(file)?;
-    }
+/// [`ShellError`] if the backend or the window can't start; no window is left open.
+pub fn start<R: Runtime>(
+    app: &AppHandle<R>,
+    options: &Options,
+    source: Source,
+) -> Result<(), ShellError> {
+    let backend = tauri::async_runtime::block_on(source.start(options))?;
+    open(app, options, backend)
+}
+
+/// Opens the main window on a started backend, then keeps the backend for the exit hook.
+///
+/// # Errors
+///
+/// [`ShellError::Tauri`] if the window can't open.
+pub fn open<R: Runtime>(
+    app: &AppHandle<R>,
+    options: &Options,
+    backend: Backend,
+) -> Result<(), ShellError> {
     open_main(
         app,
         backend.url(),
@@ -128,11 +159,49 @@ pub fn start<R: Runtime>(app: &AppHandle<R>, options: &Options) -> Result<(), Sh
     Ok(())
 }
 
-/// The exit hook: stops the backend. The workspace quit sequence will go in front.
-pub fn stop<R: Runtime>(app: &AppHandle<R>) {
-    if let Some(backend) = app.try_state::<Backend>() {
-        tauri::async_runtime::block_on(backend.shutdown());
+/// The exit hook, the quit sequence: close every window but the main one (the workspaces' editor
+/// windows), then stop the backend, which trims and stops every workspace before its API ends.
+/// Says what the backend's shutdown did; `None` when there was no backend or it had stopped
+/// already, so the hook is safe to run twice.
+pub fn stop<R: Runtime>(app: &AppHandle<R>) -> Option<HostShutdown> {
+    for (label, window) in app.webview_windows() {
+        if label != MAIN_LABEL {
+            // A window that is already going away can't be closed again; nothing is lost.
+            let _ = window.destroy();
+        }
     }
+    let shutdown = tauri::async_runtime::block_on(app.try_state::<Backend>()?.shutdown())?;
+    for warning in quit_warnings(&shutdown) {
+        tracing::warn!("{warning}");
+    }
+    tracing::info!(steps = ?shutdown.steps, "stopped");
+    Some(shutdown)
+}
+
+/// What the log says about a quit that did not go cleanly: each workspace whose disk was not
+/// trimmed or whose machine did not stop, and the operations that were ended unfinished.
+fn quit_warnings(shutdown: &HostShutdown) -> Vec<String> {
+    let report = &shutdown.sandboxes;
+    let mut lines: Vec<String> = report
+        .untrimmed()
+        .into_iter()
+        .map(|(sandbox, why)| {
+            format!("the disk of {sandbox} was not trimmed: {why}; Reclaim space trims it later")
+        })
+        .chain(
+            report
+                .unstopped()
+                .into_iter()
+                .map(|(sandbox, why)| format!("{sandbox} did not stop cleanly: {why}")),
+        )
+        .collect();
+    if shutdown.operations_ended > 0 {
+        lines.push(format!(
+            "{} workspace operations were still running and were ended",
+            shutdown.operations_ended
+        ));
+    }
+    lines
 }
 
 /// Runs the app until it quits. Closing the main window quits (that will change to hiding to the
@@ -146,28 +215,90 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
     let _ = tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .try_init();
+    // Before the runtime starts any machine: if the shell dies, Windows ends them with it.
+    puddle_lifecycle::job::contain_this_process()?;
+    // While this is the only thread: the host pins the process environment.
+    let source = Source::prepare(options, &SystemPlatform::new().with_dev_override_from_env());
     let options = options.clone();
-    // Single-instance first: a second launch must end before anything else starts.
+    // Single-instance first: a second launch hands over to the running app and ends here, before
+    // the error of its unlocked data folder could show.
     let builder =
         tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             focus_main(app);
         }));
     let app = with_plugins(builder)
         .setup(move |app| {
-            start(app.handle(), &options)?;
+            start(app.handle(), &options, source)?;
             Ok(())
         })
         .build(context())?;
     app.run(|handle, event| {
         if matches!(event, RunEvent::Exit) {
-            stop(handle);
+            let _ = stop(handle);
         }
     });
     Ok(())
 }
 
+#[cfg(test)]
+pub(crate) mod tests {
+    use puddle_lifecycle::{ShutdownReport, StopOutcome, TrimOutcome, WorkspaceOutcome};
+    use puddle_types::SandboxName;
+
+    use super::*;
+
+    #[test]
+    fn a_clean_quit_logs_no_warning() {
+        let outcome = WorkspaceOutcome {
+            sandbox: SandboxName::new("fine").unwrap(),
+            trim: TrimOutcome::Trimmed,
+            stop: StopOutcome::Stopped,
+        };
+        let clean = HostShutdown {
+            sandboxes: ShutdownReport {
+                sandboxes: vec![outcome],
+            },
+            ..HostShutdown::default()
+        };
+        assert_eq!(quit_warnings(&clean), Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_quit_names_each_workspace_that_did_not_trim_or_stop_and_the_ended_operations() {
+        let shutdown = HostShutdown {
+            sandboxes: ShutdownReport {
+                sandboxes: vec![WorkspaceOutcome {
+                    sandbox: SandboxName::new("slow").unwrap(),
+                    trim: TrimOutcome::Error("no answer".to_owned()),
+                    stop: StopOutcome::Forced,
+                }],
+            },
+            operations_ended: 2,
+            ..HostShutdown::default()
+        };
+        assert_eq!(
+            quit_warnings(&shutdown),
+            [
+                "the disk of slow was not trimmed: no answer; Reclaim space trims it later",
+                "slow did not stop cleanly: it did not shut down in time and was ended by force; files it had not written yet may be missing",
+                "2 workspace operations were still running and were ended",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_defaults_pick_a_free_port_and_ask_for_nothing() {
+        let options = Options::default();
+        assert_eq!(options.port, 0);
+        assert!(options.connection_file.is_none() && options.dev_url.is_none());
+        assert!(options.debug_port.is_none() && !options.fixture);
+        assert!(options.data_dir.is_none() && options.agent.is_none());
+        assert_eq!(Options::from_env().port, 0);
+    }
+}
+
 #[cfg(all(test, feature = "fixture"))]
-mod tests {
+mod fixture_tests {
     #![expect(
         clippy::unwrap_used,
         reason = "helpers outside #[test] fns run only in tests; a panic is how a test fails"
@@ -176,7 +307,7 @@ mod tests {
     use tauri::test::{MockRuntime, mock_builder};
 
     use super::*;
-    use crate::backend::tests::get;
+    use crate::backend::tests::{fixture_options, get, start_fixture};
 
     fn app() -> tauri::App<MockRuntime> {
         with_plugins(mock_builder()).build(context()).unwrap()
@@ -189,9 +320,9 @@ mod tests {
         let file = dir.path().join("api.json");
         let options = Options {
             connection_file: Some(file.clone()),
-            ..Options::default()
+            ..fixture_options()
         };
-        start(app.handle(), &options).unwrap();
+        start(app.handle(), &options, Source::Fixture).unwrap();
 
         let backend = app.state::<Backend>();
         let window = app.get_webview_window(MAIN_LABEL).unwrap();
@@ -202,36 +333,37 @@ mod tests {
         let reply = rt.block_on(get(&backend, "/api/pending", Some(backend.token())));
         assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
 
-        stop(app.handle());
+        let stopped = stop(app.handle()).unwrap();
+        assert_eq!(stopped.steps, [puddle_host::Step::ApiStopped]);
         let port = backend.url().port().unwrap();
         assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err());
         // The hook can run again (a second Exit event, or no backend at all).
-        stop(app.handle());
+        assert_eq!(stop(app.handle()), None);
     }
 
     #[test]
     fn stop_without_a_backend_does_nothing() {
-        stop(app().handle());
+        assert_eq!(stop(app().handle()), None);
     }
 
     #[test]
     fn focusing_without_a_main_window_does_nothing_and_with_one_succeeds() {
         let app = app();
         focus_main(app.handle());
-        start(app.handle(), &Options::default()).unwrap();
+        start(app.handle(), &fixture_options(), Source::Fixture).unwrap();
         focus_main(app.handle());
-        stop(app.handle());
+        assert!(stop(app.handle()).is_some());
     }
 
     #[test]
     fn a_failed_start_leaves_no_window() {
         let app = app();
-        let taken = tauri::async_runtime::block_on(Backend::start(0)).unwrap();
+        let taken = tauri::async_runtime::block_on(start_fixture(0));
         let options = Options {
             port: taken.url().port().unwrap(),
-            ..Options::default()
+            ..fixture_options()
         };
-        let err = start(app.handle(), &options).unwrap_err();
+        let err = start(app.handle(), &options, Source::Fixture).unwrap_err();
         assert!(matches!(err, ShellError::Backend(_)), "{err}");
         assert!(app.get_webview_window(MAIN_LABEL).is_none());
         tauri::async_runtime::block_on(taken.shutdown());
@@ -240,7 +372,7 @@ mod tests {
     #[test]
     fn a_refused_link_reaches_the_pages_problem_list() {
         let app = app();
-        start(app.handle(), &Options::default()).unwrap();
+        start(app.handle(), &fixture_options(), Source::Fixture).unwrap();
         let problems = app.state::<Backend>().problems().clone();
         refuser(&problems)(&Url::parse("file:///etc/passwd").unwrap());
         let listed: Vec<_> = problems
@@ -250,15 +382,6 @@ mod tests {
             .collect();
         assert_eq!(listed.len(), 1);
         assert!(listed[0].title.contains("file:"), "{}", listed[0].title);
-        stop(app.handle());
-    }
-
-    #[test]
-    fn the_defaults_pick_a_free_port_and_ask_for_nothing() {
-        let options = Options::default();
-        assert_eq!(options.port, 0);
-        assert!(options.connection_file.is_none() && options.dev_url.is_none());
-        assert!(options.debug_port.is_none());
-        assert_eq!(Options::from_env().port, 0);
+        assert!(stop(app.handle()).is_some());
     }
 }

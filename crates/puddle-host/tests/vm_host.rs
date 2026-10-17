@@ -33,7 +33,7 @@ use support::{Api, TestDevCert, ended, hermetic_options};
 #[cfg(not(windows))]
 use vm_support::start_vm_host_config;
 use vm_support::{
-    HarnessPlatform, VmHost, guest, harness_config, start_vm_host, start_vm_host_with,
+    HarnessPlatform, VmHost, guest, guest_within, harness_config, start_vm_host, start_vm_host_with,
 };
 
 /// A small public repository on a host the test allows.
@@ -1318,38 +1318,71 @@ async fn transparency_fixture() -> u16 {
     port
 }
 
-/// What the guest runs for the transparency bar, as curl at its widest: `curl` is the one tool the
-/// image is sure to have, and it does what the package managers do (parallel transfers, one
-/// connection reused for many requests, big bodies each way, a reader that is slow). Each part
-/// prints `key=value` lines; the test asserts them.
-const TRANSPARENCY_SCRIPT: &str = r#"
+/// What every part of [`TRANSPARENCY_PARTS`] starts with.
+const TRANSPARENCY_PRELUDE: &str = r#"
 set -u
 ulimit -n 8192 2>/dev/null || ulimit -n "$(ulimit -Hn)"
 PROXY=(-p -x http://127.0.0.1:3128 --noproxy '')
 U="http://127.0.0.1:$PORT"
 cd /tmp
-now() { date +%s.%N; }
+t0=$(date +%s%N)
+wall() { echo "$1_wall=$(( ($(date +%s%N) - t0) / 1000000 ))ms"; }
+"#;
 
+/// What the guest runs for the transparency bar, as curl at its widest: `curl` is the one tool the
+/// image is sure to have, and it does what the package managers do (parallel transfers, one
+/// connection reused for many requests, big bodies each way, a reader that is slow). Each part is
+/// its own exec with a time limit above its curl limits, so a slow part fails on its own numbers
+/// and the parts before it are already printed; one limit for all of them once timed out the
+/// whole script on a hosted Windows runner whose parts were each within their bars. A gibibyte
+/// gets 120 s each way, about three times the slowest seen (35 s up on that runner, one vCPU).
+/// Each part prints `key=value` words; the test asserts them.
+const TRANSPARENCY_PARTS: &[(&str, u64, &str)] = &[
+    (
+        "parallel",
+        150,
+        r#"
 # 1024 connections at once (four times pnpm's peak), curl's own parallel mode.
 : > par.cfg
 for i in $(seq 1 1024); do printf 'url = "%s/ping?i=%s"\noutput = "/dev/null"\n' "$U" "$i" >> par.cfg; done
-t0=$(now)
 curl -s "${PROXY[@]}" --parallel --parallel-immediate --parallel-max 1024 -K par.cfg --max-time 120 \
   -w '%{http_code} %{time_total}\n' > par.out 2> par.err
 echo "parallel_ok=$(grep -c '^200 ' par.out) parallel_total=1024 parallel_slowest=$(sort -k2 -n par.out | tail -1 | cut -d' ' -f2)"
 [ -s par.err ] && echo "parallel_stderr=$(head -c 300 par.err | tr '\n' ' ')"
-
+wall parallel
+"#,
+    ),
+    (
+        "keepalive",
+        150,
+        r#"
 # 1000 requests in a row on one reused connection.
 : > seq.cfg
 for i in $(seq 1 1000); do printf 'url = "%s/ping?i=%s"\noutput = "/dev/null"\n' "$U" "$i" >> seq.cfg; done
 curl -s "${PROXY[@]}" -K seq.cfg --max-time 120 -w '%{http_code} %{time_total} %{num_connects}\n' > seq.out 2> seq.err
-echo "keepalive_ok=$(grep -c '^200 ' seq.out) keepalive_slowest=$(sort -k2 -n seq.out | tail -1 | cut -d' ' -f2) keepalive_connects=$(awk '{n+=$3} END {print n}' seq.out)"
-
-# A gibibyte down and a gibibyte up.
-curl -s "${PROXY[@]}" -o /dev/null --max-time 300 -w 'download_bytes=%{size_download} download_s=%{time_total} download_code=%{http_code}\n' "$U/bytes/1073741824"
+echo "keepalive_ok=$(grep -c '^200 ' seq.out) keepalive_slowest=$(sort -k2 -n seq.out | tail -1 | cut -d' ' -f2) keepalive_mean=$(awk '{t+=$2} END {printf "%.6f", t/NR}' seq.out) keepalive_connects=$(awk '{n+=$3} END {print n}' seq.out)"
+wall keepalive
+"#,
+    ),
+    (
+        "download",
+        150,
+        r#"
+curl -s "${PROXY[@]}" -o /dev/null --max-time 120 -w 'download_bytes=%{size_download} download_s=%{time_total} download_code=%{http_code}\n' "$U/bytes/1073741824"
+"#,
+    ),
+    (
+        "upload",
+        150,
+        r#"
 head -c 1073741824 /dev/zero | curl -s "${PROXY[@]}" -T - -H 'Transfer-Encoding:' -H 'Content-Length: 1073741824' \
-  --max-time 300 -w ' upload_s=%{time_total} upload_code=%{http_code}\n' "$U/sink"
-
+  --max-time 120 -w ' upload_s=%{time_total} upload_code=%{http_code}\n' "$U/sink"
+"#,
+    ),
+    (
+        "slow",
+        180,
+        r#"
 # A reader at 1 KiB/s for 60 s, with 20 other transfers started meanwhile, one every 2 s.
 curl -s "${PROXY[@]}" --limit-rate 1k -o /dev/null --max-time 60 -w 'slow_bytes=%{size_download} slow_exit_time=%{time_total}\n' "$U/bytes/1073741824" &
 slow=$!
@@ -1362,10 +1395,13 @@ done
 echo "slow_others_ok=$others slow_others_total=20"
 wait "$slow"
 echo "slow_curl_exit=$?"
-"#;
+wall slow
+"#,
+    ),
+];
 
 /// The transparency bar from inside a real VM: what the heaviest package managers do (see
-/// [`TRANSPARENCY_SCRIPT`]) goes from the guest through the agent, the vsock route, the proxy and
+/// [`TRANSPARENCY_PARTS`]) goes from the guest through the agent, the vsock route, the proxy and
 /// the rules engine to a server on the host. No failure, and no connection slower than 5 s.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_host_transparency_bar_curl_at_its_widest_through_agent_and_proxy() {
@@ -1416,14 +1452,22 @@ async fn vm_host_transparency_bar_curl_at_its_widest_through_agent_and_proxy() {
         .await;
     assert_eq!(toggle.status, 200, "{}", toggle.body);
 
-    let started = std::time::Instant::now();
-    let out = guest(
-        &runtime,
-        &sandbox,
-        &format!("PORT={port} bash -s <<'PUDDLE_EOF'\n{TRANSPARENCY_SCRIPT}\nPUDDLE_EOF"),
-    )
-    .await;
-    eprintln!("{out}took {:?}", started.elapsed());
+    let mut out = String::new();
+    for (part, limit, script) in TRANSPARENCY_PARTS {
+        eprintln!("{part} starts, limit {limit} s");
+        let started = std::time::Instant::now();
+        let said = guest_within(
+            &runtime,
+            &sandbox,
+            &format!(
+                "PORT={port} bash -s <<'PUDDLE_EOF'\n{TRANSPARENCY_PRELUDE}{script}\nPUDDLE_EOF"
+            ),
+            Duration::from_secs(*limit),
+        )
+        .await;
+        eprintln!("{said}{part} took {:?}", started.elapsed());
+        out.push_str(&said);
+    }
 
     let value = |key: &str| -> String {
         out.split_whitespace()

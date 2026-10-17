@@ -99,6 +99,7 @@ mod tests {
         assert_eq!(CpuCount::new(4).unwrap().to_string(), "4");
         assert_eq!(u32::from(CpuCount::MAX), 32);
         assert_eq!(CpuCount::try_from(2).unwrap().get(), 2);
+        assert_eq!(CpuCount::default(), CpuCount::DEFAULT);
     }
 
     #[test]

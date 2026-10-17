@@ -56,7 +56,7 @@ fn internet(hosts: &[(&str, &GitHost)]) -> Internet {
         rules: ProxyRules::parse(&format!("http://127.0.0.1:{}", proxy.port())),
         ..ProxyConfig::default()
     });
-    let mut options = HostOptions::default();
+    let mut options = support::hermetic_options();
     options.discovery = Some(Discovery::new(os, puddle_upstream::Config::default()));
     let mut snapshot = StoreSnapshot::new();
     for (_, host) in hosts {

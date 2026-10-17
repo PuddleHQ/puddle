@@ -42,6 +42,24 @@ describe("the density and the settings", () => {
     expect(document.documentElement.dataset["density"]).toBeUndefined();
   });
 
+  it("keeps a choice made while the settings are still being read", async () => {
+    density.init();
+    const read = density.sync();
+    density.preview("compact");
+    await read;
+    expect(density.choice).toBe("compact");
+    expect(document.documentElement.dataset["density"]).toBe("compact");
+
+    api.ui.density = "compact";
+    globalSettings.view = null;
+    const reread = density.sync();
+    const saved = density.set("comfortable");
+    await reread;
+    expect(await saved).toEqual({ ok: true });
+    expect(density.choice).toBe("comfortable");
+    expect(document.documentElement.dataset["density"]).toBeUndefined();
+  });
+
   it("stores a new choice through the API, loading the settings first when needed", async () => {
     expect(await density.set("compact")).toEqual({ ok: true });
     expect(api.ui.density).toBe("compact");

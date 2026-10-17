@@ -113,6 +113,52 @@ test.describe("the density setting", () => {
     expect(await spaceFour(page)).toBe(roomy);
   });
 
+  test("picked while the app is still reading the settings, stays picked", async ({
+    page,
+    backend,
+  }) => {
+    // The Settings screen and the app's own start-up both read the settings. The first answer
+    // shows the screen; the rest are held until the user has picked, then answered.
+    const isRead = (r: { method(): string; url(): string }) =>
+      r.method() === "GET" && new URL(r.url()).pathname === "/api/settings";
+    let reads = 0;
+    let answered = 0;
+    let release!: () => void;
+    const picked = new Promise<void>((done) => (release = done));
+    await page.route(
+      (url) => url.pathname === "/api/settings",
+      async (route) => {
+        if (isRead(route.request()) && ++reads > 1) await picked;
+        await route.continue();
+      },
+    );
+    page.on("requestfinished", (r) => {
+      if (isRead(r)) answered++;
+    });
+    await open(page, backend, "/settings");
+    await page.getByLabel("Density", { exact: true }).selectOption("compact");
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-density",
+      "compact",
+    );
+    expect(reads, "reads held back").toBeGreaterThan(1);
+    release();
+    await expect
+      .poll(() => answered, { message: "reads answered" })
+      .toBe(reads);
+
+    const done = saved(page);
+    await page.getByRole("button", { name: "Save" }).click();
+    await done;
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-density",
+      "compact",
+    );
+    await expect(page.getByLabel("Density", { exact: true })).toHaveValue(
+      "compact",
+    );
+  });
+
   for (const density of DENSITIES) {
     test(`${density}: axe finds nothing, targets stay at least 24px, focus is visible`, async ({
       page,

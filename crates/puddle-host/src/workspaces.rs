@@ -41,8 +41,7 @@ use puddle_ssh::SshEndpoint;
 use puddle_store::Clock;
 use puddle_types::{
     CheckoutDir, CpuCount, Event, EventSink, GuestEnv, ImageRef, MemoryMib, Problem, Problems,
-    WorkspaceId,
-    WorkspaceName, WorkspaceStatus, WorkspaceStep,
+    WorkspaceId, WorkspaceName, WorkspaceStatus, WorkspaceStep,
 };
 
 use crate::ssh_target::{ReportingTarget, report_no_endpoint};

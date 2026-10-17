@@ -420,20 +420,25 @@ mod tests {
     }
 
     #[test]
-    fn publishing_the_same_folder_from_two_threads_never_fails() {
+    fn publishing_the_same_folder_from_many_threads_never_fails_and_the_last_save_wins() {
         let dir = tempfile::tempdir().unwrap();
         let (copies, store) = copies(dir.path());
         let copies = Arc::new(copies);
+        // Bounded by time, not by rounds: each publish syncs a file, which takes milliseconds on
+        // Windows. Without the lock, most 3-second runs on Linux fail.
+        let until = std::time::Instant::now() + Duration::from_secs(3);
         let workers: Vec<_> = (0..8)
             .map(|worker| {
                 let copies = Arc::clone(&copies);
                 let store = Arc::clone(&store);
                 std::thread::spawn(move || {
-                    for round in 0..2000 {
+                    let mut round = 0;
+                    while std::time::Instant::now() < until {
                         let text =
                             ShellInitText::new(&format!("export A={worker}{round}")).unwrap();
                         store.set_shell_init(&name("alpha"), &text).unwrap();
                         copies.publish(&id("w1"), &name("alpha")).unwrap();
+                        round += 1;
                     }
                 })
             })
@@ -441,6 +446,10 @@ mod tests {
         for worker in workers {
             worker.join().unwrap();
         }
+        assert_eq!(
+            fs::read_to_string(dir.path().join("w1/init.sh")).unwrap(),
+            copies.saved(&name("alpha")).unwrap().unwrap(),
+        );
     }
 
     #[test]

@@ -1133,6 +1133,96 @@ async fn stop_and_delete(api: &Api, events: &mut support::Events, name: &'static
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_workspace_with_no_repositories_is_made_without_a_clone_or_a_sync() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let reply = api
+        .post("/api/workspaces", &json!({"name": "bare"}).to_string())
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events.until(ended("bare"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(
+        events.steps("bare"),
+        [
+            "preparing_volume",
+            "pulling_image",
+            "starting",
+            "syncing",
+            "done"
+        ]
+    );
+    assert_eq!(rig.guest.clone_commands(), Vec::<String>::new());
+    assert_eq!(rig.guest.syncs(), 0);
+    let ws = api.get("/api/workspaces/bare").await.json();
+    assert_eq!(
+        (&ws["status"], &ws["repositories"]),
+        (&json!("running"), &json!([]))
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_guest_that_stops_answering_between_clones_fails_the_create_and_leaves_nothing() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let body = |name: &str| {
+        json!({"name": name, "repositories": [
+            {"url": REPO}, {"url": "https://example.org/acme/web"}
+        ]})
+        .to_string()
+    };
+    // A create that works shows how many commands a create runs before its second clone.
+    api.post("/api/workspaces", &body("probe")).await;
+    events.until(ended("probe"), Duration::from_secs(20)).await;
+    let before_second_clone = rig
+        .runtime
+        .calls()
+        .iter()
+        .filter(|c| c.op == Op::Exec && c.target.as_deref() == Some("probe"))
+        .take_while(|c| {
+            c.detail.as_deref()
+                != Some("git clone -- https://example.org/acme/web /workspaces/probe/web")
+        })
+        .count();
+    rig.runtime.inject(
+        Op::Exec,
+        Fault::once(disk_error("exec"))
+            .only_for("gone")
+            .after(u32::try_from(before_second_clone).unwrap()),
+    );
+    let clones_before = rig.guest.clone_commands().len();
+    let reply = api.post("/api/workspaces", &body("gone")).await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events.until(ended("gone"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    assert!(
+        end["detail"].as_str().unwrap().contains("no space left"),
+        "{end}"
+    );
+    assert_eq!(
+        rig.guest.clone_commands()[clones_before..],
+        [format!("clone -- {REPO} /workspaces/gone/api")],
+        "the second clone never reached the guest"
+    );
+    assert_eq!(api.get("/api/workspaces/gone").await.status, 404);
+    let volumes: Vec<String> = rig
+        .runtime
+        .list_volumes()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|v| v.name.clone())
+        .collect();
+    assert_eq!(volumes, ["ws-probe"], "the failed create's volume is gone");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_host_on_a_version_1_list_shows_one_repository_in_its_checkout_and_a_rename_saves_version_2()
  {
     let rig = Rig::new();

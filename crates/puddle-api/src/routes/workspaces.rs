@@ -203,28 +203,16 @@ impl GitSetup for StoreGitSetup {
         Box::pin(async move {
             let (store, name, list) =
                 (self.store.clone(), workspace.clone(), repositories.to_vec());
+            // A task that could not run leaves the answer without entries; the error is logged.
             let started = blocking(move || {
                 Ok(list
                     .iter()
                     .map(|repository| start_one(&store, &name, repository))
                     .collect::<Vec<_>>())
             })
-            .await;
-            *self.started.lock().unwrap_or_else(PoisonError::into_inner) = match started {
-                Ok(started) => started,
-                Err(err) => {
-                    tracing::warn!(%workspace, error = ?err, "could not set up the new workspace's Git settings");
-                    repositories
-                        .iter()
-                        .map(|r| {
-                            NewWorkspaceIdentity::not_set_up(format!(
-                                "Puddle could not set up the Git settings of {}. Set them on the Git tab.",
-                                r.repository.url
-                            ))
-                        })
-                        .collect()
-                }
-            };
+            .await
+            .unwrap_or_default();
+            *self.started.lock().unwrap_or_else(PoisonError::into_inner) = started;
         })
     }
 }
@@ -474,4 +462,39 @@ pub(crate) async fn attach_workspace(
     }
     let attached = state.workspaces.attach(&id, mode).await?;
     Ok(Json(attached.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use puddle_store::{Limits, ManualClock};
+
+    use super::*;
+    use crate::workspaces::{RepoUrl, Repository};
+
+    #[test]
+    fn a_repository_the_store_cannot_set_up_is_cloned_without_and_its_entry_says_why() {
+        let store =
+            Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
+        let ws = WorkspaceName::new("w").unwrap();
+        // An identity that is gone by the time the create sets it up.
+        let gone = NewRepository {
+            repository: Repository::at_default_directory(
+                RepoUrl::parse("https://github.com/acme/api").unwrap(),
+            ),
+            identity: Some(IdentityId(42)),
+            pull: true,
+            push: true,
+        };
+        let answer = start_one(&store, &ws, &gone);
+        assert_eq!(answer.identity, None);
+        let warning = answer.warning.unwrap();
+        assert!(
+            warning.starts_with(
+                "Puddle could not set up the Git settings of https://github.com/acme/api ("
+            ),
+            "{warning}"
+        );
+        assert!(warning.ends_with("Set them on the Git tab."), "{warning}");
+        assert_eq!(store.workspace_git(&ws).unwrap().repos, []);
+    }
 }

@@ -8,7 +8,7 @@
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
@@ -255,7 +255,21 @@ async fn http_server(
 }
 
 /// One `CONNECT` through `guest`, 64 KiB each way, checked byte for byte. Returns its duration.
+/// The 64 KiB connection `i` sends: byte `n` is `(n + i) % 251`. Built once, outside the timed
+/// part: in a coverage build, making it per connection costs more than proxying it.
+fn echo_payload(i: usize) -> &'static [u8] {
+    const LEN: usize = 64 * 1024;
+    static BYTES: OnceLock<Vec<u8>> = OnceLock::new();
+    let bytes = BYTES.get_or_init(|| {
+        (0..LEN + 251)
+            .map(|n| u8::try_from(n % 251).unwrap())
+            .collect()
+    });
+    bytes.split_at(i % 251).1.split_at(LEN).0
+}
+
 async fn round_trip(control: &mut Control, authority: &str, i: usize) -> io::Result<Duration> {
+    let payload = echo_payload(i);
     let started = Instant::now();
     let mut stream = control
         .open_stream()
@@ -269,12 +283,9 @@ async fn round_trip(control: &mut Control, authority: &str, i: usize) -> io::Res
     if code != 200 {
         return Err(io::Error::other(format!("connection {i}: status {code}")));
     }
-    let payload: Vec<u8> = (0..64 * 1024usize)
-        .map(|n| u8::try_from((n + i) % 251).unwrap())
-        .collect();
     let (mut rd, mut wr) = tokio::io::split(reader);
     let upload = async {
-        wr.write_all(&payload).await?;
+        wr.write_all(payload).await?;
         wr.shutdown().await
     };
     let mut back = Vec::new();

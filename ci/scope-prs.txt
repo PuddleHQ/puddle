@@ -456,7 +456,7 @@ ui/tools/first-start.ts
 @62 full true true true true
 .github/workflows/windows.yml
 docs/STANDARDS.md
-@63 rust true true true false
+@63 rust true true true true
 crates/puddle-e2e/tests/ip_deny.rs
 @64 ui false false true false
 ui/src/lib/audit/model.test.ts

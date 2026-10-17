@@ -392,9 +392,11 @@ impl GitRig {
         tls.write_all(raw).await.map_err(|e| e.to_string())?;
         let mut bytes = Vec::new();
         let mut chunk = [0_u8; 8192];
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(30);
         while Instant::now() < deadline {
-            match tokio::time::timeout(Duration::from_secs(2), tls.read(&mut chunk)).await {
+            // The first byte waits for a cold `git http-backend` spawn, which a loaded Windows runner takes seconds to start.
+            let idle = if bytes.is_empty() { 20 } else { 2 };
+            match tokio::time::timeout(Duration::from_secs(idle), tls.read(&mut chunk)).await {
                 Ok(Ok(0) | Err(_)) | Err(_) => break,
                 Ok(Ok(n)) => {
                     bytes.extend_from_slice(chunk.get(..n).unwrap_or_default());

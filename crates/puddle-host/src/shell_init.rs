@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use puddle_compute::{ExecOutput, ExecRequest, FileMount};
@@ -72,12 +72,19 @@ pub(crate) enum Published {
 pub(crate) struct Copies {
     root: PathBuf,
     store: Arc<Store>,
+    /// One writer at a time: a save and a start both publish, and one's cleanup of the folder
+    /// would remove the other's half-written file.
+    writing: Mutex<()>,
 }
 
 impl Copies {
     /// Folders below `root` (which must be below the guest share), texts from `store`.
     pub(crate) fn new(root: PathBuf, store: Arc<Store>) -> Self {
-        Self { root, store }
+        Self {
+            root,
+            store,
+            writing: Mutex::new(()),
+        }
     }
 
     fn dir(&self, id: &WorkspaceId) -> PathBuf {
@@ -99,6 +106,8 @@ impl Copies {
         id: &WorkspaceId,
         name: &WorkspaceName,
     ) -> Result<Published, String> {
+        // Held from the read of the text, so a later save is never overwritten by an older one.
+        let _one_at_a_time = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
         let wanted = self
             .store
             .shell_init(name)
@@ -121,6 +130,7 @@ impl Copies {
 
     /// Removes `id`'s folder (the workspace is gone). A folder that is not there is fine.
     pub(crate) fn forget(&self, id: &WorkspaceId) {
+        let _one_at_a_time = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
         let dir = self.dir(id);
         if let Err(e) = fs::remove_dir_all(&dir)
             && e.kind() != std::io::ErrorKind::NotFound
@@ -407,6 +417,30 @@ mod tests {
             fs::read_to_string(folder.join("init.sh")).unwrap(),
             "export A=1\n"
         );
+    }
+
+    #[test]
+    fn publishing_the_same_folder_from_two_threads_never_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let (copies, store) = copies(dir.path());
+        let copies = Arc::new(copies);
+        let workers: Vec<_> = (0..8)
+            .map(|worker| {
+                let copies = Arc::clone(&copies);
+                let store = Arc::clone(&store);
+                std::thread::spawn(move || {
+                    for round in 0..2000 {
+                        let text =
+                            ShellInitText::new(&format!("export A={worker}{round}")).unwrap();
+                        store.set_shell_init(&name("alpha"), &text).unwrap();
+                        copies.publish(&id("w1"), &name("alpha")).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().unwrap();
+        }
     }
 
     #[test]

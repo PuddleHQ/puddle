@@ -1434,11 +1434,14 @@ async fn vm_host_transparency_bar_curl_at_its_widest_through_agent_and_proxy() {
     assert_eq!(value("parallel_ok"), "1024", "{out}");
     assert!(seconds("parallel_slowest") < 5.0, "{out}");
     assert_eq!(value("keepalive_ok"), "1000", "{out}");
+    assert_eq!(value("keepalive_connects"), "1", "{out}");
     assert!(seconds("keepalive_slowest") < 5.0, "{out}");
     assert_eq!(value("download_bytes"), "1073741824", "{out}");
     assert_eq!(value("download_code"), "200", "{out}");
     assert_eq!(value("upload_code"), "200", "{out}");
     assert_eq!(value("slow_others_ok"), "20", "{out}");
+    // 28 is curl's "operation timed out": the slow reader was still reading at --max-time.
+    assert_eq!(value("slow_curl_exit"), "28", "{out}");
     let slow_bytes: u64 = value("slow_bytes").parse().unwrap();
     assert!(
         (30 * 1024..=120 * 1024).contains(&slow_bytes),
@@ -1600,10 +1603,10 @@ step() {
   timeout 1500 bash -c "$*" > "/tmp/radar-$name.log" 2>&1
   rc=$?
   t1=$(date +%s.%N)
-  bad=$(grep -c -i -E 'Err:|W: Failed|^E: |retrying|will retry|timed out|ETIMEDOUT|ECONNRESET|EPIPE|reset by peer|connection refused|EAI_AGAIN|unexpected eof|\bstalled|handshake|certificate verify|SSL_ERROR|SSL certificate problem|x509: |PKIX|spurious network error|i/o timeout|dial tcp|could not transfer|transfer failed|but failed' "/tmp/radar-$name.log")
+  bad=$(grep -c -i -E 'Err:|W: Failed|^E: |retrying|will retry|timed out|ETIMEDOUT|ECONNRESET|EPIPE|reset by peer|connection refused|EAI_AGAIN|unexpected eof|\bstalled|handshake fail|handshake_failure|certificate verify|SSL_ERROR|SSL certificate problem|x509: |PKIX|spurious network error|i/o timeout|dial tcp|could not transfer|transfer failed|but failed' "/tmp/radar-$name.log")
   echo "RADAR step=$name rc=$rc secs=$(awk "BEGIN {printf \"%.1f\", $t1 - $t0}") suspicious_lines=$bad disk_free_mib=$(df -Pm / | awk 'NR==2 {print $4}')"
   if [ "$rc" != 0 ] || [ "$bad" != 0 ]; then
-    grep -i -E 'Err:|W: Failed|^E: |retrying|will retry|timed out|ETIMEDOUT|ECONNRESET|EPIPE|reset by peer|connection refused|EAI_AGAIN|unexpected eof|\bstalled|handshake|certificate verify|SSL_ERROR|SSL certificate problem|x509: |PKIX|spurious network error|i/o timeout|dial tcp|could not transfer|transfer failed|but failed' "/tmp/radar-$name.log" | head -8 | sed 's/^/  | /'
+    grep -i -E 'Err:|W: Failed|^E: |retrying|will retry|timed out|ETIMEDOUT|ECONNRESET|EPIPE|reset by peer|connection refused|EAI_AGAIN|unexpected eof|\bstalled|handshake fail|handshake_failure|certificate verify|SSL_ERROR|SSL certificate problem|x509: |PKIX|spurious network error|i/o timeout|dial tcp|could not transfer|transfer failed|but failed' "/tmp/radar-$name.log" | head -8 | sed 's/^/  | /'
     tail -5 "/tmp/radar-$name.log" | sed 's/^/  > /'
   fi
 }
@@ -1623,7 +1626,7 @@ cat > package.json <<'JSON'
  "@babel/preset-env":"7.25.8","tailwindcss":"3.4.14","postcss":"8.4.47","rollup":"4.24.0","vite":"5.4.9",
  "@angular/cli":"18.2.9","@nestjs/core":"10.4.5","@nestjs/cli":"10.4.5","express":"4.21.1","lodash":"4.17.21"}}
 JSON
-step npm_cold_install 'cd /tmp/np && npm install --no-audit --no-fund --ignore-scripts'
+step npm_cold_install 'cd /tmp/np && npm install --no-audit --no-fund --ignore-scripts --loglevel=http'
 echo "RADAR npm_packages=$(find /tmp/np/node_modules -name package.json -not -path '*/test/*' | wc -l)"
 rm -rf /tmp/np/node_modules /root/.npm
 
@@ -1677,7 +1680,7 @@ cat > pom.xml <<'XML'
 <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-databind</artifactId><version>2.18.0</version></dependency>
 </dependencies></project>
 XML
-step maven_resolve 'cd /tmp/mv && mvn -q -B dependency:resolve dependency:resolve-plugins'
+step maven_resolve 'cd /tmp/mv && mvn -B dependency:resolve dependency:resolve-plugins'
 echo "RADAR maven_jars=$(find ~/.m2/repository -name '*.jar' | wc -l)"
 "#;
 
@@ -1759,7 +1762,8 @@ public class Probe {
 /// Runs each probe as root and reads the audit record the connection left: the exit code, what the
 /// tool said, and the audit reason (`guest_tls_rejected` when the proxy saw the certificate alert).
 /// Returns one line per tool, the tools whose refusal the audit did not show, and the tools that
-/// trusted the certificate (none should: the caller fails on them once everything is printed).
+/// trusted the certificate or left no connection record (none should: the caller fails on them once
+/// everything is printed).
 async fn refusal_matrix(
     vm: &VmHost,
     sandbox: &WorkspaceName,
@@ -1814,6 +1818,10 @@ async fn refusal_matrix(
         ));
         if out.status.success() {
             trusted.push(format!("{tool}: {said}"));
+        } else if reason == "no connection record" {
+            trusted.push(format!(
+                "{tool}: no connection record, so its refusal is unknown"
+            ));
         } else if reason != "guest_tls_rejected" {
             silent.push(tool.to_owned());
         }
@@ -1862,6 +1870,8 @@ async fn radar(tag: &str, terminate: bool) {
     };
     let records = audit_connections(&vm.host);
     eprintln!("terminate={terminate}\n{}", audit_summary(&records));
+    let steps = out.lines().filter(|l| l.starts_with("RADAR step=")).count();
+    assert_eq!(steps, 8, "the radar script stopped early:\n{out}");
     let failing: Vec<&str> = out
         .lines()
         .filter(|l| {
@@ -1877,7 +1887,7 @@ async fn radar(tag: &str, terminate: bool) {
     if let Some((silent, trusted)) = refusals {
         assert!(
             trusted.is_empty(),
-            "tools that trusted a certificate they should have refused: {trusted:#?}"
+            "tools that trusted a certificate they should have refused, or left no connection record: {trusted:#?}"
         );
         assert_eq!(
             silent, SILENT_REFUSALS,

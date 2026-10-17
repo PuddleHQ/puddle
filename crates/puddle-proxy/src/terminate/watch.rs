@@ -14,10 +14,12 @@
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::time::Sleep;
+// tokio's clock, the one the header deadline's `Sleep` runs on: both limits are measured on one
+// clock, which a test can hold still.
+use tokio::time::{Instant, Sleep};
 
 /// Control frames the guest may send in [`WINDOW`]. Real clients send a handful per second.
 pub(crate) const MAX_CONTROL_FRAMES: usize = 1000;

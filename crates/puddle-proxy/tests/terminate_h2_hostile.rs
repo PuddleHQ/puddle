@@ -132,6 +132,17 @@ fn rig_with(
         .build()
 }
 
+/// The control frames the proxy takes from a guest in its 10 s window; the next one ends the
+/// connection.
+const CONTROL_FRAME_CAP: usize = 1000;
+
+/// Wall-clock time the proxy gets to end a flood while tokio's clock stands still.
+const END_FLOOD_WITHIN: Duration = Duration::from_secs(60);
+
+/// The proxy serves every stream it accepts before it reads further, so on a loaded machine the
+/// first thousand resets can take longer than the 10 s window the cap is counted over (a CI run
+/// at load 48 was still reading them after 5 s). tokio's clock, which the cap is counted on,
+/// stands still while the flood is read, so the test proves the cap and not the machine's speed.
 #[tokio::test]
 async fn a_rapid_reset_flood_is_ended_and_most_of_it_never_reaches_the_server() {
     terminate_support::capture_logs();
@@ -141,19 +152,32 @@ async fn a_rapid_reset_flood_is_ended_and_most_of_it_never_reaches_the_server() 
     let rig = rig_with(&pki, server.addr, ProxyConfig::default(), injector.clone());
     let mut guest = rig.guest().await;
     let mut tls = raw(&mut guest).await;
+    // A paused clock still jumps to the next timer whenever the runtime waits on I/O, unless a
+    // blocking task is running; this one runs until the test drops `thaw`.
+    let (thaw, thawed) = std::sync::mpsc::channel::<()>();
+    let mut frozen = tokio::task::spawn_blocking(move || {
+        thawed.recv_timeout(END_FLOOD_WITHIN) != Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+    });
+    tokio::time::pause();
     let block = get_block(b"/n");
-    let mut ended = false;
     for i in 0..5000_u32 {
         let id = 2 * i + 1;
         let mut burst = frame(1, 0x4 | 0x1, id, &block);
         burst.extend(frame(3, 0, id, &8_u32.to_be_bytes()));
         if tls.write_all(&burst).await.is_err() {
-            ended = true;
             break;
         }
     }
-    let (_, closed) = frames_until_end(&mut tls, Duration::from_secs(5)).await;
-    assert!(ended || closed, "the connection was ended");
+    let closed = tokio::select! {
+        (_, closed) = frames_until_end(&mut tls, Duration::from_secs(5)) => closed,
+        _ = &mut frozen => panic!("the flood was not ended within {END_FLOOD_WITHIN:?}"),
+    };
+    drop(thaw);
+    assert!(
+        frozen.await.unwrap(),
+        "the clock ran on by itself before the flood was ended"
+    );
+    assert!(closed, "the connection was ended");
     // Ended for the flood, not for some other fault. The watch over the frames cuts the transport
     // at once, so no GOAWAY follows; its log line is the cause. Without the watch the connection
     // would stay open: the library only counts resets of streams it has not accepted yet.
@@ -163,10 +187,10 @@ async fn a_rapid_reset_flood_is_ended_and_most_of_it_never_reaches_the_server() 
             && logs.contains("too many HTTP/2 control frames"),
         "the connection was not ended for the control-frame flood"
     );
-    // The watch counts 1000 control frames before it cuts, so no more than about that many of the
-    // 5000 requests get as far as the injector.
+    // The guest's SETTINGS and 1000 resets fill the cap; the read that holds the next reset fails
+    // before the library sees any of it, so only streams opened before the 1000th reset exist.
     assert!(
-        injector.calls() <= 1500,
+        injector.calls() <= CONTROL_FRAME_CAP,
         "{} requests got as far as the injector",
         injector.calls()
     );

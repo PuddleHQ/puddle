@@ -8,6 +8,7 @@
 //! route, the rules engine, the internet), so this also shows that a sandbox booted by the host
 //! reaches only what a rule allows.
 #![expect(
+    clippy::expect_used,
     clippy::unwrap_used,
     reason = "VM test: a failed step fails the test; measurements go to stderr"
 )]

@@ -786,7 +786,15 @@ async fn drain(stream: &mut TcpStream, len: usize, within: Duration) -> bool {
     tokio::time::timeout(within, read).await.unwrap_or(false)
 }
 
-/// Connects to the first address that answers within `per_address`.
+/// How long a connection attempt runs alone before the next address is tried beside it: RFC 8305
+/// (Happy Eyeballs) §5 recommends 250 ms. A route that drops a connection attempt otherwise costs the
+/// kernel's retransmit (a second, then more) or the whole timeout, where curl, browsers and apt race
+/// the next address.
+const ATTEMPT_DELAY: Duration = Duration::from_millis(250);
+
+/// Connects to the first address that answers, racing them as RFC 8305 does: the families alternate
+/// (the first address's first), and each attempt runs alone for 250 ms before the next starts
+/// beside it, or at once when it fails. Each attempt gives up after `per_address`.
 ///
 /// # Errors
 /// The last connect error, or [`io::ErrorKind::NotFound`] for an empty list.
@@ -794,18 +802,91 @@ pub async fn connect_first(
     addrs: &[SocketAddr],
     per_address: Duration,
 ) -> io::Result<(TcpStream, SocketAddr)> {
+    let mut queue = interleaved(addrs).into_iter();
+    let mut attempts = tokio::task::JoinSet::new();
+    let start = |attempts: &mut tokio::task::JoinSet<_>, addr: SocketAddr| {
+        attempts.spawn(async move {
+            let connected = tokio::time::timeout(per_address, TcpStream::connect(addr))
+                .await
+                .unwrap_or_else(|_| {
+                    Err(io::Error::new(io::ErrorKind::TimedOut, "connect timed out"))
+                });
+            (addr, connected)
+        });
+    };
     let mut last = io::Error::new(io::ErrorKind::NotFound, "no addresses");
-    for addr in addrs {
-        match tokio::time::timeout(per_address, TcpStream::connect(addr)).await {
-            Ok(Ok(stream)) => {
-                if let Err(err) = stream.set_nodelay(true) {
-                    tracing::debug!(error = %err, "nodelay");
+    let Some(first) = queue.next() else {
+        return Err(last);
+    };
+    start(&mut attempts, first);
+    loop {
+        tokio::select! {
+            joined = attempts.join_next() => {
+                match joined {
+                    None => return Err(last),
+                    Some(Ok((addr, Ok(stream)))) => {
+                        if let Err(err) = stream.set_nodelay(true) {
+                            tracing::debug!(error = %err, "nodelay");
+                        }
+                        return Ok((stream, addr));
+                    }
+                    Some(Ok((_, Err(err)))) => last = err,
+                    Some(Err(join)) => last = io::Error::other(join),
                 }
-                return Ok((stream, *addr));
+                if let Some(addr) = queue.next() {
+                    start(&mut attempts, addr);
+                }
             }
-            Ok(Err(err)) => last = err,
-            Err(_) => last = io::Error::new(io::ErrorKind::TimedOut, "connect timed out"),
+            () = tokio::time::sleep(ATTEMPT_DELAY), if queue.len() > 0 => {
+                if let Some(addr) = queue.next() {
+                    start(&mut attempts, addr);
+                }
+            }
         }
     }
-    Err(last)
+}
+
+/// `addrs` with the families alternating, starting with the first address's, each family in its
+/// own order (RFC 8305 §4): a family whose addresses all fail costs one attempt delay, not one per
+/// address.
+fn interleaved(addrs: &[SocketAddr]) -> Vec<SocketAddr> {
+    let first_v6 = addrs.first().is_some_and(SocketAddr::is_ipv6);
+    let (mut first, mut second): (Vec<_>, Vec<_>) =
+        addrs.iter().partition(|addr| addr.is_ipv6() == first_v6);
+    first.reverse();
+    second.reverse();
+    let mut out = Vec::with_capacity(addrs.len());
+    while let Some(addr) = first.pop() {
+        out.push(addr);
+        if let Some(addr) = second.pop() {
+            out.push(addr);
+        }
+    }
+    out.extend(second.into_iter().rev());
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_families_alternate_from_the_first_address_on_each_in_its_own_order() {
+        let a: Vec<SocketAddr> = ["[::1]:1", "[::2]:1", "[::3]:1", "10.0.0.1:1", "10.0.0.2:1"]
+            .iter()
+            .map(|s| s.parse().unwrap())
+            .collect();
+        let order: Vec<String> = interleaved(&a).iter().map(ToString::to_string).collect();
+        assert_eq!(
+            order,
+            ["[::1]:1", "10.0.0.1:1", "[::2]:1", "10.0.0.2:1", "[::3]:1"]
+        );
+        let b: Vec<SocketAddr> = ["10.0.0.1:1", "10.0.0.2:1", "10.0.0.3:1", "[::1]:1"]
+            .iter()
+            .map(|s| s.parse().unwrap())
+            .collect();
+        let order: Vec<String> = interleaved(&b).iter().map(ToString::to_string).collect();
+        assert_eq!(order, ["10.0.0.1:1", "[::1]:1", "10.0.0.2:1", "10.0.0.3:1"]);
+        assert_eq!(interleaved(&[]), Vec::<SocketAddr>::new());
+    }
 }

@@ -166,9 +166,16 @@ async fn check_boot<S: Sandbox>(
     )
     .await;
     assert_eq!(code, 1, "{boot}: a credential setting was written");
-    // The agent is back within 1 s after kill -9.
-    let kill = "kill -9 $(awk '$2 == \"(puddle-agent)\" {print $1}' /proc/[0-9]*/stat 2>/dev/null)";
-    assert_eq!(sh(sb, kill).await.0, 0, "{boot}");
+    // The agent is back within 1 s after kill -9. The agent's pid comes from a shell loop, not
+    // one awk over every stat file: busybox awk stops at the first file whose process has exited
+    // since the glob, so with the image's ENTRYPOINT starting processes it missed the agent.
+    let kill = r#"exec 2>&1
+for s in /proc/[0-9]*/stat; do
+    read -r pid comm _ 2>/dev/null <"$s" && [ "$comm" = "(puddle-agent)" ] && agent="${agent:-} $pid"
+done
+kill -9 ${agent:?no puddle-agent process}"#;
+    let (code, out) = sh(sb, kill).await;
+    assert_eq!(code, 0, "{boot}: {out}");
     let start = Instant::now();
     while sh(sb, "grep -q ' 0100007F:0C38 ' /proc/net/tcp").await.0 != 0 {
         assert!(

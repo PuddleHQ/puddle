@@ -42,6 +42,24 @@ describe("the theme and the settings", () => {
     expect(document.documentElement.dataset["theme"]).toBeUndefined();
   });
 
+  it("keeps a choice made while the settings are still being read", async () => {
+    theme.init();
+    const read = theme.sync();
+    theme.preview("dark");
+    await read;
+    expect(theme.choice).toBe("dark");
+    expect(document.documentElement.dataset["theme"]).toBe("dark");
+
+    api.ui.theme = "dark";
+    globalSettings.view = null;
+    const reread = theme.sync();
+    const saved = theme.set("light");
+    await reread;
+    expect(await saved).toEqual({ ok: true });
+    expect(theme.choice).toBe("light");
+    expect(document.documentElement.dataset["theme"]).toBe("light");
+  });
+
   it("stores a new choice through the API, loading the settings first when needed", async () => {
     expect(await theme.set("light")).toEqual({ ok: true });
     expect(api.ui.theme).toBe("light");

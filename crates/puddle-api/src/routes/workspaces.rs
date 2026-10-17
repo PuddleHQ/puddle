@@ -4,11 +4,16 @@
 //! operations answer 202 with the workspace marked busy and report through `status_changed` and
 //! `workspace_progress` events.
 
+use std::collections::BTreeSet;
+use std::sync::{Arc, Mutex, PoisonError};
+
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
+use futures_util::future::BoxFuture;
 use puddle_settings::resolve;
-use puddle_types::WorkspaceId;
+use puddle_store::{IdentityId, RepoGitRequest, RepoRef, Store};
+use puddle_types::{WorkspaceId, WorkspaceName};
 
 use crate::ApiErrorBody;
 use crate::WorkspaceRecord;
@@ -19,6 +24,7 @@ use crate::wire::{
     AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, NewWorkspaceIdentity,
     NewWorkspaceRequest, RenameWorkspaceRequest, Workspace, WorkspaceList,
 };
+use crate::workspaces::{GitSetup, NewRepository};
 
 /// The id in a path. A string that can't be an id names no workspace.
 fn workspace_id(raw: &str) -> Result<WorkspaceId, ApiError> {
@@ -131,29 +137,103 @@ pub(crate) async fn list_workspaces(
     }))
 }
 
-/// A new workspace's Git settings: the identity that covers its repository (else the default) and
-/// the repository in the table. A failure here does not undo the workspace: its Git tab then
-/// shows no identity, which says what is missing.
-async fn start_git(state: &AppState, record: &WorkspaceRecord) -> Option<NewWorkspaceIdentity> {
-    let store = state.store.clone();
-    let (name, url) = (record.name.clone(), record.repo_url.clone());
-    let started = blocking(move || {
-        let repo = puddle_store::RepoRef::from_https_url(&url)?;
-        let start = store.start_workspace_git(&name, &repo)?;
-        Ok(NewWorkspaceIdentity::from_store(&start, &repo))
+/// What the store asks of one repository's Git settings; `None` when its address names no
+/// repository the table can hold.
+fn git_request(repository: &NewRepository) -> Option<RepoGitRequest> {
+    let repo = RepoRef::from_https_url(repository.repository.url.as_str()).ok()?;
+    Some(RepoGitRequest {
+        repo,
+        identity: repository.identity,
+        pull: repository.pull,
+        push: repository.push,
     })
-    .await;
-    match started {
-        Ok(identity) => Some(identity),
+}
+
+/// Sets a new workspace's repositories up in the store, in order, and keeps what each got for
+/// the answer. A repository it cannot set up is cloned without its Git settings, and its entry
+/// in the answer says so; the workspace is not undone for it.
+struct StoreGitSetup {
+    store: Arc<Store>,
+    started: Mutex<Vec<NewWorkspaceIdentity>>,
+}
+
+impl StoreGitSetup {
+    fn new(store: Arc<Store>) -> Self {
+        Self {
+            store,
+            started: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn take(&self) -> Vec<NewWorkspaceIdentity> {
+        std::mem::take(&mut *self.started.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+}
+
+fn start_one(
+    store: &Store,
+    workspace: &WorkspaceName,
+    repository: &NewRepository,
+) -> NewWorkspaceIdentity {
+    let url = repository.repository.url.as_str();
+    let Some(request) = git_request(repository) else {
+        return NewWorkspaceIdentity::not_set_up(format!(
+            "Puddle cannot tell which repository {url} is, so it set up no identity or repository \
+             table row for it. Add them on the Git tab."
+        ));
+    };
+    match store.start_repository_git(workspace, &request) {
+        Ok(start) => NewWorkspaceIdentity::from_store(&start, &request.repo),
         Err(err) => {
-            tracing::warn!(workspace = %record.name, error = ?err, "could not set up the new workspace's Git settings");
-            None
+            tracing::warn!(%workspace, %url, error = ?err, "could not set up a new repository's Git settings");
+            NewWorkspaceIdentity::not_set_up(format!(
+                "Puddle could not set up the Git settings of {url} ({err}), so it is cloned without \
+                 them. Set them on the Git tab."
+            ))
         }
     }
 }
 
-/// Creates a workspace: its disk, then a clone of the repository. Answers 202; follow it with
-/// `workspace_progress` events.
+impl GitSetup for StoreGitSetup {
+    fn set_up<'a>(
+        &'a self,
+        workspace: &'a WorkspaceName,
+        repositories: &'a [NewRepository],
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            let (store, name, list) =
+                (self.store.clone(), workspace.clone(), repositories.to_vec());
+            let started = blocking(move || {
+                Ok(list
+                    .iter()
+                    .map(|repository| start_one(&store, &name, repository))
+                    .collect::<Vec<_>>())
+            })
+            .await;
+            *self.started.lock().unwrap_or_else(PoisonError::into_inner) = match started {
+                Ok(started) => started,
+                Err(err) => {
+                    tracing::warn!(%workspace, error = ?err, "could not set up the new workspace's Git settings");
+                    repositories
+                        .iter()
+                        .map(|r| {
+                            NewWorkspaceIdentity::not_set_up(format!(
+                                "Puddle could not set up the Git settings of {}. Set them on the Git tab.",
+                                r.repository.url
+                            ))
+                        })
+                        .collect()
+                }
+            };
+        })
+    }
+}
+
+/// Creates a workspace: its disk, then a clone of each repository in the list, one at a time.
+/// The list is checked whole before anything exists. Each repository's identity joins the
+/// workspace and its repository table row is made before the first clone. A clone that fails
+/// fails only its repository: a background problem names it and the create still ends `done`.
+/// Answers 202; follow it with `workspace_progress` events.
 #[utoipa::path(
     post,
     path = "/api/workspaces",
@@ -161,8 +241,8 @@ async fn start_git(state: &AppState, record: &WorkspaceRecord) -> Option<NewWork
     request_body = NewWorkspaceRequest,
     responses(
         (status = ACCEPTED, description = "creation started", body = Workspace),
-        (status = CONFLICT, description = "the name is taken", body = ApiErrorBody),
-        (status = UNPROCESSABLE_ENTITY, description = "invalid name, repository URL (including SSH remotes), image or memory", body = ApiErrorBody),
+        (status = CONFLICT, description = "the name is taken, or two identities of the list cover the same place (`identity_collision`)", body = ApiErrorBody),
+        (status = UNPROCESSABLE_ENTITY, description = "invalid name, repository (address, SSH remote, directory clash, the same repository twice, unknown identity, more than 100), start folder, image or memory, or `repo_url` sent", body = ApiErrorBody),
         (status = SERVICE_UNAVAILABLE, description = "workspaces are not available", body = ApiErrorBody)
     )
 )]
@@ -170,13 +250,20 @@ pub(crate) async fn create_workspace(
     State(state): State<AppState>,
     crate::extract::Json(body): crate::extract::Json<NewWorkspaceRequest>,
 ) -> Result<(StatusCode, Json<Workspace>), ApiError> {
-    let record = state.workspaces.create(body.into_new()?).await?;
-    let identity = start_git(&state, &record).await;
+    let store = state.store.clone();
+    let known: BTreeSet<IdentityId> =
+        blocking(move || Ok(store.identities()?.into_iter().map(|i| i.id).collect())).await?;
+    let new = body.into_new(|id| known.contains(&id))?;
+    let (store, name) = (state.store.clone(), new.name.clone());
+    let requests: Vec<RepoGitRequest> = new.repositories.iter().filter_map(git_request).collect();
+    blocking(move || Ok(store.check_repository_git(&name, &requests)?)).await?;
+    let git = StoreGitSetup::new(state.store.clone());
+    let record = state.workspaces.create(new, &git).await?;
     // A new workspace may start with direct SSH on (the global default).
     crate::system_managed::refresh(&state).await;
     Ok((
         StatusCode::ACCEPTED,
-        Json(view(&state, record).await.with_identity(identity)),
+        Json(view(&state, record).await.with_identities(git.take())),
     ))
 }
 

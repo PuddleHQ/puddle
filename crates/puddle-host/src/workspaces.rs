@@ -1051,7 +1051,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .map(|(id, _)| id.clone());
         let Some(id) = id else { return };
         let key = problem_key("shell-init-copy", name);
-        match self.inner.kit.shell_init().publish(&id, name) {
+        match self.inner.kit.shell_init().refresh(&id, name) {
             Ok(_) => self.inner.problems.clear(&key),
             Err(reason) => {
                 tracing::warn!(workspace = %name, %reason, "the workspace's shell init is not updated");

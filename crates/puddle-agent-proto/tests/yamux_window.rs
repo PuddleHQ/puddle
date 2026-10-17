@@ -227,3 +227,59 @@ async fn a_stream_that_is_only_written_sends_past_its_window() {
     assert_eq!(got, total);
     client_driver.abort();
 }
+
+/// A reader that falls a whole window behind costs the session time in proportion to the frames
+/// it holds, not to their square: a window of 1 KiB frames (a fast server's small writes) held for
+/// a stream nobody reads yet goes in, and then out to the reader, well within the stall bar. A
+/// session that went over every held frame for each new one took most of a minute here, and in
+/// a one-vCPU guest a download that fell behind once stayed that slow.
+#[tokio::test]
+async fn a_window_of_small_frames_held_for_a_late_reader_moves_in_linear_time() {
+    const FRAME: usize = 1024;
+    let (peer, ours) = duplex(1 << 20);
+    let mut session = Session::new_server(ours, server_config());
+    let (stream_tx, stream_rx) = tokio::sync::oneshot::channel();
+    let driver = tokio::spawn(async move {
+        let mut stream_tx = Some(stream_tx);
+        while let Some(Ok(stream)) = session.next().await {
+            if let Some(tx) = stream_tx.take() {
+                tx.send(stream).ok();
+            }
+        }
+    });
+    let (mut rx, mut tx) = tokio::io::split(peer);
+    open(&mut tx, &mut rx, 1).await;
+    let mut stream = stream_rx.await.unwrap();
+    let drain = tokio::spawn(async move {
+        let mut h = [0u8; 12];
+        while rx.read_exact(&mut h).await.is_ok() {}
+    });
+
+    let window = STREAM_WINDOW as usize;
+    let mut frame = header(DATA, 0, 1, u32::try_from(FRAME).unwrap()).to_vec();
+    frame.resize(12 + FRAME, 5);
+    let started = std::time::Instant::now();
+    let moved = tokio::time::timeout(Duration::from_secs(5), async {
+        for _ in 0..window / FRAME {
+            tx.write_all(&frame).await.unwrap();
+        }
+        tx.write_all(&header(DATA, FIN, 1, 0)).await.unwrap();
+        let held = started.elapsed();
+        let mut got = Vec::new();
+        stream.read_to_end(&mut got).await.unwrap();
+        (held, got)
+    })
+    .await;
+    let Ok((held, got)) = moved else {
+        panic!("a window of {FRAME}-byte frames for a late reader did not move in 5 s",);
+    };
+    eprintln!(
+        "{} frames held in {held:?}, read out by {:?}",
+        window / FRAME,
+        started.elapsed()
+    );
+    assert_eq!(got.len(), window);
+    assert!(got.iter().all(|b| *b == 5));
+    driver.abort();
+    drain.abort();
+}

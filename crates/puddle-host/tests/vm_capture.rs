@@ -11,6 +11,10 @@
 //! hostile one: a root process that deletes the capture rules gets nothing through, and the
 //! agent puts them back.
 //!
+//! The sites the tests reach are a fake website behind a fake company proxy (`web_internet`), so no
+//! result here depends on a public site being up; only the workspace's own clone (`REPO`) and the
+//! package install of the second test still use the real internet.
+//!
 //! Every guest command runs as root through the runtime's exec, which carries the workspace's
 //! proxy settings; the probes that must not use them say `env -i` or `--noproxy '*'`.
 #![expect(
@@ -25,15 +29,16 @@ mod vm_support;
 
 use std::time::Duration;
 
+use puddle_e2e::lab::{WebHost, WebOptions};
 use puddle_store::{Actor, Effect, NewRule, Pattern, Resolution, Scope};
 use puddle_types::WorkspaceName;
 use serde_json::json;
-use support::{Api, ended};
-use vm_support::{VmHost, guest, start_vm_host};
+use support::{Api, ended, hermetic_options};
+use vm_support::{VmHost, guest, start_vm_host_platform, web_internet};
 
-/// A public host that answers plain HTTP and HTTPS, and a small public repository to create the
-/// workspace from.
-const SITE: &str = "example.com";
+/// The fake website's name (it answers plain HTTP and HTTPS), and a small public repository to
+/// create the workspace from.
+const SITE: &str = "site.test";
 const REPO_HOST: &str = "github.com";
 const REPO: &str = "https://github.com/octocat/Hello-World.git";
 
@@ -83,6 +88,14 @@ fn field<'a>(text: &'a str, key: &str) -> &'a str {
     text.lines()
         .find_map(|l| l.split_whitespace().find_map(|w| w.strip_prefix(key)))
         .unwrap_or_else(|| panic!("no {key} in: {text}"))
+}
+
+/// How many requests the fake website saw with `Host: host`.
+fn reached_by_host(web: &WebHost, host: &str) -> usize {
+    web.seen()
+        .iter()
+        .filter(|r| r.headers_named("host") == [host])
+        .count()
 }
 
 /// The open inbox rows of `workspace`, as `host:port`.
@@ -159,7 +172,10 @@ async fn wait_for_connection_record(vm: &VmHost, host: &str, port: u16, before: 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses_the_rest_at_once()
 {
-    let vm = start_vm_host("capt").await;
+    let net = web_internet(&[SITE], WebOptions::default(), hermetic_options()).await;
+    // The address nothing allows at first is answered by the same site once a rule lets it through.
+    net.proxy.route("1.1.1.1:443", net.web.tls_addr());
+    let vm = start_vm_host_platform("capt", net.options, &net.platform, |_| {}).await;
     let api = Api::new(vm.host.url(), vm.host.token());
     let workspace = create_workspace(&vm, &api, "capt", &[REPO_HOST, SITE]).await;
     let run = |script: String| {
@@ -176,7 +192,7 @@ async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses
     // connection is redirected, and the host sees `CONNECT example.com:443`.
     let before = allowed_connections(&vm, SITE, 443);
     let scrubbed = run(format!(
-        "env -i PATH=/usr/bin:/bin curl -sS -o /dev/null --max-time 30 \
+        "env -i PATH=/usr/bin:/bin curl -sS -D - -o /dev/null --max-time 30 \
          -w 'http=%{{http_code}} ip=%{{remote_ip}}\\n' https://{SITE}/ 2>&1; echo \"exit=$?\""
     ))
     .await;
@@ -184,11 +200,17 @@ async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses
     assert_eq!(field(&scrubbed, "http="), "200", "{scrubbed}");
     assert!(field(&scrubbed, "ip=").starts_with("198.1"), "{scrubbed}");
     wait_for_connection_record(&vm, SITE, 443, before).await;
+    assert!(
+        reached_by_host(&net.web, SITE) > 0,
+        "the site did not see the capture's request: {:?}",
+        net.web.seen()
+    );
 
     // Raw TCP: bash's /dev/tcp, no HTTP library, port 80.
     let raw = run(format!(
         "exec 3<>/dev/tcp/{SITE}/80 && printf 'GET / HTTP/1.0\\r\\nHost: {SITE}\\r\\n\\r\\n' >&3 \
-         && IFS= read -r -t 20 line <&3; echo \"first-line=${{line%$'\\r'}}\""
+         && IFS= read -r -t 20 line <&3; echo \"first-line=${{line%$'\\r'}}\"; \
+         while IFS= read -r -t 5 more <&3 && [ \"$more\" != $'\\r' ]; do echo \"header: ${{more%$'\\r'}}\"; done"
     ))
     .await;
     eprintln!("{raw}");
@@ -197,7 +219,7 @@ async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses
     // A client that does use the proxy settings still works, and the stub answers lookups for
     // names nothing allows without any inbox row (the connect is what asks).
     let proxied = run(format!(
-        "curl -sS -o /dev/null --max-time 30 -w 'http=%{{http_code}}\\n' https://{SITE}/ 2>&1"
+        "curl -sS -D - -o /dev/null --max-time 30 -w 'http=%{{http_code}}\\n' https://{SITE}/ 2>&1"
     ))
     .await;
     assert_eq!(field(&proxied, "http="), "200", "{proxied}");
@@ -216,7 +238,7 @@ async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses
     // Approve it, and the retry works with no restart.
     let direct = |label: &str| {
         run(format!(
-            "s=$(now); curl --noproxy '*' -sS -k -o /dev/null --connect-timeout 10 --max-time 20 \
+            "s=$(now); curl --noproxy '*' -sS -k -D - -o /dev/null --connect-timeout 10 --max-time 20 \
              -w 'http=%{{http_code}}\\n' https://1.1.1.1/ 2>&1; echo \"{label} exit=$? ms=$(($(now) - s))\""
         ))
     };
@@ -236,6 +258,11 @@ async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses
     eprintln!("{approved}");
     assert!(approved.contains("retry exit=0 "), "{approved}");
     assert_ne!(field(&approved, "http="), "000", "{approved}");
+    assert!(
+        reached_by_host(&net.web, "1.1.1.1") > 0,
+        "the approved address did not reach the site: {approved}\n{:?}",
+        net.web.seen()
+    );
 
     // UDP (not DNS) and IPv6 literals fail at once, with a refusal and not a timeout.
     let fast = run(
@@ -279,11 +306,13 @@ async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses
 
     // 256 fetches in parallel from a scrubbed environment: none fails, none stalls.
     let parallel = run(format!(
-        "seq 256 | xargs -P 32 -I{{}} env -i PATH=/usr/bin:/bin curl -sS -o /dev/null --max-time 30 \
-         -w '%{{http_code}} %{{time_total}}\\n' http://{SITE}/ > /tmp/parallel.txt 2>&1
+        "mkdir -p /tmp/heads
+         seq 256 | xargs -P 32 -I{{}} env -i PATH=/usr/bin:/bin curl -sS -D /tmp/heads/{{}}.txt -o /dev/null \
+         --max-time 30 -w '%{{http_code}} %{{time_total}}\\n' http://{SITE}/ > /tmp/parallel.txt 2>&1
          echo \"ok=$(grep -c '^200 ' /tmp/parallel.txt) lines=$(wc -l < /tmp/parallel.txt) \
          slowest=$(awk '{{print $2}}' /tmp/parallel.txt | sort -n | tail -1)\"
-         grep -v '^200 ' /tmp/parallel.txt | head -5"
+         grep -v '^200 ' /tmp/parallel.txt | head -5
+         grep -L '^HTTP/1.1 200' /tmp/heads/*.txt | head -2 | xargs -r head -20"
     ))
     .await;
     eprintln!("{parallel}");
@@ -299,7 +328,8 @@ async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses
 /// through (the VM has no route of its own), and the agent puts the rules back.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_capture_survives_a_root_that_deletes_the_rules() {
-    let vm = start_vm_host("flush").await;
+    let net = web_internet(&[SITE], WebOptions::default(), hermetic_options()).await;
+    let vm = start_vm_host_platform("flush", net.options, &net.platform, |_| {}).await;
     let api = Api::new(vm.host.url(), vm.host.token());
     let workspace = create_workspace(
         &vm,
@@ -326,14 +356,14 @@ async fn vm_capture_survives_a_root_that_deletes_the_rules() {
             "nft list table inet puddle >/dev/null 2>&1 && echo before=present || echo before=absent
              {attack}
              echo \"after-attack=$(nft list table inet puddle >/dev/null 2>&1 && echo present || echo absent)\"
-             curl --noproxy '*' -sS -k -o /dev/null --connect-timeout 3 --max-time 8 \
+             curl --noproxy '*' -sS -k -D - -o /dev/null --connect-timeout 3 --max-time 8 \
                -w 'http=%{{http_code}}\\n' http://1.0.0.1/ 2>&1
              for i in 1 2 3 4 5 6 7 8 9 10; do
                nft list table inet puddle >/dev/null 2>&1 && break
                sleep 0.5
              done
              echo \"restored=$(nft list table inet puddle >/dev/null 2>&1 && echo yes || echo no)\"
-             env -i PATH=/usr/bin:/bin curl -sS -o /dev/null --max-time 30 \
+             env -i PATH=/usr/bin:/bin curl -sS -D - -o /dev/null --max-time 30 \
                -w 'again http=%{{http_code}}\\n' http://{SITE}/ 2>&1"
         ))
         .await;

@@ -112,6 +112,20 @@ pub(crate) async fn https_get(
     name: &str,
     trusted_roots: &[&[u8]],
 ) -> Result<String, String> {
+    let response = https_get_raw(tunnel, name, trusted_roots).await?;
+    Ok(response
+        .split("\r\n\r\n")
+        .nth(1)
+        .unwrap_or_default()
+        .to_owned())
+}
+
+/// What a TLS client got over a tunnel: the handshake error, or the whole response (head and body).
+pub(crate) async fn https_get_raw(
+    tunnel: BufReader<TcpStream>,
+    name: &str,
+    trusted_roots: &[&[u8]],
+) -> Result<String, String> {
     use rustls::pki_types::{CertificateDer, ServerName};
     let mut roots = rustls::RootCertStore::empty();
     for der in trusted_roots {
@@ -144,10 +158,5 @@ pub(crate) async fn https_get(
         }
         bytes.extend_from_slice(chunk.get(..n).unwrap_or_default());
     }
-    let response = String::from_utf8_lossy(&bytes).into_owned();
-    Ok(response
-        .split("\r\n\r\n")
-        .nth(1)
-        .unwrap_or_default()
-        .to_owned())
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }

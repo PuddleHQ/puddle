@@ -19,10 +19,9 @@ mod support;
 mod vm_support;
 
 use std::collections::BTreeSet;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use base64::Engine as _;
-use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
 use puddle_e2e::lab::{GitHost, GitHostOptions, NameProxy, Versions, clean_git};
 use puddle_host::HostOptions;
 use puddle_secrets::{HostName, Secret, SecretStore, SourceSpec, StoredId, TokenScope};
@@ -30,10 +29,12 @@ use puddle_store::{
     Actor, Author, Coverage, CredentialBinding, Effect, IdentityDraft, NewRule, Pattern, Scope,
 };
 use puddle_types::WorkspaceName;
-use puddle_upstream::{Discovery, FakeOs, ProxyConfig, ProxyRules};
 use serde_json::json;
 use support::{Api, ended};
-use vm_support::{HarnessPlatform, VmHost, guest, guest_within, start_vm_host_platform};
+use vm_support::{
+    HarnessPlatform, VmHost, guest, guest_within, platform_trusting, start_vm_host_platform,
+    through_company_proxy,
+};
 
 const NAME: &str = "bound.test";
 const WORK: &str = "KCANARY-WORK-7d41c9e2b0a8";
@@ -52,28 +53,8 @@ fn internet(hosts: &[(&str, &GitHost)]) -> Internet {
     let names: Vec<(&str, std::net::SocketAddr)> =
         hosts.iter().map(|(n, h)| (*n, h.addr())).collect();
     let proxy = tokio::task::block_in_place(|| rt.block_on(NameProxy::start(&names)));
-    let os = FakeOs::new(ProxyConfig {
-        rules: ProxyRules::parse(&format!("http://127.0.0.1:{}", proxy.port())),
-        ..ProxyConfig::default()
-    });
-    let mut options = support::hermetic_options();
-    options.discovery = Some(Discovery::new(os, puddle_upstream::Config::default()));
-    let mut snapshot = StoreSnapshot::new();
-    for (_, host) in hosts {
-        snapshot.add(SOURCES[0], host.root().as_ref().to_vec());
-    }
-    let platform = HarnessPlatform {
-        roots: CorporateRoots::select(&snapshot, SystemTime::now()),
-    };
-    let roots: BTreeSet<Vec<u8>> = hosts
-        .iter()
-        .map(|(_, h)| h.root().as_ref().to_vec())
-        .collect();
-    assert_eq!(
-        platform.roots.certificates().len(),
-        roots.len(),
-        "the fake hosts' roots are reported as corporate roots"
-    );
+    let options = through_company_proxy(support::hermetic_options(), &proxy);
+    let platform = platform_trusting(hosts.iter().map(|(_, h)| h.root()));
     Internet {
         proxy,
         options,

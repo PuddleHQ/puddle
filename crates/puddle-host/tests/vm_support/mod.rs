@@ -10,9 +10,12 @@
 
 use std::time::Duration;
 
-use puddle_certs::CorporateRoots;
+use std::time::SystemTime;
+
+use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
 use puddle_compute::{ExecRequest, Runtime, Sandbox};
 use puddle_compute_msb::{MsbConfig, MsbRuntime};
+use puddle_e2e::lab::{NameProxy, WebHost, WebOptions};
 use puddle_host::{
     GuestSettings, Host, HostConfig, HostError, HostOptions, HostPaths, Platform, RuntimeFactory,
     RuntimeInputs, START_STEPS, prepare,
@@ -20,7 +23,7 @@ use puddle_host::{
 use puddle_runtime::{RuntimeLayout, RuntimeVersion};
 use puddle_secrets::MemoryStore;
 use puddle_types::WorkspaceName;
-use puddle_upstream::Mode;
+use puddle_upstream::{Discovery, FakeOs, Mode, ProxyConfig, ProxyRules};
 use puddle_vm_tests::{RuntimePair, Settings, VmEnv, test_owner};
 
 /// The harness has set the environment and checked the runtime pair already.
@@ -69,6 +72,69 @@ impl RuntimeFactory for HarnessFactory {
         let runtime = MsbRuntime::open(config).await?;
         *self.opened.lock().unwrap() = Some(runtime.clone());
         Ok(runtime)
+    }
+}
+
+/// `options` with the host's upstream route set to the company proxy `proxy` (the only thing that
+/// knows the fake hosts' names).
+pub(crate) fn through_company_proxy(mut options: HostOptions, proxy: &NameProxy) -> HostOptions {
+    let os = FakeOs::new(ProxyConfig {
+        rules: ProxyRules::parse(&format!("http://127.0.0.1:{}", proxy.port())),
+        ..ProxyConfig::default()
+    });
+    options.discovery = Some(Discovery::new(os, puddle_upstream::Config::default()));
+    options
+}
+
+/// A platform that reports `roots` as the corporate roots: the guest trusts them and the host's
+/// upstream TLS leg verifies against them, so a fake host signed by one is a host that works.
+pub(crate) fn platform_trusting<'a>(
+    roots: impl IntoIterator<Item = &'a rustls::pki_types::CertificateDer<'static>>,
+) -> HarnessPlatform {
+    let mut snapshot = StoreSnapshot::new();
+    let mut distinct = std::collections::BTreeSet::new();
+    for root in roots {
+        snapshot.add(SOURCES[0], root.as_ref().to_vec());
+        distinct.insert(root.as_ref().to_vec());
+    }
+    let platform = HarnessPlatform {
+        roots: CorporateRoots::select(&snapshot, SystemTime::now()),
+    };
+    assert_eq!(
+        platform.roots.certificates().len(),
+        distinct.len(),
+        "the fake hosts' roots are reported as corporate roots"
+    );
+    platform
+}
+
+/// A fake public website behind a company proxy: what a test uses when it needs "some allowed
+/// host" to reach, so that it never depends on a real site being up. `web` answers every name
+/// given to [`web_internet`] on ports 80 and 443; any other name goes to the real internet as it
+/// stands. Start the host with `options` and `platform`.
+pub(crate) struct WebInternet {
+    pub(crate) web: WebHost,
+    pub(crate) proxy: NameProxy,
+    pub(crate) options: HostOptions,
+    pub(crate) platform: HarnessPlatform,
+}
+
+/// Starts the fake website for `names` and the company proxy that holds them.
+pub(crate) async fn web_internet(
+    names: &[&str],
+    web_options: WebOptions,
+    options: HostOptions,
+) -> WebInternet {
+    let web = WebHost::start(names, web_options).await;
+    let proxy = NameProxy::start(&[]).await;
+    web.register(&proxy, names);
+    let options = through_company_proxy(options, &proxy);
+    let platform = platform_trusting([web.root()]);
+    WebInternet {
+        web,
+        proxy,
+        options,
+        platform,
     }
 }
 

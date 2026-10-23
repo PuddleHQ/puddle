@@ -13,8 +13,9 @@ first=${APT_FIRST_TRY_S:-180}
 second=${APT_RETRY_S:-300}
 [ "$#" -gt 0 ] || { echo "usage: apt-retry.sh <command>..." >&2; exit 2; }
 
-if timeout -k 10 "$first" "$@"; then exit 0; fi
-status=$?
+status=0
+timeout -k 10 "$first" "$@" || status=$?
+[ "$status" -ne 0 ] || exit 0
 echo "::warning::apt-retry: '$*' ended with status $status after at most ${first}s; retrying on archive.ubuntu.com"
 "$here/apt-setup.sh" --canonical || true
 [ -n "${APT_RETRY_NO_REPAIR:-}" ] || sudo dpkg --configure -a || true

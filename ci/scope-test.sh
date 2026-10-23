@@ -98,10 +98,10 @@ want "ui and gate data" "mixed true false true false" ui/src/a.ts scripts/diff-c
 want "gate data only" "rust true false true false" scripts/coverage-baseline.json
 want "ui fixtures" "mixed true true true false" ui/e2e/fixtures/workspaces.json
 want "vm crate" "rust true true true true" crates/puddle-compute-msb/src/lib.rs
-want "host-side crate outside the UI closure" "rust true true false true" crates/puddle-lifecycle/src/lib.rs
+want "host-side crate in the UI closure" "rust true true true true" crates/puddle-lifecycle/src/lib.rs
 want "crate outside the VM set, in the UI closure" "rust true true true false" crates/puddle-app/src/lib.rs
 want "crate in neither" "rust true true false false" crates/xtask/src/main.rs
-want "crate with a README only" "rust true true false true" crates/puddle-host/README.md
+want "crate with a README only" "rust true true true true" crates/puddle-host/README.md
 want "rename out of an always-run path" "$FULL" ui/src/a.ts ci/old.sh
 
 # 5. The whole script with a fake `gh`.

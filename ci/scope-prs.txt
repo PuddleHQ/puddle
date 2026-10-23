@@ -177,7 +177,7 @@ ui/src/lib/stores/global-settings.svelte.ts
 ui/src/lib/stores/global-settings.test.ts
 ui/src/routes/settings/+page.svelte
 ui/src/routes/settings/settings.test.ts
-@25 rust true true false true
+@25 rust true true true true
 crates/puddle-host/tests/fake_host.rs
 @26 full true true true true
 crates/puddle-doctor/src/boot.rs
@@ -315,7 +315,7 @@ ui/tools/first-start.test.ts
 ui/tools/first-start.ts
 @43 ui false false true false
 ui/e2e/activity.spec.ts
-@46 rust true true false true
+@46 rust true true true true
 crates/puddle-lifecycle/src/lib.rs
 crates/puddle-lifecycle/src/signal.rs
 crates/puddle-lifecycle/src/supervise.rs
@@ -463,7 +463,7 @@ ui/src/lib/audit/model.test.ts
 ui/src/lib/audit/model.ts
 ui/src/routes/inbox/+page.svelte
 ui/src/routes/inbox/inbox.test.ts
-@65 rust true true false true
+@65 rust true true true true
 crates/puddle-host/tests/vm_host.rs
 @66 full true true true true
 .github/workflows/windows.yml

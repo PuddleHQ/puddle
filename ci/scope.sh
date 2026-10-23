@@ -46,7 +46,7 @@ set -uo pipefail
 # `SCOPE_TEST_METADATA=1 ci/scope-test.sh`).
 NO_VM=" puddle puddle-app xtask "
 # Crates outside the closure of puddle-e2e and puddle-app, which the UI jobs build.
-NO_UI=" puddle puddle-host puddle-lifecycle puddle-ssh puddle-workspace xtask "
+NO_UI=" puddle xtask "
 MAX_FILES=300
 
 path_class() {

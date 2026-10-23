@@ -48,9 +48,18 @@
           >{workspace.display_name}</a
         >
       </h2>
-      {#if workspace.repositories[0]}
-        <p class="repo">{workspace.repositories[0].url}</p>
-      {/if}
+      <p class="repo">
+        {#if workspace.repositories[0]}
+          {workspace.repositories[0].url}
+          {#if workspace.repositories.length > 1}
+            <span class="more"
+              >and {workspace.repositories.length - 1} more</span
+            >
+          {/if}
+        {:else}
+          <span class="more">No repository</span>
+        {/if}
+      </p>
     </div>
     {#if workspace.direct_ssh}<TrustedBadge />{/if}
     <StatusChip status={workspace.status} busy={workspace.busy} />
@@ -81,6 +90,7 @@
   <ProgressLine
     busy={workspace.busy}
     {progress}
+    repositories={workspace.repositories}
     onDismiss={() => onDismiss(workspace)}
   />
   <div class="acts">
@@ -123,6 +133,9 @@
     font-size: var(--text-sm);
     color: var(--color-text-muted);
     overflow-wrap: anywhere;
+  }
+  .more {
+    font-family: var(--font-sans);
   }
   .meta {
     display: flex;

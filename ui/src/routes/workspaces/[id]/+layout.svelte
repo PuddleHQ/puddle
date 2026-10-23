@@ -66,6 +66,7 @@
   <ProgressLine
     busy={workspace.busy}
     progress={workspaces.progress[workspace.name]}
+    repositories={workspace.repositories}
     onDismiss={() => actions.dismissProgress(workspace)}
   />
   <nav class="tabs" aria-label="Workspace sections">

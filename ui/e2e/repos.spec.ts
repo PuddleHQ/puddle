@@ -178,21 +178,19 @@ test("Create a workspace for this opens the form filled in, with the identity th
     "https://github.com/acme/billing",
   );
   await expect(form.getByLabel("Name")).toHaveValue("billing");
-  const work = form.getByRole("checkbox", { name: /Work/ });
-  const personal = form.getByRole("checkbox", { name: /Personal/ });
-  await expect(work).toBeChecked();
-  await expect(form).toContainText("(listed this repository)");
-  await expect(personal).not.toBeChecked();
-  await personal.check();
+  const chosen = form.getByLabel("Git identity").locator("option:checked");
+  await expect(chosen).toHaveText("Work (listed this repository)");
+  await expect(
+    form.locator('optgroup[label="Cover this repository"]'),
+  ).toContainText("Personal");
   await form.getByRole("button", { name: "Create workspace" }).click();
   await expect(page).toHaveURL(/\/workspaces\/billing$/);
   await page.goto("/workspaces/billing/git");
   const ids = page.getByRole("list", {
     name: "Identities of billing, in order",
   });
-  await expect(ids.getByRole("listitem")).toHaveCount(2);
+  await expect(ids.getByRole("listitem")).toHaveCount(1);
   await expect(ids.getByRole("listitem").first()).toContainText("Work");
-  await expect(ids.getByRole("listitem").nth(1)).toContainText("Personal");
 });
 
 test("the create form's picker searches every identity's repositories and fills the form", async ({
@@ -218,12 +216,16 @@ test("the create form's picker searches every identity's repositories and fills 
     "https://github.com/tijs-demo/dotfiles",
   );
   await expect(form.getByLabel("Name")).toBeFocused();
-  await expect(form.getByRole("checkbox", { name: /Personal/ })).toBeChecked();
+  await expect(
+    form.getByLabel("Git identity").locator("option:checked"),
+  ).toHaveText(/Personal/);
   // A typed address still works, and the identities follow it.
   await form
     .getByLabel("Git repository (HTTPS)")
     .fill("https://github.com/acme/web-shop");
-  await expect(form.getByRole("checkbox", { name: /Work/ })).toBeChecked();
+  await expect(
+    form.getByLabel("Git identity").locator("option:checked"),
+  ).toHaveText("Work");
 });
 
 test("the create form's picker says which lists failed or are limited", async ({
@@ -316,8 +318,8 @@ for (const scheme of ["light", "dark"] as const) {
       await page.goto(`/identities/${WORK}`);
       await create(page, "acme/web-shop").click();
       await expect(
-        dialog(page).getByRole("checkbox", { name: /Work/ }),
-      ).toBeChecked();
+        dialog(page).getByLabel("Git identity").locator("option:checked"),
+      ).toHaveText(/Work/);
       await scan(page, "form with identities");
       await dialog(page).getByText("Choose from your repositories").click();
       await expect(

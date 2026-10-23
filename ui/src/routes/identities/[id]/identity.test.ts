@@ -354,8 +354,8 @@ describe("one identity", () => {
     expect(within(dialog).getByLabelText("Name")).toHaveValue("web");
     await waitFor(() =>
       expect(
-        within(dialog).getByRole("checkbox", { name: /Work/ }),
-      ).toBeChecked(),
+        within(dialog).getByRole("combobox", { name: "Git identity" }),
+      ).toHaveDisplayValue(/Work/),
     );
   });
 
@@ -417,7 +417,7 @@ describe("one identity", () => {
     await waitFor(() => expect(goto).toHaveBeenCalledWith("/workspaces/web"));
     expect(create).toHaveBeenCalledWith({
       name: "web",
-      repositories: [{ url: "https://github.com/acme/web" }],
+      repositories: [{ url: "https://github.com/acme/web", identity_id: 1 }],
     });
     await fireEvent.click(
       await screen.findByRole("button", {

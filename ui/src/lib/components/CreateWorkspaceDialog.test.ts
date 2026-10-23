@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { workspace } from "#lib/testing/fake-workspaces.ts";
 import {
@@ -13,9 +19,8 @@ import type { ActionResult } from "#lib/stores/workspaces.svelte.ts";
 import type { Workspace } from "#lib/workspaces/model.ts";
 import CreateWorkspaceDialog from "./CreateWorkspaceDialog.svelte";
 
-const h = vi.hoisted(() => ({ repos: undefined as unknown, use: vi.fn() }));
+const h = vi.hoisted(() => ({ repos: undefined as unknown }));
 
-vi.mock("#lib/identities/attach.ts", () => ({ useIdentities: h.use }));
 vi.mock("#lib/stores/repos.svelte.ts", async (original) => {
   const mod = await original<typeof import("#lib/stores/repos.svelte.ts")>();
   return {
@@ -95,7 +100,7 @@ describe("CreateWorkspaceDialog", () => {
     const { create } = mount();
     await screen.findByRole("dialog");
     await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
-    await fireEvent.click(screen.getByText("Image and memory"));
+    await fireEvent.click(screen.getByText("Start folder, image and memory"));
     await type("Image", " ghcr.io/acme/dev:1 ");
     await type("Memory (GiB)", "3");
     await fireEvent.click(submit());
@@ -131,7 +136,7 @@ describe("CreateWorkspaceDialog", () => {
     const { create } = mount();
     await screen.findByRole("dialog");
     await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
-    await fireEvent.click(screen.getByText("Image and memory"));
+    await fireEvent.click(screen.getByText("Start folder, image and memory"));
     await type("Memory (GiB)", "plenty");
     await fireEvent.click(submit());
     expect(screen.getByRole("alert")).toHaveTextContent(
@@ -152,7 +157,7 @@ describe("CreateWorkspaceDialog", () => {
       mount({ ok: false, message, field: fieldName });
       await screen.findByRole("dialog");
       await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
-      await fireEvent.click(screen.getByText("Image and memory"));
+      await fireEvent.click(screen.getByText("Start folder, image and memory"));
       await fireEvent.click(submit());
       await vi.waitFor(() =>
         expect(screen.getByRole("alert")).toHaveTextContent(message),
@@ -261,19 +266,18 @@ describe("CreateWorkspaceDialog identities and repositories", () => {
     repos.repos = [repoView("acme", "web", { identities: [2, 1] })];
     repos.sources = [repoSource({ repo_count: 1 })];
     h.repos = repos;
-    h.use.mockReset();
-    h.use.mockResolvedValue({ ok: true });
     ensureLoaded.mockClear();
     for (const t of [...toasts.items]) toasts.dismiss(t.id);
   });
 
   function open(
     prefill: { url: string; identity: number | null } | null = null,
-  ) {
-    const create = vi.fn(async (_body: unknown) => ({
-      ok: true as const,
+    result: ActionResult<Workspace> = {
+      ok: true,
       value: workspace("web", { busy: "creating", status: "created" }),
-    }));
+    },
+  ) {
+    const create = vi.fn(async (_body: unknown) => result);
     const onCreated = vi.fn();
     render(CreateWorkspaceDialog, {
       props: {
@@ -287,7 +291,8 @@ describe("CreateWorkspaceDialog identities and repositories", () => {
     return { create, onCreated };
   }
 
-  const box = (name: RegExp) => screen.getByRole("checkbox", { name });
+  const identityBox = () =>
+    screen.getByRole("combobox", { name: "Git identity" });
 
   it("reads the identities when it opens", async () => {
     open();
@@ -295,93 +300,84 @@ describe("CreateWorkspaceDialog identities and repositories", () => {
     expect(ensureLoaded).toHaveBeenCalled();
   });
 
-  it("offers the identities that cover a typed address and ticks the one that covers its owner", async () => {
+  it("offers the identities that cover a typed address and chooses the one that covers its owner", async () => {
     open();
     await screen.findByRole("dialog");
-    expect(screen.queryByRole("group", { name: "Git identities" })).toBeNull();
+    expect(identityBox()).toHaveDisplayValue("Let Puddle choose");
+    expect(screen.queryByRole("group", { name: "Cover this repository" })).toBe(
+      null,
+    );
     await type("Git repository (HTTPS)", "https://github.com/acme/web");
-    expect(screen.getByRole("group", { name: "Git identities" })).toBeVisible();
-    expect(box(/Work/)).toBeChecked();
-    expect(box(/Personal/)).not.toBeChecked();
+    expect(identityBox()).toHaveDisplayValue("Work");
+    const covering = screen.getByRole("group", {
+      name: "Cover this repository",
+    });
+    expect(covering).toHaveTextContent("Work");
+    expect(covering).toHaveTextContent("Personal");
     await type("Git repository (HTTPS)", "https://github.com/someone/else");
-    expect(screen.queryByRole("checkbox", { name: /Work/ })).toBeNull();
-    expect(box(/Personal/)).toBeChecked();
-  });
-
-  it("offers nothing for an address no identity covers", async () => {
-    open();
-    await screen.findByRole("dialog");
+    expect(identityBox()).toHaveDisplayValue("Personal");
+    // An identity that does not cover it is still on offer, under its own heading.
     await type("Git repository (HTTPS)", "https://gitlab.com/acme/web");
-    expect(screen.queryByRole("group", { name: "Git identities" })).toBeNull();
+    expect(identityBox()).toHaveDisplayValue("Let Puddle choose");
+    expect(
+      screen.getByRole("group", { name: "Other identities" }),
+    ).toBeVisible();
   });
 
-  it('fills the repository from "Create a workspace for this" and ticks the identity that listed it', async () => {
+  it('fills the repository from "Create a workspace for this" and chooses the identity that listed it', async () => {
     open({ url: "https://github.com/acme/web", identity: 2 });
     await screen.findByRole("dialog");
     expect(field("Git repository (HTTPS)").value).toBe(
       "https://github.com/acme/web",
     );
     expect(field("Name").value).toBe("web");
-    expect(box(/Personal.*listed this repository/)).toBeChecked();
-    expect(box(/Work/)).not.toBeChecked();
+    expect(identityBox()).toHaveDisplayValue(
+      /Personal \(listed this repository\)/,
+    );
   });
 
-  it("gives the new workspace the ticked identities, the one that listed it first", async () => {
-    const { create, onCreated } = open({
+  it("sends the identity the row shows, and one picked by hand in its place", async () => {
+    const { create } = open({
       url: "https://github.com/acme/web",
       identity: 2,
     });
     await screen.findByRole("dialog");
-    await fireEvent.click(box(/Work/));
     await fireEvent.click(submit());
-    await vi.waitFor(() => expect(h.use).toHaveBeenCalled());
-    expect(create).toHaveBeenCalled();
-    expect(onCreated).toHaveBeenCalled();
-    expect(h.use).toHaveBeenCalledWith("web", [2, 1], expect.any(Function));
-    expect(h.use.mock.calls[0]?.[2](2)).toBe("Personal");
-    expect(h.use.mock.calls[0]?.[2](9)).toBe("Identity 9");
-  });
-
-  it("can be told to use no identity, and unticking again restores the choice", async () => {
-    open({ url: "https://github.com/acme/web", identity: 1 });
-    await screen.findByRole("dialog");
-    await fireEvent.click(box(/Work/));
-    expect(box(/Work/)).not.toBeChecked();
-    await fireEvent.click(box(/Work/));
-    expect(box(/Work/)).toBeChecked();
-    await fireEvent.click(box(/Work/));
-    await fireEvent.click(submit());
-    await vi.waitFor(() =>
-      expect(h.use).toHaveBeenCalledWith("web", [], expect.any(Function)),
-    );
-  });
-
-  it("says when the identities could not be set, and that the workspace was made", async () => {
-    h.use.mockResolvedValue({
-      ok: false,
-      message: "Work and Personal both cover x.",
+    await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    expect(create.mock.calls[0]?.[0]).toMatchObject({
+      repositories: [{ url: "https://github.com/acme/web", identity_id: 2 }],
     });
-    open({ url: "https://github.com/acme/web", identity: 1 });
-    await screen.findByRole("dialog");
-    await fireEvent.click(submit());
-    await vi.waitFor(() => expect(toasts.items.length).toBe(1));
-    expect(toasts.items[0]?.message).toContain("The workspace was made");
-    expect(toasts.items[0]?.message).toContain(
-      "Work and Personal both cover x.",
-    );
-    expect(toasts.items[0]?.message).toContain("Git tab");
   });
 
-  it("touches no identity when none covers the address", async () => {
-    open();
+  it("sends an identity picked by hand", async () => {
+    const { create } = open();
     await screen.findByRole("dialog");
     await type("Git repository (HTTPS)", "https://gitlab.com/acme/web");
+    await fireEvent.change(identityBox(), { target: { value: "1" } });
+    expect(identityBox()).toHaveDisplayValue("Work");
     await fireEvent.click(submit());
-    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(h.use).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create.mock.calls[0]?.[0]).toMatchObject({
+      repositories: [{ identity_id: 1 }],
+    });
   });
 
-  it("takes the repository and identity of a pick from the list", async () => {
+  it("sends no identity when Puddle is told to choose", async () => {
+    const { create } = open({
+      url: "https://github.com/acme/web",
+      identity: 1,
+    });
+    await screen.findByRole("dialog");
+    await fireEvent.change(identityBox(), { target: { value: "" } });
+    await fireEvent.click(submit());
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create.mock.calls[0]?.[0]).toEqual({
+      name: "web",
+      repositories: [{ url: "https://github.com/acme/web" }],
+    });
+  });
+
+  it("takes the repository and identity of a pick from the list, and moves focus to the name", async () => {
     open();
     await screen.findByRole("dialog");
     await fireEvent.click(screen.getByText("Choose from your repositories"));
@@ -393,14 +389,16 @@ describe("CreateWorkspaceDialog identities and repositories", () => {
     );
     expect(field("Name")).toHaveFocus();
     // The list names Personal first, so it listed the repository first.
-    expect(box(/Personal.*listed this repository/)).toBeChecked();
+    expect(identityBox()).toHaveDisplayValue(
+      /Personal \(listed this repository\)/,
+    );
   });
 
   it("forgets the identity that listed it when the address is typed over", async () => {
     open({ url: "https://github.com/acme/web", identity: 2 });
     await screen.findByRole("dialog");
     await type("Git repository (HTTPS)", "https://github.com/acme/api");
-    expect(box(/Work/)).toBeChecked();
+    expect(identityBox()).toHaveDisplayValue("Work");
     expect(screen.queryByText(/listed this repository/)).toBeNull();
   });
 
@@ -415,4 +413,322 @@ describe("CreateWorkspaceDialog identities and repositories", () => {
       "Only push to listed repos",
     );
   });
+});
+
+describe("CreateWorkspaceDialog with several repositories", () => {
+  const url = (n: number) =>
+    within(row(n)).getByLabelText("Git repository (HTTPS)") as HTMLInputElement;
+  const row = (n: number) =>
+    screen.getByRole("group", { name: `Repository ${n}` });
+  const part = (n: number, label: string) =>
+    within(row(n)).getByLabelText(label) as HTMLInputElement;
+  const typeIn = (n: number, label: string, value: string) =>
+    fireEvent.input(part(n, label), { target: { value } });
+  const add = () =>
+    screen.getByRole("button", {
+      name: /Add (another|a) repository/,
+    });
+
+  function open(
+    result: ActionResult<Workspace> = {
+      ok: true,
+      value: workspace("api", { busy: "creating", status: "created" }),
+    },
+  ) {
+    const create = vi.fn(async (_body: unknown) => result);
+    render(CreateWorkspaceDialog, {
+      props: {
+        open: true,
+        store: { create },
+        identities: { identities: [], ensureLoaded: async () => {} },
+      },
+    } as never);
+    return { create };
+  }
+
+  beforeEach(() => {
+    h.repos = new FakeRepos();
+    for (const t of [...toasts.items]) toasts.dismiss(t.id);
+  });
+
+  it("adds a row and puts focus on its address; Remove puts focus on the next row's address, or on Add", async () => {
+    open();
+    await screen.findByRole("dialog");
+    await fireEvent.click(add());
+    await vi.waitFor(() => expect(url(2)).toHaveFocus());
+    await fireEvent.click(add());
+    await vi.waitFor(() => expect(url(3)).toHaveFocus());
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Remove repository 2" }),
+    );
+    // Row 3 is row 2 now, and it has the focus.
+    await vi.waitFor(() => expect(url(2)).toHaveFocus());
+    expect(screen.queryByRole("group", { name: "Repository 3" })).toBeNull();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Remove repository 2" }),
+    );
+    await vi.waitFor(() => expect(add()).toHaveFocus());
+  });
+
+  it("says an empty list makes an ordinary workspace, and sends an empty list", async () => {
+    const { create } = open();
+    await screen.findByRole("dialog");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Remove repository 1" }),
+    );
+    expect(
+      screen.getByText(/No repository: this makes an ordinary/),
+    ).toBeVisible();
+    expect(add()).toHaveTextContent("Add a repository");
+    await type("Name", "scratch");
+    await fireEvent.click(submit());
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create.mock.calls[0]?.[0]).toEqual({
+      name: "scratch",
+      repositories: [],
+    });
+  });
+
+  it("names the workspace after the first repository only", async () => {
+    open();
+    await screen.findByRole("dialog");
+    await fireEvent.click(add());
+    await fireEvent.input(url(2), {
+      target: { value: "https://github.com/acme/second.git" },
+    });
+    expect(field("Name").value).toBe("");
+    await fireEvent.input(url(1), {
+      target: { value: "https://github.com/acme/first.git" },
+    });
+    expect(field("Name").value).toBe("first");
+  });
+
+  it("sends each row with its directory and switches, and the start folder", async () => {
+    const { create } = open();
+    await screen.findByRole("dialog");
+    await fireEvent.input(url(1), {
+      target: { value: "https://github.com/acme/api.git" },
+    });
+    await fireEvent.click(add());
+    await fireEvent.input(url(2), {
+      target: { value: "https://github.com/acme/web.git" },
+    });
+    await typeIn(2, "Directory", " frontend ");
+    await fireEvent.click(
+      within(row(2)).getByRole("checkbox", { name: "Push" }),
+    );
+    await fireEvent.click(screen.getByText("Start folder, image and memory"));
+    await type("Start folder", " api/src ");
+    await fireEvent.click(submit());
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create.mock.calls[0]?.[0]).toEqual({
+      name: "api",
+      repositories: [
+        { url: "https://github.com/acme/api.git" },
+        {
+          url: "https://github.com/acme/web.git",
+          directory: "frontend",
+          push: false,
+        },
+      ],
+      start_folder: "api/src",
+    });
+  });
+
+  it("flags two rows that share a directory as you type, naming a free one, and clears it when one changes", async () => {
+    const { create } = open();
+    await screen.findByRole("dialog");
+    await fireEvent.click(add());
+    await fireEvent.input(url(1), {
+      target: { value: "https://github.com/acme/api.git" },
+    });
+    await fireEvent.input(url(2), {
+      target: { value: "https://gitlab.com/other/api.git" },
+    });
+    for (const n of [1, 2]) {
+      expect(part(n, "Directory")).toHaveAttribute("aria-invalid", "true");
+    }
+    expect(within(row(2)).getByRole("alert")).toHaveTextContent(
+      "Repository 1, the earlier one, also goes into api. Use another directory, such as api-2.",
+    );
+    await fireEvent.input(url(1), { target: { value: "" } });
+    await fireEvent.input(url(1), {
+      target: { value: "https://github.com/acme/api.git" },
+    });
+    await typeIn(2, "Directory", "api-2");
+    expect(part(1, "Directory")).not.toHaveAttribute("aria-invalid");
+    expect(part(2, "Directory")).not.toHaveAttribute("aria-invalid");
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("refuses a submit with a clash, a bad address or a bad directory, and focuses the first", async () => {
+    const { create } = open();
+    await screen.findByRole("dialog");
+    await fireEvent.click(add());
+    await fireEvent.input(url(1), {
+      target: { value: "https://github.com/acme/api.git" },
+    });
+    await fireEvent.input(url(2), {
+      target: { value: "https://gitlab.com/other/api.git" },
+    });
+    await fireEvent.click(submit());
+    expect(part(1, "Directory")).toHaveFocus();
+    expect(create).not.toHaveBeenCalled();
+    await typeIn(1, "Directory", "-bad");
+    await fireEvent.click(submit());
+    expect(within(row(1)).getAllByRole("alert")[0]).toHaveTextContent(
+      "Don't start with a dot or a hyphen.",
+    );
+    await typeIn(1, "Directory", "");
+    await typeIn(2, "Directory", "other");
+    await fireEvent.input(url(2), { target: { value: "ftp://x/y" } });
+    await fireEvent.click(submit());
+    expect(url(2)).toHaveFocus();
+    expect(within(row(2)).getByRole("alert")).toHaveTextContent("https://");
+  });
+
+  it("refuses the same repository in two spellings", async () => {
+    open();
+    await screen.findByRole("dialog");
+    await fireEvent.click(add());
+    await fireEvent.input(url(1), {
+      target: { value: "https://github.com/Acme/API.git" },
+    });
+    await fireEvent.input(url(2), {
+      target: { value: "https://github.com/acme/api/" },
+    });
+    await typeIn(2, "Directory", "other");
+    await fireEvent.click(submit());
+    expect(within(row(2)).getByRole("alert")).toHaveTextContent(
+      "This is the same repository as repository 1. List it once.",
+    );
+    expect(url(2)).toHaveFocus();
+  });
+
+  it("checks the start folder as you type and opens the options when it is refused", async () => {
+    const { create } = open();
+    await screen.findByRole("dialog");
+    await fireEvent.input(url(1), {
+      target: { value: "https://github.com/acme/api.git" },
+    });
+    await fireEvent.click(screen.getByText("Start folder, image and memory"));
+    await type("Start folder", "../escape");
+    expect(field("Start folder")).toHaveAttribute("aria-invalid", "true");
+    await fireEvent.click(screen.getByText("Start folder, image and memory"));
+    await fireEvent.click(submit());
+    expect(field("Start folder")).toHaveFocus();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("puts a refusal that names a repository at that row", async () => {
+    open({
+      ok: false,
+      message:
+        "repositories 1 (https://github.com/acme/api.git) and 2 (https://gitlab.com/o/api.git) both go into api; give one of them another directory, such as api-2",
+      field: "repo_url",
+    });
+    await screen.findByRole("dialog");
+    await fireEvent.click(add());
+    await fireEvent.input(url(1), {
+      target: { value: "https://github.com/acme/api.git" },
+    });
+    await fireEvent.input(url(2), {
+      target: { value: "https://gitlab.com/o/api.git" },
+    });
+    await typeIn(1, "Directory", "one");
+    await typeIn(2, "Directory", "two");
+    await fireEvent.click(submit());
+    await vi.waitFor(() =>
+      expect(within(row(2)).getByRole("alert")).toHaveTextContent(
+        "both go into api",
+      ),
+    );
+    expect(part(2, "Directory")).toHaveFocus();
+  });
+
+  it("puts a refusal about an address at the form when it names no row of several", async () => {
+    open({ ok: false, message: "the host is unreachable", field: "repo_url" });
+    await screen.findByRole("dialog");
+    await fireEvent.click(add());
+    await fireEvent.input(url(2), {
+      target: { value: "https://github.com/acme/web.git" },
+    });
+    await fireEvent.input(url(1), {
+      target: { value: "https://github.com/acme/api.git" },
+    });
+    await fireEvent.click(submit());
+    await vi.waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("unreachable"),
+    );
+  });
+
+  it("puts a refusal about the start folder at its field", async () => {
+    open({
+      ok: false,
+      message: "the start folder is odd",
+      field: "start_folder",
+    });
+    await screen.findByRole("dialog");
+    await fireEvent.input(url(1), {
+      target: { value: "https://github.com/acme/api.git" },
+    });
+    await fireEvent.click(submit());
+    await vi.waitFor(() => expect(field("Start folder")).toHaveFocus());
+  });
+
+  it("gives one warning for the repositories no identity covers, and counts the rest", async () => {
+    const one = "No identity covers github.com/a, so it got Personal.";
+    const { create } = open({
+      ok: true,
+      value: workspace("made", {
+        identities: [
+          { identity: "Personal", basis: "default", warning: one },
+          { identity: "Work", basis: "covers", warning: null },
+          { identity: "Personal", basis: "default", warning: "x" },
+          { identity: "Personal", basis: "default", warning: "y" },
+        ],
+      }),
+    });
+    await screen.findByRole("dialog");
+    await fireEvent.input(url(1), {
+      target: { value: "https://github.com/a/api.git" },
+    });
+    await fireEvent.click(submit());
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
+    await vi.waitFor(() => expect(toasts.items).toHaveLength(1));
+    expect(toasts.items[0]?.message).toBe(
+      `${one} 2 more repositories have the same trouble.`,
+    );
+  });
+
+  it("says 'repository has' for a single other warning", async () => {
+    open({
+      ok: true,
+      value: workspace("made", {
+        identities: [
+          { identity: "P", basis: "default", warning: "A." },
+          { identity: "P", basis: "default", warning: "B." },
+        ],
+      }),
+    });
+    await screen.findByRole("dialog");
+    await fireEvent.input(url(1), {
+      target: { value: "https://github.com/a/api.git" },
+    });
+    await fireEvent.click(submit());
+    await vi.waitFor(() => expect(toasts.items).toHaveLength(1));
+    expect(toasts.items[0]?.message).toBe(
+      "A. 1 more repository has the same trouble.",
+    );
+  });
+
+  it("stops adding at a hundred rows", async () => {
+    open();
+    await screen.findByRole("dialog");
+    for (let i = 1; i < 100; i++) await fireEvent.click(add());
+    expect(
+      screen.getAllByRole("group", { name: /^Repository \d+$/ }),
+    ).toHaveLength(100);
+    expect(add()).toBeDisabled();
+  }, 60_000);
 });

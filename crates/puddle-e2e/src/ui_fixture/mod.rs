@@ -40,8 +40,8 @@ use puddle_store::{
 };
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, EgressRequest, Event,
-    EventSink, Host, ImageRef, MemoryMib, SuffixAllows, WorkspaceId, WorkspaceName,
-    WorkspaceStatus,
+    EventSink, Host, ImageRef, MemoryMib, Problem, Problems, SuffixAllows, WorkspaceId,
+    WorkspaceName, WorkspaceStatus,
 };
 use tokio::sync::Mutex;
 
@@ -51,9 +51,9 @@ mod repos;
 pub mod scenario;
 
 pub use scenario::{
-    ConnectionSeed, CredentialsSeed, DecisionSeed, EffectSeed, GitRepoSeed, GitSeed, RepoItemSeed,
-    RepoListSeed, RepoNoteSeed, RepoProblemSeed, RepoSeed, RequestSeed, RuleSeed, Scenario,
-    SettingsSeed, StatusSeed, Step, UnsavedSeed, WorkspaceOperationSeed, WorkspaceSeed,
+    ConnectionSeed, CredentialsSeed, DecisionSeed, EffectSeed, GitRepoSeed, GitSeed, ProblemSeed,
+    RepoItemSeed, RepoListSeed, RepoNoteSeed, RepoProblemSeed, RepoSeed, RequestSeed, RuleSeed,
+    Scenario, SettingsSeed, StatusSeed, Step, UnsavedSeed, WorkspaceOperationSeed, WorkspaceSeed,
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
@@ -154,6 +154,8 @@ struct State {
     secrets: Arc<puddle_secrets::MemoryStore>,
     repos: Arc<repos::HeldRepos>,
     doctor: Arc<FakeDoctor>,
+    /// The background problems the API lists; kept here so they outlive a rebind of the API.
+    problems: Arc<Problems>,
     api: Option<RunningApi>,
 }
 
@@ -210,6 +212,7 @@ impl Fixture {
         let credentials = Arc::new(FakeCredentials::new());
         let repos = Arc::new(repos::HeldRepos::new());
         let doctor = Arc::new(FakeDoctor::new());
+        let problems = Arc::new(Problems::new(events.clone()));
         let state = State {
             store,
             clock,
@@ -221,6 +224,7 @@ impl Fixture {
             secrets: Arc::new(puddle_secrets::MemoryStore::new()),
             repos,
             doctor,
+            problems,
             api: None,
         };
         state.seed(scenario)?;
@@ -244,7 +248,8 @@ impl Fixture {
             .with_credentials(state.credentials.clone() as Arc<dyn CredentialService>)
             .with_secret_store(state.secrets.clone())
             .with_repos(state.repos.clone() as Arc<dyn RepoService>)
-            .with_doctor(state.doctor.clone() as Arc<dyn DoctorService>);
+            .with_doctor(state.doctor.clone() as Arc<dyn DoctorService>)
+            .with_problems(state.problems.clone());
             match ApiServer::bind(
                 ApiConfig::with_port(self.port.load(Ordering::SeqCst)),
                 self.token.clone(),
@@ -606,6 +611,14 @@ impl State {
             Step::HoldRepos => self.repos.hold(),
             Step::ReleaseRepos => self.repos.release(),
             Step::Doctor(report) => self.doctor.set((**report).clone()),
+            Step::Problem(seed) => {
+                let mut problem = Problem::new(&seed.key, &seed.title, &seed.detail);
+                if let Some(name) = &seed.workspace {
+                    problem = problem.about(workspace(name)?);
+                }
+                self.problems.raise(problem);
+            }
+            Step::ClearProblem { key } => self.problems.clear(key),
             Step::Rule(rule) => self.add_rule(rule, now)?,
             Step::Connection(connection) => self.connection(connection, now)?,
             Step::HoldWorkspaces => self.workspaces.hold(),

@@ -13,16 +13,29 @@
   let {
     busy,
     progress,
+    repositories,
     onDismiss,
   }: {
     /** What the record says is running, if anything. */
     busy: Operation | null;
     /** What the stream last said. */
     progress: Progress | undefined;
+    /** The workspace's list, to say which clone of how many is running. */
+    repositories?: readonly { directory: string }[];
     onDismiss?: () => void;
   } = $props();
 
   const operation = $derived(busy ?? progress?.operation ?? null);
+  /** "Cloning api, 2 of 3": which checkout a cloning step is on, and where it is in the list. */
+  const clone = $derived.by(() => {
+    if (progress?.step !== "cloning" || !progress.repository) return null;
+    const dir = progress.repository;
+    const total = repositories?.length ?? 0;
+    const at = repositories?.findIndex((r) => r.directory === dir) ?? -1;
+    return total > 1 && at >= 0
+      ? `Cloning ${dir}, ${at + 1} of ${total}`
+      : `Cloning ${dir}`;
+  });
   const position = $derived(
     operation && progress && !progress.failed
       ? stepPosition(operation, progress.step)
@@ -48,7 +61,7 @@
     <span class="text">
       <b
         >{progress
-          ? stepLabel(progress.step)
+          ? (clone ?? stepLabel(progress.step))
           : busy
             ? operationLabel(busy)
             : ""}</b

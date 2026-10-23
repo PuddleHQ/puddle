@@ -395,7 +395,13 @@ describe("the rest", () => {
 
   it("dismisses a failure the user saw", () => {
     store.progress = {
-      down: { step: "failed", detail: "x", operation: null, failed: true },
+      down: {
+        step: "failed",
+        detail: "x",
+        repository: null,
+        operation: null,
+        failed: true,
+      },
     };
     actions.dismissProgress(w("down"));
     expect(store.progress["down"]).toBeUndefined();

@@ -225,7 +225,7 @@ test.describe("creating", () => {
       .getByLabel("Git repository (HTTPS)")
       .fill("https://example.org/other.git");
     await expect(dialog.getByLabel("Name")).toHaveValue("my-name");
-    await dialog.getByText("Image and memory").click();
+    await dialog.getByText("Start folder, image and memory").click();
     await dialog.getByLabel("Memory (GiB)").fill("3");
     await dialog.getByLabel("Image").fill("ghcr.io/acme/dev:1");
     await dialog.getByRole("button", { name: "Create workspace" }).click();
@@ -1271,7 +1271,7 @@ test.describe("accessibility", () => {
         const create = page.getByRole("dialog", { name: "New workspace" });
         await create.getByRole("button", { name: "Create workspace" }).click();
         await expect(create.getByRole("alert")).toHaveCount(2);
-        await create.getByText("Image and memory").click();
+        await create.getByText("Start folder, image and memory").click();
         await scan(page, "create with errors");
         await create.getByRole("button", { name: "Cancel" }).click();
 

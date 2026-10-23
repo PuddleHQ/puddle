@@ -92,6 +92,21 @@ impl Scenario {
     }
 }
 
+/// A background problem to raise.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProblemSeed {
+    /// Names the problem; raising the same key again replaces it.
+    pub key: String,
+    /// The workspace it is about; left out is a problem about Puddle.
+    #[serde(default)]
+    pub workspace: Option<String>,
+    /// What went wrong, in one line.
+    pub title: String,
+    /// What Puddle did about it and what to do.
+    pub detail: String,
+}
+
 /// A rule to create.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -545,6 +560,14 @@ pub enum Step {
     ReleaseRepos,
     /// Replaces what the system check reports from now on.
     Doctor(Box<DoctorReport>),
+    /// Raises a background problem, as the host does for a clone that failed, or replaces the one
+    /// with the same key. The list at `GET /api/problems` and `problems_changed` follow.
+    Problem(ProblemSeed),
+    /// Ends the background problem with this key, as a clone that works then would.
+    ClearProblem {
+        /// The problem's key.
+        key: String,
+    },
     /// Creates a rule.
     Rule(RuleSeed),
     /// Writes a connection audit record.

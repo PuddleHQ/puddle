@@ -24,6 +24,8 @@
     store?: RepoLists;
   } = $props();
 
+  // Several pickers can be open at once (one per row of the create form).
+  const uid = $props.id();
   let opened = $state(false);
   let search = $state("");
   let typing: ReturnType<typeof setTimeout> | undefined;
@@ -82,9 +84,9 @@
   {#if opened}
     <div class="body">
       <div class="field">
-        <label for="repo-pick-search">Search your repositories</label>
+        <label for="repo-pick-search-{uid}">Search your repositories</label>
         <input
-          id="repo-pick-search"
+          id="repo-pick-search-{uid}"
           type="search"
           autocomplete="off"
           spellcheck="false"

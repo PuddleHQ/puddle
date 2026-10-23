@@ -1,10 +1,10 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { tick } from "svelte";
   import { goto } from "$app/navigation";
   import FormDialog from "./FormDialog.svelte";
   import RepoPicker from "./RepoPicker.svelte";
-  import { useIdentities } from "#lib/identities/attach.ts";
-  import { covering, type Identity } from "#lib/identities/model.ts";
+  import { covering } from "#lib/identities/model.ts";
   import { parseRepoUrl } from "#lib/identities/repo.ts";
   import {
     matchingUrl,
@@ -25,10 +25,21 @@
   import {
     nameProblem,
     parseMemoryGib,
-    repoUrlProblem,
     suggestName,
     type Workspace,
   } from "#lib/workspaces/model.ts";
+  import {
+    checkRows,
+    clashes,
+    rowProblems,
+    directoryFor,
+    MAX_REPOSITORIES,
+    newRow,
+    refusedRow,
+    startFolderProblem,
+    type RowDraft,
+    type RowProblems,
+  } from "#lib/workspaces/repo-rows.ts";
   import "#lib/theme/controls.css";
 
   let {
@@ -51,17 +62,22 @@
     onCreated?: (workspace: Workspace) => void;
   } = $props();
 
-  let repoUrl = $state("");
+  type FormField = Exclude<Field, "repo_url">;
+
+  let nextKey = 1;
+  const fresh = (url = "") => newRow(nextKey++, url);
+
+  let rows = $state<RowDraft[]>([fresh()]);
   let name = $state("");
   let nameTouched = $state(false);
   let image = $state("");
   let memoryGib = $state("");
-  let errors = $state<Partial<Record<Field, string>>>({});
+  let startFolder = $state("");
+  let moreOpen = $state(false);
+  let errors = $state<Partial<Record<FormField, string>>>({});
+  /** What each row was refused for, by the row's key: after a submit, or the service's words. */
+  let rowErrors = $state<Record<number, RowProblems>>({});
   let working = $state(false);
-  /** The identity that listed the repository in the field, when it came from a list. */
-  let listedBy = $state<number | null>(null);
-  /** The identities ticked by hand for this address; `null` while the form chooses. */
-  let ticked = $state<number[] | null>(null);
   let taken: typeof prefill = null;
 
   // Reads the identities when the form opens, so the ones that cover an address can be offered.
@@ -69,100 +85,153 @@
     if (open) void identities.ensureLoaded();
   });
 
-  // A repository handed in by "Create a workspace for this" fills the address once.
+  // A repository handed in by "Create a workspace for this" becomes the only row, once.
   $effect(() => {
     if (open && prefill && prefill !== taken) {
       taken = prefill;
-      repoUrl = prefill.url;
-      listedBy = prefill.identity;
-      ticked = null;
+      const row = fresh(prefill.url);
+      row.listedBy = prefill.identity;
+      rows = [row];
+      rowErrors = {};
     }
   });
 
-  const offered = $derived(
-    matchingUrl(identities.identities, repoUrl, listedBy),
-  );
-  // What the form chooses itself: the identity that listed the repository, else the one that
-  // covers its owner best (as the host does when none is chosen).
-  const chosenForYou = $derived.by(() => {
-    const parsed = parseRepoUrl(repoUrl);
-    if (!parsed.ok || offered.length === 0) return [];
-    const listed = offered.find((i) => i.id === listedBy);
-    const best = listed ?? covering(offered, parsed.host, parsed.owner);
-    return best ? [best.id] : [];
-  });
-  const chosen = $derived(ticked ?? chosenForYou);
+  // What two rows share is flagged as you type, before any submit.
+  const live = $derived(clashes(rows));
+  const problem = (row: RowDraft, field: keyof RowProblems) =>
+    rowErrors[row.key]?.[field] ?? live.get(row.key)?.[field];
 
-  function tick(identity: Identity, on: boolean) {
-    const kept = chosen.filter((id) => id !== identity.id);
-    const now = on ? [...kept, identity.id] : kept;
-    ticked = offered.filter((i) => now.includes(i.id)).map((i) => i.id);
+  const offeredFor = (row: RowDraft) =>
+    matchingUrl(identities.identities, row.url, row.listedBy);
+  /**
+   * What the form chooses itself for a row: the identity that listed the repository, else the one
+   * that covers its owner best (as the host does when none is chosen).
+   */
+  function chosenForYou(row: RowDraft): number | null {
+    const parsed = parseRepoUrl(row.url);
+    const offered = offeredFor(row);
+    if (!parsed.ok || offered.length === 0) return null;
+    const listed = offered.find((i) => i.id === row.listedBy);
+    return (listed ?? covering(offered, parsed.host, parsed.owner))?.id ?? null;
   }
+  const selectedFor = (row: RowDraft): string =>
+    row.identity ?? String(chosenForYou(row) ?? "");
 
-  function picked(repo: { url: string }, by: number | null) {
-    repoUrl = repo.url;
-    listedBy = by;
-    ticked = null;
-    document.getElementById("new-ws-name")?.focus();
-  }
-
-  // Until the user types a name, it follows the repository.
+  // Until the user types a name, it follows the first repository.
   $effect(() => {
-    if (!nameTouched) name = suggestName(repoUrl);
+    if (!nameTouched) name = suggestName(rows[0]?.url ?? "");
   });
 
   function reset() {
-    repoUrl = "";
+    rows = [fresh()];
     name = "";
     nameTouched = false;
     image = "";
     memoryGib = "";
+    startFolder = "";
+    moreOpen = false;
     errors = {};
+    rowErrors = {};
     working = false;
-    listedBy = null;
-    ticked = null;
     taken = null;
   }
 
-  function check(): Partial<Record<Field, string>> {
-    const found: Partial<Record<Field, string>> = {};
-    const repo = repoUrlProblem(repoUrl);
-    if (repo) found.repo_url = repo;
-    const label = nameProblem(name);
-    if (label) found.name = label;
-    const memory = parseMemoryGib(memoryGib);
-    if (!memory.ok) found.memory_mib = memory.message;
-    return found;
+  const focus = (id: string) => document.getElementById(id)?.focus();
+  const rowId = (row: RowDraft, part: string) => `new-ws-r${row.key}-${part}`;
+
+  async function addRow() {
+    if (rows.length >= MAX_REPOSITORIES) return;
+    const row = fresh();
+    rows = [...rows, row];
+    await tick();
+    focus(rowId(row, "url"));
   }
 
-  /** The host attaches one identity itself; this puts the chosen ones on the new workspace. */
-  async function giveIdentities(id: string, wanted: number[]) {
-    const label = (n: number) =>
-      identities.identities.find((i) => i.id === n)?.label ?? `Identity ${n}`;
-    const result = await useIdentities(id, wanted, label);
-    if (!result.ok) {
-      toasts.push(
-        `The workspace was made, but its identities were not set: ${result.message} Change them on its Git tab.`,
-        { tone: "error", ms: 10_000 },
-      );
+  async function removeRow(at: number) {
+    const gone = rows[at];
+    if (!gone) return;
+    rows = rows.filter((_, i) => i !== at);
+    const { [gone.key]: _dropped, ...kept } = rowErrors;
+    rowErrors = kept;
+    await tick();
+    const next = rows[at];
+    if (next) focus(rowId(next, "url"));
+    else focus("new-ws-add");
+  }
+
+  function picked(row: RowDraft, repo: { url: string }, by: number | null) {
+    row.url = repo.url;
+    row.listedBy = by;
+    row.identity = null;
+    if (row === rows[0]) focus("new-ws-name");
+    else focus(rowId(row, "directory"));
+  }
+
+  function check() {
+    const found: Partial<Record<FormField, string>> = {};
+    const label = nameProblem(name);
+    if (label) found.name = label;
+    const folder = startFolderProblem(startFolder);
+    if (folder) found.start_folder = folder;
+    const memory = parseMemoryGib(memoryGib);
+    if (!memory.ok) found.memory_mib = memory.message;
+    // What is shown after the submit is what the rows cannot show themselves; two rows that
+    // share a directory are flagged as you type (`live`), so the flag clears when one changes.
+    const shown: Record<number, RowProblems> = {};
+    for (const [key, p] of rowProblems(rows)) shown[key] = p;
+    const bad: Record<number, RowProblems> = {};
+    for (const [key, p] of checkRows(rows)) bad[key] = p;
+    return { found, bad, shown };
+  }
+
+  /** The first field with a problem, in the order on screen. */
+  function firstBad(
+    found: Partial<Record<FormField, string>>,
+    bad: Record<number, RowProblems>,
+  ): string | null {
+    for (const row of rows) {
+      if (bad[row.key]?.url) return rowId(row, "url");
+      if (bad[row.key]?.directory) return rowId(row, "directory");
     }
+    if (found.name) return "new-ws-name";
+    if (found.start_folder) return "new-ws-start_folder";
+    if (found.memory_mib) return "new-ws-memory_mib";
+    return null;
+  }
+
+  async function showAndFocus(id: string | null) {
+    if (id && /start_folder|memory_mib|image/.test(id)) moreOpen = true;
+    await tick();
+    if (id) focus(id);
   }
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     if (working) return;
-    errors = check();
-    if (Object.keys(errors).length > 0) {
-      const first = (["repo_url", "name", "memory_mib"] as const).find(
-        (f) => errors[f],
-      );
-      document.getElementById(`new-ws-${first ?? "repo_url"}`)?.focus();
+    const { found, bad, shown } = check();
+    errors = found;
+    rowErrors = shown;
+    const first = firstBad(found, bad);
+    if (first) {
+      await showAndFocus(first);
       return;
     }
     const memory = parseMemoryGib(memoryGib);
+    const folder = startFolder.trim();
     const body: NewWorkspace = {
       name,
-      repositories: [{ url: repoUrl.trim() }],
+      repositories: rows.map((row) => {
+        const identity = selectedFor(row);
+        const directory = row.directory.trim();
+        return {
+          url: row.url.trim(),
+          ...(directory === "" ? {} : { directory }),
+          ...(identity === "" ? {} : { identity_id: Number(identity) }),
+          ...(row.pull ? {} : { pull: false }),
+          ...(row.push ? {} : { push: false }),
+        };
+      }),
+      ...(folder === "" ? {} : { start_folder: folder }),
       ...(image.trim() === "" ? {} : { image: image.trim() }),
       ...(memory.ok && memory.mib !== null ? { memory_mib: memory.mib } : {}),
     };
@@ -170,77 +239,230 @@
     const result = await store.create(body);
     working = false;
     if (result.ok) {
-      const identitiesWanted = [...chosen];
-      const forAddress = offered.length > 0;
       open = false;
       reset();
-      const warning = result.value.identities[0]?.warning;
-      if (warning && !forAddress) {
-        // Nothing covers the repository (and the picker did not choose identities): say which identity the workspace got and what that
-        // means, and offer the tab where it is changed. The toast stays long enough to read.
-        const id = result.value.id;
-        toasts.push(warning, {
-          ms: 20_000,
-          action: {
-            label: "Open Git tab",
-            run: () => goto(`/workspaces/${encodeURIComponent(id)}/git`),
-          },
-        });
-      }
+      warnAboutIdentities(result.value);
       onCreated?.(result.value);
-      if (forAddress) void giveIdentities(result.value.id, identitiesWanted);
       return;
     }
-    const field = result.field ?? "form";
-    errors = { [field]: result.message };
-    if (field !== "form") document.getElementById(`new-ws-${field}`)?.focus();
+    await refuse(result.message, result.field ?? "form");
+  }
+
+  /** Puts the service's refusal where it belongs: at a row when it names one, else at its field. */
+  async function refuse(message: string, field: Field) {
+    const at = refusedRow(message);
+    const row = at ? rows[at.row - 1] : undefined;
+    if (at && row) {
+      rowErrors = { [row.key]: { [at.field]: message } };
+      errors = {};
+      await showAndFocus(rowId(row, at.field));
+      return;
+    }
+    // An address refusal that names no row is the one row's, when there is only one.
+    const only = rows.length === 1 ? rows[0] : undefined;
+    if (field === "repo_url" && only) {
+      rowErrors = { [only.key]: { url: message } };
+      errors = {};
+      await showAndFocus(rowId(only, "url"));
+      return;
+    }
+    const target = field === "repo_url" ? "form" : field;
+    errors = { [target]: message };
+    rowErrors = {};
+    if (target !== "form") await showAndFocus(`new-ws-${target}`);
+  }
+
+  /** Nothing covers some repository, so it got the default identity: say so, and where to change it. */
+  function warnAboutIdentities(made: Workspace) {
+    const warnings = made.identities.flatMap((i) =>
+      i.warning ? [i.warning] : [],
+    );
+    const [first] = warnings;
+    if (!first) return;
+    const rest = warnings.length - 1;
+    const id = made.id;
+    toasts.push(
+      rest > 0
+        ? `${first} ${rest} more ${rest === 1 ? "repository has" : "repositories have"} the same trouble.`
+        : first,
+      {
+        ms: 20_000,
+        action: {
+          label: "Open Git tab",
+          run: () => goto(`/workspaces/${encodeURIComponent(id)}/git`),
+        },
+      },
+    );
   }
 </script>
 
 <FormDialog
   bind:open
   title="New workspace"
-  description="Puddle clones the repository into a fresh workspace with its own disk."
+  description="Puddle clones your repositories into a fresh workspace with its own disk."
   onClose={reset}
 >
   <form onsubmit={submit} novalidate>
-    <div class="field">
-      <label for="new-ws-repo_url">Git repository (HTTPS)</label>
-      <input
-        id="new-ws-repo_url"
-        type="text"
-        inputmode="url"
-        autocomplete="off"
-        spellcheck="false"
-        placeholder="https://github.com/you/project.git"
-        bind:value={repoUrl}
-        oninput={() => {
-          listedBy = null;
-          ticked = null;
-        }}
-        aria-invalid={errors.repo_url ? "true" : undefined}
-        aria-describedby={errors.repo_url
-          ? "new-ws-repo_url-error"
-          : "new-ws-repo_url-hint"}
-      />
-      {#if errors.repo_url}
-        <p class="error" id="new-ws-repo_url-error" role="alert">
-          {errors.repo_url}
-        </p>
-      {:else}
-        <p class="hint" id="new-ws-repo_url-hint">
-          SSH addresses aren't supported yet: use the HTTPS URL.
-        </p>
-      {/if}
-    </div>
-
-    <RepoPicker identities={identities.identities} onPick={picked} />
-
-    {#if tableCannotHold(repoUrl)}
-      <p class="hint warn" data-testid="table-cannot-hold">
-        {TABLE_CANNOT_HOLD}
+    {#if rows.length === 0}
+      <p class="hint" id="new-ws-none">
+        No repository: this makes an ordinary workspace with an empty disk.
       </p>
     {/if}
+
+    {#each rows as row, at (row.key)}
+      {@const offered = offeredFor(row)}
+      {@const urlError = problem(row, "url")}
+      {@const dirError = problem(row, "directory")}
+      <fieldset class="repo">
+        <legend>Repository {at + 1}</legend>
+        <div class="field">
+          <label for={rowId(row, "url")}>Git repository (HTTPS)</label>
+          <input
+            id={rowId(row, "url")}
+            type="text"
+            inputmode="url"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="https://github.com/you/project.git"
+            bind:value={row.url}
+            oninput={() => {
+              row.listedBy = null;
+              row.identity = null;
+              rowErrors = { ...rowErrors, [row.key]: {} };
+            }}
+            aria-invalid={urlError ? "true" : undefined}
+            aria-describedby={urlError
+              ? rowId(row, "url-error")
+              : rowId(row, "url-hint")}
+          />
+          {#if urlError}
+            <p class="error" id={rowId(row, "url-error")} role="alert">
+              {urlError}
+            </p>
+          {:else}
+            <p class="hint" id={rowId(row, "url-hint")}>
+              SSH addresses aren't supported yet: use the HTTPS URL.
+            </p>
+          {/if}
+        </div>
+
+        <RepoPicker
+          identities={identities.identities}
+          onPick={(repo, by) => picked(row, repo, by)}
+        />
+
+        {#if tableCannotHold(row.url)}
+          <p class="hint warn" data-testid="table-cannot-hold">
+            {TABLE_CANNOT_HOLD}
+          </p>
+        {/if}
+
+        <div class="field">
+          <label for={rowId(row, "directory")}>Directory</label>
+          <input
+            id={rowId(row, "directory")}
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder={directoryFor({ url: row.url, directory: "" })}
+            bind:value={row.directory}
+            oninput={() => {
+              rowErrors = { ...rowErrors, [row.key]: {} };
+            }}
+            aria-invalid={dirError ? "true" : undefined}
+            aria-describedby={dirError
+              ? rowId(row, "directory-error")
+              : rowId(row, "directory-hint")}
+          />
+          {#if dirError}
+            <p class="error" id={rowId(row, "directory-error")} role="alert">
+              {dirError}
+            </p>
+          {:else}
+            <p class="hint" id={rowId(row, "directory-hint")}>
+              The folder it is cloned into, on the workspace's disk. It follows
+              the address until you type one.
+            </p>
+          {/if}
+        </div>
+
+        <div class="field">
+          <label for={rowId(row, "identity")}>Git identity</label>
+          <select
+            id={rowId(row, "identity")}
+            value={selectedFor(row)}
+            onchange={(event) => {
+              row.identity = event.currentTarget.value;
+            }}
+          >
+            <option value="">Let Puddle choose</option>
+            {#if offered.length > 0}
+              <optgroup label="Cover this repository">
+                {#each offered as identity (identity.id)}
+                  <option value={String(identity.id)}
+                    >{identity.label}{identity.id === row.listedBy
+                      ? " (listed this repository)"
+                      : ""}</option
+                  >
+                {/each}
+              </optgroup>
+            {/if}
+            {#if identities.identities.length > offered.length}
+              <optgroup label="Other identities">
+                {#each identities.identities.filter((i) => !offered.some((o) => o.id === i.id)) as identity (identity.id)}
+                  <option value={String(identity.id)}>{identity.label}</option>
+                {/each}
+              </optgroup>
+            {/if}
+          </select>
+        </div>
+
+        <div class="boxes">
+          <label class="choice">
+            <input
+              type="checkbox"
+              bind:checked={row.pull}
+              aria-describedby={rowId(row, "boxes-hint")}
+            />
+            Pull
+          </label>
+          <label class="choice">
+            <input
+              type="checkbox"
+              bind:checked={row.push}
+              aria-describedby={rowId(row, "boxes-hint")}
+            />
+            Push
+          </label>
+        </div>
+        <p class="hint" id={rowId(row, "boxes-hint")}>
+          Pull and Push say what the workspace may fetch from and send to this
+          repository. You can change them later on its Git tab.
+        </p>
+
+        <div>
+          <button
+            type="button"
+            class="btn"
+            aria-label="Remove repository {at + 1}"
+            onclick={() => removeRow(at)}>Remove</button
+          >
+        </div>
+      </fieldset>
+    {/each}
+
+    <div>
+      <button
+        type="button"
+        class="btn"
+        id="new-ws-add"
+        disabled={rows.length >= MAX_REPOSITORIES}
+        onclick={addRow}
+        >{rows.length === 0
+          ? "Add a repository"
+          : "Add another repository"}</button
+      >
+    </div>
 
     <div class="field">
       <label for="new-ws-name">Name</label>
@@ -269,34 +491,37 @@
       {/if}
     </div>
 
-    {#if offered.length > 0}
-      <fieldset class="ids">
-        <legend>Git identities</legend>
-        <p class="hint" id="new-ws-identities-hint">
-          These identities cover this repository. The workspace signs in with
-          the ones ticked; you can change them later on its Git tab.
+    <details class="more" bind:open={moreOpen}>
+      <summary>Start folder, image and memory</summary>
+      <div class="field">
+        <label for="new-ws-start_folder">Start folder</label>
+        <input
+          id="new-ws-start_folder"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="The workspace root"
+          bind:value={startFolder}
+          oninput={() => {
+            const { start_folder: _gone, ...rest } = errors;
+            errors = rest;
+          }}
+          aria-invalid={errors.start_folder || startFolderProblem(startFolder)
+            ? "true"
+            : undefined}
+          aria-describedby="new-ws-start_folder-hint"
+        />
+        <p
+          class={errors.start_folder || startFolderProblem(startFolder)
+            ? "error"
+            : "hint"}
+          id="new-ws-start_folder-hint"
+        >
+          {errors.start_folder ??
+            startFolderProblem(startFolder) ??
+            "A folder under the workspace root, such as api/src. New terminals start there and the editor opens it."}
         </p>
-        {#each offered as identity (identity.id)}
-          <label class="tick">
-            <input
-              type="checkbox"
-              checked={chosen.includes(identity.id)}
-              aria-describedby="new-ws-identities-hint"
-              onchange={(event) => tick(identity, event.currentTarget.checked)}
-            />
-            <span>
-              {identity.label}
-              {#if identity.id === listedBy}<span class="muted"
-                  >(listed this repository)</span
-                >{/if}
-            </span>
-          </label>
-        {/each}
-      </fieldset>
-    {/if}
-
-    <details class="more">
-      <summary>Image and memory</summary>
+      </div>
       <div class="field">
         <label for="new-ws-image">Image</label>
         <input
@@ -370,26 +595,17 @@
   .more .field {
     margin-top: var(--space-3);
   }
-  .ids {
-    display: grid;
-    gap: var(--space-1);
-    margin: 0;
-    padding: var(--space-2) var(--space-3);
+  .repo {
+    padding: var(--space-3);
     border: 1px solid var(--color-border-subtle);
     border-radius: var(--radius-md);
   }
-  legend {
-    font-weight: 600;
-    padding: 0 var(--space-1);
-  }
-  .tick {
+  .boxes {
     display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    min-height: var(--control-size);
+    gap: var(--space-4);
   }
-  .muted {
-    color: var(--color-text-muted);
+  .boxes .choice {
+    min-height: var(--control-size);
   }
   .warn {
     color: var(--color-warning);

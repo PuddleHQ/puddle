@@ -601,6 +601,56 @@ async fn scripted_steps_hold_and_fail_workspace_operations() {
 }
 
 #[tokio::test]
+async fn scripted_steps_raise_and_end_background_problems() {
+    let run = start("lived-in").await;
+    let mut stream = run.events().await;
+    read_until(&mut stream, |s| s.contains("\r\n\r\n")).await;
+    let step = |body: Value| {
+        let run = &run;
+        async move { run.control("POST", "/control/step", Some(&body)).await }
+    };
+    assert_eq!(run.get("/api/problems").await.json()["problems"], json!([]));
+    let raise = json!({
+        "do": "problem",
+        "key": "clone:web-shop:api",
+        "workspace": "web-shop",
+        "title": "Could not clone https://github.com/acme/api.git",
+        "detail": "fatal: repository not found"
+    });
+    assert_eq!(step(raise).await.status, 204);
+    read_until(&mut stream, |s| s.contains("problems_changed")).await;
+    let listed = run.get("/api/problems").await.json();
+    assert_eq!(listed["problems"][0]["key"], "clone:web-shop:api");
+    assert_eq!(listed["problems"][0]["workspace"], "web-shop");
+    assert_eq!(
+        listed["problems"][0]["detail"],
+        "fatal: repository not found"
+    );
+    let about_puddle = json!({"do": "problem", "key": "k", "title": "t", "detail": "d"});
+    assert_eq!(step(about_puddle).await.status, 204);
+    assert_eq!(
+        run.get("/api/problems").await.json()["problems"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        step(json!({"do": "clear_problem", "key": "clone:web-shop:api"}))
+            .await
+            .status,
+        204
+    );
+    assert_eq!(
+        run.get("/api/problems").await.json()["problems"][0]["key"],
+        "k"
+    );
+    let bad =
+        json!({"do": "problem", "key": "k", "workspace": "Bad_Name", "title": "t", "detail": "d"});
+    assert_eq!(step(bad).await.status, 422);
+}
+
+#[tokio::test]
 async fn a_scenario_with_a_bad_workspace_fails_to_start() {
     let cases = [
         (

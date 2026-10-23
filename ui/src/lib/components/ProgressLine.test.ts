@@ -25,6 +25,7 @@ describe("ProgressLine", () => {
         progress: {
           step: "cloning",
           detail: "<b>https://example.org/x.git</b>",
+          repository: null,
           operation: "creating",
           failed: false,
         },
@@ -37,6 +38,50 @@ describe("ProgressLine", () => {
     expect(line.querySelector("b b")).toBeNull();
   });
 
+  it("names the checkout a cloning step is on, and its place in a list of several", () => {
+    const progress = {
+      step: "cloning" as const,
+      detail: "https://example.org/web.git",
+      repository: "web",
+      operation: "creating" as const,
+      failed: false,
+    };
+    const list = ["api", "web"].map((directory) => ({ directory }));
+    const { unmount } = render(ProgressLine, {
+      props: { busy: "creating", progress, repositories: list },
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Cloning web, 2 of 2");
+    unmount();
+    render(ProgressLine, {
+      props: {
+        busy: "creating",
+        progress,
+        repositories: [{ directory: "web" }],
+      },
+    });
+    const line = screen.getByRole("status");
+    expect(line).toHaveTextContent("Cloning web");
+    expect(line).not.toHaveTextContent("of 1");
+  });
+
+  it("keeps the generic words for a checkout the list does not have", () => {
+    render(ProgressLine, {
+      props: {
+        busy: "creating",
+        progress: {
+          step: "cloning",
+          detail: null,
+          repository: "gone",
+          operation: "creating",
+          failed: false,
+        },
+        repositories: [{ directory: "api" }, { directory: "web" }],
+      },
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Cloning gone");
+    expect(screen.getByRole("status")).not.toHaveTextContent("of 2");
+  });
+
   it("leaves out the position for a step its operation doesn't have", () => {
     render(ProgressLine, {
       props: {
@@ -44,6 +89,7 @@ describe("ProgressLine", () => {
         progress: {
           step: "cloning",
           detail: null,
+          repository: null,
           operation: "starting",
           failed: false,
         },
@@ -61,6 +107,7 @@ describe("ProgressLine", () => {
         progress: {
           step: "failed",
           detail: "no boot",
+          repository: null,
           operation: "starting",
           failed: true,
         },
@@ -80,6 +127,7 @@ describe("ProgressLine", () => {
         progress: {
           step: "failed",
           detail: null,
+          repository: null,
           operation: null,
           failed: true,
         },

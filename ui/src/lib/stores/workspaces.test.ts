@@ -136,9 +136,21 @@ describe("events", () => {
     expect(store.progress["b-site"]).toEqual({
       step: "syncing",
       detail: "files",
+      repository: null,
       operation: "starting",
       failed: false,
     });
+  });
+
+  it("keeps the checkout a cloning step names", async () => {
+    await store.refresh();
+    store.handleEvent({
+      ...step("b-site", "cloning", "https://x/api.git"),
+      repository: "api",
+    });
+    expect(store.progress["b-site"]?.repository).toBe("api");
+    store.handleEvent({ ...step("b-site", "failed", "no"), repository: "api" });
+    expect(store.progress["b-site"]?.repository).toBe("api");
   });
 
   it("reads the record when progress arrives for a workspace that isn't marked busy", async () => {
@@ -213,6 +225,7 @@ describe("actions", () => {
       "new-one": {
         step: "failed",
         detail: "old",
+        repository: null,
         operation: "creating",
         failed: true,
       },
@@ -279,6 +292,7 @@ describe("actions", () => {
         "b-site": {
           step: "failed",
           detail: null,
+          repository: null,
           operation: null,
           failed: true,
         },
@@ -325,6 +339,7 @@ describe("actions", () => {
       "b-site": {
         step: "failed",
         detail: "old",
+        repository: null,
         operation: "starting",
         failed: true,
       },
@@ -485,6 +500,8 @@ describe("fieldOf", () => {
     ["memory must be at least 256 MiB", "memory_mib"],
     ["this name can't be a workspace: x", "name"],
     ["a workspace named x already exists", "name"],
+    ["the start folder can't be inside .puddle", "start_folder"],
+    ["repositories 1 (a) and 2 (b) both go into api", "repo_url"],
     ["something else", "form"],
   ])("%j goes to %s", (message, field) => {
     expect(fieldOf(message)).toBe(field);

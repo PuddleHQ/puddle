@@ -54,6 +54,48 @@ describe("WorkspaceCard", () => {
     expect(card).toHaveTextContent("3 hours ago");
   });
 
+  it("shows the first repository and how many more, or that there is none", () => {
+    const repo = (n: string) => ({
+      url: `https://github.com/acme/${n}.git`,
+      directory: n,
+    });
+    mount({}, workspace("demo", { repositories: [repo("api")] }));
+    expect(screen.getByRole("article")).not.toHaveTextContent("more");
+    cleanup();
+    mount(
+      {},
+      workspace("demo", {
+        repositories: [repo("api"), repo("web"), repo("cli")],
+      }),
+    );
+    expect(screen.getByRole("article")).toHaveTextContent(
+      "https://github.com/acme/api.git and 2 more",
+    );
+    cleanup();
+    mount({}, workspace("demo", { repositories: [] }));
+    expect(screen.getByRole("article")).toHaveTextContent("No repository");
+  });
+
+  it("says which clone of how many is running", () => {
+    const repositories = ["api", "web", "cli"].map((n) => ({
+      url: `https://github.com/acme/${n}.git`,
+      directory: n,
+    }));
+    mount(
+      {
+        progress: {
+          step: "cloning",
+          detail: repositories[1]?.url ?? null,
+          repository: "web",
+          operation: "creating",
+          failed: false,
+        },
+      },
+      workspace("demo", { busy: "creating", repositories }),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Cloning web, 2 of 3");
+  });
+
   it("tells a workspace with no volume how to get out, and keeps Start", () => {
     const calls = mount({}, workspace("demo", { status: "volume_missing" }));
     const card = screen.getByRole("article");

@@ -35,6 +35,8 @@ export interface Progress {
   step: Step;
   /** More about the step, or why it failed. Can quote tool output; only ever shown as text. */
   detail: string | null;
+  /** The checkout directory a cloning step is about; `null` for any other step. */
+  repository: string | null;
   /** The operation it belongs to, when the record said (`busy`). */
   operation: Operation | null;
   failed: boolean;
@@ -57,7 +59,8 @@ export interface OomEvent {
 }
 
 /** `field` tells a form where to put the message; `form` is anything else. */
-export type Field = "name" | "repo_url" | "image" | "memory_mib" | "form";
+export type Field =
+  "name" | "repo_url" | "image" | "memory_mib" | "start_folder" | "form";
 
 export type ActionResult<T = null> =
   | { ok: true; value: T }
@@ -78,7 +81,8 @@ const DOWN = "Puddle's service isn't answering.";
 /** Which create-form field a refusal is about, from its text. */
 export function fieldOf(message: string): Field {
   const m = message.toLowerCase();
-  if (/ssh|repository|url|https/.test(m)) return "repo_url";
+  if (/start folder|start_folder/.test(m)) return "start_folder";
+  if (/ssh|repository|repositories|url|https/.test(m)) return "repo_url";
   if (/image/.test(m)) return "image";
   if (/memory/.test(m)) return "memory_mib";
   if (/name|already exists/.test(m)) return "name";
@@ -201,6 +205,7 @@ export class WorkspaceStore {
                 [name]: {
                   step: event.step,
                   detail: event.detail,
+                  repository: event.repository ?? null,
                   operation,
                   failed,
                 },
@@ -222,6 +227,7 @@ export class WorkspaceStore {
           [name]: {
             step: event.step,
             detail: event.detail,
+            repository: event.repository ?? null,
             operation,
             failed: false,
           },

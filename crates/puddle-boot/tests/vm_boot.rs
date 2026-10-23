@@ -193,16 +193,59 @@ async fn check_entrypoint<S: Sandbox>(sb: &GatedSandbox<S>, config: &puddle_comp
         assert_eq!(code, 1, "chained without an ENTRYPOINT");
         return;
     }
+    let env = wait_for_environ(
+        || sh(sb, "tr '\\0' '\\n' </proc/$(pidof dockerd)/environ"),
+        Duration::from_millis(200),
+        Duration::from_secs(30),
+    )
+    .await;
+    assert!(
+        env.contains("HTTPS_PROXY=http://127.0.0.1:3128"),
+        "dockerd's environment lacks the proxy: {env}"
+    );
+}
+
+/// Polls `read` (a guest command that prints a process's environment, exit 0 once the process
+/// exists) until the environment is there, and returns it. A process that has just been
+/// exec'd already answers to its new name while the kernel has not yet set up its environment:
+/// `/proc/<pid>/environ` then reads as empty with exit 0 (loaded host, big binary), so an empty
+/// answer means "not yet", never "no proxy".
+async fn wait_for_environ<F, Fut>(mut read: F, every: Duration, within: Duration) -> String
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = (i32, String)>,
+{
     let start = Instant::now();
     loop {
-        let (code, env) = sh(sb, "tr '\\0' '\\n' </proc/$(pidof dockerd)/environ").await;
-        if code == 0 {
-            assert!(env.contains("HTTPS_PROXY=http://127.0.0.1:3128"));
-            break;
+        let (code, env) = read().await;
+        if code == 0 && !env.is_empty() {
+            return env;
         }
-        assert!(start.elapsed() < Duration::from_secs(30), "dockerd not up");
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(
+            start.elapsed() < within,
+            "dockerd not up with an environment (last answer: exit {code}, {} bytes)",
+            env.len()
+        );
+        tokio::time::sleep(every).await;
     }
+}
+
+#[tokio::test]
+async fn an_environ_that_reads_empty_mid_exec_is_not_the_answer() {
+    let mut answers = vec![
+        (1, String::new()),
+        (0, String::new()),
+        (0, String::new()),
+        (0, "PATH=/bin\nHTTPS_PROXY=http://127.0.0.1:3128".to_owned()),
+    ]
+    .into_iter();
+    let env = wait_for_environ(
+        || std::future::ready(answers.next().unwrap()),
+        Duration::from_millis(1),
+        Duration::from_secs(5),
+    )
+    .await;
+    assert!(env.contains("HTTPS_PROXY=http://127.0.0.1:3128"), "{env}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

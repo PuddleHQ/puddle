@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The three stream events the workspace screens act on, narrowed from the generated `Event`.
+// The stream events the workspace screens act on, narrowed from the generated `Event`.
 import type { components } from "#lib/api/schema.d.ts";
 
 type Event = components["schemas"]["Event"];
@@ -7,7 +7,12 @@ type Event = components["schemas"]["Event"];
 export type StatusChanged = Extract<Event, { type: "status_changed" }>;
 export type OomKill = Extract<Event, { type: "oom_kill" }>;
 export type WorkspaceProgress = Extract<Event, { type: "workspace_progress" }>;
-export type WorkspaceEvent = StatusChanged | OomKill | WorkspaceProgress;
+export type RepositoriesChanged = Extract<
+  Event,
+  { type: "workspace_repositories_changed" }
+>;
+export type WorkspaceEvent =
+  StatusChanged | OomKill | WorkspaceProgress | RepositoriesChanged;
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null;
@@ -27,6 +32,8 @@ export function asWorkspaceEvent(raw: unknown): WorkspaceEvent | null {
       return typeof raw["step"] === "string"
         ? (raw as WorkspaceProgress)
         : null;
+    case "workspace_repositories_changed":
+      return raw as RepositoriesChanged;
     default:
       return null;
   }

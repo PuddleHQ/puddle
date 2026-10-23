@@ -3,6 +3,7 @@
 // component tests, in the shape openapi-fetch returns them. Not shipped (tests import it).
 import type { components } from "#lib/api/schema.d.ts";
 import type { DeleteCheck, Workspace } from "#lib/workspaces/model.ts";
+import type { Checkout, CheckoutListing } from "#lib/workspaces/checkouts.ts";
 
 type Layer = components["schemas"]["SettingsLayer"];
 
@@ -29,6 +30,41 @@ export function workspace(
     settings_error: null,
     first_connect_notice_due: false,
     identities: [],
+    ...over,
+  };
+}
+
+/** A checkout the guest holds, with the list entry that has its directory (none by default). */
+export function checkout(
+  directory: string,
+  over: Partial<Checkout> = {},
+): Checkout {
+  return {
+    directory,
+    branch: "main",
+    head: "a1b2c3d",
+    dirty: false,
+    entry: null,
+    manage: { offered: true, reason: null },
+    remote_note: null,
+    remote_url: `https://github.com/acme/${directory}.git`,
+    unreadable: null,
+    ...over,
+  };
+}
+
+/** What a listing of a running workspace says. */
+export function listing(
+  checkouts: Checkout[],
+  over: Partial<CheckoutListing> = {},
+): CheckoutListing {
+  return {
+    checked_at: 1_000_000,
+    checkouts,
+    missing: [],
+    more: 0,
+    problem: null,
+    running: true,
     ...over,
   };
 }
@@ -100,6 +136,15 @@ export class FakeWorkspaces {
   calls: string[] = [];
   bodies: unknown[] = [];
   down = false;
+  /** What each workspace's checkout listing says; a running workspace with none listed by default. */
+  checkouts: Record<string, CheckoutListing> = {};
+  /** The background problems the host lists. */
+  problems: {
+    key: string;
+    title: string;
+    detail: string;
+    workspace: string | null;
+  }[] = [];
   /** Refuse the next call to a path (`"POST /api/workspaces"`) with this status and text. */
   refuse = new Map<
     string,
@@ -194,6 +239,24 @@ export class FakeWorkspaces {
         return this.find(id)
           ? this.reply(200, this.check ?? cleanCheck(String(id)))
           : this.reply(404, undefined, "no such workspace");
+      case "/api/workspaces/{id}/checkouts": {
+        const found = this.find(id);
+        if (!found) return this.reply(404, undefined, "no such workspace");
+        return this.reply(
+          200,
+          this.checkouts[String(id)] ??
+            listing([], {
+              running: found.status === "running",
+              checked_at: found.status === "running" ? 1_000_000 : null,
+              problem:
+                found.status === "running"
+                  ? null
+                  : "the workspace is not running; start it to list its checkouts",
+            }),
+        );
+      }
+      case "/api/problems":
+        return this.reply(200, { problems: this.problems });
       case "/api/settings":
         return this.reply(200, {
           effective: this.effective("-"),
@@ -255,6 +318,31 @@ export class FakeWorkspaces {
     const id = init.params?.path?.["id"];
     const found = this.find(id);
     if (!found) return this.reply(404, undefined, "no such workspace");
+    if (path === "/api/workspaces/{id}/repositories") {
+      const body = init.body ?? {};
+      const url = String(body["url"]);
+      const directory = String(
+        body["directory"] ??
+          url
+            .replace(/\/+$/, "")
+            .split("/")
+            .pop()!
+            .replace(/\.git$/, ""),
+      );
+      const cloning = body["kind"] === "clone";
+      const next: Workspace = {
+        ...found,
+        repositories: [...found.repositories, { url, directory }],
+        ...(cloning ? { busy: "cloning" as const } : {}),
+      };
+      this.list = this.list.map((w) => (w.id === found.id ? next : w));
+      return this.reply(cloning ? 202 : 200, next);
+    }
+    if (path === "/api/workspaces/{id}/repositories/{directory}/clone") {
+      const next: Workspace = { ...found, busy: "cloning" };
+      this.list = this.list.map((w) => (w.id === found.id ? next : w));
+      return this.reply(202, next);
+    }
     const verb = path.split("/").pop();
     if (verb === "attach") return this.reply(200, this.attachReply);
     const next: Workspace =
@@ -310,6 +398,15 @@ export class FakeWorkspaces {
     if (refused) return refused;
     const found = this.find(init.params.path.id);
     if (!found) return this.reply(404, undefined, "no such workspace");
+    if (path === "/api/workspaces/{id}/repositories/{directory}") {
+      const gone = (init.params.path as { directory?: string }).directory;
+      const next: Workspace = {
+        ...found,
+        repositories: found.repositories.filter((r) => r.directory !== gone),
+      };
+      this.list = this.list.map((w) => (w.id === found.id ? next : w));
+      return this.reply(200, next);
+    }
     const next: Workspace = { ...found, busy: "deleting" };
     this.list = this.list.map((w) => (w.id === found.id ? next : w));
     return this.reply(202, next);
@@ -327,6 +424,22 @@ export class FakeWorkspaces {
     if (this.down) throw new TypeError("down");
     const refused = this.refusal(`PUT ${path}`);
     if (refused) return refused;
+    if (path === "/api/workspaces/{id}/start-folder") {
+      const asked = init as unknown as {
+        params: { path: { id: string } };
+        body: { path: string | null };
+      };
+      const found = this.find(asked.params.path.id);
+      if (!found) return this.reply(404, undefined, "no such workspace");
+      this.list = this.list.map((w) =>
+        w.id === found.id ? { ...w, start_folder: asked.body.path } : w,
+      );
+      return this.reply(200, {
+        start_folder: asked.body.path,
+        exists:
+          found.status === "running" && asked.body.path !== null ? true : null,
+      });
+    }
     const name = init.params.path.workspace;
     this.overrides[name] = init.body.overrides;
     this.list = this.list.map((w) =>

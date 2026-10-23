@@ -206,6 +206,27 @@ fn quitting_stops_the_host_in_order_and_frees_its_data_folder() {
     start(&options, &Machine::default()).unwrap();
 }
 
+/// Windows gives a program's main thread 1 MiB of stack, which the host's start-up and shutdown,
+/// unoptimised, outgrow; the setup hook and the exit hook run on that thread.
+#[test]
+fn the_host_starts_and_stops_from_a_thread_with_the_windows_main_thread_stack() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = options_in(dir.path());
+    let app = app();
+    let handle = app.handle().clone();
+    let source = Source::prepare(&options, &Machine::default());
+    let stopped = std::thread::Builder::new()
+        .stack_size(1024 * 1024)
+        .spawn(move || {
+            shell::start(&handle, &options, source).unwrap();
+            shell::stop(&handle)
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(stopped.unwrap().steps, SHUTDOWN_STEPS);
+}
+
 #[test]
 fn a_second_shell_on_the_same_data_folder_says_why_and_opens_no_window() {
     let dir = tempfile::tempdir().unwrap();

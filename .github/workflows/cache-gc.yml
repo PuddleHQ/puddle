@@ -54,7 +54,9 @@ jobs:
           t0=$(date +%s)
           echo "20.106.104.242 azure.archive.ubuntu.com" | sudo tee -a /etc/hosts
           trap 'echo "AB role=base-forced secs=$(( $(date +%s) - t0 ))"' EXIT
-          ci/apt-setup.sh
+          sudo apt-get update -q >/dev/null 2>&1 || true
+          uri=$(apt-get download --print-uris libwebkit2gtk-4.1-0 | awk -F"'" 'NR==1{print $2}' | sed -nE 's#^.*/(pool/.*)#http://archive.ubuntu.com/ubuntu/\1#p')
+          APT_PROBE_URL=$uri ci/apt-setup.sh
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev squid
           test -x /usr/sbin/squid

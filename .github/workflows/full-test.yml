@@ -62,7 +62,8 @@ jobs:
       - name: msb runtime (fork tag; download, verify, build)
         run: |
           ci/apt-setup.sh
-          sudo apt-get update -q && sudo apt-get install -y -q libcap-ng-dev
+          ci/apt-retry.sh sudo apt-get update -q
+          ci/apt-retry.sh sudo apt-get install -y -q libcap-ng-dev
           MSB_BUILD_DIR="$RUNNER_TEMP/msb-build" ci/fetch-msb.sh "$RUNNER_TEMP/msb"
           echo "PUDDLE_VM_RUNTIME_DIR=$RUNNER_TEMP/msb" >> "$GITHUB_ENV"
           echo "PUDDLE_VM_ROOT=$RUNNER_TEMP/pvm" >> "$GITHUB_ENV"

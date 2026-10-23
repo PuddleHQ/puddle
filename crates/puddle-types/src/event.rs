@@ -195,6 +195,12 @@ pub enum Event {
         /// What went wrong, for the user.
         reason: String,
     },
+    /// A workspace's repository list changed (an entry was added, managed, cloned again or
+    /// removed). Carries nothing more: refetch `GET /api/workspaces/{id}` and its checkouts.
+    WorkspaceRepositoriesChanged {
+        /// The workspace.
+        workspace: WorkspaceName,
+    },
     /// A workspace asked for a credential and the source of it cannot supply one (not signed in,
     /// or the sign-in ran out). The user signs in from Puddle; a request never opens a sign-in
     /// window. Global: every subscriber gets it. Names only, never a value.
@@ -427,6 +433,7 @@ impl Event {
             | Self::WorkspaceEnvFailed { workspace, .. }
             | Self::WorkspaceShellInitChanged { workspace }
             | Self::WorkspaceShellInitRestored { workspace }
+            | Self::WorkspaceRepositoriesChanged { workspace }
             | Self::WorkspaceSshFailed { workspace, .. } => Some(workspace),
             Self::PendingOpened { request } => Some(&request.workspace),
             Self::RulesChanged {}
@@ -846,6 +853,15 @@ mod tests {
     }
 
     #[test]
+    fn a_repository_list_change_carries_only_the_workspace() {
+        let event = Event::WorkspaceRepositoriesChanged { workspace: name() };
+        let json = r#"{"type":"workspace_repositories_changed","workspace":"box"}"#;
+        assert_eq!(serde_json::to_string(&event).unwrap(), json);
+        assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
+        assert_eq!(event.workspace(), Some(&name()));
+    }
+
+    #[test]
     fn shell_init_events_have_fixed_shapes() {
         for (event, json) in [
             (
@@ -918,6 +934,7 @@ mod tests {
                 "workspace_shell_init_changed",
                 "workspace_shell_init_restored",
                 "workspace_ssh_failed",
+                "workspace_repositories_changed",
                 "credential_sign_in_needed",
                 "git_access_denied",
                 "git_no_identity",

@@ -48,7 +48,7 @@ async fn a_name_the_site_holds_answers_over_plain_http_and_tls_and_the_site_reco
     let mut conn = through(
         &proxy,
         "GET http://two.test/a?b=1 HTTP/1.1\r\n",
-        "Host: two.test\r\nX-Probe: plain\r\nConnection: close\r\n\r\n",
+        "Host: two.test\r\nProxy-Authorization: Negotiate abc\r\nX-Probe: plain\r\nConnection: close\r\n\r\n",
     )
     .await;
     let mut text = String::new();
@@ -93,6 +93,10 @@ async fn a_name_the_site_holds_answers_over_plain_http_and_tls_and_the_site_reco
     assert_eq!(seen.len(), 2, "{seen:?}");
     assert_eq!(seen[0].target, "/a?b=1");
     assert_eq!(seen[0].headers_named("x-probe"), ["plain"]);
+    assert!(
+        seen[0].headers_named("proxy-authorization").is_empty(),
+        "a header meant for the proxy reached the site: {seen:?}"
+    );
     assert_eq!(seen[1].version, "HTTP/1.1");
     assert_eq!(web.plain_addr().ip(), web.tls_addr().ip());
 

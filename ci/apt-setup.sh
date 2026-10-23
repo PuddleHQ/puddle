@@ -40,11 +40,12 @@ canonical='https://archive.ubuntu.com/ubuntu/'
 security='https://security.ubuntu.com/ubuntu/'
 
 # 2 MB in 5 s is 0.4 MB/s: far above the slow backends and far below the fast ones. The package is the
-# biggest one the jobs install; its index entry is fetched here, so the probe names a current file.
+# biggest one the jobs install; its index entry is fetched here, so the probe names a current file
+# (apt prints the mirror list's name as the host, so the URL is rebuilt from the pool path).
 if [ -z "${APT_PROBE_URL:-}" ]; then
     as_root apt-get update -q >/dev/null 2>&1 || true
     probe=$(apt-get download --print-uris libwebkit2gtk-4.1-0 2>/dev/null | awk -F"'" 'NR==1{print $2}' |
-        sed -E "s#^https?://[^/]+/#http://$host/#" || true)
+        sed -nE "s#^.*/(pool/.*)#http://$host/ubuntu/\\1#p" || true)
 fi
 ip=$(getent ahostsv4 "$host" 2>/dev/null | awk 'NR==1{print $1}' || true)
 speed=0
@@ -61,7 +62,7 @@ if [ "${speed%.*}" -gt 0 ] 2>/dev/null; then
     if [ -n "$ip" ] && ! grep -q " $host\$" "$hosts"; then printf '%s %s\n' "$ip" "$host" | as_root tee -a "$hosts" >/dev/null; fi
     first=$azure second=$canonical
 else
-    echo "apt mirror: $host (${ip:-no address}) too slow or unreachable (${got:-no answer}); archive.ubuntu.com goes first"
+    echo "apt mirror: $host (${ip:-no address}) too slow or unreachable (${got:-no answer} from ${probe:-no package url}); archive.ubuntu.com goes first"
     first=$canonical second=$azure
 fi
 printf '%s\tpriority:1\n%s\tpriority:2\n%s\tpriority:3\n' "$first" "$second" "$security" |

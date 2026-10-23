@@ -274,6 +274,32 @@ describe("the detail layout", () => {
     );
   });
 
+  it("says which clone of how many is running, from the workspace's repositories", async () => {
+    api.list = [
+      workspace("demo", {
+        status: "stopped",
+        repositories: [
+          { url: "https://github.com/acme/web.git", directory: "web" },
+          { url: "https://github.com/acme/api.git", directory: "api" },
+        ],
+      }),
+    ];
+    await load();
+    workspaces.progress = {
+      demo: {
+        step: "cloning",
+        detail: null,
+        repository: "api",
+        operation: "creating",
+        failed: false,
+      },
+    };
+    render(DetailLayout, { children: (() => {}) as never });
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Cloning api, 2 of 2",
+    );
+  });
+
   it("says when there is no such workspace", async () => {
     url.id = "nope";
     await load();

@@ -223,7 +223,37 @@ describe("identities on a workspace", () => {
     expect(screen.getByText(/No identity yet/)).toBeInTheDocument();
   });
 
-  it("says when the workspace's own address could not be read, so nothing was listed or chosen", async () => {
+  it("warns once for each listed repository no identity covers, and names it", async () => {
+    workspaces.list = [
+      workspace("many", {
+        repositories: [
+          { url: "https://github.com/acme/api.git", directory: "api" },
+          {
+            url: "https://dev.azure.com/contoso/Platform/_git/Docs",
+            directory: "Docs",
+          },
+          {
+            url: "https://gitlab.example.org/team/tools.git",
+            directory: "tools",
+          },
+        ],
+      }),
+    ];
+    api.git["many"] = { ids: [1], repos: [], push: true, pull: false };
+    url.id = "many";
+    render(Page);
+    const lines = await screen.findAllByText(/No identity here covers/);
+    expect(lines.map((l) => l.textContent?.replace(/\s+/g, " "))).toEqual([
+      expect.stringContaining(
+        "dev.azure.com/contoso, so a private clone or push of Docs",
+      ),
+      expect.stringContaining(
+        "gitlab.example.org/team, so a private clone or push of tools",
+      ),
+    ]);
+  });
+
+  it("says when a listed address could not be read, so nothing was listed or chosen", async () => {
     workspaces.list = [
       workspace("odd", {
         repositories: [{ url: "https://github.com/a/b/c", directory: "c" }],
@@ -233,9 +263,7 @@ describe("identities on a workspace", () => {
     url.id = "odd";
     render(Page);
     expect(
-      await screen.findByText(
-        /couldn't read this workspace's repository address/,
-      ),
+      await screen.findByText(/couldn't read the address of c/),
     ).toHaveTextContent("listed no repository and chose no identity");
     expect(
       screen.getByText(/not a repository address Puddle can read/),
@@ -245,9 +273,7 @@ describe("identities on a workspace", () => {
     cleanup();
     render(Page);
     await screen.findByRole("table");
-    expect(
-      screen.queryByText(/couldn't read this workspace's repository address/),
-    ).toBeNull();
+    expect(screen.queryByText(/couldn't read the address of c/)).toBeNull();
   });
 
   it("says when there is nothing to add", async () => {

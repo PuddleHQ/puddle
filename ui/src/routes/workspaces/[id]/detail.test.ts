@@ -78,7 +78,12 @@ import { rulesStore } from "#lib/stores/rules.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import { workspaceActions } from "#lib/stores/workspace-actions.svelte.ts";
 import { workspaces } from "#lib/stores/workspaces.svelte.ts";
-import { cleanCheck, dirtyCheck } from "#lib/testing/fake-workspaces.ts";
+import {
+  checkout,
+  cleanCheck,
+  dirtyCheck,
+  listing,
+} from "#lib/testing/fake-workspaces.ts";
 import DetailLayout from "./+layout.svelte";
 import Overview from "./+page.svelte";
 import Network from "./network/+page.svelte";
@@ -108,6 +113,8 @@ function reset() {
   inbox.down = false;
   rules.down = false;
   api.list = [workspace("demo", { status: "running" })];
+  api.checkouts = {};
+  api.problems = [];
   api.calls = [];
   api.bodies = [];
   api.down = false;
@@ -356,12 +363,17 @@ describe("the overview", () => {
       rule(3, { expires_at: 1 }),
     ];
     inbox.add(request(1, { workspace: "demo" as never }), "example.com");
+    const entry = {
+      url: "https://github.com/acme/demo.git",
+      directory: "demo",
+    };
+    api.checkouts["demo"] = listing([checkout("demo", { entry })]);
     await load();
     render(Overview);
     expect(await screen.findByText("ws-demo")).toBeInTheDocument();
     expect(
-      screen.getByText("https://github.com/acme/demo.git"),
-    ).toBeInTheDocument();
+      await screen.findByRole("list", { name: "Checkouts of demo" }),
+    ).toHaveTextContent("https://github.com/acme/demo.git");
     expect(screen.getByText("2 GiB of 32 GiB used")).toBeInTheDocument();
     expect(screen.getByText("8 GiB")).toBeInTheDocument();
     await vi.waitFor(() =>

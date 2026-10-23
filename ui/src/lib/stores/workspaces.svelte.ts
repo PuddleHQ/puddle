@@ -183,6 +183,10 @@ export class WorkspaceStore {
         this.#put({ ...w, status: event.status });
         return;
       }
+      case "workspace_repositories_changed":
+        // The list of repositories is part of the record: read it again.
+        void this.refresh();
+        return;
       case "oom_kill":
         this.oom = {
           ...this.oom,

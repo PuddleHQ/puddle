@@ -46,6 +46,21 @@ describe("background problems", () => {
   const make = () =>
     new ProblemNotices(new InAppNotifier(center), api as never);
 
+  it("links a missing start folder to the setting and a failed clone to the workspace", async () => {
+    listed = [
+      problem("start-folder:dev", "dev"),
+      problem("clone:dev:api", "dev"),
+    ];
+    await make().refresh();
+    expect(center.items.map((n) => n.link)).toEqual([
+      {
+        href: "/workspaces/dev/settings#start-folder",
+        label: "Change start folder",
+      },
+      { href: "/workspaces/dev", label: "Open workspace" },
+    ]);
+  });
+
   it("shows each problem the host lists, with its reason and the way out, and a link for a workspace's", async () => {
     listed = [problem("sweeper"), problem("git-locks:my web", "my web")];
     await make().refresh();

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { asWorkspaceEvent } from "./events.ts";
 
 describe("asWorkspaceEvent", () => {
-  it("accepts the three events the workspace screens use", () => {
+  it("accepts the events the workspace screens use", () => {
     const status = {
       type: "status_changed",
       workspace: "w",
@@ -19,6 +19,11 @@ describe("asWorkspaceEvent", () => {
     expect(asWorkspaceEvent(status)).toEqual(status);
     expect(asWorkspaceEvent(oom)).toEqual(oom);
     expect(asWorkspaceEvent(progress)).toEqual(progress);
+  });
+
+  it("accepts a change to a workspace's list of repositories", () => {
+    const changed = { type: "workspace_repositories_changed", workspace: "w" };
+    expect(asWorkspaceEvent(changed)).toEqual(changed);
   });
 
   it.each([

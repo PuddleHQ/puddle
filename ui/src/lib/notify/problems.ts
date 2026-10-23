@@ -4,6 +4,7 @@
 // the list changed (`problems_changed`); each becomes one notice that goes away with its cause.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
+import { problemLink } from "#lib/workspaces/problem-links.ts";
 import type { Notifier } from "./notifier.ts";
 
 type Problem = components["schemas"]["Problem"];
@@ -57,19 +58,14 @@ export class ProblemNotices {
       ]);
       now.set(problem.key, said);
       if (this.#raised.get(problem.key) === said) continue;
+      const found = problemLink(problem);
+      const link = found ? { link: found } : {};
       this.#notifier.notify({
         key: noticeKey(problem.key),
         tone: "warning",
         title: problem.title,
         detail: problem.detail,
-        ...(problem.workspace
-          ? {
-              link: {
-                href: `/workspaces/${encodeURIComponent(problem.workspace)}`,
-                label: "Open workspace",
-              },
-            }
-          : {}),
+        ...link,
       });
     }
     for (const key of this.#raised.keys()) {

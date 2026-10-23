@@ -111,6 +111,26 @@ describe("events", () => {
     await vi.waitFor(() => expect(store.byName("c-new")).toBeDefined());
   });
 
+  it("reads the list again when a workspace's repositories change", async () => {
+    api.list = api.list.map((w) =>
+      w.name === "a-shop"
+        ? {
+            ...w,
+            repositories: [
+              { url: "https://github.com/acme/x.git", directory: "x" },
+            ],
+          }
+        : w,
+    );
+    store.handleEvent({
+      type: "workspace_repositories_changed",
+      workspace: "a-shop",
+    });
+    await vi.waitFor(() =>
+      expect(store.byName("a-shop")?.repositories[0]?.directory).toBe("x"),
+    );
+  });
+
   it("remembers the last out-of-memory kill with the time the page heard it", () => {
     store.handleEvent({
       type: "oom_kill",

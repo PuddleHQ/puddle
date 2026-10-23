@@ -8,7 +8,7 @@
 #
 # Streams (gate_stream): `rust` (compiles and tests; one cargo target dir, so these queue on its lock
 # anyway), `node` (the UI chain; no cargo until ui-e2e starts its fixture) and `misc` (secrets, deny,
-# notices: read-only scans). A gate that needs another gate's output waits for it (gate_needs):
+# advisories, notices: read-only scans). A gate that needs another gate's output waits for it (gate_needs):
 # coverage runs the tests against the UI that `ui` builds. Gates keep their order within a stream; a
 # failed gate stops its stream (as `set -e` stopped the old serial run) but not the others, so the
 # first failure is reported with the whole picture and a retry of "the gates after it" covers all.
@@ -26,7 +26,7 @@
 gate_stream() {
     case $1 in
     ui | ui-licences | ui-audit | ui-e2e) echo node ;;
-    secrets | deny | notices) echo misc ;;
+    secrets | deny | advisories | notices) echo misc ;;
     *) echo rust ;;
     esac
 }

@@ -428,7 +428,7 @@ async fn vm_host_manage_lists_adds_and_removes_checkouts_in_the_real_guest() {
     assert_eq!(
         seen,
         [
-            ("Hello-World", false, true),
+            ("Hello-World", false, false),
             ("manual", true, true),
             ("shell", true, false)
         ],

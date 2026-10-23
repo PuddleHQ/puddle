@@ -1,0 +1,26 @@
+{
+  "name": "start-folder-missing",
+  "workspaces": [
+    {
+      "name": "dev",
+      "repositories": [
+        {
+          "url": "https://github.com/acme/api.git"
+        }
+      ],
+      "start_folder": "api/services/web",
+      "status": "running",
+      "ago_ms": 1209600000,
+      "disk_used_mib": 6144,
+      "checkouts": [
+        {
+          "directory": "api",
+          "remote_url": "https://github.com/acme/api.git",
+          "branch": "main",
+          "head": "a1b2c3d"
+        }
+      ]
+    }
+  ],
+  "scripts": {}
+}

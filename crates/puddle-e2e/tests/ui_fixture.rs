@@ -161,6 +161,8 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
         ("git-identities", 0, 0),
         ("repo-lists", 0, 0),
         ("first-run", 0, 0),
+        ("unmanaged-checkouts", 0, 0),
+        ("start-folder-missing", 0, 0),
     ];
     for (name, pending, rules_min) in counts {
         let run = start(name).await;
@@ -187,7 +189,9 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
             "volume-missing",
             "git-identities",
             "repo-lists",
-            "first-run"
+            "first-run",
+            "unmanaged-checkouts",
+            "start-folder-missing"
         ]
     );
 }
@@ -550,6 +554,77 @@ async fn seeded_workspaces_are_listed_with_what_deleting_them_would_lose() {
         empty.get("/api/workspaces").await.json(),
         json!({"workspaces": []})
     );
+}
+
+#[tokio::test]
+async fn seeded_checkouts_are_listed_for_a_running_workspace_and_a_stopped_one_has_none() {
+    let run = start("unmanaged-checkouts").await;
+    let list = run.get("/api/workspaces/dev/checkouts").await.json();
+    assert_eq!(list["running"], true, "{list}");
+    let dirs: Vec<_> = list["checkouts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["directory"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        dirs,
+        [
+            "api",
+            "broken",
+            "hostile",
+            "no-remote",
+            "over-ssh",
+            "personal",
+            "scratch"
+        ]
+    );
+    let by = |dir: &str| {
+        list["checkouts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["directory"] == dir)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(by("api")["entry"]["url"], "https://github.com/acme/api.git");
+    assert_eq!(by("api")["dirty"], true);
+    assert_eq!(by("scratch")["entry"], Value::Null);
+    assert_eq!(by("scratch")["manage"]["offered"], true);
+    assert_eq!(by("over-ssh")["manage"]["offered"], false);
+    assert_eq!(list["missing"], json!(["docs"]));
+
+    let parked = run.get("/api/workspaces/parked/checkouts").await.json();
+    assert_eq!(parked["running"], false, "{parked}");
+    assert_eq!(parked["checkouts"], json!([]));
+    assert!(parked["problem"].is_string(), "{parked}");
+}
+
+#[tokio::test]
+async fn every_remote_note_of_a_seeded_checkout_says_why_it_cannot_be_managed() {
+    let mut scenario = load_scenario("unmanaged-checkouts").unwrap();
+    let extra: Vec<puddle_e2e::ui_fixture::CheckoutSeed> = serde_json::from_value(json!([
+        {"directory": "stripped", "remote_note": "credentials_removed",
+         "remote_url": "https://github.com/acme/stripped.git"},
+        {"directory": "plain-http", "remote_note": "not_https"}
+    ]))
+    .unwrap();
+    scenario.workspaces[0].checkouts.extend(extra);
+    let run = start_scenario(scenario).await;
+    let list = run.get("/api/workspaces/dev/checkouts").await.json();
+    let by = |dir: &str| {
+        list["checkouts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["directory"] == dir)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(by("stripped")["remote_note"], "credentials_removed");
+    assert_eq!(by("plain-http")["remote_note"], "not_https");
+    assert_eq!(by("plain-http")["manage"]["offered"], false);
 }
 
 #[tokio::test]

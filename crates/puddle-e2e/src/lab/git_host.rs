@@ -765,23 +765,39 @@ impl NameProxy {
                 let seen = seen.clone();
                 let names = names.clone();
                 tokio::spawn(async move {
-                    let mut head = Vec::new();
-                    let mut byte = [0_u8; 1];
-                    while !head.ends_with(b"\r\n\r\n") {
-                        if client.read_exact(&mut byte).await.is_err() {
-                            return;
+                    // A client that signs in to the proxy first (Kerberos, on Windows) sends a
+                    // probe request for a name that does not exist and waits for any answer on
+                    // the same connection, before it sends the real request.
+                    let (head, tunnel, authority) = loop {
+                        let mut head = Vec::new();
+                        let mut byte = [0_u8; 1];
+                        while !head.ends_with(b"\r\n\r\n") {
+                            if client.read_exact(&mut byte).await.is_err() {
+                                return;
+                            }
+                            head.extend_from_slice(&byte);
                         }
-                        head.extend_from_slice(&byte);
-                    }
-                    let text = String::from_utf8_lossy(&head).into_owned();
-                    let mut words = text.split_whitespace();
-                    let tunnel = words.next() == Some("CONNECT");
-                    let target_word = words.next().unwrap_or_default();
-                    // A plain-HTTP request names its destination in an absolute URI.
-                    let authority = if tunnel {
-                        target_word.to_owned()
-                    } else {
-                        plain_authority(target_word)
+                        let text = String::from_utf8_lossy(&head).into_owned();
+                        let mut words = text.split_whitespace();
+                        let tunnel = words.next() == Some("CONNECT");
+                        let target_word = words.next().unwrap_or_default();
+                        // A plain-HTTP request names its destination in an absolute URI.
+                        let authority = if tunnel {
+                            target_word.to_owned()
+                        } else {
+                            plain_authority(target_word)
+                        };
+                        if !tunnel && authority.starts_with("puddle.invalid:") {
+                            if client
+                                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                                .await
+                                .is_err()
+                            {
+                                return;
+                            }
+                            continue;
+                        }
+                        break (head, tunnel, authority);
                     };
                     lock(&seen).push(authority.clone());
                     let target = held(&lock(&names), &authority);

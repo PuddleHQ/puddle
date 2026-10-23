@@ -100,6 +100,35 @@ async fn a_name_the_site_holds_answers_over_plain_http_and_tls_and_the_site_reco
     assert_eq!(seen[1].version, "HTTP/1.1");
     assert_eq!(web.plain_addr().ip(), web.tls_addr().ip());
 
+    // A client that probes the proxy first (a name that cannot exist) gets an answer on the same
+    // connection and then its real request goes through.
+    let mut conn = through(
+        &proxy,
+        "HEAD http://puddle.invalid:80/ HTTP/1.1\r\n",
+        "Host: puddle.invalid:80\r\n\r\n",
+    )
+    .await;
+    let mut probe = String::new();
+    conn.read_line(&mut probe).await.unwrap();
+    assert!(probe.starts_with("HTTP/1.1 200"), "{probe}");
+    conn.read_line(&mut probe).await.unwrap();
+    conn.read_line(&mut probe).await.unwrap();
+    conn.get_mut()
+        .write_all(
+            b"GET http://one.test/after HTTP/1.1\r\nHost: one.test\r\nConnection: close\r\n\r\n",
+        )
+        .await
+        .unwrap();
+    let mut text = String::new();
+    conn.read_to_string(&mut text).await.unwrap();
+    assert!(text.ends_with("lab web host: /after\n"), "{text}");
+    assert!(
+        !proxy
+            .connects()
+            .iter()
+            .any(|c| c.starts_with("puddle.invalid"))
+    );
+
     // A name the proxy does not hold, asked for by absolute URI, is connected to as it stands.
     let elsewhere = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let port = elsewhere.local_addr().unwrap().port();

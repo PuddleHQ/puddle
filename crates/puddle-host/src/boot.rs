@@ -232,7 +232,8 @@ impl BootKit {
     }
 
     /// How the browser editor's server runs in workspace `id`: its data on the volume, the volume
-    /// as the folder it opens. `None` when this host bundles no code-server.
+    /// as the folder it opens, or the multi-root file once an attach wrote one. `None` when this
+    /// host bundles no code-server.
     pub(crate) fn editor(
         &self,
         id: &WorkspaceId,
@@ -243,11 +244,17 @@ impl BootKit {
         }
         let layout = Layout::new(id).map_err(|e| e.to_string())?;
         let data = layout.puddle_dir().map_err(|e| e.to_string())?;
-        Ok(Some(EditorServer::new(
+        let server = EditorServer::new(
             format!("{data}/{EDITOR_DATA_DIR}"),
             layout.mount().to_string(),
             grace_secs,
-        )))
+        );
+        Ok(Some(
+            match crate::editor_file::workspace_file_path(layout.mount(), id) {
+                Some(file) => server.with_workspace_file(file.as_str()),
+                None => server,
+            },
+        ))
     }
 
     pub(crate) fn ipc(&self) -> &IpcRoot {

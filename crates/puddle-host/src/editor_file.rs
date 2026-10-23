@@ -8,42 +8,16 @@
 //! `.puddle`, which the delete check skips, so it can always be written again.
 
 use puddle_api::StartFolder;
-use puddle_compute::ExecRequest;
 use puddle_types::{
     CheckoutDir, GuestFile, GuestPath, MergeEntry, MergeFormat, MergeSpec, WorkspaceId,
 };
-use std::time::Duration;
+use puddle_workspace::CheckoutList;
 
 /// Where the multi-root file lives, below the volume root.
 const EDITOR_DIR: &str = ".puddle/editor";
 
 /// The name the volume root shows under in the multi-root window.
 const ROOT_LABEL: &str = "workspace files";
-
-/// How long the guest may take to list the volume root.
-const LIST_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// Lists the entries directly under the volume root (`$1`): `R <name>` for each checkout, with the
-/// delete check's test (a directory, not a link, holding `.git`), and `O <count>` for everything
-/// else. Puddle's own folder and `lost+found` are not counted, and a name with a control
-/// character counts as other, so every printed name is one line.
-const LISTING_SH: &str = r#"cd -- "$1" || exit 3
-others=0
-for d in * .[!.]* ..?*; do
-    [ -e "$d" ] || [ -L "$d" ] || continue
-    case $d in .puddle | lost+found) continue ;; esac
-    case $d in *[![:print:]]*) others=$((others + 1)); continue ;; esac
-    if [ -d "$d" ] && [ ! -L "$d" ] && [ -e "$d/.git" ]; then
-        printf 'R\t%s\n' "$d"
-    else
-        others=$((others + 1))
-    fi
-done
-printf 'O\t%s\n' "$others"
-"#;
-
-/// The most checkouts one window shows.
-const MAX_FOLDERS: usize = 100;
 
 /// What the volume root holds.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -54,51 +28,25 @@ pub(crate) struct Found {
     pub(crate) loose: bool,
 }
 
-/// The command that lists the volume root `root`.
-pub(crate) fn listing_request(root: &GuestPath) -> ExecRequest {
-    ExecRequest::new(
-        "sh",
-        ["-c", LISTING_SH, "puddle-editor-listing", root.as_str()].map(str::to_owned),
-    )
-    .as_user("root")
-    .with_timeout(LIST_TIMEOUT)
-}
-
-/// Reads what [`listing_request`] printed. Guest output is input: a line that is not a record, a
-/// listing that does not end with its `O` line, and a name that is no checkout name are refused or
-/// counted as other.
-///
-/// # Errors
-///
-/// A message when the listing is cut short or holds something else than records.
-pub(crate) fn parse_listing(stdout: &str) -> Result<Found, String> {
-    let mut found = Found::default();
-    let mut ended = false;
-    let mut others = false;
-    for line in stdout.lines() {
-        if ended {
-            return Err("the listing goes on after its last line".to_owned());
-        }
-        match line.split_once('\t') {
-            Some(("R", name)) => match CheckoutDir::new(name) {
-                Ok(dir) if found.checkouts.len() < MAX_FOLDERS => found.checkouts.push(dir),
-                _ => others = true,
-            },
-            Some(("O", count)) => {
-                others |= count
-                    .parse::<u64>()
-                    .map_err(|_| "a bad count of other entries")?
-                    > 0;
-                ended = true;
+impl Found {
+    /// What the checkout listing (the one the checkouts call shows) says the volume root holds.
+    /// A checkout the listing could not read still counts: it is a folder to open. A name the
+    /// listing had to clean (`?` stands for a control character) is not a path that exists, and
+    /// a name that is no checkout name, or a checkout past the listing's limit, is left to the
+    /// volume root's own folder, which then shows.
+    pub(crate) fn from_listing(list: &CheckoutList) -> Self {
+        let mut found = Self {
+            loose: list.others > 0 || list.more > 0,
+            ..Self::default()
+        };
+        for checkout in &list.checkouts {
+            match CheckoutDir::new(&checkout.dir) {
+                Ok(dir) if !checkout.dir.contains('?') => found.checkouts.push(dir),
+                _ => found.loose = true,
             }
-            _ => return Err("the listing holds a line that is no record".to_owned()),
         }
+        found
     }
-    if !ended {
-        return Err("the listing ends early".to_owned());
-    }
-    found.loose = others;
-    Ok(found)
 }
 
 /// Where a new terminal lands: the start folder below `root`, or `root` itself.
@@ -147,6 +95,15 @@ pub(crate) fn multi_root_folders(
     Some(folders)
 }
 
+/// Where the multi-root file of workspace `id` is, below the volume root `root`.
+pub(crate) fn workspace_file_path(root: &GuestPath, id: &WorkspaceId) -> Option<GuestPath> {
+    GuestPath::new(&format!(
+        "{}/{EDITOR_DIR}/{id}.code-workspace",
+        root.as_str()
+    ))
+    .ok()
+}
+
 /// The multi-root file of workspace `id` under `root`, with `folders` as the only key Puddle owns.
 /// Readable by every user of the guest, so the editor and a desktop editor over SSH can open it.
 pub(crate) fn workspace_file(
@@ -154,11 +111,7 @@ pub(crate) fn workspace_file(
     id: &WorkspaceId,
     folders: &[(GuestPath, Option<&'static str>)],
 ) -> Option<GuestFile> {
-    let path = GuestPath::new(&format!(
-        "{}/{EDITOR_DIR}/{id}.code-workspace",
-        root.as_str()
-    ))
-    .ok()?;
+    let path = workspace_file_path(root, id)?;
     let value = serde_json::Value::Array(
         folders
             .iter()
@@ -180,7 +133,6 @@ pub(crate) fn workspace_file(
 mod tests {
     use super::*;
     use puddle_types::Merged;
-    use std::fmt::Write as _;
 
     fn root() -> GuestPath {
         GuestPath::new("/workspaces/shop").unwrap()
@@ -274,69 +226,65 @@ mod tests {
         assert!(spec.apply(Some(b"{ not json"), &[]).is_err());
     }
 
-    #[test]
-    fn a_listing_is_read_as_guest_input() {
-        let ok = parse_listing("R\tapi\nR\tweb\nO\t3\n").unwrap();
-        assert_eq!((ok.checkouts, ok.loose), (dirs(&["api", "web"]), true));
-        assert!(!parse_listing("R\tapi\nO\t0\n").unwrap().loose);
-        // A name that is no checkout name counts as other.
-        let odd = parse_listing("R\t..\nR\ta b/c\nO\t0\n").unwrap();
-        assert_eq!((odd.checkouts.len(), odd.loose), (0, true));
-        for bad in [
-            "R\tapi\n",
-            "",
-            "X\tapi\nO\t0\n",
-            "O\t0\nR\tapi\n",
-            "O\tmany\n",
-            "garbage\n",
-        ] {
-            assert!(parse_listing(bad).is_err(), "{bad:?}");
+    fn checkout(dir: &str) -> puddle_workspace::FoundCheckout {
+        puddle_workspace::FoundCheckout {
+            dir: dir.to_owned(),
+            remote_url: None,
+            remote_note: None,
+            branch: None,
+            head: None,
+            dirty: false,
+            unreadable: None,
         }
-        let many = (0..150).fold(String::new(), |mut out, i| {
-            let _ = writeln!(out, "R\td{i}");
-            out
-        }) + "O\t0\n";
-        let capped = parse_listing(&many).unwrap();
-        assert_eq!((capped.checkouts.len(), capped.loose), (MAX_FOLDERS, true));
     }
 
     #[test]
-    fn the_listing_script_finds_checkouts_not_links_and_counts_the_rest() {
-        let tmp = tempfile::tempdir().unwrap();
-        let at = |p: &str| tmp.path().join(p);
-        std::fs::create_dir_all(at("api/.git")).unwrap();
-        std::fs::create_dir_all(at("web/.git")).unwrap();
-        std::fs::create_dir_all(at("plain")).unwrap();
-        std::fs::create_dir_all(at(".puddle/editor")).unwrap();
-        std::fs::create_dir_all(at("lost+found")).unwrap();
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(at("api"), at("link")).unwrap();
-        let out = std::process::Command::new("sh")
-            .args(["-c", LISTING_SH, "x"])
-            .arg(tmp.path())
-            .output()
-            .unwrap();
-        let found = parse_listing(&String::from_utf8(out.stdout).unwrap()).unwrap();
-        let mut names: Vec<_> = found
-            .checkouts
-            .iter()
-            .map(|d| d.as_str().to_owned())
-            .collect();
-        names.sort();
-        assert_eq!(names, ["api", "web"]);
-        assert!(found.loose, "plain and the link are other entries");
-        std::fs::remove_dir(at("plain")).unwrap();
-        #[cfg(unix)]
-        std::fs::remove_file(at("link")).unwrap();
-        let out = std::process::Command::new("sh")
-            .args(["-c", LISTING_SH, "x"])
-            .arg(tmp.path())
-            .output()
-            .unwrap();
-        assert!(
-            !parse_listing(&String::from_utf8(out.stdout).unwrap())
-                .unwrap()
-                .loose
+    fn the_checkout_listing_gives_the_folders_and_whether_anything_else_is_there() {
+        let mut list = CheckoutList {
+            checkouts: vec![checkout("api"), checkout("web")],
+            ..CheckoutList::default()
+        };
+        let found = Found::from_listing(&list);
+        assert_eq!(
+            (found.checkouts, found.loose),
+            (dirs(&["api", "web"]), false)
+        );
+        list.others = 3;
+        assert!(Found::from_listing(&list).loose);
+        // Checkouts past the listing's limit are not folders of the window: the root shows.
+        list.others = 0;
+        list.more = 5;
+        assert!(Found::from_listing(&list).loose);
+        // One the listing could not read is still a folder to open.
+        let mut broken = checkout("broken");
+        broken.unreadable = Some("git remote failed".to_owned());
+        list.more = 0;
+        list.checkouts.push(broken);
+        assert_eq!(Found::from_listing(&list).checkouts.len(), 3);
+    }
+
+    #[test]
+    fn a_name_that_is_not_a_folder_that_exists_is_left_to_the_root() {
+        // `?` is what the listing leaves of a control character; `..` and a slash are no names.
+        let list = CheckoutList {
+            checkouts: vec![
+                checkout("ok"),
+                checkout("a?b"),
+                checkout(".."),
+                checkout("a/b"),
+            ],
+            ..CheckoutList::default()
+        };
+        let found = Found::from_listing(&list);
+        assert_eq!((found.checkouts, found.loose), (dirs(&["ok"]), true));
+    }
+
+    #[test]
+    fn the_file_has_one_place_per_workspace() {
+        let id = WorkspaceId::new("shop").unwrap();
+        assert_eq!(
+            workspace_file_path(&root(), &id).unwrap().as_str(),
+            "/workspaces/shop/.puddle/editor/shop.code-workspace"
         );
     }
 }

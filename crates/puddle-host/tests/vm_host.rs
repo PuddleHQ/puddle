@@ -2705,6 +2705,113 @@ async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox(
     host.shutdown().await;
 }
 
+/// K tier. A workspace with no start folder and two checkouts: an attach writes the multi-root
+/// file listing both (and the volume root, for the loose file), and the real code-server, started
+/// again, opens that file: a signed-in client is sent to `?workspace=<file>`, not to the volume.
+/// With one checkout left, the next start opens the folder again. (The Windows tier needs the
+/// bundle's executable bits to survive the host's file system; that run is a follow-up.)
+#[cfg(not(windows))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_the_editor_server_opens_a_window_with_every_checkout() {
+    let release = std::path::PathBuf::from(std::env::var_os("PUDDLE_CODE_SERVER_DIR").expect(
+        "PUDDLE_CODE_SERVER_DIR: the unpacked code-server release (ci/fetch-code-server.sh)",
+    ));
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host_config("mroot", hermetic_options(), |config| {
+        config.guest.code_server = Some(release);
+    })
+    .await;
+    let name = format!("{}-mroot", settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "repositories": [], "memory_mib": 2048}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    editor_up(&runtime, &sandbox).await;
+
+    let root = format!("/workspaces/{name}");
+    let file = format!("{root}/.puddle/editor/{name}.code-workspace");
+    // The sign-in the client of the editor makes, and where it is sent.
+    let lands = || {
+        guest(
+            &runtime,
+            &sandbox,
+            "pw=$(cat /run/puddle/editor-password); rm -f /tmp/jar; \
+             curl -s -c /tmp/jar -o /dev/null -d \"password=$pw\" http://127.0.0.1:41337/login; \
+             curl -s -b /tmp/jar -o /dev/null -w '%{redirect_url}' http://127.0.0.1:41337/",
+        )
+    };
+    // The agent starts the server again when it dies; kill it as a restart would.
+    let restart = || async {
+        guest(
+            &runtime,
+            &sandbox,
+            "for p in /proc/[0-9]*; do tr '\\0' ' ' <$p/cmdline 2>/dev/null | \
+             grep -q '[c]ode-server/lib/node' && kill -9 ${p#/proc/}; done; sleep 3; true",
+        )
+        .await;
+        editor_up(&runtime, &sandbox).await;
+    };
+    let attach = || async {
+        let reply = api
+            .post(
+                &format!("/api/workspaces/{name}/attach"),
+                &json!({"mode": "browser"}).to_string(),
+            )
+            .await;
+        assert_eq!(reply.status, 200, "{}", reply.body);
+    };
+
+    // Two checkouts and a loose file: the attach writes the file, every checkout in it.
+    guest(
+        &runtime,
+        &sandbox,
+        &format!("cd {root} && git init -q api && git init -q web && echo loose >notes.txt"),
+    )
+    .await;
+    attach().await;
+    let written = guest(&runtime, &sandbox, &format!("cat {file}")).await;
+    for folder in [format!("{root}/api"), format!("{root}/web"), root.clone()] {
+        assert!(written.contains(&folder), "{folder} missing in {written}");
+    }
+    assert!(written.contains("workspace files"), "{written}");
+    // The running server keeps what it opened at its start; a start after the attach opens the file.
+    assert_eq!(
+        lands().await.trim(),
+        format!("http://127.0.0.1:41337/?folder={root}")
+    );
+    restart().await;
+    assert_eq!(
+        lands().await.trim(),
+        format!("http://127.0.0.1:41337/?workspace={file}")
+    );
+
+    // One checkout left: the attach takes the folders out and the next start opens the volume.
+    guest(&runtime, &sandbox, &format!("rm -rf {root}/web")).await;
+    attach().await;
+    restart().await;
+    assert_eq!(
+        lands().await.trim(),
+        format!("http://127.0.0.1:41337/?folder={root}")
+    );
+
+    host.shutdown().await;
+}
+
 /// A workspace's shell init on a real guest: the script is checked in a throwaway shell before it
 /// is saved, a login shell sources it from a read-only mount, the guest cannot change it, and a
 /// start that finds the file that loads it replaced says so and puts it back.

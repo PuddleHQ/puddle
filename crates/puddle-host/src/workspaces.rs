@@ -975,6 +975,17 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             Ok(output) => output.status.success(),
             Err(e) => {
                 tracing::warn!(workspace = %name, error = %e, "the start folder was not looked for");
+                self.inner.problems.raise(
+                    Problem::new(
+                        key,
+                        format!("Puddle could not look for {name}'s start folder {folder}"),
+                        format!(
+                            "{e}. New terminals and the editor may not open it; Puddle looks \
+                             again at every start and attach."
+                        ),
+                    )
+                    .about(name.clone()),
+                );
                 return None;
             }
         };
@@ -1025,8 +1036,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 .or(guest.editor_file.clone()),
             ..guest
         };
+        let key = problem_key("start-folder-file", name);
         match self.run_plan(name, &gated, &replanned).await {
             Ok(()) => {
+                inner.problems.clear(&key);
                 if let Some(state) = inner
                     .live
                     .lock()
@@ -1040,6 +1053,17 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
             Err(reason) => {
                 tracing::warn!(workspace = %name, %reason, "the start folder is not updated in the guest");
+                inner.problems.raise(
+                    Problem::new(
+                        key,
+                        format!("Puddle could not move {name}'s terminals to the new start folder"),
+                        format!(
+                            "{reason}. The setting is saved; new terminals start where they did \
+                             until the workspace starts again."
+                        ),
+                    )
+                    .about(name.clone()),
+                );
             }
         }
         self.check_start_folder(name, &gated, &replanned.root, record.start_folder.as_ref())
@@ -1073,21 +1097,28 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.check_start_folder(name, &gated, &guest.root, record.start_folder.as_ref())
             .await;
         let key = problem_key("editor-file", name);
-        let found = match gated
-            .ungated()
-            .exec(crate::editor_file::listing_request(&guest.root))
+        let not_updated = |reason: &str| {
+            tracing::warn!(workspace = %name, %reason, "the editor's target is not updated");
+            inner.problems.raise(
+                Problem::new(
+                    key.clone(),
+                    format!("Puddle could not update the editor's file in {name}"),
+                    format!(
+                        "{reason}. The editor opens what it opened before until the next attach \
+                         works."
+                    ),
+                )
+                .about(name.clone()),
+            );
+        };
+        let found = match inner
+            .workspaces
+            .list_checkouts(gated.ungated(), &record.id)
             .await
         {
-            Ok(out) if out.status.success() => {
-                crate::editor_file::parse_listing(&out.stdout_text())
-            }
-            Ok(out) => Err(format!("the listing failed: {}", out.stderr_text().trim())),
-            Err(e) => Err(e.to_string()),
-        };
-        let found = match found {
-            Ok(found) => found,
-            Err(reason) => {
-                tracing::warn!(workspace = %name, %reason, "the editor's target is not updated");
+            Ok(list) => crate::editor_file::Found::from_listing(&list),
+            Err(e) => {
+                not_updated(&e.to_string());
                 return;
             }
         };
@@ -1110,7 +1141,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let report = match self.run_plan_report(name, &gated, &replanned).await {
             Ok(report) => report,
             Err(reason) => {
-                tracing::warn!(workspace = %name, %reason, "the editor's target is not updated");
+                not_updated(&reason);
                 return;
             }
         };
@@ -2349,9 +2380,9 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             let exists = self.follow_start_folder(&record).await;
             if record.status != WorkspaceStatus::Running {
                 // A stopped workspace is looked at when it starts; the old problem ends now.
-                self.inner
-                    .problems
-                    .clear(&problem_key("start-folder", &record.name));
+                for kind in ["start-folder", "start-folder-file"] {
+                    self.inner.problems.clear(&problem_key(kind, &record.name));
+                }
             }
             Ok(StartFolderChange::new(record, exists))
         })

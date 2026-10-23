@@ -150,6 +150,36 @@ async fn a_server_that_dies_is_started_again_with_the_same_password() {
 }
 
 #[tokio::test]
+async fn a_restarted_server_opens_the_multi_root_file_that_an_attach_wrote_meanwhile() {
+    let mut f = fixture();
+    let editor = f.config.editor.as_mut().unwrap();
+    let file = Path::new(&editor.server.folder).join("shop.code-workspace");
+    editor.server = editor
+        .server
+        .clone()
+        .with_workspace_file(file.to_string_lossy());
+    let folder = editor.server.folder.clone();
+    let _agent = Agent::start(f.config.clone()).await.unwrap();
+    until("the first start", || f.out.join("1.pid").exists()).await;
+    // Before any attach there is no file: the folder opens.
+    assert!(read(&f.out, "1.args").trim_end().ends_with(&folder));
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        &file,
+        r#"{"folders": [{"path": "/workspaces/shop/api"}, {"path": "/workspaces/shop/web"}]}"#,
+    )
+    .unwrap();
+    kill(&read(&f.out, "1.pid"));
+    until("the second start", || f.out.join("2.pid").exists()).await;
+    let args = read(&f.out, "2.args");
+    assert!(
+        args.trim_end().ends_with(&*file.to_string_lossy()),
+        "{args}"
+    );
+    assert!(!args.contains(&format!("\n{folder}\n")), "{args}");
+}
+
+#[tokio::test]
 async fn a_new_agent_leaves_a_running_server_alone_and_takes_over_when_it_is_gone() {
     let f = fixture();
     let port = f.config.editor.as_ref().unwrap().server.port;

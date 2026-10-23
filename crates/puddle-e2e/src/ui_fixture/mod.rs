@@ -25,10 +25,10 @@ use std::time::Duration;
 use puddle_api::wire::{FoundAccount, FoundVia};
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, ConnectionInfo, CredentialService, DoctorService, EventHub,
-    FakeCredentials, FakeDoctor, FakeLauncher, FakeNetworkHealth, FakeWorkspaces, Launcher,
-    Listing, MemorySettings, NetworkHealthService, Operation, RepoFindings, RepoService,
-    RepositoryDraft, RunningApi, Services, SettingsRepo, StartFolder, Unsaved, WorkspaceRecord,
-    check_repositories,
+    FakeCredentials, FakeDoctor, FakeLauncher, FakeNetworkHealth, FakeWorkspaces, Found, FoundList,
+    Launcher, Listing, MemorySettings, NetworkHealthService, Operation, RemoteNote, RepoFindings,
+    RepoService, RepositoryDraft, RunningApi, Services, SettingsRepo, StartFolder, Unsaved,
+    WorkspaceRecord, check_repositories,
 };
 use puddle_secrets::{
     AccountName, DiscoveredAccount, Discovery, HostName, Listing as FoundListing, OrgName,
@@ -50,6 +50,7 @@ pub mod control;
 mod repos;
 pub mod scenario;
 
+pub use scenario::{CheckoutSeed, RemoteNoteSeed};
 pub use scenario::{
     ConnectionSeed, CredentialsSeed, DecisionSeed, EffectSeed, GitRepoSeed, GitSeed, ProblemSeed,
     RepoItemSeed, RepoListSeed, RepoNoteSeed, RepoProblemSeed, RepoSeed, RequestSeed, RuleSeed,
@@ -57,7 +58,7 @@ pub use scenario::{
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
-const BUILT_IN: [(&str, &str); 9] = [
+const BUILT_IN: [(&str, &str); 11] = [
     (
         "default",
         include_str!("../../../../ui/e2e/fixtures/default.json"),
@@ -93,6 +94,14 @@ const BUILT_IN: [(&str, &str); 9] = [
     (
         "first-run",
         include_str!("../../../../ui/e2e/fixtures/first-run.json"),
+    ),
+    (
+        "unmanaged-checkouts",
+        include_str!("../../../../ui/e2e/fixtures/unmanaged-checkouts.json"),
+    ),
+    (
+        "start-folder-missing",
+        include_str!("../../../../ui/e2e/fixtures/start-folder-missing.json"),
     ),
 ];
 
@@ -676,7 +685,7 @@ impl State {
             .into_iter()
             .map(|r| r.repository)
             .collect();
-        let mut record = WorkspaceRecord::new(id, name, repositories);
+        let mut record = WorkspaceRecord::new(id.clone(), name, repositories);
         record.start_folder = seed
             .start_folder
             .as_deref()
@@ -724,6 +733,7 @@ impl State {
                 errors: seed.unsaved.errors.clone(),
             },
         );
+        self.workspaces.set_checkouts(&id, found_list(seed));
         Ok(())
     }
 
@@ -921,6 +931,31 @@ fn found(accounts: &[FoundAccount], missing: &[FoundVia]) -> Result<Discovery, S
             })
             .collect(),
     })
+}
+
+/// What a listing of a seeded workspace's guest finds.
+fn found_list(seed: &WorkspaceSeed) -> FoundList {
+    FoundList {
+        checkouts: seed
+            .checkouts
+            .iter()
+            .map(|c| Found {
+                directory: c.directory.clone(),
+                remote_url: c.remote_url.clone(),
+                remote_note: c.remote_note.map(|note| match note {
+                    RemoteNoteSeed::CredentialsRemoved => RemoteNote::CredentialsRemoved,
+                    RemoteNoteSeed::Ssh => RemoteNote::Ssh,
+                    RemoteNoteSeed::NotHttps => RemoteNote::NotHttps,
+                    RemoteNoteSeed::NoRemote => RemoteNote::NoRemote,
+                }),
+                branch: c.branch.clone(),
+                head: c.head.clone(),
+                dirty: c.dirty,
+                unreadable: c.unreadable.clone(),
+            })
+            .collect(),
+        more: seed.checkouts_more,
+    }
 }
 
 fn workspace(name: &str) -> Result<WorkspaceName, String> {

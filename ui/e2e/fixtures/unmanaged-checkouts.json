@@ -1,0 +1,188 @@
+{
+  "name": "unmanaged-checkouts",
+  "workspaces": [
+    {
+      "name": "dev",
+      "repositories": [
+        {
+          "url": "https://github.com/acme/api.git"
+        },
+        {
+          "url": "https://github.com/acme/docs.git"
+        }
+      ],
+      "status": "running",
+      "ago_ms": 1209600000,
+      "disk_used_mib": 6144,
+      "git": {
+        "identities": ["Work"],
+        "repos": [
+          {
+            "host": "github.com",
+            "owner": "acme",
+            "repo": "api"
+          }
+        ]
+      },
+      "checkouts": [
+        {
+          "directory": "api",
+          "remote_url": "https://github.com/acme/api.git",
+          "branch": "main",
+          "head": "a1b2c3d",
+          "dirty": true
+        },
+        {
+          "directory": "broken",
+          "unreadable": "not a git repository: <b>dubious ownership</b>"
+        },
+        {
+          "directory": "hostile",
+          "remote_url": "https://example.com/<img src=x onerror=window.__owned=true>",
+          "branch": "<img src=x onerror=window.__owned=true>",
+          "head": "bad0bad"
+        },
+        {
+          "directory": "no-remote",
+          "branch": "main",
+          "head": "1111111",
+          "remote_note": "no_remote"
+        },
+        {
+          "directory": "over-ssh",
+          "branch": "main",
+          "head": "2222222",
+          "remote_note": "ssh"
+        },
+        {
+          "directory": "personal",
+          "remote_url": "https://github.com/tijs-demo/tools.git",
+          "branch": "trunk",
+          "head": "3333333"
+        },
+        {
+          "directory": "scratch",
+          "remote_url": "https://github.com/acme/scratch.git",
+          "head": "9f8e7d6"
+        }
+      ]
+    },
+    {
+      "name": "parked",
+      "repositories": [
+        {
+          "url": "https://github.com/acme/web.git"
+        }
+      ],
+      "status": "stopped",
+      "ago_ms": 604800000,
+      "disk_used_mib": 2048,
+      "git": {
+        "identities": ["Work"]
+      }
+    }
+  ],
+  "identities": [
+    {
+      "label": "Work",
+      "author": {
+        "name": "Tijs Work",
+        "email": "tijs@acme.example"
+      },
+      "credentials": [
+        {
+          "host": "github.com",
+          "source": {
+            "kind": "gh",
+            "host": "github.com",
+            "account": "tijs-work"
+          },
+          "covers": {
+            "owners": ["acme", "acme-labs"],
+            "rest_of_host": false
+          }
+        },
+        {
+          "host": "dev.azure.com",
+          "source": {
+            "kind": "git_credential",
+            "host": "dev.azure.com",
+            "path": "contoso",
+            "username": null
+          },
+          "covers": {
+            "owners": ["contoso"],
+            "rest_of_host": false
+          }
+        }
+      ]
+    },
+    {
+      "label": "Personal",
+      "author": {
+        "name": "Tijs",
+        "email": "tijs@users.noreply.github.example"
+      },
+      "credentials": [
+        {
+          "host": "github.com",
+          "source": {
+            "kind": "gh",
+            "host": "github.com",
+            "account": "tijs-demo"
+          },
+          "covers": {
+            "owners": [],
+            "rest_of_host": true
+          }
+        }
+      ]
+    }
+  ],
+  "credentials": {
+    "found": [
+      {
+        "via": "gh",
+        "host": "github.com",
+        "account": "tijs-demo",
+        "org": null,
+        "signed_in": true
+      },
+      {
+        "via": "gh",
+        "host": "github.com",
+        "account": "tijs-work",
+        "org": null,
+        "signed_in": true
+      },
+      {
+        "via": "gh",
+        "host": "github.com",
+        "account": "tijs-old",
+        "org": null,
+        "signed_in": false
+      },
+      {
+        "via": "gcm_azure_repos",
+        "host": "dev.azure.com",
+        "account": "tijs@contoso.example",
+        "org": "contoso",
+        "signed_in": true
+      }
+    ],
+    "missing": [],
+    "signed_out": [
+      {
+        "kind": "git_credential",
+        "host": "dev.azure.com",
+        "path": "contoso",
+        "username": null
+      }
+    ],
+    "sign_in": {
+      "code": "ABCD-1234",
+      "url": "https://github.com/login/device"
+    }
+  },
+  "scripts": {}
+}

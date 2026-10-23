@@ -180,6 +180,54 @@ pub struct WorkspaceSeed {
     /// Its identities and repository table; the defaults when left out.
     #[serde(default)]
     pub git: GitSeed,
+    /// The checkouts its guest holds on the volume, as a listing of the running workspace finds
+    /// them; none when left out. A listed repository whose directory is not here is "not on the
+    /// disk".
+    #[serde(default)]
+    pub checkouts: Vec<CheckoutSeed>,
+    /// How many more checkouts the guest holds than `checkouts` lists.
+    #[serde(default)]
+    pub checkouts_more: u64,
+}
+
+/// One checkout the guest holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutSeed {
+    /// Its directory under the volume root.
+    pub directory: String,
+    /// The address of its `origin` remote, an `https://` address; none when left out.
+    #[serde(default)]
+    pub remote_url: Option<String>,
+    /// Why there is no `remote_url` (or that credentials were removed from it).
+    #[serde(default)]
+    pub remote_note: Option<RemoteNoteSeed>,
+    /// The branch; detached when left out.
+    #[serde(default)]
+    pub branch: Option<String>,
+    /// The short commit; none (no commit yet) when left out.
+    #[serde(default)]
+    pub head: Option<String>,
+    /// Uncommitted changes or untracked files.
+    #[serde(default)]
+    pub dirty: bool,
+    /// Why Puddle could not read it.
+    #[serde(default)]
+    pub unreadable: Option<String>,
+}
+
+/// Why a checkout's remote address is not shown as it stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteNoteSeed {
+    /// The address had a user name or password; they were removed.
+    CredentialsRemoved,
+    /// An SSH address.
+    Ssh,
+    /// Not an `https://` address.
+    NotHttps,
+    /// No remote.
+    NoRemote,
 }
 
 const fn yes() -> bool {

@@ -393,6 +393,22 @@ async fn something_on_the_volume_is_found_whatever_it_is() {
     }
 }
 
+#[tokio::test]
+async fn not_knowing_whether_a_folder_is_there_is_an_error_not_a_no() {
+    let g = sandbox_answering(|r| {
+        (r.program == "sh" && r.args.get(2).map(String::as_str) == Some("puddle-exists"))
+            .then(|| ExecOutput::new(2, Vec::new(), b"sh: input/output error\n".to_vec()))
+    })
+    .await;
+    let dir = CheckoutDir::new("api").unwrap();
+    let err = g.w.exists_on_volume(&g.sb, &id(), &dir).await.unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("looking for api exited 2: sh: input/output error"),
+        "{err}"
+    );
+}
+
 /// The fixtures must not touch the repository a git hook points `GIT_DIR` at.
 #[test]
 fn fixtures_leave_the_repository_of_a_git_hook_alone() {

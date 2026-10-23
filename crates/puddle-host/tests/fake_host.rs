@@ -188,6 +188,13 @@ struct Guest {
     volume: Mutex<Vec<(String, String)>>,
     /// How many times the listing script ran, for all checkouts or for one.
     listings: Mutex<Vec<Option<String>>>,
+    /// The listing script fails the way it does for a volume it cannot enter.
+    fail_listing: AtomicBool,
+    /// Checkouts the listing reports as unreadable, by directory and message.
+    unreadable: Mutex<Vec<(String, String)>>,
+    /// The next listing waits here before it answers, and says so in `listing_waits`.
+    listing_hold: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+    listing_waits: AtomicBool,
 }
 
 impl Guest {
@@ -335,13 +342,29 @@ impl Guest {
 
     /// What the listing script prints for the volume, all checkouts or only `only`.
     fn list_volume(&self, only: Option<String>) -> ExecOutput {
-        use std::fmt::Write as _;
+        let hold = self.listing_hold.lock().unwrap().take();
+        if let Some(hold) = hold {
+            self.listing_waits.store(true, Ordering::SeqCst);
+            wait_for(&hold);
+        }
+        if self.fail_listing.load(Ordering::SeqCst) {
+            return ExecOutput::new(3, "E\t.\tcannot enter /workspaces/adds\n", "");
+        }
+        let mut lines: Vec<(String, String)> = Vec::new();
+        for (dir, why) in self.unreadable.lock().unwrap().iter() {
+            lines.push((dir.clone(), format!("E\t{dir}\t{why}\n")));
+        }
+        for (dir, remote) in self.volume.lock().unwrap().iter() {
+            lines.push((
+                dir.clone(),
+                format!("C\t{dir}\t{remote}\tmain\tabc1234\t0\n"),
+            ));
+        }
+        lines.sort();
         let mut out = String::new();
-        let mut volume = self.volume.lock().unwrap().clone();
-        volume.sort();
-        for (dir, remote) in volume {
+        for (dir, line) in lines {
             if only.as_ref().is_none_or(|o| *o == dir) {
-                let _ = writeln!(out, "C\t{dir}\t{remote}\tmain\tabc1234\t0");
+                out.push_str(&line);
             }
         }
         out.push_str("D\n");
@@ -1501,7 +1524,7 @@ async fn a_workspace_that_is_cloning_cannot_be_stopped_or_asked_for_a_second_clo
     let (release, hold) = std::sync::mpsc::channel::<()>();
     let hold = Mutex::new(hold);
     *rig.guest.at_clone.lock().unwrap() = Some(Box::new(move |_| {
-        let _ = hold.lock().unwrap().recv_timeout(Duration::from_secs(20));
+        wait_for(&hold.lock().unwrap());
     }));
 
     let reply = api
@@ -1513,6 +1536,18 @@ async fn a_workspace_that_is_cloning_cannot_be_stopped_or_asked_for_a_second_clo
     assert_eq!(reply.status, 202, "{}", reply.body);
     let stop = api.post("/api/workspaces/adds/stop", "").await;
     assert_eq!(stop.status, 409, "{}", stop.body);
+    let clone_too = api
+        .post(
+            "/api/workspaces/adds/repositories",
+            &json!({"kind": "clone", "url": "https://example.org/acme/more"}).to_string(),
+        )
+        .await;
+    assert_eq!(clone_too.status, 409, "{}", clone_too.body);
+    assert!(
+        clone_too.body.contains("busy (cloning)"),
+        "{}",
+        clone_too.body
+    );
     rig.guest
         .put_checkout("legacy", "https://example.org/acme/legacy.git");
     let second = add_and_wait(
@@ -1591,6 +1626,243 @@ async fn a_stopped_workspace_lists_the_checkouts_it_had_and_refuses_an_add() {
         .delete("/api/workspaces/adds/repositories/api", None)
         .await;
     assert_eq!(removed.status, 200, "{}", removed.body);
+    host.shutdown().await;
+}
+
+/// Holds the calling guest command until the test sends or 20 seconds pass, without keeping the
+/// runtime's thread from running the rest of the test.
+fn wait_for(hold: &std::sync::mpsc::Receiver<()>) {
+    tokio::task::block_in_place(|| {
+        let _ = hold.recv_timeout(Duration::from_secs(20));
+    });
+}
+
+/// Waits until the background listing after a start has run.
+async fn after_boot_listing(rig: &Rig) {
+    for _ in 0..500 {
+        if !rig.guest.listings.lock().unwrap().is_empty() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    unreachable!("no listing after the boot");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_listing_says_why_a_remote_is_not_shown_and_a_checkout_it_cannot_read_cannot_be_managed()
+ {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "adds").await;
+    after_boot_listing(&rig).await;
+    rig.guest
+        .put_checkout("keyed", "https://me:secret@example.org/acme/keyed.git");
+    rig.guest
+        .put_checkout("plain", "http://example.org/acme/plain.git");
+    rig.guest.put_checkout("bare", "");
+    rig.guest
+        .put_checkout("shell", "git@example.org:acme/shell.git");
+    rig.guest
+        .unreadable
+        .lock()
+        .unwrap()
+        .push(("broken".to_owned(), "permission denied".to_owned()));
+    tokio::time::sleep(Duration::from_millis(20)).await;
+
+    let list = checkouts_of(&api, "adds").await;
+    let notes: Vec<_> = list["checkouts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| (c["directory"].as_str().unwrap(), c["remote_note"].clone()))
+        .collect();
+    assert_eq!(
+        notes,
+        [
+            ("api", json!(null)),
+            ("bare", json!("no_remote")),
+            ("broken", json!(null)),
+            ("keyed", json!("credentials_removed")),
+            ("plain", json!("not_https")),
+            ("shell", json!("ssh")),
+        ]
+    );
+    let keyed = &list["checkouts"][3];
+    assert_eq!(keyed["remote_url"], "https://example.org/acme/keyed.git");
+    assert!(!list.to_string().contains("secret"), "{list}");
+    assert_eq!(list["checkouts"][2]["unreadable"], "permission denied");
+
+    let refused = add_and_wait(
+        &api,
+        &mut events,
+        "adds",
+        json!({"kind": "existing", "directory": "broken"}),
+    )
+    .await;
+    assert_eq!(refused.status, 409, "{}", refused.body);
+    assert!(
+        refused.body.contains("permission denied"),
+        "{}",
+        refused.body
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_listing_the_guest_cannot_make_is_a_problem_in_the_answer_not_an_error() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "adds").await;
+    after_boot_listing(&rig).await;
+    rig.guest.fail_listing.store(true, Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+
+    let list = checkouts_of(&api, "adds").await;
+    assert_eq!(list["running"], true);
+    assert!(
+        list["problem"].as_str().unwrap().contains("cannot enter"),
+        "{list}"
+    );
+    assert_eq!(list["checked_at"], json!(null));
+    assert_eq!(list["checkouts"], json!([]));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn calls_that_wait_for_a_listing_share_the_one_that_starts_after_they_asked() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api0 = api(&host);
+    let mut events = api0.events().await;
+    create(&api0, &mut events, "adds").await;
+    after_boot_listing(&rig).await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let before = rig.guest.listings.lock().unwrap().len();
+    let (release, hold) = std::sync::mpsc::channel::<()>();
+    *rig.guest.listing_hold.lock().unwrap() = Some(hold);
+
+    let ask = |host: &Host<FakeRuntime>| {
+        let api = api(host);
+        tokio::spawn(async move { checkouts_of(&api, "adds").await })
+    };
+    let first = ask(&host);
+    while !rig.guest.listing_waits.load(Ordering::SeqCst) {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let (second, third) = (ask(&host), ask(&host));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    release.send(()).unwrap();
+    let (first, second, third) = (
+        first.await.unwrap(),
+        second.await.unwrap(),
+        third.await.unwrap(),
+    );
+    assert_eq!(
+        rig.guest.listings.lock().unwrap().len(),
+        before + 2,
+        "the held listing, and one for the two that waited behind it"
+    );
+    assert_eq!(second, third);
+    assert!(second["checked_at"].as_u64() >= first["checked_at"].as_u64());
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_list_that_cannot_be_saved_changes_nothing_and_says_so() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "adds").await;
+    make_unwritable(&list_path(&rig));
+
+    let reply = api
+        .delete("/api/workspaces/adds/repositories/api", None)
+        .await;
+    assert_eq!(reply.status, 503, "{}", reply.body);
+    assert!(reply.body.contains("nothing changed"), "{}", reply.body);
+    let ws = api.get("/api/workspaces/adds").await.json();
+    assert_eq!(ws["repositories"].as_array().unwrap().len(), 1, "{ws}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nothing_is_added_once_shutdown_has_begun() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "adds").await;
+    host.workspaces().close();
+    let reply = api
+        .post(
+            "/api/workspaces/adds/repositories",
+            &json!({"kind": "clone", "url": WEB}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 503, "{}", reply.body);
+    assert!(reply.body.contains("shutting down"), "{}", reply.body);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_entry_cannot_be_removed_while_its_workspace_is_being_created() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let (release, hold) = std::sync::mpsc::channel::<()>();
+    let hold = Mutex::new(hold);
+    *rig.guest.at_clone.lock().unwrap() = Some(Box::new(move |_| {
+        wait_for(&hold.lock().unwrap());
+    }));
+    let reply = api.post("/api/workspaces", &new_workspace("late")).await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let refused = api
+        .delete("/api/workspaces/late/repositories/api", None)
+        .await;
+    assert_eq!(refused.status, 409, "{}", refused.body);
+    assert!(refused.body.contains("creating"), "{}", refused.body);
+    release.send(()).unwrap();
+    events.until(ended("late"), Duration::from_secs(20)).await;
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_clone_the_runtime_cannot_run_fails_the_operation_and_keeps_the_entry() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "adds").await;
+    after_boot_listing(&rig).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    // The add looks for the folder first; the next command is the clone.
+    rig.runtime.inject(
+        Op::Exec,
+        Fault::once(disk_error("exec")).only_for("adds").after(1),
+    );
+    let reply = api
+        .post(
+            "/api/workspaces/adds/repositories",
+            &json!({"kind": "clone", "url": WEB}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events.until(ended("adds"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    assert!(
+        end["detail"].as_str().unwrap().contains("no space left"),
+        "{end}"
+    );
+    let ws = api.get("/api/workspaces/adds").await.json();
+    assert_eq!(ws["repositories"].as_array().unwrap().len(), 2, "{ws}");
+    assert_eq!(ws["busy"], json!(null));
     host.shutdown().await;
 }
 

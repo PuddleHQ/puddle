@@ -129,18 +129,31 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .ok_or_else(|| not_found(id))
     }
 
-    /// The running workspace's sandbox, or the conflict that says to start it.
-    async fn running_sandbox(
-        &self,
-        record: &WorkspaceRecord,
-        to: &str,
-    ) -> Result<Arc<GatedSandbox<R::Sandbox>>, WorkspaceError> {
+    /// The conflict that says why `record` cannot take a change to its checkouts now: it is busy,
+    /// or it does not run.
+    fn ready_to(record: &WorkspaceRecord, to: &str) -> Result<(), WorkspaceError> {
+        if let Some(busy) = record.busy {
+            return Err(WorkspaceError::Conflict(format!(
+                "{} is busy ({busy}); wait for it to finish",
+                record.name
+            )));
+        }
         if record.status != WorkspaceStatus::Running {
             return Err(WorkspaceError::Conflict(format!(
                 "{} is {}; start it to {to}",
                 record.name, record.status
             )));
         }
+        Ok(())
+    }
+
+    /// The idle, running workspace's sandbox, or the conflict that says why not.
+    async fn running_sandbox(
+        &self,
+        record: &WorkspaceRecord,
+        to: &str,
+    ) -> Result<Arc<GatedSandbox<R::Sandbox>>, WorkspaceError> {
+        Self::ready_to(record, to)?;
         self.gated(&record.name)
             .await
             .map_err(WorkspaceError::Conflict)
@@ -245,18 +258,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 ));
             }
             let slot = state.slots.get_mut(id).ok_or_else(|| not_found(id))?;
-            if let Some(busy) = slot.record.busy {
-                return Err(WorkspaceError::Conflict(format!(
-                    "{} is busy ({busy}); wait for it to finish",
-                    slot.record.name
-                )));
-            }
-            if slot.record.status != WorkspaceStatus::Running {
-                return Err(WorkspaceError::Conflict(format!(
-                    "{} is {}; start it to add a repository",
-                    slot.record.name, slot.record.status
-                )));
-            }
+            Self::ready_to(&slot.record, "add a repository")?;
             let before = slot.record.repositories.clone();
             if add {
                 check_addition(&before, &repository)?;
@@ -372,12 +374,6 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         git: &dyn GitSetup,
     ) -> Result<WorkspaceRecord, WorkspaceError> {
         let record = self.get_record(id)?;
-        if let Some(busy) = record.busy {
-            return Err(WorkspaceError::Conflict(format!(
-                "{} is busy ({busy}); wait for it to finish",
-                record.name
-            )));
-        }
         let gated = self.running_sandbox(&record, "manage a checkout").await?;
         let now = self
             .inner
@@ -414,12 +410,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let record = {
             let mut state = self.state();
             let slot = state.slots.get_mut(id).ok_or_else(|| not_found(id))?;
-            if slot.record.busy.is_some() || slot.record.status != WorkspaceStatus::Running {
-                return Err(WorkspaceError::Conflict(format!(
-                    "{} changed while its checkout was read; try again",
-                    slot.record.name
-                )));
-            }
+            Self::ready_to(&slot.record, "manage a checkout")?;
             let before = slot.record.repositories.clone();
             check_addition(&before, &new.repository)?;
             slot.record.repositories.push(new.repository.clone());

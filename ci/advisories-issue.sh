@@ -49,7 +49,7 @@ else
     status=$?
     cat "$tmp/check.err" >&2
     # Exit 0 clean, 1 findings; any other status (2: npm could not answer) has no rows and is an outage.
-    parse='.[] | [.id, .name, "", .severity, (.title | gsub("[|\n]"; " ")), "update the package, or add an exception to ui/audit-exceptions.json"] | @tsv'
+    parse='.[] | [.id, .name, "-", .severity, (.title | gsub("[|\n]"; " ")), "update the package, or add an exception to ui/audit-exceptions.json"] | @tsv'
     [ "$status" -le 1 ] || : >"$tmp/report.json"
 fi
 if ! jq -r "$parse" "$tmp/report.json" >"$tmp/rows.tsv" 2>"$tmp/jq.err"; then
@@ -98,6 +98,7 @@ fi
     echo "| Advisory | Package | Kind | Title | Fix |"
     echo "|---|---|---|---|---|"
     while IFS=$'\t' read -r id crate version kind adv_title solution; do
+        [ "$version" != - ] || version= # tab is whitespace to `read`: an empty field would shift the columns
         echo "| [$id]($link/$id) | \`${crate}${version:+ $version}\` | $kind | $adv_title | ${solution:-none published} |"
     done <"$tmp/rows.tsv"
     echo

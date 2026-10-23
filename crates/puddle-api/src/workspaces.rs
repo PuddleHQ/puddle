@@ -1247,6 +1247,7 @@ mod tests {
                 &id,
                 AddRepository::Existing {
                     directory: dir.clone(),
+                    seen: RepoUrl::parse("https://github.com/o/r").unwrap(),
                     identity: None,
                     pull: true,
                     push: true,

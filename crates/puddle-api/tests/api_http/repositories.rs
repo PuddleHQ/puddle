@@ -278,7 +278,7 @@ async fn adding_a_repository_the_workspace_cannot_take_is_a_404_or_a_409_with_it
         ),
         (
             "off",
-            json!({"kind": "existing", "directory": "x"}),
+            json!({"kind": "existing", "url": API, "directory": "x"}),
             409,
             "start it",
         ),
@@ -302,31 +302,31 @@ async fn adding_a_repository_the_workspace_cannot_take_is_a_404_or_a_409_with_it
         ),
         (
             "web",
-            json!({"kind": "existing", "directory": "missing"}),
+            json!({"kind": "existing", "url": API, "directory": "missing"}),
             409,
             "not a checkout",
         ),
         (
             "web",
-            json!({"kind": "existing", "directory": "taken"}),
+            json!({"kind": "existing", "url": API, "directory": "taken"}),
             409,
             "no remote",
         ),
         (
             "web",
-            json!({"kind": "existing", "directory": "ssh"}),
+            json!({"kind": "existing", "url": API, "directory": "ssh"}),
             409,
             "SSH is not supported",
         ),
         (
             "web",
-            json!({"kind": "existing", "directory": "http"}),
+            json!({"kind": "existing", "url": API, "directory": "http"}),
             409,
             "not an https://",
         ),
         (
             "web",
-            json!({"kind": "existing", "directory": "api"}),
+            json!({"kind": "existing", "url": API, "directory": "api"}),
             409,
             "already on the list",
         ),
@@ -397,13 +397,13 @@ async fn adding_a_repository_that_makes_no_sense_is_a_422_that_never_echoes_a_cr
         ),
         (
             "web",
-            json!({"kind": "existing", "directory": "a/b"}),
+            json!({"kind": "existing", "url": API, "directory": "a/b"}),
             422,
             "directory",
         ),
         (
             "web",
-            json!({"kind": "existing", "directory": "x", "identity_id": 99}),
+            json!({"kind": "existing", "url": API, "directory": "x", "identity_id": 99}),
             422,
             "no identity 99",
         ),
@@ -475,10 +475,47 @@ async fn a_full_list_and_a_busy_workspace_refuse_an_add() {
     .await;
     assert_eq!(reply.status, 409, "{}", reply.body);
     assert!(reply.body.contains("busy"), "{}", reply.body);
-    let reply = add(&api, "web", json!({"kind": "existing", "directory": "api"})).await;
+    let reply = add(
+        &api,
+        "web",
+        json!({"kind": "existing", "url": API, "directory": "api"}),
+    )
+    .await;
     assert_eq!(reply.status, 409, "{}", reply.body);
     api.workspaces.release();
     api.workspaces.idle().await;
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_checkout_whose_remote_is_not_the_address_the_user_saw_is_not_managed() {
+    let api = start().await;
+    seed(
+        &api,
+        "web",
+        WorkspaceStatus::Running,
+        &[],
+        vec![found("raw", Some("https://github.com/acme/other"), None)],
+    );
+    let reply = add(
+        &api,
+        "web",
+        json!({"kind": "existing", "url": "https://github.com/acme/raw", "directory": "raw"}),
+    )
+    .await;
+    assert_eq!(reply.status, 409, "{}", reply.body);
+    assert!(
+        reply.body.contains("acme/raw") && reply.body.contains("acme/other"),
+        "{}",
+        reply.body
+    );
+    let reply = add(
+        &api,
+        "web",
+        json!({"kind": "existing", "url": "not a url", "directory": "raw"}),
+    )
+    .await;
+    assert_eq!(reply.status, 422, "{}", reply.body);
     api.running.shutdown().await;
 }
 
@@ -499,7 +536,7 @@ async fn a_checkout_on_the_disk_is_managed_with_its_git_settings_and_changes_not
     let reply = add(
         &api,
         "web",
-        json!({"kind": "existing", "directory": "raw", "pull": true, "push": false}),
+        json!({"kind": "existing", "url": "https://github.com/acme/raw", "directory": "raw", "pull": true, "push": false}),
     )
     .await;
     assert_eq!(reply.status, 200, "{}", reply.body);

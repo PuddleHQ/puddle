@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 use crate::checkouts as domain;
 use crate::error::ApiError;
 use crate::wire::WorkspaceRepository;
-use crate::workspaces::{NewRepository, RepositoryDraft, check_repositories};
+use crate::workspaces::{NewRepository, RepoUrl, RepositoryDraft, check_repositories};
 
 /// Why a checkout's remote address is not shown as it stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -159,6 +159,9 @@ pub enum AddRepositoryRequest {
     Existing {
         /// The checkout's directory under the volume root.
         directory: String,
+        /// The address the checkout list showed for it. Puddle reads the remote again and refuses
+        /// with 409 when it names another repository.
+        url: String,
         /// As for a clone.
         #[serde(default)]
         identity_id: Option<i64>,
@@ -201,6 +204,7 @@ impl AddRepositoryRequest {
             }
             Self::Existing {
                 directory,
+                url,
                 identity_id,
                 pull,
                 push,
@@ -208,6 +212,8 @@ impl AddRepositoryRequest {
                 let directory = CheckoutDir::new(&directory).map_err(|e| {
                     ApiError::invalid(format!("directory {directory:?}: {}", e.reason()))
                 })?;
+                let seen = RepoUrl::parse(&url)
+                    .map_err(|e| ApiError::invalid(format!("url {url:?}: {e}")))?;
                 let identity = identity_id.map(IdentityId);
                 if let Some(id) = identity
                     && !identity_exists(id)
@@ -216,6 +222,7 @@ impl AddRepositoryRequest {
                 }
                 Ok(domain::AddRepository::Existing {
                     directory,
+                    seen,
                     identity,
                     pull: pull.unwrap_or(true),
                     push: push.unwrap_or(true),

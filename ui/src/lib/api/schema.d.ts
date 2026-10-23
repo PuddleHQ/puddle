@@ -1239,6 +1239,11 @@ export interface components {
             pull?: boolean | null;
             /** @description As for a clone. */
             push?: boolean | null;
+            /**
+             * @description The address the checkout list showed for it. Puddle reads the remote again and refuses
+             *     with 409 when it names another repository.
+             */
+            url: string;
         };
         /** @description The body of every error response. */
         ApiErrorBody: {

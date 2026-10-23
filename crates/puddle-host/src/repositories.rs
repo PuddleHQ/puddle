@@ -9,7 +9,7 @@
 
 use puddle_api::{
     AddRepository, Checkouts, Found, FoundList, NewRepository, RemoteNote, RepoUrl, check_addition,
-    checkouts_view, why_no_remote,
+    check_seen, checkouts_view, why_no_remote,
 };
 
 use super::*;
@@ -194,11 +194,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             AddRepository::Clone(new) => self.begin_clone(id, new, true, git).await,
             AddRepository::Existing {
                 directory,
+                seen,
                 identity,
                 pull,
                 push,
             } => {
-                self.manage_checkout(id, &directory, (identity, pull, push), git)
+                self.manage_checkout(id, (&directory, &seen), (identity, pull, push), git)
                     .await
             }
         }
@@ -369,7 +370,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     async fn manage_checkout(
         &self,
         id: &WorkspaceId,
-        directory: &CheckoutDir,
+        (directory, seen): (&CheckoutDir, &RepoUrl),
         (identity, pull, push): (Option<puddle_store::IdentityId>, bool, bool),
         git: &dyn GitSetup,
     ) -> Result<WorkspaceRecord, WorkspaceError> {
@@ -398,6 +399,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 )));
             }
         };
+        check_seen(directory, seen, &url)?;
         let new = NewRepository {
             repository: Repository {
                 url,

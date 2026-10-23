@@ -218,6 +218,9 @@ pub enum AddRepository {
     Existing {
         /// The checkout's directory.
         directory: CheckoutDir,
+        /// The address the user was shown for it; the fresh read must still name the same
+        /// repository ([`check_seen`]).
+        seen: RepoUrl,
         /// The identity the user picked; `None` lets Puddle choose.
         identity: Option<IdentityId>,
         /// Pull on its new repository table row.
@@ -225,6 +228,27 @@ pub enum AddRepository {
         /// Push on its new repository table row.
         push: bool,
     },
+}
+
+/// Refuses a "Manage this" whose checkout no longer has the address the user was shown, so a
+/// workspace cannot swap the remote between the listing and the click (storage ST-50).
+///
+/// # Errors
+///
+/// [`WorkspaceError::Conflict`] naming both addresses.
+pub fn check_seen(
+    directory: &CheckoutDir,
+    seen: &RepoUrl,
+    now: &RepoUrl,
+) -> Result<(), WorkspaceError> {
+    if same_repository(seen, now) {
+        return Ok(());
+    }
+    Err(WorkspaceError::Conflict(format!(
+        "the remote of {directory} changed since it was listed: it was {}, it is now {}",
+        seen.as_str(),
+        now.as_str()
+    )))
 }
 
 /// Whether `new` may join `entries` (storage ST-51): the list has room, its directory is not

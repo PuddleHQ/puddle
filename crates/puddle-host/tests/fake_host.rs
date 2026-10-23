@@ -183,6 +183,11 @@ struct Guest {
     /// When set, the clone turns this path into a folder, so the next save of the workspace
     /// list fails (a stand-in for a full disk or a locked file).
     break_list_on_clone: Mutex<Option<PathBuf>>,
+    /// The checkouts on the volume as (directory, remote address): every successful clone adds
+    /// one, a test may add or change one by hand. The listing script prints them.
+    volume: Mutex<Vec<(String, String)>>,
+    /// How many times the listing script ran, for all checkouts or for one.
+    listings: Mutex<Vec<Option<String>>>,
 }
 
 impl Guest {
@@ -193,6 +198,9 @@ impl Guest {
 
     fn answer(&self, ctx: &ExecContext<'_>, r: &ExecRequest) -> Option<ExecOutput> {
         let second = r.args.get(1).map(String::as_str);
+        if let Some(answer) = self.answer_volume_question(r) {
+            return Some(answer);
+        }
         let kind = match (r.program.as_str(), r.args.first().map(String::as_str)) {
             ("/bin/sh", Some("/puddle/boot.sh")) => "boot",
             ("mkdir", _) => "layout",
@@ -280,6 +288,11 @@ impl Guest {
                         format!("fatal: unable to access '{url}': Could not resolve host"),
                     )
                 } else {
+                    let dir = r.args.get(3).and_then(|p| p.rsplit('/').next());
+                    self.volume
+                        .lock()
+                        .unwrap()
+                        .push((dir.unwrap_or_default().to_owned(), url));
                     ExecOutput::new(0, "", "")
                 }
             }
@@ -298,6 +311,49 @@ impl Guest {
         }
         let said = (*self.listing.lock().unwrap()).unwrap_or("O\t0\n");
         ExecOutput::new(0, said, "")
+    }
+
+    /// The two commands that look at the volume: the checkouts listing and the existence check.
+    fn answer_volume_question(&self, r: &ExecRequest) -> Option<ExecOutput> {
+        if r.program != "sh" {
+            return None;
+        }
+        match r.args.get(2).map(String::as_str) {
+            Some("puddle-checkouts") => Some(self.list_volume(r.args.get(4).cloned())),
+            Some("puddle-exists") => {
+                let dir = r
+                    .args
+                    .get(3)
+                    .and_then(|p| p.rsplit('/').next())
+                    .unwrap_or("");
+                let there = self.volume.lock().unwrap().iter().any(|(d, _)| d == dir);
+                Some(ExecOutput::new(i32::from(!there), "", ""))
+            }
+            _ => None,
+        }
+    }
+
+    /// What the listing script prints for the volume, all checkouts or only `only`.
+    fn list_volume(&self, only: Option<String>) -> ExecOutput {
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        let mut volume = self.volume.lock().unwrap().clone();
+        volume.sort();
+        for (dir, remote) in volume {
+            if only.as_ref().is_none_or(|o| *o == dir) {
+                let _ = writeln!(out, "C\t{dir}\t{remote}\tmain\tabc1234\t0");
+            }
+        }
+        out.push_str("D\n");
+        self.listings.lock().unwrap().push(only);
+        ExecOutput::new(0, out, "")
+    }
+
+    /// A checkout that is on the volume without Puddle having cloned it.
+    fn put_checkout(&self, dir: &str, remote: &str) {
+        let mut volume = self.volume.lock().unwrap();
+        volume.retain(|(d, _)| d != dir);
+        volume.push((dir.to_owned(), remote.to_owned()));
     }
 
     fn boot_ok(&self) -> ExecOutput {
@@ -1151,6 +1207,391 @@ async fn stop_and_delete(api: &Api, events: &mut support::Events, name: &'static
         .await;
     assert_eq!(deleted.status, 202, "{}", deleted.body);
     events.until(ended(name), Duration::from_secs(20)).await;
+}
+
+const WEB: &str = "https://example.org/acme/web";
+
+/// Adds `body` to workspace `name`'s list and waits for the clone it starts to end.
+async fn add_and_wait(
+    api: &Api,
+    events: &mut support::Events,
+    name: &'static str,
+    body: serde_json::Value,
+) -> support::Reply {
+    let reply = api
+        .post(
+            &format!("/api/workspaces/{name}/repositories"),
+            &body.to_string(),
+        )
+        .await;
+    if reply.status == 202 {
+        events.until(ended(name), Duration::from_secs(20)).await;
+    }
+    reply
+}
+
+async fn checkouts_of(api: &Api, name: &str) -> serde_json::Value {
+    let reply = api.get(&format!("/api/workspaces/{name}/checkouts")).await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    reply.json()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_added_clone_has_its_identity_and_table_row_before_it_runs_and_is_listed_after() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    make_work_identity(&api).await;
+    let mut events = api.events().await;
+    create(&api, &mut events, "adds").await;
+    let seen = git_settings_at_each_clone(&rig, &host, "adds");
+
+    let reply = add_and_wait(
+        &api,
+        &mut events,
+        "adds",
+        json!({"kind": "clone", "url": WEB}),
+    )
+    .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    assert_eq!(reply.json()["busy"], "cloning");
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [format!(
+            r#"clone {WEB}: identities ["Work"], rows ["example.org/acme/api", "example.org/acme/web"]"#
+        )]
+    );
+    assert_eq!(
+        rig.guest.clone_commands().last().unwrap(),
+        &format!("clone -- {WEB} /workspaces/adds/web")
+    );
+    assert_eq!(
+        rig.guest.syncs(),
+        2,
+        "one sync after each of the two clones"
+    );
+    let ws = api.get("/api/workspaces/adds").await.json();
+    assert_eq!(ws["busy"], serde_json::Value::Null, "{ws}");
+    assert_eq!(ws["repositories"].as_array().unwrap().len(), 2, "{ws}");
+
+    // The listing reads the volume after the clone and ties each checkout to its entry.
+    let list = checkouts_of(&api, "adds").await;
+    assert_eq!(list["running"], true);
+    let dirs: Vec<_> = list["checkouts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| (c["directory"].as_str().unwrap(), c["entry"]["url"].as_str()))
+        .collect();
+    assert_eq!(dirs, [("api", Some(REPO)), ("web", Some(WEB))]);
+    assert_eq!(list["missing"], json!([]));
+
+    // A taken directory is refused and a listed address cannot be added twice.
+    let again = add_and_wait(
+        &api,
+        &mut events,
+        "adds",
+        json!({"kind": "clone", "url": WEB}),
+    )
+    .await;
+    assert_eq!(again.status, 409, "{}", again.body);
+    let taken = add_and_wait(
+        &api,
+        &mut events,
+        "adds",
+        json!({"kind": "clone", "url": "https://example.org/other/web", "directory": "web"}),
+    )
+    .await;
+    assert_eq!(taken.status, 409, "{}", taken.body);
+    assert_eq!(
+        rig.guest.clone_commands().len(),
+        2,
+        "no clone ran for either"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_added_clone_keeps_its_entry_and_one_problem_and_cloning_again_clears_it() {
+    const DOWN: &str = "https://unreachable.example/acme/docs.git";
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "adds").await;
+    *rig.guest.fail_clone_of.lock().unwrap() = Some(DOWN.to_owned());
+
+    let reply = add_and_wait(
+        &api,
+        &mut events,
+        "adds",
+        json!({"kind": "clone", "url": DOWN}),
+    )
+    .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let ws = api.get("/api/workspaces/adds").await.json();
+    assert_eq!(ws["repositories"].as_array().unwrap().len(), 2, "{ws}");
+    the_one_problem_names_the_clone(&api, "adds", "docs", DOWN).await;
+    // The entry shows as not on the disk.
+    assert_eq!(checkouts_of(&api, "adds").await["missing"], json!(["docs"]));
+
+    // Cloning again while the directory is empty works and the problem goes.
+    *rig.guest.fail_clone_of.lock().unwrap() = None;
+    let reply = api
+        .post("/api/workspaces/adds/repositories/docs/clone", "")
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    events.until(ended("adds"), Duration::from_secs(20)).await;
+    assert!(problems_of(&api).await.is_empty());
+    assert_eq!(checkouts_of(&api, "adds").await["missing"], json!([]));
+    // An entry that is on the disk is not cloned over.
+    let reply = api
+        .post("/api/workspaces/adds/repositories/docs/clone", "")
+        .await;
+    assert_eq!(reply.status, 409, "{}", reply.body);
+    let reply = api
+        .post("/api/workspaces/adds/repositories/nope/clone", "")
+        .await;
+    assert_eq!(reply.status, 404, "{}", reply.body);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn managing_a_checkout_reads_its_remote_again_and_changes_nothing_in_it() {
+    const MOVED: &str = "https://example.org/acme/moved.git";
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    make_work_identity(&api).await;
+    let mut events = api.events().await;
+    create(&api, &mut events, "adds").await;
+    rig.guest
+        .put_checkout("legacy", "https://example.org/acme/legacy.git");
+    rig.guest
+        .put_checkout("ssh", "git@example.org:acme/ssh.git");
+    let clones = rig.guest.clone_commands().len();
+    let commands = rig.guest.commands().len();
+
+    // The listing offers it; then its remote changes before the call.
+    // A listing made at the same millisecond as the call would be shared with it.
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let list = checkouts_of(&api, "adds").await;
+    let legacy = list["checkouts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["directory"] == "legacy")
+        .unwrap()
+        .clone();
+    assert_eq!(legacy["entry"], serde_json::Value::Null);
+    assert_eq!(legacy["manage"]["offered"], true);
+    rig.guest.put_checkout("legacy", MOVED);
+    let listings = rig.guest.listings.lock().unwrap().len();
+
+    let reply = add_and_wait(
+        &api,
+        &mut events,
+        "adds",
+        json!({"kind": "existing", "directory": "legacy"}),
+    )
+    .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(
+        rig.guest
+            .listings
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .as_deref(),
+        Some("legacy"),
+        "its remote was read again for this call"
+    );
+    assert_eq!(rig.guest.listings.lock().unwrap().len(), listings + 1);
+    let entries = reply.json()["repositories"].clone();
+    assert_eq!(entries[1], json!({"url": MOVED, "directory": "legacy"}));
+    assert_eq!(
+        rig.guest.clone_commands().len(),
+        clones,
+        "nothing was cloned"
+    );
+    assert_eq!(
+        rig.guest.commands().len(),
+        commands,
+        "no command but the reads ran in the guest"
+    );
+    let git = api.get("/api/workspaces/adds/git").await.json();
+    let rows: Vec<_> = git["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["repo"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        rows,
+        ["api", "moved"],
+        "the new row is the one read just now"
+    );
+
+    // One that is not a checkout, one with an SSH remote and one already listed are refused.
+    for dir in ["missing", "ssh", "legacy"] {
+        let refused = add_and_wait(
+            &api,
+            &mut events,
+            "adds",
+            json!({"kind": "existing", "directory": dir}),
+        )
+        .await;
+        assert_eq!(refused.status, 409, "{dir}: {}", refused.body);
+    }
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn removing_an_entry_keeps_the_checkout_its_table_row_and_its_identity() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    make_work_identity(&api).await;
+    let mut events = api.events().await;
+    create(&api, &mut events, "adds").await;
+    let rows_before = api.get("/api/workspaces/adds/git").await.json();
+
+    let reply = api
+        .delete("/api/workspaces/adds/repositories/api", None)
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(reply.json()["repositories"], json!([]));
+    let list = checkouts_of(&api, "adds").await;
+    let checkout = &list["checkouts"][0];
+    assert_eq!(checkout["directory"], "api");
+    assert_eq!(
+        checkout["entry"],
+        serde_json::Value::Null,
+        "the checkout stays, off the list"
+    );
+    assert_eq!(
+        api.get("/api/workspaces/adds/git").await.json(),
+        rows_before
+    );
+    let gone = api
+        .delete("/api/workspaces/adds/repositories/api", None)
+        .await;
+    assert_eq!(gone.status, 404, "{}", gone.body);
+
+    // The checkout can be managed again.
+    let back = add_and_wait(
+        &api,
+        &mut events,
+        "adds",
+        json!({"kind": "existing", "directory": "api"}),
+    )
+    .await;
+    assert_eq!(back.status, 200, "{}", back.body);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_workspace_that_is_cloning_cannot_be_stopped_or_asked_for_a_second_clone() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "adds").await;
+    let (release, hold) = std::sync::mpsc::channel::<()>();
+    let hold = Mutex::new(hold);
+    *rig.guest.at_clone.lock().unwrap() = Some(Box::new(move |_| {
+        let _ = hold.lock().unwrap().recv_timeout(Duration::from_secs(20));
+    }));
+
+    let reply = api
+        .post(
+            "/api/workspaces/adds/repositories",
+            &json!({"kind": "clone", "url": WEB}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let stop = api.post("/api/workspaces/adds/stop", "").await;
+    assert_eq!(stop.status, 409, "{}", stop.body);
+    rig.guest
+        .put_checkout("legacy", "https://example.org/acme/legacy.git");
+    let second = add_and_wait(
+        &api,
+        &mut events,
+        "adds",
+        json!({"kind": "existing", "directory": "legacy"}),
+    )
+    .await;
+    assert_eq!(second.status, 409, "{}", second.body);
+    let delete = api
+        .delete(
+            "/api/workspaces/adds",
+            Some(&json!({"confirm": true}).to_string()),
+        )
+        .await;
+    assert_eq!(delete.status, 409, "{}", delete.body);
+
+    release.send(()).unwrap();
+    events.until(ended("adds"), Duration::from_secs(20)).await;
+    assert_eq!(
+        rig.guest.clone_commands().len(),
+        2,
+        "only the first add cloned"
+    );
+    let stop = api.post("/api/workspaces/adds/stop", "").await;
+    assert_eq!(stop.status, 202, "{}", stop.body);
+    events.until(ended("adds"), Duration::from_secs(20)).await;
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_workspace_lists_the_checkouts_it_had_and_refuses_an_add() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "adds").await;
+    // The listing after the start is made in the background: wait for it.
+    for _ in 0..500 {
+        if !rig.guest.listings.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    api.post("/api/workspaces/adds/stop", "").await;
+    events.until(ended("adds"), Duration::from_secs(20)).await;
+    let listings = rig.guest.listings.lock().unwrap().len();
+
+    let list = checkouts_of(&api, "adds").await;
+    assert_eq!(list["running"], false);
+    assert!(
+        list["problem"].as_str().unwrap().contains("not running"),
+        "{list}"
+    );
+    assert_eq!(
+        list["checkouts"][0]["directory"], "api",
+        "the last listing is kept: {list}"
+    );
+    assert_eq!(
+        rig.guest.listings.lock().unwrap().len(),
+        listings,
+        "no command ran"
+    );
+
+    let add = add_and_wait(
+        &api,
+        &mut events,
+        "adds",
+        json!({"kind": "clone", "url": WEB}),
+    )
+    .await;
+    assert_eq!(add.status, 409, "{}", add.body);
+    // Taking an entry off the list works while stopped.
+    let removed = api
+        .delete("/api/workspaces/adds/repositories/api", None)
+        .await;
+    assert_eq!(removed.status, 200, "{}", removed.body);
+    host.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

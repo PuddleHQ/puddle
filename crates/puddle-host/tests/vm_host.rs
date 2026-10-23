@@ -360,6 +360,153 @@ async fn checkouts_are_whole(runtime: &MsbRuntime, sandbox: &WorkspaceName, dirs
     restarted.stop().await.unwrap();
 }
 
+/// A checkout made by hand in the guest is listed and managed without a clone, a repository
+/// added later is cloned, and taking an entry off the list leaves its folder on the disk. The
+/// listing script and the existence check run in the real guest shell.
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_manage_lists_adds_and_removes_checkouts_in_the_real_guest() {
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host("manage").await;
+    let name = format!("{}-manage", settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    host.store()
+        .add_rule(&NewRule {
+            scope: Scope::Workspace(sandbox.clone()),
+            pattern: Pattern::parse(REPO_HOST).unwrap(),
+            effect: Effect::Allow,
+            expires_at: None,
+            created_by: Actor::Cli,
+        })
+        .unwrap();
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "memory_mib": 1024, "repositories": [{"url": REPO}]}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let end = events
+        .until(ended(name_static), Duration::from_mins(15))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+
+    // A checkout the user made, a folder that is none, and one with an SSH remote.
+    let manual = "https://github.com/octocat/git-consortium.git";
+    guest(
+        &runtime,
+        &sandbox,
+        &format!(
+            "cd /workspaces/{name} && git init -q manual && \
+             git -C manual remote add origin {manual} && mkdir notes && \
+             git init -q shell && git -C shell remote add origin git@github.com:o/r.git"
+        ),
+    )
+    .await;
+    let list = api.get(&format!("/api/workspaces/{name}/checkouts")).await;
+    assert_eq!(list.status, 200, "{}", list.body);
+    let list = list.json();
+    let seen: Vec<_> = list["checkouts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                c["directory"].as_str().unwrap(),
+                c["entry"].is_null(),
+                c["manage"]["offered"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            ("Hello-World", false, true),
+            ("manual", true, true),
+            ("shell", true, false)
+        ],
+        "{list}"
+    );
+    assert_eq!(list["missing"], json!([]));
+
+    // Manage the hand-made one: no clone, its folder untouched.
+    let managed = api
+        .post(
+            &format!("/api/workspaces/{name}/repositories"),
+            &json!({"kind": "existing", "directory": "manual"}).to_string(),
+        )
+        .await;
+    assert_eq!(managed.status, 200, "{}", managed.body);
+    assert_eq!(
+        managed.json()["repositories"][1],
+        json!({"url": manual, "directory": "manual"})
+    );
+    let ssh = api
+        .post(
+            &format!("/api/workspaces/{name}/repositories"),
+            &json!({"kind": "existing", "directory": "shell"}).to_string(),
+        )
+        .await;
+    assert_eq!(ssh.status, 409, "{}", ssh.body);
+
+    // A clone into a folder that exists is refused; a new repository is cloned and listed.
+    let taken = api
+        .post(
+            &format!("/api/workspaces/{name}/repositories"),
+            &json!({"kind": "clone", "url": SECOND_REPO, "directory": "notes"}).to_string(),
+        )
+        .await;
+    assert_eq!(taken.status, 409, "{}", taken.body);
+    let added = api
+        .post(
+            &format!("/api/workspaces/{name}/repositories"),
+            &json!({"kind": "clone", "url": SECOND_REPO}).to_string(),
+        )
+        .await;
+    assert_eq!(added.status, 202, "{}", added.body);
+    let end = events
+        .until(ended(name_static), Duration::from_mins(10))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let there = guest(&runtime, &sandbox, &format!("ls -1A /workspaces/{name}")).await;
+    assert!(there.lines().any(|l| l == "Spoon-Knife"), "{there}");
+
+    // Taking the entry off the list changes the list only.
+    let removed = api
+        .delete(
+            &format!("/api/workspaces/{name}/repositories/Spoon-Knife"),
+            None,
+        )
+        .await;
+    assert_eq!(removed.status, 200, "{}", removed.body);
+    let there = guest(
+        &runtime,
+        &sandbox,
+        &format!("git -C /workspaces/{name}/Spoon-Knife rev-parse HEAD"),
+    )
+    .await;
+    assert_eq!(there.trim().len(), 40, "{there}");
+    let list = api
+        .get(&format!("/api/workspaces/{name}/checkouts"))
+        .await
+        .json();
+    let spoon = list["checkouts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["directory"] == "Spoon-Knife")
+        .unwrap();
+    assert!(spoon["entry"].is_null(), "{list}");
+    host.shutdown().await;
+}
+
 /// The issuer curl saw on `https://<host>/`, which also proves the connection worked.
 fn issuer_script(host: &str) -> String {
     format!("curl -sv -o /dev/null --max-time 60 https://{host}/ 2>&1 | grep -i 'issuer:'")

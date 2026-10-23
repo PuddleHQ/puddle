@@ -1,62 +1,22 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Keeps the Actions caches under the repo's 10 GB cap (ci/cache-gc.sh): drops superseded rust-cache
-# entries on develop and stale task-branch caches, so the cargo-xwin cache is never evicted.
-#
-# What the repo keeps (compressed sizes as GitHub reports them, 2026-10-14; the Rust entries grow and
-# shrink with the dependency tree). Only develop saves them, pull requests restore:
-#
-#   entry                                        saved by (develop only)              GB
-#   rust-cache `linux`                           every push that changes it (ci)    4.79
-#   rust-cache `windows`                         nightly, a push that changes a manifest
-#                                                (windows, windows-cache)           1.71
-#   rust-cache `windows-release`                 nightly (windows)                  1.57
-#   Playwright browsers                          a push (ci)                        0.39
-#   cargo-xwin CRT and SDK (never deleted here)  a push (ci)                        0.14
-#   npm caches, Linux and Windows                a push; pull refs 2-day cleanup    0.09
-#   msb runtime binary                           a push (msb-cache)                 0.02
-#   total wanted                                                                    8.71
-#
-# The VM workflows keep no Rust cache: their archive build missed on every one of the last 22 pull
-# requests, and restoring the `linux` entry (exact) saved 9 s of a 150 s build for a 70 s restore, the
-# `windows` one about 30 s of 390 s for a 41 s restore. That removed 2.8 GB from the wanted set.
-#
-# A replacement of the `linux` entry briefly holds the old and the new one together (4.8 GB each), which
-# is over the cap for a few minutes; GitHub then evicts the least recently used entries, which are
-# `windows-release` and `windows` before `linux`, and this workflow deletes the superseded one right
-# after the run. Before the VM caches went (11.1 GB wanted), 30 of 73 runs of this workflow between
-# 2026-10-09 and 2026-10-14 found the repo above the cap, and the `linux` entry vanished between 10:12 and 10:19 UTC on
-# 2026-10-12 after a run read 11.9 GB at 10:06. Nothing proves the eviction caused that loss (GitHub publishes
-# no eviction log). ci.yml saves the `linux` entry whenever its restore was not an exact hit, so a
-# lost one costs the next develop run, not every pull request until the next dependency change.
 name: cache-gc
-
 on:
-  schedule:
-    - cron: "45 3 * * *"
-  # Right after a develop run that may have saved a new entry, so the superseded one (1-4 GB) does
-  # not wait for the nightly run.
-  workflow_run:
-    workflows: [ci, windows, windows-cache]
-    types: [completed]
-    branches: [develop]
   workflow_dispatch:
-
-permissions:
-  actions: write
-  contents: read
-
-concurrency:
-  group: cache-gc
-  cancel-in-progress: false
-
 jobs:
-  gc:
-    name: delete superseded caches
+  diag:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        n: [1,2,3,4,5,6,7,8,9,10,11,12]
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: delete superseded and stale caches
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: ci/cache-gc.sh | tee -a "$GITHUB_STEP_SUMMARY"
+      - run: |
+          cat /etc/apt/apt-mirrors.txt; cat /etc/apt/sources.list.d/ubuntu.sources | grep -v '^#' | head -12
+          echo "image: $ImageVersion"; dpkg -l | grep -c -E 'libwebkit2gtk-4.1-dev|^ii  squid ' || true
+          getent ahosts azure.archive.ubuntu.com | awk '{print $1}' | sort -u | tr '\n' ' '; echo
+          getent ahosts archive.ubuntu.com | awk '{print $1}' | sort -u | tr '\n' ' '; echo
+          curl -s ifconfig.me/ip || true; echo
+          for host in azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com; do
+            curl -s -o /dev/null --max-time 25 -w "SPEED $host %{remote_ip} %{speed_download} B/s %{size_download} B in %{time_total}s\n" "http://$host/ubuntu/pool/main/w/webkit2gtk/libjavascriptcoregtk-4.1-0_2.52.6-0ubuntu0.24.04.1_amd64.deb" || echo "SPEED $host fail"
+          done

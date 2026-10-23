@@ -26,6 +26,14 @@ ignore = [
     # wry/tao on Linux. tauri 2 stays on gtk-rs 0.18 until tauri 3 (alpha); nothing of it
     # runs at runtime. Review at each tauri bump, by 2027-01-06.
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained; build-time dependency of tauri's gtk-rs 0.18 on Linux" },
+    # zbus_names, zvariant and zvariant_derive are unmaintained as standalone crates (merged into
+    # zbus 6). They are only the Linux Secret Service client: keyring 4.2 ->
+    # zbus-secret-service-keyring-store 1.0.1 -> secret-service 5.2.0 -> zbus 5.19. The newest
+    # secret-service release still needs zbus 5, so no fixed version exists. Not vulnerable. Review
+    # when secret-service or the keyring store moves to zbus 6, by 2027-01-06.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant unmaintained; transitive via keyring's Secret Service store (zbus 5), no migration path yet" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names unmaintained; transitive via keyring's Secret Service store (zbus 5), no migration path yet" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive unmaintained; transitive via keyring's Secret Service store (zbus 5), no migration path yet" },
     # Unsound `glib::VariantStrIter` (undefined behaviour in its iterator methods): glib 0.18 -> gtk 0.18
     # -> tauri's wry/tao, Linux only. Only `Variant::array_iter_str` creates one and no crate in the Linux
     # build graph calls it. tauri 2 stays on gtk-rs 0.18 (the fix is glib 0.20 or later) until tauri 3

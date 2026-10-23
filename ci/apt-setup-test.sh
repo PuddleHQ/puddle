@@ -66,6 +66,7 @@ S
 chmod +x "$tmp/stall.sh"
 start=$SECONDS
 "$here/apt-retry.sh" "$tmp/stall.sh" >"$tmp/out" 2>&1 || fail "retry: a stall was not recovered"
+grep -q "status 124" "$tmp/out" || fail "retry: the warning does not name the timeout (status 124)"
 [ $((SECONDS - start)) -lt 15 ] || fail "retry: the stalled try was not cut off"
 [ "$(sed -n 1p "$tmp/apt/apt-mirrors.txt")" = "$canonical" ] || fail "retry: Canonical is not first after a stall"
 "$here/apt-retry.sh" false >"$tmp/out" 2>&1 && fail "retry: a failing command passed"

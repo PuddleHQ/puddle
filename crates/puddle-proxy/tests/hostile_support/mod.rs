@@ -7,7 +7,8 @@
 #![allow(dead_code, reason = "each test binary uses a different subset")]
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -17,12 +18,83 @@ use puddle_agent_proto::yamux::client_config;
 use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{AnyAddress, StaticPolicy, StaticResolver};
 use puddle_proxy::{Proxy, ProxyConfig, Route};
-use puddle_types::{Host, NullSink, WorkspaceName};
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use puddle_types::{ConnectionLog, Host, NullConnectionLog, NullSink, WorkspaceName};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
+use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 use tokio::task::JoinHandle;
 
 const LOCAL: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+
+/// Set in the child process to the attacked route's endpoint: the child is then the guests.
+const GUEST_ROUTE: &str = "PUDDLE_TEST_HOSTILE_GUEST_ROUTE";
+
+/// The attacked route's endpoint when this process is a test's guests (see [`Guests`]).
+pub(crate) fn guest_route() -> Option<PathBuf> {
+    std::env::var_os(GUEST_ROUTE).map(PathBuf::from)
+}
+
+/// A test's guests in a child process: the same test binary, re-run as `test` with
+/// [`guest_route`] set. A real guest runs in its own machine, so what a guest holds (its streams,
+/// the bytes it has queued but not yet sent) is its memory, not the proxy's, and the heap a test
+/// counts in the parent is the proxy's.
+pub(crate) struct Guests {
+    child: Child,
+    stdout: BufReader<ChildStdout>,
+    stderr: ChildStderr,
+    said: String,
+}
+
+impl Guests {
+    pub(crate) fn start(test: &str, route: &Route) -> Self {
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", test, "--nocapture", "--test-threads=1"])
+            .env(GUEST_ROUTE, route.endpoint().path())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        Self {
+            stdout: BufReader::new(child.stdout.take().unwrap()),
+            stderr: child.stderr.take().unwrap(),
+            child,
+            said: String::new(),
+        }
+    }
+
+    /// Reads what the guests print until they print `line` (or end).
+    pub(crate) async fn until(&mut self, line: &str) {
+        while !self.said.contains(line) && self.stdout.read_line(&mut self.said).await.unwrap() > 0
+        {
+        }
+    }
+
+    /// Waits up to `limit` for the guests to end: whether they succeeded, and all they printed.
+    pub(crate) async fn finish(mut self, limit: Duration) -> (bool, String) {
+        let mut stderr = String::new();
+        let status = tokio::time::timeout(limit, async {
+            let (out, err) = tokio::join!(
+                self.stdout.read_to_string(&mut self.said),
+                self.stderr.read_to_string(&mut stderr)
+            );
+            out.unwrap();
+            err.unwrap();
+            self.child.wait().await.unwrap()
+        })
+        .await;
+        let Ok(status) = status else {
+            return (
+                false,
+                format!(
+                    "the guests did not finish within {limit:?}; they said: {}",
+                    self.said
+                ),
+            );
+        };
+        (status.success(), self.said + &stderr)
+    }
+}
 
 /// A proxy with two routes, `attacked` and `bystander`, one policy and an echo server on loopback.
 pub(crate) struct Rig {
@@ -39,12 +111,18 @@ pub(crate) async fn rig() -> Rig {
 
 /// As [`rig`], with `config` for the proxy.
 pub(crate) async fn rig_with(config: ProxyConfig) -> Rig {
+    rig_logged(config, Arc::new(NullConnectionLog)).await
+}
+
+/// As [`rig_with`], with `log` as the proxy's connection log.
+pub(crate) async fn rig_logged(config: ProxyConfig, log: Arc<dyn ConnectionLog>) -> Rig {
     let policy = Arc::new(StaticPolicy::new());
     policy.allow(&Host::parse_normalised("127.0.0.1").unwrap());
     let proxy = Arc::new(
         Proxy::new(policy.clone(), Arc::new(NullSink))
             .with_resolver(Arc::new(StaticResolver::new()))
             .with_address_check(Arc::new(AnyAddress))
+            .with_connection_log(log)
             .with_config(config),
     );
     let root = IpcRoot::new().unwrap();
@@ -161,6 +239,29 @@ fn content_length(head: &[u8]) -> usize {
 }
 
 impl Guest {
+    /// Opens one stream over the workspace's cap: `true` when its answer is the cap's refusal
+    /// naming `limit`, `None` when it got no answer within 20 s.
+    pub(crate) async fn refused_at_the_cap(&self, limit: usize) -> Option<bool> {
+        let mut control = self.control.clone();
+        let mut stream = control.open_stream().await.ok()?;
+        stream
+            .write_all(b"CONNECT blocked.test:443 HTTP/1.1\r\n\r\n")
+            .await
+            .ok()?;
+        let mut raw = Vec::new();
+        tokio::time::timeout(Duration::from_secs(20), stream.read_to_end(&mut raw))
+            .await
+            .ok()?
+            .ok()?;
+        let text = String::from_utf8_lossy(&raw);
+        Some(
+            text.starts_with("HTTP/1.1 503")
+                && text.contains(&format!(
+                    "too many open connections from this workspace (limit {limit})"
+                )),
+        )
+    }
+
     /// Opens `CONNECT echo` and returns the status code and the stream (open, for the caller to hold).
     pub(crate) async fn connect_status(&mut self, echo: SocketAddr) -> (u16, StreamHandle) {
         let mut stream = self.control.open_stream().await.unwrap();

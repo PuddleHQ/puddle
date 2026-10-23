@@ -18,6 +18,8 @@ use puddle_types::{
 };
 use sha2::{Digest, Sha256};
 
+use crate::checkouts::{AddRepository, Checkouts};
+
 /// The long operation a workspace is in the middle of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Operation {
@@ -29,6 +31,8 @@ pub enum Operation {
     Stopping,
     /// Giving freed disk space back to the host.
     Reclaiming,
+    /// Cloning one repository into a running workspace.
+    Cloning,
     /// Checking for unsaved work and removing the workspace.
     Deleting,
 }
@@ -40,6 +44,7 @@ impl fmt::Display for Operation {
             Self::Starting => "starting",
             Self::Stopping => "stopping",
             Self::Reclaiming => "reclaiming",
+            Self::Cloning => "cloning",
             Self::Deleting => "deleting",
         })
     }
@@ -904,6 +909,56 @@ pub trait WorkspaceService: Send + Sync {
         })
     }
 
+    /// The checkouts under the workspace's volume root, each with the list entry that has its
+    /// directory (storage ST-47 to ST-49). A running workspace lists them now (calls at the same
+    /// moment share one listing); a stopped one answers the last listing this run made, or says
+    /// to start it. A listing that cannot be made or read is a [`Checkouts::problem`], not an
+    /// error.
+    fn checkouts<'a>(
+        &'a self,
+        _id: &'a WorkspaceId,
+    ) -> BoxFuture<'a, Result<Checkouts, WorkspaceError>> {
+        unavailable()
+    }
+
+    /// Adds a repository to a running workspace's list (storage ST-50, ST-51). A clone is
+    /// accepted like any operation: the record returned is busy `cloning`. Managing a checkout
+    /// that is already on the volume answers at once with the changed record. `git` sets up the
+    /// repository's identity and table row once the request is accepted and before any clone.
+    /// [`WorkspaceError::Conflict`] when the workspace is not running or busy, the list is full,
+    /// the repository or directory is listed, the directory exists (clone) or is no checkout or
+    /// has no usable remote (existing); [`WorkspaceError::NotFound`] for an unknown workspace.
+    fn add_repository<'a>(
+        &'a self,
+        _id: &'a WorkspaceId,
+        _add: AddRepository,
+        _git: &'a dyn GitSetup,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        unavailable()
+    }
+
+    /// Clones a list entry whose directory is not on the volume again (storage ST-52). Accepted
+    /// like [`WorkspaceService::add_repository`] with a clone.
+    fn clone_again<'a>(
+        &'a self,
+        _id: &'a WorkspaceId,
+        _directory: &'a CheckoutDir,
+        _git: &'a dyn GitSetup,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        unavailable()
+    }
+
+    /// Takes an entry off the list and nothing else (storage ST-53): the checkout, the
+    /// repository table row and the identities stay. [`WorkspaceError::NotFound`] for an unknown
+    /// entry; [`WorkspaceError::Conflict`] while the workspace is being created or deleted.
+    fn remove_repository<'a>(
+        &'a self,
+        _id: &'a WorkspaceId,
+        _directory: &'a CheckoutDir,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        unavailable()
+    }
+
     /// Tells the service that settings changed, so it can apply what takes effect at once (the
     /// SSH endpoint of a running workspace opens or closes with its `direct_ssh` setting).
     /// The default does nothing.
@@ -948,7 +1003,7 @@ impl LaunchError {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NoWorkspaces;
 
-fn unavailable<T: Send + 'static>() -> BoxFuture<'static, Result<T, WorkspaceError>> {
+pub(crate) fn unavailable<T: Send + 'static>() -> BoxFuture<'static, Result<T, WorkspaceError>> {
     Box::pin(async {
         Err(WorkspaceError::Unavailable(
             "workspaces are not available in this build yet".into(),

@@ -30,6 +30,7 @@ mod first_run;
 mod identities;
 mod network_health;
 mod repos;
+mod repositories;
 mod rule_sets;
 mod shell_init;
 mod start_folder;
@@ -62,6 +63,7 @@ pub use repos::{
     RepoProblem, RepoProblemCode, RepoRefreshRequest, RepoRole, RepoSource, RepoSources, RepoView,
     RepoVisibility,
 };
+pub use repositories::{AddRepositoryRequest, Checkout, CheckoutManage, Checkouts, RemoteNote};
 pub use rule_sets::{
     NewRuleSetRequest, RuleSetEntry, RuleSetKind, RuleSetList, RuleSetOverride,
     RuleSetSwitchRequest, RuleSetSwitched, RuleSetUpdateRequest, RuleSetView, SystemManagedHost,

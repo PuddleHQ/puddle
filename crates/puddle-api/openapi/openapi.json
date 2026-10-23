@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.13.0"
+    "version": "0.14.0"
   },
   "paths": {
     "/api/audit": {
@@ -4746,6 +4746,88 @@
         }
       }
     },
+    "/api/workspaces/{id}/checkouts": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "The checkouts directly under the workspace's volume root, each with the list entry that has\nits directory. A running workspace lists them now (calls at the same moment share one\nlisting, which takes at most 10 seconds); a stopped one answers the last listing this run\nmade, or says to start it. A listing that cannot be made or read is `problem`, not an error.\nEvery string in it came from the guest: escape it.",
+        "operationId": "list_checkouts",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the checkouts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Checkouts"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/workspaces/{id}/delete-check": {
       "get": {
         "tags": [
@@ -5990,6 +6072,350 @@
         }
       }
     },
+    "/api/workspaces/{id}/repositories": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Adds a repository to a running workspace's list. With `kind` `clone` it clones a new one: the\ndirectory must not exist, Git settings are set up first, and the answer is `202` with the\nworkspace busy `cloning` (stop and delete answer `409` until it ends; rename works), followed\nby `workspace_progress`. A failed clone leaves the entry with a background problem. With\n`kind` `existing` it manages a checkout already on the volume: Puddle reads its remote again\nin the guest, adds the entry and its Git settings, changes nothing in the checkout and answers\n`200` with the workspace.",
+        "operationId": "add_repository",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddRepositoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the checkout is on the list now (kind `existing`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "the clone started (kind `clone`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the workspace is not running or is busy, the list is full, the repository or directory is already listed, the directory exists (clone) or is no checkout or has no usable remote (existing), or the identities collide (`identity_collision`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "a bad address, directory or identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "the list could not be saved, nothing changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/repositories/{directory}": {
+      "delete": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Takes an entry off the list and nothing else: the checkout and its files stay (and show as a\ncheckout without an entry), and so do the repository table row and the identities. Allowed in\nevery state but creating and deleting. No call deletes a checkout.",
+        "operationId": "remove_repository",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "directory",
+            "in": "path",
+            "description": "the entry's directory",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the workspace without the entry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace or entry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the workspace is being created or deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "the list could not be saved, nothing changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/repositories/{directory}/clone": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Clones an entry whose directory is not on the volume again, as adding does. Answers `202`\nwith the workspace busy `cloning`.",
+        "operationId": "clone_again",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "directory",
+            "in": "path",
+            "description": "the entry's directory",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "the clone started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace or entry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the workspace is not running or is busy, or the directory is there",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/workspaces/{id}/shell-init": {
       "get": {
         "tags": [
@@ -6627,6 +7053,102 @@
           "api",
           "system"
         ]
+      },
+      "AddRepositoryRequest": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Clone a new repository into the running workspace.",
+            "required": [
+              "url",
+              "kind"
+            ],
+            "properties": {
+              "directory": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The checkout's directory under the volume root; left out or `null` is the last part\nof the address. It must not exist yet."
+              },
+              "identity_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "The identity that serves it; left out or `null` is the identity that covers its\nowner, else the default identity."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "clone"
+                ]
+              },
+              "pull": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "Pull on its new repository table row; left out or `null` is on."
+              },
+              "push": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "Push on its new repository table row; left out or `null` is on."
+              },
+              "url": {
+                "type": "string",
+                "description": "The repository, as an `https://` URL without credentials."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Manage a checkout that is already on the volume (\"Manage this\"). Puddle reads its remote\nagain at that moment and changes nothing in the checkout.",
+            "required": [
+              "directory",
+              "kind"
+            ],
+            "properties": {
+              "directory": {
+                "type": "string",
+                "description": "The checkout's directory under the volume root."
+              },
+              "identity_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "As for a clone."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "existing"
+                ]
+              },
+              "pull": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "As for a clone."
+              },
+              "push": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "As for a clone."
+              }
+            }
+          }
+        ],
+        "description": "`POST /api/workspaces/{id}/repositories`: what to add."
       },
       "ApiErrorBody": {
         "type": "object",
@@ -7770,6 +8292,85 @@
           }
         }
       },
+      "Checkout": {
+        "type": "object",
+        "description": "One checkout found directly under the workspace's volume root. Every string except `entry`\ncame from the guest: escape it when rendering.",
+        "required": [
+          "directory",
+          "remote_url",
+          "remote_note",
+          "branch",
+          "head",
+          "dirty",
+          "unreadable",
+          "entry",
+          "manage"
+        ],
+        "properties": {
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The branch; `null` when HEAD is detached."
+          },
+          "directory": {
+            "type": "string",
+            "description": "Its directory under the volume root."
+          },
+          "dirty": {
+            "type": "boolean",
+            "description": "Whether it has uncommitted changes or untracked files."
+          },
+          "entry": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceRepository",
+                "description": "The list entry with this directory, or `null` when the checkout is not on the list. Its\naddress may differ from `remote_url`: show both then."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "head": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The short commit; `null` before the first commit."
+          },
+          "manage": {
+            "$ref": "#/components/schemas/CheckoutManage",
+            "description": "Whether \"Manage this\" is offered."
+          },
+          "remote_note": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RemoteNote",
+                "description": "Why `remote_url` is `null`, or that credentials were removed from it; `null` when\nneither."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "remote_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The address of its `origin` remote (else of its only remote) when that is an `https://`\naddress, without any user name or password; `null` otherwise (see `remote_note`)."
+          },
+          "unreadable": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why Puddle could not read it, when it could not; `null` otherwise."
+          }
+        }
+      },
       "CheckoutDir": {
         "type": "string",
         "description": "A checkout's directory directly under the workspace's volume root: ASCII letters, digits, `.`, `_` and `-`, not starting with `.` or `-`, not `lost+found`.",
@@ -7777,6 +8378,81 @@
         "maxLength": 100,
         "minLength": 1,
         "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$"
+      },
+      "CheckoutManage": {
+        "type": "object",
+        "description": "Whether \"Manage this\" is offered for a checkout.",
+        "required": [
+          "offered",
+          "reason"
+        ],
+        "properties": {
+          "offered": {
+            "type": "boolean",
+            "description": "Whether the checkout can be turned into a list entry."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why not, when it cannot (for the user; guest text may be in it)."
+          }
+        }
+      },
+      "Checkouts": {
+        "type": "object",
+        "description": "`GET /api/workspaces/{id}/checkouts`.",
+        "required": [
+          "running",
+          "checked_at",
+          "problem",
+          "more",
+          "checkouts",
+          "missing"
+        ],
+        "properties": {
+          "checked_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the listing was made (epoch ms); `null` before the first one this run.",
+            "minimum": 0
+          },
+          "checkouts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Checkout"
+            },
+            "description": "The checkouts found, in directory order."
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CheckoutDir"
+            },
+            "description": "The directories of list entries that are not on the volume (\"not on the disk\"). Empty\nwhen the listing stopped at its limit: an entry past it may be there."
+          },
+          "more": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many checkouts there are past the first 100.",
+            "minimum": 0
+          },
+          "problem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why there is no listing (the workspace is stopped, or the listing failed or its output\nwas refused); `null` when there is one."
+          },
+          "running": {
+            "type": "boolean",
+            "description": "Whether the workspace is running: `checkouts` is then from the moment of the call."
+          }
+        }
       },
       "ClipboardRead": {
         "type": "string",
@@ -10615,6 +11291,16 @@
         },
         "additionalProperties": false
       },
+      "RemoteNote": {
+        "type": "string",
+        "description": "Why a checkout's remote address is not shown as it stands.",
+        "enum": [
+          "credentials_removed",
+          "ssh",
+          "not_https",
+          "no_remote"
+        ]
+      },
       "RenameWorkspaceRequest": {
         "type": "object",
         "description": "`PATCH /api/workspaces/{id}`.",
@@ -12522,6 +13208,7 @@
           "starting",
           "stopping",
           "reclaiming",
+          "cloning",
           "deleting"
         ]
       },

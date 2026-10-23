@@ -21,6 +21,9 @@ pub enum WorkspaceOperation {
     Stopping,
     /// Giving freed disk space back to the host.
     Reclaiming,
+    /// Cloning one repository into a running workspace; stop and delete are refused until it
+    /// ends.
+    Cloning,
     /// Checking for unsaved work and removing the workspace.
     Deleting,
 }
@@ -32,6 +35,7 @@ impl From<domain::Operation> for WorkspaceOperation {
             domain::Operation::Starting => Self::Starting,
             domain::Operation::Stopping => Self::Stopping,
             domain::Operation::Reclaiming => Self::Reclaiming,
+            domain::Operation::Cloning => Self::Cloning,
             domain::Operation::Deleting => Self::Deleting,
         }
     }

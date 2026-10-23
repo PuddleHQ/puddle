@@ -116,7 +116,7 @@ async fn views(state: &AppState, records: Vec<WorkspaceRecord>) -> Vec<Workspace
 }
 
 /// One workspace as the API shows it.
-async fn view(state: &AppState, record: WorkspaceRecord) -> Workspace {
+pub(super) async fn view(state: &AppState, record: WorkspaceRecord) -> Workspace {
     let d = direct_ssh_of_one(state, &record).await;
     Workspace::new(record, d.on).with_settings_error(d.unreadable)
 }
@@ -139,7 +139,7 @@ pub(crate) async fn list_workspaces(
 
 /// What the store asks of one repository's Git settings; `None` when its address names no
 /// repository the table can hold.
-fn git_request(repository: &NewRepository) -> Option<RepoGitRequest> {
+pub(super) fn git_request(repository: &NewRepository) -> Option<RepoGitRequest> {
     let repo = RepoRef::from_https_url(repository.repository.url.as_str()).ok()?;
     Some(RepoGitRequest {
         repo,
@@ -152,20 +152,20 @@ fn git_request(repository: &NewRepository) -> Option<RepoGitRequest> {
 /// Sets a new workspace's repositories up in the store, in order, and keeps what each got for
 /// the answer. A repository it cannot set up is cloned without its Git settings, and its entry
 /// in the answer says so; the workspace is not undone for it.
-struct StoreGitSetup {
+pub(super) struct StoreGitSetup {
     store: Arc<Store>,
     started: Mutex<Vec<NewWorkspaceIdentity>>,
 }
 
 impl StoreGitSetup {
-    fn new(store: Arc<Store>) -> Self {
+    pub(super) fn new(store: Arc<Store>) -> Self {
         Self {
             store,
             started: Mutex::new(Vec::new()),
         }
     }
 
-    fn take(&self) -> Vec<NewWorkspaceIdentity> {
+    pub(super) fn take(&self) -> Vec<NewWorkspaceIdentity> {
         std::mem::take(&mut *self.started.lock().unwrap_or_else(PoisonError::into_inner))
     }
 }

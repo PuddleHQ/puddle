@@ -22,6 +22,7 @@ mod identities;
 mod network_health;
 mod problems;
 mod repos;
+mod repositories;
 mod routes;
 mod rule_sets;
 #[cfg(windows)]

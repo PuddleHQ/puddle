@@ -44,6 +44,7 @@ const DONE_WORDS: Record<string, (label: string) => string> = {
   starting: (name) => `${name} is running.`,
   stopping: (name) => `Stopped ${name}.`,
   reclaiming: (name) => `Reclaimed free space on ${name}.`,
+  cloning: (name) => `Cloned a repository into ${name}.`,
   deleting: (name) => `Deleted ${name}.`,
 };
 

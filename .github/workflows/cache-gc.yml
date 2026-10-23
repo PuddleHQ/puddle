@@ -3,21 +3,42 @@ name: cache-gc
 on:
   workflow_dispatch:
 jobs:
-  diag:
+  baseline:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        n: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]
+    timeout-minutes: 15
     steps:
-      - run: |
+      - name: install (develop's step, verbatim)
+        id: i
+        timeout-minutes: 10
+        continue-on-error: true
+        run: |
+          t0=$(date +%s)
           ip=$(getent ahostsv4 azure.archive.ubuntu.com | awk 'NR==1{print $1}')
-          curl -s https://archive.ubuntu.com/ubuntu/dists/noble/main/binary-amd64/Packages.xz | xz -dc > /tmp/P
-          awk -v RS= -F'\n' '{f="";s=0;for(i=1;i<=NF;i++){if($i~/^Filename:/)f=substr($i,11);if($i~/^Size:/)s=substr($i,7)} if(s>3000000&&s<12000000)print f}' /tmp/P | shuf -n 4 > /tmp/files
-          for f in $(cat /tmp/files) pool/main/g/glib2.0/libglib2.0-0t64_2.80.0-6ubuntu3_amd64.deb pool/main/w/webkit2gtk/libjavascriptcoregtk-4.1-0_2.52.6-0ubuntu0.24.04.1_amd64.deb; do
-            r=$(curl -s -o /dev/null --max-time 6 --range 0-2097151 --resolve azure.archive.ubuntu.com:80:$ip -w '%{size_download} %{speed_download}' "http://azure.archive.ubuntu.com/ubuntu/$f" || true)
-            echo "PROBE ip=$ip $r $(basename $f | cut -c1-40)"
-          done
-          r=$(curl -s -o /dev/null --max-time 6 --range 0-3145727 --resolve azure.archive.ubuntu.com:80:$ip -w '%{size_download} %{speed_download}' "http://azure.archive.ubuntu.com/ubuntu/dists/noble/universe/binary-amd64/Packages.xz" || true)
-          echo "PROBE ip=$ip $r dists-universe-Packages.xz"
+          printf 'Acquire::http::Timeout "20";\nAcquire::Retries "5";\n' | sudo tee /etc/apt/apt.conf.d/99-ci-timeouts >/dev/null
+          trap 'echo "AB role=baseline ip=$ip secs=$(( $(date +%s) - t0 )) runner=$RUNNER_NAME"' EXIT
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev squid 2>&1 | tee /tmp/apt.out
+          grep -E "^Fetched" /tmp/apt.out | sed 's/^/AB fetched baseline: /'
+          sudo systemctl stop squid || true
+          test -x /usr/sbin/squid
+      - run: 'echo "AB role=baseline outcome=${{ steps.i.outcome }}"'
+  candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: install (the new step)
+        id: i
+        timeout-minutes: 10
+        continue-on-error: true
+        run: |
+          t0=$(date +%s)
+          ip=$(getent ahostsv4 azure.archive.ubuntu.com | awk 'NR==1{print $1}')
+          ci/apt-setup.sh | sed "s/^/AB setup: /"
+          trap 'echo "AB role=candidate ip=$ip secs=$(( $(date +%s) - t0 )) runner=$RUNNER_NAME"' EXIT
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev squid 2>&1 | tee /tmp/apt.out
+          grep -E "^Fetched" /tmp/apt.out | sed 's/^/AB fetched candidate: /'
+          sudo systemctl stop squid || true
+          test -x /usr/sbin/squid
+      - run: 'echo "AB role=candidate outcome=${{ steps.i.outcome }}"'

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { advisories, judge } from "./audit.ts";
+import { advisories, failing, judge } from "./audit.ts";
 import { allowed, collect, render } from "./licences.ts";
 
 describe("licence allowlist", () => {
@@ -149,5 +149,23 @@ describe("audit", () => {
       judge([], [{ id: "GHSA-9", review_by: "2027-01-01" }], "2026-10-07")
         .unused,
     ).toEqual(["GHSA-9"]);
+  });
+
+  it("lists as failing what judge fails: not excepted, or excepted past its date", () => {
+    const found = advisories(report);
+    expect(failing(found, [], "2026-10-07").map((a) => a.id)).toEqual([
+      "GHSA-1",
+      "GHSA-2",
+    ]);
+    expect(
+      failing(
+        found,
+        [
+          { id: "GHSA-1", review_by: "2027-01-01" },
+          { id: "GHSA-2", review_by: "2026-01-01" },
+        ],
+        "2026-10-07",
+      ).map((a) => a.id),
+    ).toEqual(["GHSA-2"]);
   });
 });

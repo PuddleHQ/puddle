@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Self-test of the gate sets in scripts/check.sh, through `--list` (which runs no gate): `all` is
-# every gate, `pre-push` is `all` minus ui-e2e and advisories in the same order, `fast` is a prefix of both, a
+# every gate, `pre-push` is `all` minus ui-e2e, advisories and ui-audit in the same order, `fast` is a prefix of both, a
 # single gate is its own set, and the pre-push hook asks for the `pre-push` set. Not seen: that a
 # listed gate runs (each gate has its own CI step), and that CI's workflow file names every gate.
 set -eu
@@ -18,11 +18,13 @@ fast=$("$check" --list fast)
 
 printf '%s\n' "$all" | grep -qx ui-e2e || fail "all lacks ui-e2e"
 printf '%s\n' "$pre_push" | grep -qx ui-e2e && fail "pre-push runs ui-e2e"
-# Advisories depend on the day's RustSec database, not on the change: only `all` (CI's push and nightly run) has them.
+# Advisories (RustSec, npm) depend on the day's database, not on the change: only `all` (CI's push and nightly run) has them.
 printf '%s\n' "$all" | grep -qx advisories || fail "all lacks advisories"
 printf '%s\n' "$pre_push" | grep -qx advisories && fail "pre-push runs advisories"
+printf '%s\n' "$all" | grep -qx ui-audit || fail "all lacks ui-audit"
+printf '%s\n' "$pre_push" | grep -qx ui-audit && fail "pre-push runs ui-audit"
 printf '%s\n' "$pre_push" | grep -qx deny || fail "pre-push lacks deny (bans, licences, sources)"
-[ "$(printf '%s\n' "$all" | grep -vx -e ui-e2e -e advisories)" = "$pre_push" ] || fail "pre-push is not all minus ui-e2e and advisories, in order"
+[ "$(printf '%s\n' "$all" | grep -vx -e ui-e2e -e advisories -e ui-audit)" = "$pre_push" ] || fail "pre-push is not all minus ui-e2e, advisories and ui-audit, in order"
 [ "$(printf '%s\n' "$all" | sort | uniq -d)" = "" ] || fail "all repeats a gate"
 [ "$(printf '%s\n' "$all" | head -n "$(printf '%s\n' "$fast" | wc -l)")" = "$fast" ] || fail "fast is not the start of all"
 printf '%s\n' "$pre_push" | grep -qx coverage || fail "pre-push lacks coverage"

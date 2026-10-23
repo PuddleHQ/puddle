@@ -294,7 +294,7 @@ for wf, (rid, rname) in results.items():
     res = jobs[rid]
     if res.get("name") != rname:
         bad.append(f"{wf}: result job name {res.get('name')!r}, want {rname!r}")
-    # ci.yml's nightly (schedule) runs only its advisories job, so its result job skips on that event.
+    # ci.yml's nightly (schedule) runs only its advisories jobs, so its result job skips on that event.
     want_if = "${{always()&&github.event_name!='schedule'}}" if wf == "ci" else "${{always()}}"
     if str(res.get("if", "")).replace(" ", "") != want_if:
         bad.append(f"{wf}: result job must run with always()")
@@ -329,12 +329,12 @@ for wf, (rid, rname) in results.items():
     for j in needs:
         if j == "scope" or j in specs:
             continue
-        # Unscoped jobs: the release build and the advisories check, each with its own event rule
-        # (advisories: not on a pull request to develop, so a new RustSec entry fails no such pull request).
-        if wf == "ci" and j == "advisories":
+        # Unscoped jobs: the release build and the advisories checks, each with its own event rule
+        # (advisories: not on a pull request to develop, so a new RustSec or npm entry fails no such pull request).
+        if wf == "ci" and j in ("advisories", "advisories-npm"):
             cond = str(jobs[j].get("if", "")).replace(" ", "")
             if "github.event.pull_request.base.ref=='main'" not in cond or "github.event_name!='pull_request'" not in cond:
-                bad.append(f"ci: job advisories if={cond!r} must skip exactly on a pull request not to main")
+                bad.append(f"ci: job {j} if={cond!r} must skip exactly on a pull request not to main")
         elif not (wf == "windows" and j == "release"):
             bad.append(f"{wf}: needed job {j} is neither scoped nor the release build")
     # Every other job of the workflow is reached through the result job (directly or via needs).

@@ -7,16 +7,17 @@
 # job): a docs-only or UI-only change runs a light job (typos, spdx, shellcheck, standalone, secrets)
 # instead of the Rust gates, and a change with no UI-relevant path skips the UI job. Every other
 # event, and any doubt, runs everything. `linux (all gates)` accepts a skip only when `scope` said so.
-# RustSec advisories are not one of those gates: a new advisory fails every pull request at once, whatever the
-# pull request changes. The separate `advisories` job runs on pull requests to main, on pushes, nightly and by
-# hand, never on a pull request to develop (the `cargo-deny` step there checks bans, licences and sources).
+# Advisories (RustSec, npm) are not one of those gates: a new advisory fails every pull request at once, whatever
+# the pull request changes. The separate `advisories` and `advisories-npm` jobs run on pull requests to main, on
+# pushes, nightly and by hand, never on a pull request to develop (the `cargo-deny` step there checks bans,
+# licences and sources).
 name: ci
 
 on:
   push:
     branches: [develop, main]
   pull_request:
-  # The nightly runs only the `advisories` job (every other job skips on this event) and keeps its tracking issue.
+  # The nightly runs only the two advisories jobs (every other job skips on this event) and keeps its tracking issue.
   schedule:
     - cron: "30 5 * * *"
   workflow_dispatch:
@@ -333,9 +334,6 @@ jobs:
       - name: UI licences (npm packages in the bundle)
         if: ${{ !cancelled() }}
         run: scripts/check.sh ui-licences
-      - name: UI audit (npm advisories in production dependencies)
-        if: ${{ !cancelled() }}
-        run: scripts/check.sh ui-audit
       - name: UI end-to-end (Playwright, Chromium and WebKit, axe)
         if: ${{ !cancelled() }}
         run: scripts/check.sh ui-e2e
@@ -377,7 +375,36 @@ jobs:
         if: ${{ !cancelled() && github.event_name == 'schedule' }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ci/advisories-issue.sh
+        run: ci/advisories-issue.sh rust
+
+  # npm advisories (`scripts/check.sh ui-audit`), the same shape as `advisories` above: skipped on a pull request to
+  # develop, run on a pull request to main (where it fails `linux (all gates)`), every push, the nightly and by hand.
+  # Its own job, so it is not tied to the UI job's scope verdict: a UI-free pull request to main still gets it.
+  advisories-npm:
+    name: advisories (npm)
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.base.ref == 'main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Node for the UI
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: npm audit (production dependencies)
+        run: scripts/check.sh ui-audit
+      - name: tracking issue (nightly only)
+        if: ${{ !cancelled() && github.event_name == 'schedule' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          (cd ui && npm ci --ignore-scripts --no-audit --no-fund)
+          ci/advisories-issue.sh npm
 
   # One stable result for the jobs above.
   # The develop ruleset requires it by this name: a rename changes the ruleset in the same change.
@@ -385,7 +412,7 @@ jobs:
   # verdict); a failed `scope` job leaves its outputs empty, which runs everything.
   linux:
     name: linux (all gates)
-    needs: [scope, rust, light, ui, advisories]
+    needs: [scope, rust, light, ui, advisories, advisories-npm]
     if: ${{ always() && github.event_name != 'schedule' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5

@@ -26,7 +26,7 @@ Rust, pinned in `rust-toolchain.toml` (rustup installs it on first use). Tools f
 
 ```sh
 git config core.hooksPath .githooks   # once per clone: fast gates on commit, the pre-push set on push
-scripts/check.sh                      # every gate CI runs (the pre-push set plus UI e2e and advisories): fmt, typos, SPDX, clippy, deny, advisories, docs, tests + coverage
+scripts/check.sh                      # every gate CI runs (the pre-push set plus UI e2e and the RustSec and npm advisory checks): fmt, typos, SPDX, clippy, deny, advisories, docs, tests + coverage
 cargo nextest run                     # tests only
 cargo run -p puddle -- --version
 ```

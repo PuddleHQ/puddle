@@ -8,8 +8,8 @@
 #   fast     = fmt typos spdx shellcheck hooks platform-literals standalone git-pins silent-skips   (pre-commit hook)
 #   all      = fast git-env secrets clippy clippy-windows deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage
 #              (CI, the nightly run, by hand; coverage runs the tests, and must follow `ui`: the embedded UI is built there)
-#   pre-push = every gate of `all` except ui-e2e, the slowest one, and advisories, which depends on the day's
-#              RustSec database and not on the change (pre-push hook; CI still runs ui-e2e after the push)
+#   pre-push = every gate of `all` except ui-e2e, the slowest one, and advisories and ui-audit, which depend on
+#              the day's advisory databases and not on the change (pre-push hook; CI still runs ui-e2e after the push)
 #   `scripts/check.sh --list <set>` prints a set's gates, one per line, without running anything.
 # Several gates run at the same time (scripts/gate-sched.sh): after the `fast` gates, which run first and
 # stop the run on a failure, the compile-and-test gates, the UI chain (ui ui-licences ui-audit ui-e2e) and
@@ -237,7 +237,8 @@ run_gate() {
         (cd ui && node scripts/licences.ts --check)
         ;;
     ui-audit)
-        # npm audit on production dependencies, minus ui/audit-exceptions.json.
+        # npm audit on production dependencies, minus ui/audit-exceptions.json. Like `advisories`, it answers
+        # for the day's database, so pull requests to develop skip it (ci.yml, job advisories-npm).
         ui_install
         (cd ui && node scripts/audit.ts)
         ;;
@@ -317,7 +318,7 @@ fast_gates="fmt typos spdx shellcheck hooks platform-literals standalone git-pin
 all_gates="$fast_gates git-env secrets clippy clippy-windows deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage"
 pre_push_gates=
 for g in $all_gates; do
-    case $g in ui-e2e | advisories) ;; *) pre_push_gates="$pre_push_gates $g" ;; esac
+    case $g in ui-e2e | advisories | ui-audit) ;; *) pre_push_gates="$pre_push_gates $g" ;; esac
 done
 
 # Prints the gates of a set, or of a single gate, one per line.

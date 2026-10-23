@@ -234,7 +234,7 @@ the owner, then tagged `vX.Y.Z` on `main`.
 
 | Tier | What | Where it lives | Runs |
 |---|---|---|---|
-| L0 static | fmt, clippy (Linux + msvc), deny (bans, licences, sources), advisories (RustSec; not on pull requests to `develop`), typos, SPDX, shellcheck, secrets (gitleaks), standalone (no planning-note references, "Puddle" capitalised in prose), git-pins (no dependency pinned by a branch), silent skips, rustdoc, API contract | `scripts/check.sh` | every push, every PR |
+| L0 static | fmt, clippy (Linux + msvc), deny (bans, licences, sources), advisories (RustSec, and npm as `ui-audit`; neither on pull requests to `develop`), typos, SPDX, shellcheck, secrets (gitleaks), standalone (no planning-note references, "Puddle" capitalised in prose), git-pins (no dependency pinned by a branch), silent skips, rustdoc, API contract | `scripts/check.sh` | every push, every PR |
 | L1 unit | one module's logic: parsers, rules, state machines, address classifier, path handling | `#[cfg(test)] mod tests` in the same file | every push (Linux), nightly + PRs to `main` (Windows) |
 | L2 integration, no VM | real proxy + real agent over a Unix socket / named pipe, fake guest client, fake upstreams; API over loopback; the hostile-guest **tier P** | `crates/<crate>/tests/*.rs`; cross-crate ones in `crates/puddle-e2e/tests/` | every push |
 | L3 Linux KVM e2e (**K**) | a real msb microVM; the product's behaviours; hostile-guest **tier V** | `crates/puddle-vm-tests/tests/`, functions or files named `vm_*` | `vm-linux.yml`: every pull request to `develop`, by hand on any branch, nightly on `develop` |
@@ -332,8 +332,8 @@ the owner, then tagged `vX.Y.Z` on `main`.
 | Set | Gates | Runs |
 |---|---|---|
 | `fast` | fmt, typos, spdx, shellcheck, hooks, platform-literals, standalone, git-pins, silent-skips | pre-commit hook |
-| `pre-push` | every gate of `all` except `ui-e2e` and `advisories` | pre-push hook |
-| `all` (the default) | every gate, `ui-e2e` and `advisories` included | `ci.yml` (every push and PR, except `advisories`, see below), by hand |
+| `pre-push` | every gate of `all` except `ui-e2e`, `advisories` and `ui-audit` | pre-push hook |
+| `all` (the default) | every gate, `ui-e2e`, `advisories` and `ui-audit` included | `ci.yml` (every push and PR, except `advisories` and `ui-audit`, see below), by hand |
 
 **Concurrent gates.** Within a set, `fast` runs first, one gate at a time, and a failure stops the run.
 The rest runs as up to three streams at once (`scripts/gate-sched.sh`): the Rust gates (`git-env`, `clippy`,
@@ -359,7 +359,7 @@ before pushing a change that touches the UI's behaviour, routes or accessibility
 
 | Workflow | Trigger | Runner | Gates |
 |---|---|---|---|
-| `ci.yml` | push to `develop`/`main`, every PR, nightly (`advisories` only), manual (a newer push to a PR or `develop` cancels the run in flight; `main` never) | `ubuntu-24.04` | all of `scripts/check.sh all` (the `pre-push` set plus `ui-e2e` and `advisories`) in parallel jobs (Rust and repository gates; UI gates; advisories) plus `linux (all gates)`, the one result that needs them; every gate runs even if an earlier one fails |
+| `ci.yml` | push to `develop`/`main`, every PR, nightly (the two advisories jobs only), manual (a newer push to a PR or `develop` cancels the run in flight; `main` never) | `ubuntu-24.04` | all of `scripts/check.sh all` (the `pre-push` set plus `ui-e2e`, `advisories` and `ui-audit`) in parallel jobs (Rust and repository gates; UI gates; RustSec advisories; npm advisories) plus `linux (all gates)`, the one result that needs them; every gate runs even if an earlier one fails |
 | `windows.yml` | every PR to `develop` and `main` (a newer push to the PR cancels the run in flight), nightly 02:30 UTC (skipped if it already has a green run on that commit), manual | `windows-2025` | four parallel jobs (clippy; nextest, doc tests, secret scan; UI gates, e2e on Edge and the desktop shell smoke test; release build, MSVC: only on the nightly, on PRs to `main` and on manual runs from `develop`, so PRs to `develop` skip it) plus `windows-msvc (build, clippy, tests)`, the one result that needs them all. The nightly retries each failed test once and lists the flaky ones in the job summary, without failing |
 | `windows-cache.yml` | push to `develop` that changes a `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml` or `.cargo/config.toml`, manual | `windows-2025` | builds the test binaries once (no tests) so the pull requests' `windows.yml` runs restore a current `windows` Rust cache entry instead of an older one; only a run on `develop` saves it |
 | `vm-linux.yml` | every PR to `develop` (a newer push to the PR cancels the run in flight), manual on any branch (`gh workflow run vm-linux.yml --ref <branch>`), nightly 03:00 UTC on `develop` (skipped if it already has a green run on that commit) | `ubuntu-24.04` (KVM) | VM tests, tier K: the test binaries are built once (`cargo nextest archive`) and run in 3 hash partitions on 3 runners; `vm-linux (KVM, msb microVMs)` is the one result. No KVM ⇒ warning, infrastructure skip |
@@ -424,9 +424,14 @@ workspace. `scripts/check-spdx.sh` enforces it. Details and third-party files:
   pull request; gate `advisories` runs on pull requests to `main` (a release never ships a known advisory), on pushes
   to `develop` and `main`, nightly, and by hand. Pull requests to `develop` skip it, so a pull request that adds a
   vulnerable dependency can land; the push to `develop` and the nightly catch it. The nightly (job `advisories` in
-  `ci.yml`, `ci/advisories-issue.sh`) opens or rewrites one issue titled "Dependency advisories: cargo deny check
+  `ci.yml`, `ci/advisories-issue.sh rust`) opens or rewrites one issue titled "Dependency advisories: cargo deny check
   advisories fails" with the advisory IDs, crates and a link to the run, closes it on the first clean run, and fails visibly.
   `pre-push` skips `advisories`; `scripts/check.sh advisories` runs it by hand.
+- **npm advisories follow the same rule.** Gate `ui-audit` (`npm audit`, section 13) runs in its own job,
+  `advisories (npm)`, on the same events as `advisories`: pull requests to `main`, pushes, nightly and by hand, never on a
+  pull request to `develop`. The nightly keeps a second issue, "Dependency advisories: npm audit fails"
+  (`ci/advisories-issue.sh npm`), with its own life cycle: one issue per source, closed on that source's first clean run,
+  untouched when npm cannot answer. `pre-push` skips `ui-audit`.
 - A git dependency is pinned by a tag or a full `rev`, never by `branch =`: a branch moves, and once its
   owner rebases it the commit in `Cargo.lock` is off its history and every fresh fetch fails with
   "revision not found". Gate `git-pins` (`scripts/check-git-pins.sh`) fails on a `branch =` key in
@@ -450,7 +455,7 @@ and in `ci.yml` (Linux); every one but `ui-e2e` is also in the `pre-push` set; `
 | `ui` | `prettier --check`, `eslint` (with `eslint-plugin-svelte`), `svelte-check --fail-on-warnings` (Svelte's accessibility warnings fail), `vitest run --coverage`, `vite build` |
 | `ui-e2e` | Playwright against the UI fixture backend (the real API on fake services, below), serving the built app: Chromium and WebKit on Linux, the installed Edge on Windows; axe (WCAG 2.0 to 2.2, A and AA) on every route in both themes; no CSP violations |
 | `ui-licences` | every npm package in the bundle is MIT, ISC, Apache-2.0, BSD-2/3-Clause, 0BSD or OFL-1.1, and is in `ui/THIRD-PARTY-NOTICES.txt` (`cd ui && npm run build && npm run licences` rewrites it) |
-| `ui-audit` | `npm audit --omit=dev --audit-level=moderate`, minus `ui/audit-exceptions.json` (id, reason, review-by date) |
+| `ui-audit` | `npm audit --omit=dev --audit-level=moderate`, minus `ui/audit-exceptions.json` (id, reason, review-by date); not run on pull requests to `develop` (section 12) |
 
 - **The fixture backend** (`puddle-ui-fixture`, `crates/puddle-e2e/src/ui_fixture/`) is the real
   `puddle-api` router on an in-memory store, a manual clock and in-memory settings, seeded from a JSON

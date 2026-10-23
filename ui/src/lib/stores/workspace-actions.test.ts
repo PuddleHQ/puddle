@@ -432,6 +432,10 @@ describe("settledMessage", () => {
       { operation: "reclaiming", failed: false, detail: null },
       "Reclaimed free space on w.",
     ],
+    [
+      { operation: "cloning", failed: false, detail: null },
+      "Cloned a repository into w.",
+    ],
     [{ operation: "deleting", failed: false, detail: null }, "Deleted w."],
     [{ operation: null, failed: false, detail: null }, "w: done."],
     [

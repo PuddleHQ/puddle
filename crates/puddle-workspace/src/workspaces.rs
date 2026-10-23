@@ -5,7 +5,8 @@
 use std::time::Duration;
 
 use puddle_compute::{
-    ComputeError, DiskSize, Runtime, Sandbox, SandboxSpec, VolumeInfo, VolumeMount, VolumeSpec,
+    ComputeError, DiskSize, ExecRequest, Runtime, Sandbox, SandboxSpec, VolumeInfo, VolumeMount,
+    VolumeSpec,
 };
 use puddle_types::{
     CheckoutDir, GuestPath, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceId,
@@ -14,6 +15,7 @@ use puddle_types::{
 use tracing::{debug, info, warn};
 
 use crate::check::{self, DeleteConfirmation, DeleteReport, Findings};
+use crate::checkouts::{self, CheckoutList, FoundCheckout};
 use crate::locks::{self, LockReport};
 use crate::registry::{HoldKind, Holder, Registry};
 use crate::trim::{self, TrimReport, tail};
@@ -431,6 +433,83 @@ impl Workspaces {
                     tail(&out.stderr_text())
                 ),
             })
+        }
+    }
+
+    /// Lists the checkouts directly under workspace `id`'s volume root (a directory, not a link,
+    /// with a `.git` entry), at most [`crate::MAX_CHECKOUTS`], in `sandbox`, which must be
+    /// running and have the volume mounted. Changes nothing in the guest.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkspaceError::Checkouts`] when the listing fails, times out or its output can't be
+    /// read; [`WorkspaceError::Runtime`].
+    pub async fn list_checkouts<S: Sandbox>(
+        &self,
+        sandbox: &S,
+        id: &WorkspaceId,
+    ) -> Result<CheckoutList, WorkspaceError> {
+        checkouts::run(sandbox, id, None).await
+    }
+
+    /// Reads the checkout `dir` of workspace `id` again: `None` when it is not a checkout (it is
+    /// missing, a link, or has no `.git`).
+    ///
+    /// # Errors
+    ///
+    /// As [`Workspaces::list_checkouts`].
+    pub async fn read_checkout<S: Sandbox>(
+        &self,
+        sandbox: &S,
+        id: &WorkspaceId,
+        dir: &CheckoutDir,
+    ) -> Result<Option<FoundCheckout>, WorkspaceError> {
+        Ok(checkouts::run(sandbox, id, Some(dir))
+            .await?
+            .checkouts
+            .into_iter()
+            .next())
+    }
+
+    /// Whether anything (a file, a directory, a link, even a dangling one) is at `dir` under
+    /// workspace `id`'s volume root.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkspaceError::Layout`]; [`WorkspaceError::Runtime`].
+    pub async fn exists_on_volume<S: Sandbox>(
+        &self,
+        sandbox: &S,
+        id: &WorkspaceId,
+        dir: &CheckoutDir,
+    ) -> Result<bool, WorkspaceError> {
+        let path = Layout::new(id)?.checkout(dir)?;
+        let request = ExecRequest::new(
+            "sh",
+            [
+                "-c",
+                "[ -e \"$1\" ] || [ -L \"$1\" ]",
+                "puddle-exists",
+                path.as_str(),
+            ]
+            .map(str::to_owned),
+        )
+        .as_user("root");
+        let out = sandbox
+            .exec(request)
+            .await
+            .map_err(|e| WorkspaceError::runtime("look for a folder", id, e))?;
+        match out.status.code {
+            0 => Ok(true),
+            1 => Ok(false),
+            // Not knowing is not "no": a clone must never go into a folder that may hold work.
+            other => Err(WorkspaceError::Checkouts {
+                workspace: id.to_string(),
+                reason: format!(
+                    "looking for {dir} exited {other}: {}",
+                    tail(&out.stderr_text())
+                ),
+            }),
         }
     }
 

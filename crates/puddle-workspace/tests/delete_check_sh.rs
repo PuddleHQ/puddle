@@ -9,7 +9,6 @@
 )]
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use puddle_compute::fake::{ExecContext, FakeRuntime};
 use puddle_compute::{DiskSize, ExecOutput, ExecRequest, Runtime, VolumeSpec};
@@ -17,96 +16,7 @@ use puddle_types::WorkspaceId;
 use puddle_workspace::{DELETE_CHECK_SH, DeleteReport, Workspaces};
 
 mod common;
-use common::command;
-
-/// Shells the script must work under (the guest's `/bin/sh` is dash on Debian).
-fn shells() -> Vec<&'static str> {
-    ["dash", "bash"]
-        .into_iter()
-        .filter(|s| {
-            Command::new("sh")
-                .args(["-c", &format!("command -v {s}")])
-                .output()
-                .is_ok_and(|o| o.status.success())
-        })
-        .collect()
-}
-
-/// Git for the fixture repositories, with auto maintenance off: newer git starts
-/// `git maintenance run --auto` detached after a commit, which would still be working in the
-/// repository while the script under test reads it.
-fn git(dir: &Path, args: &[&str]) {
-    let out = command("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_COUNT", "1")
-        .env("GIT_CONFIG_KEY_0", "maintenance.auto")
-        .env("GIT_CONFIG_VALUE_0", "false")
-        .env("GIT_AUTHOR_NAME", "T")
-        .env("GIT_AUTHOR_EMAIL", "t@example.org")
-        .env("GIT_COMMITTER_NAME", "T")
-        .env("GIT_COMMITTER_EMAIL", "t@example.org")
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-/// A volume root with: ext4's `lost+found`, Puddle's `.puddle`, a checkout with every kind of
-/// unsaved work, a clean checkout, a repo without commits, and a stray file.
-fn volume(root: &Path) -> PathBuf {
-    let remote = root.join("remote.git");
-    std::fs::create_dir(&remote).unwrap();
-    git(&remote, &["init", "-q", "--bare", "-b", "main"]);
-    let vol = root.join("vol");
-    std::fs::create_dir_all(vol.join("lost+found")).unwrap();
-    std::fs::create_dir_all(vol.join(".puddle/code-server")).unwrap();
-    std::fs::write(vol.join("notes.txt"), "loose\n").unwrap();
-
-    let seed = root.join("seed");
-    std::fs::create_dir(&seed).unwrap();
-    git(&seed, &["init", "-q", "-b", "main"]);
-    std::fs::write(seed.join("a.txt"), "a\n").unwrap();
-    git(&seed, &["add", "."]);
-    git(&seed, &["commit", "-qm", "first"]);
-    git(
-        &seed,
-        &["remote", "add", "origin", remote.to_str().unwrap()],
-    );
-    git(&seed, &["push", "-q", "origin", "main"]);
-
-    git(&vol, &["clone", "-q", remote.to_str().unwrap(), "web"]);
-    git(&vol, &["clone", "-q", remote.to_str().unwrap(), "api"]);
-    let api = vol.join("api");
-    std::fs::write(api.join("a.txt"), "changed\n").unwrap();
-    git(&api, &["stash", "-q"]);
-    std::fs::write(api.join("b.txt"), "b\n").unwrap();
-    git(&api, &["add", "b.txt"]);
-    git(&api, &["commit", "-qm", "local only"]);
-    std::fs::write(api.join("a.txt"), "edited\n").unwrap();
-    std::fs::write(api.join("new.txt"), "untracked\n").unwrap();
-    // A hostile repo config: the check must not run it.
-    let pwned = root.join("pwned");
-    git(
-        &api,
-        &[
-            "config",
-            "core.fsmonitor",
-            &format!("touch {}; false", pwned.display()),
-        ],
-    );
-
-    let fresh = vol.join("fresh");
-    std::fs::create_dir(&fresh).unwrap();
-    git(&fresh, &["init", "-q"]);
-    std::fs::write(fresh.join("x"), "x\n").unwrap();
-    vol
-}
+use common::{command, git, shells, volume};
 
 /// Runs the check script with `shell` on `host_root` whenever the fake is asked to.
 fn run_on_host(rt: &FakeRuntime, shell: &'static str, host_root: PathBuf) {

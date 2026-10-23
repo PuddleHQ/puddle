@@ -535,6 +535,25 @@ describe("CreateWorkspaceDialog with several repositories", () => {
     });
   });
 
+  it("takes a pick from the list in a later row and moves focus to that row's directory", async () => {
+    const repos = new FakeRepos();
+    repos.repos = [repoView("acme", "web")];
+    repos.sources = [repoSource({ repo_count: 1 })];
+    h.repos = repos;
+    open();
+    await screen.findByRole("dialog");
+    await fireEvent.click(add());
+    await vi.waitFor(() => expect(url(2)).toHaveFocus());
+    await fireEvent.click(
+      within(row(2)).getByText("Choose from your repositories"),
+    );
+    await fireEvent.click(
+      await screen.findByRole("button", { name: /acme\/web/ }),
+    );
+    expect(url(2).value).toBe("https://github.com/acme/web");
+    await vi.waitFor(() => expect(part(2, "Directory")).toHaveFocus());
+  });
+
   it("flags two rows that share a directory as you type, naming a free one, and clears it when one changes", async () => {
     const { create } = open();
     await screen.findByRole("dialog");

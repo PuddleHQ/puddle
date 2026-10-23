@@ -69,5 +69,38 @@ start=$SECONDS
 grep -q "status 124" "$tmp/out" || fail "retry: the warning does not name the timeout (status 124)"
 [ $((SECONDS - start)) -lt 15 ] || fail "retry: the stalled try was not cut off"
 [ "$(sed -n 1p "$tmp/apt/apt-mirrors.txt")" = "$canonical" ] || fail "retry: Canonical is not first after a stall"
-"$here/apt-retry.sh" false >"$tmp/out" 2>&1 && fail "retry: a failing command passed"
+
+# A command that fails both times: its own status comes back, with an error that names it
+cat >"$tmp/fail7.sh" <<'S'
+#!/usr/bin/env bash
+exit 7
+S
+chmod +x "$tmp/fail7.sh"
+rc=0
+"$here/apt-retry.sh" "$tmp/fail7.sh" >"$tmp/out" 2>&1 || rc=$?
+[ "$rc" = 7 ] || fail "retry: the second status was not passed on (got $rc)"
+grep -q "^::error::apt-retry: '$tmp/fail7.sh' failed again (status 7) on archive.ubuntu.com after 5s$" "$tmp/out" ||
+    fail "retry: no error after the second failure"
+# The second try that times out names status 124
+cat >"$tmp/hang.sh" <<'S'
+#!/usr/bin/env bash
+sleep 30
+S
+chmod +x "$tmp/hang.sh"
+rc=0
+"$here/apt-retry.sh" "$tmp/hang.sh" >"$tmp/out" 2>&1 || rc=$?
+[ "$rc" = 124 ] || fail "retry: a second timeout did not give status 124 (got $rc)"
+grep -q "failed again (status 124)" "$tmp/out" || fail "retry: no error after the second timeout"
+
+# A failing repair step is a warning, not silence: apt-setup.sh gets a file where a directory belongs,
+# and a fake sudo makes dpkg fail
+: >"$tmp/notdir"
+mkdir -p "$tmp/bin"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$tmp/bin/sudo"
+chmod +x "$tmp/bin/sudo"
+rc=0
+PATH="$tmp/bin:$PATH" APT_ETC="$tmp/notdir" APT_RETRY_NO_REPAIR='' "$here/apt-retry.sh" "$tmp/fail7.sh" >"$tmp/out" 2>&1 || rc=$?
+[ "$rc" = 7 ] || fail "retry: failing repair steps changed the status (got $rc)"
+grep -q "^::warning::apt-retry: 'apt-setup.sh --canonical' failed" "$tmp/out" || fail "retry: no warning for apt-setup.sh"
+grep -q "^::warning::apt-retry: 'dpkg --configure -a' failed" "$tmp/out" || fail "retry: no warning for dpkg"
 echo "apt-setup-test: ok"

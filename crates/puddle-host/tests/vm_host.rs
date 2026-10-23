@@ -2852,3 +2852,79 @@ if command -v openssl >/dev/null; then openssl verify -CAfile /etc/ssl/certs/ca-
     let down = host.shutdown().await;
     assert!(down.sandboxes.all_stopped(), "{down:?}");
 }
+
+/// An interactive login shell started in the home directory lands in the workspace's start folder;
+/// a start folder that does not exist yet lands in the volume root and is a problem until it does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_a_login_shell_lands_in_the_start_folder_and_a_missing_one_opens_the_root() {
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        root: _,
+        secrets: _,
+    } = start_vm_host("sf").await;
+    let name = format!("{}-sf", settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "repositories": [], "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let root = format!("/workspaces/{name}");
+    let set = |path: &'static str| {
+        let (api, url) = (&api, format!("/api/workspaces/{name}/start-folder"));
+        async move { api.put(&url, &json!({ "path": path }).to_string()).await }
+    };
+    // Where an interactive login shell, started in the home directory, ends up.
+    let lands = || guest(&runtime, &sandbox, "cd ~ && bash -lic pwd 2>/dev/null");
+
+    // The default is the volume root.
+    assert_eq!(lands().await.trim(), root);
+
+    // An existing folder: the next terminal starts there, with no restart.
+    guest(&runtime, &sandbox, &format!("mkdir -p {root}/play/src")).await;
+    let reply = set("play/src").await;
+    assert_eq!(reply.json()["exists"], true, "{}", reply.body);
+    assert_eq!(lands().await.trim(), format!("{root}/play/src"));
+    // A command without a terminal, and a shell started in another folder, stay where they are.
+    assert_eq!(
+        guest(&runtime, &sandbox, "cd ~ && bash -lc pwd 2>/dev/null")
+            .await
+            .trim(),
+        guest(&runtime, &sandbox, "cd ~ && pwd").await.trim()
+    );
+    assert_eq!(
+        guest(&runtime, &sandbox, "cd /tmp && bash -lic pwd 2>/dev/null")
+            .await
+            .trim(),
+        "/tmp"
+    );
+
+    // A folder that is not there opens the root and is a problem until it exists.
+    let reply = set("later").await;
+    assert_eq!(reply.json()["exists"], false, "{}", reply.body);
+    assert_eq!(lands().await.trim(), root);
+    let key = format!("start-folder:{name}");
+    assert!(api.get("/api/problems").await.body.contains(&key));
+    guest(&runtime, &sandbox, &format!("mkdir -p {root}/later")).await;
+    let reply = set("later").await;
+    assert_eq!(reply.json()["exists"], true, "{}", reply.body);
+    assert!(!api.get("/api/problems").await.body.contains(&key));
+    assert_eq!(lands().await.trim(), format!("{root}/later"));
+
+    let stopped = api.post(&format!("/api/workspaces/{name}/stop"), "").await;
+    assert_eq!(stopped.status, 202, "{}", stopped.body);
+    events
+        .until(ended(name_static), Duration::from_secs(300))
+        .await;
+}

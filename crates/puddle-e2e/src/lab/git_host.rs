@@ -721,6 +721,19 @@ fn held(names: &[(String, SocketAddr)], authority: &str) -> Option<SocketAddr> {
         .find_map(|wanted| names.iter().find(|(n, _)| n == wanted).map(|(_, a)| *a))
 }
 
+/// `head` (a request head ending in a blank line) without its `Proxy-*` header lines: they are
+/// for the proxy, and a server that receives a sign-in token meant for the proxy may refuse.
+fn without_proxy_headers(head: &[u8]) -> Vec<u8> {
+    let text = String::from_utf8_lossy(head);
+    let mut out = String::new();
+    for line in text.split_inclusive("\r\n") {
+        if !line.to_ascii_lowercase().starts_with("proxy-") {
+            out.push_str(line);
+        }
+    }
+    out.into_bytes()
+}
+
 /// The `host:port` an absolute `http://` URI names (port 80 when it has none); the text itself
 /// when it is no such URI.
 fn plain_authority(target: &str) -> String {
@@ -786,7 +799,11 @@ impl NameProxy {
                         let _ = client
                             .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
                             .await;
-                    } else if upstream.write_all(&head).await.is_err() {
+                    } else if upstream
+                        .write_all(&without_proxy_headers(&head))
+                        .await
+                        .is_err()
+                    {
                         return;
                     }
                     let _ = tokio::io::copy_bidirectional(&mut client, &mut upstream).await;
@@ -848,6 +865,15 @@ mod tests {
         assert_eq!(held(&names, "a.test:80"), Some(two));
         assert_eq!(held(&names, "a.test:443"), Some(one));
         assert_eq!(held(&names, "b.test:80"), None);
+    }
+
+    #[test]
+    fn a_forwarded_head_loses_the_headers_meant_for_the_proxy() {
+        let head = b"GET http://a.test/ HTTP/1.1\r\nHost: a.test\r\nProxy-Authorization: Negotiate abc\r\nproxy-connection: keep-alive\r\nAccept: */*\r\n\r\n";
+        assert_eq!(
+            String::from_utf8(without_proxy_headers(head)).unwrap(),
+            "GET http://a.test/ HTTP/1.1\r\nHost: a.test\r\nAccept: */*\r\n\r\n"
+        );
     }
 
     #[test]

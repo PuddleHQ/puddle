@@ -346,7 +346,7 @@ async fn vm_capture_survives_a_root_that_deletes_the_rules() {
     // The image ships no nft; the test brings one, through the proxy, as any tool would.
     let installed = run("export DEBIAN_FRONTEND=noninteractive
          { apt-get update -qq; apt-get install -y -qq nftables; } >/tmp/apt.log 2>&1
-         command -v nft || { echo 'no nft; the end of apt output:'; tail -15 /tmp/apt.log; }"
+         command -v nft || { echo 'no nft; the end of apt output:'; tail -15 /tmp/apt.log; curl -sv --max-time 20 -o /dev/null http://deb.debian.org/debian/dists/trixie/InRelease 2>&1 | tail -25; }"
         .into())
     .await;
     assert!(installed.trim_end().ends_with("/nft"), "{installed}");

@@ -45,6 +45,7 @@
 #![forbid(unsafe_code)]
 
 mod auth;
+mod checkouts;
 mod credentials;
 mod dev_cert;
 mod doctor;
@@ -64,6 +65,10 @@ mod ui;
 pub mod wire;
 mod workspaces;
 
+pub use checkouts::{
+    AddRepository, Checkout, Checkouts, Found, FoundList, Manage, RemoteNote, check_addition,
+    checkouts_view, why_no_remote,
+};
 pub use credentials::{
     Check, CredentialService, CredentialsError, FakeCredentials, HostCredentials, NoCredentials,
     NoSecretStore,

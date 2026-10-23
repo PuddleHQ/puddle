@@ -808,6 +808,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{id}/checkouts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The checkouts directly under the workspace's volume root, each with the list entry that has
+         *     its directory. A running workspace lists them now (calls at the same moment share one
+         *     listing, which takes at most 10 seconds); a stopped one answers the last listing this run
+         *     made, or says to start it. A listing that cannot be made or read is `problem`, not an error.
+         *     Every string in it came from the guest: escape it.
+         */
+        get: operations["list_checkouts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{id}/delete-check": {
         parameters: {
             query?: never;
@@ -1000,6 +1023,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{id}/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Adds a repository to a running workspace's list. With `kind` `clone` it clones a new one: the
+         *     directory must not exist, Git settings are set up first, and the answer is `202` with the
+         *     workspace busy `cloning` (stop and delete answer `409` until it ends; rename works), followed
+         *     by `workspace_progress`. A failed clone leaves the entry with a background problem. With
+         *     `kind` `existing` it manages a checkout already on the volume: Puddle reads its remote again
+         *     in the guest, adds the entry and its Git settings, changes nothing in the checkout and answers
+         *     `200` with the workspace.
+         */
+        post: operations["add_repository"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/repositories/{directory}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Takes an entry off the list and nothing else: the checkout and its files stay (and show as a
+         *     checkout without an entry), and so do the repository table row and the identities. Allowed in
+         *     every state but creating and deleting. No call deletes a checkout.
+         */
+        delete: operations["remove_repository"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/repositories/{directory}/clone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clones an entry whose directory is not on the volume again, as adding does. Answers `202`
+         *     with the workspace busy `cloning`.
+         */
+        post: operations["clone_again"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{id}/shell-init": {
         parameters: {
             query?: never;
@@ -1115,6 +1204,42 @@ export interface components {
          * @enum {string}
          */
         Actor: "cli" | "ui" | "api" | "system";
+        /** @description `POST /api/workspaces/{id}/repositories`: what to add. */
+        AddRepositoryRequest: {
+            /**
+             * @description The checkout's directory under the volume root; left out or `null` is the last part
+             *     of the address. It must not exist yet.
+             */
+            directory?: string | null;
+            /**
+             * Format: int64
+             * @description The identity that serves it; left out or `null` is the identity that covers its
+             *     owner, else the default identity.
+             */
+            identity_id?: number | null;
+            /** @enum {string} */
+            kind: "clone";
+            /** @description Pull on its new repository table row; left out or `null` is on. */
+            pull?: boolean | null;
+            /** @description Push on its new repository table row; left out or `null` is on. */
+            push?: boolean | null;
+            /** @description The repository, as an `https://` URL without credentials. */
+            url: string;
+        } | {
+            /** @description The checkout's directory under the volume root. */
+            directory: string;
+            /**
+             * Format: int64
+             * @description As for a clone.
+             */
+            identity_id?: number | null;
+            /** @enum {string} */
+            kind: "existing";
+            /** @description As for a clone. */
+            pull?: boolean | null;
+            /** @description As for a clone. */
+            push?: boolean | null;
+        };
         /** @description The body of every error response. */
         ApiErrorBody: {
             /** @description Stable error code. */
@@ -1590,10 +1715,69 @@ export interface components {
             readable: boolean;
         };
         /**
+         * @description One checkout found directly under the workspace's volume root. Every string except `entry`
+         *     came from the guest: escape it when rendering.
+         */
+        Checkout: {
+            /** @description The branch; `null` when HEAD is detached. */
+            branch: string | null;
+            /** @description Its directory under the volume root. */
+            directory: string;
+            /** @description Whether it has uncommitted changes or untracked files. */
+            dirty: boolean;
+            entry: components["schemas"]["WorkspaceRepository"] | null;
+            /** @description The short commit; `null` before the first commit. */
+            head: string | null;
+            /** @description Whether "Manage this" is offered. */
+            manage: components["schemas"]["CheckoutManage"];
+            remote_note: components["schemas"]["RemoteNote"] | null;
+            /**
+             * @description The address of its `origin` remote (else of its only remote) when that is an `https://`
+             *     address, without any user name or password; `null` otherwise (see `remote_note`).
+             */
+            remote_url: string | null;
+            /** @description Why Puddle could not read it, when it could not; `null` otherwise. */
+            unreadable: string | null;
+        };
+        /**
          * @description A checkout's directory directly under the workspace's volume root: ASCII letters, digits, `.`, `_` and `-`, not starting with `.` or `-`, not `lost+found`.
          * @example api
          */
         CheckoutDir: string;
+        /** @description Whether "Manage this" is offered for a checkout. */
+        CheckoutManage: {
+            /** @description Whether the checkout can be turned into a list entry. */
+            offered: boolean;
+            /** @description Why not, when it cannot (for the user; guest text may be in it). */
+            reason: string | null;
+        };
+        /** @description `GET /api/workspaces/{id}/checkouts`. */
+        Checkouts: {
+            /**
+             * Format: int64
+             * @description When the listing was made (epoch ms); `null` before the first one this run.
+             */
+            checked_at: number | null;
+            /** @description The checkouts found, in directory order. */
+            checkouts: components["schemas"]["Checkout"][];
+            /**
+             * @description The directories of list entries that are not on the volume ("not on the disk"). Empty
+             *     when the listing stopped at its limit: an entry past it may be there.
+             */
+            missing: components["schemas"]["CheckoutDir"][];
+            /**
+             * Format: int64
+             * @description How many checkouts there are past the first 100.
+             */
+            more: number;
+            /**
+             * @description Why there is no listing (the workspace is stopped, or the listing failed or its output
+             *     was refused); `null` when there is one.
+             */
+            problem: string | null;
+            /** @description Whether the workspace is running: `checkouts` is then from the moment of the call. */
+            running: boolean;
+        };
         /**
          * @description What a programmatic clipboard read in the browser window does.
          * @enum {string}
@@ -2773,6 +2957,11 @@ export interface components {
             /** @description The pull proxy reaches the internet through the company proxy setup above. */
             via_upstream: boolean;
         };
+        /**
+         * @description Why a checkout's remote address is not shown as it stands.
+         * @enum {string}
+         */
+        RemoteNote: "credentials_removed" | "ssh" | "not_https" | "no_remote";
         /** @description `PATCH /api/workspaces/{id}`. */
         RenameWorkspaceRequest: {
             /**
@@ -3581,7 +3770,7 @@ export interface components {
          *     `workspace_progress` events.
          * @enum {string}
          */
-        WorkspaceOperation: "creating" | "starting" | "stopping" | "reclaiming" | "deleting";
+        WorkspaceOperation: "creating" | "starting" | "stopping" | "reclaiming" | "cloning" | "deleting";
         /**
          * @description One repository Puddle manages for a workspace. Its identity and its Pull and Push toggles are
          *     the workspace's Git settings (`GET /api/workspaces/{id}/git`), matched in the repository
@@ -7573,6 +7762,74 @@ export interface operations {
             };
         };
     };
+    list_checkouts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the checkouts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Checkouts"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
     delete_check: {
         parameters: {
             query?: never;
@@ -8540,6 +8797,281 @@ export interface operations {
                 };
             };
             /** @description busy */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    add_repository: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddRepositoryRequest"];
+            };
+        };
+        responses: {
+            /** @description the checkout is on the list now (kind `existing`) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description the clone started (kind `clone`) */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the workspace is not running or is busy, the list is full, the repository or directory is already listed, the directory exists (clone) or is no checkout or has no usable remote (existing), or the identities collide (`identity_collision`) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description a bad address, directory or identity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the list could not be saved, nothing changed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    remove_repository: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+                /** @description the entry's directory */
+                directory: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the workspace without the entry */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace or entry */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the workspace is being created or deleted */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the list could not be saved, nothing changed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    clone_again: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+                /** @description the entry's directory */
+                directory: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the clone started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace or entry */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the workspace is not running or is busy, or the directory is there */
             409: {
                 headers: {
                     [name: string]: unknown;

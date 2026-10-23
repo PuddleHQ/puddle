@@ -67,6 +67,7 @@ const OPERATION_WORDS: Record<Operation, string> = {
   starting: "Starting",
   stopping: "Stopping",
   reclaiming: "Reclaiming space",
+  cloning: "Cloning",
   deleting: "Deleting",
 };
 
@@ -94,6 +95,7 @@ const SCRIPTS: Record<Operation, readonly Step[]> = {
   starting: ["starting", "syncing"],
   stopping: ["stopping", "reclaiming"],
   reclaiming: ["reclaiming"],
+  cloning: ["cloning"],
   deleting: ["checking", "removing"],
 };
 

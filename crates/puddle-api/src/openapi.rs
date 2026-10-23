@@ -12,7 +12,7 @@ use crate::routes::{AppState, api_router, slow_router};
 
 /// The contract's version. Bump the minor version for additive changes and the major version
 /// for anything a generated client would break on.
-pub const API_VERSION: &str = "0.13.0";
+pub const API_VERSION: &str = "0.14.0";
 
 /// The security scheme's name in the spec.
 const BEARER: &str = "bearer";
@@ -171,7 +171,7 @@ mod tests {
                 assert!(op["tags"].as_array().is_some_and(|t| !t.is_empty()));
             }
         }
-        assert_eq!(count, 73, "operations in the spec");
+        assert_eq!(count, 77, "operations in the spec");
     }
 
     /// ADR 0002: responses always carry every field (`null`, never absent), so the generated

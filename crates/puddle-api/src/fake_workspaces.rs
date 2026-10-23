@@ -15,10 +15,12 @@ use puddle_store::Clock;
 use puddle_types::{CheckoutDir, Event, EventSink, WorkspaceId, WorkspaceStatus, WorkspaceStep};
 use tokio::sync::watch;
 
+use crate::checkouts::{AddRepository, Checkouts, FoundList, check_addition, checkouts_view};
 use crate::workspaces::{
     AttachMode, Attached, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DeleteCheck, DisplayName, GitSetup,
-    LaunchError, Launcher, Listing, NewWorkspace, Operation, RepoFindings, ShellInitCheck,
-    StartFolder, StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService,
+    LaunchError, Launcher, Listing, NewRepository, NewWorkspace, Operation, RepoFindings,
+    ShellInitCheck, StartFolder, StartFolderChange, WorkspaceError, WorkspaceRecord,
+    WorkspaceService,
 };
 
 /// One step an operation reports: the step, its detail, and the checkout a cloning step is about.
@@ -88,6 +90,10 @@ struct State {
     shell_init_check: Option<ShellInitCheck>,
     /// The scripts the checks were asked about.
     shell_init_checked: Vec<String>,
+    /// What each running workspace's guest holds: the checkouts a listing would find.
+    guest: BTreeMap<WorkspaceId, FoundList>,
+    /// The last listing made of each workspace, with its time (epoch ms).
+    last_listing: BTreeMap<WorkspaceId, (u64, FoundList)>,
 }
 
 struct Inner {
@@ -145,6 +151,8 @@ impl FakeWorkspaces {
                     fail_next: BTreeMap::new(),
                     shell_init_check: None,
                     shell_init_checked: Vec::new(),
+                    guest: BTreeMap::new(),
+                    last_listing: BTreeMap::new(),
                 }),
                 events,
                 clock,
@@ -184,6 +192,11 @@ impl FakeWorkspaces {
     #[must_use]
     pub fn shell_init_checked(&self) -> Vec<String> {
         lock(&self.inner.state).shell_init_checked.clone()
+    }
+
+    /// Sets what `id`'s guest holds: the checkouts a listing of the running workspace finds.
+    pub fn set_checkouts(&self, id: &WorkspaceId, checkouts: FoundList) {
+        lock(&self.inner.state).guest.insert(id.clone(), checkouts);
     }
 
     /// Replaces what deleting `id` would lose. `false` if there is no such workspace.
@@ -311,7 +324,7 @@ impl FakeWorkspaces {
                     status_changed = true;
                     record.status = WorkspaceStatus::Running;
                 }
-                Operation::Reclaiming | Operation::Deleting => {}
+                Operation::Reclaiming | Operation::Cloning | Operation::Deleting => {}
             }
             if let Some(entry) = state.entries.get_mut(id) {
                 entry.record = record.clone();
@@ -324,7 +337,7 @@ impl FakeWorkspaces {
             return;
         }
         match op {
-            Operation::Creating => {}
+            Operation::Creating | Operation::Cloning => {}
             Operation::Starting => {
                 record.status = WorkspaceStatus::Running;
                 status_changed = true;
@@ -350,6 +363,166 @@ impl FakeWorkspaces {
             self.emit_status(&record);
         }
         self.progress(&record, (WorkspaceStep::Done, None, None));
+    }
+
+    fn repositories_changed(&self, record: &WorkspaceRecord) {
+        self.inner.events.emit(Event::WorkspaceRepositoriesChanged {
+            workspace: record.name.clone(),
+        });
+    }
+
+    /// Clones `new` into the running workspace `id`: a new entry when `add`, else the entry it
+    /// already is (storage ST-51, ST-52).
+    async fn clone_into(
+        &self,
+        id: &WorkspaceId,
+        new: NewRepository,
+        add: bool,
+        git: &dyn GitSetup,
+    ) -> Result<WorkspaceRecord, WorkspaceError> {
+        let guest_has = |state: &State| {
+            state.guest.get(id).is_some_and(|g| {
+                g.checkouts
+                    .iter()
+                    .any(|c| c.directory == new.repository.directory.as_str())
+            })
+        };
+        let has_dir = guest_has(&lock(&self.inner.state));
+        let record = self.accept(
+            id,
+            Operation::Cloning,
+            |r| {
+                if r.status != WorkspaceStatus::Running {
+                    return Err(WorkspaceError::Conflict(format!(
+                        "{} is {}; start it to add a repository",
+                        r.name, r.status
+                    )));
+                }
+                if add {
+                    check_addition(&r.repositories, &new.repository)?;
+                }
+                if has_dir {
+                    return Err(WorkspaceError::Conflict(format!(
+                        "{} already exists in the workspace; Puddle never clones into a folder that holds anything",
+                        new.repository.directory
+                    )));
+                }
+                Ok(())
+            },
+            |r| {
+                if add {
+                    r.repositories.push(new.repository.clone());
+                }
+            },
+        )?;
+        git.set_up(&record.name, std::slice::from_ref(&new)).await;
+        if add {
+            self.repositories_changed(&record);
+        }
+        let repository = &new.repository;
+        self.run(
+            &record,
+            Operation::Cloning,
+            vec![(
+                WorkspaceStep::Cloning,
+                Some(repository.url.as_str().to_owned()),
+                Some(repository.directory.clone()),
+            )],
+        );
+        // The clone puts the checkout on the guest's disk, for the next listing.
+        let found = crate::checkouts::Found {
+            directory: repository.directory.as_str().to_owned(),
+            remote_url: Some(repository.url.as_str().to_owned()),
+            remote_note: None,
+            branch: Some("main".to_owned()),
+            head: Some("0000000".to_owned()),
+            dirty: false,
+            unreadable: None,
+        };
+        lock(&self.inner.state)
+            .guest
+            .entry(id.clone())
+            .or_default()
+            .checkouts
+            .push(found);
+        Ok(record)
+    }
+
+    /// "Manage this": the checkout `directory` the guest holds joins the list.
+    async fn manage_existing(
+        &self,
+        id: &WorkspaceId,
+        directory: &CheckoutDir,
+        identity: Option<puddle_store::IdentityId>,
+        pull: bool,
+        push: bool,
+        git: &dyn GitSetup,
+    ) -> Result<WorkspaceRecord, WorkspaceError> {
+        let (name, new) = {
+            let state = lock(&self.inner.state);
+            let entry = state.entries.get(id).ok_or_else(|| not_found(id))?;
+            let record = &entry.record;
+            if let Some(busy) = record.busy {
+                return Err(WorkspaceError::Conflict(format!(
+                    "{} is busy ({busy}); wait for it to finish",
+                    record.name
+                )));
+            }
+            if record.status != WorkspaceStatus::Running {
+                return Err(WorkspaceError::Conflict(format!(
+                    "{} is {}; start it to manage a checkout",
+                    record.name, record.status
+                )));
+            }
+            let found = state
+                .guest
+                .get(id)
+                .and_then(|g| {
+                    g.checkouts
+                        .iter()
+                        .find(|c| c.directory == directory.as_str())
+                })
+                .ok_or_else(|| {
+                    WorkspaceError::Conflict(format!(
+                        "{directory} is not a checkout in the workspace"
+                    ))
+                })?;
+            let url = found
+                .remote_url
+                .as_deref()
+                .ok_or_else(|| {
+                    WorkspaceError::Conflict(format!(
+                        "cannot manage {directory}: {}",
+                        crate::checkouts::why_no_remote(found.remote_note)
+                    ))
+                })
+                .and_then(|u| {
+                    crate::workspaces::RepoUrl::parse(u).map_err(WorkspaceError::Conflict)
+                })?;
+            let repository = crate::workspaces::Repository {
+                url,
+                directory: directory.clone(),
+            };
+            check_addition(&record.repositories, &repository)?;
+            (
+                record.name.clone(),
+                NewRepository {
+                    repository,
+                    identity,
+                    pull,
+                    push,
+                },
+            )
+        };
+        git.set_up(&name, std::slice::from_ref(&new)).await;
+        let record = {
+            let mut state = lock(&self.inner.state);
+            let entry = state.entries.get_mut(id).ok_or_else(|| not_found(id))?;
+            entry.record.repositories.push(new.repository);
+            entry.record.clone()
+        };
+        self.repositories_changed(&record);
+        Ok(record)
     }
 
     fn check_for(&self, id: &WorkspaceId) -> Result<DeleteCheck, WorkspaceError> {
@@ -716,6 +889,120 @@ impl WorkspaceService for FakeWorkspaces {
                     Err(err) => Ok(Attached::not_opened(err.to_string())),
                 },
             }
+        })
+    }
+
+    fn checkouts<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+    ) -> BoxFuture<'a, Result<Checkouts, WorkspaceError>> {
+        Box::pin(async move {
+            let now = self.inner.clock.now_ms();
+            let mut state = lock(&self.inner.state);
+            let entry = state.entries.get(id).ok_or_else(|| not_found(id))?;
+            let (running, entries) = (
+                entry.record.status == WorkspaceStatus::Running,
+                entry.record.repositories.clone(),
+            );
+            if running {
+                let found = state.guest.get(id).cloned().unwrap_or_default();
+                state.last_listing.insert(id.clone(), (now, found));
+            }
+            let last = state.last_listing.get(id);
+            let problem = (!running)
+                .then(|| "the workspace is not running; start it to list its checkouts".to_owned());
+            Ok(checkouts_view(
+                running,
+                last.map(|(at, _)| *at),
+                problem,
+                last.map(|(_, list)| list),
+                &entries,
+            ))
+        })
+    }
+
+    fn add_repository<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        add: AddRepository,
+        git: &'a dyn GitSetup,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            match add {
+                AddRepository::Clone(new) => self.clone_into(id, new, true, git).await,
+                AddRepository::Existing {
+                    directory,
+                    identity,
+                    pull,
+                    push,
+                } => {
+                    self.manage_existing(id, &directory, identity, pull, push, git)
+                        .await
+                }
+            }
+        })
+    }
+
+    fn clone_again<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        directory: &'a CheckoutDir,
+        git: &'a dyn GitSetup,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let repository = {
+                let state = lock(&self.inner.state);
+                let entry = state.entries.get(id).ok_or_else(|| not_found(id))?;
+                entry
+                    .record
+                    .repositories
+                    .iter()
+                    .find(|r| &r.directory == directory)
+                    .cloned()
+                    .ok_or_else(|| {
+                        WorkspaceError::NotFound(format!("{directory} is not on the list"))
+                    })?
+            };
+            let new = NewRepository {
+                repository,
+                identity: None,
+                pull: true,
+                push: true,
+            };
+            self.clone_into(id, new, false, git).await
+        })
+    }
+
+    fn remove_repository<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        directory: &'a CheckoutDir,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let record = {
+                let mut state = lock(&self.inner.state);
+                let entry = state.entries.get_mut(id).ok_or_else(|| not_found(id))?;
+                if let Some(busy @ (Operation::Creating | Operation::Deleting)) = entry.record.busy
+                {
+                    return Err(WorkspaceError::Conflict(format!(
+                        "{} is {busy}; remove it from the list when that is done",
+                        entry.record.label()
+                    )));
+                }
+                let before = entry.record.repositories.len();
+                entry
+                    .record
+                    .repositories
+                    .retain(|r| &r.directory != directory);
+                if entry.record.repositories.len() == before {
+                    return Err(WorkspaceError::NotFound(format!(
+                        "{directory} is not on the list"
+                    )));
+                }
+                entry.record.clone()
+            };
+            self.repositories_changed(&record);
+            Ok(record)
         })
     }
 

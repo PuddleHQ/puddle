@@ -31,6 +31,7 @@ mod network_health;
 mod pending;
 mod problems;
 mod repos;
+mod repositories;
 mod rule_sets;
 mod rules;
 pub(crate) mod settings;
@@ -109,6 +110,10 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(workspaces::reclaim_workspace))
         .routes(routes!(workspaces::delete_check))
         .routes(routes!(workspaces::attach_workspace))
+        .routes(routes!(repositories::list_checkouts))
+        .routes(routes!(repositories::add_repository))
+        .routes(routes!(repositories::clone_again))
+        .routes(routes!(repositories::remove_repository))
         .routes(routes!(
             identities::list_identities,
             identities::create_identity

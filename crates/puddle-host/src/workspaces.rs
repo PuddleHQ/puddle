@@ -55,6 +55,9 @@ use crate::files::{Stored, WorkspaceBook};
 use crate::git_hosts::{Authors, authors};
 use crate::injection::Injection;
 
+#[path = "repositories.rs"]
+mod repositories;
+
 impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
     fn decrypt_changed(&self, workspace: &WorkspaceName) -> Option<puddle_store::WorkspaceGit> {
         Self::decrypt_changed(self, workspace)
@@ -219,6 +222,8 @@ struct Inner<R: Runtime + Clone> {
     /// Workspaces whose variables changed while their guest was booting: `settle` applies the
     /// change to the guest once it runs.
     env_missed_while_booting: Mutex<BTreeSet<WorkspaceName>>,
+    /// The last listing of each workspace's checkouts; see [`repositories::CachedListing`].
+    listings: Mutex<BTreeMap<WorkspaceId, repositories::CachedListing>>,
 }
 
 /// The workspaces service. Cheap to clone; clones share state.
@@ -404,6 +409,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 running: watch::channel(0).0,
                 shell_init_changed_inside: Mutex::new(BTreeSet::new()),
                 env_missed_while_booting: Mutex::new(BTreeSet::new()),
+                listings: Mutex::new(BTreeMap::new()),
             }),
         };
         if interrupted && let Err(e) = service.persist(&service.state()) {
@@ -618,7 +624,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 status_changed = true;
             }
             (Err(_), Operation::Reclaiming | Operation::Deleting)
-            | (Ok(()), Operation::Reclaiming) => {}
+            | (Ok(()), Operation::Reclaiming)
+            | (_, Operation::Cloning) => {}
             (Ok(()), Operation::Creating | Operation::Starting) => {
                 slot.record.status = WorkspaceStatus::Running;
                 slot.creating = false;
@@ -1695,6 +1702,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             let reason = format!("{e}; the new workspace was removed again; {SAVE_HINT}");
             return Err(self.undo_boot(&record, true, created_volume, reason).await);
         }
+        self.refresh_checkouts_later(&record.id).await;
         Ok(())
     }
 
@@ -1724,23 +1732,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 Ok(_) => self.inner.problems.clear(&key),
                 Err(puddle_workspace::WorkspaceError::Clone { reason, .. }) => {
                     tracing::warn!(workspace = %record.name, url = %repository.url, %reason, "a repository of a new workspace was not cloned");
-                    self.inner.problems.raise(
-                        Problem::new(
-                            key,
-                            format!(
-                                "Puddle could not clone {} into {}",
-                                repository.url,
-                                record.label()
-                            ),
-                            format!(
-                                "{reason}. The workspace was made without it, and the repository \
-                                 stays on its list. To get it, clone it in a terminal in the \
-                                 workspace: git clone {} /workspaces/{}/{}",
-                                repository.url, record.id, repository.directory
-                            ),
-                        )
-                        .about(record.name.clone()),
-                    );
+                    self.raise_clone_problem(record, repository, &reason, true);
                 }
                 Err(other) => return Err(other.to_string()),
             }
@@ -1809,6 +1801,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         if let Err(reason) = self.settle(&record).await {
             return Err(self.undo_boot(&record, false, false, reason).await);
         }
+        self.refresh_checkouts_later(&record.id).await;
         Ok(())
     }
 
@@ -2412,6 +2405,39 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 Err(reason) => Err(WorkspaceError::Unavailable(reason)),
             }
         })
+    }
+
+    fn checkouts<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+    ) -> BoxFuture<'a, Result<puddle_api::Checkouts, WorkspaceError>> {
+        Box::pin(async move { self.checkouts_of(id).await })
+    }
+
+    fn add_repository<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        add: puddle_api::AddRepository,
+        git: &'a dyn GitSetup,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move { self.add_repository_to(id, add, git).await })
+    }
+
+    fn clone_again<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        directory: &'a CheckoutDir,
+        git: &'a dyn GitSetup,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move { self.clone_entry_again(id, directory, git).await })
+    }
+
+    fn remove_repository<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        directory: &'a CheckoutDir,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move { self.remove_entry(id, directory) })
     }
 
     fn settings_changed(&self) -> BoxFuture<'_, ()> {

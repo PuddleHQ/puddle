@@ -49,6 +49,10 @@ describe("shippedPackages plugin", () => {
           },
         },
         "a.css": { type: "asset" },
+        "font.woff2": {
+          type: "asset",
+          originalFileNames: ["node_modules/@f/font/files/x.woff2"],
+        },
       },
     );
   };
@@ -63,6 +67,7 @@ describe("shippedPackages plugin", () => {
       expect(JSON.parse(readFileSync(file, "utf8"))).toEqual([
         "/w/node_modules/a",
         "/w/node_modules/b",
+        "node_modules/@f/font",
       ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });

@@ -21,7 +21,7 @@ export function packageDirOf(id: string): string | undefined {
   return `${prefix}${name}`;
 }
 
-/** Vite plugin: lists the packages of the client bundle after the build. */
+/** Vite plugin: lists the packages of the client bundle (code and copied files) after the build. */
 export function shippedPackages(file = SHIPPED_FILE): Plugin {
   return {
     name: "puddle-shipped-packages",
@@ -30,8 +30,12 @@ export function shippedPackages(file = SHIPPED_FILE): Plugin {
       if (this.environment?.name !== "client") return;
       const dirs = new Set<string>();
       for (const chunk of Object.values(bundle)) {
-        if (chunk.type !== "chunk") continue;
-        for (const id of Object.keys(chunk.modules)) {
+        // Code lists its modules; a copied file (a font) lists the source files it came from.
+        const ids =
+          chunk.type === "chunk"
+            ? Object.keys(chunk.modules)
+            : (chunk.originalFileNames ?? []);
+        for (const id of ids) {
           const dir = packageDirOf(id);
           if (dir) dirs.add(dir);
         }

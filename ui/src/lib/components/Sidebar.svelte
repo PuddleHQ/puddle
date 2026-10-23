@@ -3,13 +3,17 @@
   import { page } from "$app/state";
   import { APP_NAME, NAV, sectionFor } from "#lib/nav.ts";
   import { live } from "#lib/stores/live.svelte.ts";
+  import DuckMark from "./DuckMark.svelte";
   import ThemeToggle from "./ThemeToggle.svelte";
 
   const current = $derived(sectionFor(page.url.pathname)?.href);
 </script>
 
 <aside class="sidebar">
-  <p class="brand">{APP_NAME}</p>
+  <p class="brand">
+    <DuckMark size={28} />
+    <span>{APP_NAME}</span>
+  </p>
   <nav aria-label="Main">
     <ul>
       {#each NAV as item (item.href)}
@@ -48,6 +52,9 @@
     border-inline-end: 1px solid var(--color-border-subtle);
   }
   .brand {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
     margin: 0;
     font-size: var(--text-lg);
     font-weight: 600;

@@ -2,5 +2,9 @@
 [files]
 extend-exclude = ["vendor", "LICENSE", "CLA.md", "*.lock", "ui/package-lock.json", "ui/THIRD-PARTY-NOTICES.txt", "ui/src/lib/api/schema.d.ts"]
 
+[default]
+# Hex code points in a CSS unicode-range (U+02BA) read as words.
+extend-ignore-re = ["[uU]\\+[0-9a-fA-F]{4}(-[0-9a-fA-F]{4})?"]
+
 [default.extend-words]
 # Real words in this project that typos flags. Add with a comment.

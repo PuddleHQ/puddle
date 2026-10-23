@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
   import { page } from "$app/state";
+  import DuckMark from "#lib/components/DuckMark.svelte";
   import { APP_NAME } from "#lib/nav.ts";
   import { STEPS, stepFor } from "#lib/welcome/steps.ts";
 
@@ -14,7 +15,10 @@
 </script>
 
 <div class="welcome">
-  <p class="brand">{APP_NAME}</p>
+  <p class="brand">
+    <DuckMark size={32} />
+    <span>{APP_NAME}</span>
+  </p>
   {#if inFlow}
     <ol class="steps" aria-label="Setup steps">
       {#each STEPS as step, index (step.id)}
@@ -43,6 +47,9 @@
     gap: var(--space-4);
   }
   .brand {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
     margin: 0;
     font-size: var(--text-lg);
     font-weight: 600;

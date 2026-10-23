@@ -250,3 +250,8 @@ crates/puddle-host/src/workspaces.rs | // A stopped workspace is looked at when 
 crates/puddle-host/src/workspaces.rs | self.inner | a guest or disk failure the fake runtime cannot produce here (log only, the start or attach goes on); a problem for it is a follow-up
 crates/puddle-host/src/workspaces.rs | .problems | a guest or disk failure the fake runtime cannot produce here (log only, the start or attach goes on); a problem for it is a follow-up
 crates/puddle-host/src/workspaces.rs | .clear(&problem_key("start-folder", &record.name)); | a guest or disk failure the fake runtime cannot produce here (log only, the start or attach goes on); a problem for it is a follow-up
+crates/puddle-e2e/src/lab/git_host.rs | return; | the fake proxy's early exit when the client or the upstream hangs up mid-request; no test can time a peer's disconnect to this line without a race, and a hang-up there only ends one proxied connection
+crates/puddle-e2e/src/lab/web_host.rs | return; | a failed TLS handshake with the fake site only ends that connection; the untrusted-root test of the fixture's own test stops at the client side
+crates/puddle-e2e/src/lab/web_host.rs | let _ = hyper::server::conn::http2::Builder::new(TokioExecutor::new()) | HTTP/2 is negotiated only by the guest's curl, so the VM tier covers it (vm_host.rs asserts the HTTP/2 answer)
+crates/puddle-e2e/src/lab/web_host.rs | .serve_connection(io, service) | HTTP/2 is negotiated only by the guest's curl, so the VM tier covers it (vm_host.rs asserts the HTTP/2 answer)
+crates/puddle-e2e/src/lab/web_host.rs | .await; | HTTP/2 is negotiated only by the guest's curl, so the VM tier covers it (vm_host.rs asserts the HTTP/2 answer)

@@ -104,7 +104,7 @@ impl fmt::Display for ConnectionOutcome {
 /// Why the proxy decided as it did (R-24). Serialised as a string: `rule`, `no_rule`, a
 /// [`BlockReason::code`] (`toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`,
 /// `local_address`, `settings_unreadable`), `policy_unavailable`, `puddle_request`, `sni_mismatch`, `guest_tls_rejected`,
-/// `connection_limit`, `suppressed`, `merged`, `puddle_request_failed:<code>` or, for a request the credential rules refused on a decrypted connection, the
+/// `connection_limit`, `suppressed`, `merged`, `limit:<code>` (a limit ended the connection or cut a stream of it), `puddle_request_failed:<code>` or, for a request the credential rules refused on a decrypted connection, the
 /// refusal's code (`push_denied`, `pull_denied`, `credential_unavailable`, ...).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -137,6 +137,11 @@ pub enum ConnectionReason {
     /// to a request whose credential Puddle chose was answered with Puddle's own refusal. The
     /// text is the refusal's machine-readable code.
     Refused(&'static str),
+    /// A limit of the proxy ended the connection, or cut a stream or pipe of it (a stream idle
+    /// for an hour, an agreed WebSocket that went silent, a flood of control frames, a header
+    /// block left open). The decision of the rule stands. The text is the limit's code, shown as
+    /// `limit:<code>`.
+    LimitEnded(&'static str),
     /// Puddle's own request (a repository listing) that could not be completed: the code says
     /// why (`unreachable`, `tls`, `timeout`, `too_large`, `protocol`, `bad_token`, or
     /// `host_refused` for a 401 or 403, `rate_limited` for a 429, `host_error` for any other error
@@ -157,6 +162,7 @@ impl fmt::Display for ConnectionReason {
             Self::GuestTlsRejected => f.write_str("guest_tls_rejected"),
             Self::Suppressed => f.write_str("suppressed"),
             Self::Merged => f.write_str("merged"),
+            Self::LimitEnded(code) => write!(f, "limit:{code}"),
             Self::Refused(code) => f.write_str(code),
             Self::PuddleRequestFailed(code) => write!(f, "puddle_request_failed:{code}"),
         }
@@ -470,6 +476,10 @@ mod tests {
             (ConnectionReason::Suppressed, "suppressed"),
             (ConnectionReason::Merged, "merged"),
             (ConnectionReason::Refused("push_denied"), "push_denied"),
+            (
+                ConnectionReason::LimitEnded("stream_idle"),
+                "limit:stream_idle",
+            ),
         ];
         for (reason, text) in reasons {
             assert_eq!(reason.to_string(), text);

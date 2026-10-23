@@ -12,10 +12,10 @@
 use std::convert::Infallible;
 use std::io;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::task::{Context as TaskContext, Poll};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ::http::header::{self, HeaderMap, HeaderName, HeaderValue};
 use ::http::{Method, Request, Response, StatusCode, Uri};
@@ -29,7 +29,7 @@ use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use puddle_types::HttpRequestLine;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Notify;
-use tokio::time::Sleep;
+use tokio::time::Instant;
 
 use super::exchange::{AnswerBody, Exchange, MAX_EXCHANGE_BODY, read_answer, swap_request_body};
 use super::guest::{ALPN_H2, ALPN_HTTP11};
@@ -39,6 +39,9 @@ use super::inject::{
 use super::leg::{self, BoxError, Connected, H1Pool, H2Conn, Lease, UpBody};
 use super::request::{self, UpstreamVersion, bad, misdirected};
 use super::session::{Context, Outcome};
+use super::streams::{
+    Activity, Clock, Registry, SWEEP_INTERVAL, Step, StreamGuard, Sweeper, ended,
+};
 use super::watch::Watch;
 use super::ws;
 use crate::proxy::Refusal;
@@ -58,16 +61,18 @@ const MAX_PENDING_ACCEPT_RESETS: usize = 20;
 /// connection is ended.
 const MAX_LOCAL_ERROR_RESETS: usize = 128;
 
-/// How long a stream may go without a frame in either direction before it is reset. A watch or
-/// event stream is quiet for long stretches, so this is far above the body-stall timeout of
-/// HTTP/1.1; what catches a dead peer sooner is the ping of the connection.
-pub(crate) const STREAM_IDLE: Duration = Duration::from_secs(3600);
-
-/// How often a connection with no stream open is looked at for the keep-alive timeout.
-const IDLE_CHECK: Duration = Duration::from_secs(2);
+/// The flow-control window of one stream toward the guest, and of the whole connection: how much
+/// the guest may send before the proxy has read it. Fixed, not adaptive: the guest is on the same
+/// machine, so the proxy's turnaround is all a window has to cover, and an adaptive window would
+/// grow to 16 MiB on a connection that then stops being read.
+const GUEST_STREAM_WINDOW: u32 = 512 * 1024;
+const GUEST_CONNECTION_WINDOW: u32 = 2 * 1024 * 1024;
 
 /// What an HTTP/1.1 pool checkout may wait for a free connection.
 const POOL_WAIT: Duration = Duration::from_secs(30);
+
+/// What a stream may wait while another stream of the connection sets up the upstream connection.
+const LEG_WAIT: Duration = Duration::from_secs(30);
 
 /// A response body or request body as the HTTP/2 server and the upstream clients take it.
 type RespBody = http_body_util::combinators::UnsyncBoxBody<Bytes, BoxError>;
@@ -103,11 +108,23 @@ impl Route {
 
 struct Shared {
     cx: Arc<Context>,
-    leg: tokio::sync::Mutex<LegState>,
+    /// The upstream connection (or pool) in use. Held only to read or replace it, never across
+    /// a connect.
+    leg: Mutex<LegState>,
+    /// One stream at a time sets the upstream connection up; the others wait here and share the
+    /// outcome. The last failure is kept with the moment it happened.
+    connecting: tokio::sync::Mutex<Option<(Instant, Refusal)>>,
     /// Why the real server could not be used at the handshake; the first stream gets it.
     deferred: Mutex<Option<Refusal>>,
     outcome: Mutex<Outcome>,
-    open_streams: Arc<AtomicUsize>,
+    streams: Arc<Registry>,
+}
+
+/// What the upstream leg offers a stream right now.
+enum Usable {
+    H2(hyper::client::conn::http2::SendRequest<UpBody>),
+    Pool(H1Pool),
+    None,
 }
 
 impl Shared {
@@ -121,56 +138,96 @@ impl Shared {
         {
             return Err(refusal);
         }
-        let pool = {
-            let mut leg = self.leg.lock().await;
-            match &*leg {
-                LegState::H2(conn) if !conn.sender.is_closed() => {
-                    return Ok(Route::H2(conn.sender.clone()));
-                }
-                LegState::H1(pool) => pool.clone(),
-                _ => {
-                    let made = leg::connect(&self.cx, &[ALPN_H2, ALPN_HTTP11]).await?;
-                    {
-                        let mut outcome =
-                            self.outcome.lock().unwrap_or_else(PoisonError::into_inner);
-                        if outcome.hop.is_none() && outcome.resolved_ip.is_none() {
-                            outcome.hop = made.hop;
-                            outcome.resolved_ip = made.ip;
-                        }
-                    }
-                    match made.conn {
-                        Connected::H2(conn) => {
-                            let sender = conn.sender.clone();
-                            *leg = LegState::H2(conn);
-                            return Ok(Route::H2(sender));
-                        }
-                        Connected::H1(conn) => {
-                            let pool = H1Pool::new(conn);
-                            *leg = LegState::H1(pool.clone());
-                            pool
-                        }
-                    }
-                }
+        let usable = match self.usable() {
+            Usable::None => self.connect_leg().await?,
+            usable => usable,
+        };
+        match usable {
+            Usable::H2(sender) => Ok(Route::H2(sender)),
+            Usable::Pool(pool) => pool.checkout(&self.cx, POOL_WAIT).await.map(Route::H1),
+            Usable::None => Err(Refusal::new(
+                "502 Bad Gateway",
+                "the upstream connection is gone",
+            )),
+        }
+    }
+
+    fn usable(&self) -> Usable {
+        match &*self.leg.lock().unwrap_or_else(PoisonError::into_inner) {
+            LegState::H2(conn) if !conn.sender.is_closed() => Usable::H2(conn.sender.clone()),
+            LegState::H1(pool) => Usable::Pool(pool.clone()),
+            _ => Usable::None,
+        }
+    }
+
+    /// Connects to the real server, once for every stream that is waiting for it: a stream that
+    /// came while an attempt was running gets that attempt's failure, not an attempt of its own,
+    /// so a dead server costs one timeout however many streams ask.
+    async fn connect_leg(&self) -> Result<Usable, Refusal> {
+        let asked = Instant::now();
+        let mut gate = tokio::time::timeout(LEG_WAIT, self.connecting.lock())
+            .await
+            .map_err(|_| {
+                Refusal::new(
+                    "503 Service Unavailable",
+                    format!(
+                        "the connection to {} is still being set up",
+                        self.cx.target.host
+                    ),
+                )
+            })?;
+        match self.usable() {
+            Usable::None => {}
+            usable => return Ok(usable),
+        }
+        if let Some((failed_at, refusal)) = gate.as_ref()
+            && *failed_at >= asked
+        {
+            return Err(refusal.clone());
+        }
+        let made = match leg::connect(&self.cx, &[ALPN_H2, ALPN_HTTP11]).await {
+            Ok(made) => made,
+            Err(refusal) => {
+                *gate = Some((Instant::now(), refusal.clone()));
+                return Err(refusal);
             }
         };
-        pool.checkout(&self.cx, POOL_WAIT).await.map(Route::H1)
+        {
+            let mut outcome = self.outcome.lock().unwrap_or_else(PoisonError::into_inner);
+            if outcome.hop.is_none() && outcome.resolved_ip.is_none() {
+                outcome.hop = made.hop;
+                outcome.resolved_ip = made.ip;
+            }
+        }
+        let mut leg = self.leg.lock().unwrap_or_else(PoisonError::into_inner);
+        Ok(match made.conn {
+            Connected::H2(conn) => {
+                let sender = conn.sender.clone();
+                *leg = LegState::H2(conn);
+                Usable::H2(sender)
+            }
+            Connected::H1(conn) => {
+                let pool = H1Pool::new(conn, Arc::clone(&self.cx.connections));
+                *leg = LegState::H1(pool.clone());
+                Usable::Pool(pool)
+            }
+        })
     }
-}
 
-/// Counts a stream as open until the guard goes away (with the response body, so a stream that
-/// is still sending is not mistaken for an idle connection).
-struct StreamGuard(Arc<AtomicUsize>);
-
-impl StreamGuard {
-    fn new(open_streams: &Arc<AtomicUsize>) -> Self {
-        open_streams.fetch_add(1, Ordering::SeqCst);
-        Self(Arc::clone(open_streams))
-    }
-}
-
-impl Drop for StreamGuard {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::SeqCst);
+    /// The place in the workspace's stream budget for one more stream, as a guard that keeps it.
+    fn open_stream(&self) -> Result<StreamGuard, Refusal> {
+        let Ok(permit) = Arc::clone(&self.cx.streams).try_acquire_owned() else {
+            tracing::warn!(workspace = %self.cx.workspace, host = %self.cx.target.host, "HTTP/2 stream refused: the workspace is over its stream budget");
+            return Err(Refusal::new(
+                "503 Service Unavailable",
+                "too many open requests from this workspace; retry when some have finished",
+            )
+            .header("retry-after", "1")
+            .coded("stream_limit"));
+        };
+        Ok(self
+            .streams
+            .open(self.cx.proxy.config.stream_idle_timeout, Some(permit)))
     }
 }
 
@@ -189,15 +246,17 @@ where
     let config = cx.proxy.config;
     let leg = match first {
         Some(Connected::H2(conn)) => LegState::H2(conn),
-        Some(Connected::H1(conn)) => LegState::H1(H1Pool::new(conn)),
+        Some(Connected::H1(conn)) => LegState::H1(H1Pool::new(conn, Arc::clone(&cx.connections))),
         None => LegState::None,
     };
+    let limit_hit: Arc<OnceLock<&'static str>> = Arc::default();
     let shared = Arc::new(Shared {
         cx,
-        leg: tokio::sync::Mutex::new(leg),
+        leg: Mutex::new(leg),
+        connecting: tokio::sync::Mutex::new(None),
         deferred: Mutex::new(deferred),
         outcome: Mutex::new(outcome),
-        open_streams: Arc::new(AtomicUsize::new(0)),
+        streams: Arc::new(Registry::new(Arc::clone(&limit_hit))),
     });
     let service = {
         let shared = Arc::clone(&shared);
@@ -206,7 +265,8 @@ where
     let mut builder = http2::Builder::new(TokioExecutor::new());
     builder
         .timer(TokioTimer::new())
-        .adaptive_window(true)
+        .initial_stream_window_size(GUEST_STREAM_WINDOW)
+        .initial_connection_window_size(GUEST_CONNECTION_WINDOW)
         .max_frame_size(leg::MAX_FRAME_SIZE)
         .max_concurrent_streams(MAX_CONCURRENT_STREAMS)
         .max_header_list_size(MAX_REQUEST_HEADER_LIST)
@@ -215,11 +275,17 @@ where
         .keep_alive_interval(leg::PING_INTERVAL)
         .keep_alive_timeout(leg::PING_TIMEOUT)
         .enable_connect_protocol();
-    let connection =
-        builder.serve_connection(TokioIo::new(Watch::new(io, config.head_timeout)), service);
+    let watched = Watch::new(io, config.head_timeout, Arc::clone(&limit_hit));
+    let connection = builder.serve_connection(TokioIo::new(watched), service);
     tokio::pin!(connection);
-    let mut idle_since = Some(Instant::now());
-    let mut tick = tokio::time::interval(IDLE_CHECK);
+    let mut sweeper = Sweeper::new(
+        Clock {
+            keepalive: config.keepalive_timeout,
+            grace: config.shutdown_grace,
+        },
+        Instant::now(),
+    );
+    let mut tick = tokio::time::interval(SWEEP_INTERVAL);
     loop {
         tokio::select! {
             result = connection.as_mut() => {
@@ -228,12 +294,13 @@ where
                 }
                 break;
             }
-            _ = tick.tick() => {
-                if shared.open_streams.load(Ordering::SeqCst) > 0 {
-                    idle_since = None;
-                } else if idle_since.get_or_insert_with(Instant::now).elapsed() >= config.keepalive_timeout {
-                    connection.as_mut().graceful_shutdown();
-                    idle_since = Some(Instant::now());
+            _ = tick.tick() => match sweeper.tick(Instant::now(), &shared.streams) {
+                Step::Nothing => {}
+                Step::Shutdown => connection.as_mut().graceful_shutdown(),
+                Step::Drop(code) => {
+                    tracing::info!(host = %shared.cx.target.host, reason = code, "guest HTTP/2 connection dropped");
+                    let _ = limit_hit.set(code);
+                    break;
                 }
             }
         }
@@ -242,6 +309,7 @@ where
         .outcome
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
+    outcome.ended = limit_hit.get().copied();
     std::mem::take(&mut *outcome)
 }
 
@@ -249,8 +317,20 @@ async fn handle(
     shared: Arc<Shared>,
     request: Request<Incoming>,
 ) -> Result<Response<RespBody>, Infallible> {
-    let guard = StreamGuard::new(&shared.open_streams);
-    Ok(match exchange(&shared, request, guard).await {
+    let answered = match shared.open_stream() {
+        Ok(guard) => {
+            let activity = guard.activity();
+            tokio::select! {
+                answered = exchange(&shared, request, guard) => answered,
+                () = activity.expired() => {
+                    activity.note_limit(ended::STREAM_IDLE);
+                    Err(stream_idle())
+                }
+            }
+        }
+        Err(refusal) => Err(refusal),
+    };
+    Ok(match answered {
         Ok(response) => response,
         Err(refusal) => {
             if let Some(code) = refusal.code {
@@ -264,6 +344,15 @@ async fn handle(
             refusal_response(&refusal)
         }
     })
+}
+
+/// The answer to a stream that moved no frame for its limit before the proxy had one to give.
+fn stream_idle() -> Refusal {
+    tracing::info!("an HTTP/2 stream moved no frame for too long and was reset");
+    Refusal::new(
+        "408 Request Timeout",
+        "the request moved no data for too long",
+    )
 }
 
 /// A refusal as an HTTP/2 response: the same status, headers and text as the HTTP/1.1 path sends.
@@ -497,7 +586,7 @@ async fn exchange(
             }
         };
     let head_only = checked.method == Method::HEAD;
-    let activity = Arc::new(Activity::new());
+    let activity = guard.activity();
     let sent = Arc::new(Sent::default());
     let (_, body) = request.into_parts();
     let body = request_body(body, prefetched, injection.as_ref(), &activity, &sent);
@@ -512,9 +601,7 @@ async fn exchange(
         Route::H1(lease) => Some(lease),
         Route::H2(_) => None,
     };
-    Ok(guest_response(
-        response, head_only, &activity, &sent, lease, guard,
-    ))
+    Ok(guest_response(response, head_only, &sent, lease, guard))
 }
 
 /// The body of the request sent upstream: the one that was read in full already, or the guest's
@@ -779,7 +866,9 @@ fn build_request(
 
 /// Sends `request` over `route` and waits for the answer's head: `502` when the request fails,
 /// `504` when the server stays silent for the upstream-head timeout after the request is fully
-/// sent (`sent`). A streaming call that never finishes sending is held by the idle timeout.
+/// sent (`sent`), or does not take the request up in that time (a stream queued behind the
+/// server's own stream limit). A streaming call that never finishes sending is held by the idle
+/// timeout.
 async fn send(
     shared: &Shared,
     route: &mut Route,
@@ -789,8 +878,12 @@ async fn send(
     let cx = &shared.cx;
     let timeout = cx.proxy.config.upstream_head_timeout;
     let head_deadline = async {
+        if tokio::time::timeout(timeout, sent.started()).await.is_err() {
+            return Late::NotTaken;
+        }
         sent.wait().await;
         tokio::time::sleep(timeout).await;
+        Late::Silent
     };
     let sending = async {
         match route {
@@ -813,11 +906,30 @@ async fn send(
             }
             None => Err(Refusal::new("502 Bad Gateway", "the upstream connection is gone")),
         },
-        () = head_deadline => Err(Refusal::new(
+        late = head_deadline => Err(Refusal::new(
             "504 Gateway Timeout",
-            format!("{} did not answer within {}s", cx.target.host, timeout.as_secs()),
+            match late {
+                Late::NotTaken => format!(
+                    "{} did not take up the request within {}s",
+                    cx.target.host,
+                    timeout.as_secs()
+                ),
+                Late::Silent => format!(
+                    "{} did not answer within {}s",
+                    cx.target.host,
+                    timeout.as_secs()
+                ),
+            },
         )),
     }
+}
+
+/// Which wait of [`send`] ran out.
+enum Late {
+    /// The request never started: the connection's stream limit held it back.
+    NotTaken,
+    /// The request was sent in full and the server never answered.
+    Silent,
 }
 
 /// An extended `CONNECT` for a WebSocket (RFC 8441): to an HTTP/2 server it is passed on as it is;
@@ -873,13 +985,11 @@ async fn websocket(
     };
     if !agreed {
         // The server said no: its answer goes to the guest as any other.
-        let activity = Arc::new(Activity::new());
         let sent = Arc::new(Sent::default());
         sent.finish();
         return Ok(guest_response(
             response.map(AnswerBody::Streaming),
             false,
-            &activity,
             &sent,
             lease,
             guard,
@@ -902,6 +1012,9 @@ async fn websocket(
     for (name, value) in ws::answer_headers(response.headers(), false) {
         answer.headers_mut().append(name, value);
     }
+    let activity = guard.activity();
+    let idle = cx.proxy.config.websocket_idle_timeout;
+    activity.set_limit(idle);
     tokio::spawn(async move {
         let _guard = guard;
         let _lease = lease;
@@ -914,7 +1027,7 @@ async fn websocket(
                 .await
                 .inspect_err(|err| tracing::debug!(error = %err, "the server's WebSocket upgrade did not complete"))
                 .ok()?;
-            ws::splice(&mut TokioIo::new(guest), upstream).await;
+            ws::splice(&mut TokioIo::new(guest), upstream, &activity, idle).await;
             Some(())
         }
         .await;
@@ -1003,7 +1116,6 @@ fn end_to_end_headers(headers: &HeaderMap) -> HeaderMap {
 fn guest_response(
     response: Response<AnswerBody>,
     head_only: bool,
-    activity: &Arc<Activity>,
     sent: &Arc<Sent>,
     lease: Option<Lease>,
     guard: StreamGuard,
@@ -1020,7 +1132,7 @@ fn guest_response(
             .map_err(|never| match never {})
             .boxed_unsync()
     } else {
-        UpstreamBody::new(body, activity, sent, lease, guard).boxed_unsync()
+        UpstreamBody::new(body, sent, lease, guard).boxed_unsync()
     };
     Response::from_parts(parts, body)
 }
@@ -1028,43 +1140,34 @@ fn guest_response(
 // ---------------------------------------------------------------------------------------------
 // Bodies
 
-/// When a stream last moved a frame in either direction.
-#[derive(Debug)]
-pub(crate) struct Activity {
-    base: tokio::time::Instant,
-    last_ms: AtomicU64,
-}
-
-impl Activity {
-    pub(crate) fn new() -> Self {
-        Self {
-            base: tokio::time::Instant::now(),
-            last_ms: AtomicU64::new(0),
-        }
-    }
-
-    fn touch(&self) {
-        let ms = u64::try_from(self.base.elapsed().as_millis()).unwrap_or(u64::MAX);
-        self.last_ms.store(ms, Ordering::Relaxed);
-    }
-
-    fn quiet_for(&self) -> Duration {
-        let now = u64::try_from(self.base.elapsed().as_millis()).unwrap_or(u64::MAX);
-        Duration::from_millis(now.saturating_sub(self.last_ms.load(Ordering::Relaxed)))
-    }
-}
-
-/// Whether the request body has been read to its end, and the wait for that.
+/// Whether the request body has been taken up and read to its end, and the waits for that.
 #[derive(Debug, Default)]
 pub(crate) struct Sent {
+    begun: AtomicBool,
     done: AtomicBool,
     notify: Notify,
 }
 
 impl Sent {
+    /// The upstream took the request up: its stream is open and it reads the body.
+    fn begin(&self) {
+        self.begun.store(true, Ordering::SeqCst);
+        self.notify.notify_waiters();
+    }
+
     fn finish(&self) {
         self.done.store(true, Ordering::SeqCst);
-        self.notify.notify_waiters();
+        self.begin();
+    }
+
+    async fn started(&self) {
+        loop {
+            let notified = self.notify.notified();
+            if self.begun.load(Ordering::SeqCst) {
+                return;
+            }
+            notified.await;
+        }
     }
 
     fn is_done(&self) -> bool {
@@ -1082,35 +1185,8 @@ impl Sent {
     }
 }
 
-/// Fires when the stream it watches has moved no frame for the idle time.
-struct IdleTimer {
-    activity: Arc<Activity>,
-    sleep: Pin<Box<Sleep>>,
-}
-
-impl IdleTimer {
-    fn new(activity: &Arc<Activity>) -> Self {
-        Self {
-            activity: Arc::clone(activity),
-            sleep: Box::pin(tokio::time::sleep(STREAM_IDLE)),
-        }
-    }
-
-    fn poll_expired(&mut self, cx: &mut TaskContext<'_>) -> Poll<()> {
-        loop {
-            std::task::ready!(self.sleep.as_mut().poll(cx));
-            let quiet = self.activity.quiet_for();
-            if quiet >= STREAM_IDLE {
-                return Poll::Ready(());
-            }
-            self.sleep
-                .as_mut()
-                .reset(tokio::time::Instant::now() + STREAM_IDLE.saturating_sub(quiet));
-        }
-    }
-}
-
-fn timed_out() -> BoxError {
+fn timed_out(activity: &Activity) -> BoxError {
+    activity.note_limit(ended::STREAM_IDLE);
     tracing::info!("an HTTP/2 stream moved no frame for too long and was reset");
     Box::new(io::Error::new(
         io::ErrorKind::TimedOut,
@@ -1129,7 +1205,6 @@ struct GuestBody<B> {
     inner: B,
     activity: Arc<Activity>,
     sent: Arc<Sent>,
-    timer: IdleTimer,
     /// The `Content-Length` the guest declared, if any.
     expected: Option<u64>,
     received: u64,
@@ -1155,7 +1230,6 @@ impl<B: Body<Data = Bytes>> GuestBody<B> {
             inner,
             activity: Arc::clone(activity),
             sent: Arc::clone(sent),
-            timer: IdleTimer::new(activity),
         }
     }
 
@@ -1210,6 +1284,8 @@ where
         cx: &mut TaskContext<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
         let this = &mut *self;
+        // The upstream polls the body once it has a stream for it.
+        this.sent.begin();
         match Pin::new(&mut this.inner).poll_frame(cx) {
             Poll::Ready(Some(Ok(mut frame))) => {
                 this.activity.touch();
@@ -1235,8 +1311,8 @@ where
                 Poll::Ready(None)
             }
             Poll::Pending => {
-                if this.timer.poll_expired(cx).is_ready() {
-                    Poll::Ready(Some(Err(timed_out())))
+                if this.activity.poll_expired(cx).is_ready() {
+                    Poll::Ready(Some(Err(timed_out(&this.activity))))
                 } else {
                     Poll::Pending
                 }
@@ -1261,24 +1337,18 @@ struct UpstreamBody<B> {
     activity: Arc<Activity>,
     sent: Arc<Sent>,
     lease: Option<Lease>,
-    timer: IdleTimer,
     _guard: StreamGuard,
 }
 
 impl<B: Body<Data = Bytes>> UpstreamBody<B> {
-    fn new(
-        inner: B,
-        activity: &Arc<Activity>,
-        sent: &Arc<Sent>,
-        lease: Option<Lease>,
-        guard: StreamGuard,
-    ) -> Self {
+    fn new(inner: B, sent: &Arc<Sent>, lease: Option<Lease>, guard: StreamGuard) -> Self {
+        let activity = guard.activity();
+        activity.touch();
         let mut body = Self {
             inner,
-            activity: Arc::clone(activity),
+            activity,
             sent: Arc::clone(sent),
             lease,
-            timer: IdleTimer::new(activity),
             _guard: guard,
         };
         if body.inner.is_end_stream() {
@@ -1332,9 +1402,9 @@ where
                 Poll::Ready(None)
             }
             Poll::Pending => {
-                if this.timer.poll_expired(cx).is_ready() {
+                if this.activity.poll_expired(cx).is_ready() {
                     this.lease = None;
-                    Poll::Ready(Some(Err(timed_out())))
+                    Poll::Ready(Some(Err(timed_out(&this.activity))))
                 } else {
                     Poll::Pending
                 }
@@ -1614,21 +1684,6 @@ mod tests {
         assert_eq!(no_random_bytes().status, "502 Bad Gateway");
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn a_stream_with_no_frame_for_the_idle_time_times_out_and_activity_defers_it() {
-        let activity = Arc::new(Activity::new());
-        let mut timer = IdleTimer::new(&activity);
-        let mut cx = TaskContext::from_waker(std::task::Waker::noop());
-        assert!(timer.poll_expired(&mut cx).is_pending());
-        tokio::time::advance(STREAM_IDLE.saturating_sub(Duration::from_secs(1))).await;
-        activity.touch();
-        tokio::time::advance(Duration::from_secs(2)).await;
-        // The timer's own deadline passed, but a frame moved a moment ago.
-        assert!(timer.poll_expired(&mut cx).is_pending());
-        tokio::time::advance(STREAM_IDLE + Duration::from_secs(1)).await;
-        assert!(timer.poll_expired(&mut cx).is_ready());
-    }
-
     #[tokio::test]
     async fn the_sent_flag_wakes_its_waiters_once_and_stays_set() {
         let sent = Arc::new(Sent::default());
@@ -1694,30 +1749,32 @@ mod tests {
         Frame::data(Bytes::from_static(text.as_bytes()))
     }
 
+    const IDLE: Duration = Duration::from_secs(3600);
+
     fn guest_body(inner: Scripted) -> (GuestBody<Scripted>, Arc<Sent>) {
-        let sent = Arc::new(Sent::default());
-        let body = GuestBody::new(
-            inner,
-            &Arc::new(Activity::new()),
-            &sent,
-            vec![HeaderName::from_static("x-api-key")],
-        );
+        let (body, sent, _) = guest_body_in(inner, &Arc::new(Registry::default()));
         (body, sent)
     }
 
-    fn upstream_body(
+    fn guest_body_in(
         inner: Scripted,
-        sent: &Arc<Sent>,
-    ) -> (UpstreamBody<Scripted>, Arc<AtomicUsize>) {
-        let open = Arc::new(AtomicUsize::new(0));
-        let body = UpstreamBody::new(
+        registry: &Arc<Registry>,
+    ) -> (GuestBody<Scripted>, Arc<Sent>, StreamGuard) {
+        let sent = Arc::new(Sent::default());
+        let guard = registry.open(IDLE, None);
+        let body = GuestBody::new(
             inner,
-            &Arc::new(Activity::new()),
-            sent,
-            None,
-            StreamGuard::new(&open),
+            &guard.activity(),
+            &sent,
+            vec![HeaderName::from_static("x-api-key")],
         );
-        (body, open)
+        (body, sent, guard)
+    }
+
+    fn upstream_body(inner: Scripted, sent: &Arc<Sent>) -> (UpstreamBody<Scripted>, Arc<Registry>) {
+        let registry = Arc::new(Registry::default());
+        let body = UpstreamBody::new(inner, sent, None, registry.open(IDLE, None));
+        (body, registry)
     }
 
     #[tokio::test]
@@ -1766,12 +1823,38 @@ mod tests {
         assert!(err.to_string().contains("stream broke"), "{err}");
     }
 
+    /// Runs the connection's sweep every tick for `span`, as the connection loop does.
+    async fn sweep_for(registry: &Registry, span: Duration) {
+        let mut waited = Duration::ZERO;
+        while waited < span {
+            tokio::time::advance(SWEEP_INTERVAL).await;
+            waited += SWEEP_INTERVAL;
+            registry.sweep_for_test(Instant::now());
+        }
+    }
+
     #[tokio::test(start_paused = true)]
-    async fn a_request_body_that_moves_nothing_for_an_hour_is_reset() {
-        let (mut body, _) = guest_body(Scripted::new(vec![], None).then_pending());
-        let err = body.frame().await.unwrap().unwrap_err();
+    async fn a_request_body_that_moves_nothing_for_an_hour_is_reset_by_the_sweep() {
+        let registry = Arc::new(Registry::default());
+        let (mut body, _, _guard) =
+            guest_body_in(Scripted::new(vec![], None).then_pending(), &registry);
+        let frame = tokio::spawn(async move { body.frame().await });
+        tokio::task::yield_now().await;
+        assert!(!frame.is_finished());
+        sweep_for(&registry, IDLE + Duration::from_secs(4)).await;
+        let err = frame.await.unwrap().unwrap().unwrap_err();
         let err = err.downcast_ref::<io::Error>().unwrap();
         assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_request_body_that_is_polled_is_taken_up_and_one_that_is_not_is_waited_for() {
+        let (mut body, sent) = guest_body(Scripted::new(vec![Ok(data("a"))], None).then_pending());
+        let waiting = tokio::time::timeout(Duration::from_secs(5), sent.started()).await;
+        assert!(waiting.is_err(), "nothing polled the body yet");
+        assert!(body.frame().await.is_some());
+        sent.started().await;
+        assert!(!sent.is_done(), "taken up is not sent in full");
     }
 
     #[tokio::test]
@@ -1786,13 +1869,13 @@ mod tests {
         let sent = Arc::new(Sent::default());
         sent.finish();
         let (mut body, open) = upstream_body(Scripted::new(vec![Ok(data("ab"))], Some(2)), &sent);
-        assert_eq!(open.load(Ordering::SeqCst), 1);
+        assert_eq!(open.len(), 1);
         assert_eq!(body.size_hint().exact(), Some(2));
         assert!(body.frame().await.unwrap().unwrap().is_data());
         assert!(body.frame().await.is_none());
         assert!(body.is_end_stream());
         drop(body);
-        assert_eq!(open.load(Ordering::SeqCst), 0);
+        assert_eq!(open.len(), 0);
     }
 
     #[tokio::test]
@@ -1807,10 +1890,13 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_response_body_that_moves_nothing_for_an_hour_is_reset() {
+    async fn a_response_body_that_moves_nothing_for_an_hour_is_reset_by_the_sweep() {
         let sent = Arc::new(Sent::default());
-        let (mut body, _) = upstream_body(Scripted::new(vec![], None).then_pending(), &sent);
-        let err = body.frame().await.unwrap().unwrap_err();
+        let (mut body, registry) = upstream_body(Scripted::new(vec![], None).then_pending(), &sent);
+        let frame = tokio::spawn(async move { body.frame().await });
+        tokio::task::yield_now().await;
+        sweep_for(&registry, IDLE + Duration::from_secs(4)).await;
+        let err = frame.await.unwrap().unwrap().unwrap_err();
         let err = err.downcast_ref::<io::Error>().unwrap();
         assert_eq!(err.kind(), io::ErrorKind::TimedOut);
     }

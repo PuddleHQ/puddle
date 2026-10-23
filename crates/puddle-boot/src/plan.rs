@@ -26,6 +26,10 @@ pub const PATH_FILE_GUEST: &str = "/etc/profile.d/00-puddle-path.sh";
 /// The provider environment, for login shells and the chained ENTRYPOINT.
 pub const ENV_FILE_GUEST: &str = "/etc/profile.d/01-puddle-env.sh";
 
+/// Moves an interactive login shell that starts in the home directory to the workspace's start
+/// folder. It sorts after the environment file and the shell init loader.
+pub const START_FOLDER_FILE_GUEST: &str = "/etc/profile.d/03-puddle-start-folder.sh";
+
 /// Puddle's git settings, included from `/etc/gitconfig`.
 pub const GIT_CONFIG_GUEST: &str = "/etc/puddle/gitconfig";
 
@@ -681,6 +685,22 @@ fn env_file(env: &GuestEnv) -> GuestFile {
         text.extend(["export ", name, "=", &sh_word(value), "\n"]);
     }
     GuestFile::new(guest_path(ENV_FILE_GUEST), text.into_bytes())
+}
+
+/// The login-shell file that opens terminals in `folder`, the start folder inside the workspace's
+/// volume `root`.
+///
+/// Only an interactive shell that starts in the home directory moves: a command run over SSH
+/// without a terminal, a shell started in any other folder and a shell that is not a login shell
+/// stay where they are. A folder that does not exist (yet) falls back to `root`.
+#[must_use]
+pub fn start_folder_file(root: &GuestPath, folder: &GuestPath) -> GuestFile {
+    let text = format!(
+        "{GENERATED}case $- in\n*i*)\n\tif [ \"$PWD\" = \"$HOME\" ]; then\n\t\tif [ -d {folder} ]; then\n\t\t\tcd {folder}\n\t\telif [ -d {root} ]; then\n\t\t\tcd {root}\n\t\tfi\n\tfi\n\t;;\nesac\n",
+        folder = sh_word(folder.as_str()),
+        root = sh_word(root.as_str()),
+    );
+    GuestFile::new(guest_path(START_FOLDER_FILE_GUEST), text.into_bytes())
 }
 
 /// A quoted git config value.

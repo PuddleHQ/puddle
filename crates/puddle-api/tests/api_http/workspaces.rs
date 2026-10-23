@@ -1282,3 +1282,58 @@ async fn desktop_attach_names_the_unreadable_settings_instead_of_saying_direct_s
     assert_eq!(api.launcher.opened().len(), 0);
     api.running.shutdown().await;
 }
+
+async fn put_start_folder(api: &Api, id: &str, body: &Value) -> crate::common::Reply {
+    api.send(
+        "PUT",
+        &format!("/api/workspaces/{id}/start-folder"),
+        Some(body),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn the_start_folder_is_set_read_back_and_reset_and_a_bad_path_says_which_rule() {
+    let api = start().await;
+    running(&api, "web").await;
+    let set = put_start_folder(&api, "web", &json!({"path": "app/src"})).await;
+    assert_eq!(set.status, 200, "{}", set.body);
+    assert_eq!(
+        set.json(),
+        json!({"start_folder": "app/src", "exists": true})
+    );
+    assert_eq!(
+        api.get("/api/workspaces/web").await.json()["start_folder"],
+        "app/src"
+    );
+    let reset = put_start_folder(&api, "web", &json!({"path": null})).await;
+    assert_eq!(reset.json(), json!({"start_folder": null, "exists": null}));
+
+    for (path, rule) in [
+        ("", "empty"),
+        ("/abs", "leading /"),
+        ("a/../b", ".."),
+        ("a//b", "empty"),
+        (".puddle/x", ".puddle"),
+        ("a\\b", "\\"),
+    ] {
+        let refused = put_start_folder(&api, "web", &json!({"path": path})).await;
+        assert_eq!(refused.status, 422, "{path}: {}", refused.body);
+        assert!(refused.body.contains(rule), "{path}: {}", refused.body);
+    }
+    // The body must say the path, and nothing else.
+    for body in [json!({}), json!({"path": "a", "x": 1})] {
+        assert_eq!(
+            put_start_folder(&api, "web", &body).await.status,
+            422,
+            "{body}"
+        );
+    }
+    assert_eq!(
+        put_start_folder(&api, "nope", &json!({"path": null}))
+            .await
+            .status,
+        404
+    );
+    api.running.shutdown().await;
+}

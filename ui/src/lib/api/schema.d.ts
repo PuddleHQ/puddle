@@ -1041,6 +1041,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{id}/start-folder": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Sets the start folder: a path under the volume, or `null` for the volume root. The folder may
+         *     not exist yet. A running workspace's new terminals follow at once, and the answer says whether
+         *     the folder exists there. A folder that is missing opens the volume root and shows a problem
+         *     until it exists or the setting changes. A path that breaks the rules is refused with 422 and
+         *     the reason; a workspace that is being created or deleted answers 409.
+         */
+        put: operations["put_start_folder"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{id}/stop": {
         parameters: {
             query?: never;
@@ -2057,6 +2080,11 @@ export interface components {
             reason: string;
             /** @enum {string} */
             type: "workspace_ssh_failed";
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
+        } | {
+            /** @enum {string} */
+            type: "workspace_repositories_changed";
             /** @description The workspace. */
             workspace: components["schemas"]["WorkspaceName"];
         } | {
@@ -3319,6 +3347,27 @@ export interface components {
             reason: string;
             /** @description The subject's common name, when readable. */
             subject: string | null;
+        };
+        /** @description `PUT /api/workspaces/{id}/start-folder`. */
+        StartFolderRequest: {
+            /**
+             * @description The folder, relative to the workspace's volume: parts joined by `/`, none empty, `.` or
+             *     `..`, no control character or `\`, not inside `.puddle` or `lost+found`, at most 255
+             *     bytes. It may name a folder that does not exist yet. `null` is the volume root. Required,
+             *     so an empty body never resets it.
+             */
+            path: string | null;
+        };
+        /** @description The start folder after a change. */
+        StartFolderSet: {
+            /**
+             * @description Whether the folder exists in the workspace: `true` or `false` while it runs, `null` when it
+             *     is stopped (Puddle looks when it starts) or the start folder is the volume root. A folder
+             *     that is missing opens the volume root and shows a problem until it exists.
+             */
+            exists: boolean | null;
+            /** @description The start folder now; `null` is the volume root. */
+            start_folder: string | null;
         };
         /**
          * @description A token the user pasted. It is kept in the operating system's credential store under Puddle's
@@ -8793,6 +8842,96 @@ export interface operations {
             };
             /** @description Host is not the API's own address */
             421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_start_folder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartFolderRequest"];
+            };
+        };
+        responses: {
+            /** @description the start folder now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartFolderSet"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the workspace is being created or deleted */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the path breaks the start folder's rules */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

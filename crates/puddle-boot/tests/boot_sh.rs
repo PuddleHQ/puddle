@@ -16,7 +16,8 @@ use std::time::Duration;
 use common::{FakeRoot, alive, kill9, shells, show};
 use puddle_boot::{
     BootHook, BootPlan, CA_DIR_GUEST, ENV_FILE_GUEST, GIT_CONFIG_GUEST, Gate, GateState,
-    GitIdentity, MACHINE_SETTINGS_GUEST, PATH_FILE_GUEST, PLAN_HEADER,
+    GitIdentity, MACHINE_SETTINGS_GUEST, PATH_FILE_GUEST, PLAN_HEADER, START_FOLDER_FILE_GUEST,
+    start_folder_file,
 };
 use puddle_compute::ImageConfig;
 use puddle_types::{GuestEnv, GuestFile, GuestPath, MergeEntry, MergeFormat, MergeSpec};
@@ -936,4 +937,81 @@ fn capture_off_starts_the_agent_without_it_and_gives_back_the_line() {
         fr.read("/etc/resolv.conf"),
         "search x\nnameserver 10.0.0.2\n"
     );
+}
+
+/// Starts `shell` (`interactive` or not) in `cwd` with `home` as `$HOME`, sources the start-folder
+/// file `file` and prints where it ended up.
+fn where_after_start_folder(
+    shell: &std::path::Path,
+    interactive: bool,
+    cwd: &std::path::Path,
+    home: &std::path::Path,
+    file: &std::path::Path,
+) -> String {
+    let mut command = std::process::Command::new(shell);
+    if interactive {
+        command.arg("-i");
+    }
+    let out = command
+        .arg("-c")
+        .arg(format!(". '{}'; pwd -P", file.display()))
+        .current_dir(cwd)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("HOME", home)
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
+#[test]
+fn the_start_folder_file_moves_only_an_interactive_shell_that_starts_in_home() {
+    for sh in shells() {
+        let fr = FakeRoot::new(&sh);
+        let (root, api, other, home) = (
+            fr.path("/workspaces/w"),
+            fr.path("/workspaces/w/api"),
+            fr.path("/elsewhere"),
+            fr.path("/root-home"),
+        );
+        for dir in [&api, &other, &home] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        let guest = |p: &std::path::Path| GuestPath::new(p.to_str().unwrap()).unwrap();
+        let written = start_folder_file(&guest(&root), &guest(&api));
+        assert_eq!(written.path().as_str(), START_FOLDER_FILE_GUEST);
+        let file = fr.path("/start-folder.sh");
+        std::fs::write(&file, written.contents()).unwrap();
+        let real = |p: &std::path::Path| std::fs::canonicalize(p).unwrap().display().to_string();
+        let at = |interactive: bool, cwd: &std::path::Path| {
+            where_after_start_folder(&fr.shell, interactive, cwd, &home, &file)
+        };
+        let why = sh.display().to_string();
+
+        // An interactive shell that starts in $HOME lands in the start folder.
+        assert_eq!(at(true, &home), real(&api), "{why}");
+        // A command without a terminal stays, and so does a shell started in another folder.
+        assert_eq!(at(false, &home), real(&home), "{why}");
+        assert_eq!(at(true, &other), real(&other), "{why}");
+
+        // A start folder that does not exist yet opens the volume root; with no root, it stays.
+        let missing = start_folder_file(&guest(&root), &guest(&fr.path("/workspaces/w/later")));
+        std::fs::write(&file, missing.contents()).unwrap();
+        assert_eq!(at(true, &home), real(&root), "{why}");
+        let nowhere = start_folder_file(
+            &guest(&fr.path("/workspaces/none")),
+            &guest(&fr.path("/workspaces/none/x")),
+        );
+        std::fs::write(&file, nowhere.contents()).unwrap();
+        assert_eq!(at(true, &home), real(&home), "{why}");
+
+        // The folder's name is one word to the shell, whatever it holds.
+        let odd = fr.path("/workspaces/w/it's $(touch pwned) `x`");
+        std::fs::create_dir_all(&odd).unwrap();
+        let quoted = start_folder_file(&guest(&root), &guest(&odd));
+        std::fs::write(&file, quoted.contents()).unwrap();
+        assert_eq!(at(true, &home), real(&odd), "{why}");
+        assert!(!fr.path("/workspaces/w/pwned").exists());
+        assert!(!home.join("pwned").exists());
+    }
 }

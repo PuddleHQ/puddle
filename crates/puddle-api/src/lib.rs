@@ -89,6 +89,7 @@ pub use workspaces::{
     AttachMode, Attached, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DeleteCheck, DisplayName, GitSetup,
     LaunchError, Launcher, Listing, MAX_REPO_URL_LEN, MAX_REPOSITORIES, NewRepository,
     NewWorkspace, NoGitSetup, NoWorkspaces, Operation, RepoFindings, RepoUrl, Repository,
-    RepositoryDraft, ShellInitCheck, StartFolder, WorkspaceError, WorkspaceRecord,
-    WorkspaceService, check_rename, check_repositories, label_taken,
+    RepositoryDraft, ShellInitCheck, StartFolder, StartFolderChange, WorkspaceError,
+    WorkspaceRecord, WorkspaceService, check_rename, check_repositories, check_start_folder_change,
+    label_taken,
 };

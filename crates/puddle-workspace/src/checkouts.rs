@@ -442,6 +442,34 @@ mod tests {
     }
 
     #[test]
+    fn an_address_without_a_scheme_has_no_credentials_to_remove() {
+        assert_eq!(without_credentials("host/x"), ("host/x".to_owned(), false));
+        assert_eq!(
+            without_credentials("https://u:p@host/x"),
+            ("https://host/x".to_owned(), true)
+        );
+    }
+
+    #[test]
+    fn a_host_and_path_with_a_colon_is_scp_like_whether_or_not_a_slash_follows() {
+        assert!(is_scp_like("git@host:repo"));
+        assert!(is_scp_like("host:o/r"));
+        assert!(!is_scp_like("c:repo"), "a drive letter is not a host");
+        assert!(!is_scp_like("plain"));
+    }
+
+    #[test]
+    fn long_valid_records_are_cut_and_made_printable() {
+        let long = "x\u{7}".repeat(MAX_FIELD);
+        let text =
+            format!("C\t{long}\thttps://h/{long}\t{long}\t{long}\t1\nE\t{long}\t{long}\nM\t7\nD\n");
+        let list = parse(&text).unwrap();
+        assert_eq!(list.checkouts.len(), 2);
+        assert_eq!(list.more, 7);
+        check_bounded(&text);
+    }
+
+    #[test]
     fn the_request_runs_the_script_as_root_on_the_mount_point() {
         let l = Layout::new(&WorkspaceId::new("a").unwrap()).unwrap();
         let r = request(&l, None);

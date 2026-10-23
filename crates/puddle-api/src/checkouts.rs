@@ -282,6 +282,39 @@ mod tests {
     }
 
     #[test]
+    fn a_checkout_that_could_not_be_read_or_has_a_bad_address_is_not_offered() {
+        let mut unreadable = found("odd", None, None);
+        unreadable.unreadable = Some("permission denied".to_owned());
+        let listing = FoundList {
+            checkouts: vec![
+                unreadable,
+                found("plain", Some("http://github.com/o/plain"), None),
+            ],
+            more: 0,
+        };
+        let v = view(&listing, &[]);
+        let why = |d: &str| {
+            let c = v.checkouts.iter().find(|c| c.found.directory == d).unwrap();
+            assert!(!c.manage.offered);
+            c.manage.reason.clone().unwrap()
+        };
+        assert_eq!(
+            why("odd"),
+            "Puddle could not read this checkout: permission denied"
+        );
+        assert!(why("plain").contains("https://"), "{}", why("plain"));
+    }
+
+    #[test]
+    fn addresses_of_a_host_the_table_cannot_name_are_compared_as_written() {
+        let a = RepoUrl::parse("https://example.com:8443/a/b").unwrap();
+        let same = RepoUrl::parse("https://example.com:8443/a/b").unwrap();
+        let other = RepoUrl::parse("https://example.com:8443/a/c").unwrap();
+        assert!(same_repository(&a, &same));
+        assert!(!same_repository(&a, &other));
+    }
+
+    #[test]
     fn each_checkout_has_its_entry_and_a_reason_when_it_cannot_be_managed() {
         let entries = [entry("https://github.com/o/api", "api")];
         let listing = FoundList {

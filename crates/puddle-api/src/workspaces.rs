@@ -1221,6 +1221,7 @@ mod tests {
         let svc = NoWorkspaces;
         let id = WorkspaceId::new("w").unwrap();
         let name = WorkspaceName::new("w").unwrap();
+        let dir = CheckoutDir::new("a").unwrap();
         let url = RepoUrl::parse("https://example.com/a").unwrap();
         let repos = vec![NewRepository {
             repository: Repository::at_default_directory(url),
@@ -1241,6 +1242,21 @@ mod tests {
             svc.delete(&id, None).await.map(|_| ()),
             svc.rename(&id, None).await.map(|_| ()),
             svc.attach(&id, AttachMode::Browser).await.map(|_| ()),
+            svc.checkouts(&id).await.map(|_| ()),
+            svc.add_repository(
+                &id,
+                AddRepository::Existing {
+                    directory: dir.clone(),
+                    identity: None,
+                    pull: true,
+                    push: true,
+                },
+                &NoGitSetup,
+            )
+            .await
+            .map(|_| ()),
+            svc.clone_again(&id, &dir, &NoGitSetup).await.map(|_| ()),
+            svc.remove_repository(&id, &dir).await.map(|_| ()),
         ];
         for result in all {
             assert!(matches!(result, Err(WorkspaceError::Unavailable(_))));

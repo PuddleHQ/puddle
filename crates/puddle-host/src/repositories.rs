@@ -66,16 +66,18 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let cache = self.listing_cache(id);
         let mut cached = cache.lock().await;
         let gated = if record.status == WorkspaceStatus::Running {
-            self.gated(&record.name).await.ok()
+            self.gated(&record.name).await
         } else {
-            None
+            Err("the workspace is not running; start it to see its checkouts".to_owned())
         };
-        let Some(gated) = gated else {
-            let problem = "the workspace is not running; start it to see its checkouts".to_owned();
-            let (at, kept) = cached
-                .as_ref()
-                .map_or((None, None), |(_, at, l)| (Some(*at), Some(l)));
-            return Ok(checkouts_view(false, at, Some(problem), kept, &entries));
+        let gated = match gated {
+            Ok(gated) => gated,
+            Err(problem) => {
+                let (at, kept) = cached
+                    .as_ref()
+                    .map_or((None, None), |(_, at, l)| (Some(*at), Some(l)));
+                return Ok(checkouts_view(false, at, Some(problem), kept, &entries));
+            }
         };
         // A listing that began after this call did, while it waited for the lock, is as good as
         // one of its own; one that began earlier may have read the volume before a change.

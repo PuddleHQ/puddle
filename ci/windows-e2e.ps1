@@ -48,7 +48,7 @@ Battery percentage below which a run on battery is refused. Default 30.
 Don't post the commit status (local experiments; bisect steps never post).
 
 .PARAMETER Repo
-GitHub repo for the status. Default TijsVK/puddle.
+GitHub repo for the status. Default PuddleHQ/puddle.
 
 .PARAMETER Bisect
 Find the first bad commit between -Good and -Bad with `git bisect run`, using this script as the
@@ -83,7 +83,7 @@ param(
     [string]$Root = (Join-Path $env:TEMP 'pvm'),
     [int]$MinBattery = 30,
     [switch]$NoStatus,
-    [string]$Repo = 'TijsVK/puddle',
+    [string]$Repo = 'PuddleHQ/puddle',
     [switch]$Bisect,
     [string]$Good,
     [string]$Bad = 'HEAD',

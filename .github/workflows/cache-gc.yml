@@ -3,20 +3,42 @@ name: cache-gc
 on:
   workflow_dispatch:
 jobs:
-  diag:
+  baseline:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        n: [1,2,3,4,5,6,7,8,9,10,11,12]
+    timeout-minutes: 15
     steps:
-      - run: |
-          cat /etc/apt/apt-mirrors.txt; cat /etc/apt/sources.list.d/ubuntu.sources | grep -v '^#' | head -12
-          echo "image: $ImageVersion"; dpkg -l | grep -c -E 'libwebkit2gtk-4.1-dev|^ii  squid ' || true
-          getent ahosts azure.archive.ubuntu.com | awk '{print $1}' | sort -u | tr '\n' ' '; echo
-          getent ahosts archive.ubuntu.com | awk '{print $1}' | sort -u | tr '\n' ' '; echo
-          curl -s ifconfig.me/ip || true; echo
-          for host in azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com; do
-            curl -s -o /dev/null --max-time 25 -w "SPEED $host %{remote_ip} %{speed_download} B/s %{size_download} B in %{time_total}s\n" "http://$host/ubuntu/pool/main/w/webkit2gtk/libjavascriptcoregtk-4.1-0_2.52.6-0ubuntu0.24.04.1_amd64.deb" || echo "SPEED $host fail"
-          done
+      - name: install (develop's step, verbatim)
+        id: i
+        timeout-minutes: 10
+        continue-on-error: true
+        run: |
+          t0=$(date +%s)
+          ip=$(getent ahostsv4 azure.archive.ubuntu.com | awk 'NR==1{print $1}')
+          printf 'Acquire::http::Timeout "20";\nAcquire::Retries "5";\n' | sudo tee /etc/apt/apt.conf.d/99-ci-timeouts >/dev/null
+          trap 'echo "AB role=baseline ip=$ip secs=$(( $(date +%s) - t0 )) runner=$RUNNER_NAME"' EXIT
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev squid 2>&1 | tee /tmp/apt.out
+          grep -E "^Fetched" /tmp/apt.out | sed 's/^/AB fetched baseline: /'
+          sudo systemctl stop squid || true
+          test -x /usr/sbin/squid
+      - run: 'echo "AB role=baseline outcome=${{ steps.i.outcome }}"'
+  candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: install (the new step)
+        id: i
+        timeout-minutes: 10
+        continue-on-error: true
+        run: |
+          t0=$(date +%s)
+          ip=$(getent ahostsv4 azure.archive.ubuntu.com | awk 'NR==1{print $1}')
+          ci/apt-setup.sh
+          trap 'echo "AB role=candidate ip=$ip secs=$(( $(date +%s) - t0 )) runner=$RUNNER_NAME"' EXIT
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev squid 2>&1 | tee /tmp/apt.out
+          grep -E "^Fetched" /tmp/apt.out | sed 's/^/AB fetched candidate: /'
+          sudo systemctl stop squid || true
+          test -x /usr/sbin/squid
+      - run: 'echo "AB role=candidate outcome=${{ steps.i.outcome }}"'

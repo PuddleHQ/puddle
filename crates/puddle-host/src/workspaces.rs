@@ -1160,8 +1160,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     key,
                     format!("Puddle could not update the editor's file in {name}"),
                     format!(
-                        "{path} was left as it is: {why}. The editor opens the volume root \
-                         until the file is fixed or deleted."
+                        "{path} was left as it is: {why}. The editor opens it as it is, or \
+                         the volume root when it lists no folder, until the file is fixed or \
+                         deleted."
                     ),
                 )
                 .about(name.clone()),

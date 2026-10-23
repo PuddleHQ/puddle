@@ -70,7 +70,9 @@ jobs:
           ci/fetch-code-server.sh "$RUNNER_TEMP/code-server"
           echo "PUDDLE_CODE_SERVER_DIR=$RUNNER_TEMP/code-server" >> "$GITHUB_ENV"
       - name: guest agent (static musl build)
-        run: echo "PUDDLE_AGENT_BIN=$(ci/build-agent.sh --locked)" >> "$GITHUB_ENV"
+        # build-agent.sh prints a path relative to the repository root; nextest runs each test with the
+        # crate's directory as its cwd, so the host would look for it there and report the agent missing.
+        run: echo "PUDDLE_AGENT_BIN=$PWD/$(ci/build-agent.sh --locked)" >> "$GITHUB_ENV"
       - name: the radar (one test at a time, never retried)
         run: |
           PUDDLE_VM_PREFIX="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \

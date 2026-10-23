@@ -2,13 +2,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
-#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, silent-skips, secrets, clippy, clippy-windows, deny, notices, openapi, test, doc, coverage,
+#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, silent-skips, secrets, clippy, clippy-windows, deny, advisories, notices, openapi, test, doc, coverage,
 #   coverage-ratchet, diff-coverage,
 #   ui, ui-licences, ui-audit, ui-e2e
 #   fast     = fmt typos spdx shellcheck hooks platform-literals standalone git-pins silent-skips   (pre-commit hook)
-#   all      = fast git-env secrets clippy clippy-windows deny notices openapi ui ui-licences ui-audit ui-e2e doc coverage
+#   all      = fast git-env secrets clippy clippy-windows deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage
 #              (CI, the nightly run, by hand; coverage runs the tests, and must follow `ui`: the embedded UI is built there)
-#   pre-push = every gate of `all` except ui-e2e, the slowest one (pre-push hook; CI still runs ui-e2e after the push)
+#   pre-push = every gate of `all` except ui-e2e, the slowest one, and advisories, which depends on the day's
+#              RustSec database and not on the change (pre-push hook; CI still runs ui-e2e after the push)
 #   `scripts/check.sh --list <set>` prints a set's gates, one per line, without running anything.
 # Several gates run at the same time (scripts/gate-sched.sh): after the `fast` gates, which run first and
 # stop the run on a failure, the compile-and-test gates, the UI chain (ui ui-licences ui-audit ui-e2e) and
@@ -135,7 +136,7 @@ run_gate() {
         scripts/pre-push-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
             scripts/target-names-test.sh --self-test && scripts/target-names-test.sh &&
             ci/fetch-msb-test.sh && ci/fetch-code-server-test.sh && ci/check-runtime-layout-test.sh &&
-            ci/scope-test.sh && ci/apt-setup-test.sh
+            ci/scope-test.sh && ci/apt-setup-test.sh && ci/advisories-issue-test.sh
         ;;
     git-env)
         # Through the coverage gate's build (same arguments), so it compiles no test binary of its own.
@@ -189,7 +190,11 @@ run_gate() {
         cargo xwin clippy --workspace --all-targets --all-features --locked \
             --target x86_64-pc-windows-msvc -- -D warnings
         ;;
-    deny) "$cargo" deny --locked check ;;
+    # `deny` is what a change can break; `advisories` is what a new RustSec entry can break on a day no one
+    # touched the lock file. Pull requests to develop run only `deny` (ci.yml); `advisories` runs on pull
+    # requests to main, on pushes to develop and nightly, where it also keeps one tracking issue.
+    deny) "$cargo" deny --locked check bans licenses sources ;;
+    advisories) "$cargo" deny --locked check advisories ;;
     notices)
         # Every shipped dependency has a licence entry in the third-party notices (cargo-about).
         # The verdict is a function of the dependency manifests and lock, the cargo-about config, the
@@ -309,10 +314,10 @@ run_gate() {
 
 # The gate sets, in run order. `pre-push` is derived from `all`, so a gate added to `all` is in it too.
 fast_gates="fmt typos spdx shellcheck hooks platform-literals standalone git-pins silent-skips"
-all_gates="$fast_gates git-env secrets clippy clippy-windows deny notices openapi ui ui-licences ui-audit ui-e2e doc coverage"
+all_gates="$fast_gates git-env secrets clippy clippy-windows deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage"
 pre_push_gates=
 for g in $all_gates; do
-    [ "$g" = ui-e2e ] || pre_push_gates="$pre_push_gates $g"
+    case $g in ui-e2e | advisories) ;; *) pre_push_gates="$pre_push_gates $g" ;; esac
 done
 
 # Prints the gates of a set, or of a single gate, one per line.

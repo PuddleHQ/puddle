@@ -7,12 +7,18 @@
 # job): a docs-only or UI-only change runs a light job (typos, spdx, shellcheck, standalone, secrets)
 # instead of the Rust gates, and a change with no UI-relevant path skips the UI job. Every other
 # event, and any doubt, runs everything. `linux (all gates)` accepts a skip only when `scope` said so.
+# RustSec advisories are not one of those gates: a new advisory fails every pull request at once, whatever the
+# pull request changes. The separate `advisories` job runs on pull requests to main, on pushes, nightly and by
+# hand, never on a pull request to develop (the `cargo-deny` step there checks bans, licences and sources).
 name: ci
 
 on:
   push:
     branches: [develop, main]
   pull_request:
+  # The nightly runs only the `advisories` job (every other job skips on this event) and keeps its tracking issue.
+  schedule:
+    - cron: "30 5 * * *"
   workflow_dispatch:
 
 permissions:
@@ -22,8 +28,9 @@ permissions:
 # commit that is no longer the head). develop and main runs are never cancelled: every commit there gets a
 # finished run, so a regression cannot land unseen. They get one group per commit, because a group also
 # keeps only one pending run (a queued run is dropped for a newer one even with cancel-in-progress false).
+# The event is part of the group, so the nightly never replaces a push run of the same commit.
 concurrency:
-  group: ci-${{ (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main') && github.sha || github.ref }}
+  group: ci-${{ (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main') && format('{0}-{1}', github.sha, github.event_name) || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/develop' && github.ref != 'refs/heads/main' }}
 
 env:
@@ -43,6 +50,7 @@ jobs:
   # only ci/, so it costs a few seconds.
   scope:
     name: scope (changed files)
+    if: ${{ github.event_name != 'schedule' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -67,7 +75,7 @@ jobs:
   rust:
     name: linux (Rust and repository gates)
     needs: scope
-    if: ${{ !cancelled() && needs.scope.outputs.ci_rust != 'false' }}
+    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.scope.outputs.ci_rust != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -193,7 +201,7 @@ jobs:
       - name: clippy (windows-msvc, cross-checked)
         if: ${{ !cancelled() }}
         run: scripts/check.sh clippy-windows
-      - name: cargo-deny
+      - name: cargo-deny (bans, licences, sources; advisories run in their own job)
         if: ${{ !cancelled() }}
         run: scripts/check.sh deny
       - name: licence notices (cargo-about)
@@ -275,7 +283,7 @@ jobs:
   ui:
     name: linux (UI gates)
     needs: scope
-    if: ${{ !cancelled() && needs.scope.outputs.ui != 'false' }}
+    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.scope.outputs.ui != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -343,14 +351,42 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
+  # RustSec advisories (`scripts/check.sh advisories`). The result job needs it, but it skips on a pull request to
+  # develop by its own event rule (not a scope verdict; the result job accepts a skip of a job it does not scope), so
+  # a new advisory fails no pull request to develop. It runs where the answer matters: a release path (pull request
+  # to main, where it fails `linux (all gates)`), every push to develop and main, the nightly (which the result job
+  # skips) and by hand. The nightly also opens, rewrites or closes the tracking issue (ci/advisories-issue.sh).
+  advisories:
+    name: advisories (RustSec)
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.base.ref == 'main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
+      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+        with:
+          tool: cargo-deny@0.20.2
+      - name: cargo-deny advisories
+        run: scripts/check.sh advisories
+      - name: tracking issue (nightly only)
+        if: ${{ !cancelled() && github.event_name == 'schedule' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ci/advisories-issue.sh
+
   # One stable result for the jobs above.
   # The develop ruleset requires it by this name: a rename changes the ruleset in the same change.
   # On a pull request a job may be skipped only when `scope` said it was not needed (ci/scope.sh
   # verdict); a failed `scope` job leaves its outputs empty, which runs everything.
   linux:
     name: linux (all gates)
-    needs: [scope, rust, light, ui]
-    if: ${{ always() }}
+    needs: [scope, rust, light, ui, advisories]
+    if: ${{ always() && github.event_name != 'schedule' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

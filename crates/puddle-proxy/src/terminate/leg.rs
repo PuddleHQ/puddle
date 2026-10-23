@@ -52,6 +52,9 @@ const MAX_UPSTREAM_HEADER_LIST: u32 = 64 * 1024;
 pub(crate) struct H1Conn {
     pub(crate) sender: http1::SendRequest<UpBody>,
     driver: JoinHandle<()>,
+    /// The place this socket holds in the workspace's connection limit, when it is one more than
+    /// the guest connection's own.
+    _slot: Option<OwnedSemaphorePermit>,
 }
 
 impl Drop for H1Conn {
@@ -117,6 +120,16 @@ fn busy_refusal(host: impl std::fmt::Display) -> Refusal {
     )
 }
 
+/// The workspace has no room for one more connection to the server.
+fn over_limit(host: impl std::fmt::Display) -> Refusal {
+    Refusal::new(
+        "503 Service Unavailable",
+        format!("too many open connections from this workspace; none left for another to {host}"),
+    )
+    .header("retry-after", "1")
+    .coded("connection_limit")
+}
+
 /// A connection and what the audit learns from making it.
 pub(crate) struct Made {
     pub(crate) conn: Connected,
@@ -175,7 +188,11 @@ pub(crate) async fn connect(cx: &Context, alpn: &[&[u8]]) -> Result<Made, Refusa
                     tracing::debug!(error = %err, "upstream connection ended");
                 }
             });
-            Connected::H1(H1Conn { sender, driver })
+            Connected::H1(H1Conn {
+                sender,
+                driver,
+                _slot: None,
+            })
         }
         Proto::H2 => {
             let (sender, connection) = http2::Builder::new(TokioExecutor::new())
@@ -200,7 +217,9 @@ pub(crate) async fn connect(cx: &Context, alpn: &[&[u8]]) -> Result<Made, Refusa
 }
 
 /// The HTTP/1.1 connections an HTTP/2 guest connection uses toward an HTTP/1.1 server: idle ones
-/// are kept for the next stream, and at most [`MAX_POOLED`] exist at once.
+/// are kept for the next stream, and at most [`MAX_POOLED`] exist at once. The first is the guest
+/// connection's own; each further socket takes a place in the workspace's connection limit for as
+/// long as it exists, so a pool is not a way around that limit.
 #[derive(Clone)]
 pub(crate) struct H1Pool {
     inner: Arc<PoolInner>,
@@ -209,15 +228,19 @@ pub(crate) struct H1Pool {
 struct PoolInner {
     idle: Mutex<Vec<H1Conn>>,
     permits: Arc<Semaphore>,
+    /// The workspace's connection limit.
+    connections: Arc<Semaphore>,
 }
 
 impl H1Pool {
-    /// A pool that starts with the already verified `first`.
-    pub(crate) fn new(first: H1Conn) -> Self {
+    /// A pool that starts with the already verified `first`; `connections` is the workspace's
+    /// connection limit.
+    pub(crate) fn new(first: H1Conn, connections: Arc<Semaphore>) -> Self {
         Self {
             inner: Arc::new(PoolInner {
                 idle: Mutex::new(vec![first]),
                 permits: Arc::new(Semaphore::new(MAX_POOLED)),
+                connections,
             }),
         }
     }
@@ -248,7 +271,11 @@ impl H1Pool {
                 return Ok(Lease::new(conn, self, permit));
             }
         }
-        let conn = connect(cx, &[ALPN_HTTP11]).await?.conn.into_h1()?;
+        let slot = Arc::clone(&self.inner.connections)
+            .try_acquire_owned()
+            .map_err(|_| over_limit(&cx.target.host))?;
+        let mut conn = connect(cx, &[ALPN_HTTP11]).await?.conn.into_h1()?;
+        conn._slot = Some(slot);
         Ok(Lease::new(conn, self, permit))
     }
 }

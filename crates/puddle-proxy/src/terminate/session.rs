@@ -21,6 +21,7 @@ use super::inject::{
 use super::leg::{self, BoxError, Connected, H1Conn, UpBody};
 use super::request::{self, Parsed};
 use super::stand_in::Swapped;
+use super::streams::Activity;
 use super::{Termination, h2, response, ws};
 use crate::http::{self, HeadError};
 use crate::proxy::{ClientReader, Proxy, ProxyConfig, Refusal, refuse};
@@ -83,6 +84,9 @@ pub(crate) struct Outcome {
     pub(crate) certificate_refused: bool,
     /// The code of the first refusal the credential rules gave a request (`x-puddle-blocked`).
     pub(crate) refused: Option<&'static str>,
+    /// The code of the limit that ended the connection or cut one of its streams or pipes
+    /// (`limit:<code>`), when one did.
+    pub(crate) ended: Option<&'static str>,
 }
 
 impl Outcome {
@@ -109,6 +113,11 @@ pub(crate) struct Context {
     pub(crate) workspace: WorkspaceName,
     pub(crate) target: Target,
     pub(crate) admitted: Admitted,
+    /// The workspace's connection limit; extra upstream sockets of one guest connection count
+    /// against it.
+    pub(crate) connections: Arc<tokio::sync::Semaphore>,
+    /// The workspace's budget of open HTTP/2 streams.
+    pub(crate) streams: Arc<tokio::sync::Semaphore>,
 }
 
 /// Terminates `reader`'s connection (a `CONNECT` whose head was just read). The guest's
@@ -611,6 +620,7 @@ where
         }
         head.extend_from_slice(b"\r\n");
         let host = &self.cx.target.host;
+        let idle = self.cx.proxy.config.websocket_idle_timeout;
         let piped = async {
             self.writer
                 .write_all(&head)
@@ -623,7 +633,10 @@ where
                 .ok()?;
             // Bytes the guest sent right behind its handshake are still in the reader's buffer.
             let mut guest = tokio::io::join(&mut self.reader, &mut self.writer);
-            ws::splice(&mut guest, upgraded).await;
+            let activity = Arc::new(Activity::new(idle, Arc::default()));
+            if ws::splice(&mut guest, upgraded, &activity, idle).await {
+                self.outcome.ended.get_or_insert(super::streams::ended::WEBSOCKET_IDLE);
+            }
             Some(())
         }
         .await;

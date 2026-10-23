@@ -6,12 +6,20 @@
 //! agrees (`101` on HTTP/1.1, `2xx` on HTTP/2), the two connections become a byte pipe: what the
 //! frames mean is none of the proxy's business.
 
+use std::io;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context as TaskContext, Poll};
+use std::time::Duration;
+
 use ::http::header::{HeaderMap, HeaderName, HeaderValue};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+
+use super::streams::Activity;
 
 /// The GUID RFC 6455 §1.3 mixes into the key.
 const GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -66,15 +74,93 @@ pub(crate) fn is_upgrade_request(connection_tokens: &[String], upgrade_values: &
         && matches!(upgrade_values, [one] if one.trim().eq_ignore_ascii_case("websocket"))
 }
 
-/// Pipes the guest's side to the server's until either ends.
-pub(crate) async fn splice<G>(guest: &mut G, upstream: Upgraded)
+/// Pipes the guest's side to the server's until either ends, or until no byte has moved in either
+/// direction for `idle` (`true`): a pipe has no protocol the proxy reads, so silence is the only
+/// sign of a peer that is gone without a close. `activity` is touched by every byte.
+pub(crate) async fn splice<G>(
+    guest: &mut G,
+    upstream: Upgraded,
+    activity: &Arc<Activity>,
+    idle: Duration,
+) -> bool
 where
     G: AsyncRead + AsyncWrite + Unpin,
 {
-    let mut upstream = TokioIo::new(upstream);
-    let _ = tokio::io::copy_bidirectional(guest, &mut upstream)
-        .await
-        .inspect_err(|err| tracing::debug!(error = %err, "WebSocket ended with an error"));
+    let mut guest = Moving::new(guest, activity);
+    let mut upstream = Moving::new(TokioIo::new(upstream), activity);
+    let copy = tokio::io::copy_bidirectional(&mut guest, &mut upstream);
+    let silent = async {
+        loop {
+            let quiet = activity.quiet_for();
+            if quiet >= idle {
+                return;
+            }
+            tokio::time::sleep(idle - quiet).await;
+        }
+    };
+    tokio::select! {
+        ended = copy => {
+            let _ = ended.inspect_err(|err| tracing::debug!(error = %err, "WebSocket ended with an error"));
+            false
+        }
+        () = silent => {
+            activity.note_limit(super::streams::ended::WEBSOCKET_IDLE);
+            tracing::info!(idle_secs = idle.as_secs(), "a WebSocket moved no byte for too long and was closed");
+            true
+        }
+    }
+}
+
+/// A stream that notes every byte that passes through it.
+struct Moving<S> {
+    inner: S,
+    activity: Arc<Activity>,
+}
+
+impl<S> Moving<S> {
+    fn new(inner: S, activity: &Arc<Activity>) -> Self {
+        Self {
+            inner,
+            activity: Arc::clone(activity),
+        }
+    }
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for Moving<S> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let before = buf.filled().len();
+        let polled = Pin::new(&mut self.inner).poll_read(cx, buf);
+        if matches!(polled, Poll::Ready(Ok(()))) && buf.filled().len() > before {
+            self.activity.touch();
+        }
+        polled
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for Moving<S> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let polled = Pin::new(&mut self.inner).poll_write(cx, buf);
+        if matches!(polled, Poll::Ready(Ok(n)) if n > 0) {
+            self.activity.touch();
+        }
+        polled
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
 }
 
 /// The header `name` of `headers` as text, if there is exactly one.

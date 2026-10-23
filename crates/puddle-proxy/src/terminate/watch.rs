@@ -21,6 +21,8 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 // clock, which a test can hold still.
 use tokio::time::{Instant, Sleep};
 
+use super::streams::LimitHit;
+
 /// Control frames the guest may send in [`WINDOW`]. Real clients send a handful per second.
 pub(crate) const MAX_CONTROL_FRAMES: usize = 1000;
 
@@ -51,6 +53,14 @@ pub(crate) enum Violation {
 }
 
 impl Violation {
+    /// The audit's `limit:` code.
+    fn code(self) -> &'static str {
+        match self {
+            Self::HeaderBlockTooSlow => "header_block_too_slow",
+            Self::ControlFrameFlood => "control_frame_flood",
+        }
+    }
+
     fn message(self) -> &'static str {
         match self {
             Self::HeaderBlockTooSlow => "HTTP/2 header block not completed in time",
@@ -198,20 +208,23 @@ pub(crate) struct Watch<S> {
     frames: Frames,
     header_timeout: Duration,
     deadline: Option<Pin<Box<Sleep>>>,
+    hit: LimitHit,
 }
 
 impl<S> Watch<S> {
-    pub(crate) fn new(inner: S, header_timeout: Duration) -> Self {
+    pub(crate) fn new(inner: S, header_timeout: Duration, hit: LimitHit) -> Self {
         Self {
             inner,
             frames: Frames::new(),
             header_timeout,
             deadline: None,
+            hit,
         }
     }
 }
 
-fn violation(why: Violation) -> io::Error {
+fn violation(why: Violation, hit: &LimitHit) -> io::Error {
+    let _ = hit.set(why.code());
     tracing::info!(reason = why.message(), "guest HTTP/2 connection ended");
     io::Error::new(io::ErrorKind::InvalidData, why.message())
 }
@@ -228,7 +241,7 @@ impl<S: AsyncRead + Unpin> AsyncRead for Watch<S> {
             Poll::Ready(Ok(())) => {
                 let fresh = buf.filled().get(before..).unwrap_or_default();
                 if let Err(why) = this.frames.observe(fresh, Instant::now()) {
-                    return Poll::Ready(Err(violation(why)));
+                    return Poll::Ready(Err(violation(why, &this.hit)));
                 }
                 match (this.frames.block_open_since(), this.deadline.is_some()) {
                     (Some(_), false) => {
@@ -244,7 +257,7 @@ impl<S: AsyncRead + Unpin> AsyncRead for Watch<S> {
                 if let Some(deadline) = this.deadline.as_mut()
                     && deadline.as_mut().poll(cx).is_ready()
                 {
-                    return Poll::Ready(Err(violation(Violation::HeaderBlockTooSlow)));
+                    return Poll::Ready(Err(violation(Violation::HeaderBlockTooSlow, &this.hit)));
                 }
                 Poll::Pending
             }
@@ -390,7 +403,7 @@ mod tests {
     #[tokio::test]
     async fn a_read_error_of_the_connection_is_passed_on_as_it_is() {
         use tokio::io::AsyncReadExt as _;
-        let mut watched = Watch::new(Broken, Duration::from_secs(1));
+        let mut watched = Watch::new(Broken, Duration::from_secs(1), LimitHit::default());
         let err = watched.read(&mut [0_u8; 16]).await.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::ConnectionReset);
     }

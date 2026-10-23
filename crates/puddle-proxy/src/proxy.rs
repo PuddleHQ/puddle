@@ -73,6 +73,20 @@ pub struct ProxyConfig {
     /// Name lookups (of allowed names) one workspace may run at once. A lookup over it waits up
     /// to `lookup_timeout` for a free slot; after that the stub gets `SERVFAIL`.
     pub max_lookups_per_workspace: usize,
+    /// HTTP/2 streams one workspace may have open at once across its terminated connections.
+    /// A stream over it gets a `503`. Each open stream can hold up to a flow-control window of
+    /// the guest's data, so this is also the ceiling of the memory hostile guests can pin.
+    pub max_h2_streams_per_workspace: usize,
+    /// How long an HTTP/2 stream of a terminated connection may move no frame in either direction
+    /// before it is reset. A watch or event stream is quiet for long stretches, so this is far
+    /// above the body-stall timeout of HTTP/1.1; the connection's ping catches a dead peer sooner.
+    pub stream_idle_timeout: Duration,
+    /// How long an agreed WebSocket of a terminated connection may move no byte in either
+    /// direction before it is closed.
+    pub websocket_idle_timeout: Duration,
+    /// How long a terminated HTTP/2 connection may take to end after the proxy asked it to shut
+    /// down (idle too long, or a stream that would not give up) before it is dropped.
+    pub shutdown_grace: Duration,
 }
 
 impl Default for ProxyConfig {
@@ -90,6 +104,10 @@ impl Default for ProxyConfig {
             body_idle_timeout: Duration::from_secs(120),
             lookup_timeout: Duration::from_secs(3),
             max_lookups_per_workspace: 128,
+            max_h2_streams_per_workspace: 2048,
+            stream_idle_timeout: Duration::from_secs(3600),
+            websocket_idle_timeout: Duration::from_secs(3600),
+            shutdown_grace: Duration::from_secs(20),
         }
     }
 }
@@ -100,6 +118,28 @@ impl ProxyConfig {
     pub fn with_lookup_limits(mut self, timeout: Duration, max_per_workspace: usize) -> Self {
         self.lookup_timeout = timeout;
         self.max_lookups_per_workspace = max_per_workspace;
+        self
+    }
+
+    /// The default limits with another per-workspace HTTP/2 stream budget.
+    #[must_use]
+    pub fn with_max_h2_streams_per_workspace(mut self, max: usize) -> Self {
+        self.max_h2_streams_per_workspace = max;
+        self
+    }
+
+    /// The default limits with other idle limits for HTTP/2 streams and agreed WebSockets, and
+    /// another grace for a connection that was asked to shut down.
+    #[must_use]
+    pub fn with_idle_limits(
+        mut self,
+        stream: Duration,
+        websocket: Duration,
+        shutdown_grace: Duration,
+    ) -> Self {
+        self.stream_idle_timeout = stream;
+        self.websocket_idle_timeout = websocket;
+        self.shutdown_grace = shutdown_grace;
         self
     }
 
@@ -286,6 +326,7 @@ impl Proxy {
         WorkspaceHandler {
             proxy: Arc::clone(self),
             streams: Arc::new(Semaphore::new(self.config.max_streams_per_workspace)),
+            h2_streams: Arc::new(Semaphore::new(self.config.max_h2_streams_per_workspace)),
             lookups: Arc::new(Semaphore::new(self.config.max_lookups_per_workspace)),
             workspace,
         }
@@ -399,6 +440,7 @@ impl std::fmt::Debug for TerminationConfig {
 pub struct WorkspaceHandler {
     pub(crate) proxy: Arc<Proxy>,
     streams: Arc<Semaphore>,
+    h2_streams: Arc<Semaphore>,
     pub(crate) lookups: Arc<Semaphore>,
     pub(crate) workspace: WorkspaceName,
 }
@@ -555,7 +597,7 @@ async fn serve(handler: &WorkspaceHandler, stream: GuestStream) {
     } else if ssh::announced(&head) || ssh::started(reader.buffer()) {
         request = request.with_protocol(ProtocolHint::Ssh);
     }
-    let mut event = relay(proxy, reader, &request, &head, &target, path, body).await;
+    let mut event = relay(handler, reader, &request, &head, &target, path, body).await;
     event.bytes_up = counts.read();
     event.bytes_down = counts.written();
     proxy.record(event).await;
@@ -606,7 +648,7 @@ async fn refuse_over_limit(handler: &WorkspaceHandler, mut reader: GuestReader) 
 /// Decides, connects and relays one request whose destination is known; returns what the audit
 /// records about it (bytes are filled in by the caller once the stream is gone).
 async fn relay(
-    proxy: &Arc<Proxy>,
+    handler: &WorkspaceHandler,
     mut reader: GuestReader,
     request: &EgressRequest,
     head: &Head,
@@ -614,6 +656,7 @@ async fn relay(
     path: Option<String>,
     body: Body,
 ) -> ConnectionEvent {
+    let proxy = &handler.proxy;
     let (admitted, mut event) = admit(proxy, request).await;
     if let Some(path) = &path {
         event.http = Some(HttpRequestLine::new(head.method.as_str(), path));
@@ -638,6 +681,8 @@ async fn relay(
             workspace: request.workspace.clone(),
             target: target.clone(),
             admitted,
+            connections: Arc::clone(&handler.streams),
+            streams: Arc::clone(&handler.h2_streams),
         });
         let done = terminate::run(cx, reader).await;
         event.http = done.http;
@@ -653,6 +698,9 @@ async fn relay(
         } else if done.certificate_refused {
             // Puddle blocked nothing: the rule's decision stands and the tool refused.
             event.reason = ConnectionReason::GuestTlsRejected;
+        } else if let Some(code) = done.ended {
+            // Puddle blocked nothing at the start: the rule's decision stands, a limit cut it short.
+            event.reason = ConnectionReason::LimitEnded(code);
         } else if let Some(code) = done.refused {
             event.decision = ConnectionDecision::Blocked;
             event.reason = ConnectionReason::Refused(code);

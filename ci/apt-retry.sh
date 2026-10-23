@@ -17,6 +17,11 @@ status=0
 timeout -k 10 "$first" "$@" || status=$?
 [ "$status" -ne 0 ] || exit 0
 echo "::warning::apt-retry: '$*' ended with status $status after at most ${first}s; retrying on archive.ubuntu.com"
-"$here/apt-setup.sh" --canonical || true
-[ -n "${APT_RETRY_NO_REPAIR:-}" ] || sudo dpkg --configure -a || true
-exec timeout -k 10 "$second" "$@"
+"$here/apt-setup.sh" --canonical ||
+    echo "::warning::apt-retry: 'apt-setup.sh --canonical' failed; retrying with the current mirror list"
+[ -n "${APT_RETRY_NO_REPAIR:-}" ] || sudo dpkg --configure -a ||
+    echo "::warning::apt-retry: 'dpkg --configure -a' failed; retrying anyway"
+status=0
+timeout -k 10 "$second" "$@" || status=$?
+[ "$status" -eq 0 ] || echo "::error::apt-retry: '$*' failed again (status $status) on archive.ubuntu.com after ${second}s"
+exit "$status"

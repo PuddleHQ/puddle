@@ -2350,6 +2350,12 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     .ok_or_else(|| not_found(id))?
             };
             let exists = self.follow_start_folder(&record).await;
+            if record.status != WorkspaceStatus::Running {
+                // A stopped workspace is looked at when it starts; the old problem ends now.
+                self.inner
+                    .problems
+                    .clear(&problem_key("start-folder", &record.name));
+            }
             Ok(StartFolderChange::new(record, exists))
         })
     }

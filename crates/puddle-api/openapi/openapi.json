@@ -7110,6 +7110,7 @@
             "description": "Manage a checkout that is already on the volume (\"Manage this\"). Puddle reads its remote\nagain at that moment and changes nothing in the checkout.",
             "required": [
               "directory",
+              "url",
               "kind"
             ],
             "properties": {
@@ -7144,6 +7145,10 @@
                   "null"
                 ],
                 "description": "As for a clone."
+              },
+              "url": {
+                "type": "string",
+                "description": "The address the checkout list showed for it. Puddle reads the remote again and refuses\nwith 409 when it names another repository."
               }
             }
           }

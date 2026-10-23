@@ -1409,13 +1409,34 @@ async fn managing_a_checkout_reads_its_remote_again_and_changes_nothing_in_it() 
     assert_eq!(legacy["entry"], serde_json::Value::Null);
     assert_eq!(legacy["manage"]["offered"], true);
     rig.guest.put_checkout("legacy", MOVED);
+
+    // The user saw the old address: a swapped remote is refused, naming both, and adds nothing.
+    let swapped = add_and_wait(
+        &api,
+        &mut events,
+        "adds",
+        json!({"kind": "existing", "url": "https://example.org/acme/legacy.git", "directory": "legacy"}),
+    )
+    .await;
+    assert_eq!(swapped.status, 409, "{}", swapped.body);
+    assert!(
+        swapped.body.contains("legacy.git") && swapped.body.contains(MOVED),
+        "{}",
+        swapped.body
+    );
+    let record = api.get("/api/workspaces/adds").await.json();
+    assert_eq!(
+        record["repositories"].as_array().unwrap().len(),
+        1,
+        "{record}"
+    );
     let listings = rig.guest.listings.lock().unwrap().len();
 
     let reply = add_and_wait(
         &api,
         &mut events,
         "adds",
-        json!({"kind": "existing", "directory": "legacy"}),
+        json!({"kind": "existing", "url": MOVED, "directory": "legacy"}),
     )
     .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
@@ -1462,7 +1483,7 @@ async fn managing_a_checkout_reads_its_remote_again_and_changes_nothing_in_it() 
             &api,
             &mut events,
             "adds",
-            json!({"kind": "existing", "directory": dir}),
+            json!({"kind": "existing", "url": "https://example.org/acme/x.git", "directory": dir}),
         )
         .await;
         assert_eq!(refused.status, 409, "{dir}: {}", refused.body);
@@ -1507,7 +1528,7 @@ async fn removing_an_entry_keeps_the_checkout_its_table_row_and_its_identity() {
         &api,
         &mut events,
         "adds",
-        json!({"kind": "existing", "directory": "api"}),
+        json!({"kind": "existing", "url": "https://example.org/acme/api.git", "directory": "api"}),
     )
     .await;
     assert_eq!(back.status, 200, "{}", back.body);
@@ -1554,7 +1575,7 @@ async fn a_workspace_that_is_cloning_cannot_be_stopped_or_asked_for_a_second_clo
         &api,
         &mut events,
         "adds",
-        json!({"kind": "existing", "directory": "legacy"}),
+        json!({"kind": "existing", "url": "https://example.org/acme/legacy.git", "directory": "legacy"}),
     )
     .await;
     assert_eq!(second.status, 409, "{}", second.body);
@@ -1698,7 +1719,7 @@ async fn the_listing_says_why_a_remote_is_not_shown_and_a_checkout_it_cannot_rea
         &api,
         &mut events,
         "adds",
-        json!({"kind": "existing", "directory": "broken"}),
+        json!({"kind": "existing", "url": "https://example.org/acme/broken.git", "directory": "broken"}),
     )
     .await;
     assert_eq!(refused.status, 409, "{}", refused.body);

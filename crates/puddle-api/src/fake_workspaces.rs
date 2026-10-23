@@ -452,7 +452,7 @@ impl FakeWorkspaces {
     async fn manage_existing(
         &self,
         id: &WorkspaceId,
-        directory: &CheckoutDir,
+        (directory, seen): (&CheckoutDir, &crate::workspaces::RepoUrl),
         identity: Option<puddle_store::IdentityId>,
         pull: bool,
         push: bool,
@@ -499,6 +499,7 @@ impl FakeWorkspaces {
                 .and_then(|u| {
                     crate::workspaces::RepoUrl::parse(u).map_err(WorkspaceError::Conflict)
                 })?;
+            crate::checkouts::check_seen(directory, seen, &url)?;
             let repository = crate::workspaces::Repository {
                 url,
                 directory: directory.clone(),
@@ -932,11 +933,12 @@ impl WorkspaceService for FakeWorkspaces {
                 AddRepository::Clone(new) => self.clone_into(id, new, true, git).await,
                 AddRepository::Existing {
                     directory,
+                    seen,
                     identity,
                     pull,
                     push,
                 } => {
-                    self.manage_existing(id, &directory, identity, pull, push, git)
+                    self.manage_existing(id, (&directory, &seen), identity, pull, push, git)
                         .await
                 }
             }

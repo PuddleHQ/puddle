@@ -67,7 +67,7 @@ mod workspaces;
 
 pub use checkouts::{
     AddRepository, Checkout, Checkouts, Found, FoundList, Manage, RemoteNote, check_addition,
-    checkouts_view, why_no_remote,
+    check_seen, checkouts_view, why_no_remote,
 };
 pub use credentials::{
     Check, CredentialService, CredentialsError, FakeCredentials, HostCredentials, NoCredentials,

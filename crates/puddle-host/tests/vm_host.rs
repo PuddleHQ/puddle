@@ -440,7 +440,7 @@ async fn vm_host_manage_lists_adds_and_removes_checkouts_in_the_real_guest() {
     let managed = api
         .post(
             &format!("/api/workspaces/{name}/repositories"),
-            &json!({"kind": "existing", "directory": "manual"}).to_string(),
+            &json!({"kind": "existing", "url": manual, "directory": "manual"}).to_string(),
         )
         .await;
     assert_eq!(managed.status, 200, "{}", managed.body);
@@ -451,7 +451,7 @@ async fn vm_host_manage_lists_adds_and_removes_checkouts_in_the_real_guest() {
     let ssh = api
         .post(
             &format!("/api/workspaces/{name}/repositories"),
-            &json!({"kind": "existing", "directory": "shell"}).to_string(),
+            &json!({"kind": "existing", "url": manual, "directory": "shell"}).to_string(),
         )
         .await;
     assert_eq!(ssh.status, 409, "{}", ssh.body);

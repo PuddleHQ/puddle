@@ -1,34 +1,46 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
- * Design tokens: neutral, restyled by changing this file only (the final look is still open).
- * Components use these custom properties and never a literal colour.
+ * Design tokens. These are the recommended defaults ("Pond": calm water blues, duck yellow only for
+ * what needs you); they are not a locked palette, a theme replaces any of them by setting the same
+ * custom properties on the root. Components use these properties and never a literal colour.
  *
  * Light and dark come from one declaration each via light-dark(); `color-scheme` follows the OS
- * unless the user overrides it (data-theme="light" | "dark" on <html>, see theme.ts).
+ * unless the user overrides it (data-theme="light" | "dark" on <html>, see theme.ts). Every text,
+ * UI-part and focus pair is checked against WCAG 2.2 AA by tokens.test.ts, so a change here that
+ * breaks a ratio fails the unit tests.
  */
 :root {
   color-scheme: light dark;
 
-  --color-bg: light-dark(#f6f6f8, #131417);
-  --color-surface: light-dark(#ffffff, #1c1d21);
-  --color-surface-raised: light-dark(#eef0f3, #26282d);
-  --color-border: light-dark(#8a8f99, #6b707a);
-  --color-border-subtle: light-dark(#d5d8de, #34363d);
-  --color-text: light-dark(#1a1b1f, #ececf0);
-  --color-text-muted: light-dark(#52565e, #a9adb6);
-  --color-accent: light-dark(#1b5bc9, #7ba7ff);
-  --color-accent-contrast: light-dark(#ffffff, #0c1424);
-  --color-accent-subtle: light-dark(#e3ecfb, #1f2a42);
-  --color-danger: light-dark(#b3261e, #ff8f85);
-  --color-success: light-dark(#18703a, #6fd391);
-  --color-warning: light-dark(#8a5a00, #f0b84f);
-  --color-focus: light-dark(#1b5bc9, #9bbcff);
+  --color-bg: light-dark(#f4f7f9, #0b171d);
+  --color-surface: light-dark(#ffffff, #11222a);
+  --color-surface-raised: light-dark(#edf2f5, #172c36);
+  --color-border: light-dark(#6f8795, #6a8795);
+  --color-border-subtle: light-dark(#d3dde3, #26404d);
+  --color-text: light-dark(#12222b, #e2edf2);
+  --color-text-muted: light-dark(#4a6373, #9db4c0);
+  --color-accent: light-dark(#0a6a85, #52b6d4);
+  --color-accent-contrast: light-dark(#ffffff, #03202a);
+  --color-accent-subtle: light-dark(#dceef4, #133746);
+  --color-danger: light-dark(#b42330, #ff8088);
+  --color-success: light-dark(#1c7a4b, #52c78f);
+  --color-warning: light-dark(#8a5a00, #f2c063);
+  --color-focus: light-dark(#0a6a85, #52b6d4);
 
+  /* The duck: the mark, and the one colour that means "needs you". */
+  --color-duck: #f6c431;
+  --color-duck-ink: #3a2c00;
+  --color-duck-soft: light-dark(#fff4cf, #3a3110);
+  --color-beak: #e8742a;
+  --color-water: light-dark(#8cc9dc, #2a6f86);
+
+  /* Fonts are bundled (fonts.css), so Puddle looks the same on every OS. */
   --font-sans:
-    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
-    sans-serif;
+    "Inter Variable", system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
   --font-mono:
-    ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+    "JetBrains Mono Variable", ui-monospace, "Cascadia Code", "SF Mono", Menlo,
+    Consolas, monospace;
 
   --text-sm: 0.875rem;
   --text-md: 1rem;

@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import "#lib/theme/fonts.css";
   import "#lib/theme/tokens.css";
   import "#lib/theme/base.css";
   import { onMount } from "svelte";

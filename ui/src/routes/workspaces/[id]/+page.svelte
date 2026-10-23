@@ -4,6 +4,7 @@
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
   import { page } from "$app/state";
+  import RepositoriesSection from "#lib/components/RepositoriesSection.svelte";
   import StatusChip from "#lib/components/StatusChip.svelte";
   import VolumeMissingNotice from "#lib/components/VolumeMissingNotice.svelte";
   import { api } from "#lib/api/client.ts";
@@ -126,13 +127,13 @@
         </dd>
         <dt>Image</dt>
         <dd class="mono">{workspace.image}</dd>
-        <dt>Repository</dt>
-        <dd class="mono">{workspace.repositories[0]?.url ?? "None"}</dd>
       </dl>
       {#if workspace.status === "volume_missing" && workspace.busy === null}
         <VolumeMissingNotice name={workspace.name} detail />
       {/if}
     </section>
+
+    <RepositoriesSection {workspace} />
 
     <section class="card" aria-labelledby="resources-h">
       <h2 id="resources-h">Resources</h2>

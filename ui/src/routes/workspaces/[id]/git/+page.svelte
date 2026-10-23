@@ -46,13 +46,29 @@
   const available = $derived(
     identities.identities.filter((i) => !attachedIds.includes(i.id)),
   );
-  // The workspace's own repository, and whether any identity on it covers that host and owner.
-  const ownUrl = $derived(workspace?.repositories[0]?.url);
-  const own = $derived(ownUrl === undefined ? null : parseRepoUrl(ownUrl));
+  // The workspace's own repositories (its list), read as the repository table spells them.
+  const listed = $derived(
+    (workspace?.repositories ?? []).map((entry) => ({
+      entry,
+      parsed: parseRepoUrl(entry.url),
+    })),
+  );
+  // Listed addresses Puddle could not read, so it listed no repository and chose no identity.
+  const unreadable = $derived(
+    git && git.identities.length === 0 && git.repos.length === 0
+      ? listed.flatMap((l) => (l.parsed.ok ? [] : [{ ...l, parsed: l.parsed }]))
+      : [],
+  );
+  // One entry for each listed repository that no identity on the workspace covers.
   const uncovered = $derived(
-    git && own?.ok && covering(git.identities, own.host, own.owner) === null
-      ? own
-      : null,
+    git
+      ? listed.flatMap((l) =>
+          l.parsed.ok &&
+          covering(git.identities, l.parsed.host, l.parsed.owner) === null
+            ? [{ entry: l.entry, parsed: l.parsed }]
+            : [],
+        )
+      : [],
   );
 
   async function attach(event: SubmitEvent) {
@@ -155,20 +171,20 @@
       covers the repository's owner. When a repository's remotes match several
       identities, the first one here is the commit author.
     </p>
-    {#if own && !own.ok && git.identities.length === 0 && git.repos.length === 0}
+    {#each unreadable as { entry, parsed } (entry.directory)}
       <p class="warn" role="status">
-        Puddle couldn't read this workspace's repository address, so it listed
-        no repository and chose no identity. {own.message} Add them here.
+        Puddle couldn't read the address of {entry.directory}, so it listed no
+        repository and chose no identity. {parsed.message} Add them here.
       </p>
-    {/if}
-    {#if uncovered}
+    {/each}
+    {#each uncovered as { entry, parsed } (entry.directory)}
       <p class="warn" role="status">
-        No identity here covers {uncovered.host}/{uncovered.owner}, so a private
-        clone or push of this workspace's repository will fail. Add one that
-        covers it, or give an identity on the
+        No identity here covers {parsed.host}/{parsed.owner}, so a private clone
+        or push of {entry.directory} will fail. Add one that covers it, or give an
+        identity on the
         <a href="/identities">Identities page</a> that coverage.
       </p>
-    {/if}
+    {/each}
     {#if git.identities.length === 0}
       <p class="muted">
         No identity yet. Git requests go out without a sign-in, which works for

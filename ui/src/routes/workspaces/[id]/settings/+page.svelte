@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import StartFolderSetting from "#lib/components/StartFolderSetting.svelte";
   import UnknownFields from "#lib/components/UnknownFields.svelte";
   import { page } from "$app/state";
   import { LOCAL_LABELS, type LocalCategory } from "#lib/decision/local.ts";
@@ -175,6 +176,8 @@
         <p>The new login setting applies the next time the workspace starts.</p>
       {/if}
     </div>
+
+    <StartFolderSetting {workspace} />
 
     <section class="card" aria-labelledby="memory-h">
       <h2 id="memory-h">Memory</h2>

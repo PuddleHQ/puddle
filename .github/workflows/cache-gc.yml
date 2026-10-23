@@ -34,7 +34,7 @@ jobs:
         run: |
           t0=$(date +%s)
           ip=$(getent ahostsv4 azure.archive.ubuntu.com | awk 'NR==1{print $1}')
-          ci/apt-setup.sh
+          ci/apt-setup.sh | sed "s/^/AB setup: /"
           trap 'echo "AB role=candidate ip=$ip secs=$(( $(date +%s) - t0 )) runner=$RUNNER_NAME"' EXIT
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev squid 2>&1 | tee /tmp/apt.out

@@ -141,8 +141,14 @@ async fn a_name_the_proxy_does_not_hold_is_connected_to_as_it_stands() {
     let port = elsewhere.local_addr().unwrap().port();
     tokio::spawn(async move {
         let (mut conn, _) = elsewhere.accept().await.unwrap();
-        let mut buf = [0_u8; 64];
-        let _ = conn.read(&mut buf).await;
+        // Read the whole request: closing with unread bytes resets the connection, and on
+        // Windows a reset throws away the answer the client has not read yet.
+        let mut head = Vec::new();
+        while !head.ends_with(b"\r\n\r\n") {
+            let mut byte = [0_u8; 1];
+            conn.read_exact(&mut byte).await.unwrap();
+            head.push(byte[0]);
+        }
         conn.write_all(b"HTTP/1.1 204 No Content\r\n\r\n")
             .await
             .unwrap();
@@ -154,7 +160,11 @@ async fn a_name_the_proxy_does_not_hold_is_connected_to_as_it_stands() {
     )
     .await;
     let mut text = String::new();
-    conn.read_to_string(&mut text).await.unwrap();
-    assert!(text.starts_with("HTTP/1.1 204"), "{text}");
+    let read = conn.read_to_string(&mut text).await;
+    assert!(
+        text.starts_with("HTTP/1.1 204"),
+        "read {read:?}, got {text:?}, proxy saw {:?}",
+        proxy.connects()
+    );
     assert!(proxy.connects().contains(&format!("127.0.0.1:{port}")));
 }

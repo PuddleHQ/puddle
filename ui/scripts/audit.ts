@@ -2,6 +2,8 @@
 // The `ui-audit` gate: `npm audit` on production dependencies at moderate and above, minus the
 // reviewed exceptions in audit-exceptions.json (advisory id, reason, review-by date), like
 // deny.toml's `ignore`. An exception past its date fails again, so it gets looked at.
+// `--json` (the nightly issue script, ci/advisories-issue.sh) prints the failing advisories as a JSON array on
+// stdout instead of text: exit 0 for none, 1 for some, 2 when npm could not answer.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -65,7 +67,21 @@ export function judge(
   return { failures, unused };
 }
 
+/** The findings that fail the gate: not excepted, or excepted with a review date in the past. */
+export function failing(
+  found: Advisory[],
+  exceptions: Exception[],
+  today: string,
+): Advisory[] {
+  const byId = new Map(exceptions.map((e) => [e.id, e]));
+  return found.filter((f) => {
+    const exception = byId.get(f.id);
+    return !exception || exception.review_by < today;
+  });
+}
+
 function main(): number {
+  const json = process.argv.includes("--json");
   const exceptions = JSON.parse(
     readFileSync(resolve(root, "audit-exceptions.json"), "utf8"),
   ).exceptions;
@@ -83,7 +99,11 @@ function main(): number {
   } catch (error) {
     // npm audit exits 1 when it finds something, and prints the report on stdout.
     const stdout = (error as { stdout?: string }).stdout;
-    if (!stdout) throw error;
+    if (!stdout) {
+      if (!json) throw error;
+      console.error(`ui-audit: npm audit gave no report: ${String(error)}`);
+      return 2;
+    }
     output = stdout;
   }
   const report = JSON.parse(output) as Report;
@@ -91,10 +111,19 @@ function main(): number {
     console.error(
       `ui-audit: npm audit failed: ${report.error.summary ?? JSON.stringify(report.error)}`,
     );
-    return 1;
+    return json ? 2 : 1;
   }
   const levels = new Set(["moderate", "high", "critical"]);
   const found = advisories(report).filter((a) => levels.has(a.severity));
+  if (json) {
+    const rows = failing(
+      found,
+      exceptions,
+      new Date().toISOString().slice(0, 10),
+    );
+    console.log(JSON.stringify(rows));
+    return rows.length > 0 ? 1 : 0;
+  }
   const { failures, unused } = judge(
     found,
     exceptions,

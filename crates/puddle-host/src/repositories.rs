@@ -14,9 +14,9 @@ use puddle_api::{
 
 use super::*;
 
-/// What the last listing of one workspace found, and when (epoch ms). Its lock is held while a
+/// What the last listing of one workspace found, when it started and when it ended (epoch ms). Its lock is held while a
 /// listing runs, so calls at the same moment share one.
-pub(super) type CachedListing = Arc<tokio::sync::Mutex<Option<(u64, FoundList)>>>;
+pub(super) type CachedListing = Arc<tokio::sync::Mutex<Option<(u64, u64, FoundList)>>>;
 
 fn note(n: puddle_workspace::RemoteNote) -> RemoteNote {
     match n {
@@ -74,15 +74,17 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             let problem = "the workspace is not running; start it to see its checkouts".to_owned();
             let (at, kept) = cached
                 .as_ref()
-                .map_or((None, None), |(at, l)| (Some(*at), Some(l)));
+                .map_or((None, None), |(_, at, l)| (Some(*at), Some(l)));
             return Ok(checkouts_view(false, at, Some(problem), kept, &entries));
         };
-        // A listing made while this call waited for the lock is as good as one of its own.
-        if let Some((at, kept)) = cached.as_ref()
-            && *at >= asked
+        // A listing that began after this call did, while it waited for the lock, is as good as
+        // one of its own; one that began earlier may have read the volume before a change.
+        if let Some((started, at, kept)) = cached.as_ref()
+            && *started >= asked
         {
             return Ok(checkouts_view(true, Some(*at), None, Some(kept), &entries));
         }
+        let began = self.inner.clock.now_ms();
         match self
             .inner
             .workspaces
@@ -90,9 +92,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .await
         {
             Ok(listed) => {
-                let (at, fresh) = (self.inner.clock.now_ms(), found(&listed));
+                let (started, at, fresh) = (began, self.inner.clock.now_ms(), found(&listed));
                 let view = checkouts_view(true, Some(at), None, Some(&fresh), &entries);
-                *cached = Some((at, fresh));
+                *cached = Some((started, at, fresh));
                 Ok(view)
             }
             Err(e) => {

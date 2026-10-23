@@ -225,8 +225,12 @@ impl GitHost {
             .unwrap();
         let repos = dir.path().join("repos");
         std::fs::create_dir_all(&repos).unwrap();
-        let (root, config) =
-            tls_config(&options.certificate_names, options.versions, options.valid);
+        let (root, config) = tls_config(
+            "Puddle fake git host root",
+            &options.certificate_names,
+            options.versions,
+            options.valid,
+        );
         let state = Arc::new(State {
             name: name.to_owned(),
             repos,
@@ -340,7 +344,8 @@ impl GitHost {
 }
 
 /// A root, and a server configuration for a leaf signed by it for `name`.
-fn tls_config(
+pub(super) fn tls_config(
+    root_name: &str,
     names: &[String],
     versions: Versions,
     valid: (i32, i32),
@@ -349,7 +354,7 @@ fn tls_config(
     let mut ca = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
     ca.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
     ca.distinguished_name
-        .push(rcgen::DnType::CommonName, "Puddle fake git host root");
+        .push(rcgen::DnType::CommonName, root_name);
     let ca_cert = ca.self_signed(&ca_key).unwrap();
     let issuer = rcgen::Issuer::new(ca, ca_key);
     let mut leaf = rcgen::CertificateParams::new(names.to_vec()).unwrap();
@@ -690,9 +695,10 @@ fn cgi_response(out: &[u8]) -> Reply {
         .unwrap()
 }
 
-/// A tiny HTTP `CONNECT` proxy that sends each tunnel to the address registered for the name in
-/// its target: the company proxy that is the only one who knows the fake hosts' names. Any other
-/// name is connected to as it stands. Stops when dropped.
+/// A tiny HTTP proxy that sends each `CONNECT` tunnel, and each plain-HTTP request named by an
+/// absolute URI, to the address registered for the name (or the `name:port`) in its target: the
+/// company proxy that is the only one who knows the fake hosts' names. Any other name is
+/// connected to as it stands. Stops when dropped.
 pub struct NameProxy {
     port: u16,
     names: Arc<Mutex<Vec<(String, SocketAddr)>>>,
@@ -703,6 +709,29 @@ pub struct NameProxy {
 impl Drop for NameProxy {
     fn drop(&mut self) {
         self.task.abort();
+    }
+}
+
+/// The address registered for `authority` (`host:port`): an entry for the whole authority first,
+/// then one for the bare name.
+fn held(names: &[(String, SocketAddr)], authority: &str) -> Option<SocketAddr> {
+    let name = authority.rsplit_once(':').map_or(authority, |(n, _)| n);
+    [authority, name]
+        .iter()
+        .find_map(|wanted| names.iter().find(|(n, _)| n == wanted).map(|(_, a)| *a))
+}
+
+/// The `host:port` an absolute `http://` URI names (port 80 when it has none); the text itself
+/// when it is no such URI.
+fn plain_authority(target: &str) -> String {
+    let Some(rest) = target.strip_prefix("http://") else {
+        return target.to_owned();
+    };
+    let authority = rest.split(['/', '?']).next().unwrap_or_default();
+    if authority.contains(':') {
+        authority.to_owned()
+    } else {
+        format!("{authority}:80")
     }
 }
 
@@ -732,17 +761,17 @@ impl NameProxy {
                         head.extend_from_slice(&byte);
                     }
                     let text = String::from_utf8_lossy(&head).into_owned();
-                    let authority = text
-                        .split_whitespace()
-                        .nth(1)
-                        .unwrap_or_default()
-                        .to_owned();
+                    let mut words = text.split_whitespace();
+                    let tunnel = words.next() == Some("CONNECT");
+                    let target_word = words.next().unwrap_or_default();
+                    // A plain-HTTP request names its destination in an absolute URI.
+                    let authority = if tunnel {
+                        target_word.to_owned()
+                    } else {
+                        plain_authority(target_word)
+                    };
                     lock(&seen).push(authority.clone());
-                    let wanted = authority.split(':').next().unwrap_or_default();
-                    let target = lock(&names)
-                        .iter()
-                        .find(|(n, _)| n == wanted)
-                        .map(|(_, a)| *a);
+                    let target = held(&lock(&names), &authority);
                     // A name the fake internet does not hold goes where it says, as through any
                     // open company proxy (the image pull goes through the same chain).
                     let connected = match target {
@@ -753,9 +782,13 @@ impl NameProxy {
                         let _ = client.write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n").await;
                         return;
                     };
-                    let _ = client
-                        .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
-                        .await;
+                    if tunnel {
+                        let _ = client
+                            .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
+                            .await;
+                    } else if upstream.write_all(&head).await.is_err() {
+                        return;
+                    }
                     let _ = tokio::io::copy_bidirectional(&mut client, &mut upstream).await;
                 });
             }
@@ -768,7 +801,8 @@ impl NameProxy {
         }
     }
 
-    /// Sends tunnels for `name` to `target` from now on.
+    /// Sends tunnels for `name` (or for `name:port` only, which wins over the bare name) to
+    /// `target` from now on.
     pub fn route(&self, name: &str, target: SocketAddr) {
         lock(&self.names).push((name.to_owned(), target));
     }
@@ -799,6 +833,21 @@ mod tests {
         assert_eq!(options.valid, (2008, 2012));
         let options = options.certificate_for("c.test");
         assert_eq!(options.certificate_names, ["c.test"]);
+    }
+
+    #[test]
+    fn a_plain_request_is_held_by_its_authority_and_then_by_its_name() {
+        assert_eq!(plain_authority("http://a.test/x?y"), "a.test:80");
+        assert_eq!(plain_authority("http://a.test:8080?y"), "a.test:8080");
+        assert_eq!(plain_authority("a.test:443"), "a.test:443");
+        let (one, two): (SocketAddr, SocketAddr) = (
+            "127.0.0.1:1".parse().unwrap(),
+            "127.0.0.1:2".parse().unwrap(),
+        );
+        let names = vec![("a.test".to_owned(), one), ("a.test:80".to_owned(), two)];
+        assert_eq!(held(&names, "a.test:80"), Some(two));
+        assert_eq!(held(&names, "a.test:443"), Some(one));
+        assert_eq!(held(&names, "b.test:80"), None);
     }
 
     #[test]

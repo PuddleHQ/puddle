@@ -8,6 +8,7 @@
 //! | [`Interceptor`] | a TLS-intercepting proxy with a root made for the run | `PUDDLE_MITMDUMP_BIN` |
 //! | [`NtlmProxy`] | a proxy that demands NTLM and accepts any Type 3 | `PUDDLE_MITMDUMP_BIN` |
 //! | [`PacServer`] | the web server that hands out a PAC file | nothing |
+//! | [`WebHost`] | a public website the test only needs to reach, over plain HTTP and TLS | nothing |
 //!
 //! A fixture a test cannot start because its program is missing makes `start` return `None` and
 //! print why; when the matching `PUDDLE_REQUIRE_*` variable is set (CI sets it) a missing program
@@ -29,6 +30,7 @@ mod interceptor;
 mod pac;
 #[cfg(unix)]
 mod squid;
+mod web_host;
 
 use std::net::{Ipv4Addr, TcpStream};
 use std::path::Path;
@@ -41,6 +43,7 @@ pub use interceptor::{Interceptor, NtlmLeg, NtlmProxy, Root};
 pub use pac::{PacServer, failover_pac};
 #[cfg(unix)]
 pub use squid::{Squid, SquidOptions};
+pub use web_host::{WebHost, WebOptions};
 
 /// The loopback address every fixture binds.
 pub const LOCAL: Ipv4Addr = Ipv4Addr::LOCALHOST;

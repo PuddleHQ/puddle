@@ -21,6 +21,7 @@ use std::time::Duration;
 
 use puddle_compute::{ExecRequest, Runtime, Sandbox};
 use puddle_compute_msb::MsbRuntime;
+use puddle_e2e::lab::WebOptions;
 use puddle_host::{Host, HostOptions, SHUTDOWN_STEPS, prepare};
 use puddle_secrets::{AccountName, HostName, SourceSpec};
 use puddle_store::{
@@ -34,8 +35,13 @@ use support::{Api, TestDevCert, ended, hermetic_options};
 use vm_support::start_vm_host_config;
 use vm_support::{
     HarnessPlatform, VmHost, guest, guest_within, harness_config, kill_vm, start_vm_host,
-    start_vm_host_with,
+    start_vm_host_platform, start_vm_host_with, web_internet,
 };
+
+/// The fake website's names (see `web_internet`) for the hosts a test only needs to reach, one
+/// that no identity names and one an identity names later.
+const SITE: &str = "site.test";
+const SECOND: &str = "second.test";
 
 /// A small public repository on a host the test allows.
 const REPO_HOST: &str = "github.com";
@@ -552,15 +558,21 @@ fn identity(label: &str, host: &str) -> IdentityDraft {
 #[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_ca() {
+    let internet = web_internet(
+        &[SITE, SECOND],
+        WebOptions::default(),
+        options_without_injection(),
+    )
+    .await;
     let VmHost {
         host,
         runtime,
         settings,
         ..
-    } = start_vm_host_with("ca", options_without_injection()).await;
+    } = start_vm_host_platform("ca", internet.options, &internet.platform, |_| {}).await;
     let name = format!("{}-ca", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
-    for site in ["github.com", "gitlab.com", "example.com"] {
+    for site in ["github.com", SECOND, SITE] {
         host.store()
             .add_rule(&NewRule {
                 scope: Scope::Workspace(sandbox.clone()),
@@ -597,11 +609,11 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
         .expect("a CA while it runs");
     let ca_name = format!("Puddle CA for {name}");
 
-    // github.com is decrypted and the guest trusts its certificate; example.com is spliced and
-    // shows its real issuer; gitlab.com has no identity yet, so it is spliced too.
+    // github.com is decrypted and the guest trusts its certificate; site.test is spliced and
+    // shows its real issuer; second.test has no identity yet, so it is spliced too.
     let github = guest(&runtime, &sandbox, &issuer_script("github.com")).await;
     assert!(github.contains(&ca_name), "{github}");
-    for site in ["example.com", "gitlab.com"] {
+    for site in [SITE, SECOND] {
         let issuer = guest(&runtime, &sandbox, &issuer_script(site)).await;
         assert!(
             !issuer.to_lowercase().contains("puddle"),
@@ -619,14 +631,15 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
     .await;
     assert!(files.contains("puddle-ca-1.crt"), "{files}");
     assert!(!files.contains("PRIVATE"), "{files}");
-    // One CA in the extra CAs file: the one of this start.
+    // Two CAs in the extra CAs file: the one of this start, and the fake website's root, which
+    // the harness reports as a corporate root (a stale CA of an earlier start would make three).
     let extra = guest(
         &runtime,
         &sandbox,
         "grep -c 'BEGIN CERTIFICATE' /etc/puddle/extra-cas.pem",
     )
     .await;
-    assert_eq!(extra.trim(), "1");
+    assert_eq!(extra.trim(), "2");
 
     // The author of a commit is the identity's, by remote.
     let email = |remote: &str| {
@@ -646,11 +659,11 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
         "work@example.org"
     );
 
-    // A second identity attached to the running workspace: gitlab.com is decrypted on the next
+    // A second identity attached to the running workspace: second.test is decrypted on the next
     // connection with the CA the guest already had, and its remotes get its author.
     let lab = host
         .store()
-        .create_identity(identity("Lab", "gitlab.com"))
+        .create_identity(identity("Lab", SECOND))
         .unwrap();
     let ca_before = termination.ca().certificate().clone();
     host.store()
@@ -661,14 +674,14 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
         let now = host.workspaces().termination(&sandbox).unwrap();
         if now
             .set()
-            .contains(&puddle_types::Host::parse_normalised("gitlab.com").unwrap())
+            .contains(&puddle_types::Host::parse_normalised(SECOND).unwrap())
         {
             decrypted = true;
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert!(decrypted, "gitlab.com never joined the decrypt set");
+    assert!(decrypted, "second.test never joined the decrypt set");
     assert_eq!(
         host.workspaces()
             .termination(&sandbox)
@@ -677,14 +690,14 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
             .certificate(),
         &ca_before
     );
-    let gitlab = guest(&runtime, &sandbox, &issuer_script("gitlab.com")).await;
+    let gitlab = guest(&runtime, &sandbox, &issuer_script(SECOND)).await;
     assert!(gitlab.contains(&ca_name), "{gitlab}");
     let mut author = String::new();
     for _ in 0..60 {
         author = guest(
             &runtime,
             &sandbox,
-            &email("https://gitlab.com/gitlab-org/gitlab"),
+            &email("https://second.test/lab/project"),
         )
         .await;
         if author.trim() == "lab@example.org" {
@@ -693,7 +706,7 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
     assert_eq!(author.trim(), "lab@example.org");
-    // Work's remotes keep Work's author; example.com is still spliced.
+    // Work's remotes keep Work's author; site.test is still spliced.
     assert_eq!(
         guest(
             &runtime,
@@ -704,7 +717,7 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
         .trim(),
         "work@example.org"
     );
-    let issuer = guest(&runtime, &sandbox, &issuer_script("example.com")).await;
+    let issuer = guest(&runtime, &sandbox, &issuer_script(SITE)).await;
     assert!(!issuer.to_lowercase().contains("puddle"), "{issuer}");
     let _ = work;
 
@@ -720,8 +733,10 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
     assert!(down.sandboxes.all_stopped(), "{down:?}");
 }
 
-/// A public host that serves HTTP/3 (it answers `alt-svc: h3=":443"`) next to HTTP/2 over TCP.
-const H3_HOST: &str = "example.com";
+/// A site that offers HTTP/3 (it answers `alt-svc: h3=":443"`) next to HTTP/2 over TCP: the fake
+/// website, which sends the header. The guest cannot send UDP, so the offer is never taken up.
+const H3_HOST: &str = "h3.test";
+const H3_ALT_SVC: &str = "h3=\":443\"; ma=86400";
 
 /// Sends one datagram to port 443 of four addresses from bash (a connected socket) and of two
 /// from perl (an unconnected `sendto`), each timed inside the guest: one line per attempt,
@@ -747,8 +762,8 @@ perl -MSocket -MTime::HiRes=time -e '
 /// nothing here depends on a name or on the internet.
 const DIRECT_HTTP3_SCRIPT: &str = r#"
 start=${EPOCHREALTIME/[.,]/}
-curl --noproxy '*' --http3-only --resolve example.com:443:192.0.2.1 -sS -o /dev/null \
-  --max-time 20 https://example.com/ </dev/null 2>&1
+curl --noproxy '*' --http3-only --resolve h3.test:443:192.0.2.1 -sS -o /dev/null \
+  --max-time 20 https://h3.test/ </dev/null 2>&1
 echo "exit=$?"
 end=${EPOCHREALTIME/[.,]/}
 echo "direct-http3 $(( (end - start) / 1000 )) ms"
@@ -762,12 +777,20 @@ echo "direct-http3 $(( (end - start) / 1000 )) ms"
 #[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
+    let internet = web_internet(
+        &[H3_HOST],
+        WebOptions {
+            alt_svc: Some(H3_ALT_SVC.to_owned()),
+        },
+        hermetic_options(),
+    )
+    .await;
     let VmHost {
         host,
         runtime,
         settings,
         ..
-    } = start_vm_host("quic").await;
+    } = start_vm_host_platform("quic", internet.options, &internet.platform, |_| {}).await;
     let name = format!("{}-quic", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
     for site in [REPO_HOST, H3_HOST] {
@@ -834,7 +857,7 @@ async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
         &format!(
             "curl --http3 -sS -v -o /dev/null --max-time 60 \
              -w 'answer http_version=%{{http_version}} http_code=%{{http_code}}\\n' \
-             https://{H3_HOST}/ 2>&1 | grep -i -E 'HTTP/3 is not|alt-svc|^answer'"
+             https://{H3_HOST}/ 2>&1 | grep -i -E 'HTTP/3 is not|^< |^answer'"
         ),
     )
     .await;
@@ -880,14 +903,14 @@ async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
 
     // The same curl with no proxy at all: its name resolves to a stand-in through the stub, the
     // QUIC attempt to it is refused at once, and the TCP fallback is redirected to the proxy and
-    // sent as `CONNECT example.com:443`, which the host allows: a second connection record.
+    // sent as `CONNECT h3.test:443`, which the host allows: a second connection record.
     let captured = guest(
         &runtime,
         &sandbox,
         &format!(
             "curl --noproxy '*' --http3 -sS -v -o /dev/null --max-time 60 \
              -w 'answer http_version=%{{http_version}} http_code=%{{http_code}}\n' \
-             https://{H3_HOST}/ 2>&1 | grep -i -E 'alt-svc|^answer|Connected to'"
+             https://{H3_HOST}/ 2>&1 | grep -i -E '^< |^answer|Connected to'"
         ),
     )
     .await;
@@ -902,7 +925,7 @@ async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
     );
     // The guest connected to a stand-in address, not a real one: its answer came from the stub.
     assert!(
-        captured.contains("Connected to example.com (198.1"),
+        captured.contains("Connected to h3.test (198.1"),
         "{captured}"
     );
     let mut after = recorded;
@@ -949,6 +972,12 @@ async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
     let down = host.shutdown().await;
     assert!(down.sandboxes.all_stopped(), "{down:?}");
 }
+
+/// The fake website's names for the secrets' hosts: the first two are decrypted from the start,
+/// the third is made one while the workspace runs.
+const ALPHA: &str = "alpha.test";
+const BETA: &str = "beta.test";
+const GAMMA: &str = "gamma.test";
 
 /// The values the real secrets hold in the credential store. Written in the guest scripts as two
 /// quoted halves, so the script's own text is not what a search for the value finds.
@@ -1022,16 +1051,22 @@ async fn connections(api: &Api, workspace: &str, host: &str) -> Vec<serde_json::
 #[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own_hosts() {
+    let internet = web_internet(
+        &[ALPHA, BETA, GAMMA],
+        WebOptions::default(),
+        hermetic_options(),
+    )
+    .await;
     let VmHost {
         host,
         runtime,
         settings,
         secrets,
         root: _,
-    } = start_vm_host("env").await;
+    } = start_vm_host_platform("env", internet.options, &internet.platform, |_| {}).await;
     let name = format!("{}-env", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
-    for site in ["github.com", "example.com", "example.org", "example.net"] {
+    for site in ["github.com", ALPHA, BETA, GAMMA] {
         host.store()
             .add_rule(&NewRule {
                 scope: Scope::Workspace(sandbox.clone()),
@@ -1057,12 +1092,12 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
     .await;
     put(
         "/api/env/PROBE_A",
-        json!({"kind": "secret", "value": SECRET_A, "hosts": ["example.com"]}),
+        json!({"kind": "secret", "value": SECRET_A, "hosts": [ALPHA]}),
     )
     .await;
     put(
         "/api/env/PROBE_B",
-        json!({"kind": "secret", "value": SECRET_B, "hosts": ["example.org"]}),
+        json!({"kind": "secret", "value": SECRET_B, "hosts": [BETA]}),
     )
     .await;
     assert_eq!(secrets.ids().len(), 2);
@@ -1124,11 +1159,11 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
 
     // Only the hosts the secrets name are decrypted; the rest keep their real certificate.
     let ca_name = format!("Puddle CA for {name}");
-    for site in ["example.com", "example.org"] {
+    for site in [ALPHA, BETA] {
         let issuer = guest(&runtime, &sandbox, &issuer_script(site)).await;
         assert!(issuer.contains(&ca_name), "{site}: {issuer}");
     }
-    let net = guest(&runtime, &sandbox, &issuer_script("example.net")).await;
+    let net = guest(&runtime, &sandbox, &issuer_script(GAMMA)).await;
     assert!(!net.to_lowercase().contains("puddle"), "{net}");
 
     // A request toward a secret's own host with its stand-in: the proxy swaps the real value in
@@ -1141,29 +1176,43 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
     let code = guest(
         &runtime,
         &sandbox,
-        &curl("example.com", "Authorization", "Bearer $PROBE_A"),
+        &curl(ALPHA, "Authorization", "Bearer $PROBE_A"),
     )
     .await;
     assert!(
         code.trim().starts_with('2') || code.trim().starts_with('4'),
         "{code}"
     );
-    let swapped = record_where(&api, &name, "example.com", |r| r["injected"] == true).await;
+    let swapped = record_where(&api, &name, ALPHA, |r| r["injected"] == true).await;
     assert_eq!(swapped["binding_id"], "stand-in:secret:PROBE_A");
     assert_eq!(swapped["placeholder_unbound"], false);
+    // The site was sent the real value, which only the proxy had. (A failure lists the requests
+    // by method and target: their headers hold the secret.)
+    let requests = || {
+        let seen = internet.web.seen();
+        let listed: Vec<String> = seen
+            .iter()
+            .map(|r| format!("{} {}", r.method, r.target))
+            .collect();
+        (seen, listed)
+    };
+    let (seen, listed) = requests();
+    assert!(
+        seen.iter().any(|r| r.headers_named("host") == [ALPHA]
+            && r.headers_named("authorization") == [format!("Bearer {SECRET_A}")]),
+        "{ALPHA} was not sent the real value; requests seen: {listed:?}"
+    );
 
     // The same stand-in toward another decrypted host goes out unchanged and is flagged.
-    guest(
-        &runtime,
-        &sandbox,
-        &curl("example.org", "X-Probe", "$PROBE_A"),
-    )
-    .await;
-    let flagged = record_where(&api, &name, "example.org", |r| {
-        r["placeholder_unbound"] == true
-    })
-    .await;
+    guest(&runtime, &sandbox, &curl(BETA, "X-Probe", "$PROBE_A")).await;
+    let flagged = record_where(&api, &name, BETA, |r| r["placeholder_unbound"] == true).await;
     assert_eq!(flagged["injected"], false);
+    let (seen, listed) = requests();
+    assert!(
+        seen.iter().any(|r| r.headers_named("host") == [BETA]
+            && r.headers_named("x-probe") == [stand_a.as_str()]),
+        "{BETA} was not sent the stand-in unchanged; requests seen: {listed:?}"
+    );
 
     // A secret added to the running workspace: its host is decrypted from the next connection,
     // with the same CA and no restart.
@@ -1176,7 +1225,7 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
         .clone();
     put(
         "/api/env/PROBE_C",
-        json!({"kind": "secret", "value": SECRET_C, "hosts": ["example.net"]}),
+        json!({"kind": "secret", "value": SECRET_C, "hosts": [GAMMA]}),
     )
     .await;
     let mut decrypted = false;
@@ -1184,14 +1233,14 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
         let now = host.workspaces().termination(&sandbox).unwrap();
         if now
             .set()
-            .contains(&puddle_types::Host::parse_normalised("example.net").unwrap())
+            .contains(&puddle_types::Host::parse_normalised(GAMMA).unwrap())
         {
             decrypted = true;
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert!(decrypted, "example.net never joined the decrypt set");
+    assert!(decrypted, "gamma.test never joined the decrypt set");
     assert_eq!(
         host.workspaces()
             .termination(&sandbox)
@@ -1200,18 +1249,13 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
             .certificate(),
         &ca_before
     );
-    let net = guest(&runtime, &sandbox, &issuer_script("example.net")).await;
+    let net = guest(&runtime, &sandbox, &issuer_script(GAMMA)).await;
     assert!(net.contains(&ca_name), "{net}");
     // Its stand-in is not in the running guest's environment (that is read at the next start),
     // but the proxy already knows it: a request that carries it is swapped.
     let stand_c = stand_in_of(&host, &sandbox, "PROBE_C");
-    guest(
-        &runtime,
-        &sandbox,
-        &curl("example.net", "X-Probe", &stand_c),
-    )
-    .await;
-    let swapped = record_where(&api, &name, "example.net", |r| r["injected"] == true).await;
+    guest(&runtime, &sandbox, &curl(GAMMA, "X-Probe", &stand_c)).await;
+    let swapped = record_where(&api, &name, GAMMA, |r| r["injected"] == true).await;
     assert_eq!(swapped["binding_id"], "stand-in:secret:PROBE_C");
 
     // Removing it takes the host out again, and its value out of the credential store.
@@ -1221,16 +1265,16 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
         let now = host.workspaces().termination(&sandbox).unwrap();
         if !now
             .set()
-            .contains(&puddle_types::Host::parse_normalised("example.net").unwrap())
+            .contains(&puddle_types::Host::parse_normalised(GAMMA).unwrap())
         {
             spliced = true;
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert!(spliced, "example.net stayed in the decrypt set");
+    assert!(spliced, "gamma.test stayed in the decrypt set");
     assert_eq!(secrets.ids().len(), 2);
-    let net = guest(&runtime, &sandbox, &issuer_script("example.net")).await;
+    let net = guest(&runtime, &sandbox, &issuer_script(GAMMA)).await;
     assert!(!net.to_lowercase().contains("puddle"), "{net}");
 
     let stop = api.post(&format!("/api/workspaces/{name}/stop"), "").await;
@@ -1256,13 +1300,14 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_alone_when_it_is_off()
 {
+    let internet = web_internet(&[SITE], WebOptions::default(), hermetic_options()).await;
     let VmHost {
         host,
         runtime,
         settings,
         secrets: _,
         root: _,
-    } = start_vm_host("login").await;
+    } = start_vm_host_platform("login", internet.options, &internet.platform, |_| {}).await;
     let name = format!("{}-login", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
     for site in [
@@ -1270,7 +1315,7 @@ async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_al
         "api.github.com",
         "platform.claude.com",
         "api.anthropic.com",
-        "example.com",
+        SITE,
     ] {
         host.store()
             .add_rule(&NewRule {
@@ -1303,7 +1348,7 @@ async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_al
         let issuer = guest(&runtime, &sandbox, &issuer_script(site)).await;
         assert!(issuer.contains(&ca_name), "{site}: {issuer}");
     }
-    let example = guest(&runtime, &sandbox, &issuer_script("example.com")).await;
+    let example = guest(&runtime, &sandbox, &issuer_script(SITE)).await;
     assert!(!example.to_lowercase().contains("puddle"), "{example}");
 
     // An ordinary request on a decrypted login host works, over HTTP/2 where the server speaks it.

@@ -589,6 +589,9 @@ async fn refuse_over_limit(handler: &WorkspaceHandler, mut reader: GuestReader) 
         ),
     );
     refuse(reader.get_mut(), &refusal).await;
+    // The guest has its answer: end its stream before the audit row, which waits on a blocking
+    // thread and can lag, so a flood of refusals does not keep a stream and its buffer each.
+    drop(reader);
     if let Some(Target { host, port }) = target {
         let request = EgressRequest::new(handler.workspace.clone(), host, port);
         let event = ConnectionEvent::new(

@@ -10,21 +10,16 @@ mod hostile_heap;
 mod hostile_support;
 
 use std::path::Path;
-use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
 use hostile_heap::Counting;
-use hostile_support::{Guest, bystander_round, rig};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
-use tokio::process::Command;
+use hostile_support::{Guest, Guests, bystander_round, guest_route, rig};
 
 #[global_allocator]
 static HEAP: Counting = Counting::new();
 
 const TEST: &str = "hostile_hg10_the_heap_does_not_follow_what_a_guest_sends";
-/// Set in the child process to the attacked route's endpoint: the child is then the guests.
-const GUEST_ROUTE: &str = "PUDDLE_TEST_HOSTILE_GUEST_ROUTE";
 /// What the child prints once every guest is sending.
 const SENDING: &str = "guests: sending";
 const ATTACKERS: usize = 12;
@@ -33,8 +28,8 @@ const LIMIT: usize = 12 * 1024 * 1024;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn hostile_hg10_the_heap_does_not_follow_what_a_guest_sends() {
-    if let Some(route) = std::env::var_os(GUEST_ROUTE) {
-        guests(Path::new(&route)).await;
+    if let Some(route) = guest_route() {
+        guests(&route).await;
         // skip-ok: the child's half; the parent process that started it makes the assertions.
         return;
     }
@@ -46,38 +41,17 @@ async fn hostile_hg10_the_heap_does_not_follow_what_a_guest_sends() {
     drop(held);
 
     let before = HEAP.restart_peak();
-    let mut child = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
-        .env(GUEST_ROUTE, rig.attacked.endpoint().path())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .unwrap();
-    let mut stdout = BufReader::new(child.stdout.take().unwrap());
-    let mut said = String::new();
-    while !said.contains(SENDING) && stdout.read_line(&mut said).await.unwrap() > 0 {}
+    let mut guests = Guests::start(TEST, &rig.attacked);
+    guests.until(SENDING).await;
     let timed = bystander_round(&rig.bystander, rig.echo).await;
     assert!(timed < Duration::from_secs(5), "{timed:?}");
-    let mut stderr = String::new();
-    let mut child_stderr = child.stderr.take().unwrap();
-    let status = tokio::time::timeout(Duration::from_secs(60), async {
-        let (out, err) = tokio::join!(
-            stdout.read_to_string(&mut said),
-            child_stderr.read_to_string(&mut stderr)
-        );
-        out.unwrap();
-        err.unwrap();
-        child.wait().await.unwrap()
-    })
-    .await
-    .expect("the guests finish within 60 s");
+    let (ok, said) = guests.finish(Duration::from_secs(60)).await;
     let grew = HEAP.rose_above(before);
     assert!(
         grew < LIMIT,
         "the proxy's heap grew by {grew} bytes (limit {LIMIT}); the guests said: {said}"
     );
-    assert!(status.success(), "guests failed: {said}{stderr}");
+    assert!(ok, "guests failed: {said}");
     assert_eq!(
         rig.policy.decisions(),
         64,

@@ -248,18 +248,7 @@ impl Guest {
             }
             "boot" => self.boot_ok(),
             "start-folder" | "editor-listing" => self.answer_editor(kind),
-            "shell-init-check" => {
-                let seen = ctx
-                    .read(&GuestPath::new("/puddle/shell-init/init.sh").unwrap())
-                    .ok()
-                    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
-                let script = String::from_utf8_lossy(&r.stdin).into_owned();
-                self.checks.lock().unwrap().push((script, seen));
-                match *self.check_answer.lock().unwrap() {
-                    Some((code, out)) => ExecOutput::new(code, out, ""),
-                    None => ExecOutput::new(0, "", ""),
-                }
-            }
+            "shell-init-check" => self.answer_shell_init_check(ctx, r),
             "layout" if self.fail_layout.load(Ordering::SeqCst) => ExecOutput::new(
                 1,
                 "",
@@ -308,6 +297,20 @@ impl Guest {
             }
             _ => ExecOutput::new(0, "", ""),
         })
+    }
+
+    /// Records the script a shell-init check ran and the file it saw, then answers as set up.
+    fn answer_shell_init_check(&self, ctx: &ExecContext<'_>, r: &ExecRequest) -> ExecOutput {
+        let seen = ctx
+            .read(&GuestPath::new("/puddle/shell-init/init.sh").unwrap())
+            .ok()
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+        let script = String::from_utf8_lossy(&r.stdin).into_owned();
+        self.checks.lock().unwrap().push((script, seen));
+        match *self.check_answer.lock().unwrap() {
+            Some((code, out)) => ExecOutput::new(code, out, ""),
+            None => ExecOutput::new(0, "", ""),
+        }
     }
 
     /// What the guest says about the start folder and the editor's listing of the volume root.

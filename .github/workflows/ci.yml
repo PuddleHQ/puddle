@@ -99,7 +99,11 @@ jobs:
           cache: npm
           cache-dependency-path: crates/puddle-api/openapi/package-lock.json
       - name: System packages (WebKitGTK for the desktop shell, Squid for the upstream-chaining e2e)
+        timeout-minutes: 10
         run: |
+          # The Ubuntu mirror sometimes stalls one download for minutes (a 25 MB package took 26 minutes, twice);
+          # a short timeout makes apt drop the connection and retry instead of waiting out the stall.
+          printf 'Acquire::http::Timeout "20";\nAcquire::Retries "5";\n' | sudo tee /etc/apt/apt.conf.d/99-ci-timeouts >/dev/null
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev squid
           # The package starts its own daemon; the test runs its own Squid on a free port.
@@ -300,7 +304,9 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
       - name: Playwright browsers (Chromium and WebKit; their system libraries every time)
+        timeout-minutes: 10
         run: |
+          printf 'Acquire::http::Timeout "20";\nAcquire::Retries "5";\n' | sudo tee /etc/apt/apt.conf.d/99-ci-timeouts >/dev/null
           cd ui
           npm ci --ignore-scripts --no-audit --no-fund
           if [ "${{ steps.browsers.outputs.cache-hit }}" = true ]; then

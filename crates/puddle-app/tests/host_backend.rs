@@ -206,8 +206,10 @@ fn quitting_stops_the_host_in_order_and_frees_its_data_folder() {
     start(&options, &Machine::default()).unwrap();
 }
 
-/// Windows gives a program's main thread 1 MiB of stack, which the host's start-up and shutdown,
-/// unoptimised, outgrow; the setup hook and the exit hook run on that thread.
+/// Windows gives a program's main thread 1 MiB of stack by default; `build.rs` links the program
+/// with 8 MiB because the host's start-up, unoptimised, outgrows 1 MiB (the setup hook and the exit
+/// hook run on that thread). This test only shows the work fits a 1 MiB thread where frames are
+/// small; the program's real stack is checked by the Windows smoke test.
 #[test]
 fn the_host_starts_and_stops_from_a_thread_with_the_windows_main_thread_stack() {
     let dir = tempfile::tempdir().unwrap();

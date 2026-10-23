@@ -24,6 +24,7 @@ puddle-compute-msb = { workspace = true }
 puddle-ipc = { workspace = true }
 puddle-proxy = { workspace = true, features = ["testing"] }
 puddle-vm-tests = { workspace = true }
+proptest = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt", "rt-multi-thread", "sync", "time"] }
 tracing-subscriber = { workspace = true }

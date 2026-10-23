@@ -6422,6 +6422,7 @@ name = "puddle-workspace"
 version = "0.0.0"
 dependencies = [
  "microsandbox",
+ "proptest",
  "puddle-boot",
  "puddle-compute",
  "puddle-compute-msb",

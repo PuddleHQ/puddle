@@ -14,6 +14,7 @@
 //! | clone a checkout, then `sync` once after the last (a VMM kill right after a clone can lose the repo) | [`Workspaces::clone_checkout`], [`Workspaces::sync`] |
 //! | after every boot: Puddle's directory, and stale git locks of a crash cleared | [`Workspaces::after_boot`] ([`Workspaces::clear_stale_locks`]) |
 //! | `fstrim` before stop; "reclaim space" | [`Workspaces::stop`], [`Workspaces::reclaim_space`] |
+//! | list the checkouts on the volume, or read one (the guest's list; its output is hostile input) | [`Workspaces::list_checkouts`], [`Workspaces::read_checkout`], [`Workspaces::exists_on_volume`] |
 //! | delete after listing unsaved work, with explicit confirmation | [`Workspaces::check_delete`] → [`DeleteReport::confirm`] → [`Workspaces::delete`] |
 //! | reconcile after a restart | [`Workspaces::adopt`], [`is_maintenance_name`] |
 //!
@@ -42,6 +43,7 @@
 #![forbid(unsafe_code)]
 
 mod check;
+mod checkouts;
 mod error;
 mod layout;
 mod locks;
@@ -52,6 +54,10 @@ mod workspaces;
 pub use check::{
     CHECK_TIMEOUT, DELETE_CHECK_SH, DeleteConfirmation, DeleteReport, Findings, Listing, MAX_ITEMS,
     MAX_REPOS, RepoReport,
+};
+pub use checkouts::{
+    CHECKOUTS_SH, CHECKOUTS_TIMEOUT, CheckoutList, FoundCheckout, MAX_CHECKOUTS, MAX_FIELD,
+    RemoteNote,
 };
 pub use error::WorkspaceError;
 pub use layout::{LOST_AND_FOUND, Layout, PUDDLE_DIR, WORKSPACES_ROOT};

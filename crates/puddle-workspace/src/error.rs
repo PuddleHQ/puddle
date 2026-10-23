@@ -62,6 +62,15 @@ pub enum WorkspaceError {
         /// Why.
         reason: String,
     },
+    /// The checkout listing couldn't run or its output couldn't be read. Nothing of a listing
+    /// that does not parse is shown.
+    #[error("cannot list the checkouts of workspace {workspace:?}: {reason}")]
+    Checkouts {
+        /// The workspace.
+        workspace: String,
+        /// Why.
+        reason: String,
+    },
     /// `fstrim` failed in the guest.
     #[error("cannot trim workspace {workspace:?}: {reason}")]
     Trim {

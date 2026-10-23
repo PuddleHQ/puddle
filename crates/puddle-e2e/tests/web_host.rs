@@ -99,9 +99,13 @@ async fn a_name_the_site_holds_answers_over_plain_http_and_tls_and_the_site_reco
     );
     assert_eq!(seen[1].version, "HTTP/1.1");
     assert_eq!(web.plain_addr().ip(), web.tls_addr().ip());
+}
 
-    // A client that probes the proxy first (a name that cannot exist) gets an answer on the same
-    // connection and then its real request goes through.
+#[tokio::test]
+async fn a_probe_of_a_name_that_cannot_exist_is_answered_before_the_real_request_goes_through() {
+    let web = WebHost::start(&["one.test"], WebOptions { alt_svc: None }).await;
+    let proxy = NameProxy::start(&[]).await;
+    web.register(&proxy, &["one.test"]);
     let mut conn = through(
         &proxy,
         "HEAD http://puddle.invalid:80/ HTTP/1.1\r\n",
@@ -128,8 +132,11 @@ async fn a_name_the_site_holds_answers_over_plain_http_and_tls_and_the_site_reco
             .iter()
             .any(|c| c.starts_with("puddle.invalid"))
     );
+}
 
-    // A name the proxy does not hold, asked for by absolute URI, is connected to as it stands.
+#[tokio::test]
+async fn a_name_the_proxy_does_not_hold_is_connected_to_as_it_stands() {
+    let proxy = NameProxy::start(&[]).await;
     let elsewhere = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let port = elsewhere.local_addr().unwrap().port();
     tokio::spawn(async move {

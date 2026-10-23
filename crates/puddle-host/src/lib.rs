@@ -30,6 +30,7 @@ mod config;
 mod data_folder;
 mod dev_cert;
 mod doctor;
+mod editor_file;
 mod environment;
 mod error;
 mod files;

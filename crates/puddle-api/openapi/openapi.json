@@ -6337,6 +6337,118 @@
         }
       }
     },
+    "/api/workspaces/{id}/start-folder": {
+      "put": {
+        "tags": [
+          "start-folder"
+        ],
+        "summary": "Sets the start folder: a path under the volume, or `null` for the volume root. The folder may\nnot exist yet. A running workspace's new terminals follow at once, and the answer says whether\nthe folder exists there. A folder that is missing opens the volume root and shows a problem\nuntil it exists or the setting changes. A path that breaks the rules is refused with 422 and\nthe reason; a workspace that is being created or deleted answers 409.",
+        "operationId": "put_start_folder",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartFolderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the start folder now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartFolderSet"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the workspace is being created or deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "the path breaks the start folder's rules",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/workspaces/{id}/stop": {
       "post": {
         "tags": [
@@ -8889,6 +9001,26 @@
                 "type": "string",
                 "enum": [
                   "workspace_ssh_failed"
+                ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A workspace's repository list changed (an entry was added, managed, cloned again or\nremoved). Carries nothing more: refetch `GET /api/workspaces/{id}` and its checkouts.",
+            "required": [
+              "workspace",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "workspace_repositories_changed"
                 ]
               },
               "workspace": {
@@ -11809,6 +11941,47 @@
         },
         "additionalProperties": false
       },
+      "StartFolderRequest": {
+        "type": "object",
+        "description": "`PUT /api/workspaces/{id}/start-folder`.",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The folder, relative to the workspace's volume: parts joined by `/`, none empty, `.` or\n`..`, no control character or `\\`, not inside `.puddle` or `lost+found`, at most 255\nbytes. It may name a folder that does not exist yet. `null` is the volume root. Required,\nso an empty body never resets it."
+          }
+        },
+        "additionalProperties": false
+      },
+      "StartFolderSet": {
+        "type": "object",
+        "description": "The start folder after a change.",
+        "required": [
+          "start_folder",
+          "exists"
+        ],
+        "properties": {
+          "exists": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the folder exists in the workspace: `true` or `false` while it runs, `null` when it\nis stopped (Puddle looks when it starts) or the start folder is the volume root. A folder\nthat is missing opens the volume root and shows a problem until it exists."
+          },
+          "start_folder": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The start folder now; `null` is the volume root."
+          }
+        }
+      },
       "StoreTokenRequest": {
         "type": "object",
         "description": "A token the user pasted. It is kept in the operating system's credential store under Puddle's\nown name and never read back through the API.",
@@ -12512,6 +12685,10 @@
     {
       "name": "shell-init",
       "description": "A workspace's shell init: the script its login shells source; the host's copy is the only source of truth"
+    },
+    {
+      "name": "start-folder",
+      "description": "Where a workspace's new terminals land and what its editor opens"
     }
   ]
 }

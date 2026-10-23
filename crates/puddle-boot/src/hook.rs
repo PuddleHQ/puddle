@@ -59,6 +59,17 @@ impl BootReport {
             .filter_map(|line| line.strip_prefix("puddle-boot: replaced "))
             .collect()
     }
+
+    /// The merged files the hook could not parse and so left as they were: each with the reason
+    /// it gave (`<path> left as it is: <reason>`).
+    #[must_use]
+    pub fn left_files(&self) -> Vec<(&str, &str)> {
+        self.stdout
+            .lines()
+            .filter_map(|line| line.strip_prefix("puddle-boot: "))
+            .filter_map(|line| line.split_once(" left as it is: "))
+            .collect()
+    }
 }
 
 /// Why a create, start or adopt with the hook failed.

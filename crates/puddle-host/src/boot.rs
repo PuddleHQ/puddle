@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use puddle_agent_proto::editor::EditorServer;
+use puddle_api::StartFolder;
 use puddle_boot::{
     BootHook, BootPlan, GitIdentity, with_boot_mounts, with_code_server_mount, write_assets,
 };
@@ -17,7 +18,9 @@ use puddle_guest_env::{ProxySettings, guest_proxy_config};
 use puddle_ipc::IpcRoot;
 use puddle_proxy::{Proxy, Route};
 use puddle_store::Store;
-use puddle_types::{GuestEnv, ImageRef, MemoryMib, WorkspaceId, WorkspaceName};
+use puddle_types::{
+    GuestEnv, GuestFile, GuestPath, ImageRef, MemoryMib, WorkspaceId, WorkspaceName,
+};
 use puddle_workspace::Layout;
 
 use crate::dev_cert::GuestCertSource;
@@ -74,6 +77,12 @@ pub(crate) struct GuestInputs<'a> {
     pub(crate) editor: Option<&'a EditorServer>,
     /// The development certificate and its key, when the host has one for this start.
     pub(crate) dev_cert: Option<&'a GuestDevCert>,
+    /// The volume's mount point.
+    pub(crate) root: &'a GuestPath,
+    /// Where login shells land; `None` is the volume root.
+    pub(crate) start_folder: Option<&'a StartFolder>,
+    /// The multi-root file for the editor, when the workspace has two or more checkouts.
+    pub(crate) editor_file: Option<&'a GuestFile>,
 }
 
 impl BootKit {
@@ -175,7 +184,14 @@ impl BootKit {
             .env(&env)
             .files(proxy.files)
             .files(trust.guest_files())
-            .file(shell_init::loader());
+            .file(shell_init::loader())
+            .file(puddle_boot::start_folder_file(
+                guest.root,
+                &crate::editor_file::start_path(guest.root, guest.start_folder),
+            ));
+        if let Some(file) = guest.editor_file {
+            builder = builder.file(file.clone());
+        }
         for step in trust.boot_steps() {
             builder = builder.step(step);
         }

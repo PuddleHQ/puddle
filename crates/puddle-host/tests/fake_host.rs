@@ -176,6 +176,10 @@ struct Guest {
     /// Lines the next boot hook prints after its own, once: what the hook says about a file it
     /// put back.
     boot_says: Mutex<String>,
+    /// The folder the guest is asked about as the start folder is not there.
+    start_folder_missing: AtomicBool,
+    /// What the editor's listing of the volume root prints, instead of no checkouts.
+    listing: Mutex<Option<&'static str>>,
     /// When set, the clone turns this path into a folder, so the next save of the workspace
     /// list fails (a stand-in for a full disk or a locked file).
     break_list_on_clone: Mutex<Option<PathBuf>>,
@@ -192,6 +196,12 @@ impl Guest {
         let kind = match (r.program.as_str(), r.args.first().map(String::as_str)) {
             ("/bin/sh", Some("/puddle/boot.sh")) => "boot",
             ("mkdir", _) => "layout",
+            ("sh", _) if r.args.get(2).map(String::as_str) == Some("puddle-start-folder") => {
+                "start-folder"
+            }
+            ("sh", _) if r.args.get(2).map(String::as_str) == Some("puddle-editor-listing") => {
+                "editor-listing"
+            }
             ("sh", _) if second == Some(CLEAR_LOCKS_SH) => "locks",
             ("sh", _) if second == Some(DELETE_CHECK_SH) => "check",
             ("sh", _) if second.is_some_and(|s| s.contains("fstrim")) => "shutdown-trim",
@@ -222,6 +232,7 @@ impl Guest {
                 self.boot_ok()
             }
             "boot" => self.boot_ok(),
+            "start-folder" | "editor-listing" => self.answer_editor(kind),
             "shell-init-check" => {
                 let seen = ctx
                     .read(&GuestPath::new("/puddle/shell-init/init.sh").unwrap())
@@ -277,6 +288,16 @@ impl Guest {
             }
             _ => ExecOutput::new(0, "", ""),
         })
+    }
+
+    /// What the guest says about the start folder and the editor's listing of the volume root.
+    fn answer_editor(&self, kind: &str) -> ExecOutput {
+        if kind == "start-folder" {
+            let missing = self.start_folder_missing.load(Ordering::SeqCst);
+            return ExecOutput::new(i32::from(missing), "", "");
+        }
+        let said = (*self.listing.lock().unwrap()).unwrap_or("O\t0\n");
+        ExecOutput::new(0, said, "")
     }
 
     fn boot_ok(&self) -> ExecOutput {
@@ -5741,4 +5762,147 @@ async fn a_host_without_a_development_certificate_writes_nothing_for_it_into_the
     for word in ["dev-cert", "puddle-dev", "DEV_CERT_PEM", "DOTNET_GENERATE"] {
         assert!(!plan.contains(word), "{word} in the plan");
     }
+}
+
+// ---- the start folder and the editor's target --------------------------------------------
+
+async fn put_start_folder(api: &Api, workspace: &str, path: Option<&str>) -> support::Reply {
+    api.put(
+        &format!("/api/workspaces/{workspace}/start-folder"),
+        &json!({ "path": path }).to_string(),
+    )
+    .await
+}
+
+fn last_plan(rig: &Rig) -> String {
+    String::from_utf8(rig.guest.plan_bytes(rig.guest.boots() - 1)).unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_start_folder_reaches_the_login_shell_file_and_a_missing_one_is_a_problem_until_it_exists()
+ {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+
+    // No start folder: new terminals land in the volume root.
+    let files = rig.guest.plan_files(rig.guest.boots() - 1);
+    let file = pem_of(&files, "/etc/profile.d/03-puddle-start-folder.sh");
+    assert!(file.contains("cd '/workspaces/acme'"), "{file}");
+
+    // The setting is checked, saved, and written into the running guest without a restart.
+    let boots = rig.guest.boots();
+    let set = put_start_folder(&api, "acme", Some("web/src")).await;
+    assert_eq!(set.status, 200, "{}", set.body);
+    assert_eq!(
+        set.json(),
+        json!({"start_folder": "web/src", "exists": true})
+    );
+    assert_eq!(rig.guest.boots(), boots + 1);
+    let files = rig.guest.plan_files(rig.guest.boots() - 1);
+    let file = pem_of(&files, "/etc/profile.d/03-puddle-start-folder.sh");
+    assert!(file.contains("cd '/workspaces/acme/web/src'"), "{file}");
+    events
+        .until(
+            is_event("workspace_repositories_changed", "acme"),
+            Duration::from_secs(20),
+        )
+        .await;
+    let read = api.get("/api/workspaces/acme").await;
+    assert_eq!(read.json()["start_folder"], "web/src");
+
+    // A folder that is not there opens the root and is a problem; the setting still saves.
+    rig.guest.start_folder_missing.store(true, Ordering::SeqCst);
+    let set = put_start_folder(&api, "acme", Some("later")).await;
+    assert_eq!(
+        set.json(),
+        json!({"start_folder": "later", "exists": false})
+    );
+    let (title, detail) = problem_is(&api, "start-folder:acme", true).await.unwrap();
+    assert!(title.contains("later"), "{title}");
+    assert!(detail.contains("volume root"), "{detail}");
+    // It ends when the folder exists (an attach looks again) or the setting goes back to the root.
+    rig.guest
+        .start_folder_missing
+        .store(false, Ordering::SeqCst);
+    let attach = api
+        .post(
+            "/api/workspaces/acme/attach",
+            &json!({"mode": "browser"}).to_string(),
+        )
+        .await;
+    assert_eq!(attach.status, 200, "{}", attach.body);
+    assert!(problem_is(&api, "start-folder:acme", false).await.is_none());
+    rig.guest.start_folder_missing.store(true, Ordering::SeqCst);
+    put_start_folder(&api, "acme", Some("later")).await;
+    assert!(problem_is(&api, "start-folder:acme", true).await.is_some());
+    let reset = put_start_folder(&api, "acme", None).await;
+    assert_eq!(reset.json(), json!({"start_folder": null, "exists": null}));
+    assert!(problem_is(&api, "start-folder:acme", false).await.is_none());
+
+    // What breaks the rules is refused with the reason; an unknown workspace is a 404.
+    for bad in ["../etc", "/abs", "a//b", ".puddle/x", "lost+found"] {
+        let refused = put_start_folder(&api, "acme", Some(bad)).await;
+        assert_eq!(refused.status, 422, "{bad}: {}", refused.body);
+    }
+    assert_eq!(put_start_folder(&api, "nope", None).await.status, 404);
+    let saved = api.get("/api/workspaces/acme").await;
+    assert_eq!(saved.json()["start_folder"], serde_json::Value::Null);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_attach_writes_the_multi_root_file_for_two_checkouts_and_a_file_it_cannot_parse_is_a_problem()
+ {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let attach = || async {
+        let reply = api
+            .post(
+                "/api/workspaces/acme/attach",
+                &json!({"mode": "browser"}).to_string(),
+            )
+            .await;
+        assert_eq!(reply.status, 200, "{}", reply.body);
+    };
+    let file = ".puddle/editor/acme.code-workspace";
+
+    // One checkout, or none: the root opens and the plan holds no file.
+    attach().await;
+    assert!(!last_plan(&rig).contains(file));
+    *rig.guest.listing.lock().unwrap() = Some("R\tapi\nO\t0\n");
+    attach().await;
+    assert!(!last_plan(&rig).contains(file));
+
+    // Two: the plan merges `folders` into the file, one folder per checkout.
+    *rig.guest.listing.lock().unwrap() = Some("R\tweb\nR\tapi\nO\t2\n");
+    attach().await;
+    let plan = last_plan(&rig);
+    assert!(plan.contains(file), "{plan}");
+    for folder in [
+        "/workspaces/acme/api",
+        "/workspaces/acme/web",
+        "workspace files",
+    ] {
+        assert!(plan.contains(folder), "{folder}: {plan}");
+    }
+
+    // A start folder replaces the window: Puddle's lines go again.
+    put_start_folder(&api, "acme", Some("api")).await;
+    attach().await;
+    assert!(!last_plan(&rig).contains(file));
+    put_start_folder(&api, "acme", None).await;
+
+    // A file the hook cannot parse is left alone and a problem names it, until it parses.
+    *rig.guest.boot_says.lock().unwrap() =
+        format!("puddle-boot: /workspaces/acme/{file} left as it is: expected a value at line 1\n");
+    attach().await;
+    let (_, detail) = problem_is(&api, "editor-file:acme", true).await.unwrap();
+    assert!(detail.contains("left as it is"), "{detail}");
+    attach().await;
+    assert!(problem_is(&api, "editor-file:acme", false).await.is_none());
 }

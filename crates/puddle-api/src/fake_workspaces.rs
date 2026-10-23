@@ -18,7 +18,7 @@ use tokio::sync::watch;
 use crate::workspaces::{
     AttachMode, Attached, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DeleteCheck, DisplayName, GitSetup,
     LaunchError, Launcher, Listing, NewWorkspace, Operation, RepoFindings, ShellInitCheck,
-    WorkspaceError, WorkspaceRecord, WorkspaceService,
+    StartFolder, StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService,
 };
 
 /// One step an operation reports: the step, its detail, and the checkout a cloning step is about.
@@ -647,6 +647,27 @@ impl WorkspaceService for FakeWorkspaces {
             let entry = state.entries.get_mut(id).ok_or_else(|| not_found(id))?;
             entry.record.display_name = display_name;
             Ok(entry.record.clone())
+        })
+    }
+
+    fn set_start_folder<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        start_folder: Option<StartFolder>,
+    ) -> BoxFuture<'a, Result<StartFolderChange, WorkspaceError>> {
+        Box::pin(async move {
+            let mut state = lock(&self.inner.state);
+            crate::check_start_folder_change(state.entries.values().map(|e| &e.record), id)?;
+            let entry = state.entries.get_mut(id).ok_or_else(|| not_found(id))?;
+            entry.record.start_folder = start_folder;
+            // A folder the fake was never told about "exists" only in a running workspace.
+            let exists = (entry.record.status == WorkspaceStatus::Running
+                && entry.record.start_folder.is_some())
+            .then_some(true);
+            Ok(StartFolderChange {
+                record: entry.record.clone(),
+                exists,
+            })
         })
     }
 

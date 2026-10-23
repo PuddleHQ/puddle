@@ -35,6 +35,7 @@ mod rule_sets;
 mod rules;
 pub(crate) mod settings;
 mod shell_init;
+mod start_folder;
 mod workspaces;
 
 /// What the handlers share.
@@ -102,6 +103,7 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
             workspaces::rename_workspace,
             workspaces::delete_workspace
         ))
+        .routes(routes!(start_folder::put_start_folder))
         .routes(routes!(workspaces::start_workspace))
         .routes(routes!(workspaces::stop_workspace))
         .routes(routes!(workspaces::reclaim_workspace))

@@ -437,6 +437,50 @@ fn free_directory(dir: &CheckoutDir, taken: &[NewRepository]) -> CheckoutDir {
         .unwrap_or_else(|| dir.clone())
 }
 
+/// Whether the start folder of workspace `id` may change now.
+///
+/// # Errors
+///
+/// [`WorkspaceError::NotFound`] for an unknown id; [`WorkspaceError::Conflict`] while the
+/// workspace is being created or deleted (there is nothing settled to change).
+pub fn check_start_folder_change<'a>(
+    records: impl IntoIterator<Item = &'a WorkspaceRecord>,
+    id: &WorkspaceId,
+) -> Result<(), WorkspaceError> {
+    let record = records
+        .into_iter()
+        .find(|r| &r.id == id)
+        .ok_or_else(|| WorkspaceError::NotFound(format!("no workspace {id}")))?;
+    match record.busy {
+        Some(busy @ (Operation::Creating | Operation::Deleting)) => {
+            Err(WorkspaceError::Conflict(format!(
+                "{} is {busy}; change its start folder when that is done",
+                record.label()
+            )))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// What setting the start folder did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct StartFolderChange {
+    /// The workspace as it is now.
+    pub record: WorkspaceRecord,
+    /// Whether the folder exists in the running workspace; `None` when the workspace does not run
+    /// (nothing can be looked at) or the start folder is the volume root.
+    pub exists: Option<bool>,
+}
+
+impl StartFolderChange {
+    /// A change to `record`, with whether the folder exists.
+    #[must_use]
+    pub fn new(record: WorkspaceRecord, exists: Option<bool>) -> Self {
+        Self { record, exists }
+    }
+}
+
 /// A start folder (storage ST-54): a relative path under the volume root, `/` between its
 /// parts, no part empty, `.` or `..`, no control character or `\`, not inside `.puddle` or
 /// `lost+found`, at most [`StartFolder::MAX_BYTES`] bytes.
@@ -827,6 +871,17 @@ pub trait WorkspaceService: Send + Sync {
         display_name: Option<DisplayName>,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
 
+    /// Sets where new terminals land and what the editor opens: a path under the volume, or
+    /// `None` for the volume root. The folder need not exist yet. In a running workspace the
+    /// login-shell file follows at once and the answer says whether the folder exists; the
+    /// editor's server picks the folder at its next start. [`WorkspaceError::Conflict`] while the
+    /// workspace is being created or deleted.
+    fn set_start_folder<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        start_folder: Option<StartFolder>,
+    ) -> BoxFuture<'a, Result<StartFolderChange, WorkspaceError>>;
+
     /// Opens the workspace in an editor. The workspace must be running.
     fn attach<'a>(
         &'a self,
@@ -954,6 +1009,13 @@ impl WorkspaceService for NoWorkspaces {
         _: &'a WorkspaceId,
         _: Option<DisplayName>,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        unavailable()
+    }
+    fn set_start_folder<'a>(
+        &'a self,
+        _: &'a WorkspaceId,
+        _: Option<StartFolder>,
+    ) -> BoxFuture<'a, Result<StartFolderChange, WorkspaceError>> {
         unavailable()
     }
     fn attach<'a>(

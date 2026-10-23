@@ -27,7 +27,7 @@ use crate::wire::{
 use crate::workspaces::{GitSetup, NewRepository};
 
 /// The id in a path. A string that can't be an id names no workspace.
-fn workspace_id(raw: &str) -> Result<WorkspaceId, ApiError> {
+pub(super) fn workspace_id(raw: &str) -> Result<WorkspaceId, ApiError> {
     WorkspaceId::new(raw).map_err(|_| ApiError::not_found(format!("no workspace {raw:?}")))
 }
 

@@ -32,6 +32,7 @@ mod network_health;
 mod repos;
 mod rule_sets;
 mod shell_init;
+mod start_folder;
 mod workspaces;
 
 pub(crate) use credentials::source_problem;
@@ -67,6 +68,7 @@ pub use rule_sets::{
     SystemReason,
 };
 pub use shell_init::{ShellInitRequest, ShellInitSaved, ShellInitView};
+pub use start_folder::{StartFolderRequest, StartFolderSet};
 
 pub use workspaces::{
     AttachMode, AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, FindingList,

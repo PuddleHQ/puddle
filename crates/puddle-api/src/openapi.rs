@@ -52,7 +52,8 @@ const BEARER: &str = "bearer";
         (name = "identities", description = "Git identities (author and credentials) and each workspace's identities, repository table and push and pull switches"),
         (name = "workspaces", description = "Workspaces: their own disk with the repositories Puddle manages for them, and the sandbox that runs them"),
         (name = "environment", description = "Environment variables and secrets, global and per workspace; a secret's value is write-only"),
-        (name = "shell-init", description = "A workspace's shell init: the script its login shells source; the host's copy is the only source of truth")
+        (name = "shell-init", description = "A workspace's shell init: the script its login shells source; the host's copy is the only source of truth"),
+        (name = "start-folder", description = "Where a workspace's new terminals land and what its editor opens")
     )
 )]
 struct ApiDoc;
@@ -170,7 +171,7 @@ mod tests {
                 assert!(op["tags"].as_array().is_some_and(|t| !t.is_empty()));
             }
         }
-        assert_eq!(count, 72, "operations in the spec");
+        assert_eq!(count, 73, "operations in the spec");
     }
 
     /// ADR 0002: responses always carry every field (`null`, never absent), so the generated

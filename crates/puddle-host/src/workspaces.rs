@@ -28,20 +28,20 @@ use futures_util::future::BoxFuture;
 use puddle_agent_proto::editor::EditorServer;
 use puddle_api::{
     AttachMode, Attached, DEFAULT_IMAGE, DeleteCheck, DisplayName, GitSetup, LaunchError, Launcher,
-    Listing, NewWorkspace, Operation, RepoFindings, Repository, ShellInitCheck, WorkspaceError,
-    WorkspaceRecord, WorkspaceService,
+    Listing, NewWorkspace, Operation, RepoFindings, Repository, ShellInitCheck, StartFolder,
+    StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService,
 };
 use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
-use puddle_compute::{ComputeError, DiskSize, ImageConfig, Runtime, Sandbox as _};
+use puddle_compute::{ComputeError, DiskSize, ExecRequest, ImageConfig, Runtime, Sandbox as _};
 use puddle_lifecycle::Lifecycle;
 use puddle_proxy::Route;
 use puddle_settings::{ReconnectionGrace, WorkspaceSettings, resolve};
 use puddle_ssh::SshEndpoint;
 use puddle_store::Clock;
 use puddle_types::{
-    CheckoutDir, CpuCount, Event, EventSink, GuestEnv, ImageRef, MemoryMib, Problem, Problems,
-    WorkspaceId, WorkspaceName, WorkspaceStatus, WorkspaceStep,
+    CheckoutDir, CpuCount, Event, EventSink, GuestEnv, GuestFile, GuestPath, ImageRef, MemoryMib,
+    Problem, Problems, WorkspaceId, WorkspaceName, WorkspaceStatus, WorkspaceStep,
 };
 
 use crate::ssh_target::{ReportingTarget, report_no_endpoint};
@@ -168,6 +168,14 @@ struct GuestState {
     editor: Option<EditorServer>,
     /// The development certificate this start gave the guest, so a re-planned boot keeps it.
     dev_cert: Option<puddle_certs::devcert::GuestDevCert>,
+    /// Where login shells land: what the saved start folder was at this start, or when it last
+    /// changed.
+    start_folder: Option<StartFolder>,
+    /// The volume's mount point, `/workspaces/<id>`.
+    root: GuestPath,
+    /// The multi-root file the editor opens when the workspace has two or more checkouts, as the
+    /// last attach wrote it; `None` has the hook take Puddle's lines out of it.
+    editor_file: Option<GuestFile>,
 }
 
 /// What a sandbox owns while this process serves it.
@@ -745,7 +753,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             Err(reason) => return Err(self.abort_attachment(attachment, reason).await),
         };
         // The CA comes after the route: a start that fails here has nothing else to take back.
-        let (plan, env, guest) = match self.plan_guest(&record.id, name, config).await {
+        let (plan, env, guest) = match self.plan_guest_for(record, config).await {
             Ok(ready) => ready,
             Err(reason) => {
                 route.shutdown().await;
@@ -792,6 +800,21 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
+    /// [`Self::plan_guest`] for `record`'s workspace and saved start folder.
+    async fn plan_guest_for(
+        &self,
+        record: &WorkspaceRecord,
+        image: ImageConfig,
+    ) -> Result<(puddle_boot::BootPlan, GuestEnv, GuestState), String> {
+        self.plan_guest(
+            &record.id,
+            &record.name,
+            image,
+            record.start_folder.as_ref(),
+        )
+        .await
+    }
+
     /// Makes this start's CA for `name`, registers what it decrypts and its secrets' stand-ins and
     /// plans the guest's boot with the CA in its trust, the authors of the workspace's identities
     /// and its environment. A start that fails after this must call `Injection::end`.
@@ -800,6 +823,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         id: &WorkspaceId,
         name: &WorkspaceName,
         image: ImageConfig,
+        start_folder: Option<&StartFolder>,
     ) -> Result<(puddle_boot::BootPlan, GuestEnv, GuestState), String> {
         let inner = &self.inner;
         let capture = crate::logins::capture_enabled(inner.settings.as_ref(), name);
@@ -812,6 +836,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             authors: authors(&began.git),
             env: began.env,
             dev_cert: inner.kit.dev_cert().await,
+            start_folder: start_folder.cloned(),
+            root: Layout::new(id).map_err(|e| e.to_string())?.mount().clone(),
+            editor_file: None,
         };
         match inner.kit.plan(
             &state.image,
@@ -821,6 +848,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 env: &state.env,
                 editor: state.editor.as_ref(),
                 dev_cert: state.dev_cert.as_ref(),
+                root: &state.root,
+                start_folder: state.start_folder.as_ref(),
+                editor_file: state.editor_file.as_ref(),
             },
         ) {
             Ok((plan, env)) => Ok((plan, env, state)),
@@ -907,6 +937,197 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
+    /// Looks in the guest for the start folder (storage ST-55). A missing one never fails anything:
+    /// terminals and the editor open the volume root, and a problem on the workspace names the
+    /// folder and the ways out until it exists or the setting changes. `None` for the volume
+    /// root, or when the guest could not be asked (the problem stays as it was).
+    async fn check_start_folder(
+        &self,
+        name: &WorkspaceName,
+        gated: &GatedSandbox<R::Sandbox>,
+        root: &GuestPath,
+        start: Option<&StartFolder>,
+    ) -> Option<bool> {
+        let key = problem_key("start-folder", name);
+        let Some(folder) = start else {
+            self.inner.problems.clear(&key);
+            return None;
+        };
+        let path = crate::editor_file::start_path(root, start);
+        let request = ExecRequest::new(
+            "sh",
+            ["-c", "[ -d \"$1\" ]", "puddle-start-folder", path.as_str()].map(str::to_owned),
+        )
+        .as_user("root")
+        .with_timeout(Duration::from_secs(10));
+        let exists = match gated.ungated().exec(request).await {
+            Ok(output) => output.status.success(),
+            Err(e) => {
+                tracing::warn!(workspace = %name, error = %e, "the start folder was not looked for");
+                return None;
+            }
+        };
+        if exists {
+            self.inner.problems.clear(&key);
+        } else {
+            self.inner.problems.raise(
+                Problem::new(
+                    key,
+                    format!("{name}'s start folder {folder} does not exist"),
+                    format!(
+                        "New terminals and the editor open the volume root instead. Create the \
+                         folder {folder} in the workspace, or change the start folder in the \
+                         workspace's settings; Puddle looks again at every start and attach."
+                    ),
+                )
+                .about(name.clone()),
+            );
+        }
+        Some(exists)
+    }
+
+    /// The start folder of the running `record` changed: the login-shell file is written again
+    /// (the hook is idempotent) and the folder is looked for. `None` when the workspace does not
+    /// run, or the folder cannot be looked for.
+    async fn follow_start_folder(&self, record: &WorkspaceRecord) -> Option<bool> {
+        let name = &record.name;
+        let inner = &self.inner;
+        let rewrite = inner
+            .live
+            .lock()
+            .await
+            .get(name)
+            .map(|e| Arc::clone(&e.rewrite))?;
+        let _one_at_a_time = rewrite.lock().await;
+        let (gated, guest) = {
+            let live = inner.live.lock().await;
+            live.get(name)
+                .and_then(|e| Some((e.gated.clone()?, e.guest.clone()?)))?
+        };
+        let replanned = GuestState {
+            start_folder: record.start_folder.clone(),
+            // Opening a folder replaces the multi-root window; the next attach writes it again.
+            editor_file: record
+                .start_folder
+                .as_ref()
+                .and(None)
+                .or(guest.editor_file.clone()),
+            ..guest
+        };
+        match self.run_plan(name, &gated, &replanned).await {
+            Ok(()) => {
+                if let Some(state) = inner
+                    .live
+                    .lock()
+                    .await
+                    .get_mut(name)
+                    .and_then(|e| e.guest.as_mut())
+                {
+                    state.start_folder.clone_from(&replanned.start_folder);
+                    state.editor_file.clone_from(&replanned.editor_file);
+                }
+            }
+            Err(reason) => {
+                tracing::warn!(workspace = %name, %reason, "the start folder is not updated in the guest");
+            }
+        }
+        self.check_start_folder(name, &gated, &replanned.root, record.start_folder.as_ref())
+            .await
+    }
+
+    /// At an attach: the editor's target. With no start folder and two or more checkouts the
+    /// multi-root file is written again (through the boot hook, which merges only `folders` and
+    /// leaves a file it cannot parse as it is, with a problem naming it); with fewer, Puddle's
+    /// lines are taken out of it.
+    async fn refresh_editor_file(&self, record: &WorkspaceRecord) {
+        let name = &record.name;
+        let inner = &self.inner;
+        let Some(rewrite) = inner
+            .live
+            .lock()
+            .await
+            .get(name)
+            .map(|e| Arc::clone(&e.rewrite))
+        else {
+            return;
+        };
+        let _one_at_a_time = rewrite.lock().await;
+        let Some((gated, guest)) = ({
+            let live = inner.live.lock().await;
+            live.get(name)
+                .and_then(|e| Some((e.gated.clone()?, e.guest.clone()?)))
+        }) else {
+            return;
+        };
+        self.check_start_folder(name, &gated, &guest.root, record.start_folder.as_ref())
+            .await;
+        let key = problem_key("editor-file", name);
+        let found = match gated
+            .ungated()
+            .exec(crate::editor_file::listing_request(&guest.root))
+            .await
+        {
+            Ok(out) if out.status.success() => {
+                crate::editor_file::parse_listing(&out.stdout_text())
+            }
+            Ok(out) => Err(format!("the listing failed: {}", out.stderr_text().trim())),
+            Err(e) => Err(e.to_string()),
+        };
+        let found = match found {
+            Ok(found) => found,
+            Err(reason) => {
+                tracing::warn!(workspace = %name, %reason, "the editor's target is not updated");
+                return;
+            }
+        };
+        let order: Vec<CheckoutDir> = record
+            .repositories
+            .iter()
+            .map(|r| r.directory.clone())
+            .collect();
+        let file = crate::editor_file::multi_root_folders(
+            &guest.root,
+            record.start_folder.as_ref(),
+            &found,
+            &order,
+        )
+        .and_then(|folders| crate::editor_file::workspace_file(&guest.root, &record.id, &folders));
+        let replanned = GuestState {
+            editor_file: file,
+            ..guest.clone()
+        };
+        let report = match self.run_plan_report(name, &gated, &replanned).await {
+            Ok(report) => report,
+            Err(reason) => {
+                tracing::warn!(workspace = %name, %reason, "the editor's target is not updated");
+                return;
+            }
+        };
+        if let Some(state) = inner
+            .live
+            .lock()
+            .await
+            .get_mut(name)
+            .and_then(|e| e.guest.as_mut())
+        {
+            state.editor_file.clone_from(&replanned.editor_file);
+        }
+        match report.left_files().first() {
+            Some((path, why)) if path.ends_with(".code-workspace") => inner.problems.raise(
+                Problem::new(
+                    key,
+                    format!("Puddle could not update the editor's file in {name}"),
+                    format!(
+                        "{path} was left as it is: {why}. The editor opens the volume root \
+                         until the file is fixed or deleted."
+                    ),
+                )
+                .about(name.clone()),
+            ),
+            _ => inner.problems.clear(&key),
+        }
+    }
+
     /// Plans the guest as `guest` says and runs the plan in it. When the hook put the loader of
     /// the shell init back, the user is told, as a boot would.
     async fn run_plan(
@@ -915,6 +1136,16 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         gated: &GatedSandbox<R::Sandbox>,
         guest: &GuestState,
     ) -> Result<(), String> {
+        self.run_plan_report(name, gated, guest).await.map(|_| ())
+    }
+
+    /// As [`Self::run_plan`], with what the hook said.
+    async fn run_plan_report(
+        &self,
+        name: &WorkspaceName,
+        gated: &GatedSandbox<R::Sandbox>,
+        guest: &GuestState,
+    ) -> Result<puddle_boot::BootReport, String> {
         let kit = &self.inner.kit;
         let inputs = GuestInputs {
             ca: &guest.ca,
@@ -922,6 +1153,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             env: &guest.env,
             editor: guest.editor.as_ref(),
             dev_cert: guest.dev_cert.as_ref(),
+            root: &guest.root,
+            start_folder: guest.start_folder.as_ref(),
+            editor_file: guest.editor_file.as_ref(),
         };
         let (plan, _) = kit.plan(&guest.image, &inputs)?;
         let report = kit
@@ -930,7 +1164,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .await
             .map_err(|failure| failure.to_string())?;
         self.announce_loader_replaced(name, &report);
-        Ok(())
+        Ok(report)
     }
 
     fn announce_loader_replaced(&self, name: &WorkspaceName, report: &puddle_boot::BootReport) {
@@ -1219,6 +1453,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .map_err(|e| e.to_string())?;
         self.report_locks(name, locks);
         self.settle_shell_init(name, &gated).await;
+        let root = Layout::new(id).map_err(|e| e.to_string())?.mount().clone();
+        self.check_start_folder(name, &gated, &root, record.start_folder.as_ref())
+            .await;
         let mount = Layout::new(id).map_err(|e| e.to_string())?.mount().clone();
         let handle = inner
             .runtime
@@ -1584,7 +1821,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let image = ImageRef::new(&record.image).map_err(|e| e.to_string())?;
         let config = self.image_config(&image).await?;
         self.publish_shell_init(&record.id, name)?;
-        let (plan, _, guest) = self.plan_guest(&record.id, name, config).await?;
+        let (plan, _, guest) = self.plan_guest_for(record, config).await?;
         let made_with = inner
             .live
             .lock()
@@ -2081,6 +2318,42 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         })
     }
 
+    fn set_start_folder<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        start_folder: Option<StartFolder>,
+    ) -> BoxFuture<'a, Result<StartFolderChange, WorkspaceError>> {
+        Box::pin(async move {
+            let record = {
+                let mut state = self.state();
+                if state.closed {
+                    return Err(WorkspaceError::Unavailable(
+                        "Puddle is shutting down".to_owned(),
+                    ));
+                }
+                puddle_api::check_start_folder_change(state.slots.values().map(|s| &s.record), id)?;
+                let slot = state.slots.get_mut(id).ok_or_else(|| not_found(id))?;
+                let before = std::mem::replace(&mut slot.record.start_folder, start_folder);
+                if let Err(e) = self.persist(&state) {
+                    // Nothing changes when the list can't be saved.
+                    if let Some(slot) = state.slots.get_mut(id) {
+                        slot.record.start_folder = before;
+                    }
+                    return Err(WorkspaceError::Unavailable(format!(
+                        "the start folder was not changed: {e}; {SAVE_HINT}"
+                    )));
+                }
+                state
+                    .slots
+                    .get(id)
+                    .map(|s| s.record.clone())
+                    .ok_or_else(|| not_found(id))?
+            };
+            let exists = self.follow_start_folder(&record).await;
+            Ok(StartFolderChange::new(record, exists))
+        })
+    }
+
     fn attach<'a>(
         &'a self,
         id: &'a WorkspaceId,
@@ -2094,6 +2367,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     record.name
                 )));
             }
+            self.refresh_editor_file(&record).await;
             match mode {
                 AttachMode::Browser => Ok(Attached::not_opened(
                     "the editor in the browser is not available in this build",

@@ -244,17 +244,14 @@ impl BootKit {
         }
         let layout = Layout::new(id).map_err(|e| e.to_string())?;
         let data = layout.puddle_dir().map_err(|e| e.to_string())?;
-        let server = EditorServer::new(
+        let mut server = EditorServer::new(
             format!("{data}/{EDITOR_DATA_DIR}"),
             layout.mount().to_string(),
             grace_secs,
         );
-        Ok(Some(
-            match crate::editor_file::workspace_file_path(layout.mount(), id) {
-                Some(file) => server.with_workspace_file(file.as_str()),
-                None => server,
-            },
-        ))
+        server.workspace_file = crate::editor_file::workspace_file_path(layout.mount(), id)
+            .map(|file| file.as_str().to_owned());
+        Ok(Some(server))
     }
 
     pub(crate) fn ipc(&self) -> &IpcRoot {

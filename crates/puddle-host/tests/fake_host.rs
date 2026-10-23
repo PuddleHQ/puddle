@@ -6710,6 +6710,34 @@ async fn a_start_folder_the_guest_cannot_be_given_is_a_problem_until_a_change_re
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_start_folder_changed_while_the_workspace_is_stopped_ends_the_problems_about_the_old_one()
+{
+    let rig = Rig::new();
+    let (_host, api) = quiet_workspace(&rig, "acme").await;
+    rig.runtime
+        .inject(Op::Exec, Fault::once(disk_error("exec")).only_for("acme"));
+    put_start_folder(&api, "acme", Some("web")).await;
+    problem_is(&api, "start-folder-file:acme", true).await;
+    rig.guest.start_folder_missing.store(true, Ordering::SeqCst);
+    put_start_folder(&api, "acme", Some("web/src")).await;
+    problem_is(&api, "start-folder:acme", true).await;
+    let mut events = api.events().await;
+    let stop = api.post("/api/workspaces/acme/stop", "").await;
+    assert_eq!(stop.status, 202, "{}", stop.body);
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    // Nothing in a stopped workspace can be looked at: the change ends both problems, and the
+    // start that comes looks again.
+    let set = put_start_folder(&api, "acme", Some("api")).await;
+    assert_eq!(set.status, 200, "{}", set.body);
+    assert!(problem_is(&api, "start-folder:acme", false).await.is_none());
+    assert!(
+        problem_is(&api, "start-folder-file:acme", false)
+            .await
+            .is_none()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_attach_that_cannot_list_or_write_the_editors_file_says_so_until_one_works() {
     let rig = Rig::new();
     let (_host, api) = quiet_workspace(&rig, "acme").await;

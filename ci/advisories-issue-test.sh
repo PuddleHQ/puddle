@@ -99,6 +99,8 @@ run "npm advisory, no npm issue open (the Rust issue is not it)" 1 npm-vulnerabl
 grep -q "^issue create --title $npm_title --body-file " "$tmp/gh.log" || fail "no npm issue opened: $(cat "$tmp/gh.log")"
 grep -q 'GHSA-35jh-r3h4-6jhm' "$tmp/body.md" || fail "npm body lacks the advisory id"
 grep -q 'github.com/advisories/GHSA-35jh-r3h4-6jhm' "$tmp/body.md" || fail "npm body lacks the advisory link"
+# shellcheck disable=SC2016 # backticks are literal table text
+grep -qF '| `lodash` | high | Command Injection in lodash | ' "$tmp/body.md" || fail "npm body columns are off: $(cat "$tmp/body.md")"
 grep -q 'audit-exceptions.json' "$tmp/body.md" || fail "npm body lacks the exception file"
 grep -q 'advisories-npm' "$tmp/body.md" || fail "npm body lacks the job name"
 

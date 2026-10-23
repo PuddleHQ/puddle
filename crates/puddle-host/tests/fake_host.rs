@@ -13,7 +13,7 @@ mod support;
 
 use std::future::Future;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -178,8 +178,8 @@ struct Guest {
     boot_says: Mutex<String>,
     /// The folder the guest is asked about as the start folder is not there.
     start_folder_missing: AtomicBool,
-    /// What the editor's listing of the volume root prints, instead of no checkouts.
-    listing: Mutex<Option<&'static str>>,
+    /// How many entries that are no checkout the listing reports under the volume root.
+    other_entries: AtomicUsize,
     /// When set, the clone turns this path into a folder, so the next save of the workspace
     /// list fails (a stand-in for a full disk or a locked file).
     break_list_on_clone: Mutex<Option<PathBuf>>,
@@ -214,9 +214,6 @@ impl Guest {
             ("sh", _) if r.args.get(2).map(String::as_str) == Some("puddle-start-folder") => {
                 "start-folder"
             }
-            ("sh", _) if r.args.get(2).map(String::as_str) == Some("puddle-editor-listing") => {
-                "editor-listing"
-            }
             ("sh", _) if second == Some(CLEAR_LOCKS_SH) => "locks",
             ("sh", _) if second == Some(DELETE_CHECK_SH) => "check",
             ("sh", _) if second.is_some_and(|s| s.contains("fstrim")) => "shutdown-trim",
@@ -247,7 +244,7 @@ impl Guest {
                 self.boot_ok()
             }
             "boot" => self.boot_ok(),
-            "start-folder" | "editor-listing" => self.answer_editor(kind),
+            "start-folder" => self.answer_start_folder(),
             "shell-init-check" => self.answer_shell_init_check(ctx, r),
             "layout" if self.fail_layout.load(Ordering::SeqCst) => ExecOutput::new(
                 1,
@@ -313,14 +310,10 @@ impl Guest {
         }
     }
 
-    /// What the guest says about the start folder and the editor's listing of the volume root.
-    fn answer_editor(&self, kind: &str) -> ExecOutput {
-        if kind == "start-folder" {
-            let missing = self.start_folder_missing.load(Ordering::SeqCst);
-            return ExecOutput::new(i32::from(missing), "", "");
-        }
-        let said = (*self.listing.lock().unwrap()).unwrap_or("O\t0\n");
-        ExecOutput::new(0, said, "")
+    /// What the guest says about the start folder: a missing one fails the `[ -d ]` test.
+    fn answer_start_folder(&self) -> ExecOutput {
+        let missing = self.start_folder_missing.load(Ordering::SeqCst);
+        ExecOutput::new(i32::from(missing), "", "")
     }
 
     /// The two commands that look at the volume: the checkouts listing and the existence check.
@@ -369,6 +362,12 @@ impl Guest {
             if only.as_ref().is_none_or(|o| *o == dir) {
                 out.push_str(&line);
             }
+        }
+        if only.is_none() {
+            let others = self.other_entries.load(Ordering::SeqCst);
+            out.push_str("O\t");
+            out.push_str(&others.to_string());
+            out.push('\n');
         }
         out.push_str("D\n");
         self.listings.lock().unwrap().push(only);
@@ -3946,6 +3945,12 @@ async fn a_host_with_code_server_tells_each_guest_where_to_run_the_editor_server
         seen.get("PUDDLE_AGENT_EDITOR_FOLDER").map(String::as_str),
         Some("/workspaces/acme")
     );
+    // Where an attach writes the multi-root file, for a server that starts after one.
+    assert_eq!(
+        seen.get("PUDDLE_AGENT_EDITOR_WORKSPACE_FILE")
+            .map(String::as_str),
+        Some("/workspaces/acme/.puddle/editor/acme.code-workspace")
+    );
     assert_eq!(
         seen.get("PUDDLE_AGENT_EDITOR_GRACE").map(String::as_str),
         Some("300")
@@ -6611,12 +6616,16 @@ async fn an_attach_writes_the_multi_root_file_for_two_checkouts_and_a_file_it_ca
     // One checkout, or none: the root opens and the plan holds no file.
     attach().await;
     assert!(!last_plan(&rig).contains(file));
-    *rig.guest.listing.lock().unwrap() = Some("R\tapi\nO\t0\n");
+    rig.guest
+        .put_checkout("api", "https://example.org/acme/api.git");
     attach().await;
     assert!(!last_plan(&rig).contains(file));
 
-    // Two: the plan merges `folders` into the file, one folder per checkout.
-    *rig.guest.listing.lock().unwrap() = Some("R\tweb\nR\tapi\nO\t2\n");
+    // Two, and a loose file: the plan merges `folders` into the file, one folder per checkout and
+    // the volume root last.
+    rig.guest
+        .put_checkout("web", "https://example.org/acme/web.git");
+    rig.guest.other_entries.store(2, Ordering::SeqCst);
     attach().await;
     let plan = last_plan(&rig);
     assert!(plan.contains(file), "{plan}");
@@ -6627,7 +6636,6 @@ async fn an_attach_writes_the_multi_root_file_for_two_checkouts_and_a_file_it_ca
     ] {
         assert!(plan.contains(folder), "{folder}: {plan}");
     }
-
     // A start folder replaces the window: Puddle's lines go again.
     put_start_folder(&api, "acme", Some("api")).await;
     attach().await;
@@ -6642,4 +6650,89 @@ async fn an_attach_writes_the_multi_root_file_for_two_checkouts_and_a_file_it_ca
     assert!(detail.contains("left as it is"), "{detail}");
     attach().await;
     assert!(problem_is(&api, "editor-file:acme", false).await.is_none());
+}
+
+/// A workspace that runs, with nothing else going on in its guest.
+async fn quiet_workspace(rig: &Rig, name: &'static str) -> (Host<FakeRuntime>, Api) {
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, name).await;
+    after_boot_listing(rig).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    (host, api)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_guest_that_cannot_look_for_the_start_folder_is_a_problem_until_it_can() {
+    let rig = Rig::new();
+    let (_host, api) = quiet_workspace(&rig, "acme").await;
+    // The login-shell file is written (the first command); the look for the folder is the next.
+    rig.runtime.inject(
+        Op::Exec,
+        Fault::once(disk_error("exec")).only_for("acme").after(1),
+    );
+    let set = put_start_folder(&api, "acme", Some("web")).await;
+    assert_eq!(set.json(), json!({"start_folder": "web", "exists": null}));
+    let (title, detail) = problem_is(&api, "start-folder:acme", true).await.unwrap();
+    assert!(
+        title.contains("could not look for") && title.contains("web"),
+        "{title}"
+    );
+    assert!(detail.contains("no space left"), "{detail}");
+    // The next look that works ends it.
+    put_start_folder(&api, "acme", Some("web")).await;
+    assert!(problem_is(&api, "start-folder:acme", false).await.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_start_folder_the_guest_cannot_be_given_is_a_problem_until_a_change_reaches_it() {
+    let rig = Rig::new();
+    let (_host, api) = quiet_workspace(&rig, "acme").await;
+    rig.runtime
+        .inject(Op::Exec, Fault::once(disk_error("exec")).only_for("acme"));
+    let set = put_start_folder(&api, "acme", Some("web")).await;
+    assert_eq!(set.status, 200, "{}", set.body);
+    let (title, detail) = problem_is(&api, "start-folder-file:acme", true)
+        .await
+        .unwrap();
+    assert!(title.contains("start folder"), "{title}");
+    assert!(
+        detail.contains("no space left") && detail.contains("saved"),
+        "{detail}"
+    );
+    put_start_folder(&api, "acme", Some("web/src")).await;
+    assert!(
+        problem_is(&api, "start-folder-file:acme", false)
+            .await
+            .is_none()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_attach_that_cannot_list_or_write_the_editors_file_says_so_until_one_works() {
+    let rig = Rig::new();
+    let (_host, api) = quiet_workspace(&rig, "acme").await;
+    let attach = || async {
+        let reply = api
+            .post(
+                "/api/workspaces/acme/attach",
+                &json!({"mode": "browser"}).to_string(),
+            )
+            .await;
+        assert_eq!(reply.status, 200, "{}", reply.body);
+    };
+    // The listing is the first command of an attach with no start folder, the plan the second.
+    for skip in [0, 1] {
+        rig.runtime.inject(
+            Op::Exec,
+            Fault::once(disk_error("exec")).only_for("acme").after(skip),
+        );
+        attach().await;
+        let (title, detail) = problem_is(&api, "editor-file:acme", true).await.unwrap();
+        assert!(title.contains("editor's file"), "{title}");
+        assert!(detail.contains("no space left"), "{detail}");
+        attach().await;
+        assert!(problem_is(&api, "editor-file:acme", false).await.is_none());
+    }
 }

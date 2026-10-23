@@ -12,6 +12,7 @@
 //! | [`ENV_DATA`] | where user data and extensions live (on the workspace volume) |
 //! | [`ENV_GRACE`] | the reconnection grace in seconds |
 //! | [`ENV_FOLDER`] | the folder the editor opens (the workspace volume) |
+//! | [`ENV_WORKSPACE_FILE`] | the multi-root file the editor opens instead when it exists and lists folders (optional) |
 //!
 //! ```
 //! use puddle_agent_proto::editor::EditorServer;
@@ -38,6 +39,9 @@ pub const ENV_DATA: &str = "PUDDLE_AGENT_EDITOR_DATA";
 pub const ENV_GRACE: &str = "PUDDLE_AGENT_EDITOR_GRACE";
 /// The folder the editor opens.
 pub const ENV_FOLDER: &str = "PUDDLE_AGENT_EDITOR_FOLDER";
+/// The multi-root file the editor opens instead of the folder, when the file exists and lists
+/// a folder. Unset: the editor always opens the folder.
+pub const ENV_WORKSPACE_FILE: &str = "PUDDLE_AGENT_EDITOR_WORKSPACE_FILE";
 
 /// Where the agent writes the server's password (owner-only; the host reads it to sign the
 /// window in). It lives in `/run`: a new random value for each boot of the sandbox, kept while
@@ -63,6 +67,10 @@ pub struct EditorServer {
     pub data: String,
     /// The folder the editor opens.
     pub folder: String,
+    /// The multi-root file the editor opens instead of [`Self::folder`] at each start of the
+    /// server where the file exists and lists a folder. The host writes it at an attach, so the
+    /// server only finds it at a start that comes after one.
+    pub workspace_file: Option<String>,
     /// The reconnection grace in seconds ([`MIN_GRACE_SECS`] to [`MAX_GRACE_SECS`]).
     pub grace_secs: u32,
 }
@@ -77,20 +85,32 @@ impl EditorServer {
             port: DEFAULT_PORT,
             data: data.into(),
             folder: folder.into(),
+            workspace_file: None,
             grace_secs,
         }
+    }
+
+    /// The same server, opening `file` instead of the folder when it holds a multi-root list.
+    #[must_use]
+    pub fn with_workspace_file(mut self, file: impl Into<String>) -> Self {
+        self.workspace_file = Some(file.into());
+        self
     }
 
     /// The variables that tell the agent to run this server.
     #[must_use]
     pub fn env(&self) -> Vec<(&'static str, String)> {
-        vec![
+        let mut env = vec![
             (ENV_DIR, self.dir.clone()),
             (ENV_PORT, self.port.to_string()),
             (ENV_DATA, self.data.clone()),
             (ENV_FOLDER, self.folder.clone()),
             (ENV_GRACE, self.grace_secs.to_string()),
-        ]
+        ];
+        if let Some(file) = &self.workspace_file {
+            env.push((ENV_WORKSPACE_FILE, file.clone()));
+        }
+        env
     }
 
     /// Reads the settings through `get`: `None` when [`ENV_DIR`] is unset (no server).
@@ -140,6 +160,9 @@ impl EditorServer {
             port,
             data: path(ENV_DATA, required(ENV_DATA)?)?,
             folder: path(ENV_FOLDER, required(ENV_FOLDER)?)?,
+            workspace_file: get(ENV_WORKSPACE_FILE)
+                .map(|file| path(ENV_WORKSPACE_FILE, file))
+                .transpose()?,
             grace_secs,
         }))
     }
@@ -204,6 +227,16 @@ mod tests {
     }
 
     #[test]
+    fn the_workspace_file_is_optional_and_reads_back() {
+        let server = EditorServer::new("/d", "/f", 300).with_workspace_file("/f/w.code-workspace");
+        let env = server.env();
+        let vars: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        assert_eq!(read(&vars), Ok(Some(server)));
+        let without = read(&[(ENV_DIR, "/e"), (ENV_DATA, "/d"), (ENV_FOLDER, "/f")]);
+        assert_eq!(without.unwrap().unwrap().workspace_file, None);
+    }
+
+    #[test]
     fn unusable_values_name_their_variable() {
         let ok = [(ENV_DIR, "/e"), (ENV_DATA, "/d"), (ENV_FOLDER, "/f")];
         let with = |extra: (&'static str, &'static str)| {
@@ -218,6 +251,7 @@ mod tests {
         assert!(with((ENV_GRACE, "86401")).starts_with(ENV_GRACE));
         assert!(with((ENV_DATA, "relative")).starts_with(ENV_DATA));
         assert!(with((ENV_FOLDER, "/a/../b")).starts_with(ENV_FOLDER));
+        assert!(with((ENV_WORKSPACE_FILE, "w.code-workspace")).starts_with(ENV_WORKSPACE_FILE));
         assert!(with((ENV_DIR, "e")).starts_with(ENV_DIR));
         for missing in [ENV_DATA, ENV_FOLDER] {
             let mut v = ok.to_vec();

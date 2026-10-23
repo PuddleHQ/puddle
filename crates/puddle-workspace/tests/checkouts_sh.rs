@@ -114,6 +114,33 @@ async fn the_listing_and_the_delete_check_agree_on_what_a_checkout_is() {
 }
 
 #[tokio::test]
+async fn entries_that_are_no_checkout_are_counted_but_puddle_s_own_folders_are_not() {
+    for shell in shells() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vol = volume(tmp.path());
+        let before = list(shell, &vol).await.others;
+        std::os::unix::fs::symlink(vol.join("api"), vol.join("api-link")).unwrap();
+        std::fs::create_dir(vol.join("plain-folder")).unwrap();
+        std::fs::write(vol.join("extra-note.txt"), "x").unwrap();
+        std::fs::create_dir_all(vol.join(".puddle/editor")).unwrap();
+        std::fs::create_dir_all(vol.join("lost+found")).unwrap();
+        let found = list(shell, &vol).await;
+        assert_eq!(found.checkouts.len(), 3, "{shell}");
+        assert_eq!(
+            found.others,
+            before + 3,
+            "{shell}: the link, the folder and the file"
+        );
+        // One directory asked for: no count of the rest.
+        let g = sandbox_on(shell, vol.clone()).await;
+        let one =
+            g.w.read_checkout(&g.sb, &id(), &CheckoutDir::new("api").unwrap())
+                .await;
+        assert!(one.unwrap().is_some(), "{shell}");
+    }
+}
+
+#[tokio::test]
 async fn each_checkout_says_where_it_came_from_and_what_state_it_is_in() {
     for shell in shells() {
         let tmp = tempfile::tempdir().unwrap();

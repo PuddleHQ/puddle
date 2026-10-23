@@ -14,6 +14,8 @@
 #       there is none. <branch> is empty when HEAD is detached. <head> is the short commit,
 #       empty before the first commit. <dirty> is 1 with uncommitted changes or untracked files.
 #   M <count>          <count> more checkouts left out (past 100)
+#   O <count>          <count> other entries directly under the volume root (loose files, folders
+#                      that are no checkout); only when listing all, before D
 #   E <dir> <message>  something could not be read
 #   D                  the listing ran to the end
 # Fields have control characters replaced by '?' and are cut at 500 characters.
@@ -85,12 +87,17 @@ if [ $# -ge 2 ]; then
 fi
 
 count=0
+others=0
 for d in * .[!.]* ..?*; do
     [ -e "$d" ] || [ -L "$d" ] || continue
     case $d in .puddle | lost+found) continue ;; esac
-    is_checkout "$d" || continue
+    if ! is_checkout "$d"; then
+        others=$((others + 1))
+        continue
+    fi
     count=$((count + 1))
     if [ "$count" -le "$limit" ]; then describe; fi
 done
 if [ "$count" -gt "$limit" ]; then printf 'M\t%s\n' "$((count - limit))"; fi
+printf 'O\t%s\n' "$others"
 printf 'D\n'

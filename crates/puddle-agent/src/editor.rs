@@ -106,7 +106,32 @@ pub fn write_password(path: &Path, password: &str) -> io::Result<()> {
     std::fs::rename(&partial, path)
 }
 
-/// The command line of the server (without the program): the release's own flags, the folder last.
+/// Most of the multi-root file that is read to see whether it lists a folder.
+const WORKSPACE_FILE_PEEK: u64 = 1 << 20;
+
+/// Whether `file` is a multi-root file that lists at least one folder. A safety net, not a parser
+/// (the file is JSON with comments the user may have edited): it asks for the `folders` key and a
+/// `path` entry anywhere, so a settings-only file, which the host leaves behind when it takes its
+/// folders out, does not open an empty window. It cannot see a `path` that belongs to another key.
+fn lists_a_folder(file: &Path) -> bool {
+    use std::io::Read as _;
+    let mut text = String::new();
+    let read = std::fs::File::open(file)
+        .and_then(|f| f.take(WORKSPACE_FILE_PEEK).read_to_string(&mut text));
+    read.is_ok() && text.contains("\"folders\"") && text.contains("\"path\"")
+}
+
+/// What the server opens, looked at each time it starts: the multi-root file when there is one
+/// that lists a folder, else the folder.
+#[must_use]
+pub fn target(server: &EditorServer) -> OsString {
+    match &server.workspace_file {
+        Some(file) if lists_a_folder(Path::new(file)) => OsString::from(file),
+        _ => OsString::from(&server.folder),
+    }
+}
+
+/// The command line of the server (without the program): the release's own flags, the target last.
 #[must_use]
 pub fn arguments(server: &EditorServer) -> Vec<OsString> {
     let data = Path::new(&server.data);
@@ -126,7 +151,7 @@ pub fn arguments(server: &EditorServer) -> Vec<OsString> {
         "--disable-telemetry".into(),
         "--disable-update-check".into(),
     ];
-    args.push(OsString::from(&server.folder));
+    args.push(target(server));
     args
 }
 
@@ -277,6 +302,42 @@ mod tests {
                 .iter()
                 .any(|a| a.contains("password") && a != "password")
         );
+    }
+
+    #[test]
+    fn the_server_opens_the_multi_root_file_only_while_it_lists_a_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a.code-workspace");
+        let server = EditorServer::new("/d", "/workspaces/a", 300)
+            .with_workspace_file(file.to_string_lossy());
+        let opens = || target(&server).to_string_lossy().into_owned();
+        // No file yet, a file of settings alone, a list with no folder in it: the folder.
+        assert_eq!(opens(), "/workspaces/a");
+        for text in [
+            r#"{"settings": {"path": 1}}"#,
+            "",
+            r#"{"folders": []}"#,
+            "not json at all",
+        ] {
+            std::fs::write(&file, text).unwrap();
+            assert_eq!(opens(), "/workspaces/a", "{text:?}");
+        }
+        // A list with a folder, comments and all: the file, which is the last argument.
+        std::fs::write(
+            &file,
+            "// kept\n{\"folders\": [{\"path\": \"/workspaces/a/api\"}], \"settings\": {}}",
+        )
+        .unwrap();
+        assert_eq!(opens(), file.to_string_lossy());
+        assert_eq!(
+            arguments(&server)
+                .last()
+                .map(|a| a.to_string_lossy().into_owned()),
+            Some(file.to_string_lossy().into_owned())
+        );
+        // A server told of no file never looks.
+        let plain = EditorServer::new("/d", "/workspaces/a", 300);
+        assert_eq!(target(&plain), OsString::from("/workspaces/a"));
     }
 
     #[test]

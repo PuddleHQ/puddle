@@ -72,6 +72,10 @@ pub struct CheckoutList {
     pub checkouts: Vec<FoundCheckout>,
     /// How many more there are.
     pub more: u64,
+    /// How many other entries (loose files, folders that are no checkout) sit directly under the
+    /// volume root; Puddle's own folder and `lost+found` are not counted. Zero for the listing of
+    /// one directory.
+    pub others: u64,
 }
 
 /// The command for `layout`: all checkouts, or just `only`.
@@ -209,6 +213,12 @@ pub(crate) fn parse(stdout: &str) -> Result<CheckoutList, String> {
                     .map_err(|_| format!("bad count line {:?}", truncate(line)))?;
                 list.more = list.more.saturating_add(n);
             }
+            ["O", count] => {
+                let n: u64 = count
+                    .parse()
+                    .map_err(|_| format!("bad count line {:?}", truncate(line)))?;
+                list.others = list.others.saturating_add(n);
+            }
             ["E", dir, message] if !dir.is_empty() => {
                 errors += 1;
                 if errors > MAX_ERRORS {
@@ -255,9 +265,9 @@ mod tests {
                    C\tlocal\t/srv/repo\tmain\tabc\t0\n\
                    C\tplain\thttp://host/r\tmain\tabc\t0\n\
                    E\tbroken\tgit remote failed: boom\n\
-                   M\t7\nD\n";
+                   M\t7\nO\t3\nD\n";
         let list = parse(out).unwrap();
-        assert_eq!(list.more, 7);
+        assert_eq!((list.more, list.others), (7, 3));
         let by = |dir: &str| list.checkouts.iter().find(|c| c.dir == dir).unwrap();
         let api = by("api");
         assert_eq!(

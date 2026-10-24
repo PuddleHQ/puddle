@@ -60,6 +60,16 @@ impl BootReport {
             .collect()
     }
 
+    /// The image's entrypoint, when it exited with a failure within a second of its start: its
+    /// exit status and the end of its output (`<status>: <output>`). One that is still running,
+    /// exited with 0, or died later is not reported: the hook has left by then.
+    #[must_use]
+    pub fn entrypoint_failure(&self) -> Option<&str> {
+        self.stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("puddle-boot: entrypoint exited with status "))
+    }
+
     /// The merged files the hook could not parse and so left as they were: each with the reason
     /// it gave (`<path> left as it is: <reason>`).
     #[must_use]
@@ -352,6 +362,24 @@ mod tests {
         };
         assert_eq!(report.replaced_files(), ["/etc/a b", "/etc/c"]);
         assert_eq!(BootReport::default().replaced_files(), [] as [&str; 0]);
+    }
+
+    #[test]
+    fn the_report_names_an_entrypoint_that_failed_at_once() {
+        let said = |stdout: &str| BootReport {
+            duration: Duration::ZERO,
+            stdout: stdout.into(),
+        };
+        assert_eq!(
+            said("puddle-boot: entrypoint chained: x\npuddle-boot: entrypoint exited with status 127: x: not found\n")
+                .entrypoint_failure(),
+            Some("127: x: not found")
+        );
+        assert_eq!(
+            said("puddle-boot: entrypoint chained: x\n").entrypoint_failure(),
+            None
+        );
+        assert_eq!(BootReport::default().entrypoint_failure(), None);
     }
 
     #[test]

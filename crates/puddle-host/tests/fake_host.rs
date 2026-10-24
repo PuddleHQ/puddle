@@ -6026,6 +6026,49 @@ async fn a_start_that_finds_the_shell_init_changed_from_inside_puts_it_back_and_
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_entrypoint_that_failed_at_once_is_a_problem_until_a_start_where_it_did_not() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    *rig.guest.boot_says.lock().unwrap() =
+        "puddle-boot: entrypoint exited with status 127: dockerd: not found\n".to_owned();
+    create(&api, &mut events, "acme").await;
+    let problem = host
+        .problems()
+        .list()
+        .into_iter()
+        .find(|p| p.key == "entrypoint:acme")
+        .unwrap_or_else(|| panic!("no problem: {:?}", host.problems().list()));
+    assert_eq!(
+        problem.title,
+        "The image's entrypoint in acme stopped right after it started"
+    );
+    assert!(
+        problem.detail.contains("status 127: dockerd: not found")
+            && problem.detail.contains("/run/puddle/entrypoint.log"),
+        "{}",
+        problem.detail
+    );
+    assert_eq!(problem.workspace.as_ref().map(|w| w.as_str()), Some("acme"));
+
+    // The next start, where it did not fail, takes the problem away.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(
+        host.problems()
+            .list()
+            .iter()
+            .all(|p| p.key != "entrypoint:acme"),
+        "{:?}",
+        host.problems().list()
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn deleting_a_workspace_removes_its_shell_init_and_the_folder() {
     let rig = Rig::new();
     let host = rig.start().await;

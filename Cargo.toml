@@ -90,6 +90,8 @@ libc = "0.2.172"
 rustix = { version = "1.1.5", default-features = false, features = ["std", "process"] }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "std"] }
 getrandom = "0.4"
+# The login key of direct SSH (public half derived from the seed); already in the tree through the runtime's SSH stack.
+ed25519-dalek = { version = "3", default-features = false, features = ["zeroize"] }
 # Fast substring search for the proxy's stand-in swap (already in the tree through regex and axum).
 memchr = "2.8"
 # The per-user data folder per OS; no own per-OS code for it.

@@ -998,7 +998,20 @@ pub trait Launcher: Send + Sync {
     fn open_desktop<'a>(
         &'a self,
         workspace: &'a WorkspaceRecord,
+        target: &'a DesktopTarget,
     ) -> BoxFuture<'a, Result<(), LaunchError>>;
+}
+
+/// What a desktop editor opens: a place in a workspace, reached through its ssh host entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesktopTarget {
+    /// The workspace's host name in the ssh config (`puddle-<workspace>`).
+    pub ssh_host: String,
+    /// The absolute path in the guest to open: a checkout, the volume root, or the multi-root
+    /// file.
+    pub path: String,
+    /// Whether `path` is a `.code-workspace` file rather than a folder.
+    pub is_workspace_file: bool,
 }
 
 /// The desktop editor could not be opened.

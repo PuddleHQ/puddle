@@ -69,6 +69,10 @@ impl RuntimeFactory for HarnessFactory {
         .with_registry_roots(inputs.registry_roots)
         .with_runtime_log_level(self.settings.msb_log_level.clone())
         .with_keep_logs_dir(self.settings.kept_logs());
+        let config = match inputs.ssh_login_key {
+            Some(key) => config.with_ssh_key(key),
+            None => config,
+        };
         let runtime = MsbRuntime::open(config).await?;
         *self.opened.lock().unwrap() = Some(runtime.clone());
         Ok(runtime)

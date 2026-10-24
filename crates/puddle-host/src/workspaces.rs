@@ -27,9 +27,9 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use puddle_agent_proto::editor::EditorServer;
 use puddle_api::{
-    AttachMode, Attached, DEFAULT_IMAGE, DeleteCheck, DisplayName, GitSetup, LaunchError, Launcher,
-    Listing, NewWorkspace, Operation, RepoFindings, Repository, ShellInitCheck, StartFolder,
-    StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService,
+    AttachMode, Attached, DEFAULT_IMAGE, DeleteCheck, DesktopTarget, DisplayName, GitSetup,
+    Launcher, Listing, NewWorkspace, Operation, RepoFindings, Repository, ShellInitCheck,
+    StartFolder, StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService,
 };
 use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
@@ -44,6 +44,7 @@ use puddle_types::{
     Problem, Problems, WorkspaceId, WorkspaceName, WorkspaceStatus, WorkspaceStep,
 };
 
+use crate::ssh_config::{SshSetup, ssh_host};
 use crate::ssh_target::{ReportingTarget, report_no_endpoint};
 use puddle_workspace::{Findings, Layout, Workspaces};
 use tokio::sync::watch;
@@ -106,23 +107,6 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
     }
 }
 
-/// A [`Launcher`] for a host with no desktop shell: every attach says so.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct NoLauncher;
-
-impl Launcher for NoLauncher {
-    fn open_desktop<'a>(
-        &'a self,
-        _workspace: &'a WorkspaceRecord,
-    ) -> BoxFuture<'a, Result<(), LaunchError>> {
-        Box::pin(async {
-            Err(LaunchError::new(
-                "this Puddle has no desktop shell to open an editor from",
-            ))
-        })
-    }
-}
-
 /// What the service is built from.
 pub(crate) struct Parts<R: Runtime + Clone> {
     pub(crate) runtime: R,
@@ -133,6 +117,8 @@ pub(crate) struct Parts<R: Runtime + Clone> {
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) settings: Arc<dyn puddle_api::SettingsRepo>,
     pub(crate) launcher: Arc<dyn Launcher>,
+    /// The login key and ssh config of direct SSH.
+    pub(crate) ssh: Arc<SshSetup>,
     pub(crate) book: WorkspaceBook,
     pub(crate) injection: Arc<Injection>,
     pub(crate) problems: Arc<Problems>,
@@ -209,6 +195,7 @@ struct Inner<R: Runtime + Clone> {
     clock: Arc<dyn Clock>,
     settings: Arc<dyn puddle_api::SettingsRepo>,
     launcher: Arc<dyn Launcher>,
+    ssh: Arc<SshSetup>,
     book: WorkspaceBook,
     injection: Arc<Injection>,
     problems: Arc<Problems>,
@@ -407,6 +394,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 clock: parts.clock,
                 settings: parts.settings,
                 launcher: parts.launcher,
+                ssh: parts.ssh,
                 book: parts.book,
                 injection: parts.injection,
                 problems: parts.problems,
@@ -536,10 +524,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             self.inner.injection.end(&name);
         }
         let live = std::mem::take(&mut *self.inner.live.lock().await);
-        for (_, entry) in live {
+        for (name, entry) in live {
             let Live { route, ssh, .. } = entry;
             if let Some(ssh) = ssh {
-                ssh.close().await;
+                self.close_ssh(&name, ssh).await;
             }
             route.shutdown().await;
         }
@@ -1596,6 +1584,54 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
+    /// What a desktop editor opens in the running workspace `record`, once its ssh entry is in
+    /// place: the multi-root file when the editor opens one, else the start folder or the volume
+    /// root. Asked again, it writes the entry again, so an entry that could not be written when the
+    /// endpoint opened (a config file that was locked) gets another try now, and says why if it
+    /// fails again.
+    ///
+    /// # Errors
+    ///
+    /// Why the editor cannot be opened, for the user.
+    async fn desktop_target(&self, record: &WorkspaceRecord) -> Result<DesktopTarget, String> {
+        let name = &record.name;
+        if !self.direct_ssh_allowed(name) {
+            return Err("direct SSH is off for this workspace; allow it first".to_owned());
+        }
+        let live = self.inner.live.lock().await;
+        let entry = live.get(name);
+        let Some(endpoint) = entry
+            .and_then(|e| e.ssh.as_ref())
+            .map(|ssh| ssh.endpoint().path().to_path_buf())
+        else {
+            return Err(format!(
+                "direct SSH has no endpoint in {name}; restart the workspace to try again"
+            ));
+        };
+        let guest = entry.and_then(|e| e.guest.as_ref());
+        let (path, is_workspace_file) = match guest {
+            Some(guest) => match &guest.editor_file {
+                Some(file) => (file.path().clone(), true),
+                None => (
+                    crate::editor_file::start_path(&guest.root, record.start_folder.as_ref()),
+                    false,
+                ),
+            },
+            None => return Err(format!("{name} is not running; start it first")),
+        };
+        let key = problem_key("ssh", name);
+        self.inner.ssh.publish(name, &endpoint).map_err(|reason| {
+            self.ssh_not_usable(name, &reason);
+            format!("direct SSH is on but the ssh config could not be written: {reason}")
+        })?;
+        self.inner.problems.clear(&key);
+        Ok(DesktopTarget {
+            ssh_host: ssh_host(name),
+            path: path.as_str().to_owned(),
+            is_workspace_file,
+        })
+    }
+
     /// The browser editor's reconnection grace for `name`, in seconds: the settings' value, the
     /// default when they cannot be read (the editor is not worth a failed start).
     fn reconnection_grace(&self, name: &WorkspaceName) -> u32 {
@@ -1621,14 +1657,15 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Ok(resolve(&global, Some(&own)).direct_ssh.value)
     }
 
-    /// Opens the SSH endpoint of a running sandbox. A failure is reported to the user
-    /// ([`Event::WorkspaceSshFailed`]): the workspace runs without direct SSH.
+    /// Opens the SSH endpoint of a running sandbox and puts its entry in Puddle's ssh config. A
+    /// failure is reported to the user ([`Event::WorkspaceSshFailed`] and a problem that lasts
+    /// until it works): the workspace runs without direct SSH.
     async fn open_ssh(&self, name: &WorkspaceName, gated: Arc<GatedSandbox<R::Sandbox>>) {
         let inner = &self.inner;
         let listener = match inner.kit.ipc().listen() {
             Ok(listener) => listener,
             Err(e) => {
-                report_no_endpoint(inner.events.as_ref(), name, &e);
+                self.endpoint_failed(name, &e);
                 return;
             }
         };
@@ -1640,23 +1677,70 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let ssh = match SshEndpoint::start(listener, target) {
             Ok(ssh) => ssh,
             Err(e) => {
-                report_no_endpoint(inner.events.as_ref(), name, &e);
+                self.endpoint_failed(name, &e);
                 return;
             }
         };
-        let stale = {
+        let endpoint = ssh.endpoint().path().to_path_buf();
+        // What is left over: an endpoint this one replaced, or this one when it has no place.
+        let leftover = {
             let mut live = inner.live.lock().await;
-            if let Some(entry) = live.get_mut(name) {
-                entry.ssh.replace(ssh)
-            } else {
-                drop(live);
-                ssh.close().await;
-                return;
+            // The switch may have gone off while the endpoint was starting: then it has no place.
+            match live.get_mut(name).filter(|_| self.direct_ssh_allowed(name)) {
+                Some(entry) => {
+                    let stale = entry.ssh.replace(ssh);
+                    // The entry is written while the lock is held, so a switch turned off
+                    // meanwhile (which takes the endpoint under the same lock) removes it
+                    // after, never before.
+                    self.publish_entry(name, &endpoint);
+                    stale
+                }
+                None => Some(ssh),
             }
         };
-        if let Some(stale) = stale {
-            stale.close().await;
+        if let Some(leftover) = leftover {
+            leftover.close().await;
         }
+    }
+
+    /// Puts `name`'s entry in Puddle's ssh config, naming `endpoint`. The caller has checked
+    /// [`Self::direct_ssh_allowed`]. A failure is a problem on the workspace: its endpoint is up,
+    /// but nothing can name it.
+    fn publish_entry(&self, name: &WorkspaceName, endpoint: &std::path::Path) {
+        let key = problem_key("ssh", name);
+        match self.inner.ssh.publish(name, endpoint) {
+            Ok(()) => self.inner.problems.clear(&key),
+            Err(reason) => self.ssh_not_usable(name, &reason),
+        }
+    }
+
+    fn endpoint_failed(&self, name: &WorkspaceName, error: &dyn std::fmt::Display) {
+        report_no_endpoint(self.inner.events.as_ref(), name, error);
+        self.ssh_not_usable(name, &format!("it has no SSH endpoint ({error})"));
+    }
+
+    /// Raises the problem that direct SSH is on for `name` and cannot be used.
+    fn ssh_not_usable(&self, name: &WorkspaceName, reason: &str) {
+        tracing::warn!(workspace = %name, %reason, "direct SSH is on but not usable");
+        self.inner.problems.raise(
+            Problem::new(
+                problem_key("ssh", name),
+                format!("Direct SSH does not work in {name}"),
+                format!(
+                    "{reason}. The workspace runs, but ssh and VS Code cannot connect to it; \
+                     restarting the workspace tries again."
+                ),
+            )
+            .about(name.clone()),
+        );
+    }
+
+    /// Ends `name`'s SSH way in: the entry first, so nothing names a closed endpoint, then the
+    /// endpoint, and the problem about it.
+    async fn close_ssh(&self, name: &WorkspaceName, ssh: SshEndpoint) {
+        self.inner.ssh.withdraw(name);
+        self.inner.problems.clear(&problem_key("ssh", name));
+        ssh.close().await;
     }
 
     /// Makes every running sandbox's SSH endpoint and ssh config entry match its direct SSH
@@ -1688,9 +1772,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                         .get_mut(&name)
                         .and_then(|entry| entry.ssh.take());
                     if let Some(ssh) = ssh {
-                        ssh.close().await;
+                        self.close_ssh(&name, ssh).await;
                     }
                 }
+                (false, false, _) => self.inner.problems.clear(&problem_key("ssh", &name)),
                 _ => {}
             }
         }
@@ -1702,6 +1787,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.inner.lifecycle.release(&name.sandbox_name());
         // The CA belongs to one start: a stopped or failed sandbox decrypts nothing.
         self.inner.injection.end(name);
+        self.inner.problems.clear(&problem_key("ssh", name));
         let (ssh, route) = {
             let mut live = self.inner.live.lock().await;
             if drop_route {
@@ -1721,7 +1807,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
         };
         if let Some(ssh) = ssh {
-            ssh.close().await;
+            self.close_ssh(name, ssh).await;
         }
         if let Some(route) = route {
             route.shutdown().await;
@@ -2462,10 +2548,13 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 AttachMode::Browser => Ok(Attached::not_opened(
                     "the editor in the browser is not available in this build",
                 )),
-                AttachMode::Desktop => match self.inner.launcher.open_desktop(&record).await {
-                    Ok(()) => Ok(Attached::opened()),
-                    Err(err) => Ok(Attached::not_opened(err.to_string())),
-                },
+                AttachMode::Desktop => Ok(match self.desktop_target(&record).await {
+                    Err(reason) => Attached::not_opened(reason),
+                    Ok(target) => match self.inner.launcher.open_desktop(&record, &target).await {
+                        Ok(()) => Attached::opened(),
+                        Err(err) => Attached::not_opened(err.to_string()),
+                    },
+                }),
             }
         })
     }

@@ -11,7 +11,7 @@ export const DIRECT_SSH_HINT =
 
 /** The trust text: said once, when the switch is turned on. */
 export const TRUST_DETAIL =
-  "Anything that already runs in the workspace, including code in its repository, runs with your rights on this computer when you connect with desktop VS Code: it can read your VS Code secrets, including a signed-in GitHub token, and run commands here through a local terminal. Turning the switch off later closes the way in but does not undo what already ran. Only allow it for code you trust. The browser editor keeps the workspace isolated.";
+  "Anything that already runs in the workspace, including code in its repository, runs with your rights on this computer when you connect with desktop VS Code: it can read your VS Code secrets, including a signed-in GitHub token, and run commands here through a local terminal. Turning the switch off later closes the way in but does not undo what already ran. Only allow it for code you trust. The browser editor keeps the workspace isolated. To let those tools find the workspace, Puddle also adds one line to the top of your ssh config (~/.ssh/config), an Include of Puddle's own ssh file; it changes nothing else in your files.";
 
 export interface TrustWords {
   title: string;

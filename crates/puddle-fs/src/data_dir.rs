@@ -50,9 +50,36 @@ pub fn data_dir_in(base: Option<&Path>) -> Result<PathBuf, DataDirError> {
     Ok(base.join(APP_DIR_NAME))
 }
 
+/// The user's own ssh config, `~/.ssh/config` (not created), or `None` without a home folder.
+#[must_use]
+pub fn user_ssh_config() -> Option<PathBuf> {
+    user_ssh_config_in(dirs::home_dir().as_deref())
+}
+
+/// [`user_ssh_config`] from an explicit home folder; a relative one is no home.
+#[must_use]
+pub fn user_ssh_config_in(home: Option<&Path>) -> Option<PathBuf> {
+    let home = home.filter(|h| h.is_absolute())?;
+    Some(home.join(".ssh").join("config"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_users_ssh_config_is_in_the_home_folder_when_it_is_absolute() {
+        let home = std::env::temp_dir();
+        assert_eq!(
+            user_ssh_config_in(Some(&home)),
+            Some(home.join(".ssh").join("config"))
+        );
+        assert_eq!(user_ssh_config_in(Some(Path::new("relative"))), None);
+        assert_eq!(user_ssh_config_in(None), None);
+        assert!(
+            user_ssh_config().is_none_or(|own| own.ends_with(Path::new(".ssh").join("config")))
+        );
+    }
 
     #[test]
     fn the_folder_is_puddle_inside_the_base() {

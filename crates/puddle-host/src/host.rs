@@ -42,8 +42,9 @@ use crate::dev_cert::{DevCertSource, host_dev_cert};
 use crate::doctor::system_doctor;
 use crate::files::{FileSettings, WorkspaceBook};
 use crate::injection::{Injection, InjectorFactory, InjectorInputs, forward_sign_in_needed};
-use crate::workspaces::{NoLauncher, Parts, known_ids};
-use crate::{HostConfig, HostError, HostWorkspaces, Platform, ProxyPasswords};
+use crate::ssh_config::SshSetup;
+use crate::workspaces::{Parts, known_ids};
+use crate::{HostConfig, HostError, HostWorkspaces, Platform, ProxyPasswords, VsCodeLauncher};
 
 /// One step of starting or stopping the host, in the order they ran.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -220,6 +221,10 @@ pub struct RuntimeInputs<'a> {
     pub registry_roots: Vec<String>,
     /// msb's log level for sandbox runtimes.
     pub log_level: Option<String>,
+    /// The public login key (an OpenSSH line) that the runtime's SSH server accepts: the only way
+    /// to log in through a workspace's endpoint. `None` when the key could not be made; the
+    /// server then accepts no login.
+    pub ssh_login_key: Option<String>,
 }
 
 /// Opens the sandbox runtime. The real one opens msb; tests open a fake.
@@ -255,6 +260,10 @@ impl RuntimeFactory for MsbFactory {
         .with_registry_proxy(inputs.pull_proxy.expose())
         .with_registry_roots(inputs.registry_roots)
         .with_runtime_log_level(inputs.log_level);
+        let config = match inputs.ssh_login_key {
+            Some(key) => config.with_ssh_key(key),
+            None => config,
+        };
         Ok(puddle_compute_msb::MsbRuntime::open(config).await?)
     }
 }
@@ -263,7 +272,7 @@ impl RuntimeFactory for MsbFactory {
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct HostOptions {
-    /// Opens editors for the workspaces (the desktop shell supplies it).
+    /// Opens the desktop editor for the workspaces: VS Code's `code` command by default.
     pub launcher: Arc<dyn Launcher>,
     /// The proxy discovery to use instead of the system's (tests).
     pub discovery: Option<Arc<Discovery>>,
@@ -285,7 +294,7 @@ pub struct HostOptions {
 impl Default for HostOptions {
     fn default() -> Self {
         Self {
-            launcher: Arc::new(NoLauncher),
+            launcher: Arc::new(VsCodeLauncher::new()),
             discovery: None,
             injector: None,
             secret_store: None,
@@ -497,6 +506,9 @@ impl<R: Runtime + Clone> Host<R> {
         .with_dev_cert(dev_cert.clone());
         steps.push(Step::GuestFilesReady);
 
+        // The login key of direct SSH: made before the runtime opens, which takes its public half.
+        let ssh = Arc::new(SshSetup::open(config.paths.data(), &config.ssh));
+
         // The runtime, with image pulls through the pull proxy and the corporate roots trusted.
         let runtime = factory
             .open(RuntimeInputs {
@@ -505,6 +517,7 @@ impl<R: Runtime + Clone> Host<R> {
                 pull_proxy: pull_url,
                 registry_roots: pem_of(&roots),
                 log_level: config.runtime_log_level.clone(),
+                ssh_login_key: ssh.authorized_key().map(str::to_owned),
             })
             .await?;
         steps.push(Step::RuntimeOpened);
@@ -541,6 +554,7 @@ impl<R: Runtime + Clone> Host<R> {
                 clock: clock.clone(),
                 settings: settings.clone(),
                 launcher: options.launcher,
+                ssh,
                 book,
                 injection: injecting.injection.clone(),
                 problems: problems.clone(),

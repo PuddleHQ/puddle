@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use puddle_api::{LaunchError, Launcher, UiAssets, UiFile, WorkspaceRecord};
+use puddle_api::{DesktopTarget, LaunchError, Launcher, UiAssets, UiFile, WorkspaceRecord};
 use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
 use puddle_compute::fake::{ExecContext, FakeRuntime, Fault, Op};
 use puddle_compute::{ExecOutput, ExecRequest, ImageConfig, Runtime};
@@ -111,6 +111,7 @@ struct FakeFactory {
     pull_proxy: Mutex<Option<String>>,
     pull_url: Mutex<Option<String>>,
     roots: Mutex<Option<usize>>,
+    ssh_login_key: Mutex<Option<String>>,
 }
 
 impl FakeFactory {
@@ -121,6 +122,7 @@ impl FakeFactory {
             pull_proxy: Mutex::new(None),
             pull_url: Mutex::new(None),
             roots: Mutex::new(None),
+            ssh_login_key: Mutex::new(None),
         }
     }
 }
@@ -136,6 +138,10 @@ impl RuntimeFactory for FakeFactory {
         *self.pull_proxy.lock().unwrap() = Some(inputs.pull_proxy.addr().to_string());
         *self.pull_url.lock().unwrap() = Some(inputs.pull_proxy.expose().to_owned());
         *self.roots.lock().unwrap() = Some(inputs.registry_roots.len());
+        self.ssh_login_key
+            .lock()
+            .unwrap()
+            .clone_from(&inputs.ssh_login_key);
         assert!(inputs.guest_share.ends_with("guest-share"));
         std::future::ready(Ok(self.runtime.clone()))
     }
@@ -478,16 +484,24 @@ impl UiAssets for TestUi {
 
 #[derive(Debug, Default)]
 struct RecordingLauncher {
+    /// Makes the next launch fail with this message (once).
+    fail_with: Mutex<Option<String>>,
     opened: Mutex<Vec<String>>,
+    targets: Mutex<Vec<DesktopTarget>>,
 }
 
 impl Launcher for RecordingLauncher {
     fn open_desktop<'a>(
         &'a self,
         workspace: &'a WorkspaceRecord,
+        target: &'a DesktopTarget,
     ) -> futures_util::future::BoxFuture<'a, Result<(), LaunchError>> {
         Box::pin(async move {
+            if let Some(message) = self.fail_with.lock().unwrap().take() {
+                return Err(LaunchError::new(message));
+            }
             self.opened.lock().unwrap().push(workspace.name.to_string());
+            self.targets.lock().unwrap().push(target.clone());
             Ok(())
         })
     }
@@ -535,7 +549,19 @@ impl Rig {
         config.upstream.discovery.mode = Mode::Direct;
         config.api.ui = Some(Arc::new(TestUi));
         config.operations_grace = Duration::from_secs(5);
+        config.ssh.bridge_program = Some(root.join("puddle"));
+        config.ssh.user_config = Some(self.user_ssh_config());
         config
+    }
+
+    /// The user's own ssh config of this rig's pretend home: never the real one.
+    fn user_ssh_config(&self) -> PathBuf {
+        self.dir.path().join("home").join(".ssh").join("config")
+    }
+
+    /// Puddle's own ssh config file.
+    fn puddle_ssh_config(&self) -> PathBuf {
+        self.dir.path().join("data").join("ssh").join("config")
     }
 
     async fn start(&self) -> Host<FakeRuntime> {
@@ -3401,6 +3427,316 @@ async fn the_global_default_decides_for_workspaces_without_their_own_switch() {
     host.shutdown().await;
 }
 
+/// The `Host` lines of Puddle's ssh config file (none when there is no file).
+fn ssh_hosts(rig: &Rig) -> Vec<String> {
+    std::fs::read_to_string(rig.puddle_ssh_config())
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| l.strip_prefix("Host ").map(str::to_owned))
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_runtime_gets_the_login_key_and_the_ssh_entry_follows_the_endpoint() {
+    let rig = Rig::new();
+    let factory = FakeFactory::new(&rig.runtime, &rig.log);
+    let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
+    let mut options = hermetic_options();
+    options.secret_store = Some(rig.secrets.clone());
+    options.dev_cert = Some(rig.dev_cert.clone() as Arc<dyn DevCertSource>);
+    let host = Host::start(prepared, &factory, options).await.unwrap();
+    let key = factory.ssh_login_key.lock().unwrap().clone().unwrap();
+    let public =
+        std::fs::read_to_string(rig.dir.path().join("data/ssh/login_ed25519.pub")).unwrap();
+    assert_eq!(key, public.trim());
+    assert!(key.starts_with("ssh-ed25519 "));
+
+    let api = api(&host);
+    let mut events = api.events().await;
+    let name = WorkspaceName::new("acme").unwrap();
+    // Off: no entry, and the user's own file is not touched.
+    create(&api, &mut events, "acme").await;
+    assert!(ssh_hosts(&rig).is_empty());
+    assert!(!rig.user_ssh_config().exists());
+
+    // On: the entry names the endpoint, and the user's file gets its one line.
+    allow_direct_ssh(&api, "acme", true).await;
+    let first = host.workspaces().ssh_endpoint(&name).await.unwrap();
+    assert_eq!(ssh_hosts(&rig), ["puddle-acme"]);
+    let entry = std::fs::read_to_string(rig.puddle_ssh_config()).unwrap();
+    assert!(entry.contains(&first.display().to_string()), "{entry}");
+    assert!(entry.contains("ssh-bridge"), "{entry}");
+    let include = format!("Include \"{}\"", rig.puddle_ssh_config().display());
+    let user = std::fs::read_to_string(rig.user_ssh_config()).unwrap();
+    assert_eq!(user.lines().next(), Some(include.as_str()), "{user}");
+
+    // Off again: the entry goes with the endpoint, the include line stays (and is not doubled).
+    allow_direct_ssh(&api, "acme", false).await;
+    assert!(ssh_hosts(&rig).is_empty());
+    allow_direct_ssh(&api, "acme", true).await;
+    assert_eq!(ssh_hosts(&rig), ["puddle-acme"]);
+    assert_eq!(
+        std::fs::read_to_string(rig.user_ssh_config()).unwrap(),
+        user
+    );
+
+    // A stop takes the entry out; the next start writes the new endpoint (the name is random per run).
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(ssh_hosts(&rig).is_empty());
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let second = host.workspaces().ssh_endpoint(&name).await.unwrap();
+    assert_ne!(first, second);
+    let entry = std::fs::read_to_string(rig.puddle_ssh_config()).unwrap();
+    assert!(
+        entry.contains(&second.display().to_string())
+            && !entry.contains(&first.display().to_string())
+    );
+
+    // Shutting down leaves no entry.
+    host.shutdown().await;
+    assert!(ssh_hosts(&rig).is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_workspace_that_follows_the_global_default_gets_its_entry_and_one_that_overrides_it_does_not()
+ {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let reply = api
+        .put(
+            "/api/settings",
+            &json!({"workspace_defaults": {"direct_ssh": true}}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    create(&api, &mut events, "acme").await;
+    allow_direct_ssh(&api, "beta", false).await;
+    create(&api, &mut events, "beta").await;
+    assert_eq!(ssh_hosts(&rig), ["puddle-acme"]);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_entry_left_by_a_crashed_run_is_gone_when_the_host_starts() {
+    let rig = Rig::new();
+    let stale = rig.puddle_ssh_config();
+    std::fs::create_dir_all(stale.parent().unwrap()).unwrap();
+    std::fs::write(&stale, "Host puddle-ghost\n    User root\n").unwrap();
+    let host = rig.start().await;
+    assert!(ssh_hosts(&rig).is_empty());
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_entry_that_cannot_be_written_is_a_problem_that_ends_when_it_can() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    // The user's ssh config is a folder: the include line cannot be added.
+    std::fs::create_dir_all(rig.user_ssh_config()).unwrap();
+    allow_direct_ssh(&api, "acme", true).await;
+    let (title, detail) = problem_is(&api, "ssh:acme", true).await.unwrap();
+    assert!(title.contains("acme"), "{title}");
+    assert!(detail.contains("include line"), "{detail}");
+    // The attach says it too, instead of opening an editor that cannot connect.
+    let attach = api
+        .post(
+            "/api/workspaces/acme/attach",
+            &json!({"mode": "desktop"}).to_string(),
+        )
+        .await;
+    assert_eq!(attach.json()["opened"], false, "{}", attach.body);
+    assert!(
+        attach.json()["message"]
+            .as_str()
+            .unwrap()
+            .contains("include line")
+    );
+    assert!(rig.launcher.opened.lock().unwrap().is_empty());
+    // Fixed: the next attach writes it, opens the editor and the problem is gone.
+    std::fs::remove_dir(rig.user_ssh_config()).unwrap();
+    let attach = api
+        .post(
+            "/api/workspaces/acme/attach",
+            &json!({"mode": "desktop"}).to_string(),
+        )
+        .await;
+    assert_eq!(attach.json()["opened"], true, "{}", attach.body);
+    assert!(problem_is(&api, "ssh:acme", false).await.is_none());
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_problem_with_direct_ssh_ends_when_the_switch_goes_off_or_the_workspace_stops() {
+    for ending in ["off", "stop"] {
+        let rig = Rig::new();
+        let host = rig.start().await;
+        let api = api(&host);
+        let mut events = api.events().await;
+        create(&api, &mut events, "acme").await;
+        std::fs::create_dir_all(rig.user_ssh_config()).unwrap();
+        allow_direct_ssh(&api, "acme", true).await;
+        problem_is(&api, "ssh:acme", true).await.unwrap();
+        if ending == "off" {
+            allow_direct_ssh(&api, "acme", false).await;
+        } else {
+            api.post("/api/workspaces/acme/stop", "").await;
+            events.until(ended("acme"), Duration::from_secs(20)).await;
+        }
+        assert!(
+            problem_is(&api, "ssh:acme", false).await.is_none(),
+            "{ending}"
+        );
+        host.shutdown().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_without_the_puddle_program_says_why_direct_ssh_has_no_entry() {
+    let rig = Rig::new();
+    let mut config = rig.config();
+    config.ssh.bridge_program = None;
+    let host = rig.start_with(config).await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    allow_direct_ssh(&api, "acme", true).await;
+    create(&api, &mut events, "acme").await;
+    let (_, detail) = problem_is(&api, "ssh:acme", true).await.unwrap();
+    assert!(detail.contains("no `puddle` program"), "{detail}");
+    assert!(ssh_hosts(&rig).is_empty());
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_desktop_editor_opens_the_start_folder_or_the_multi_root_file_on_the_workspaces_ssh_host()
+ {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    allow_direct_ssh(&api, "acme", true).await;
+    create(&api, &mut events, "acme").await;
+    let attach = || async {
+        let reply = api
+            .post(
+                "/api/workspaces/acme/attach",
+                &json!({"mode": "desktop"}).to_string(),
+            )
+            .await;
+        assert_eq!(reply.json()["opened"], true, "{}", reply.body);
+        rig.launcher
+            .targets
+            .lock()
+            .unwrap()
+            .last()
+            .cloned()
+            .unwrap()
+    };
+    let root = attach().await;
+    assert_eq!(root.ssh_host, "puddle-acme");
+    assert_eq!(root.path, "/workspaces/acme");
+    assert!(!root.is_workspace_file);
+
+    rig.guest
+        .put_checkout("api", "https://example.org/acme/api.git");
+    rig.guest
+        .put_checkout("web", "https://example.org/acme/web.git");
+    let multi = attach().await;
+    assert_eq!(
+        multi.path,
+        "/workspaces/acme/.puddle/editor/acme.code-workspace"
+    );
+    assert!(multi.is_workspace_file);
+
+    let reply = put_start_folder(&api, "acme", Some("api")).await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let folder = attach().await;
+    assert_eq!(folder.path, "/workspaces/acme/api");
+    assert!(!folder.is_workspace_file);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_launcher_that_fails_says_why_in_the_answer() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    allow_direct_ssh(&api, "acme", true).await;
+    create(&api, &mut events, "acme").await;
+    *rig.launcher.fail_with.lock().unwrap() = Some("VS Code is not installed".into());
+    let reply = api
+        .post(
+            "/api/workspaces/acme/attach",
+            &json!({"mode": "desktop"}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.json()["opened"], false, "{}", reply.body);
+    assert_eq!(reply.json()["message"], "VS Code is not installed");
+    host.shutdown().await;
+}
+
+/// An endpoint that cannot open (its folder is gone) is reported as an event and a problem, the
+/// attach says so, and the problem ends when the endpoint opens again.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn an_endpoint_that_cannot_open_is_reported_and_ends_when_it_can() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let name = WorkspaceName::new("acme").unwrap();
+    allow_direct_ssh(&api, "acme", true).await;
+    create(&api, &mut events, "acme").await;
+    let endpoint = host.workspaces().ssh_endpoint(&name).await.unwrap();
+    let folder = endpoint.parent().unwrap().to_path_buf();
+    allow_direct_ssh(&api, "acme", false).await;
+    let moved = folder.with_extension("away");
+    std::fs::rename(&folder, &moved).unwrap();
+
+    allow_direct_ssh(&api, "acme", true).await;
+    let (title, detail) = problem_is(&api, "ssh:acme", true).await.unwrap();
+    assert!(title.contains("acme"), "{title}");
+    assert!(detail.contains("no SSH endpoint"), "{detail}");
+    let event = events
+        .until(
+            |e| e["type"] == "workspace_ssh_failed",
+            Duration::from_secs(20),
+        )
+        .await;
+    assert_eq!(event["workspace"], "acme");
+    assert!(host.workspaces().ssh_endpoint(&name).await.is_none());
+    assert!(ssh_hosts(&rig).is_empty());
+    let attach = api
+        .post(
+            "/api/workspaces/acme/attach",
+            &json!({"mode": "desktop"}).to_string(),
+        )
+        .await;
+    assert_eq!(attach.json()["opened"], false, "{}", attach.body);
+    assert!(
+        attach.json()["message"]
+            .as_str()
+            .unwrap()
+            .contains("no endpoint")
+    );
+
+    // The folder is back: turning the switch off and on again opens it and ends the problem.
+    std::fs::rename(&moved, &folder).unwrap();
+    allow_direct_ssh(&api, "acme", false).await;
+    assert!(problem_is(&api, "ssh:acme", false).await.is_none());
+    allow_direct_ssh(&api, "acme", true).await;
+    host.workspaces().ssh_endpoint(&name).await.unwrap();
+    assert_eq!(ssh_hosts(&rig), ["puddle-acme"]);
+    host.shutdown().await;
+}
+
 fn base64(input: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
@@ -4216,6 +4552,12 @@ async fn no_file_in_the_data_folder_holds_a_key_or_the_ca_whether_the_workspace_
         files_under(&rig.dir.path().join("runtime"), &mut files);
         assert!(!files.is_empty());
         for file in files {
+            // The one key file Puddle keeps is direct SSH's login key: `ssh` reads its identity from
+            // a file, so it is owner-only on disk by design, and it opens nothing but the runtime's
+            // SSH server. It is made at every start, whether or not the switch is on.
+            if file == rig.dir.path().join("data/ssh/login_ed25519") {
+                continue;
+            }
             // A file the database or a save is replacing may be gone by now.
             let Ok(bytes) = std::fs::read(&file) else {
                 continue;

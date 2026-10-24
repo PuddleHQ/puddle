@@ -15,7 +15,10 @@ publish.workspace = true
 embedded-ui = ["puddle-api/embedded-ui"]
 
 [dependencies]
+base64 = { workspace = true }
+ed25519-dalek = { workspace = true }
 futures-util = { workspace = true }
+getrandom = { workspace = true }
 puddle-agent-proto = { workspace = true }
 puddle-api = { workspace = true }
 puddle-boot = { workspace = true }
@@ -52,7 +55,6 @@ tracing = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
-base64 = { workspace = true }
 microsandbox = { workspace = true }
 puddle-e2e = { workspace = true }
 puddle-compute = { workspace = true, features = ["fake"] }
@@ -68,6 +70,12 @@ tracing-subscriber = { workspace = true }
 # default test harness never allows, so these run as plain programs (child processes of this one).
 [[test]]
 name = "pin_environment"
+harness = false
+
+# The ssh client's `ProxyCommand` is this binary itself (`ssh-bridge <endpoint>`), and it answers the
+# test runner's `--list` as `pin_environment` does.
+[[test]]
+name = "vm_desktop_attach"
 harness = false
 
 [lints]

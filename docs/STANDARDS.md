@@ -295,9 +295,12 @@ the owner, then tagged `vX.Y.Z` on `main`.
   carries the trailer `Owner-OK: coverage-baseline` (the owner's OK; the environment can't grant it).
 - **One unreadable profile file does not fail the gate.** Each instrumented process writes a `.profraw` file when
   it exits, and a process stopped mid-write leaves a short one that fails the whole `llvm-profdata merge`
-  although every test passed. `scripts/coverage-run.sh` (the `coverage` gate runs the tests through it) sets
-  `LLVM_PROFDATA_FLAGS=--failure-mode=all`, so the merge fails only when no file is readable, and prints a
-  `warning: coverage profile dropped: <file> (<reason>)` line per skipped file (a GitHub annotation in CI).
+  although every test passed. `cargo llvm-cov` merges in several batches, so a merge flag that tolerates a bad
+  file is not enough when a batch holds only that file. `scripts/coverage-run.sh` (the `coverage` gate runs the
+  tests through it, then `cargo llvm-cov report`) checks every profile file with `llvm-profdata show` first and
+  sets an unreadable one aside as `<file>.dropped`, so the merge sees readable files only. It prints a
+  `warning: <file>: <reason>; coverage profile dropped, ...` line per skipped file (a GitHub annotation in CI);
+  with no readable file the report fails.
   The ratchet and diff-coverage still fail when a material share of the counters went missing (a loss under
   the 0.05-point wobble below is not seen), so read the warning.
 - **The ratchet allows 0.05 points of wobble, the floors none.** Measurement varies by a few hundredths

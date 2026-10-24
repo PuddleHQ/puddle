@@ -38,6 +38,7 @@ async fn a_name_the_site_holds_answers_over_plain_http_and_tls_and_the_site_reco
         &["one.test", "two.test"],
         WebOptions {
             alt_svc: Some("h3=\":443\"; ma=86400".to_owned()),
+            ..WebOptions::default()
         },
     )
     .await;
@@ -167,4 +168,51 @@ async fn a_name_the_proxy_does_not_hold_is_connected_to_as_it_stands() {
         proxy.connects()
     );
     assert!(proxy.connects().contains(&format!("127.0.0.1:{port}")));
+}
+
+#[tokio::test]
+async fn a_responder_answers_the_requests_it_wants_and_the_site_records_what_it_answered() {
+    let responder: puddle_e2e::lab::Responder = std::sync::Arc::new(|seen| {
+        (seen.target == "/token").then(|| puddle_e2e::lab::WebAnswer {
+            status: 418,
+            content_type: "application/json",
+            body: format!("{{\"body\":{}}}", seen.body.len()),
+        })
+    });
+    let web = WebHost::start(
+        &["one.test"],
+        WebOptions {
+            responder: Some(responder),
+            ..WebOptions::default()
+        },
+    )
+    .await;
+    let proxy = NameProxy::start(&[]).await;
+    web.register(&proxy, &["one.test"]);
+    let mut conn = through(
+        &proxy,
+        "POST http://one.test/token HTTP/1.1\r\n",
+        "Host: one.test\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc",
+    )
+    .await;
+    let mut text = String::new();
+    conn.read_to_string(&mut text).await.unwrap();
+    assert!(text.starts_with("HTTP/1.1 418"), "{text}");
+    assert!(text.contains("content-type: application/json"), "{text}");
+    assert!(text.ends_with("{\"body\":3}"), "{text}");
+    let mut conn = through(
+        &proxy,
+        "GET http://one.test/other HTTP/1.1\r\n",
+        "Host: one.test\r\nConnection: close\r\n\r\n",
+    )
+    .await;
+    let mut other = String::new();
+    conn.read_to_string(&mut other).await.unwrap();
+    assert!(other.ends_with("lab web host: /other\n"), "{other}");
+    let seen = web.seen();
+    assert_eq!(
+        seen.iter().map(|r| r.status).collect::<Vec<_>>(),
+        [418, 200]
+    );
+    assert!(format!("{:?}", WebOptions::default()).contains("responder"));
 }

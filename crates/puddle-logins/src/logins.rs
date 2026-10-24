@@ -563,7 +563,9 @@ impl Logins {
 #[non_exhaustive]
 pub enum ForgetError {
     /// The credential store did not delete a token.
-    #[error("the operating system's credential store did not delete a saved login")]
+    #[error(
+        "the operating system's credential store did not delete a saved login; unlock it or start it and ask again (what was already deleted stays deleted)"
+    )]
     Store,
 }
 

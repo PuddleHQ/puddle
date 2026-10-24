@@ -256,10 +256,19 @@ export class WorkspaceStore {
   /**
    * Shows the record an action answered with, unless the operation already ended (events can
    * beat the answer): then the answer is older than what the page knows, so read again.
+   * `startsOperation` also hides the last operation's failure, again only if this one has not ended.
    */
-  #accept(name: string, before: number, record: Workspace): void {
-    if ((this.#ended.get(name) ?? 0) === before) this.#put(record);
-    else void this.refresh();
+  #accept(
+    name: string,
+    before: number,
+    record: Workspace,
+    startsOperation = false,
+  ): void {
+    if ((this.#ended.get(name) ?? 0) === before) {
+      // A failure that arrived before this answer belongs to this operation: keep it.
+      if (startsOperation) this.#forgetFailure(name);
+      this.#put(record);
+    } else void this.refresh();
   }
 
   #endedCount(name: string): number {
@@ -302,8 +311,7 @@ export class WorkspaceStore {
       this.#api.POST("/api/workspaces", { body }),
     );
     if (result.ok) {
-      this.#forgetFailure(result.value.name);
-      this.#accept(result.value.name, before, result.value);
+      this.#accept(result.value.name, before, result.value, true);
     } else if (!result.field && result.reason === "conflict") {
       return { ...result, field: "name" };
     }
@@ -320,8 +328,7 @@ export class WorkspaceStore {
       this.#api.POST(path, { params: { path: { id } } }),
     );
     if (result.ok) {
-      this.#forgetFailure(result.value.name);
-      this.#accept(result.value.name, before, result.value);
+      this.#accept(result.value.name, before, result.value, true);
     }
     return result;
   }

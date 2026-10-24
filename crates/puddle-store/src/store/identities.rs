@@ -15,7 +15,8 @@ use crate::identity::{
     check_attachable, collision, resolve,
 };
 use crate::workspace_git::{
-    GitDefaults, GitStart, RepoEntry, RepoGitRequest, RepoRef, StartBasis, WorkspaceGit,
+    GitDefaults, GitStart, RepoEntry, RepoGitRequest, RepoRef, StartBasis, SwitchChange,
+    WorkspaceGit,
 };
 
 const COLUMNS: &str = "id, label, author_name, author_email, credentials, signing, is_default, \
@@ -231,6 +232,51 @@ fn changed_for(fx: &mut Vec<Event>, workspaces: Vec<WorkspaceName>) {
             .into_iter()
             .map(|workspace| Event::WorkspaceGitChanged { workspace }),
     );
+}
+
+/// One repository's part of a start: the identity joins the list, the row is made.
+fn start_in(
+    tx: &Transaction<'_>,
+    now: u64,
+    fx: &mut Vec<Event>,
+    ws: &WorkspaceName,
+    request: &RepoGitRequest,
+) -> Result<GitStart, StoreError> {
+    let everyone = all(tx)?;
+    let mut list = attached(tx, ws)?;
+    let (chosen, basis) = choose(&everyone, &list, request)?;
+    let identity = chosen.map(|i| (i.id, i.label.clone()));
+    let mut changed = false;
+    if let Some(identity) = chosen
+        && !list.iter().any(|i| i.id == identity.id)
+    {
+        list.push(identity.clone());
+        check_list(&list)?;
+        let ids: Vec<IdentityId> = list.iter().map(|i| i.id).collect();
+        write_list(tx, ws, &ids)?;
+        changed = true;
+    }
+    let repo = &request.repo;
+    changed |= tx.execute(
+        "INSERT INTO workspace_repos (workspace_id, host, owner, repo, pull, push, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT DO NOTHING",
+        params![
+            ws.as_str(),
+            repo.host.as_str(),
+            repo.owner.as_str(),
+            repo.repo,
+            request.pull,
+            request.push,
+            sql_ts(now)
+        ],
+    )? > 0;
+    if changed {
+        fx.push(Event::WorkspaceGitChanged {
+            workspace: ws.clone(),
+        });
+    }
+    Ok(GitStart { identity, basis })
 }
 
 impl Store {
@@ -504,6 +550,8 @@ impl Store {
             repos,
             only_push_listed,
             only_pull_listed,
+            push_follows_default: own_push.is_none(),
+            pull_follows_default: own_pull.is_none(),
         })
     }
 
@@ -550,42 +598,26 @@ impl Store {
         ws: &WorkspaceName,
         request: &RepoGitRequest,
     ) -> Result<GitStart, StoreError> {
+        self.change(|tx, now, fx| start_in(tx, now, fx, ws, request))
+    }
+
+    /// Sets up every repository of a new workspace's list, in order, in one transaction (as
+    /// [`Store::start_repository_git`] does for one): identities join the list as they are
+    /// chosen, so a later repository sees the earlier ones' identities. The answers are in the
+    /// order of `requests`.
+    ///
+    /// # Errors
+    /// As [`Store::start_repository_git`]; nothing of the list is set up on an error.
+    pub fn start_repositories_git(
+        &self,
+        ws: &WorkspaceName,
+        requests: &[RepoGitRequest],
+    ) -> Result<Vec<GitStart>, StoreError> {
         self.change(|tx, now, fx| {
-            let everyone = all(tx)?;
-            let mut list = attached(tx, ws)?;
-            let (chosen, basis) = choose(&everyone, &list, request)?;
-            let identity = chosen.map(|i| (i.id, i.label.clone()));
-            let mut changed = false;
-            if let Some(identity) = chosen
-                && !list.iter().any(|i| i.id == identity.id)
-            {
-                list.push(identity.clone());
-                check_list(&list)?;
-                let ids: Vec<IdentityId> = list.iter().map(|i| i.id).collect();
-                write_list(tx, ws, &ids)?;
-                changed = true;
-            }
-            let repo = &request.repo;
-            changed |= tx.execute(
-                "INSERT INTO workspace_repos (workspace_id, host, owner, repo, pull, push, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                 ON CONFLICT DO NOTHING",
-                params![
-                    ws.as_str(),
-                    repo.host.as_str(),
-                    repo.owner.as_str(),
-                    repo.repo,
-                    request.pull,
-                    request.push,
-                    sql_ts(now)
-                ],
-            )? > 0;
-            if changed {
-                fx.push(Event::WorkspaceGitChanged {
-                    workspace: ws.clone(),
-                });
-            }
-            Ok(GitStart { identity, basis })
+            requests
+                .iter()
+                .map(|request| start_in(tx, now, fx, ws, request))
+                .collect()
         })
     }
 
@@ -713,14 +745,39 @@ impl Store {
         only_push_listed: Option<bool>,
         only_pull_listed: Option<bool>,
     ) -> Result<WorkspaceGit, StoreError> {
+        self.change_git_switches(
+            ws,
+            only_push_listed.map_or(SwitchChange::Keep, SwitchChange::Set),
+            only_pull_listed.map_or(SwitchChange::Keep, SwitchChange::Set),
+        )
+    }
+
+    /// Changes either "only listed" switch for this workspace in one transaction: keeps it, sets
+    /// the workspace's own value, or drops its own value so it follows the default again.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn change_git_switches(
+        &self,
+        ws: &WorkspaceName,
+        push: SwitchChange,
+        pull: SwitchChange,
+    ) -> Result<WorkspaceGit, StoreError> {
         self.change(|tx, _now, fx| {
+            let (own_push, own_pull) = tx
+                .query_row(
+                    "SELECT only_push_listed, only_pull_listed FROM workspace_git WHERE workspace_id = ?1",
+                    [ws.as_str()],
+                    |r| Ok((r.get::<_, Option<bool>>(0)?, r.get::<_, Option<bool>>(1)?)),
+                )
+                .optional()?
+                .unwrap_or((None, None));
             tx.execute(
                 "INSERT INTO workspace_git (workspace_id, only_push_listed, only_pull_listed)
                  VALUES (?1, ?2, ?3)
                  ON CONFLICT (workspace_id) DO UPDATE
-                 SET only_push_listed = COALESCE(?2, only_push_listed),
-                     only_pull_listed = COALESCE(?3, only_pull_listed)",
-                params![ws.as_str(), only_push_listed, only_pull_listed],
+                 SET only_push_listed = ?2, only_pull_listed = ?3",
+                params![ws.as_str(), push.apply(own_push), pull.apply(own_pull)],
             )?;
             fx.push(Event::WorkspaceGitChanged {
                 workspace: ws.clone(),

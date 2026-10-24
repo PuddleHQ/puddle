@@ -149,9 +149,9 @@ pub(super) fn git_request(repository: &NewRepository) -> Option<RepoGitRequest> 
     })
 }
 
-/// Sets a new workspace's repositories up in the store, in order, and keeps what each got for
-/// the answer. A repository it cannot set up is cloned without its Git settings, and its entry
-/// in the answer says so; the workspace is not undone for it.
+/// Sets a new workspace's repositories up in the store, in order and in one transaction, and
+/// keeps what each got for the answer. A repository it cannot set up is cloned without its Git
+/// settings, and its entry in the answer says so; the workspace is not undone for it.
 pub(super) struct StoreGitSetup {
     store: Arc<Store>,
     started: Mutex<Vec<NewWorkspaceIdentity>>,
@@ -170,28 +170,51 @@ impl StoreGitSetup {
     }
 }
 
-fn start_one(
-    store: &Store,
-    workspace: &WorkspaceName,
-    repository: &NewRepository,
-) -> NewWorkspaceIdentity {
-    let url = repository.repository.url.as_str();
-    let Some(request) = git_request(repository) else {
-        return NewWorkspaceIdentity::not_set_up(format!(
+/// What the answer says about a repository whose Git settings were not set up.
+fn not_set_up(url: &str, why: Option<&puddle_store::StoreError>) -> NewWorkspaceIdentity {
+    NewWorkspaceIdentity::not_set_up(match why {
+        None => format!(
             "Puddle cannot tell which repository {url} is, so it set up no identity or repository \
              table row for it. Add them on the Git tab."
-        ));
-    };
-    match store.start_repository_git(workspace, &request) {
-        Ok(start) => NewWorkspaceIdentity::from_store(&start, &request.repo),
+        ),
+        Some(err) => format!(
+            "Puddle could not set up the Git settings of {url} ({err}), so it is cloned without \
+             them. Set them on the Git tab."
+        ),
+    })
+}
+
+/// Sets up the whole list in one store transaction, so the workspace's identities and table rows
+/// are all there or none is. A list the store refuses (a race with an identity deleted since the
+/// check) is cloned without any Git settings, and every entry says so.
+fn start_all(
+    store: &Store,
+    workspace: &WorkspaceName,
+    repositories: &[NewRepository],
+) -> Vec<NewWorkspaceIdentity> {
+    let requests: Vec<Option<RepoGitRequest>> = repositories.iter().map(git_request).collect();
+    let asked: Vec<RepoGitRequest> = requests.iter().flatten().cloned().collect();
+    let started = match store.start_repositories_git(workspace, &asked) {
+        Ok(started) => started,
         Err(err) => {
-            tracing::warn!(%workspace, %url, error = ?err, "could not set up a new repository's Git settings");
-            NewWorkspaceIdentity::not_set_up(format!(
-                "Puddle could not set up the Git settings of {url} ({err}), so it is cloned without \
-                 them. Set them on the Git tab."
-            ))
+            tracing::warn!(%workspace, error = ?err, "could not set up a new workspace's Git settings");
+            return repositories
+                .iter()
+                .map(|r| not_set_up(r.repository.url.as_str(), Some(&err)))
+                .collect();
         }
-    }
+    };
+    let mut started = started.iter();
+    repositories
+        .iter()
+        .zip(&requests)
+        .map(|(repository, request)| {
+            match request.as_ref().and_then(|r| Some((r, started.next()?))) {
+                Some((request, start)) => NewWorkspaceIdentity::from_store(start, &request.repo),
+                None => not_set_up(repository.repository.url.as_str(), None),
+            }
+        })
+        .collect()
 }
 
 impl GitSetup for StoreGitSetup {
@@ -203,10 +226,7 @@ impl GitSetup for StoreGitSetup {
         Box::pin(async move {
             // On this thread, not a blocking task: a few small writes, and a task that could not
             // run would leave repositories set up without the answer saying which.
-            let started = repositories
-                .iter()
-                .map(|repository| start_one(&self.store, workspace, repository))
-                .collect();
+            let started = start_all(&self.store, workspace, repositories);
             *self.started.lock().unwrap_or_else(PoisonError::into_inner) = started;
         })
     }
@@ -466,30 +486,70 @@ mod tests {
     use super::*;
     use crate::workspaces::{RepoUrl, Repository};
 
+    fn at(url: &str, identity: Option<i64>) -> NewRepository {
+        NewRepository {
+            repository: Repository::at_default_directory(RepoUrl::parse(url).unwrap()),
+            identity: identity.map(IdentityId),
+            pull: true,
+            push: true,
+        }
+    }
+
     #[test]
-    fn a_repository_the_store_cannot_set_up_is_cloned_without_and_its_entry_says_why() {
+    fn a_list_the_store_cannot_set_up_is_cloned_without_and_every_entry_says_why() {
         let store =
             Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
         let ws = WorkspaceName::new("w").unwrap();
-        // An identity that is gone by the time the create sets it up.
-        let gone = NewRepository {
-            repository: Repository::at_default_directory(
-                RepoUrl::parse("https://github.com/acme/api").unwrap(),
-            ),
-            identity: Some(IdentityId(42)),
-            pull: true,
-            push: true,
-        };
-        let answer = start_one(&store, &ws, &gone);
-        assert_eq!(answer.identity, None);
-        let warning = answer.warning.unwrap();
-        assert!(
-            warning.starts_with(
-                "Puddle could not set up the Git settings of https://github.com/acme/api ("
-            ),
-            "{warning}"
-        );
-        assert!(warning.ends_with("Set them on the Git tab."), "{warning}");
+        // The second repository's identity is gone by the time the create sets it up: the first
+        // is not set up either, as the list is one transaction.
+        let list = [
+            at("https://github.com/acme/web", None),
+            at("https://github.com/acme/api", Some(42)),
+        ];
+        let answers = start_all(&store, &ws, &list);
+        assert_eq!(answers.len(), 2);
+        for (answer, url) in answers
+            .iter()
+            .zip(["https://github.com/acme/web", "https://github.com/acme/api"])
+        {
+            assert_eq!(answer.identity, None);
+            let warning = answer.warning.as_deref().unwrap();
+            assert!(
+                warning.starts_with(&format!(
+                    "Puddle could not set up the Git settings of {url} ("
+                )),
+                "{warning}"
+            );
+            assert!(warning.ends_with("Set them on the Git tab."), "{warning}");
+        }
         assert_eq!(store.workspace_git(&ws).unwrap().repos, []);
+    }
+
+    #[test]
+    fn a_repository_the_table_cannot_hold_is_skipped_and_the_rest_are_set_up() {
+        let store =
+            Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
+        let ws = WorkspaceName::new("w").unwrap();
+        let list = [
+            at("https://github.com/a/b/c", None),
+            at("https://github.com/acme/web", None),
+        ];
+        let answers = start_all(&store, &ws, &list);
+        assert!(
+            answers[0]
+                .warning
+                .as_deref()
+                .unwrap()
+                .contains("cannot tell which repository https://github.com/a/b/c is")
+        );
+        // The second was set up: its notice is about the missing identity, not a failed set-up.
+        assert!(
+            answers[1]
+                .warning
+                .as_deref()
+                .unwrap()
+                .starts_with("No identity covers github.com/acme")
+        );
+        assert_eq!(store.workspace_git(&ws).unwrap().repos.len(), 1);
     }
 }

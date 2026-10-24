@@ -19,6 +19,7 @@ use crate::wire::{
     AttachIdentityRequest, GitDefaultsView, GitRepoRequest, GitRepoToggles, GitRepoView,
     GitSwitchesRequest, IdentityDeleted, IdentityList, IdentityOrderRequest, IdentityRequest,
     IdentityView, TokenLeft, WorkspaceGitView, WorkspaceIdentitiesRequest,
+    WorkspaceSwitchesRequest,
 };
 
 fn view(store: &Store, identity: puddle_store::Identity) -> Result<IdentityView, ApiError> {
@@ -41,6 +42,8 @@ fn git_view(
         repos: git.repos.into_iter().map(GitRepoView::from_store).collect(),
         only_push_listed: git.only_push_listed,
         only_pull_listed: git.only_pull_listed,
+        push_follows_default: git.push_follows_default,
+        pull_follows_default: git.pull_follows_default,
     })
 }
 
@@ -433,29 +436,29 @@ pub(crate) async fn detach_identity(
     Ok(Json(set))
 }
 
-/// Sets "only push to listed repos" and "only pull from listed repos"; a switch left out stays.
+/// Sets "only push to listed repos" and "only pull from listed repos"; a switch left out stays. `use_default_push` or `use_default_pull` drops the workspace's own
+/// value, so that switch follows the default again.
 #[utoipa::path(
     put,
     path = "/api/workspaces/{id}/git/switches",
     tag = "identities",
     params(("id" = String, Path, description = "workspace id")),
-    request_body = GitSwitchesRequest,
+    request_body = WorkspaceSwitchesRequest,
     responses(
         (status = OK, description = "the settings", body = WorkspaceGitView),
-        (status = NOT_FOUND, description = "no such workspace", body = ApiErrorBody)
+        (status = NOT_FOUND, description = "no such workspace", body = ApiErrorBody),
+        (status = UNPROCESSABLE_ENTITY, description = "a switch is both set and sent back to the default", body = ApiErrorBody)
     )
 )]
 pub(crate) async fn set_git_switches(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    crate::extract::Json(body): crate::extract::Json<GitSwitchesRequest>,
+    crate::extract::Json(body): crate::extract::Json<WorkspaceSwitchesRequest>,
 ) -> Result<Json<WorkspaceGitView>, ApiError> {
     let name = workspace(&state, &id).await?;
+    let (push, pull) = body.changes()?;
     let set = blocking(move || {
-        let git =
-            state
-                .store
-                .set_git_switches(&name, body.only_push_listed, body.only_pull_listed)?;
+        let git = state.store.change_git_switches(&name, push, pull)?;
         git_view(&state.store, name, git)
     })
     .await?;

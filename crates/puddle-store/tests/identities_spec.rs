@@ -12,7 +12,7 @@ use puddle_secrets::{AccountName, HostName, SourceSpec};
 use puddle_store::{
     Author, CollisionWhat, Coverage, CredentialBinding, CredentialChoice, GitDefaults,
     IdentityDraft, IdentityId, Limits, ManualClock, Owner, RepoGitRequest, RepoRef, StartBasis,
-    Store, StoreError, WorkspaceGit,
+    Store, StoreError, SwitchChange, WorkspaceGit,
 };
 use puddle_types::{CollectingSink, Event, WorkspaceName};
 
@@ -560,6 +560,108 @@ fn the_default_switches_are_inherited_until_a_workspace_sets_its_own() {
         store.git_defaults().unwrap(),
         store.set_git_defaults(Some(false), Some(false)).unwrap()
     );
+}
+
+#[test]
+fn two_changes_of_different_default_switches_made_at_once_both_stick() {
+    let store = Arc::new(fixture().1);
+    for round in 0..200 {
+        store.set_git_defaults(Some(false), Some(false)).unwrap();
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let changes = [(Some(true), None), (None, Some(true))].map(|(push, pull)| {
+            let (store, barrier) = (store.clone(), barrier.clone());
+            std::thread::spawn(move || {
+                barrier.wait();
+                store.set_git_defaults(push, pull).unwrap();
+            })
+        });
+        for change in changes {
+            change.join().unwrap();
+        }
+        let got = store.git_defaults().unwrap();
+        assert!(
+            got.only_push_listed && got.only_pull_listed,
+            "a change was lost in round {round}"
+        );
+    }
+}
+
+#[test]
+fn a_switch_can_go_back_to_following_the_default() {
+    let (sink, store) = fixture();
+    let w = ws("w");
+    assert!(store.workspace_git(&w).unwrap().push_follows_default);
+    store
+        .change_git_switches(&w, SwitchChange::Set(false), SwitchChange::Set(true))
+        .unwrap();
+    store.set_git_defaults(Some(true), Some(false)).unwrap();
+    let own = store.workspace_git(&w).unwrap();
+    assert!(!own.only_push_listed && own.only_pull_listed);
+    assert!(!own.push_follows_default && !own.pull_follows_default);
+
+    // Dropping one own value follows the default at once and leaves the other switch alone.
+    let _ = sink.take();
+    let back = store
+        .change_git_switches(&w, SwitchChange::FollowDefault, SwitchChange::Keep)
+        .unwrap();
+    assert!(back.only_push_listed && back.push_follows_default);
+    assert!(back.only_pull_listed && !back.pull_follows_default);
+    assert!(sink.take().contains(&Event::WorkspaceGitChanged {
+        workspace: w.clone()
+    }));
+
+    // Setting one and dropping the other is one change; dropping what was never set is fine.
+    let both = store
+        .change_git_switches(&w, SwitchChange::FollowDefault, SwitchChange::FollowDefault)
+        .unwrap();
+    assert!(both.push_follows_default && both.pull_follows_default && !both.only_pull_listed);
+    let mixed = store
+        .change_git_switches(&w, SwitchChange::Set(false), SwitchChange::FollowDefault)
+        .unwrap();
+    assert!(!mixed.only_push_listed && !mixed.push_follows_default && mixed.pull_follows_default);
+}
+
+#[test]
+fn a_list_of_repositories_is_set_up_whole_or_not_at_all() {
+    let (sink, store) = fixture();
+    let work = make(&store, "Work", &["acme"], false);
+    let me = make(&store, "Personal", &["me"], false);
+    let w = ws("multi");
+    let shop = ask(repo("github.com", "acme", "shop"));
+    let blog = ask(repo("github.com", "me", "blog"));
+    let _ = sink.take();
+    let starts = store
+        .start_repositories_git(&w, &[shop.clone(), blog.clone()])
+        .unwrap();
+    assert_eq!(
+        starts
+            .iter()
+            .map(|s| s.identity.clone().unwrap().0)
+            .collect::<Vec<_>>(),
+        vec![work, me]
+    );
+    let git = store.workspace_git(&w).unwrap();
+    assert_eq!(git.identities.len(), 2);
+    assert_eq!(git.repos.len(), 2);
+    assert_eq!(
+        sink.take()
+            .iter()
+            .filter(|e| matches!(e, Event::WorkspaceGitChanged { .. }))
+            .count(),
+        2,
+        "one event per repository that changed something"
+    );
+
+    // An unknown identity on the second repository leaves the first not set up either.
+    let w2 = ws("broken");
+    let mut bad = ask(repo("github.com", "me", "other"));
+    bad.identity = Some(IdentityId(9_999));
+    assert!(matches!(
+        store.start_repositories_git(&w2, &[shop, bad]),
+        Err(StoreError::UnknownIdentity(_))
+    ));
+    let none = store.workspace_git(&w2).unwrap();
+    assert!(none.identities.is_empty() && none.repos.is_empty());
 }
 
 #[test]

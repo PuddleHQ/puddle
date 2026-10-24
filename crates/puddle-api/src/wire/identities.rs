@@ -363,6 +363,10 @@ pub struct WorkspaceGitView {
     pub only_push_listed: bool,
     /// Refuse a fetch from a repository not listed with Pull on (default off).
     pub only_pull_listed: bool,
+    /// The push switch is the default's (the workspace set none of its own, or dropped it).
+    pub push_follows_default: bool,
+    /// The pull switch is the default's.
+    pub pull_follows_default: bool,
 }
 
 /// The identities a workspace has, replacing its list.
@@ -394,6 +398,47 @@ pub struct GitSwitchesRequest {
     #[serde(default)]
     #[schema(required = false)]
     pub only_pull_listed: Option<bool>,
+}
+
+/// Changes a workspace's two switches; a switch left out stays as it is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct WorkspaceSwitchesRequest {
+    /// "Only push to listed repos": the workspace's own value.
+    #[serde(default)]
+    #[schema(required = false)]
+    pub only_push_listed: Option<bool>,
+    /// "Only pull from listed repos": the workspace's own value.
+    #[serde(default)]
+    #[schema(required = false)]
+    pub only_pull_listed: Option<bool>,
+    /// Drop the workspace's own push value, so it follows the default again. Not with
+    /// `only_push_listed`.
+    #[serde(default)]
+    #[schema(required = false)]
+    pub use_default_push: bool,
+    /// Drop the workspace's own pull value, so it follows the default again. Not with
+    /// `only_pull_listed`.
+    #[serde(default)]
+    #[schema(required = false)]
+    pub use_default_pull: bool,
+}
+
+impl WorkspaceSwitchesRequest {
+    /// What each switch should become; 422 when a switch is both set and dropped.
+    pub(crate) fn changes(&self) -> Result<(store::SwitchChange, store::SwitchChange), ApiError> {
+        let one = |name: &str, set: Option<bool>, drop: bool| match (set, drop) {
+            (Some(_), true) => Err(ApiError::invalid(format!(
+                "the {name} switch is both set and sent back to the default"
+            ))),
+            (Some(on), false) => Ok(store::SwitchChange::Set(on)),
+            (None, true) => Ok(store::SwitchChange::FollowDefault),
+            (None, false) => Ok(store::SwitchChange::Keep),
+        };
+        Ok((
+            one("push", self.only_push_listed, self.use_default_push)?,
+            one("pull", self.only_pull_listed, self.use_default_pull)?,
+        ))
+    }
 }
 
 /// Adds a repository to the table.

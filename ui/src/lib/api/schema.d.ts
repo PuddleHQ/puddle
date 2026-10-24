@@ -956,7 +956,10 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Sets "only push to listed repos" and "only pull from listed repos"; a switch left out stays. */
+        /**
+         * Sets "only push to listed repos" and "only pull from listed repos"; a switch left out stays. `use_default_push` or `use_default_pull` drops the workspace's own
+         *     value, so that switch follows the default again.
+         */
         put: operations["set_git_switches"];
         post?: never;
         delete?: never;
@@ -3750,6 +3753,10 @@ export interface components {
             only_pull_listed: boolean;
             /** @description Refuse a push to a repository not listed with Push on (default on). */
             only_push_listed: boolean;
+            /** @description The pull switch is the default's. */
+            pull_follows_default: boolean;
+            /** @description The push switch is the default's (the workspace set none of its own, or dropped it). */
+            push_follows_default: boolean;
             /** @description The repository table. */
             repos: components["schemas"]["GitRepoView"][];
             /** @description The workspace. */
@@ -3813,6 +3820,23 @@ export interface components {
          * @enum {string}
          */
         WorkspaceStep: "preparing_volume" | "pulling_image" | "cloning" | "starting" | "syncing" | "checking" | "reclaiming" | "stopping" | "removing" | "done" | "failed";
+        /** @description Changes a workspace's two switches; a switch left out stays as it is. */
+        WorkspaceSwitchesRequest: {
+            /** @description "Only pull from listed repos": the workspace's own value. */
+            only_pull_listed?: boolean | null;
+            /** @description "Only push to listed repos": the workspace's own value. */
+            only_push_listed?: boolean | null;
+            /**
+             * @description Drop the workspace's own pull value, so it follows the default again. Not with
+             *     `only_pull_listed`.
+             */
+            use_default_pull?: boolean;
+            /**
+             * @description Drop the workspace's own push value, so it follows the default again. Not with
+             *     `only_push_listed`.
+             */
+            use_default_push?: boolean;
+        };
     };
     responses: never;
     parameters: never;
@@ -8452,7 +8476,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["GitSwitchesRequest"];
+                "application/json": components["schemas"]["WorkspaceSwitchesRequest"];
             };
         };
         responses: {
@@ -8494,6 +8518,15 @@ export interface operations {
             };
             /** @description Host is not the API's own address */
             421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description a switch is both set and sent back to the default */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

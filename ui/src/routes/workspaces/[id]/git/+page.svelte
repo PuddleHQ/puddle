@@ -119,6 +119,12 @@
     if (!result.ok) switchProblem = result.message;
   }
 
+  async function useDefault(which: "use_default_push" | "use_default_pull") {
+    switchProblem = null;
+    const result = await store.setSwitches({ [which]: true });
+    if (!result.ok) switchProblem = result.message;
+  }
+
   async function toggle(row: RepoRow, pull: boolean, push: boolean) {
     rowProblem = null;
     const result = await store.setToggles(row, pull, push);
@@ -294,6 +300,17 @@
           {git.only_push_listed
             ? "A push is allowed only to a repository whose Push box is ticked."
             : "Off: a push may go to any repository the credential can write to, and the Push boxes change nothing."}
+          {#if git.push_follows_default}
+            It follows the default for new workspaces.
+          {:else}
+            <button
+              type="button"
+              class="btn"
+              aria-label="Use the default again for Only push to listed repos"
+              onclick={() => void useDefault("use_default_push")}
+              >Use the default again</button
+            >
+          {/if}
         </p>
       </div>
       <div class="switch">
@@ -314,6 +331,17 @@
           {git.only_pull_listed
             ? "A fetch is allowed only from a repository whose Pull box is ticked."
             : "Off: a fetch may go to any repository the credential can read, and the Pull boxes change nothing."}
+          {#if git.pull_follows_default}
+            It follows the default for new workspaces.
+          {:else}
+            <button
+              type="button"
+              class="btn"
+              aria-label="Use the default again for Only pull from listed repos"
+              onclick={() => void useDefault("use_default_pull")}
+              >Use the default again</button
+            >
+          {/if}
         </p>
       </div>
     </div>

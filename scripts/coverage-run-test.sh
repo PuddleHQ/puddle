@@ -52,12 +52,13 @@ scenario() {
         head -c 100 "$tmp/good/ok.profraw" >"$d/run-cut-$n.profraw"
     done
 }
-# run <name> [env assignment]: the exit status goes to $tmp/<name>.rc, the output to $tmp/<name>.out.
+# run <name> [env assignment]: GITHUB_ACTIONS is unset first (a CI runner sets it, which adds an annotation line per
+# warning); the exit status goes to $tmp/<name>.rc, the output to $tmp/<name>.out.
 run() {
     name=$1
     shift
     set +e
-    env -u LLVM_PROFDATA_FLAGS PROFILES="$tmp/$name" "$@" "$here/scripts/coverage-run.sh" "$tmp/cargo" llvm-cov nextest \
+    env -u LLVM_PROFDATA_FLAGS -u GITHUB_ACTIONS PROFILES="$tmp/$name" "$@" "$here/scripts/coverage-run.sh" "$tmp/cargo" llvm-cov nextest \
         >"$tmp/$name.out" 2>&1
     echo $? >"$tmp/$name.rc"
     set -e
@@ -76,7 +77,7 @@ run cut
 grep -q "^warning: coverage profile dropped: .*run-cut-1\.profraw (.*)" "$tmp/cut.out" ||
     fail "no warning naming the cut file: $(cat "$tmp/cut.out")"
 grep -q 'its counters are missing' "$tmp/cut.out" || fail "the warning does not say what is missing"
-[ "$(grep -c 'coverage profile dropped' "$tmp/cut.out")" = 1 ] || fail "more than one warning for one cut file"
+[ "$(grep -c '^warning: coverage profile dropped' "$tmp/cut.out")" = 1 ] || fail "more than one warning for one cut file"
 
 scenario annotated 1 1
 run annotated GITHUB_ACTIONS=true

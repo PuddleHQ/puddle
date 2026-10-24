@@ -593,6 +593,7 @@ impl Runtime for MsbRuntime {
             Ok(VolumeInfo {
                 name: created.name().to_owned(),
                 size: crate::volume::size_mib(created.capacity_bytes(), None),
+                used: None,
                 holder: None,
             })
         })

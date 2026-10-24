@@ -6026,6 +6026,39 @@ async fn a_start_that_finds_the_shell_init_changed_from_inside_puts_it_back_and_
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_list_and_one_workspace_say_what_the_volume_takes_when_the_runtime_knows() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+
+    // A runtime that cannot say leaves the field empty: the card shows the size alone.
+    let list = api.get("/api/workspaces").await.json();
+    assert!(list["workspaces"][0]["disk_used_mib"].is_null(), "{list}");
+
+    rig.runtime.set_volume_used(
+        &WorkspaceId::new("acme").unwrap().volume_name(),
+        puddle_compute::DiskSize::mib(1536),
+    );
+    let list = api.get("/api/workspaces").await.json();
+    assert_eq!(list["workspaces"][0]["disk_used_mib"], 1536, "{list}");
+    let one = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(one["disk_used_mib"], 1536, "{one}");
+
+    // A workspace's own answer follows an operation without a list being asked for.
+    rig.runtime.set_volume_used(
+        &WorkspaceId::new("acme").unwrap().volume_name(),
+        puddle_compute::DiskSize::mib(1700),
+    );
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let one = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(one["disk_used_mib"], 1700, "{one}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_entrypoint_that_failed_at_once_is_a_problem_until_a_start_where_it_did_not() {
     let rig = Rig::new();
     let host = rig.start().await;
@@ -6050,7 +6083,13 @@ async fn an_entrypoint_that_failed_at_once_is_a_problem_until_a_start_where_it_d
         "{}",
         problem.detail
     );
-    assert_eq!(problem.workspace.as_ref().map(|w| w.as_str()), Some("acme"));
+    assert_eq!(
+        problem
+            .workspace
+            .as_ref()
+            .map(puddle_types::WorkspaceName::as_str),
+        Some("acme")
+    );
 
     // The next start, where it did not fail, takes the problem away.
     api.post("/api/workspaces/acme/stop", "").await;

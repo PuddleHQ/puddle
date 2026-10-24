@@ -103,4 +103,21 @@ PATH="$tmp/bin:$PATH" APT_ETC="$tmp/notdir" APT_RETRY_NO_REPAIR='' "$here/apt-re
 [ "$rc" = 7 ] || fail "retry: failing repair steps changed the status (got $rc)"
 grep -q "^::warning::apt-retry: 'apt-setup.sh --canonical' failed" "$tmp/out" || fail "retry: no warning for apt-setup.sh"
 grep -q "^::warning::apt-retry: 'dpkg --configure -a' failed" "$tmp/out" || fail "retry: no warning for dpkg"
+# A try that times out must not leave its apt-get behind: the stub starts a helper in its own
+# session (as sudo does) that holds a lock file; the retry fails while that helper runs.
+cat >"$tmp/lockhold.sh" <<S
+#!/usr/bin/env bash
+lock="$tmp/lock-frontend"
+if [ -e "$tmp/held" ]; then flock -n "\$lock" true || { echo "E: Could not get lock \$lock" >&2; exit 1; }; exit 0; fi
+: >"$tmp/held"
+setsid flock "\$lock" sleep 60 &
+sleep 60
+S
+chmod +x "$tmp/lockhold.sh"
+rm -f "$tmp/held"
+: >"$tmp/lock-frontend"
+APT_LOCKS="$tmp/lock-frontend" "$here/apt-retry.sh" "$tmp/lockhold.sh" >"$tmp/out" 2>&1 ||
+    fail "retry: the retry failed on a lock the stopped try left behind: $(tail -3 "$tmp/out" | tr '\n' '|')"
+grep -q "still holds an apt lock" "$tmp/out" || fail "retry: the lock holder was not named"
+flock -n "$tmp/lock-frontend" true || fail "retry: the lock is still held"
 echo "apt-setup-test: ok"

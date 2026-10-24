@@ -33,8 +33,11 @@ use windows_sys::Win32::Storage::FileSystem::{
     CREATE_NEW, CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_DELETE,
     FILE_SHARE_READ, FILE_SHARE_WRITE, ReplaceFileW,
 };
+use windows_sys::Win32::System::Pipes::GetNamedPipeServerProcessId;
 use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
-use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+use windows_sys::Win32::System::Threading::{
+    GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+};
 
 /// The current user's SID in string form (`S-1-5-21-...`).
 ///
@@ -244,6 +247,38 @@ pub fn process_token(access: TOKEN_ACCESS_MASK) -> io::Result<OwnedHandle> {
     }
     // SAFETY: on success `raw` is a fresh token handle that nothing else owns.
     Ok(unsafe { OwnedHandle::from_raw_handle(raw) })
+}
+
+/// The user (as a string SID) that the process serving the client end `pipe` of a named pipe runs
+/// as. A server that cannot be looked at (a process of another user, which a client without
+/// special rights cannot open) is an error, never a match.
+///
+/// # Errors
+///
+/// The OS error of the first call that failed.
+pub fn pipe_server_user_sid(pipe: HANDLE) -> io::Result<String> {
+    let mut pid = 0u32;
+    // SAFETY: `pipe` is a live pipe handle the caller owns for the whole call, and `pid` is a
+    // valid out-pointer.
+    if unsafe { GetNamedPipeServerProcessId(pipe, &raw mut pid) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: plain call; the returned handle is null on failure and checked below.
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if process.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `process` is a fresh handle that nothing else owns.
+    let process = unsafe { OwnedHandle::from_raw_handle(process) };
+    let mut raw: HANDLE = ptr::null_mut();
+    // SAFETY: `process` is a live process handle, and `raw` is a valid out-pointer.
+    if unsafe { OpenProcessToken(process.as_raw_handle(), TOKEN_QUERY, &raw mut raw) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: on success `raw` is a fresh token handle that nothing else owns.
+    let token = unsafe { OwnedHandle::from_raw_handle(raw) };
+    let user = TokenUserBuf::read(&token)?;
+    sid_to_string(user.sid())
 }
 
 /// A `TOKEN_USER` read from a token, in a buffer aligned for it.

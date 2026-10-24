@@ -8,6 +8,7 @@
 mod security;
 
 use std::io;
+use std::os::windows::io::AsRawHandle as _;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -201,13 +202,38 @@ impl Listener {
 }
 
 pub(crate) async fn connect(path: &Path) -> Result<Stream, IpcError> {
+    let own = puddle_fs::win::current_user_sid().map_err(|source| IpcError::Io {
+        op: "read the user of",
+        endpoint: path.to_path_buf(),
+        source,
+    })?;
+    connect_as(path, &own).await
+}
+
+/// Connects, and refuses a pipe whose server process runs as a user other than the one with the
+/// string SID `own_sid`: a second user can create a freed pipe name, and the client's access list
+/// check does not look at who made the pipe.
+async fn connect_as(path: &Path, own_sid: &str) -> Result<Stream, IpcError> {
     let deadline = tokio::time::Instant::now() + CONNECT_BUSY_TIMEOUT;
     let mut options = ClientOptions::new();
     // Identification only: the server learns who we are but can't act as us.
     options.security_qos_flags(SECURITY_IDENTIFICATION | SECURITY_SQOS_PRESENT);
     loop {
         match options.open(path) {
-            Ok(client) => return Ok(Stream::Client(client)),
+            Ok(client) => {
+                let served_by = puddle_fs::win::pipe_server_user_sid(client.as_raw_handle())
+                    .map_err(|source| IpcError::Io {
+                        op: "check the owner of",
+                        endpoint: path.to_path_buf(),
+                        source,
+                    })?;
+                if served_by != own_sid {
+                    return Err(IpcError::WrongOwner {
+                        endpoint: path.to_path_buf(),
+                    });
+                }
+                return Ok(Stream::Client(client));
+            }
             Err(err) if is_busy(&err) => {
                 if tokio::time::Instant::now() >= deadline {
                     return Err(IpcError::Busy {
@@ -314,6 +340,19 @@ mod tests {
         let s = p.to_str().unwrap();
         let suffix = s.strip_prefix(PIPE_PREFIX).unwrap();
         assert_eq!(suffix.len(), 32, "{s}");
+    }
+
+    #[tokio::test]
+    async fn a_pipe_served_by_another_user_is_refused_and_ours_is_not() {
+        let root = crate::IpcRoot::new().unwrap();
+        let listener = root.listen().unwrap();
+        let path = listener.endpoint().path().to_path_buf();
+        let own = puddle_fs::win::current_user_sid().unwrap();
+        connect_as(&path, &own).await.unwrap();
+        // The local SYSTEM account stands for the other user.
+        let err = connect_as(&path, "S-1-5-18").await.unwrap_err();
+        assert!(matches!(err, IpcError::WrongOwner { .. }), "{err}");
+        crate::connect(&path).await.unwrap();
     }
 
     #[test]

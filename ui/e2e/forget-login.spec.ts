@@ -133,7 +133,9 @@ test("the Forget button of a notice is a target big enough to hit and does not o
   backend,
 }) => {
   await open(page, backend);
-  const notice = page.locator(".notice", { has: forgetButton(page) });
+  const notice = page.locator(".notice", {
+    has: page.getByRole("button", { name: "Forget Claude Code login" }),
+  });
   const edge = (await notice.boundingBox())!;
   const box = (await forgetButton(page).boundingBox())!;
   expect(box.width).toBeGreaterThanOrEqual(24);

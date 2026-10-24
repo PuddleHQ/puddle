@@ -12724,6 +12724,14 @@
           }
         }
       },
+      "SwitchSource": {
+        "type": "string",
+        "description": "Whose value a workspace's switch holds.",
+        "enum": [
+          "own",
+          "default"
+        ]
+      },
       "SyncedRoot": {
         "type": "object",
         "description": "A certificate copied into workspaces.",
@@ -13144,8 +13152,8 @@
           "repos",
           "only_push_listed",
           "only_pull_listed",
-          "push_follows_default",
-          "pull_follows_default"
+          "push_from",
+          "pull_from"
         ],
         "properties": {
           "identities": {
@@ -13163,13 +13171,13 @@
             "type": "boolean",
             "description": "Refuse a push to a repository not listed with Push on (default on)."
           },
-          "pull_follows_default": {
-            "type": "boolean",
-            "description": "The pull switch is the default's."
+          "pull_from": {
+            "$ref": "#/components/schemas/SwitchSource",
+            "description": "Whose value `only_pull_listed` is."
           },
-          "push_follows_default": {
-            "type": "boolean",
-            "description": "The push switch is the default's (the workspace set none of its own, or dropped it)."
+          "push_from": {
+            "$ref": "#/components/schemas/SwitchSource",
+            "description": "Whose value `only_push_listed` is."
           },
           "repos": {
             "type": "array",

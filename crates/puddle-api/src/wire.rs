@@ -50,8 +50,8 @@ pub use identities::{
     AttachIdentityRequest, CredentialCoverage, CredentialSource, GitDefaultsView, GitRepoRequest,
     GitRepoToggles, GitRepoView, GitSwitchesRequest, IdentityAuthor, IdentityCredential,
     IdentityDeleted, IdentityList, IdentityOrderRequest, IdentityRequest, IdentitySigning,
-    IdentityView, NewWorkspaceIdentity, NewWorkspaceIdentityBasis, TokenLeft, WorkspaceGitView,
-    WorkspaceIdentitiesRequest, WorkspaceSwitchesRequest,
+    IdentityView, NewWorkspaceIdentity, NewWorkspaceIdentityBasis, SwitchSource, TokenLeft,
+    WorkspaceGitView, WorkspaceIdentitiesRequest, WorkspaceSwitchesRequest,
 };
 pub use network_health::{
     DeadProxy, NetworkHealth, PacState, ProxyDetected, ProxyMode, ProxyProblem, ProxyProblemKind,

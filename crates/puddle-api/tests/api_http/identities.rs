@@ -689,16 +689,16 @@ async fn a_switch_goes_back_to_following_the_default_and_the_view_says_which_one
     };
     let git = api.get("/api/workspaces/w/git").await.json();
     assert_eq!(
-        (&git["push_follows_default"], &git["pull_follows_default"]),
-        (&json!(true), &json!(true))
+        (&git["push_from"], &git["pull_from"]),
+        (&json!("default"), &json!("default"))
     );
 
     let own = put(json!({"only_push_listed": false, "only_pull_listed": true}))
         .await
         .json();
     assert_eq!(
-        (&own["push_follows_default"], &own["pull_follows_default"]),
-        (&json!(false), &json!(false))
+        (&own["push_from"], &own["pull_from"]),
+        (&json!("own"), &json!("own"))
     );
 
     // Pull goes back to the default (off); push stays the workspace's own.
@@ -706,12 +706,12 @@ async fn a_switch_goes_back_to_following_the_default_and_the_view_says_which_one
     assert_eq!(back.status, 200, "{}", back.body);
     let back = back.json();
     assert_eq!(
-        (&back["only_push_listed"], &back["push_follows_default"]),
-        (&json!(false), &json!(false))
+        (&back["only_push_listed"], &back["push_from"]),
+        (&json!(false), &json!("own"))
     );
     assert_eq!(
-        (&back["only_pull_listed"], &back["pull_follows_default"]),
-        (&json!(false), &json!(true))
+        (&back["only_pull_listed"], &back["pull_from"]),
+        (&json!(false), &json!("default"))
     );
     api.send(
         "PUT",

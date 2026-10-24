@@ -601,7 +601,7 @@ impl State {
                 }
             }
             Step::LoginStoreRefuses { refuses } => {
-                self.workspaces.set_login_store_refuses(*refuses)
+                self.workspaces.set_login_store_refuses(*refuses);
             }
             Step::NetworkHealth(report) => {
                 let epoch = report.proxy.epoch;

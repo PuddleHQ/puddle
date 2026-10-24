@@ -134,7 +134,7 @@ run_gate() {
         ;;
     hooks)
         scripts/pre-push-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
-            scripts/target-names-test.sh --self-test && scripts/target-names-test.sh &&
+            scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh &&
             ci/fetch-msb-test.sh && ci/fetch-code-server-test.sh && ci/check-runtime-layout-test.sh &&
             ci/scope-test.sh && ci/apt-setup-test.sh && ci/advisories-issue-test.sh
         ;;
@@ -276,7 +276,7 @@ run_gate() {
         ui_install
         target=${CARGO_TARGET_DIR:-target}
         # shellcheck disable=SC2086
-        "$cargo" llvm-cov nextest --workspace $skip_app --all-features --locked \
+        scripts/coverage-run.sh "$cargo" llvm-cov nextest --workspace $skip_app --all-features --locked \
             --profile "${NEXTEST_PROFILE:-default}" \
             --lcov --output-path "$target/lcov.info"
         "$cargo" llvm-cov report --summary-only

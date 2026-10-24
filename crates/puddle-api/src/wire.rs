@@ -1681,7 +1681,7 @@ impl From<DensityChoice> for settings::DensityChoice {
     }
 }
 
-/// What closing the window does while a workspace runs.
+/// What the close button does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CloseBehaviour {
@@ -1730,10 +1730,14 @@ pub struct UiPrefs {
     #[serde(default)]
     #[schema(required = true)]
     pub sound: Option<bool>,
-    /// What closing the window does while a workspace runs (default `tray`).
+    /// What the close button does (default `tray`).
     #[serde(default)]
     #[schema(required = true)]
     pub close_behaviour: Option<CloseBehaviour>,
+    /// Minimizing hides the window to the tray instead of the taskbar (default off).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub minimize_to_tray: Option<bool>,
     /// Notify only while Puddle's window is not focused (default on).
     #[serde(default)]
     #[schema(required = true)]
@@ -1768,6 +1772,7 @@ impl From<&settings::UiPrefs> for UiPrefs {
             notifications: u.notifications,
             sound: u.sound,
             close_behaviour: u.close_behaviour.map(Into::into),
+            minimize_to_tray: u.minimize_to_tray,
             notify_only_unfocused: u.notify_only_unfocused,
             badge: u.badge,
             notify_oom: u.notify_oom,
@@ -1786,6 +1791,7 @@ impl UiPrefs {
             notifications,
             sound,
             close_behaviour,
+            minimize_to_tray,
             notify_only_unfocused,
             badge,
             notify_oom,
@@ -1798,6 +1804,7 @@ impl UiPrefs {
         prefs.notifications = notifications;
         prefs.sound = sound;
         prefs.close_behaviour = close_behaviour.map(Into::into);
+        prefs.minimize_to_tray = minimize_to_tray;
         prefs.notify_only_unfocused = notify_only_unfocused;
         prefs.badge = badge;
         prefs.notify_oom = notify_oom;
@@ -2332,6 +2339,7 @@ mod tests {
                 notifications: Some(false),
                 sound: Some(true),
                 close_behaviour: Some(CloseBehaviour::Quit),
+                minimize_to_tray: Some(true),
                 notify_only_unfocused: Some(false),
                 badge: Some(false),
                 notify_oom: Some(false),
@@ -2348,6 +2356,7 @@ mod tests {
         assert!(!g.ui.notifications());
         assert!(g.ui.sound());
         assert_eq!(g.ui.close_behaviour(), settings::CloseBehaviour::Quit);
+        assert!(g.ui.minimize_to_tray());
         assert!(!g.ui.notify_only_unfocused());
         assert!(!g.ui.badge());
         assert!(!g.ui.notify_oom());

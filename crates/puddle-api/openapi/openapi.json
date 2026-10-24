@@ -8480,7 +8480,7 @@
       },
       "CloseBehaviour": {
         "type": "string",
-        "description": "What closing the window does while a workspace runs.",
+        "description": "What the close button does.",
         "enum": [
           "tray",
           "quit"
@@ -12866,6 +12866,7 @@
           "notifications",
           "sound",
           "close_behaviour",
+          "minimize_to_tray",
           "notify_only_unfocused",
           "badge",
           "notify_oom",
@@ -12885,7 +12886,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/CloseBehaviour",
-                "description": "What closing the window does while a workspace runs (default `tray`)."
+                "description": "What the close button does (default `tray`)."
               },
               {
                 "type": "null"
@@ -12916,6 +12917,13 @@
               "null"
             ],
             "description": "The inbox's single-key shortcuts A, D, J and K (default off)."
+          },
+          "minimize_to_tray": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Minimizing hides the window to the tray instead of the taskbar (default off)."
           },
           "notifications": {
             "type": [

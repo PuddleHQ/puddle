@@ -101,6 +101,39 @@ describe("LiveState.start", () => {
     }
   });
 
+  it("opens the stream again when the service answers after refusing its key", async () => {
+    vi.useFakeTimers();
+    try {
+      const opened: EventStreamOptions[] = [];
+      const live = new LiveState({
+        api: fakeApi(() => ok(0)),
+        pollMs: 1000,
+        events: (o) => {
+          opened.push(o);
+          return (async function* () {})();
+        },
+      });
+      const stop = live.start();
+      await vi.advanceTimersByTimeAsync(0);
+      // A poll that works while the stream is fine opens nothing new.
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(opened).toHaveLength(1);
+      opened[0]?.onState?.("refused");
+      expect(live.stream).toBe("refused");
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(opened).toHaveLength(2);
+      expect(opened[0]?.signal.aborted).toBe(true);
+      expect(live.stream).toBe("connecting");
+      // Late words from the old stream change nothing.
+      opened[0]?.onState?.("refused");
+      expect(live.stream).toBe("connecting");
+      stop();
+      expect(opened[1]?.signal.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("uses the app's client, the real stream and a 15 s poll by default", () => {
     const live = new LiveState();
     expect(live.pending).toBe(0);

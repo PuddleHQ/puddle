@@ -45,6 +45,8 @@ export class LiveState implements LiveSource {
   readonly #events: (options: EventStreamOptions) => AsyncIterable<unknown>;
   readonly #pollMs: number;
   readonly #listeners = new Set<LiveListener>();
+  /** Opens the stream again; set while `start` runs. */
+  #reopen: (() => void) | null = null;
 
   constructor(deps: LiveDeps = {}) {
     this.#api = deps.api ?? defaultApi;
@@ -73,6 +75,9 @@ export class LiveState implements LiveSource {
         this.pending = data.requests.length;
         this.problem = null;
         this.problemDetail = null;
+        // The service answers this app again after refusing its key on the stream (a restart, a
+        // key handover): the stream was stopped for good, so it is opened anew.
+        if (this.stream === "refused") this.#reopen?.();
       } else if (response.status === 401) {
         this.problem = "unauthorized";
       } else {
@@ -87,31 +92,45 @@ export class LiveState implements LiveSource {
   /** Starts the stream and the poll; returns the function that stops both. */
   start(): () => void {
     const controller = new AbortController();
+    let streaming: AbortController | null = null;
+    const open = () => {
+      streaming?.abort();
+      const own = new AbortController();
+      streaming = own;
+      controller.signal.addEventListener("abort", () => own.abort(), {
+        once: true,
+      });
+      this.stream = "connecting";
+      void (async () => {
+        const stream = this.#events({
+          signal: own.signal,
+          onState: (state) => {
+            if (own.signal.aborted) return;
+            this.stream = state;
+            if (state === "connected") this.streamError = null;
+          },
+          onError: (reason) => {
+            if (!own.signal.aborted) this.streamError = reason;
+          },
+          onResync: () => {
+            void this.refresh();
+            for (const l of [...this.#listeners]) l.resync?.();
+          },
+        });
+        for await (const event of stream) {
+          // The count itself still comes from the poll until the API sends pending events.
+          for (const l of [...this.#listeners]) l.event?.(event);
+        }
+      })();
+    };
+    this.#reopen = open;
     void this.refresh();
     const timer = setInterval(() => void this.refresh(), this.#pollMs);
-    void (async () => {
-      const stream = this.#events({
-        signal: controller.signal,
-        onState: (state) => {
-          this.stream = state;
-          if (state === "connected") this.streamError = null;
-        },
-        onError: (reason) => {
-          this.streamError = reason;
-        },
-        onResync: () => {
-          void this.refresh();
-          for (const l of [...this.#listeners]) l.resync?.();
-        },
-      });
-      for await (const event of stream) {
-        // The count itself still comes from the poll until the API sends pending events.
-        for (const l of [...this.#listeners]) l.event?.(event);
-      }
-    })();
+    open();
     return () => {
       controller.abort();
       clearInterval(timer);
+      this.#reopen = null;
     };
   }
 }

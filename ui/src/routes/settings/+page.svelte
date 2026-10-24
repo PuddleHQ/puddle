@@ -397,7 +397,9 @@
             <label for="set-close">Closing the window</label>
             <p class="desc">
               Keeping Puddle in the tray lets workspaces keep running, so builds
-              carry on. Quitting from the tray menu stops every workspace.
+              carry on. Quitting from the tray menu stops every workspace. A
+              desktop with no tray icon (some Linux desktops) minimizes the
+              window instead.
             </p>
           </div>
           <select
@@ -419,7 +421,7 @@
           "minimize_to_tray",
           "set-minimize",
           "Minimizing hides Puddle in the tray",
-          "Off: minimizing leaves Puddle in the taskbar.",
+          "Off: minimizing leaves Puddle in the taskbar. Without a tray icon on your desktop, minimizing always does.",
           false,
         )}
       </section>

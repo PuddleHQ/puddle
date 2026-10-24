@@ -268,12 +268,10 @@ crates/puddle-app/src/desktop.rs | if event.id().as_ref() == MENU_QUIT { | the a
 crates/puddle-app/src/desktop.rs | app.exit(0); | the application menu (see `install_quit_shortcut`)
 crates/puddle-app/src/desktop.rs | if let Some(window) = app.get_webview_window(MAIN_LABEL) { | the application menu (see `install_quit_shortcut`)
 crates/puddle-app/src/desktop.rs | window.hide_menu()?; | the application menu (see `install_quit_shortcut`)
-crates/puddle-app/src/desktop.rs | if let Err(err) = notify::show(app, notice, sound) { | the operating system's notification service (D-Bus on Linux, toasts on Windows): a test would pop a real notification on a developer's desktop
-crates/puddle-app/src/desktop.rs | tracing::warn!(%err, "could not show a notification"); | the same notification service failing
 crates/puddle-app/src/desktop.rs | tray.show(count, badge_on); | the tray icon needs a display and a tray host (GTK on Linux); it is built and updated only in a real session
 crates/puddle-app/src/desktop.rs | Err(err) => tracing::debug!(%err, "the settings read did not finish"), | a blocking read that panics or is cancelled; the runtime does not do that in a test
 crates/puddle-app/src/desktop.rs | TrayState::Shown | the tray exists only in a real desktop session (see `Tray::build`)
-crates/puddle-app/src/desktop.rs | open_inbox(&handle, &base, opens); | runs when a real notification is clicked; `tapped` and `open_inbox` are tested directly
+crates/puddle-app/src/desktop.rs | .on_action(move |performed| on_tap(&handle, &base, performed)); | the closure the notification plugin calls when a real notification is clicked; `on_tap` is tested directly
 crates/puddle-app/src/desktop.rs | tracing::warn!(%err, "a click on a notification will not open the inbox"); | the notification plugin refusing a handler, which it never does on desktop
 crates/puddle-app/src/notify.rs | pub fn show<R: Runtime>( | hands a notice to the operating system's notification service (D-Bus on Linux, toasts on Windows): a test would pop a real notification on a developer's desktop
 crates/puddle-app/src/notify.rs | let mut builder = app | the same notification service call (see `show`)
@@ -290,4 +288,12 @@ crates/puddle-app/src/shell.rs | crash::install(folder.join(crash::FOLDER)); | `
 crates/puddle-app/src/shell.rs | if let Err(err) = desktop::install_quit_shortcut(app.handle()) { | `run` drives the real window system's event loop, which a test process cannot start; the Ctrl+Q menu is covered by the Windows smoke test and a hands-on check
 crates/puddle-app/src/shell.rs | tracing::warn!(%err, "Ctrl+Q will not quit"); | the same `run` path: the menu failing to install
 crates/puddle-app/src/shell.rs | .or_else(|| puddle_fs::data_dir().ok()) | the per-user data folder lookup runs in `run` and in `open` for the real host only; a test names its own folder
-crates/puddle-app/src/tray.rs | * | the tray icon, its menu and the tray-host probe run only in a real desktop session: GTK needs a display and the mock runtime builds muda menus through it, and the Linux probe asks the session bus. The matrix of what the buttons do (`close_action`, `minimize_action`), the icon drawing (`icons`, `badge::with_dot`) and the panic guard are tested; the Windows smoke test closes a real window with the real tray
+crates/puddle-app/src/notify.rs | tracing::warn!(%err, "could not show a notification"); | the operating system's notification service refusing a notice: a test would pop a real notification on a developer's desktop, and cannot make it refuse
+crates/puddle-app/src/tray.rs | let name = zbus::names::BusName | the Linux tray-host probe, past the connection to a session bus
+crates/puddle-app/src/tray.rs | zbus::blocking::fdo::DBusProxy::new(&bus) | the Linux tray-host probe, past the connection to a session bus
+crates/puddle-app/src/tray.rs | .ok()? | the Linux tray-host probe, past the connection to a session bus
+crates/puddle-app/src/tray.rs | .name_has_owner(name) | the Linux tray-host probe, past the connection to a session bus
+crates/puddle-app/src/tray.rs | .ok() | the Linux tray-host probe and the tray build past a tray host, which the test environment has none of
+crates/puddle-app/src/tray.rs | let made = can_show() | the tray is only made where the probe finds a host, which the test environment has none of; `make` and `show` run on a virtual display in the tray tests
+crates/puddle-app/src/tray.rs | let tray = made.flatten() | the tray is only made where the probe finds a host, which the test environment has none of; `make` and `show` run on a virtual display in the tray tests
+crates/puddle-app/src/tray.rs | made.map_err(|err| tracing::debug! | the tray is only made where the probe finds a host, which the test environment has none of; `make` and `show` run on a virtual display in the tray tests

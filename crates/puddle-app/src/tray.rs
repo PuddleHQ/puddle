@@ -317,6 +317,80 @@ mod tests {
         assert!(icons(&wide).1.is_none());
     }
 
+    /// The tray needs GTK, which needs a display. This test starts a virtual one (`Xvfb`, from the
+    /// `xvfb` package that CI images have) and runs itself again on it, so the icon, its menu and
+    /// its badge are built for real. The inner run is told apart by an environment variable.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_icon_is_made_with_a_menu_and_shows_the_waiting_count() {
+        const INNER: &str = "PUDDLE_TRAY_TEST_ON_DISPLAY";
+        if std::env::var_os(INNER).is_some() {
+            on_display();
+            // skip-ok: the inner run of this same test, on the virtual display; it ran the checks above
+            return;
+        }
+        // `-displayfd 1` makes Xvfb pick a free display and print its number once it is ready.
+        let mut xvfb = std::process::Command::new("Xvfb")
+            .args([
+                "-displayfd",
+                "1",
+                "-screen",
+                "0",
+                "640x480x24",
+                "-nolisten",
+                "tcp",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("this test needs Xvfb (the xvfb package)");
+        let mut ready = String::new();
+        std::io::BufRead::read_line(
+            &mut std::io::BufReader::new(xvfb.stdout.take().unwrap()),
+            &mut ready,
+        )
+        .unwrap();
+        let display = format!(":{}", ready.trim());
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tray::tests::the_icon_is_made_with_a_menu_and_shows_the_waiting_count",
+                "--nocapture",
+            ])
+            .env(INNER, "1")
+            .env("DISPLAY", &display)
+            .env_remove("DBUS_SESSION_BUS_ADDRESS")
+            .status()
+            .unwrap();
+        xvfb.kill().unwrap();
+        xvfb.wait().unwrap();
+        assert!(status.success(), "the run on the display failed");
+    }
+
+    /// What the test above runs on the virtual display.
+    #[cfg(target_os = "linux")]
+    fn on_display() {
+        use tauri::test::mock_builder;
+
+        gtk::init().unwrap();
+        let app = crate::shell::with_plugins(mock_builder())
+            .build(crate::shell::context())
+            .unwrap();
+        let tray = Tray::make(app.handle(), 0, true).unwrap();
+        assert!(
+            tray.marked.is_some(),
+            "the app icon is square, so it gets a dot"
+        );
+        assert_eq!(tray.waiting.text().unwrap(), "Nothing is waiting");
+        tray.show(3, true);
+        assert_eq!(tray.waiting.text().unwrap(), "3 requests are waiting");
+        tray.show(3, false);
+        tray.show(0, true);
+        assert_eq!(tray.waiting.text().unwrap(), "Nothing is waiting");
+        // No session bus here, so there is no tray host: the shell goes without a tray.
+        assert!(Tray::build(app.handle(), 1, true).is_none());
+    }
+
     #[test]
     fn a_panic_while_making_the_icon_is_an_answer_not_a_crash() {
         assert_eq!(guarded(|| 7), Some(7));

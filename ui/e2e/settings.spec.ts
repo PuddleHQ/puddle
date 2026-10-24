@@ -232,9 +232,7 @@ test.describe("default CPUs", () => {
     ).toBeNull();
 
     await pressSave(page);
-    expect((await stored(request, backend)).workspace_defaults["cpus"]).toBe(
-      2,
-    );
+    expect((await stored(request, backend)).workspace_defaults["cpus"]).toBe(2);
     await page.reload();
     await expect(page.getByLabel("Default CPUs")).toHaveValue("2");
   });

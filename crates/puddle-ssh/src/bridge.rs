@@ -58,6 +58,14 @@ pub enum BridgeError {
         /// The endpoint.
         endpoint: PathBuf,
     },
+    /// The server at the endpoint belongs to another user, so nothing was sent to it.
+    #[error(
+        "the SSH endpoint {endpoint} is served by another user, not by the Puddle you run: nothing was sent to it (restart Puddle and the workspace, then connect again)"
+    )]
+    WrongOwner {
+        /// The endpoint.
+        endpoint: PathBuf,
+    },
     /// Connecting failed otherwise.
     #[error("could not connect to the SSH endpoint")]
     Connect(#[source] IpcError),
@@ -88,6 +96,7 @@ impl From<IpcError> for BridgeError {
         match e {
             IpcError::NotFound { endpoint } => Self::NotFound { endpoint },
             IpcError::AccessDenied { endpoint } => Self::AccessDenied { endpoint },
+            IpcError::WrongOwner { endpoint } => Self::WrongOwner { endpoint },
             other => Self::Connect(other),
         }
     }

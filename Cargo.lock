@@ -6254,6 +6254,7 @@ version = "0.0.0"
 dependencies = [
  "getrandom 0.4.3",
  "puddle-fs",
+ "rustix",
  "thiserror 2.0.21",
  "tokio",
  "tracing",

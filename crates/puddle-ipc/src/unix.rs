@@ -170,14 +170,45 @@ impl Listener {
 }
 
 pub(crate) async fn connect(path: &Path) -> Result<Stream, IpcError> {
-    UnixStream::connect(path)
+    connect_as(path, rustix::process::geteuid().as_raw()).await
+}
+
+/// Connects, and refuses a server whose process runs as a user other than `own_uid`. The server's
+/// user is the one the socket recorded when it started listening, so a socket another user made
+/// at this path cannot pass for ours, whatever its mode.
+async fn connect_as(path: &Path, own_uid: u32) -> Result<Stream, IpcError> {
+    let stream = UnixStream::connect(path)
         .await
-        .map_err(|source| crate::client_error(path, source))
+        .map_err(|source| crate::client_error(path, source))?;
+    let peer = stream.peer_cred().map_err(|source| IpcError::Io {
+        op: "check the owner of",
+        endpoint: path.to_path_buf(),
+        source,
+    })?;
+    if peer.uid() != own_uid {
+        return Err(IpcError::WrongOwner {
+            endpoint: path.to_path_buf(),
+        });
+    }
+    Ok(stream)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_server_run_by_another_user_is_refused_and_ours_is_not() {
+        let root = crate::IpcRoot::new().unwrap();
+        let listener = root.listen().unwrap();
+        let path = listener.endpoint().path().to_path_buf();
+        let own = rustix::process::geteuid().as_raw();
+        connect_as(&path, own).await.unwrap();
+        let err = connect_as(&path, own.wrapping_add(1)).await.unwrap_err();
+        assert!(matches!(err, IpcError::WrongOwner { .. }), "{err}");
+        // The public entry point asks for the real user.
+        crate::connect(&path).await.unwrap();
+    }
 
     #[test]
     fn long_paths_are_refused_before_bind() {

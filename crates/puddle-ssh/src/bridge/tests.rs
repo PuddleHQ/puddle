@@ -445,3 +445,18 @@ async fn something_other_than_puddle_is_not_relayed() {
         assert_eq!(out, b"");
     }
 }
+
+#[test]
+fn a_server_run_by_another_user_is_named_and_nothing_is_sent() {
+    let err = BridgeError::from(IpcError::WrongOwner {
+        endpoint: PathBuf::from("/run/ep"),
+    });
+    assert!(matches!(err, BridgeError::WrongOwner { .. }), "{err:?}");
+    let text = err.to_string();
+    assert!(
+        text.contains("/run/ep")
+            && text.contains("another user")
+            && text.contains("nothing was sent"),
+        "{text}"
+    );
+}

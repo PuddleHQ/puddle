@@ -62,6 +62,13 @@ pub enum IpcError {
         /// The endpoint.
         endpoint: PathBuf,
     },
+    /// The server at the endpoint belongs to another user. Nothing was sent to it: the endpoint
+    /// names are random per run, so a second user who took a freed name is not Puddle.
+    #[error("the server at {endpoint} belongs to another user")]
+    WrongOwner {
+        /// The endpoint.
+        endpoint: PathBuf,
+    },
     /// Every pipe instance stayed busy for the whole connect timeout.
     #[error("every instance of {endpoint} stayed busy")]
     Busy {
@@ -131,6 +138,7 @@ mod tests {
             IpcError::NoRuntime,
             IpcError::NotFound { endpoint: p() },
             IpcError::AccessDenied { endpoint: p() },
+            IpcError::WrongOwner { endpoint: p() },
             IpcError::Busy { endpoint: p() },
             IpcError::Closed { endpoint: p() },
             IpcError::Io {

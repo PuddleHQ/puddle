@@ -278,7 +278,8 @@ impl AsyncWrite for Connection {
 /// # Errors
 ///
 /// [`IpcError::NotFound`] when nothing listens there, [`IpcError::AccessDenied`] when the
-/// endpoint refuses this process, [`IpcError::Busy`] when no pipe instance freed up in time,
+/// endpoint refuses this process, [`IpcError::WrongOwner`] when the server at it runs as another user
+/// (nothing is sent to it), [`IpcError::Busy`] when no pipe instance freed up in time,
 /// [`IpcError::NoRuntime`] outside a tokio runtime, [`IpcError::Io`] otherwise.
 pub async fn connect(path: &Path) -> Result<Connection, IpcError> {
     if tokio::runtime::Handle::try_current().is_err() {

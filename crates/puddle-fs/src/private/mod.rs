@@ -451,4 +451,84 @@ mod tests {
     fn hex_is_two_digits_per_byte() {
         assert_eq!(hex(&[0x00, 0x9f, 0xff, 0x10]), "009fff10");
     }
+
+    #[test]
+    fn replacing_a_file_puts_the_new_content_in_place_and_removes_the_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let to = dir.path().join("config");
+        fs::write(&to, b"old").unwrap();
+        let from = dir.path().join("config.tmp");
+        let mut file = create_file(&from).unwrap();
+        file.write_all(b"new").unwrap();
+        drop(file);
+        replace_file(&from, &to).unwrap();
+        assert_eq!(fs::read(&to).unwrap(), b"new");
+        assert!(!from.exists());
+    }
+
+    // A rename makes the file on Unix; `ReplaceFileW` wants the target to exist.
+    #[cfg(windows)]
+    #[test]
+    fn replacing_a_file_that_is_not_there_is_an_error_and_keeps_the_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("config.tmp");
+        drop(create_file(&from).unwrap());
+        assert!(replace_file(&from, &dir.path().join("missing")).is_err());
+        assert!(from.exists());
+    }
+
+    /// The access list of `path` as `icacls` prints it, without the path.
+    #[cfg(windows)]
+    fn acl_of(path: &Path) -> Vec<String> {
+        let out = std::process::Command::new("icacls")
+            .arg(path)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let text = String::from_utf8_lossy(&out.stdout).into_owned();
+        let path = path.display().to_string();
+        let mut entries: Vec<String> = text
+            .lines()
+            .map(|l| l.replace(&path, "").trim().to_owned())
+            .filter(|l| !l.is_empty() && !l.starts_with("Successfully processed"))
+            .collect();
+        entries.sort();
+        entries
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn replacing_a_file_keeps_the_access_list_it_had_on_windows() {
+        let dir = tempfile::tempdir().unwrap();
+        let make = |name: &str| {
+            let to = dir.path().join(name);
+            fs::write(&to, b"old").unwrap();
+            // An access list that differs from the owner-only one the copy is made with.
+            let granted = std::process::Command::new("icacls")
+                .arg(&to)
+                .args(["/grant", "*S-1-1-0:(R)"])
+                .output()
+                .unwrap();
+            assert!(granted.status.success());
+            let from = dir.path().join(format!("{name}.tmp"));
+            create_file(&from).unwrap().write_all(b"new").unwrap();
+            (from, to)
+        };
+        let (from, to) = make("kept");
+        let before = acl_of(&to);
+        assert!(before.iter().any(|e| e.contains("Everyone")), "{before:?}");
+        replace_file(&from, &to).unwrap();
+        assert_eq!(fs::read(&to).unwrap(), b"new");
+        assert_eq!(acl_of(&to), before);
+        // The control: a plain rename takes the access list of the copy, which is the loss
+        // `replace_file` exists to avoid.
+        let (from, to) = make("renamed");
+        let before = acl_of(&to);
+        fs::rename(&from, &to).unwrap();
+        assert_ne!(acl_of(&to), before);
+    }
 }

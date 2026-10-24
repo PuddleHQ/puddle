@@ -28,7 +28,7 @@ const ADVICE_OTHER =
   "Open Puddle from its app window or tray icon; if this stays, restart the app.";
 
 /**
- * Reads the service's own error body (`{ error, message }`, API-11) for a 401 or 403. The code
+ * Reads the service's own error body (`{ error, message }`) for a 401 or 403. The code
  * picks the advice; the message is shown as the service wrote it, cut to a sensible length.
  */
 export async function refusalOf(response: Response): Promise<StreamRefusal> {

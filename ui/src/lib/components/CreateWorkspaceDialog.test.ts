@@ -825,10 +825,13 @@ describe("CreateWorkspaceDialog with several repositories", () => {
   it("stops adding at a hundred rows", async () => {
     open();
     await screen.findByRole("dialog");
-    for (let i = 1; i < 100; i++) await fireEvent.click(add());
+    // One role query reads the whole accessibility tree, so asking for the button again after
+    // each click made this test quadratic (88 % of its time); the button is one element throughout.
+    const button = add();
+    for (let i = 1; i < 100; i++) await fireEvent.click(button);
     expect(
       screen.getAllByRole("group", { name: /^Repository \d+$/ }),
     ).toHaveLength(100);
-    expect(add()).toBeDisabled();
-  }, 60_000);
+    expect(button).toBeDisabled();
+  });
 });

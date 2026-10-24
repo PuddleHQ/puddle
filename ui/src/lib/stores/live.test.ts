@@ -105,8 +105,9 @@ describe("LiveState.start", () => {
     vi.useFakeTimers();
     try {
       const opened: EventStreamOptions[] = [];
+      let answer: unknown = ok(0);
       const live = new LiveState({
-        api: fakeApi(() => ok(0)),
+        api: fakeApi(() => answer),
         pollMs: 1000,
         events: (o) => {
           opened.push(o);
@@ -120,6 +121,15 @@ describe("LiveState.start", () => {
       expect(opened).toHaveLength(1);
       opened[0]?.onState?.("refused");
       expect(live.stream).toBe("refused");
+      // The poll answering all along does not reopen a stream whose key was refused.
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(opened).toHaveLength(1);
+      // The service fails the poll too, then answers again: that is a restart, so reopen.
+      answer = { error: {}, response: { status: 401 } };
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(live.problem).toBe("unauthorized");
+      expect(opened).toHaveLength(1);
+      answer = ok(0);
       await vi.advanceTimersByTimeAsync(1000);
       expect(opened).toHaveLength(2);
       expect(opened[0]?.signal.aborted).toBe(true);

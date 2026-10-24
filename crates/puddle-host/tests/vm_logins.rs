@@ -25,7 +25,7 @@ mod vm_support;
 use std::sync::Arc;
 use std::time::Duration;
 
-use puddle_e2e::lab::{Seen, WebAnswer, WebHost, WebOptions};
+use puddle_e2e::lab::{NameProxy, Seen, WebAnswer, WebHost, WebOptions};
 use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
 use puddle_types::WorkspaceName;
 use serde_json::{Value, json};
@@ -132,6 +132,8 @@ fn token_endpoint(seen: &Seen) -> Option<WebAnswer> {
 struct Rig {
     vm: VmHost,
     web: WebHost,
+    /// The company proxy the host's upstream leg goes through: it stops when dropped.
+    _proxy: NameProxy,
     workspaces: Vec<WorkspaceName>,
 }
 
@@ -152,7 +154,7 @@ async fn rig(tag: &str, workspaces: &[&str]) -> Rig {
     let mut events = api.events().await;
     let mut made = Vec::new();
     for suffix in workspaces {
-        let name = format!("{}-{suffix}", vm.settings.prefix.as_str());
+        let name = format!("{}-{tag}-{suffix}", vm.settings.prefix.as_str());
         let workspace = WorkspaceName::new(&name).unwrap();
         for site in SITES {
             vm.host
@@ -181,6 +183,7 @@ async fn rig(tag: &str, workspaces: &[&str]) -> Rig {
     Rig {
         vm,
         web: internet.web,
+        _proxy: internet.proxy,
         workspaces: made,
     }
 }

@@ -77,6 +77,66 @@ impl Prefix {
     }
 }
 
+/// What a fixture's start cost: the wall-clock time from the call to the first accepted
+/// connection, and the CPU time its process had used by then.
+///
+/// The wall time is what a test waits and depends on how many other processes want the CPU
+/// (a check runs niced on a host meant to run at 100 %, so the same start takes 1 s or 13 s).
+/// The CPU time is the work the fixture itself does and does not stretch with the load, so it
+/// is the part a bound on "how long a fixture takes to start" can hold the fixture to.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct StartCost {
+    /// From the call to the first accepted connection.
+    pub wall: Duration,
+    /// The fixture process's user and system CPU time at that point; `None` where the OS does
+    /// not say (no `/proc`) or the fixture runs in a container.
+    pub cpu: Option<Duration>,
+}
+
+impl StartCost {
+    /// Measures `child` (the fixture's process, if it is one of ours) and logs one line, so a
+    /// slow start shows which of the two it was.
+    fn measure(prefix: &Prefix, begun: Instant, child: Option<&Child>) -> Self {
+        let cost = Self {
+            wall: begun.elapsed(),
+            cpu: child.and_then(|c| cpu_time(c.id())),
+        };
+        eprintln!(
+            "lab: {} ready after {:.2?} wall, {} CPU",
+            prefix.as_str(),
+            cost.wall,
+            cost.cpu
+                .map_or_else(|| "unknown".to_owned(), |c| format!("{c:.2?}")),
+        );
+        cost
+    }
+
+    /// The time a start bound applies to: the CPU time where it is known, else the wall time.
+    #[must_use]
+    pub fn bounded(&self) -> Duration {
+        self.cpu.unwrap_or(self.wall)
+    }
+}
+
+/// User plus system CPU time of process `pid` so far (Linux: `/proc/<pid>/stat`).
+fn cpu_time(pid: u32) -> Option<Duration> {
+    if cfg!(target_os = "linux") {
+        parse_cpu_time(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
+    } else {
+        None
+    }
+}
+
+/// `utime + stime` of a `/proc/<pid>/stat` line, at the 100 Hz tick every Linux target uses. The
+/// process name (field 2) is in parentheses and may hold spaces and parentheses, so the fields
+/// are counted from the last `)`.
+fn parse_cpu_time(stat: &str) -> Option<Duration> {
+    let mut fields = stat[stat.rfind(')')? + 1..].split_whitespace().skip(11);
+    let utime: u64 = fields.next()?.parse().ok()?;
+    let stime: u64 = fields.next()?.parse().ok()?;
+    Some(Duration::from_millis((utime + stime) * 10))
+}
+
 /// A free loopback port. The port can be taken again before the caller binds it; the fixtures
 /// retry nothing, so a collision is a failed start, not a silent one.
 #[must_use]
@@ -196,5 +256,20 @@ mod tests {
             .spawn()
             .unwrap();
         wait_ready(port, Some(&mut child), Duration::from_secs(30), String::new);
+    }
+
+    #[test]
+    fn cpu_time_is_user_plus_system_ticks_counted_after_the_name() {
+        // Field 2 holds a space and a parenthesis; utime and stime are fields 14 and 15.
+        let line = "42 (mitm (dump) x) S 1 42 42 0 -1 4194560 100 0 0 0 55 17 0 0 20 0 1 0 100 0 0";
+        assert_eq!(parse_cpu_time(line), Some(Duration::from_millis(720)));
+        assert_eq!(parse_cpu_time("no name here"), None);
+        assert_eq!(parse_cpu_time("1 (x) S 1"), None);
+    }
+
+    #[test]
+    fn a_running_process_reports_cpu_time_on_linux() {
+        let own = cpu_time(std::process::id());
+        assert_eq!(own.is_some(), cfg!(target_os = "linux"));
     }
 }

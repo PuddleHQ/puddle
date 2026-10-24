@@ -869,7 +869,7 @@ impl WorkspaceService for FakeWorkspaces {
     ) -> BoxFuture<'a, Result<(), WorkspaceError>> {
         Box::pin(async move {
             self.get(id).await?;
-            if !matches!(service, "claude" | "github") {
+            if !matches!(service, "claude" | "github" | "Claude Code" | "GitHub") {
                 return Err(WorkspaceError::NotFound(format!(
                     "no login service {service:?}"
                 )));
@@ -877,7 +877,7 @@ impl WorkspaceService for FakeWorkspaces {
             let mut state = lock(&self.inner.state);
             if state.login_store_refuses {
                 return Err(WorkspaceError::Unavailable(
-                    "the credential store did not delete a saved login".to_owned(),
+                    "the operating system's credential store did not delete a saved login; unlock it or start it and ask again (what was already deleted stays deleted)".to_owned(),
                 ));
             }
             state

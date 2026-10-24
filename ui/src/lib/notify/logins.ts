@@ -5,8 +5,11 @@
 // works, it is just not protected), the next two mean the login in the workspace does not work
 // (the tool will ask for a new sign-in, or its stand-in is refused), and an unnamed problem says
 // only that.
+import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
+import { sentence } from "#lib/rules/model.ts";
 import type { Notifier } from "./notifier.ts";
+import type { NoticeAction } from "./notices.svelte.ts";
 
 type Event = components["schemas"]["Event"];
 export type LoginProblem = Extract<Event, { type: "login_problem" }>;
@@ -69,9 +72,49 @@ function titleFor(e: LoginProblem): string {
 
 export class LoginNotices {
   readonly #notifier: Notifier;
+  readonly #api: Pick<ApiClient, "DELETE">;
 
-  constructor(notifier: Notifier) {
+  constructor(notifier: Notifier, api: Pick<ApiClient, "DELETE"> = defaultApi) {
     this.#notifier = notifier;
+    this.#api = api;
+  }
+
+  /**
+   * The button that forgets the login a kept-login notice is about: its saved tokens leave the
+   * credential store, and the notice goes with them. A failure rejects with the API's own words
+   * (a store that refuses says how to try again), which the confirmation shows.
+   */
+  #forget(e: LoginProblem): NoticeAction {
+    return {
+      label: `Forget ${e.service} login`,
+      confirm: {
+        title: `Forget the ${e.service} login in ${e.workspace}?`,
+        summary: `Puddle deletes the ${e.service} sign-in it saved for ${e.workspace} from this computer's credential store.`,
+        detail: `${e.service} inside ${e.workspace} stops working with its current login and asks you to sign in again. Other workspaces and other services are not touched.`,
+        confirmLabel: "Forget login",
+      },
+      run: async () => {
+        let result;
+        try {
+          result = await this.#api.DELETE(
+            "/api/workspaces/{id}/logins/{service}",
+            {
+              params: { path: { id: e.workspace, service: e.service } },
+            },
+          );
+        } catch {
+          throw new Error("Puddle's service isn't answering. Try again.");
+        }
+        if (result.error) {
+          throw new Error(
+            sentence(
+              result.error.message || "Puddle couldn't forget the login",
+            ),
+          );
+        }
+        this.#notifier.resolve(loginKey(e));
+      },
+    };
   }
 
   /** Raises the notice a login problem calls for; false when the event is not one. */
@@ -83,6 +126,7 @@ export class LoginNotices {
       tone: "warning",
       title: titleFor(event),
       detail: WHY[event.kind][0]!.toUpperCase() + WHY[event.kind].slice(1),
+      ...(keptLogin(event.kind) ? { action: this.#forget(event) } : {}),
       link: {
         href: `/workspaces/${encodeURIComponent(event.workspace)}/settings`,
         label: "Workspace settings",

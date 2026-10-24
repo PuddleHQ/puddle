@@ -32,7 +32,7 @@ const sshKey = (name: string) => `ssh:${name}`;
 export interface WatcherDeps {
   source?: LiveSource;
   notifier?: Notifier;
-  api?: Pick<ApiClient, "GET" | "POST" | "PUT">;
+  api?: Pick<ApiClient, "GET" | "POST" | "PUT" | "DELETE">;
   /** What the sign-in notice asks of the identities; the app's own by default. */
   identities?: IdentityLookup;
 }
@@ -40,7 +40,7 @@ export interface WatcherDeps {
 export class NoticeWatcher {
   readonly #source: LiveSource | undefined;
   readonly #notifier: Notifier;
-  readonly #api: Pick<ApiClient, "GET" | "POST" | "PUT">;
+  readonly #api: Pick<ApiClient, "GET" | "POST" | "PUT" | "DELETE">;
   readonly #credentials: CredentialNotices;
   readonly #logins: LoginNotices;
   readonly #problems: ProblemNotices;
@@ -58,7 +58,7 @@ export class NoticeWatcher {
       identities: deps.identities ?? identities,
       api: this.#api,
     });
-    this.#logins = new LoginNotices(this.#notifier);
+    this.#logins = new LoginNotices(this.#notifier, this.#api);
     this.#problems = new ProblemNotices(this.#notifier, this.#api);
   }
 

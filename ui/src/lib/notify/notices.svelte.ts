@@ -16,7 +16,22 @@ export interface NoticeLink {
 /** A button on a notice: one deliberate click does the thing the notice says is missing. */
 export interface NoticeAction {
   label: string;
+  /** A rejection's message is shown to the user: in the confirmation when there is one. */
   run: () => void | Promise<void>;
+  /**
+   * Asks first, for a click that deletes something: the notice shows this dialog and calls
+   * `run` only on its confirm button. The dialog stays open, and says why, when `run` fails.
+   */
+  confirm?: NoticeConfirm;
+}
+
+export interface NoticeConfirm {
+  title: string;
+  /** The one line that says what is removed. */
+  summary: string;
+  /** What happens next. */
+  detail?: string;
+  confirmLabel: string;
 }
 
 export interface NoticeInput {

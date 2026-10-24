@@ -512,6 +512,7 @@ impl DnsServer {
 
 /// What the kernel holds for one waiting query: a small datagram is charged about 700 bytes
 /// (its buffers and bookkeeping), not its few dozen bytes of payload.
+#[cfg(target_os = "linux")]
 const UDP_QUEUE_BYTES_PER_QUERY: usize = 1024;
 
 /// Sizes the socket's receive queue for the queries the stub promises to handle at once. The

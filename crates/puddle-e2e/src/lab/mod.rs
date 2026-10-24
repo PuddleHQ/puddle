@@ -89,7 +89,8 @@ pub struct StartCost {
     /// From the call to the first accepted connection.
     pub wall: Duration,
     /// The fixture process's user and system CPU time at that point; `None` where the OS does
-    /// not say (no `/proc`) or the fixture runs in a container.
+    /// not say (no `/proc`) or the fixture runs in a container, where the wall time is the
+    /// only measure and a loaded host can stretch it.
     pub cpu: Option<Duration>,
 }
 
@@ -265,8 +266,28 @@ mod tests {
     }
 
     #[test]
-    fn a_running_process_reports_cpu_time_on_linux() {
-        let own = cpu_time(std::process::id());
-        assert_eq!(own.is_some(), cfg!(target_os = "linux"));
+    #[cfg(target_os = "linux")]
+    fn a_busy_process_reports_more_cpu_time_than_an_idle_one() {
+        let mut idle = Command::new("sleep").arg("30").spawn().unwrap();
+        let mut busy = Command::new("sh")
+            .args(["-c", "while :; do :; done"])
+            .spawn()
+            .unwrap();
+        // A loaded host may give the loop its first 100 ms late, so wait for them.
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while cpu_time(busy.id()).unwrap() < Duration::from_millis(100) {
+            assert!(Instant::now() < deadline, "the busy loop never got a CPU");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let idle_cpu = cpu_time(idle.id()).unwrap();
+        stop(&mut idle);
+        stop(&mut busy);
+        assert!(idle_cpu < Duration::from_millis(100), "{idle_cpu:?}");
+    }
+
+    #[test]
+    #[cfg(not(target_os = "linux"))]
+    fn without_proc_there_is_no_cpu_time() {
+        assert_eq!(cpu_time(std::process::id()), None);
     }
 }

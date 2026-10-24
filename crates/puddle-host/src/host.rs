@@ -455,7 +455,14 @@ impl<R: Runtime + Clone> Host<R> {
             .clone()
             .unwrap_or_else(crate::vault::os_vault);
         crate::vault::sweep_in_background(vault.clone(), store.clone(), problems.clone());
-        let injecting = Injecting::build(&options, &vault, &store, &events, &roots)?;
+        let injecting = Injecting::build(
+            &options,
+            &vault,
+            &store,
+            &events,
+            &roots,
+            config.paths.login_markers(),
+        )?;
         let proxy_passwords = ProxyPasswords::new(vault.clone());
         load_proxy_passwords(proxy_passwords.clone(), problems.clone());
 
@@ -834,6 +841,7 @@ impl Injecting {
         store: &Arc<Store>,
         events: &Arc<EventHub>,
         roots: &CorporateRoots,
+        login_markers: PathBuf,
     ) -> Result<Self, HostError> {
         // The secrets read from the user's own sign-ins (`gh`, Git, the operating system's store).
         let secrets = Arc::new(SecretCache::new(Sources::new(
@@ -842,16 +850,19 @@ impl Injecting {
         )));
         // The proxy asks this registry, once per connection, what the workspace decrypts.
         let terminations = Arc::new(Terminations::new());
-        let injection = Arc::new(Injection::new(
-            terminations.clone(),
-            InjectorInputs {
-                store: store.clone(),
-                secrets: secrets.clone(),
-                events: events.clone() as Arc<dyn EventSink>,
-            },
-            options.injector.clone(),
-            Arc::clone(vault),
-        ));
+        let injection = Arc::new(
+            Injection::new(
+                terminations.clone(),
+                InjectorInputs {
+                    store: store.clone(),
+                    secrets: secrets.clone(),
+                    events: events.clone() as Arc<dyn EventSink>,
+                },
+                options.injector.clone(),
+                Arc::clone(vault),
+            )
+            .with_login_markers(login_markers),
+        );
         // The platform's roots plus the company's, as the guest is given.
         let tls = TlsClient::new(roots.certificates().iter().map(der_of))?;
         Ok(Self {

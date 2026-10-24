@@ -26,6 +26,7 @@ mod environment;
 mod events;
 mod first_run;
 mod identities;
+mod logins;
 mod meta;
 mod network_health;
 mod pending;
@@ -149,6 +150,7 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
             shell_init::put_shell_init,
             shell_init::delete_shell_init
         ))
+        .routes(routes!(logins::forget_login))
         .routes(routes!(repos::credential_profile))
         .routes(routes!(repos::list_repos))
         .routes(routes!(repos::refresh_repos))

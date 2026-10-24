@@ -909,6 +909,26 @@ pub trait WorkspaceService: Send + Sync {
         })
     }
 
+    /// Forgets the login Puddle kept for `service` (`claude`, `github`) in workspace `id`: the
+    /// real tokens leave the credential store, and a notice that the login is kept but unused
+    /// ends with it. The workspace's own copy is only a stand-in and is left alone.
+    ///
+    /// # Errors
+    /// [`WorkspaceError::NotFound`] for no such workspace or no such service,
+    /// [`WorkspaceError::Unavailable`] when the credential store refused a deletion (what was
+    /// deleted stays deleted; ask again after it answers).
+    fn forget_login<'a>(
+        &'a self,
+        _id: &'a WorkspaceId,
+        _service: &'a str,
+    ) -> BoxFuture<'a, Result<(), WorkspaceError>> {
+        Box::pin(async {
+            Err(WorkspaceError::Unavailable(
+                "this Puddle keeps no logins".to_owned(),
+            ))
+        })
+    }
+
     /// The checkouts under the workspace's volume root, each with the list entry that has its
     /// directory (storage ST-47 to ST-49). A running workspace lists them now (calls at the same
     /// moment share one listing); a stopped one answers the last listing this run made, or says

@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::profile::{CLAUDE, GITHUB, Profile, Role, builtin};
 use crate::vault::Vault;
-use crate::{ForgetError, LoginNotices, Logins, Problem};
+use crate::{ForgetError, LoginNotices, Logins, Marker, Problem};
 
 const REAL_ACCESS: &str =
     "sk-ant-oat01-CANARY0access0real0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -55,6 +55,10 @@ fn workspace() -> WorkspaceName {
 }
 
 fn rig_on(store: &Arc<MemoryStore>, enabled: bool) -> Rig {
+    rig_marked(store, enabled, Marker::none())
+}
+
+fn rig_marked(store: &Arc<MemoryStore>, enabled: bool, marker: Marker) -> Rig {
     let registry = Arc::new(StandIns::new());
     let notices = Arc::new(Notices::default());
     let logins = Logins::new(
@@ -64,6 +68,7 @@ fn rig_on(store: &Arc<MemoryStore>, enabled: bool) -> Rig {
         Arc::clone(&registry),
         Arc::clone(store) as Arc<dyn SecretStore>,
         Arc::clone(&notices) as Arc<dyn LoginNotices>,
+        marker,
     );
     Rig {
         logins,
@@ -546,6 +551,125 @@ async fn with_capture_off_and_nothing_kept_there_is_nothing_to_say() {
     assert_eq!(off.notices.seen(), []);
 }
 
+fn marker_in(dir: &tempfile::TempDir) -> Marker {
+    Marker::in_file(dir.path().join("alpha.kept"))
+}
+
+#[tokio::test]
+async fn a_login_kept_with_capture_on_is_said_with_capture_off_without_asking_the_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let on = rig_marked(&store, true, marker_in(&dir));
+    on.logins.load().await;
+    assert_eq!(on.logins.inner_marker_kept(), Some(vec![]));
+    claude_login(&on, REAL_ACCESS, REAL_REFRESH).await;
+    assert_eq!(
+        on.logins.inner_marker_kept(),
+        Some(vec!["claude".to_owned()])
+    );
+
+    // The store is down, which would make a start without the marker say nothing.
+    store.break_it();
+    let off = rig_marked(&store, false, marker_in(&dir));
+    off.logins.load().await;
+    assert_eq!(
+        off.notices.seen(),
+        [("claude".to_owned(), Problem::CaptureOff)]
+    );
+}
+
+#[tokio::test]
+async fn the_first_start_with_capture_off_asks_the_store_once_and_leaves_a_marker_behind() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(MemoryStore::new());
+    claude_login(&rig_on(&store, true), REAL_ACCESS, REAL_REFRESH).await;
+
+    let first = rig_marked(&store, false, marker_in(&dir));
+    first.logins.load().await;
+    assert_eq!(first.notices.seen().len(), 1);
+    assert_eq!(
+        first.logins.inner_marker_kept(),
+        Some(vec!["claude".to_owned()])
+    );
+
+    store.break_it();
+    let second = rig_marked(&store, false, marker_in(&dir));
+    second.logins.load().await;
+    assert_eq!(second.notices.seen(), first.notices.seen());
+}
+
+#[tokio::test]
+async fn a_store_that_does_not_answer_leaves_the_marker_as_it_was() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(MemoryStore::new());
+    store.break_it();
+    let off = rig_marked(&store, false, marker_in(&dir));
+    off.logins.load().await;
+    assert_eq!(off.logins.inner_marker_kept(), None);
+    let on = rig_marked(&store, true, marker_in(&dir));
+    on.logins.load().await;
+    assert_eq!(on.logins.inner_marker_kept(), None);
+}
+
+#[tokio::test]
+async fn a_marker_that_says_nothing_is_kept_is_believed_and_the_store_is_not_asked() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let off = rig_marked(&store, false, marker_in(&dir));
+    off.logins.load().await;
+    assert_eq!(off.logins.inner_marker_kept(), Some(vec![]));
+    // A login kept without Puddle's marker knowing (by another copy of Puddle, say) is not said:
+    // the marker is the answer until capture is on again and reads the store.
+    claude_login(&rig_on(&store, true), REAL_ACCESS, REAL_REFRESH).await;
+    let again = rig_marked(&store, false, marker_in(&dir));
+    again.logins.load().await;
+    assert_eq!(again.notices.seen(), []);
+    rig_marked(&store, true, marker_in(&dir))
+        .logins
+        .load()
+        .await;
+    let later = rig_marked(&store, false, marker_in(&dir));
+    later.logins.load().await;
+    assert_eq!(later.notices.seen().len(), 1);
+}
+
+#[tokio::test]
+async fn forgetting_a_login_ends_the_notice_even_when_the_entries_were_already_gone() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let on = rig_marked(&store, true, marker_in(&dir));
+    on.logins.load().await;
+    claude_login(&on, REAL_ACCESS, REAL_REFRESH).await;
+    // The user cleared the credential store by hand: the marker still says "kept".
+    for role in CLAUDE.roles() {
+        vault(&on).delete(&CLAUDE, role).unwrap();
+    }
+    let off = rig_marked(&store, false, marker_in(&dir));
+    off.logins.load().await;
+    assert_eq!(off.notices.seen().len(), 1, "the marker is believed");
+
+    let off = rig_marked(&store, false, marker_in(&dir));
+    assert_eq!(off.logins.forget("claude").await, Ok(true));
+    store.break_it();
+    let after = rig_marked(&store, false, marker_in(&dir));
+    after.logins.load().await;
+    assert_eq!(after.notices.seen(), []);
+}
+
+#[tokio::test]
+async fn a_forget_the_store_refuses_keeps_the_marker_so_the_notice_stays() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let on = rig_marked(&store, true, marker_in(&dir));
+    on.logins.load().await;
+    claude_login(&on, REAL_ACCESS, REAL_REFRESH).await;
+    store.break_it();
+    assert_eq!(on.logins.forget("claude").await, Err(ForgetError::Store));
+    let off = rig_marked(&store, false, marker_in(&dir));
+    off.logins.load().await;
+    assert_eq!(off.notices.seen().len(), 1);
+}
+
 #[tokio::test]
 async fn with_capture_off_a_credential_store_that_does_not_answer_says_nothing() {
     let on = rig();
@@ -611,6 +735,7 @@ async fn deleting_the_workspace_deletes_every_token_kept_for_it() {
             registry,
             Arc::clone(&rig.store) as Arc<dyn SecretStore>,
             Arc::clone(&rig.notices) as Arc<dyn LoginNotices>,
+            Marker::none(),
         )
     };
     let store: Arc<dyn SecretStore> = Arc::clone(&rig.store) as Arc<dyn SecretStore>;
@@ -636,6 +761,7 @@ async fn a_workspaces_logins_never_reach_another_workspace() {
         Arc::new(StandIns::new()),
         Arc::clone(&one.store) as Arc<dyn SecretStore>,
         Arc::new(Notices::default()),
+        Marker::none(),
     );
     beta.load().await;
     assert_eq!(beta.kept().len(), 0);
@@ -777,6 +903,7 @@ async fn a_credential_store_that_does_not_answer_is_given_up_on_and_the_start_go
         Arc::new(StandIns::new()),
         store,
         Arc::clone(&notices) as Arc<dyn LoginNotices>,
+        Marker::none(),
     );
     logins.set_store_timeout(std::time::Duration::from_millis(50));
     logins.load().await;

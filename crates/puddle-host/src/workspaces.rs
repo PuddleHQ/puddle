@@ -2415,6 +2415,28 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         })
     }
 
+    fn forget_login<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        service: &'a str,
+    ) -> BoxFuture<'a, Result<(), WorkspaceError>> {
+        Box::pin(async move {
+            let record = self.get(id).await?;
+            match self
+                .inner
+                .injection
+                .forget_login(&record.name, service)
+                .await
+            {
+                Ok(true) => Ok(()),
+                Ok(false) => Err(WorkspaceError::NotFound(format!(
+                    "no login service {service:?}"
+                ))),
+                Err(error) => Err(WorkspaceError::Unavailable(error.to_string())),
+            }
+        })
+    }
+
     fn check_shell_init<'a>(
         &'a self,
         id: &'a WorkspaceId,

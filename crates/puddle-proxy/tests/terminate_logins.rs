@@ -136,6 +136,7 @@ fn logins_on(
         Arc::clone(registry),
         Arc::clone(store) as Arc<dyn SecretStore>,
         Arc::clone(&notices) as Arc<dyn LoginNotices>,
+        puddle_logins::Marker::none(),
     );
     (logins, notices)
 }

@@ -90,6 +90,10 @@ struct State {
     shell_init_check: Option<ShellInitCheck>,
     /// The scripts the checks were asked about.
     shell_init_checked: Vec<String>,
+    /// The logins forgotten, as (workspace id, service), in order.
+    forgotten_logins: Vec<(String, String)>,
+    /// Whether forgetting a login fails as a credential store that refuses would.
+    login_store_refuses: bool,
     /// What each running workspace's guest holds: the checkouts a listing would find.
     guest: BTreeMap<WorkspaceId, FoundList>,
     /// The last listing made of each workspace, with its time (epoch ms).
@@ -151,6 +155,8 @@ impl FakeWorkspaces {
                     fail_next: BTreeMap::new(),
                     shell_init_check: None,
                     shell_init_checked: Vec::new(),
+                    forgotten_logins: Vec::new(),
+                    login_store_refuses: false,
                     guest: BTreeMap::new(),
                     last_listing: BTreeMap::new(),
                 }),
@@ -192,6 +198,17 @@ impl FakeWorkspaces {
     #[must_use]
     pub fn shell_init_checked(&self) -> Vec<String> {
         lock(&self.inner.state).shell_init_checked.clone()
+    }
+
+    /// The logins forgotten so far, as (workspace id, service).
+    #[must_use]
+    pub fn forgotten_logins(&self) -> Vec<(String, String)> {
+        lock(&self.inner.state).forgotten_logins.clone()
+    }
+
+    /// Makes forgetting a login fail the way a credential store that refuses does.
+    pub fn set_login_store_refuses(&self, refuses: bool) {
+        lock(&self.inner.state).login_store_refuses = refuses;
     }
 
     /// Sets what `id`'s guest holds: the checkouts a listing of the running workspace finds.
@@ -842,6 +859,31 @@ impl WorkspaceService for FakeWorkspaces {
                 record: entry.record.clone(),
                 exists,
             })
+        })
+    }
+
+    fn forget_login<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        service: &'a str,
+    ) -> BoxFuture<'a, Result<(), WorkspaceError>> {
+        Box::pin(async move {
+            self.get(id).await?;
+            if !matches!(service, "claude" | "github") {
+                return Err(WorkspaceError::NotFound(format!(
+                    "no login service {service:?}"
+                )));
+            }
+            let mut state = lock(&self.inner.state);
+            if state.login_store_refuses {
+                return Err(WorkspaceError::Unavailable(
+                    "the credential store did not delete a saved login".to_owned(),
+                ));
+            }
+            state
+                .forgotten_logins
+                .push((id.to_string(), service.to_owned()));
+            Ok(())
         })
     }
 

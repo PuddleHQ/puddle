@@ -17,7 +17,7 @@
 //! a key, the credential store is not there) the answer goes to the tool as it is, so the tool
 //! keeps working, and the user is told that this login is not protected.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -32,6 +32,7 @@ use puddle_secrets::SecretStore;
 use puddle_types::{Host, WorkspaceName};
 use zeroize::Zeroizing;
 
+use crate::marker::Marker;
 use crate::profile::{Endpoint, Field, Profile, Role, Scope};
 use crate::shape;
 use crate::vault::{STORE_TIMEOUT, Vault, VaultError};
@@ -94,6 +95,7 @@ struct Inner {
     registry: Arc<StandIns>,
     vault: Vault,
     notices: Arc<dyn LoginNotices>,
+    marker: Marker,
     /// One capture at a time, so two refreshes at once do not interleave their writes.
     capture: tokio::sync::Mutex<()>,
     /// How long a call on the credential store may take, in milliseconds.
@@ -156,7 +158,9 @@ impl Logins {
     ///
     /// `registry` is the workspace's stand-in registry (the one its termination swaps from) and
     /// `store` the operating system's credential store. With `enabled` false nothing is captured
-    /// and nothing is swapped: the workspace's logins stay in the workspace.
+    /// and nothing is swapped: the workspace's logins stay in the workspace. `marker` is the file
+    /// that says which services have a login kept, so that a start with capture off does not ask
+    /// the store.
     #[must_use]
     pub fn new(
         workspace: WorkspaceName,
@@ -165,6 +169,7 @@ impl Logins {
         registry: Arc<StandIns>,
         store: Arc<dyn SecretStore>,
         notices: Arc<dyn LoginNotices>,
+        marker: Marker,
     ) -> Self {
         let routes = profiles
             .iter()
@@ -190,6 +195,7 @@ impl Logins {
                 routes,
                 registry,
                 notices,
+                marker,
                 capture: tokio::sync::Mutex::new(()),
                 store_timeout_ms: AtomicU64::new(
                     u64::try_from(STORE_TIMEOUT.as_millis()).unwrap_or(u64::MAX),
@@ -291,6 +297,7 @@ impl Logins {
         }
         let mut unreadable: Vec<&'static Profile> = Vec::new();
         let mut store_down = false;
+        let mut kept: BTreeSet<String> = BTreeSet::new();
         for profile in self.inner.profiles {
             for slot in profile.slots() {
                 if store_down {
@@ -299,6 +306,7 @@ impl Logins {
                 }
                 match self.store(move |vault| vault.read(profile, slot.0)).await {
                     Ok(Some(saved)) => {
+                        kept.insert(profile.id.to_owned());
                         if self
                             .install(profile, slot, &saved.stand_in, &saved.real)
                             .is_err()
@@ -307,10 +315,17 @@ impl Logins {
                         }
                     }
                     Ok(None) => {}
-                    Err(VaultError::Damaged) => unreadable.push(profile),
+                    Err(VaultError::Damaged) => {
+                        kept.insert(profile.id.to_owned());
+                        unreadable.push(profile);
+                    }
                     Err(VaultError::Unavailable) => store_down = true,
                 }
             }
+        }
+        // Only an answer from every slot says what is kept.
+        if !store_down {
+            self.inner.marker.write(&kept);
         }
         // With the store down nothing can be kept either, so every service is told once, with
         // the words for a login that is not protected.
@@ -334,19 +349,55 @@ impl Logins {
     }
 
     /// With capture off: tells the user, once per service, that Puddle still holds a login it
-    /// kept earlier. A store that does not answer says nothing: with capture off there is nothing
-    /// to protect, and one call that did not answer is enough to know.
+    /// kept earlier. The marker says which services those are without asking the credential
+    /// store, which can wait on a locked keyring at every start. With no marker yet (a workspace
+    /// from before it, or one it could not be written for) the store is asked once, the answer
+    /// is written to the marker, and a store that does not answer says nothing: with capture off
+    /// there is nothing to protect, and one call that did not answer is enough to know.
     async fn tell_about_kept_logins(&self) {
+        if let Some(kept) = self.inner.marker.read() {
+            for profile in self.inner.profiles.iter().filter(|p| kept.contains(p.id)) {
+                self.notify(profile, Problem::CaptureOff);
+            }
+            return;
+        }
+        let mut kept: BTreeSet<String> = BTreeSet::new();
         for profile in self.inner.profiles {
             for role in profile.roles() {
                 match self.store(move |vault| vault.holds(profile, role)).await {
                     Ok(true) => {
+                        kept.insert(profile.id.to_owned());
                         self.notify(profile, Problem::CaptureOff);
                         break;
                     }
                     Ok(false) => {}
                     Err(_) => return,
                 }
+            }
+        }
+        self.inner.marker.write(&kept);
+    }
+
+    /// What the marker says is kept, as a sorted list (tests).
+    #[cfg(test)]
+    pub(crate) fn inner_marker_kept(&self) -> Option<Vec<String>> {
+        self.inner
+            .marker
+            .read()
+            .map(|ids| ids.into_iter().collect())
+    }
+
+    /// Adds `profile` to the marker when it is known. A marker that is not known stays so: the
+    /// next start with capture on asks the store and writes all of it.
+    fn mark(&self, profile: &Profile, kept: bool) {
+        if let Some(mut ids) = self.inner.marker.read() {
+            let changed = if kept {
+                ids.insert(profile.id.to_owned())
+            } else {
+                ids.remove(profile.id)
+            };
+            if changed {
+                self.inner.marker.write(&ids);
             }
         }
     }
@@ -382,7 +433,12 @@ impl Logins {
     /// [`ForgetError::Store`] when the credential store did not delete a token; the stand-ins are
     /// already gone, and trying again deletes what is left.
     pub async fn forget(&self, profile_id: &str) -> Result<bool, ForgetError> {
-        let Some(profile) = self.inner.profiles.iter().find(|p| p.id == profile_id) else {
+        let Some(profile) = self
+            .inner
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id || p.name == profile_id)
+        else {
             return Ok(false);
         };
         let mut failed = false;
@@ -398,6 +454,7 @@ impl Logins {
         if failed {
             Err(ForgetError::Store)
         } else {
+            self.mark(profile, false);
             Ok(true)
         }
     }
@@ -473,6 +530,7 @@ impl Logins {
                 .await
                 .map_err(|_| Problem::StoreUnavailable)?;
         }
+        self.mark(profile, true);
         for (field, real, stand_in, is_new) in &planned {
             let slot = (field.role, field.scope);
             // A refresh gives the stand-in a new token without a moment in which it has none; a

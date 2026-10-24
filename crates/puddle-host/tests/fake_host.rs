@@ -3350,6 +3350,25 @@ async fn login_capture_is_on_by_default_and_a_workspace_can_turn_it_off_for_its_
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_kept_login_is_forgotten_through_the_api_by_the_services_short_name() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    // Nothing is kept, which is fine to forget again; the service must be one Puddle has.
+    let gone = api.delete("/api/workspaces/acme/logins/claude", None).await;
+    assert_eq!(gone.status, 204, "{}", gone.body);
+    let unknown = api.delete("/api/workspaces/acme/logins/azure", None).await;
+    assert_eq!(unknown.status, 404, "{}", unknown.body);
+    let no_workspace = api
+        .delete("/api/workspaces/nobody/logins/claude", None)
+        .await;
+    assert_eq!(no_workspace.status, 404, "{}", no_workspace.body);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_global_default_decides_for_workspaces_without_their_own_switch() {
     let rig = Rig::new();
     let host = rig.start().await;

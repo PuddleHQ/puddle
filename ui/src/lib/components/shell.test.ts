@@ -163,6 +163,17 @@ describe("root layout", () => {
     );
   });
 
+  it("says a refused event stream stopped for good and what to do", () => {
+    live.problem = null;
+    live.stream = "refused";
+    live.streamError = "the event stream refused this app's key (status 401)";
+    render(Layout, { children: (() => {}) as never });
+    expect(screen.getByRole("status")).toHaveTextContent(
+      /Live updates stopped: the event stream refused this app's key \(status 401\)\. Open Puddle from its app window or tray icon to sign in again\./,
+    );
+    live.stream = "connecting";
+  });
+
   it("leaves the sidebar out of the first-run flow and names its step in the title", () => {
     url.pathname = "/welcome/check";
     render(Layout, { children: (() => {}) as never });

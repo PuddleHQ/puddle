@@ -167,6 +167,8 @@ fn plugin_commands_are_refused_to_the_main_window() {
     let (_app, window) = app_with_main();
     let api = "http://127.0.0.1:4711/";
     for cmd in [
+        "plugin:notification|notify",
+        "plugin:notification|register_listener",
         "plugin:opener|open_url",
         "plugin:opener|open_path",
         "plugin:window-state|save_window_state",

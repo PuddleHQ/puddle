@@ -362,6 +362,7 @@ pub struct Host<R: Runtime + Clone> {
     problems: Arc<Problems>,
     proxy_passwords: Arc<ProxyPasswords>,
     store: Arc<Store>,
+    settings: Arc<dyn SettingsRepo>,
     endpoints: PuddleEndpoints,
     workspaces: HostWorkspaces<R>,
     lifecycle: Arc<Lifecycle<R>>,
@@ -549,16 +550,21 @@ impl<R: Runtime + Clone> Host<R> {
         let (git_changes, sign_in_notices) = injecting.watch(&service, &events);
         steps.push(Step::WorkspacesReady);
 
-        let services = Services::new(store.clone(), settings, events.clone(), clock.clone())
-            .with_problems(problems.clone())
-            .with_workspaces(Arc::new(service.clone()))
-            .with_network_health(network_health)
-            .with_secret_store(vault.clone())
-            .with_credentials(Arc::new(HostCredentials::new(ToolPaths::resolve(), vault)))
-            .with_repos(injecting.repos(&egress.chain, &clock, connections.clone()))
-            .with_doctor(system_doctor(&config.layout, &config.expected_runtime))
-            .with_dev_cert(dev_cert)
-            .with_endpoints(endpoints.clone());
+        let services = Services::new(
+            store.clone(),
+            settings.clone(),
+            events.clone(),
+            clock.clone(),
+        )
+        .with_problems(problems.clone())
+        .with_workspaces(Arc::new(service.clone()))
+        .with_network_health(network_health)
+        .with_secret_store(vault.clone())
+        .with_credentials(Arc::new(HostCredentials::new(ToolPaths::resolve(), vault)))
+        .with_repos(injecting.repos(&egress.chain, &clock, connections.clone()))
+        .with_doctor(system_doctor(&config.layout, &config.expected_runtime))
+        .with_dev_cert(dev_cert)
+        .with_endpoints(endpoints.clone());
         let served = serve_api(&config, services).await?;
         steps.push(Step::ApiServing);
         tracing::info!(url = %served.url, "Puddle is up");
@@ -570,6 +576,7 @@ impl<R: Runtime + Clone> Host<R> {
             problems,
             proxy_passwords,
             store,
+            settings,
             endpoints,
             workspaces: service,
             lifecycle,
@@ -632,6 +639,13 @@ impl<R: Runtime + Clone> Host<R> {
     #[must_use]
     pub fn store(&self) -> &Arc<Store> {
         &self.store
+    }
+
+    /// The settings documents the API serves, for the desktop shell's own reads (what its tray and
+    /// notifications do follow them).
+    #[must_use]
+    pub fn settings(&self) -> &Arc<dyn SettingsRepo> {
+        &self.settings
     }
 
     /// Every address Puddle itself listens on, which the destination guard keeps guests away

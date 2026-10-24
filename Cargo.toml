@@ -130,10 +130,11 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 # Desktop shell. Tauri 2.12 (3.0 is alpha). `wry` is the webview; `x11` is the Linux
 # display backend. No `common-controls-v6` (the unit-test executables have no manifest, so they
 # fail to load with 0xc0000139; nothing here shows a dialog) and no `compression`
-# (nothing is served through Tauri's asset protocol: the SPA comes from puddle-api), no tray or
-# devtools features yet.
-tauri = { version = "2.12.1", default-features = false, features = ["wry", "x11"] }
+# (nothing is served through Tauri's asset protocol: the SPA comes from puddle-api) and no devtools
+# feature. `tray-icon` is the tray icon and the application menu.
+tauri = { version = "2.12.1", default-features = false, features = ["wry", "x11", "tray-icon"] }
 tauri-build = { version = "2.7.1", default-features = false }
+tauri-plugin-notification = { version = "2.7.0", default-features = false }
 tauri-plugin-single-instance = "2.5.2"
 tauri-plugin-window-state = "2.5.0"
 tauri-plugin-opener = { version = "2.7.0", default-features = false }

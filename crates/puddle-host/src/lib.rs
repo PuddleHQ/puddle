@@ -44,8 +44,11 @@ mod process_env;
 mod proxy_passwords;
 mod settings_read;
 mod shell_init;
+mod ssh_config;
+mod ssh_login;
 mod ssh_target;
 mod vault;
+mod vscode;
 mod workspaces;
 
 pub use config::{
@@ -62,4 +65,6 @@ pub use injection::{InjectorFactory, InjectorInputs};
 pub use paths::HostPaths;
 pub use platform::{Platform, SystemPlatform};
 pub use proxy_passwords::{ProxyPasswordError, ProxyPasswords};
-pub use workspaces::{HostWorkspaces, NoLauncher};
+pub use ssh_config::{SshSettings, ssh_host};
+pub use vscode::VsCodeLauncher;
+pub use workspaces::HostWorkspaces;

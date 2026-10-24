@@ -44,7 +44,7 @@ pub const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 pub enum BridgeError {
     /// Nothing listens at the endpoint.
     #[error(
-        "no Puddle SSH endpoint at {endpoint}: the workspace is not running, or Puddle is not (start it in Puddle and connect again)"
+        "no Puddle SSH endpoint at {endpoint}: the workspace is not running, direct SSH is off for it, or Puddle is not running (start the workspace and allow direct SSH for it in Puddle, then connect again)"
     )]
     NotFound {
         /// The endpoint.

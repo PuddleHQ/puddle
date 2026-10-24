@@ -13,7 +13,7 @@ use puddle_runtime::{RuntimeLayout, RuntimeVersion};
 use puddle_upstream::Credentials;
 use puddle_workspace::WorkspaceConfig;
 
-use crate::{HostError, HostPaths};
+use crate::{HostError, HostPaths, SshSettings};
 
 /// How the API listens and what it serves.
 #[derive(Clone)]
@@ -105,6 +105,8 @@ pub struct HostConfig {
     pub operations_grace: Duration,
     /// What goes into the guests.
     pub guest: GuestSettings,
+    /// The ssh config of direct SSH.
+    pub ssh: SshSettings,
 }
 
 impl HostConfig {
@@ -128,6 +130,7 @@ impl HostConfig {
             shutdown: ShutdownConfig::default(),
             operations_grace: Duration::from_secs(20),
             guest,
+            ssh: SshSettings::default(),
         }
     }
 
@@ -140,7 +143,11 @@ impl HostConfig {
     /// folders are not absolute.
     pub fn installed_for_user(exe: &Path) -> Result<Self, HostError> {
         let data = puddle_fs::data_dir().map_err(|e| HostError::DataDir(e.to_string()))?;
-        Self::installed(exe, &data)
+        let mut config = Self::installed(exe, &data)?;
+        // Only the user's own installation touches the user's own ssh config: a host over an
+        // explicit data folder (tests, a second profile) leaves it alone.
+        config.ssh.user_config = puddle_fs::user_ssh_config();
+        Ok(config)
     }
 
     /// The installed layout with state in `data` instead of the per-user data folder: the runtime
@@ -155,8 +162,21 @@ impl HostConfig {
         let mut guest = GuestSettings::new(agent);
         let code_server = layout.runtime_dir().join(CODE_SERVER_DIR_NAME);
         guest.code_server = code_server.is_dir().then_some(code_server);
-        Ok(Self::new(HostPaths::new(data), layout, guest))
+        let mut config = Self::new(HostPaths::new(data), layout, guest);
+        config.ssh.bridge_program = bridge_program(exe);
+        Ok(config)
     }
+}
+
+/// The `puddle` program that runs as the ssh bridge: `exe` itself when it is `puddle`, else the
+/// one installed beside it, if there is one.
+fn bridge_program(exe: &Path) -> Option<PathBuf> {
+    let file = format!("puddle{}", std::env::consts::EXE_SUFFIX);
+    if exe.file_name().is_some_and(|name| name == file.as_str()) {
+        return Some(exe.to_path_buf());
+    }
+    let beside = exe.parent()?.join(file);
+    beside.is_file().then_some(beside)
 }
 
 /// The code-server release's folder name inside the runtime folder.

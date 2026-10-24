@@ -17,8 +17,8 @@ use tokio::sync::watch;
 
 use crate::checkouts::{AddRepository, Checkouts, FoundList, check_addition, checkouts_view};
 use crate::workspaces::{
-    AttachMode, Attached, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DeleteCheck, DisplayName, GitSetup,
-    LaunchError, Launcher, Listing, NewRepository, NewWorkspace, Operation, RepoFindings,
+    AttachMode, Attached, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DeleteCheck, DesktopTarget, DisplayName,
+    GitSetup, LaunchError, Launcher, Listing, NewRepository, NewWorkspace, Operation, RepoFindings,
     ShellInitCheck, StartFolder, StartFolderChange, WorkspaceError, WorkspaceRecord,
     WorkspaceService,
 };
@@ -56,6 +56,7 @@ impl Launcher for FakeLauncher {
     fn open_desktop<'a>(
         &'a self,
         workspace: &'a WorkspaceRecord,
+        _target: &'a DesktopTarget,
     ) -> BoxFuture<'a, Result<(), LaunchError>> {
         Box::pin(async move {
             if let Some(message) = lock(&self.fail_with).take() {
@@ -927,7 +928,19 @@ impl WorkspaceService for FakeWorkspaces {
                     "{}/workspaces/{}/",
                     self.inner.browser_base, record.id
                 ))),
-                AttachMode::Desktop => match self.inner.launcher.open_desktop(&record).await {
+                AttachMode::Desktop => match self
+                    .inner
+                    .launcher
+                    .open_desktop(
+                        &record,
+                        &DesktopTarget {
+                            ssh_host: format!("puddle-{}", record.name),
+                            path: format!("/workspaces/{}", record.id),
+                            is_workspace_file: false,
+                        },
+                    )
+                    .await
+                {
                     Ok(()) => Ok(Attached::opened()),
                     Err(err) => Ok(Attached::not_opened(err.to_string())),
                 },
@@ -1295,17 +1308,22 @@ mod tests {
     async fn the_launcher_records_what_it_opened() {
         let launcher = FakeLauncher::new();
         let record = WorkspaceRecord::new(id("w"), WorkspaceName::new("w").unwrap(), Vec::new());
-        launcher.open_desktop(&record).await.unwrap();
+        let target = DesktopTarget {
+            ssh_host: "puddle-w".into(),
+            path: "/workspaces/w".into(),
+            is_workspace_file: false,
+        };
+        launcher.open_desktop(&record, &target).await.unwrap();
         launcher.fail_next("nope");
         assert_eq!(
             launcher
-                .open_desktop(&record)
+                .open_desktop(&record, &target)
                 .await
                 .unwrap_err()
                 .to_string(),
             "nope"
         );
-        launcher.open_desktop(&record).await.unwrap();
+        launcher.open_desktop(&record, &target).await.unwrap();
         assert_eq!(launcher.opened(), [id("w"), id("w")]);
     }
 }

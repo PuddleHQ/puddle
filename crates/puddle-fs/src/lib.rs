@@ -26,5 +26,5 @@ pub mod private;
 pub mod win;
 
 pub use allocated::allocated_bytes;
-pub use data_dir::{DataDirError, data_dir, data_dir_in};
+pub use data_dir::{DataDirError, data_dir, data_dir_in, user_ssh_config, user_ssh_config_in};
 pub use lock::{DataLock, LockError};

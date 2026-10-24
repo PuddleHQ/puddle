@@ -92,6 +92,17 @@
     border-bottom: 1px solid var(--color-border-subtle);
     color: var(--color-text);
   }
+  @media (max-width: 760px) {
+    .shell {
+      flex-direction: column;
+    }
+    main {
+      padding: var(--space-4);
+    }
+    .banner {
+      padding: var(--space-2) var(--space-4);
+    }
+  }
   .skip-link {
     position: absolute;
     inset-inline-start: var(--space-2);

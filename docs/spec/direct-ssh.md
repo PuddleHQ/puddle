@@ -33,10 +33,13 @@ computer and read the editor's secrets (a signed-in GitHub token). The browser e
 9. The one change to the user's own `~/.ssh/config` is an `Include` line for that file at its top,
    written when the first entry is about to be, which is after the user confirmed the trust text
    (it says so). Everything else in the file stays byte for byte, a symlinked config is followed and
-   its permissions kept, and a line already there is enough. A config that cannot be read or written
-   is reported as a problem on the workspace; nothing is overwritten.
+   its permissions kept, and a line already there is enough when it comes before the file's first
+   `Host` or `Match` line. A config that cannot be read or written, is read-only, is a link to a file
+   that is not there, or was saved by another program meanwhile is reported as a problem on the
+   workspace; nothing is overwritten.
 10. The host key of a workspace's sandbox is remembered in a file of Puddle's own, per workspace, and
-   forgotten each time the endpoint opens, since a rebuilt sandbox has a new key.
+   forgotten when the endpoint is a new one, since a rebuilt sandbox has a new key, and kept when an
+   attach finds the endpoint the entry already names.
 11. "Open in VS Code" runs VS Code's `code` command on the workspace's ssh host
     (`--folder-uri`, or `--file-uri` for the multi-root file). It refuses with the reason when
     direct SSH is off, the endpoint or entry is missing, or `code` is not found or fails.

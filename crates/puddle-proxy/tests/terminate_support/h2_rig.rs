@@ -13,6 +13,7 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use bytes::Bytes;
 use http::{HeaderMap, Request, Response};
@@ -27,7 +28,7 @@ use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 
-use super::{Guest, LOCAL, Pki};
+use super::{Guest, LOCAL, Pki, TlsStream};
 
 pub(crate) type BoxError = Box<dyn std::error::Error + Send + Sync>;
 pub(crate) type Reply = Response<UnsyncBoxBody<Bytes, BoxError>>;
@@ -91,6 +92,16 @@ fn pairs(map: &HeaderMap) -> Vec<(String, String)> {
             )
         })
         .collect()
+}
+
+/// How a test server is set up beyond the defaults.
+#[derive(Clone, Copy)]
+enum Tuning {
+    None,
+    /// The windows and frame size of a server built for bulk transfers.
+    Bulk,
+    /// At most this many concurrent streams per connection.
+    Streams(u32),
 }
 
 /// A TLS server that speaks HTTP/2 only (ALPN `h2`).
@@ -163,7 +174,25 @@ impl H2Server {
     /// As [`Self::streaming`], with the flow-control windows and frame size of a server built for
     /// bulk transfers (4 MiB per stream, 16 MiB per connection, 64 KiB frames), for throughput tests.
     pub(crate) async fn bulk(pki: &Pki, name: &str, handler: Handler) -> Self {
-        Self::start_tuned(pki, name, handler, false, Arc::default(), true).await
+        Self::start_tuned(pki, name, handler, false, Arc::default(), Tuning::Bulk).await
+    }
+
+    /// As [`Self::streaming`], allowing the client `max_streams` open streams at a time.
+    pub(crate) async fn streaming_limited(
+        pki: &Pki,
+        name: &str,
+        handler: Handler,
+        max_streams: u32,
+    ) -> Self {
+        Self::start_tuned(
+            pki,
+            name,
+            handler,
+            false,
+            Arc::default(),
+            Tuning::Streams(max_streams),
+        )
+        .await
     }
 
     /// As [`Self::streaming`], advertising RFC 8441 extended CONNECT.
@@ -178,7 +207,7 @@ impl H2Server {
         connect_protocol: bool,
         seen: Arc<Mutex<Vec<Seen>>>,
     ) -> Self {
-        Self::start_tuned(pki, name, handler, connect_protocol, seen, false).await
+        Self::start_tuned(pki, name, handler, connect_protocol, seen, Tuning::None).await
     }
 
     async fn start_tuned(
@@ -187,7 +216,7 @@ impl H2Server {
         handler: Handler,
         connect_protocol: bool,
         seen: Arc<Mutex<Vec<Seen>>>,
-        bulk: bool,
+        tuning: Tuning,
     ) -> Self {
         let mut config = Arc::into_inner(pki.server_config(name, super::Flaw::None))
             .expect("one owner of a fresh config");
@@ -218,11 +247,17 @@ impl H2Server {
                         if connect_protocol {
                             builder.enable_connect_protocol();
                         }
-                        if bulk {
-                            builder
-                                .initial_stream_window_size(4 << 20)
-                                .initial_connection_window_size(16 << 20)
-                                .max_frame_size(64 << 10);
+                        match tuning {
+                            Tuning::None => {}
+                            Tuning::Bulk => {
+                                builder
+                                    .initial_stream_window_size(4 << 20)
+                                    .initial_connection_window_size(16 << 20)
+                                    .max_frame_size(64 << 10);
+                            }
+                            Tuning::Streams(max) => {
+                                builder.max_concurrent_streams(max);
+                            }
                         }
                         let _ = builder.serve_connection(TokioIo::new(tls), service).await;
                     });
@@ -317,7 +352,7 @@ impl H2Guest {
         let driver = self.driver.take();
         drop(self);
         if let Some(driver) = driver {
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), driver).await;
+            let _ = tokio::time::timeout(Duration::from_secs(5), driver).await;
         }
     }
 }
@@ -702,4 +737,91 @@ pub(crate) async fn record_frames(
         })
     };
     (addr, frames, task)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Raw HTTP/2 frames, for guests that are not well-behaved.
+
+pub(crate) const PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+
+pub(crate) fn frame(kind: u8, flags: u8, stream: u32, payload: &[u8]) -> Vec<u8> {
+    let [_, a, b, c] = u32::try_from(payload.len()).unwrap().to_be_bytes();
+    let mut out = vec![a, b, c, kind, flags];
+    out.extend_from_slice(&stream.to_be_bytes());
+    out.extend_from_slice(payload);
+    out
+}
+
+/// An HPACK literal without indexing (RFC 7541 §6.2.2), no Huffman coding.
+pub(crate) fn literal(name: &str, value: &[u8]) -> Vec<u8> {
+    let mut out = vec![0x00, u8::try_from(name.len()).unwrap()];
+    out.extend_from_slice(name.as_bytes());
+    out.push(u8::try_from(value.len()).unwrap());
+    out.extend_from_slice(value);
+    out
+}
+
+/// `GET <path> https bound.test`, as an HPACK block.
+pub(crate) fn get_block(path: &[u8]) -> Vec<u8> {
+    let mut block = vec![0x82, 0x87];
+    block.extend(literal(":path", path));
+    block.extend(literal(":authority", b"bound.test"));
+    block
+}
+
+/// A connection to the proxy that has sent the HTTP/2 preface and nothing else.
+pub(crate) async fn raw(guest: &mut Guest) -> TlsStream {
+    let client = guest
+        .tls_with("bound.test:443", None, &[b"h2"], true)
+        .await
+        .unwrap();
+    assert_eq!(client.alpn.as_deref(), Some(&b"h2"[..]));
+    let mut tls = client.stream.into_inner();
+    tls.write_all(PREFACE).await.unwrap();
+    tls.write_all(&frame(4, 0, 0, &[])).await.unwrap();
+    tls
+}
+
+/// Reads frames until the connection ends or `limit` passes; the (type, stream, payload) of each.
+pub(crate) async fn frames_until_end(
+    tls: &mut TlsStream,
+    limit: Duration,
+) -> (Vec<(u8, u32, Vec<u8>)>, bool) {
+    let mut seen = Vec::new();
+    let deadline = tokio::time::Instant::now() + limit;
+    loop {
+        let mut head = [0_u8; 9];
+        match tokio::time::timeout_at(deadline, tls.read_exact(&mut head)).await {
+            Err(_) => return (seen, false),
+            Ok(Err(_)) => return (seen, true),
+            Ok(Ok(_)) => {}
+        }
+        let len = (usize::from(head[0]) << 16) | (usize::from(head[1]) << 8) | usize::from(head[2]);
+        let stream = u32::from_be_bytes([head[5] & 0x7f, head[6], head[7], head[8]]);
+        let mut payload = vec![0_u8; len];
+        match tokio::time::timeout_at(deadline, tls.read_exact(&mut payload)).await {
+            Err(_) => return (seen, false),
+            Ok(Err(_)) => return (seen, true),
+            Ok(Ok(_)) => {}
+        }
+        if head[3] == 4 && head[4] & 1 == 0 {
+            let _ = tls.write_all(&frame(4, 1, 0, &[])).await;
+        }
+        seen.push((head[3], stream, payload));
+    }
+}
+
+/// Reads the server's own `SETTINGS` and acknowledges them, before anything else is sent.
+pub(crate) async fn ack_server_settings(tls: &mut TlsStream) {
+    loop {
+        let mut head = [0_u8; 9];
+        tls.read_exact(&mut head).await.unwrap();
+        let len = (usize::from(head[0]) << 16) | (usize::from(head[1]) << 8) | usize::from(head[2]);
+        let mut payload = vec![0_u8; len];
+        tls.read_exact(&mut payload).await.unwrap();
+        if head[3] == 4 && head[4] & 1 == 0 {
+            tls.write_all(&frame(4, 1, 0, &[])).await.unwrap();
+            return;
+        }
+    }
 }

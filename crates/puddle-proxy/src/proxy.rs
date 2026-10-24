@@ -128,7 +128,7 @@ impl ProxyConfig {
         self
     }
 
-    /// The default limits with other idle limits for HTTP/2 streams and agreed WebSockets, and
+    /// The default limits with other idle limits for HTTP/2 streams and agreed `WebSocket`s, and
     /// another grace for a connection that was asked to shut down.
     #[must_use]
     pub fn with_idle_limits(

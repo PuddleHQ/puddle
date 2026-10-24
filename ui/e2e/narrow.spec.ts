@@ -30,7 +30,9 @@ const ROUTES = [
 ] as const;
 
 /** The page's overflow in px, and the elements whose right edge is past the window. */
-async function overflow(page: Page): Promise<{ by: number; culprits: string[] }> {
+async function overflow(
+  page: Page,
+): Promise<{ by: number; culprits: string[] }> {
   return page.evaluate(() => {
     const root = document.documentElement;
     const width = root.clientWidth;
@@ -39,10 +41,13 @@ async function overflow(page: Page): Promise<{ by: number; culprits: string[] }>
       const right = el.getBoundingClientRect().right;
       if (right > width + 0.5 && culprits.length < 8) {
         const id = el.id ? `#${el.id}` : "";
-        const cls = typeof el.className === "string" && el.className
-          ? `.${el.className.trim().split(/\s+/).join(".")}`
-          : "";
-        culprits.push(`${el.tagName.toLowerCase()}${id}${cls} right=${Math.round(right)}`);
+        const cls =
+          typeof el.className === "string" && el.className
+            ? `.${el.className.trim().split(/\s+/).join(".")}`
+            : "";
+        culprits.push(
+          `${el.tagName.toLowerCase()}${id}${cls} right=${Math.round(right)}`,
+        );
       }
     }
     return { by: root.scrollWidth - width, culprits };
@@ -59,7 +64,10 @@ test.describe("at 390 px wide", () => {
       await page.goto(route);
       await expect(page.locator("h1").first()).toBeVisible();
       const { by, culprits } = await overflow(page);
-      expect(by, `overflow by ${by} px; sticking out: ${culprits.join(", ")}`).toBeLessThanOrEqual(0);
+      expect(
+        by,
+        `overflow by ${by} px; sticking out: ${culprits.join(", ")}`,
+      ).toBeLessThanOrEqual(0);
     });
   }
 });

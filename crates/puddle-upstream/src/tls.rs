@@ -40,8 +40,8 @@ pub enum TlsConnectError {
     #[error("{0:?} is not a valid server name")]
     InvalidName(String),
     /// The server's certificate was not accepted: unknown issuer, expired, wrong name, ... For
-    /// the common reasons the text is one fixed sentence on every platform (see
-    /// [`certificate_reason`]); for the rest it is rustls's own reason.
+    /// the common reasons the text is one fixed sentence on every platform, led by the name rustls
+    /// gives the reason; for the rest it is the verifier's own text.
     #[error("{0}")]
     Certificate(String),
     /// Any other handshake or transport failure.

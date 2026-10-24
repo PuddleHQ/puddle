@@ -105,6 +105,12 @@ export class LoginNotices {
         } catch {
           throw new Error("Puddle's service isn't answering. Try again.");
         }
+        // Nothing is kept for this service any more (forgotten from another window, or the
+        // workspace is gone): the notice is out of date, which is what the click wanted ended.
+        if (result.response.status === 404) {
+          this.#notifier.resolve(loginKey(e));
+          return;
+        }
         if (result.error) {
           throw new Error(
             sentence(

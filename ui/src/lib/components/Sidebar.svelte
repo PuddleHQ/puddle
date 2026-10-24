@@ -96,4 +96,21 @@
   .footer {
     margin-top: auto;
   }
+  /* A phone-width window has no room for a column beside the page: the bar goes on top. */
+  @media (max-width: 760px) {
+    .sidebar {
+      width: auto;
+      flex-flow: row wrap;
+      align-items: center;
+      border-inline-end: none;
+      border-block-end: 1px solid var(--color-border-subtle);
+    }
+    ul {
+      flex-flow: row wrap;
+    }
+    .footer {
+      margin-top: 0;
+      margin-inline-start: auto;
+    }
+  }
 </style>

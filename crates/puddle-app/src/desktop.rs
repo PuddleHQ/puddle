@@ -818,9 +818,9 @@ mod behaviour_tests {
             poll: Duration::from_secs(60),
         };
         tauri::async_runtime::spawn(state.run(stream));
-        wait_for("the recount", || {
-            rig.recorded.badges().last() == Some(&(1, true))
-        });
+        // The rig's own start-up showed (1, true); the recount shows it again after the loss.
+        wait_for("the recount", || rig.recorded.badges().len() == 2);
+        assert_eq!(rig.recorded.badges().last(), Some(&(1, true)));
     }
 
     #[test]

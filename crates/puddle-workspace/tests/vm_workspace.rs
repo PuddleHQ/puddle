@@ -440,6 +440,8 @@ fn kill_hard(pid: u32) {
     assert!(status.unwrap().success(), "killing VM process {pid}");
 }
 
+/// Polls every millisecond: a restart right after the status turns down must find the dying
+/// runtime already gone, and a slow poll would hide a gap between the two.
 async fn wait_down(rt: &MsbRuntime, name: &SandboxName) {
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
@@ -457,7 +459,7 @@ async fn wait_down(rt: &MsbRuntime, name: &SandboxName) {
             Instant::now() < deadline,
             "still {status:?} 60 s after the kill"
         );
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        tokio::time::sleep(Duration::from_millis(1)).await;
     }
 }
 

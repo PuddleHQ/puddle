@@ -2,11 +2,6 @@
 //! A panic writes a crash file and still reaches the hook that was there before. This is its own
 //! test program because the panic hook is process-wide.
 
-#![expect(
-    clippy::unwrap_used,
-    reason = "a panic is how a test fails; this file is only tests"
-)]
-
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use puddle_app::crash;

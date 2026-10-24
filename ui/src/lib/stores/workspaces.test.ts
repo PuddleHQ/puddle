@@ -374,6 +374,23 @@ describe("actions", () => {
     });
   });
 
+  it("keeps a failure that arrives before the answer to the request that started it", async () => {
+    // The service failed fast and the stream beat the answer: this failure is the new one.
+    const real = api.POST;
+    api.POST = async (path: string, init: Parameters<typeof real>[1]) => {
+      const answer = await real(path, init);
+      store.handleEvent(step("b-site", "starting"));
+      store.handleEvent(step("b-site", "failed", "boom"));
+      return answer;
+    };
+    await store.startWorkspace("b-site");
+    expect(store.progress["b-site"]).toMatchObject({
+      step: "failed",
+      detail: "boom",
+      failed: true,
+    });
+  });
+
   it("reads the list again after a 409 and after a 404, and says which", async () => {
     api.refuse.set("POST /api/workspaces/{id}/start", {
       status: 409,

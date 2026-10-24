@@ -1750,8 +1750,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                         format!("Puddle's ssh config still names {name}"),
                         format!(
                             "{reason}. The entry points at an endpoint that is now closed, so \
-                             `ssh {}` finds nothing; Puddle writes the file again the next time \
-                             any workspace's direct SSH starts or stops.",
+                             `ssh {}` finds nothing; the file is written again, without the \
+                             entry, whenever any workspace's direct SSH starts or stops, and this \
+                             note ends when this workspace's direct SSH starts or is turned off.",
                             ssh_host(name)
                         ),
                     )

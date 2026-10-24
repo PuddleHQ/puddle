@@ -143,7 +143,11 @@ impl Cache {
     }
 }
 
-type Flight = Shared<BoxFuture<'static, ResolveAnswer>>;
+/// One lookup on the host that every query for the same thing shares. `None`: it never got a
+/// slot, so nobody asked the host.
+type Flight = Shared<BoxFuture<'static, Option<ResolveAnswer>>>;
+
+type Reply = (Rcode, Vec<Record>, Vec<Record>);
 
 struct State<A> {
     ask: A,
@@ -186,8 +190,10 @@ impl<A: Ask> Stub<A> {
         }
     }
 
-    /// Answers one DNS message from the guest, or `None` for a message to drop (a response, or
-    /// too short to be a query). `udp` limits the answer's size.
+    /// Answers one DNS message from the guest, or `None` for a message to drop: a response, one
+    /// too short to be a query, or a query that waited its whole time for a lookup slot (it was
+    /// never tried, so the guest asks again instead of taking a failure for the name). `udp`
+    /// limits the answer's size.
     pub async fn answer(&self, message: &[u8], udp: bool) -> Option<Vec<u8>> {
         let query = match wire::parse_query(message) {
             Ok(query) => query,
@@ -198,20 +204,20 @@ impl<A: Ask> Stub<A> {
                 recursion_desired,
             }) => return Some(wire::error_response(id, rcode, recursion_desired)),
         };
-        let (rcode, answers, additional) = self.respond(&query).await;
+        let (rcode, answers, additional) = self.respond(&query).await?;
         Some(wire::respond(&query, rcode, &answers, &additional, udp))
     }
 
-    async fn respond(&self, query: &wire::Query) -> (Rcode, Vec<Record>, Vec<Record>) {
+    async fn respond(&self, query: &wire::Query) -> Option<Reply> {
         let name = match &query.name {
             QueryName::Plain(name) if names::is_plain(name) || name.is_empty() => name,
-            _ => return (Rcode::NxDomain, vec![], vec![]),
+            _ => return Some((Rcode::NxDomain, vec![], vec![])),
         };
         if query.qclass != CLASS_IN {
-            return (Rcode::Refused, vec![], vec![]);
+            return Some((Rcode::Refused, vec![], vec![]));
         }
         if names::is_local_only(name) {
-            return (Rcode::NxDomain, vec![], vec![]);
+            return Some((Rcode::NxDomain, vec![], vec![]));
         }
         match query.qtype {
             TYPE_A => self.address(name).await,
@@ -230,13 +236,13 @@ impl<A: Ask> Stub<A> {
                 } else {
                     Rcode::NoError
                 };
-                (rcode, vec![], vec![])
+                Some((rcode, vec![], vec![]))
             }
         }
     }
 
-    async fn address(&self, name: &str) -> (Rcode, Vec<Record>, Vec<Record>) {
-        match self.lookup(name, RecordType::A).await {
+    async fn address(&self, name: &str) -> Option<Reply> {
+        let reply = match self.lookup(name, RecordType::A).await? {
             ResolveAnswer::StandIn { ttl, .. } => match self.shared.stand_ins.address_for(name) {
                 Ok(ip) => (Rcode::NoError, vec![stand_in_record(None, ip, ttl)], vec![]),
                 Err(err) => {
@@ -247,11 +253,12 @@ impl<A: Ask> Stub<A> {
             ResolveAnswer::NoSuchName { .. } => (Rcode::NxDomain, vec![], vec![]),
             ResolveAnswer::NoData { .. } => (Rcode::NoError, vec![], vec![]),
             _ => (Rcode::ServFail, vec![], vec![]),
-        }
+        };
+        Some(reply)
     }
 
-    async fn records(&self, name: &str, rtype: RecordType) -> (Rcode, Vec<Record>, Vec<Record>) {
-        match self.lookup(name, rtype).await {
+    async fn records(&self, name: &str, rtype: RecordType) -> Option<Reply> {
+        let reply = match self.lookup(name, rtype).await? {
             ResolveAnswer::Records { records, ttl } => {
                 let mut answers = Vec::new();
                 let mut additional: Vec<Record> = Vec::new();
@@ -291,7 +298,8 @@ impl<A: Ask> Stub<A> {
             ResolveAnswer::NoSuchName { .. } => (Rcode::NxDomain, vec![], vec![]),
             ResolveAnswer::NoData { .. } => (Rcode::NoError, vec![], vec![]),
             _ => (Rcode::ServFail, vec![], vec![]),
-        }
+        };
+        Some(reply)
     }
 
     fn cached(&self, name: &str, rtype: RecordType) -> Option<ResolveAnswer> {
@@ -304,56 +312,71 @@ impl<A: Ask> Stub<A> {
     }
 
     /// What the host says about `name`: from the cache, else from one lookup shared by every
-    /// query for the same thing that is in flight.
-    async fn lookup(&self, name: &str, rtype: RecordType) -> ResolveAnswer {
-        if let Some(hit) = self.cached(name, rtype) {
-            return hit;
-        }
+    /// query for the same thing that is in flight. `None` when no lookup slot came free within
+    /// one `ask_timeout` of this query's arrival.
+    async fn lookup(&self, name: &str, rtype: RecordType) -> Option<ResolveAnswer> {
         let key = (name.to_owned(), rtype);
-        let flight = {
-            let mut inflight = self
+        let arrived = Instant::now();
+        loop {
+            if let Some(hit) = self.cached(name, rtype) {
+                return Some(hit);
+            }
+            let flight = self
                 .shared
                 .inflight
                 .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            inflight
+                .unwrap_or_else(PoisonError::into_inner)
                 .entry(key.clone())
                 .or_insert_with(|| {
                     let shared = Arc::clone(&self.shared);
                     let key = key.clone();
-                    async move { shared.ask_host(key).await }.boxed().shared()
+                    async move {
+                        let answer = shared.ask_host(key.clone()).await;
+                        // Gone before anyone sees the result, so a query that gets `None` and
+                        // tries again starts a new lookup instead of joining this one.
+                        shared
+                            .inflight
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .remove(&key);
+                        answer
+                    }
+                    .boxed()
+                    .shared()
                 })
-                .clone()
-        };
-        let answer = flight.await;
-        self.shared
-            .inflight
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(&key);
-        answer
+                .clone();
+            if let Some(answer) = flight.await {
+                return Some(answer);
+            }
+            // The lookup it joined may have been waiting for a slot since before this query
+            // came; the query's own wait is not over until its own time is.
+            if arrived.elapsed() >= self.shared.limits.ask_timeout {
+                return None;
+            }
+        }
     }
 }
 
 impl<A: Ask> State<A> {
     /// One lookup on the host, bounded in number and time. A failure is `Unavailable` and is not
-    /// kept.
-    async fn ask_host(&self, key: Key) -> ResolveAnswer {
+    /// kept. `None` when the wait for a slot ran out: a burst deeper than the slots can serve in
+    /// one `ask_timeout` leaves its tail unasked, and that is no verdict on the name.
+    async fn ask_host(&self, key: Key) -> Option<ResolveAnswer> {
         let limit = self.limits.ask_timeout;
         let Ok(Ok(_slot)) = tokio::time::timeout(limit, self.asks.acquire()).await else {
-            tracing::warn!(name = %key.0, "no free lookup slot in time; answered SERVFAIL");
-            return ResolveAnswer::Unavailable;
+            tracing::warn!(name = %key.0, "no free lookup slot in time; query dropped, the client asks again");
+            return None;
         };
         let query = ResolveQuery::new(key.0.clone(), key.1);
         let answer = match tokio::time::timeout(limit, self.ask.ask(query)).await {
             Ok(Ok(answer)) => answer,
             Ok(Err(err)) => {
                 tracing::warn!(name = %key.0, error = %err, "lookup on the host failed; answered SERVFAIL");
-                return ResolveAnswer::Unavailable;
+                return Some(ResolveAnswer::Unavailable);
             }
             Err(_) => {
                 tracing::warn!(name = %key.0, "lookup on the host timed out; answered SERVFAIL");
-                return ResolveAnswer::Unavailable;
+                return Some(ResolveAnswer::Unavailable);
             }
         };
         let answer = fit_to(key.1, answer);
@@ -362,13 +385,13 @@ impl<A: Ask> State<A> {
             | ResolveAnswer::NoSuchName { ttl }
             | ResolveAnswer::NoData { ttl }
             | ResolveAnswer::Records { ttl, .. } => *ttl,
-            _ => return answer,
+            _ => return Some(answer),
         };
         self.cache
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .put(key, answer.clone(), ttl, Instant::now());
-        answer
+        Some(answer)
     }
 }
 
@@ -455,6 +478,7 @@ impl DnsServer {
     /// Binding a socket failing, for example because no interface has the address yet.
     pub async fn bind<A: Ask>(stub: Stub<A>, listen: SocketAddr) -> io::Result<Self> {
         let udp = UdpSocket::bind(listen).await?;
+        make_room_for_a_burst(&udp, stub.shared.limits.max_udp_queries);
         let tcp = TcpListener::bind(listen).await?;
         let (udp_addr, tcp_addr) = (udp.local_addr()?, tcp.local_addr()?);
         let limits = stub.shared.limits;
@@ -485,6 +509,30 @@ impl DnsServer {
         while self.tasks.join_next().await.is_some() {}
     }
 }
+
+/// What the kernel holds for one waiting query: a small datagram is charged about 700 bytes
+/// (its buffers and bookkeeping), not its few dozen bytes of payload.
+const UDP_QUEUE_BYTES_PER_QUERY: usize = 1024;
+
+/// Sizes the socket's receive queue for the queries the stub promises to handle at once. The
+/// default queue (about 300 datagrams) is smaller than that promise: a cold package-manager start
+/// sends hundreds of queries in a few microseconds, the kernel drops what does not fit, and each
+/// dropped query costs its client a whole attempt (five seconds) for a lookup the stub would have
+/// answered. The agent is root in the guest, so the size is forced past the `rmem_max` cap when
+/// it can be, and capped by it otherwise.
+#[cfg(target_os = "linux")]
+fn make_room_for_a_burst(socket: &UdpSocket, queries: usize) {
+    use rustix::net::sockopt;
+    let wanted = queries.max(1).saturating_mul(UDP_QUEUE_BYTES_PER_QUERY);
+    if sockopt::set_socket_recv_buffer_size_force(socket, wanted).is_err()
+        && let Err(err) = sockopt::set_socket_recv_buffer_size(socket, wanted)
+    {
+        tracing::debug!(error = %err, "stub DNS: receive queue left at its default size");
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn make_room_for_a_burst(_socket: &UdpSocket, _queries: usize) {}
 
 /// How often [`bind_when_ready`] tries.
 const BIND_RETRY: Duration = Duration::from_secs(1);

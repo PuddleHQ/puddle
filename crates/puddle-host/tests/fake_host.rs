@@ -12,7 +12,7 @@
 mod support;
 
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -3427,6 +3427,18 @@ async fn the_global_default_decides_for_workspaces_without_their_own_switch() {
     host.shutdown().await;
 }
 
+/// The line Puddle adds to the user's ssh config. On Windows the product writes the path with
+/// forward slashes (OpenSSH accepts them, and a backslash is an escape for some parsers).
+fn include_line(path: &Path) -> String {
+    let text = path.display().to_string();
+    let text = if cfg!(windows) {
+        text.replace('\\', "/")
+    } else {
+        text
+    };
+    format!("Include \"{text}\"")
+}
+
 /// The `Host` lines of Puddle's ssh config file (none when there is no file).
 fn ssh_hosts(rig: &Rig) -> Vec<String> {
     std::fs::read_to_string(rig.puddle_ssh_config())
@@ -3466,7 +3478,7 @@ async fn the_runtime_gets_the_login_key_and_the_ssh_entry_follows_the_endpoint()
     let entry = std::fs::read_to_string(rig.puddle_ssh_config()).unwrap();
     assert!(entry.contains(&first.display().to_string()), "{entry}");
     assert!(entry.contains("ssh-bridge"), "{entry}");
-    let include = format!("Include \"{}\"", rig.puddle_ssh_config().display());
+    let include = include_line(&rig.puddle_ssh_config());
     let user = std::fs::read_to_string(rig.user_ssh_config()).unwrap();
     assert_eq!(user.lines().next(), Some(include.as_str()), "{user}");
 

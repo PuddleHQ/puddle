@@ -13,8 +13,8 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use super::{
-    BASIC_PASSWORD, BASIC_USER, LOCAL, Prefix, READY, configured_or_skip, free_port, read,
-    require_file, stop, wait_ready,
+    BASIC_PASSWORD, BASIC_USER, LOCAL, Prefix, READY, StartCost, configured_or_skip, free_port,
+    read, require_file, stop, wait_ready,
 };
 
 /// What a lab Squid is set up to do.
@@ -68,7 +68,7 @@ pub struct Squid {
     prefix: Prefix,
     dir: tempfile::TempDir,
     stop: Stop,
-    started_in: Duration,
+    started: StartCost,
 }
 
 enum Stop {
@@ -251,10 +251,14 @@ impl Squid {
             prefix,
             dir,
             stop,
-            started_in: Duration::ZERO,
+            started: StartCost::default(),
         };
         squid.wait();
-        squid.started_in = begun.elapsed();
+        let process = match &squid.stop {
+            Stop::Process(child) => Some(child),
+            Stop::Container(_) => None,
+        };
+        squid.started = StartCost::measure(&squid.prefix, begun, process);
         Some(squid)
     }
 
@@ -285,10 +289,10 @@ impl Squid {
         &self.prefix
     }
 
-    /// How long the start took, from the call to the first accepted connection.
+    /// What the start cost, from the call to the first accepted connection.
     #[must_use]
-    pub fn started_in(&self) -> Duration {
-        self.started_in
+    pub fn start_cost(&self) -> StartCost {
+        self.started
     }
 
     /// Squid's access log (what it forwarded, and as which user).
@@ -329,7 +333,7 @@ mod tests {
             prefix: Prefix::new("squid"),
             dir: tempfile::tempdir().unwrap(),
             stop: Stop::Process(command.stdout(Stdio::null()).spawn().unwrap()),
-            started_in: Duration::ZERO,
+            started: StartCost::default(),
         }
     }
 

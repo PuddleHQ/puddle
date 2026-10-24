@@ -9,7 +9,8 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use super::{
-    LOCAL, Prefix, READY, configured_or_skip, free_port, read, require_file, stop, wait_ready,
+    LOCAL, Prefix, READY, StartCost, configured_or_skip, free_port, read, require_file, stop,
+    wait_ready,
 };
 
 /// The test root of one interceptor: made before the proxy starts and handed to it, so a test
@@ -84,7 +85,7 @@ struct Mitm {
     port: u16,
     prefix: Prefix,
     dir: tempfile::TempDir,
-    started_in: Duration,
+    started: StartCost,
 }
 
 impl Mitm {
@@ -145,12 +146,13 @@ impl Mitm {
             .unwrap();
         let log_path = dir.path().join("mitm.log");
         wait_ready(port, Some(&mut child), READY, || read(&log_path));
+        let started = StartCost::measure(&prefix, begun, Some(&child));
         Some(Self {
             child,
             port,
             prefix,
             dir,
-            started_in: begun.elapsed(),
+            started,
         })
     }
 
@@ -217,10 +219,10 @@ impl Interceptor {
         &self.mitm.prefix
     }
 
-    /// How long the start took.
+    /// What the start cost, in wall-clock and CPU time.
     #[must_use]
-    pub fn started_in(&self) -> Duration {
-        self.mitm.started_in
+    pub fn start_cost(&self) -> StartCost {
+        self.mitm.started
     }
 
     /// The flow log: one line per intercepted request (`GET https://host/path ... 200`).
@@ -301,10 +303,10 @@ impl NtlmProxy {
         &self.mitm.prefix
     }
 
-    /// How long the start took.
+    /// What the start cost, in wall-clock and CPU time.
     #[must_use]
-    pub fn started_in(&self) -> Duration {
-        self.mitm.started_in
+    pub fn start_cost(&self) -> StartCost {
+        self.mitm.started
     }
 
     /// The proxy's log.

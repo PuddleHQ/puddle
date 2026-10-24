@@ -135,6 +135,28 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(credentials::store_token))
         .routes(routes!(credentials::forget_token))
         .routes(routes!(credentials::sign_in))
+        .merge(environment_router())
+        .routes(routes!(repos::credential_profile))
+        .routes(routes!(repos::list_repos))
+        .routes(routes!(repos::refresh_repos))
+        .routes(routes!(identities::get_workspace_git))
+        .routes(routes!(
+            identities::set_workspace_identities,
+            identities::attach_identity
+        ))
+        .routes(routes!(identities::detach_identity))
+        .routes(routes!(identities::set_git_switches))
+        .routes(routes!(identities::add_git_repo))
+        .routes(routes!(
+            identities::set_git_repo,
+            identities::remove_git_repo
+        ))
+}
+
+/// What a workspace keeps beside its Git settings: its environment, its shell init and the logins
+/// kept for it.
+fn environment_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
         .routes(routes!(environment::list_global_env))
         .routes(routes!(
             environment::put_global_env,
@@ -151,21 +173,6 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
             shell_init::delete_shell_init
         ))
         .routes(routes!(logins::forget_login))
-        .routes(routes!(repos::credential_profile))
-        .routes(routes!(repos::list_repos))
-        .routes(routes!(repos::refresh_repos))
-        .routes(routes!(identities::get_workspace_git))
-        .routes(routes!(
-            identities::set_workspace_identities,
-            identities::attach_identity
-        ))
-        .routes(routes!(identities::detach_identity))
-        .routes(routes!(identities::set_git_switches))
-        .routes(routes!(identities::add_git_repo))
-        .routes(routes!(
-            identities::set_git_repo,
-            identities::remove_git_repo
-        ))
 }
 
 /// The routes that may take far longer than the rest (the system check boots a test machine), so

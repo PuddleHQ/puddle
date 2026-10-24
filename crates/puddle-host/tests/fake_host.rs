@@ -3359,6 +3359,14 @@ async fn a_kept_login_is_forgotten_through_the_api_by_the_services_short_name() 
     // Nothing is kept, which is fine to forget again; the service must be one Puddle has.
     let gone = api.delete("/api/workspaces/acme/logins/claude", None).await;
     assert_eq!(gone.status, 204, "{}", gone.body);
+    // A credential store that refuses the deletion is a 503, and works again once it answers.
+    rig.secrets.break_it();
+    let refused = api.delete("/api/workspaces/acme/logins/claude", None).await;
+    assert_eq!(refused.status, 503, "{}", refused.body);
+    assert!(refused.body.contains("ask again"), "{}", refused.body);
+    rig.secrets.heal();
+    let again = api.delete("/api/workspaces/acme/logins/claude", None).await;
+    assert_eq!(again.status, 204, "{}", again.body);
     let unknown = api.delete("/api/workspaces/acme/logins/azure", None).await;
     assert_eq!(unknown.status, 404, "{}", unknown.body);
     let no_workspace = api

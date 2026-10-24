@@ -455,14 +455,8 @@ impl<R: Runtime + Clone> Host<R> {
             .clone()
             .unwrap_or_else(crate::vault::os_vault);
         crate::vault::sweep_in_background(vault.clone(), store.clone(), problems.clone());
-        let injecting = Injecting::build(
-            &options,
-            &vault,
-            &store,
-            &events,
-            &roots,
-            config.paths.login_markers(),
-        )?;
+        let marks = config.paths.login_markers();
+        let injecting = Injecting::build(&options, &vault, &store, &events, &roots, marks)?;
         let proxy_passwords = ProxyPasswords::new(vault.clone());
         load_proxy_passwords(proxy_passwords.clone(), problems.clone());
 

@@ -3,6 +3,10 @@
 //! the HTTP/1.1 pool, streams that are never polled, a peer that ignores the shutdown, a stream
 //! queued behind the server's own limit, a dead server asked by many streams, the window of the
 //! guest leg and the idle limit of an agreed WebSocket. Each test says which mechanism it proves.
+#![expect(
+    clippy::unwrap_used,
+    reason = "helpers outside #[test] functions fail the test by panicking"
+)]
 mod terminate_support;
 
 use std::sync::Arc;

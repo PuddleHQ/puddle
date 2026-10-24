@@ -75,9 +75,16 @@ struct Group {
 }
 
 /// Decides what to show for each event.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Notifier {
+    window: Duration,
     groups: HashMap<WorkspaceName, Group>,
+}
+
+impl Default for Notifier {
+    fn default() -> Self {
+        Self::with_window(GROUP_WINDOW)
+    }
 }
 
 /// Whether a notification may show now, by the switches: the master switch for requests, and
@@ -87,6 +94,15 @@ fn allowed(prefs: &UiPrefs, master: bool, in_front: bool) -> bool {
 }
 
 impl Notifier {
+    /// A notifier whose windows last `window` instead of [`GROUP_WINDOW`] (tests use a short one).
+    #[must_use]
+    pub fn with_window(window: Duration) -> Self {
+        Self {
+            window,
+            groups: HashMap::new(),
+        }
+    }
+
     /// What to show for `event`, given the preferences and whether Puddle's window is in front.
     pub fn handle(
         &mut self,
@@ -159,7 +175,7 @@ impl Notifier {
         self.groups.insert(
             request.workspace.clone(),
             Group {
-                ends: now + GROUP_WINDOW,
+                ends: now + self.window,
                 held: Vec::new(),
             },
         );
@@ -179,17 +195,10 @@ impl Notifier {
     fn flush_ended(&mut self, now: Instant, prefs: &UiPrefs, in_front: bool) -> Vec<Notice> {
         let show = allowed(prefs, prefs.notifications(), in_front);
         let mut notices = Vec::new();
-        let mut ended: Vec<WorkspaceName> = self
-            .groups
-            .iter()
-            .filter(|(_, g)| g.ends <= now)
-            .map(|(name, _)| name.clone())
-            .collect();
-        ended.sort();
-        for name in ended {
-            let Some(group) = self.groups.remove(&name) else {
-                continue;
-            };
+        let mut ended: Vec<(WorkspaceName, Group)> =
+            self.groups.extract_if(|_, g| g.ends <= now).collect();
+        ended.sort_by(|a, b| a.0.cmp(&b.0));
+        for (name, group) in ended {
             if group.held.is_empty() {
                 continue;
             }
@@ -198,7 +207,7 @@ impl Notifier {
                 self.groups.insert(
                     name,
                     Group {
-                        ends: now + GROUP_WINDOW,
+                        ends: now + self.window,
                         held: Vec::new(),
                     },
                 );
@@ -386,6 +395,21 @@ mod tests {
     }
 
     #[test]
+    fn a_window_that_ended_with_nothing_held_is_forgotten() {
+        let (mut n, t0) = (Notifier::default(), Instant::now());
+        n.handle(t0, &prefs(), false, &open(1, "demo", "a.example"));
+        assert_eq!(n.flush(t0 + GROUP_WINDOW, &prefs(), false), NONE);
+        // The next request is the first of a new window and shows at once.
+        let next = n.handle(
+            t0 + GROUP_WINDOW * 2,
+            &prefs(),
+            false,
+            &open(2, "demo", "b.example"),
+        );
+        assert_eq!(next.len(), 1);
+    }
+
+    #[test]
     fn each_workspace_has_its_own_window() {
         let (mut n, t0) = (Notifier::default(), Instant::now());
         assert_eq!(
@@ -446,11 +470,8 @@ mod tests {
         let notices = Notifier::default().handle(t0, &prefs(), false, &kill);
         assert_eq!(notices.len(), 1);
         assert_eq!(notices[0].title, "demo ran out of memory");
-        assert!(
-            notices[0].body.starts_with("node was ended."),
-            "{}",
-            notices[0].body
-        );
+        let body = &notices[0].body;
+        assert!(body.starts_with("node was ended."), "{body}");
         assert_eq!(notices[0].request, None);
         let mut off = prefs();
         off.notify_oom = Some(false);

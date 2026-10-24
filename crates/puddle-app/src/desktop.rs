@@ -20,7 +20,7 @@ use puddle_types::Event;
 use serde_json::Value;
 use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri::{AppHandle, Manager, Runtime, WebviewWindow, WindowEvent};
-use tauri_plugin_notification::NotificationExt;
+use tauri_plugin_notification::{ActionPerformed, NotificationExt};
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 use url::Url;
@@ -64,20 +64,43 @@ fn prefs_or_default(repo: &dyn SettingsRepo) -> UiPrefs {
     })
 }
 
-/// The address a notification opens: the inbox, at `request` when the notification was about one.
+/// Where a click on a notification goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Opens {
+    /// The inbox as it is.
+    Inbox,
+    /// The inbox with this request current.
+    Request(i64),
+}
+
+/// The address a notification opens.
 #[must_use]
-pub fn inbox_url(base: &Url, request: Option<i64>) -> Url {
+pub fn inbox_url(base: &Url, opens: Opens) -> Url {
     let mut url = base.clone();
     url.set_path("/inbox");
-    url.set_query(request.map(|id| format!("request={id}")).as_deref());
+    match opens {
+        Opens::Inbox => url.set_query(None),
+        Opens::Request(id) => url.set_query(Some(&format!("request={id}"))),
+    }
     url
 }
 
-/// Brings the main window up on the inbox, at `request` if there is one.
-fn open_inbox<R: Runtime>(app: &AppHandle<R>, base: &Url, request: Option<i64>) {
+/// What a click on a notification asks for: `None` for any action but the click itself.
+fn tapped(performed: &ActionPerformed) -> Option<Opens> {
+    (performed.action_id() == "tap").then(|| {
+        performed
+            .notification()
+            .and_then(|n| n.extra().get(REQUEST_EXTRA))
+            .and_then(Value::as_i64)
+            .map_or(Opens::Inbox, Opens::Request)
+    })
+}
+
+/// Brings the main window up on the inbox, at the request a notification was about.
+fn open_inbox<R: Runtime>(app: &AppHandle<R>, base: &Url, opens: Opens) {
     crate::shell::focus_main(app);
     if let Some(window) = app.get_webview_window(MAIN_LABEL)
-        && let Err(err) = window.navigate(inbox_url(base, request))
+        && let Err(err) = window.navigate(inbox_url(base, opens))
     {
         tracing::warn!(%err, "could not open the inbox from a notification");
     }
@@ -374,12 +397,8 @@ pub fn attach<R: Runtime>(
 
     let (handle, base) = (app.clone(), backend.url().clone());
     let registered = app.notification().on_action(move |performed| {
-        if performed.action_id() == "tap" {
-            let request = performed
-                .notification()
-                .and_then(|n| n.extra().get(REQUEST_EXTRA))
-                .and_then(Value::as_i64);
-            open_inbox(&handle, &base, request);
+        if let Some(opens) = tapped(performed) {
+            open_inbox(&handle, &base, opens);
         }
     });
     if let Err(err) = registered {
@@ -447,11 +466,11 @@ mod tests {
     fn a_notification_opens_the_inbox_at_its_request_or_the_inbox_as_it_is() {
         let base = Url::parse("http://127.0.0.1:4000/settings?x=1#top").unwrap();
         assert_eq!(
-            inbox_url(&base, Some(42)).as_str(),
+            inbox_url(&base, Opens::Request(42)).as_str(),
             "http://127.0.0.1:4000/inbox?request=42#top"
         );
         assert_eq!(
-            inbox_url(&base, None).as_str(),
+            inbox_url(&base, Opens::Inbox).as_str(),
             "http://127.0.0.1:4000/inbox#top"
         );
     }
@@ -504,7 +523,6 @@ mod tests {
 mod behaviour_tests {
     #![expect(
         clippy::unwrap_used,
-        clippy::panic,
         reason = "helpers outside #[test] fns run only in tests; a panic is how a test fails"
     )]
 
@@ -555,8 +573,7 @@ mod behaviour_tests {
     }
 
     struct Rig {
-        /// Kept so the window stays valid.
-        _app: tauri::App<MockRuntime>,
+        app: tauri::App<MockRuntime>,
         window: WebviewWindow<MockRuntime>,
         backend: Backend,
         recorded: Arc<Recorded>,
@@ -570,19 +587,16 @@ mod behaviour_tests {
                 .unwrap();
         let backend = tauri::async_runtime::block_on(start_fixture(0));
         let recorded = Arc::new(Recorded::default());
-        let told = recorded.clone();
         attach_with(
             &window,
             &backend,
             None,
             tray,
             recorded.outputs(),
-            Arc::new(move |_| {
-                told.told.fetch_add(1, Ordering::SeqCst);
-            }),
+            Arc::new(|_| {}),
         );
         Rig {
-            _app: app,
+            app,
             window,
             backend,
             recorded,
@@ -618,13 +632,7 @@ mod behaviour_tests {
     /// Emits `event` and waits until `done` holds (the loop runs on its own task).
     fn emit_until(rig: &Rig, event: Event, done: impl Fn(&Recorded) -> bool) {
         rig.backend.events().emit(event);
-        for _ in 0..200 {
-            if done(&rig.recorded) {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(25));
-        }
-        panic!("the event had no effect in 5 s");
+        wait_for("the event had no effect", || done(&rig.recorded));
     }
 
     #[test]
@@ -696,13 +704,9 @@ mod behaviour_tests {
         rig.backend.events().emit(event);
         let probe = opened(10_000 + i64::try_from(before).unwrap());
         rig.backend.events().emit(probe);
-        for _ in 0..200 {
-            if rig.recorded.badges().len() > before {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(25));
-        }
-        panic!("the loop did not get past the event");
+        wait_for("the loop did not get past the event", || {
+            rig.recorded.badges().len() > before
+        });
     }
 
     #[test]
@@ -763,5 +767,142 @@ mod behaviour_tests {
         buttons.on_minimize(&rig.window);
         // The test window cannot tell whether it is hidden; the matrix itself is tested in `tray`,
         // and the real window by the Windows smoke test.
+    }
+
+    /// A loop over `hub`'s events with the rig's recorder as outputs, started as the app starts it.
+    fn start_loop(rig: &Rig, hub: &Arc<puddle_api::EventHub>, notifier: Notifier, poll: Duration) {
+        let stream = hub.subscribe();
+        let settings = rig.backend.settings().clone();
+        let prefs = prefs_or_default(settings.as_ref());
+        let open = open_requests(rig.backend.store());
+        let shown = (open.count(), prefs.badge());
+        let state = Loop {
+            out: rig.recorded.outputs(),
+            store: rig.backend.store().clone(),
+            settings,
+            open,
+            notifier,
+            prefs,
+            shown,
+            poll,
+        };
+        tauri::async_runtime::spawn(state.run(stream));
+    }
+
+    fn wait_for(what: &str, done: impl Fn() -> bool) {
+        let mut waited = 0;
+        while !done() && waited < 200 {
+            std::thread::sleep(Duration::from_millis(25));
+            waited += 1;
+        }
+        assert!(done(), "{what}: not within 5 s");
+    }
+
+    #[test]
+    fn events_the_stream_dropped_are_made_up_by_counting_the_store_again() {
+        let rig = rig(TrayState::Shown);
+        let hub = Arc::new(puddle_api::EventHub::new(2));
+        let stream = hub.subscribe();
+        for _ in 0..10 {
+            hub.emit(Event::RulesChanged {});
+        }
+        // The loop starts believing nothing waits; the store has the fixture's request.
+        let state = Loop {
+            out: rig.recorded.outputs(),
+            store: rig.backend.store().clone(),
+            settings: rig.backend.settings().clone(),
+            open: OpenRequests::default(),
+            notifier: Notifier::default(),
+            prefs: UiPrefs::default(),
+            shown: (0, true),
+            poll: Duration::from_secs(60),
+        };
+        tauri::async_runtime::spawn(state.run(stream));
+        wait_for("the recount", || {
+            rig.recorded.badges().last() == Some(&(1, true))
+        });
+    }
+
+    #[test]
+    fn requests_held_in_a_window_become_one_summary_when_it_ends() {
+        let rig = rig(TrayState::Shown);
+        let hub = Arc::new(puddle_api::EventHub::default());
+        start_loop(
+            &rig,
+            &hub,
+            Notifier::with_window(Duration::from_millis(200)),
+            Duration::from_secs(60),
+        );
+        hub.emit(opened(910));
+        hub.emit(opened(911));
+        wait_for("the summary", || rig.recorded.notices().len() == 2);
+        let notices = rig.recorded.notices();
+        assert_eq!(notices[0].0.request, Some(910));
+        assert_eq!(notices[1].0.title, "demo is asking for 1 more");
+        assert_eq!(notices[1].0.request, Some(911));
+    }
+
+    #[test]
+    fn a_switch_changed_in_settings_reaches_the_badge_without_any_event() {
+        let rig = rig(TrayState::Shown);
+        let hub = Arc::new(puddle_api::EventHub::default());
+        start_loop(&rig, &hub, Notifier::default(), Duration::from_millis(50));
+        save(&rig, &json!({"badge": false}));
+        wait_for("the badge going off", || {
+            rig.recorded.badges().last() == Some(&(1, false))
+        });
+    }
+
+    #[test]
+    fn settings_that_cannot_be_read_leave_the_window_preferences_as_they_were() {
+        let rig = rig(TrayState::Shown);
+        save(&rig, &json!({"sound": true}));
+        let hub = Arc::new(puddle_api::EventHub::default());
+        start_loop(&rig, &hub, Notifier::default(), Duration::from_secs(60));
+        hub.emit(opened(920));
+        wait_for("the first notice", || rig.recorded.notices().len() == 1);
+        assert!(rig.recorded.notices()[0].1, "sound is on");
+        // Now the document is damaged: the next event is still handled, with the last good ones.
+        save(&rig, &json!({"close_behaviour": "explode"}));
+        hub.emit(Event::oom_kill(workspace(), 3, "node"));
+        wait_for("the second notice", || rig.recorded.notices().len() == 2);
+        assert!(rig.recorded.notices()[1].1, "the sound switch stayed on");
+    }
+
+    #[test]
+    fn the_system_outputs_ask_the_window_and_show_the_badge_on_its_title() {
+        let rig = rig(TrayState::Shown);
+        let out = Outputs::system(rig.app.handle(), None);
+        // The test window is visible and not minimized, and nobody has focused it.
+        assert!(!(out.in_front)());
+        (out.badge)(2, true);
+        (out.badge)(0, false);
+    }
+
+    #[test]
+    fn a_click_opens_the_inbox_in_the_main_window() {
+        let rig = rig(TrayState::Shown);
+        let base = Url::parse("http://127.0.0.1:4000/").unwrap();
+        open_inbox(rig.app.handle(), &base, Opens::Request(3));
+        open_inbox(rig.app.handle(), &base, Opens::Inbox);
+    }
+
+    fn performed(action: &str, request: Option<i64>) -> ActionPerformed {
+        let extra = request.map_or_else(|| json!({}), |id| json!({ REQUEST_EXTRA: id }));
+        serde_json::from_value(json!({
+            "actionId": action,
+            "notification": { "id": 1, "extra": extra },
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn only_a_click_on_the_notification_itself_opens_anything() {
+        assert_eq!(tapped(&performed("tap", Some(7))), Some(Opens::Request(7)));
+        assert_eq!(tapped(&performed("tap", None)), Some(Opens::Inbox));
+        assert_eq!(tapped(&performed("dismiss", Some(7))), None);
+        let unreadable: ActionPerformed =
+            serde_json::from_value(json!({"actionId": "tap", "notification": "garbled"})).unwrap();
+        assert_eq!(tapped(&unreadable), Some(Opens::Inbox));
     }
 }

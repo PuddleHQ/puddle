@@ -19,10 +19,38 @@ export default defineConfig({
     environment: "jsdom",
     // Every test file still gets its own jsdom and module graph, but inside one VM context per file
     // in a long-lived worker thread, so the worker, jsdom and the Node modules load once, not per file.
-    // vitest.setup.ts adds the Node globals a bare jsdom context lacks.
+    // vitest.globals.ts adds the Node globals a bare jsdom context lacks.
     pool: "vmThreads",
-    include: ["src/**/*.test.ts", "tools/**/*.test.ts", "scripts/**/*.test.ts"],
-    setupFiles: ["./vitest.setup.ts"],
+    // Two projects over one config. The warm-up and the testing-library setup cost about a sixth of a
+    // CPU second per test file, so only the files that draw components run them; the stores, models
+    // and tools tests get the globals alone. Both keep jsdom: a plain Node environment would compile
+    // the Svelte stores for the server, not as they ship.
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "dom",
+          include: [
+            "src/routes/**/*.test.ts",
+            "src/lib/components/**/*.test.ts",
+          ],
+          setupFiles: ["./vitest.globals.ts", "./vitest.setup.ts"],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "logic",
+          include: [
+            "src/**/*.test.ts",
+            "tools/**/*.test.ts",
+            "scripts/**/*.test.ts",
+          ],
+          exclude: ["src/routes/**", "src/lib/components/**"],
+          setupFiles: ["./vitest.globals.ts"],
+        },
+      },
+    ],
     coverage: {
       provider: "v8",
       include: ["src/**/*.{ts,svelte}", "tools/**/*.ts"],

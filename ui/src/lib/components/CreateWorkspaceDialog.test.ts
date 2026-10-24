@@ -16,6 +16,7 @@ import {
 import { FakeRepos, repoSource, repoView } from "#lib/testing/fake-repos.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import type { ActionResult } from "#lib/stores/workspaces.svelte.ts";
+import type { Identity } from "#lib/identities/model.ts";
 import type { Workspace } from "#lib/workspaces/model.ts";
 import CreateWorkspaceDialog from "./CreateWorkspaceDialog.svelte";
 
@@ -276,6 +277,10 @@ describe("CreateWorkspaceDialog identities and repositories", () => {
       ok: true,
       value: workspace("web", { busy: "creating", status: "created" }),
     },
+    store: {
+      identities: Identity[];
+      status?: "loading" | "ready" | "failed";
+    } = { identities: [work, personal] },
   ) {
     const create = vi.fn(async (_body: unknown) => result);
     const onCreated = vi.fn();
@@ -283,7 +288,7 @@ describe("CreateWorkspaceDialog identities and repositories", () => {
       props: {
         open: true,
         store: { create },
-        identities: { identities: [work, personal], ensureLoaded },
+        identities: { ...store, ensureLoaded },
         prefill,
         onCreated,
       },
@@ -322,6 +327,82 @@ describe("CreateWorkspaceDialog identities and repositories", () => {
     expect(
       screen.getByRole("group", { name: "Other identities" }),
     ).toBeVisible();
+  });
+
+  it("shows which identity the repository will get as the address and the pick change", async () => {
+    open();
+    await screen.findByRole("dialog");
+    expect(screen.queryByText(/Uses |No identity covers/)).toBeNull();
+    await type("Git repository (HTTPS)", "https://github.com/acme/web");
+    expect(identityBox()).toHaveAccessibleDescription(
+      "Uses Work: it covers acme on github.com.",
+    );
+    await type("Git repository (HTTPS)", "https://github.com/someone/else");
+    expect(identityBox()).toHaveAccessibleDescription(
+      "Uses Personal: it covers someone on github.com.",
+    );
+    // Nothing covers it: the default, with the consequence spelled out.
+    await type("Git repository (HTTPS)", "https://gitlab.com/acme/web");
+    expect(identityBox()).toHaveAccessibleDescription(
+      /No identity covers acme on gitlab\.com, so Puddle uses the default, Work\. .*without a credential/,
+    );
+    await fireEvent.change(identityBox(), { target: { value: "2" } });
+    expect(identityBox()).toHaveAccessibleDescription(
+      /Uses Personal, which has no credential for acme on gitlab\.com/,
+    );
+    await fireEvent.change(identityBox(), { target: { value: "" } });
+    expect(identityBox()).toHaveAccessibleDescription(/the default, Work/);
+  });
+
+  it("says a workspace gets no identity when there are none, and waits for the identities", async () => {
+    open(null, undefined, { identities: [] });
+    await screen.findByRole("dialog");
+    await type("Git repository (HTTPS)", "https://github.com/acme/web");
+    expect(identityBox()).toHaveAccessibleDescription(
+      /no commit author and no credential/,
+    );
+    cleanup();
+    open(null, undefined, { identities: [work], status: "loading" });
+    await screen.findByRole("dialog");
+    await type("Git repository (HTTPS)", "https://github.com/acme/web");
+    expect(identityBox()).not.toHaveAccessibleDescription();
+  });
+
+  it("lets a later row see the identities the earlier rows bring", async () => {
+    const both = identity(3, {
+      label: "Both",
+      is_default: false,
+      credentials: [credential({ rest: true })],
+    });
+    open(null, undefined, { identities: [work, personal, both] });
+    await screen.findByRole("dialog");
+    await type("Git repository (HTTPS)", "https://github.com/acme/web");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Add another repository" }),
+    );
+    const second = () =>
+      screen.getAllByRole("combobox", { name: "Git identity" })[1]!;
+    await fireEvent.input(
+      screen.getAllByLabelText("Git repository (HTTPS)")[1]!,
+      { target: { value: "https://github.com/someone/else" } },
+    );
+    // Personal and Both both cover "someone"; neither is on the list yet, so the first wins.
+    expect(second()).toHaveAccessibleDescription(
+      "Uses Personal: it covers someone on github.com.",
+    );
+    // Told to choose, the host prefers one already on the list: once the first repository takes
+    // Both, the second gets it too.
+    await fireEvent.change(second(), { target: { value: "" } });
+    expect(second()).toHaveAccessibleDescription(
+      "Uses Personal: it covers someone on github.com.",
+    );
+    await fireEvent.change(
+      screen.getAllByRole("combobox", { name: "Git identity" })[0]!,
+      { target: { value: "3" } },
+    );
+    expect(second()).toHaveAccessibleDescription(
+      "Uses Both: it covers someone on github.com.",
+    );
   });
 
   it('fills the repository from "Create a workspace for this" and chooses the identity that listed it', async () => {

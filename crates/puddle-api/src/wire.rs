@@ -51,7 +51,7 @@ pub use identities::{
     GitRepoToggles, GitRepoView, GitSwitchesRequest, IdentityAuthor, IdentityCredential,
     IdentityDeleted, IdentityList, IdentityOrderRequest, IdentityRequest, IdentitySigning,
     IdentityView, NewWorkspaceIdentity, NewWorkspaceIdentityBasis, TokenLeft, WorkspaceGitView,
-    WorkspaceIdentitiesRequest,
+    WorkspaceIdentitiesRequest, WorkspaceSwitchesRequest,
 };
 pub use network_health::{
     DeadProxy, NetworkHealth, PacState, ProxyDetected, ProxyMode, ProxyProblem, ProxyProblemKind,

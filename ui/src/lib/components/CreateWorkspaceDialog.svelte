@@ -4,7 +4,8 @@
   import { goto } from "$app/navigation";
   import FormDialog from "./FormDialog.svelte";
   import RepoPicker from "./RepoPicker.svelte";
-  import { covering } from "#lib/identities/model.ts";
+  import { covering, type Identity } from "#lib/identities/model.ts";
+  import { previewIdentity, type Preview } from "#lib/identities/preview.ts";
   import { parseRepoUrl } from "#lib/identities/repo.ts";
   import {
     matchingUrl,
@@ -52,7 +53,8 @@
     open?: boolean;
     store?: Pick<WorkspaceStore, "create">;
     /** The identities to offer; the screens' own store unless a test brings one. */
-    identities?: Pick<IdentitiesStore, "identities" | "ensureLoaded">;
+    identities?: Pick<IdentitiesStore, "identities" | "ensureLoaded"> &
+      Partial<Pick<IdentitiesStore, "status">>;
     /**
      * A repository to start from, as "Create a workspace for this" gives it: its address and the
      * identity that listed it. Give a new object each time the form should take one.
@@ -116,6 +118,34 @@
   }
   const selectedFor = (row: RowDraft): string =>
     row.identity ?? String(chosenForYou(row) ?? "");
+
+  /**
+   * What each row will get, as the host will choose it: a row's identity joins the workspace's
+   * list for the rows after it. Empty until the identities are read, and for an address that
+   * names no repository yet.
+   */
+  const previews = $derived.by(() => {
+    const out: Record<number, Preview> = {};
+    if (identities.status && identities.status !== "ready") return out;
+    const onList: Identity[] = [];
+    for (const row of rows) {
+      const parsed = parseRepoUrl(row.url);
+      if (!parsed.ok) continue;
+      const picked = selectedFor(row);
+      const preview = previewIdentity(
+        identities.identities,
+        onList,
+        picked === "" ? null : Number(picked),
+        parsed.host,
+        parsed.owner,
+      );
+      out[row.key] = preview;
+      const joined = preview.identity;
+      if (joined && !onList.some((i) => i.id === joined.id))
+        onList.push(joined);
+    }
+    return out;
+  });
 
   // Until the user types a name, it follows the first repository.
   $effect(() => {
@@ -391,6 +421,9 @@
           <select
             id={rowId(row, "identity")}
             value={selectedFor(row)}
+            aria-describedby={previews[row.key]
+              ? rowId(row, "identity-preview")
+              : undefined}
             onchange={(event) => {
               row.identity = event.currentTarget.value;
             }}
@@ -415,6 +448,17 @@
               </optgroup>
             {/if}
           </select>
+          {#if previews[row.key]}
+            {@const preview = previews[row.key]!}
+            <p
+              class="hint"
+              class:warn={!preview.covered}
+              id={rowId(row, "identity-preview")}
+              aria-live="polite"
+            >
+              {preview.text}
+            </p>
+          {/if}
         </div>
 
         <div class="boxes">

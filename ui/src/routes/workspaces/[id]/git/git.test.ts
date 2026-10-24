@@ -81,8 +81,8 @@ beforeEach(() => {
         repoRow(7, { repo: "web-shop" }),
         repoRow(8, { repo: "design-tokens", push: false }),
       ],
-      push: true,
-      pull: false,
+      push: null,
+      pull: null,
     },
     docs: { ids: [], repos: [], push: false, pull: true },
   };
@@ -366,6 +366,53 @@ describe("the repository table", () => {
     await fireEvent.click(pull);
     expect(await screen.findByRole("alert")).toHaveTextContent("No.");
     expect(pull).toBeChecked();
+  });
+
+  it("says which switches follow the default and sends one back to it", async () => {
+    await mount();
+    expect(
+      screen.getAllByText(/It follows the default for new workspaces/),
+    ).toHaveLength(2);
+    expect(
+      screen.queryByRole("button", { name: /Use the default again/ }),
+    ).toBeNull();
+
+    await fireEvent.click(
+      screen.getByRole("switch", { name: "Only pull from listed repos" }),
+    );
+    const again = await screen.findByRole("button", {
+      name: "Use the default again for Only pull from listed repos",
+    });
+    expect(
+      screen.getAllByText(/It follows the default for new workspaces/),
+    ).toHaveLength(1);
+    api.gitDefaults = { only_push_listed: true, only_pull_listed: false };
+
+    api.refuse = { status: 500, message: "no" };
+    await fireEvent.click(again);
+    expect(await screen.findByRole("alert")).toHaveTextContent("No.");
+    expect(api.git["web-shop"]!.pull).toBe(true);
+
+    await fireEvent.click(again);
+    await waitFor(() => expect(api.git["web-shop"]!.pull).toBeNull());
+    expect(api.bodies.at(-1)).toEqual({ use_default_pull: true });
+    expect(
+      screen.getByRole("switch", { name: "Only pull from listed repos" }),
+    ).not.toBeChecked();
+    expect(
+      screen.getAllByText(/It follows the default for new workspaces/),
+    ).toHaveLength(2);
+
+    await fireEvent.click(
+      screen.getByRole("switch", { name: "Only push to listed repos" }),
+    );
+    await fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Use the default again for Only push to listed repos",
+      }),
+    );
+    await waitFor(() => expect(api.git["web-shop"]!.push).toBeNull());
+    expect(api.bodies.at(-1)).toEqual({ use_default_push: true });
   });
 
   it("removes a row, says so and puts focus on the heading", async () => {

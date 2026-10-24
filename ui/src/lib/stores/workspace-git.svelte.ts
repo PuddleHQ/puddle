@@ -148,10 +148,15 @@ export class WorkspaceGitStore {
     }
   }
 
-  /** Sets "only push to listed repos" and/or "only pull from listed repos". */
+  /**
+   * Sets "only push to listed repos" and/or "only pull from listed repos", or sends one back to
+   * following the default for new workspaces.
+   */
   setSwitches(switches: {
     only_push_listed?: boolean;
     only_pull_listed?: boolean;
+    use_default_push?: boolean;
+    use_default_pull?: boolean;
   }): Promise<Result> {
     return this.#send(
       () =>

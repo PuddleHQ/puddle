@@ -61,8 +61,9 @@ export function repoRow(id: number, over: Partial<RepoRow> = {}): RepoRow {
 interface Git {
   ids: number[];
   repos: RepoRow[];
-  push: boolean;
-  pull: boolean;
+  /** The workspace's own switch; `null` follows the default. */
+  push: boolean | null;
+  pull: boolean | null;
 }
 
 type Body = Record<string, unknown>;
@@ -111,7 +112,7 @@ export class FakeIdentities {
 
   #ws(name: string | number | undefined): Git {
     const key = String(name);
-    return (this.git[key] ??= { ids: [], repos: [], push: true, pull: false });
+    return (this.git[key] ??= { ids: [], repos: [], push: null, pull: null });
   }
 
   #view(name: string): WorkspaceGit {
@@ -122,8 +123,10 @@ export class FakeIdentities {
         .map((id) => this.identities.find((i) => i.id === id))
         .filter((i): i is Identity => i !== undefined),
       repos: g.repos,
-      only_push_listed: g.push,
-      only_pull_listed: g.pull,
+      only_push_listed: g.push ?? this.gitDefaults.only_push_listed,
+      only_pull_listed: g.pull ?? this.gitDefaults.only_pull_listed,
+      push_follows_default: g.push === null,
+      pull_follows_default: g.pull === null,
     };
   }
 
@@ -331,6 +334,8 @@ export class FakeIdentities {
           g.push = body["only_push_listed"];
         if (typeof body["only_pull_listed"] === "boolean")
           g.pull = body["only_pull_listed"];
+        if (body["use_default_push"] === true) g.push = null;
+        if (body["use_default_pull"] === true) g.pull = null;
         return this.reply(200, this.#view(String(init.params?.path["id"])));
       }
       case "/api/workspaces/{id}/git/repos/{repo}": {

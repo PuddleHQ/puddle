@@ -676,6 +676,67 @@ async fn the_default_switches_are_read_changed_inherited_and_overridden_per_work
     api.running.shutdown().await;
 }
 
+#[tokio::test]
+async fn a_switch_goes_back_to_following_the_default_and_the_view_says_which_ones_follow() {
+    let api = start().await;
+    workspace(&api, "w").await;
+    let put = |body: Value| {
+        let api = &api;
+        async move {
+            api.send("PUT", "/api/workspaces/w/git/switches", Some(&body))
+                .await
+        }
+    };
+    let git = api.get("/api/workspaces/w/git").await.json();
+    assert_eq!(
+        (&git["push_follows_default"], &git["pull_follows_default"]),
+        (&json!(true), &json!(true))
+    );
+
+    let own = put(json!({"only_push_listed": false, "only_pull_listed": true}))
+        .await
+        .json();
+    assert_eq!(
+        (&own["push_follows_default"], &own["pull_follows_default"]),
+        (&json!(false), &json!(false))
+    );
+
+    // Pull goes back to the default (off); push stays the workspace's own.
+    let back = put(json!({"use_default_pull": true})).await;
+    assert_eq!(back.status, 200, "{}", back.body);
+    let back = back.json();
+    assert_eq!(
+        (&back["only_push_listed"], &back["push_follows_default"]),
+        (&json!(false), &json!(false))
+    );
+    assert_eq!(
+        (&back["only_pull_listed"], &back["pull_follows_default"]),
+        (&json!(false), &json!(true))
+    );
+    api.send(
+        "PUT",
+        "/api/identities/git-defaults",
+        Some(&json!({"only_pull_listed": true})),
+    )
+    .await;
+    let after = api.get("/api/workspaces/w/git").await.json();
+    assert_eq!(
+        after["only_pull_listed"], true,
+        "it follows the default now"
+    );
+
+    // Setting and dropping the same switch in one request says which one is contradictory.
+    let both = put(json!({"only_push_listed": true, "use_default_push": true})).await;
+    assert_eq!(both.status, 422, "{}", both.body);
+    assert!(both.body.contains("push"), "{}", both.body);
+    let unchanged = api.get("/api/workspaces/w/git").await.json();
+    assert_eq!(
+        unchanged["only_push_listed"], false,
+        "a refusal changes nothing"
+    );
+    api.running.shutdown().await;
+}
+
 fn pasted(label: &str, id: &str, owners: &[&str], rest: bool) -> Value {
     let mut body = body(label, owners, rest);
     body["credentials"][0]["source"] =

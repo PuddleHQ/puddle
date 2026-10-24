@@ -274,6 +274,10 @@ test("creating from the form for a repository nobody covers warns with the defau
   await dialog
     .getByLabel("Git repository (HTTPS)")
     .fill("https://gitlab.example.com/team/tooling.git");
+  // The form says what the repository will get before anything is created.
+  await expect(dialog).toContainText(
+    "No identity covers team on gitlab.example.com, so Puddle uses the default, Work.",
+  );
   await dialog.getByRole("button", { name: "Create workspace" }).click();
   await expect(dialog).toHaveCount(0);
   // Work is the default; it covers github.com/acme only, so the warning names it and the place.
@@ -311,6 +315,9 @@ test("creating for a repository an identity covers says nothing and attaches tha
   await dialog
     .getByLabel("Git repository (HTTPS)")
     .fill("https://github.com/someone-else/notes.git");
+  await expect(dialog).toContainText(
+    "Uses Personal: it covers someone-else on github.com.",
+  );
   await dialog.getByRole("button", { name: "Create workspace" }).click();
   await expect(dialog).toHaveCount(0);
   // The workspace is listed, and no warning came with it.
@@ -381,6 +388,28 @@ test("the default for the two switches is inherited by new workspaces and overri
   ).not.toBeChecked();
   await expect(
     page.getByRole("switch", { name: "Only push to listed repos" }),
+  ).toBeChecked();
+
+  // "Use the default again" drops the workspace's own pull value: it follows the default from then on.
+  await expect(
+    page.getByRole("button", { name: /Use the default again/ }),
+  ).toHaveCount(1);
+  await page
+    .getByRole("button", {
+      name: "Use the default again for Only pull from listed repos",
+    })
+    .click();
+  await expect(
+    page.getByRole("button", { name: /Use the default again/ }),
+  ).toHaveCount(0);
+  await expect(page.getByText(/It follows the default/)).toHaveCount(2);
+  await page.goto("/identities");
+  await page
+    .getByRole("switch", { name: "Only pull from listed repos" })
+    .click();
+  await page.goto("/workspaces/inherits/git");
+  await expect(
+    page.getByRole("switch", { name: "Only pull from listed repos" }),
   ).toBeChecked();
 });
 

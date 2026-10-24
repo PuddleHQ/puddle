@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.14.0"
+    "version": "0.15.0"
   },
   "paths": {
     "/api/audit": {
@@ -5589,7 +5589,7 @@
         "tags": [
           "identities"
         ],
-        "summary": "Sets \"only push to listed repos\" and \"only pull from listed repos\"; a switch left out stays.",
+        "summary": "Sets \"only push to listed repos\" and \"only pull from listed repos\"; a switch left out stays. `use_default_push` or `use_default_pull` drops the workspace's own\nvalue, so that switch follows the default again.",
         "operationId": "set_git_switches",
         "parameters": [
           {
@@ -5606,7 +5606,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GitSwitchesRequest"
+                "$ref": "#/components/schemas/WorkspaceSwitchesRequest"
               }
             }
           },
@@ -5655,6 +5655,16 @@
           },
           "421": {
             "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "a switch is both set and sent back to the default",
             "content": {
               "application/json": {
                 "schema": {
@@ -13133,7 +13143,9 @@
           "identities",
           "repos",
           "only_push_listed",
-          "only_pull_listed"
+          "only_pull_listed",
+          "push_follows_default",
+          "pull_follows_default"
         ],
         "properties": {
           "identities": {
@@ -13150,6 +13162,14 @@
           "only_push_listed": {
             "type": "boolean",
             "description": "Refuse a push to a repository not listed with Push on (default on)."
+          },
+          "pull_follows_default": {
+            "type": "boolean",
+            "description": "The pull switch is the default's."
+          },
+          "push_follows_default": {
+            "type": "boolean",
+            "description": "The push switch is the default's (the workspace set none of its own, or dropped it)."
           },
           "repos": {
             "type": "array",
@@ -13307,6 +13327,34 @@
           "done",
           "failed"
         ]
+      },
+      "WorkspaceSwitchesRequest": {
+        "type": "object",
+        "description": "Changes a workspace's two switches; a switch left out stays as it is.",
+        "properties": {
+          "only_pull_listed": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "\"Only pull from listed repos\": the workspace's own value."
+          },
+          "only_push_listed": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "\"Only push to listed repos\": the workspace's own value."
+          },
+          "use_default_pull": {
+            "type": "boolean",
+            "description": "Drop the workspace's own pull value, so it follows the default again. Not with\n`only_pull_listed`."
+          },
+          "use_default_push": {
+            "type": "boolean",
+            "description": "Drop the workspace's own push value, so it follows the default again. Not with\n`only_push_listed`."
+          }
+        }
       }
     },
     "securitySchemes": {

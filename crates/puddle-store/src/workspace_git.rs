@@ -276,6 +276,33 @@ pub struct WorkspaceGit {
     /// Refuse a fetch from a repository not listed with Pull on (default off: a fetch reaches
     /// every repository the token can read).
     pub only_pull_listed: bool,
+    /// The push switch is the default's: the workspace never set its own, or dropped it.
+    pub push_follows_default: bool,
+    /// The pull switch is the default's.
+    pub pull_follows_default: bool,
+}
+
+/// What a change does to one of a workspace's two "only listed" switches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwitchChange {
+    /// Leave it as it is.
+    Keep,
+    /// The workspace's own value from now on.
+    Set(bool),
+    /// Drop the workspace's own value: it follows the default again.
+    FollowDefault,
+}
+
+impl SwitchChange {
+    /// The workspace's own value (`None`: follows the default) after this change.
+    #[must_use]
+    pub fn apply(self, own: Option<bool>) -> Option<bool> {
+        match self {
+            Self::Keep => own,
+            Self::Set(on) => Some(on),
+            Self::FollowDefault => None,
+        }
+    }
 }
 
 impl WorkspaceGit {
@@ -288,6 +315,8 @@ impl WorkspaceGit {
             repos: Vec::new(),
             only_push_listed: true,
             only_pull_listed: false,
+            push_follows_default: true,
+            pull_follows_default: true,
         }
     }
 

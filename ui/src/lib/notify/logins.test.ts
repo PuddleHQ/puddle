@@ -116,7 +116,7 @@ describe("the notice watcher", () => {
 });
 
 describe("forgetting a kept login from its notice", () => {
-  type Reply = { error?: { message: string } };
+  type Reply = { error?: { message: string }; response?: { status: number } };
   const forgetting = (reply: () => Promise<Reply>) => {
     const DELETE = vi.fn(reply);
     const login = new LoginNotices(new InAppNotifier(center), {
@@ -128,7 +128,9 @@ describe("forgetting a kept login from its notice", () => {
   it.each(["capture_off", "unreadable"])(
     "offers Forget on a %s notice and asks first, saying what goes",
     (kind) => {
-      const { login } = forgetting(() => Promise.resolve({}));
+      const { login } = forgetting(() =>
+        Promise.resolve({ response: { status: 204 } }),
+      );
       login.handle(problem(kind));
       const action = center.items[0]!.action!;
       expect(action.label).toBe("Forget Claude Code login");
@@ -153,7 +155,9 @@ describe("forgetting a kept login from its notice", () => {
   });
 
   it("deletes the login by workspace and the service's name, then ends the notice", async () => {
-    const { DELETE, login } = forgetting(() => Promise.resolve({}));
+    const { DELETE, login } = forgetting(() =>
+      Promise.resolve({ response: { status: 204 } }),
+    );
     login.handle(problem("capture_off"));
     await center.items[0]!.action!.run();
     expect(DELETE).toHaveBeenCalledWith(
@@ -166,6 +170,7 @@ describe("forgetting a kept login from its notice", () => {
   it("rejects with the API's own words as a sentence and keeps the notice when the store refuses", async () => {
     const { login } = forgetting(() =>
       Promise.resolve({
+        response: { status: 503 },
         error: {
           message:
             "the operating system's credential store did not delete a saved login; unlock it or start it and ask again",
@@ -185,10 +190,24 @@ describe("forgetting a kept login from its notice", () => {
     await expect(center.items[0]!.action!.run()).rejects.toThrow(
       "Puddle's service isn't answering. Try again.",
     );
-    const bare = forgetting(() => Promise.resolve({ error: { message: "" } }));
+    const bare = forgetting(() =>
+      Promise.resolve({ response: { status: 503 }, error: { message: "" } }),
+    );
     bare.login.handle(problem("unreadable"));
     await expect(center.items.at(-1)!.action!.run()).rejects.toThrow(
       "Puddle couldn't forget the login.",
     );
+  });
+
+  it("ends the notice when nothing is kept for the service any more", async () => {
+    const { login } = forgetting(() =>
+      Promise.resolve({
+        response: { status: 404 },
+        error: { message: 'no login service "Claude Code"' },
+      }),
+    );
+    login.handle(problem("capture_off"));
+    await center.items[0]!.action!.run();
+    expect(center.items).toEqual([]);
   });
 });

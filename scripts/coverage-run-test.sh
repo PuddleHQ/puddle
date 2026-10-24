@@ -57,7 +57,7 @@ run() {
     name=$1
     shift
     set +e
-    env PROFILES="$tmp/$name" "$@" "$here/scripts/coverage-run.sh" "$tmp/cargo" llvm-cov nextest \
+    env -u LLVM_PROFDATA_FLAGS PROFILES="$tmp/$name" "$@" "$here/scripts/coverage-run.sh" "$tmp/cargo" llvm-cov nextest \
         >"$tmp/$name.out" 2>&1
     echo $? >"$tmp/$name.rc"
     set -e

@@ -123,6 +123,22 @@ describe("NoticeWatcher", () => {
     expect(keys()).toEqual([]);
   });
 
+  it("withdraws the SSH notice when the endpoint accepts again, and only that workspace's", () => {
+    const w = make();
+    const failed = (workspace: string) => ({
+      type: "workspace_ssh_failed",
+      workspace,
+      reason:
+        "the SSH endpoint could not accept a connection (x); it keeps trying",
+    });
+    w.handle(failed("web"));
+    w.handle(failed("api"));
+    w.handle({ type: "workspace_ssh_recovered", workspace: "web" });
+    expect(keys()).toEqual(["ssh:api"]);
+    w.handle({ type: "workspace_ssh_recovered", workspace: 7 });
+    expect(keys()).toEqual(["ssh:api"]);
+  });
+
   it("calls a stop nobody asked for unexpected, from the seeded list", async () => {
     const w = make();
     w.start();

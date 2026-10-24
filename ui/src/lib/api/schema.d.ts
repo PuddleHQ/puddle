@@ -2276,6 +2276,11 @@ export interface components {
             workspace: components["schemas"]["WorkspaceName"];
         } | {
             /** @enum {string} */
+            type: "workspace_ssh_recovered";
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
+        } | {
+            /** @enum {string} */
             type: "workspace_repositories_changed";
             /** @description The workspace. */
             workspace: components["schemas"]["WorkspaceName"];

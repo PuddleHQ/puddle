@@ -9702,6 +9702,26 @@
           },
           {
             "type": "object",
+            "description": "A workspace's direct SSH accepts connections again after a [`Self::WorkspaceSshFailed`]\nthat said it kept trying. The app withdraws that notice.",
+            "required": [
+              "workspace",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "workspace_ssh_recovered"
+                ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace."
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "A workspace's repository list changed (an entry was added, managed, cloned again or\nremoved). Carries nothing more: refetch `GET /api/workspaces/{id}` and its checkouts.",
             "required": [
               "workspace",

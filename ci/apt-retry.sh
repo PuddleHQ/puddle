@@ -7,9 +7,9 @@
 # 60 s, and one that is still running after $APT_FIRST_TRY_S (default 180) is stopped, Canonical's
 # archive is put first, dpkg is repaired and the command runs again (apt resumes partial downloads).
 # Only the stall path is bounded this tightly; the retry gets $APT_RETRY_S (default 300).
-# `timeout` stops only its own child. `playwright install-deps` runs `sudo apt-get` in a session of
-# its own, so after the timeout that apt-get lived on holding the dpkg lock and the retry failed in
-# 2 s on "Could not get lock". So after a timeout every process holding an apt or dpkg lock is
+# `timeout` signals its own process group, but `playwright install-deps` runs `sudo apt-get` in a
+# session of its own, so after the timeout that apt-get lived on holding the dpkg lock and the retry
+# failed in 2 s on "Could not get lock". So after a timeout every process holding an apt or dpkg lock is
 # stopped (SIGTERM, then SIGKILL) and the locks are waited for before dpkg is repaired.
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)

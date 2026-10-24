@@ -19,7 +19,12 @@ import type { ActionResult } from "#lib/stores/workspaces.svelte.ts";
 import type { Workspace } from "#lib/workspaces/model.ts";
 import CreateWorkspaceDialog from "./CreateWorkspaceDialog.svelte";
 
-const h = vi.hoisted(() => ({ repos: undefined as unknown }));
+// The limit is 100 (pinned in repo-rows.test.ts); a form with that many rows takes seconds to
+// build in jsdom, so the dialog's use of the limit is tested with a small one.
+const h = vi.hoisted(() => ({
+  repos: undefined as unknown,
+  rowLimit: undefined as number | undefined,
+}));
 
 vi.mock("#lib/stores/repos.svelte.ts", async (original) => {
   const mod = await original<typeof import("#lib/stores/repos.svelte.ts")>();
@@ -29,6 +34,16 @@ vi.mock("#lib/stores/repos.svelte.ts", async (original) => {
       constructor() {
         super({ api: h.repos as never });
       }
+    },
+  };
+});
+
+vi.mock("#lib/workspaces/repo-rows.ts", async (original) => {
+  const mod = await original<typeof import("#lib/workspaces/repo-rows.ts")>();
+  return {
+    ...mod,
+    get MAX_REPOSITORIES() {
+      return h.rowLimit ?? mod.MAX_REPOSITORIES;
     },
   };
 });
@@ -448,6 +463,7 @@ describe("CreateWorkspaceDialog with several repositories", () => {
 
   beforeEach(() => {
     h.repos = new FakeRepos();
+    h.rowLimit = undefined;
     for (const t of [...toasts.items]) toasts.dismiss(t.id);
   });
 
@@ -741,16 +757,19 @@ describe("CreateWorkspaceDialog with several repositories", () => {
     );
   });
 
-  it("stops adding at a hundred rows", async () => {
+  it("stops adding at the row limit", async () => {
+    h.rowLimit = 4;
     open();
     await screen.findByRole("dialog");
-    // One role query reads the whole accessibility tree, so asking for the button again after
-    // each click made this test quadratic (88 % of its time); the button is one element throughout.
     const button = add();
-    for (let i = 1; i < 100; i++) await fireEvent.click(button);
+    for (let i = 1; i < 4; i++) await fireEvent.click(button);
     expect(
       screen.getAllByRole("group", { name: /^Repository \d+$/ }),
-    ).toHaveLength(100);
+    ).toHaveLength(4);
     expect(button).toBeDisabled();
+    await fireEvent.click(button);
+    expect(
+      screen.getAllByRole("group", { name: /^Repository \d+$/ }),
+    ).toHaveLength(4);
   });
 });

@@ -681,6 +681,7 @@ async fn a_second_host_on_the_same_data_folder_is_refused_and_the_first_is_untou
     let api = api(&first);
     let mut events = api.events().await;
     create(&api, &mut events, "keep").await;
+    after_boot_listing(&rig).await;
     let running = rig
         .runtime
         .list()
@@ -2952,6 +2953,8 @@ async fn a_rename_survives_a_restart_and_leaves_the_sandbox_and_volume_alone() {
     let api1 = api(&host);
     let mut events = api1.events().await;
     create(&api1, &mut events, "acme").await;
+    // The create ends before its background listing runs; count after it, or it lands in the rename.
+    after_boot_listing(&rig).await;
     let calls_before = rig.runtime.calls().len();
     let renamed = api1
         .patch("/api/workspaces/acme", &display_name_body("Acme shop"))

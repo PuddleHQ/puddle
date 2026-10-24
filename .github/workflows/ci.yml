@@ -107,7 +107,7 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: crates/puddle-api/openapi/package-lock.json
-      - name: System packages (WebKitGTK for the desktop shell, Squid for the upstream-chaining e2e)
+      - name: System packages (WebKitGTK, the tray library and Xvfb for the desktop shell, Squid for the upstream-chaining e2e)
         timeout-minutes: 10
         run: |
           # The image's default mirror hands some runners a backend that serves 40 to 250 kB/s (a 62 MB
@@ -115,7 +115,9 @@ jobs:
           # ci/apt-retry.sh moves to Canonical when the install itself stalls anyway.
           ci/apt-setup.sh
           ci/apt-retry.sh sudo apt-get update
-          ci/apt-retry.sh sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev squid
+          # libayatana-appindicator3-1: the tray icon library, opened at run time (the build does not
+          # need its dev package); xvfb: the virtual display the tray test runs on.
+          ci/apt-retry.sh sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-1 xvfb squid
           # The package starts its own daemon; the test runs its own Squid on a free port.
           sudo systemctl stop squid || true
           test -x /usr/sbin/squid

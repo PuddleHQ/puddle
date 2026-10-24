@@ -318,8 +318,9 @@ mod tests {
     }
 
     /// The tray needs GTK, which needs a display. This test starts a virtual one (`Xvfb`, from the
-    /// `xvfb` package that CI images have) and runs itself again on it, so the icon, its menu and
-    /// its badge are built for real. The inner run is told apart by an environment variable.
+    /// `xvfb` package) and runs itself again on it, so the icon, its menu and its badge are built
+    /// for real; that needs the tray library too (`libayatana-appindicator3-1`). The inner run is
+    /// told apart by an environment variable.
     #[cfg(target_os = "linux")]
     #[test]
     fn the_icon_is_made_with_a_menu_and_shows_the_waiting_count() {
@@ -343,7 +344,7 @@ mod tests {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .spawn()
-            .expect("this test needs Xvfb (the xvfb package)");
+            .expect("this test needs Xvfb (apt package xvfb) and libayatana-appindicator3.so.1 (apt package libayatana-appindicator3-1)");
         let mut ready = String::new();
         std::io::BufRead::read_line(
             &mut std::io::BufReader::new(xvfb.stdout.take().unwrap()),
@@ -364,7 +365,11 @@ mod tests {
             .unwrap();
         xvfb.kill().unwrap();
         xvfb.wait().unwrap();
-        assert!(status.success(), "the run on the display failed");
+        assert!(
+            status.success(),
+            "the run on the display failed; if the log says libayatana-appindicator3.so.1 cannot be opened, \
+             install apt package libayatana-appindicator3-1"
+        );
     }
 
     /// What the test above runs on the virtual display.

@@ -43,7 +43,7 @@ pub use interceptor::{Interceptor, NtlmLeg, NtlmProxy, Root};
 pub use pac::{PacServer, failover_pac};
 #[cfg(unix)]
 pub use squid::{Squid, SquidOptions};
-pub use web_host::{WebHost, WebOptions};
+pub use web_host::{Responder, WebAnswer, WebHost, WebOptions};
 
 /// The loopback address every fixture binds.
 pub const LOCAL: Ipv4Addr = Ipv4Addr::LOCALHOST;

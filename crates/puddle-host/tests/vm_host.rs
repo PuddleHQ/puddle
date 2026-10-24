@@ -781,6 +781,7 @@ async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
         &[H3_HOST],
         WebOptions {
             alt_svc: Some(H3_ALT_SVC.to_owned()),
+            ..WebOptions::default()
         },
         hermetic_options(),
     )

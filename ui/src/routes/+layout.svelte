@@ -57,10 +57,10 @@
       <p class="banner" role="status">
         {live.problemDetail} Retrying.
       </p>
-    {:else if live.stream === "refused"}
+    {:else if live.stream === "refused" && live.streamRefusal}
       <p class="banner" role="status">
-        Live updates stopped: {live.streamError}. Open Puddle from its app
-        window or tray icon to sign in again.
+        Live updates stopped: {live.streamRefusal.reason}. {live.streamRefusal
+          .advice}
       </p>
     {:else if live.streamError}
       <p class="banner" role="status">

@@ -211,27 +211,68 @@ describe("eventStream", () => {
     ]);
   });
 
-  it.each([401, 403])(
-    "stops after a %i, saying why, instead of retrying with the same key",
-    async (code) => {
+  const json = (status: number, error: string, message: string) => () =>
+    new Response(JSON.stringify({ error, message }), { status });
+  it.each([
+    {
+      name: "a wrong key",
+      answer: json(401, "unauthorized", "missing or wrong bearer token"),
+      reason:
+        "the service refused the event stream: missing or wrong bearer token (status 401)",
+      advice: "Restart Puddle's app to sign in again.",
+    },
+    {
+      name: "a wrong origin",
+      answer: json(
+        403,
+        "forbidden_origin",
+        "requests from this origin are not allowed.",
+      ),
+      reason:
+        "the service refused the event stream: requests from this origin are not allowed (status 403)",
+      advice:
+        "Open Puddle from its own app window or tray icon, not from another address.",
+    },
+    {
+      name: "a 403 with an unknown code",
+      answer: json(403, "something_new", "x".repeat(300)),
+      reason: `the service refused the event stream: ${"x".repeat(200)} (status 403)`,
+      advice:
+        "Open Puddle from its app window or tray icon; if this stays, restart the app.",
+    },
+    {
+      name: "a 401 whose body is not the service's",
+      answer: () => new Response("no", { status: 401 }),
+      reason: "the service refused the event stream (status 401)",
+      advice:
+        "Open Puddle from its app window or tray icon; if this stays, restart the app.",
+    },
+    {
+      name: "a 403 whose body is JSON without an error",
+      answer: () => new Response("[1]", { status: 403 }),
+      reason: "the service refused the event stream (status 403)",
+      advice:
+        "Open Puddle from its app window or tray icon; if this stays, restart the app.",
+    },
+  ])(
+    "stops after $name, giving the service's reason and what to do",
+    async ({ answer, reason, advice }) => {
       const reasons: string[] = [];
+      const refusals: unknown[] = [];
       const states: string[] = [];
-      const t = setup([
-        () => new Response("no", { status: code }),
-        () => sse([status("never reached")]),
-      ]);
+      const t = setup([answer, () => sse([status("never reached")])]);
       const seen: PuddleEvent[] = [];
       for await (const event of eventStream({
         ...t.base,
         onError: (r) => reasons.push(r),
+        onRefused: (r) => refusals.push(r),
         onState: (s) => states.push(s),
       })) {
         seen.push(event);
       }
       expect(seen).toEqual([]);
-      expect(reasons).toEqual([
-        `the event stream refused this app's key (status ${code})`,
-      ]);
+      expect(reasons).toEqual([reason]);
+      expect(refusals).toEqual([{ reason, advice }]);
       expect(states).toEqual(["connecting", "refused"]);
       expect(t.sleeps).toEqual([]);
     },

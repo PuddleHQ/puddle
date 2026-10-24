@@ -18,6 +18,47 @@ export type StreamState =
   /** The service refused the app's key; the stream has stopped and will not retry. */
   | "refused";
 
+/** Why the service refused the stream (401 or 403) and what the user can do about it. */
+export interface StreamRefusal {
+  reason: string;
+  advice: string;
+}
+
+const ADVICE_OTHER =
+  "Open Puddle from its app window or tray icon; if this stays, restart the app.";
+
+/**
+ * Reads the service's own error body (`{ error, message }`, API-11) for a 401 or 403. The code
+ * picks the advice; the message is shown as the service wrote it, cut to a sensible length.
+ */
+export async function refusalOf(response: Response): Promise<StreamRefusal> {
+  let code: unknown;
+  let message = "";
+  try {
+    const body: unknown = JSON.parse(await response.text());
+    if (typeof body === "object" && body !== null) {
+      code = (body as { error?: unknown }).error;
+      const text = (body as { message?: unknown }).message;
+      if (typeof text === "string") {
+        message = text.trim().replace(/\.$/, "").slice(0, 200);
+      }
+    }
+  } catch {
+    // No readable body (a proxy, a stub): the status alone is the reason.
+  }
+  const reason =
+    message === ""
+      ? `the service refused the event stream (status ${response.status})`
+      : `the service refused the event stream: ${message} (status ${response.status})`;
+  const advice =
+    code === "forbidden_origin"
+      ? "Open Puddle from its own app window or tray icon, not from another address."
+      : code === "unauthorized"
+        ? "Restart Puddle's app to sign in again."
+        : ADVICE_OTHER;
+  return { reason, advice };
+}
+
 export interface EventStreamOptions {
   /** Ends the stream; the iterator then returns without throwing. */
   signal: AbortSignal;
@@ -31,6 +72,8 @@ export interface EventStreamOptions {
   onState?: (state: StreamState) => void;
   /** Called when an attempt failed, with why in words ("the event stream answered 500"); not called after a clean close or an abort. */
   onError?: (reason: string) => void;
+  /** Called once when the service refused the stream (401/403), just before it stops. */
+  onRefused?: (refusal: StreamRefusal) => void;
   /** Wait times between attempts; the last repeats. */
   backoffMs?: readonly number[];
   /** For tests. */
@@ -95,7 +138,7 @@ export async function* eventStream(
 
   while (!signal.aborted) {
     let failure = "the connection to the event stream failed";
-    let refused = false;
+    let refused: StreamRefusal | null = null;
     try {
       const response = await doFetch(streamUrl(options), {
         signal,
@@ -105,10 +148,12 @@ export async function* eventStream(
         },
       });
       if (!response.ok || response.body === null) {
-        refused = response.status === 401 || response.status === 403;
-        failure = refused
-          ? `the event stream refused this app's key (status ${response.status})`
-          : `the event stream answered ${response.status}`;
+        if (response.status === 401 || response.status === 403) {
+          refused = await refusalOf(response);
+          failure = refused.reason;
+        } else {
+          failure = `the event stream answered ${response.status}`;
+        }
         throw new Error(`event stream answered ${response.status}`);
       }
       if (everConnected) options.onResync?.("reconnect");
@@ -151,7 +196,8 @@ export async function* eventStream(
       options.onError?.(failure);
     }
     if (signal.aborted) break;
-    if (refused) {
+    if (refused !== null) {
+      options.onRefused?.(refused);
       options.onState?.("refused");
       return;
     }

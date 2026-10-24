@@ -251,22 +251,100 @@ test("an activity log that cannot be written is a notice with the reason, and en
   ).toHaveCount(0);
 });
 
-test("a refused key stops the event stream for good and the banner says what to do", async ({
-  page,
-  backend,
-}) => {
-  await backend.control.reset("lived-in");
-  await backend.signIn(page);
-  let attempts = 0;
-  await page.route("**/api/events*", (route) => {
-    attempts += 1;
-    return route.fulfill({ status: 401, body: "no" });
+/**
+ * Answers the page's event stream with what the real service sends for a refused request: the
+ * request goes to the fixture backend with one header changed, and its own answer comes back.
+ */
+async function refuseEvents(
+  page: Page,
+  change: (headers: Record<string, string>) => Record<string, string>,
+) {
+  const attempts = { count: 0 };
+  await page.route("**/api/events*", async (route) => {
+    attempts.count += 1;
+    const response = await route.fetch({
+      headers: change(route.request().headers()),
+    });
+    await route.fulfill({ response });
   });
-  await page.goto("/rules");
-  const banner = page.getByRole("status").filter({
-    hasText: /Live updates stopped: the event stream refused this app's key/,
+  return attempts;
+}
+
+const refusals = [
+  {
+    kind: "a wrong key",
+    change: (h: Record<string, string>) => ({
+      ...h,
+      authorization: "Bearer not-the-key",
+    }),
+    status: 401,
+    text: "Live updates stopped: the service refused the event stream: missing or wrong bearer token (status 401). Restart Puddle's app to sign in again.",
+  },
+  {
+    kind: "a wrong origin",
+    change: (h: Record<string, string>) => ({
+      ...h,
+      origin: "http://evil.example",
+    }),
+    status: 403,
+    text: "Live updates stopped: the service refused the event stream: requests from this origin are not allowed (status 403). Open Puddle from its own app window or tray icon, not from another address.",
+  },
+];
+
+for (const refusal of refusals) {
+  test(`${refusal.kind} stops the event stream for good, and the banner gives the service's reason and what to do`, async ({
+    page,
+    backend,
+  }) => {
+    await backend.control.reset("lived-in");
+    await backend.signIn(page);
+    const attempts = await refuseEvents(page, refusal.change);
+    await page.goto("/rules");
+    const banner = page.getByRole("status").filter({
+      hasText: "Live updates stopped",
+    });
+    await expect(banner).toHaveText(refusal.text);
+    // The first refusal ended it: nothing asked again before the banner could be read.
+    expect(attempts.count).toBe(1);
   });
-  await expect(banner).toContainText("Open Puddle from its app window");
-  // The first refusal ended it: nothing asked again before the banner could be read.
-  expect(attempts).toBe(1);
-});
+}
+
+for (const scheme of ["light", "dark"] as const) {
+  test(`the refusal banner is readable and fits a narrow window in ${scheme}`, async ({
+    page,
+    backend,
+  }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.setViewportSize({ width: 360, height: 700 });
+    await backend.control.reset("lived-in");
+    await backend.signIn(page);
+    const origin = refusals[1];
+    if (origin === undefined) throw new Error("the origin case is missing");
+    await refuseEvents(page, origin.change);
+    await page.goto("/rules");
+    const banner = page.getByRole("status").filter({
+      hasText: "Live updates stopped",
+    });
+    await expect(banner).toBeVisible();
+    expect(await axeViolations(page)).toEqual([]);
+    const box = await banner.evaluate((el) => {
+      const style = getComputedStyle(el);
+      const probe = document.createElement("span");
+      probe.style.color = "var(--color-surface-raised)";
+      document.body.append(probe);
+      const surface = getComputedStyle(probe).color;
+      probe.remove();
+      return {
+        fits: el.scrollWidth <= el.clientWidth,
+        right: el.getBoundingClientRect().right,
+        background: style.backgroundColor,
+        surface,
+        wrap: style.overflowWrap,
+      };
+    });
+    // The whole sentence is on screen: no sideways scrolling, nothing cut off.
+    expect(box.fits).toBe(true);
+    expect(box.right).toBeLessThanOrEqual(360);
+    expect(box.background).toBe(box.surface);
+  });
+}

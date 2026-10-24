@@ -6,6 +6,7 @@ import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import {
   eventStream,
   type EventStreamOptions,
+  type StreamRefusal,
   type StreamState,
 } from "#lib/api/sse.ts";
 import { readFailure } from "./read-failure.ts";
@@ -40,6 +41,8 @@ export class LiveState implements LiveSource {
   problemDetail = $state<string | null>(null);
   /** Why the event stream last failed to connect; `null` while it is connected. */
   streamError = $state<string | null>(null);
+  /** What the service said when it refused the stream, with what to do; set while `stream` is `refused`. */
+  streamRefusal = $state<StreamRefusal | null>(null);
 
   readonly #api: Pick<ApiClient, "GET">;
   readonly #events: (options: EventStreamOptions) => AsyncIterable<unknown>;
@@ -109,7 +112,13 @@ export class LiveState implements LiveSource {
           onState: (state) => {
             if (own.signal.aborted) return;
             this.stream = state;
-            if (state === "connected") this.streamError = null;
+            if (state === "connected") {
+              this.streamError = null;
+              this.streamRefusal = null;
+            }
+          },
+          onRefused: (refusal) => {
+            if (!own.signal.aborted) this.streamRefusal = refusal;
           },
           onError: (reason) => {
             if (!own.signal.aborted) this.streamError = reason;

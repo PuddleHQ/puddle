@@ -72,12 +72,14 @@ export class LiveState implements LiveSource {
     try {
       const { data, error, response } = await this.#api.GET("/api/pending");
       if (data) {
+        const recovered = this.problem !== null;
         this.pending = data.requests.length;
         this.problem = null;
         this.problemDetail = null;
-        // The service answers this app again after refusing its key on the stream (a restart, a
-        // key handover): the stream was stopped for good, so it is opened anew.
-        if (this.stream === "refused") this.#reopen?.();
+        // The service failed this app too and answers again (a restart, a key handover): the
+        // stream stopped after a refusal, so it is opened anew. A key refused on the stream
+        // alone, with the poll answering all along, stays refused.
+        if (recovered && this.stream === "refused") this.#reopen?.();
       } else if (response.status === 401) {
         this.problem = "unauthorized";
       } else {

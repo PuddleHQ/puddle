@@ -21,10 +21,9 @@ fail() {
 # shellcheck disable=SC2046 # the list is words by design
 unset $(git rev-parse --local-env-vars)
 
-profdata=$(command -v llvm-profdata || true)
-if [ -z "$profdata" ]; then
-    profdata=$(find "$(rustc --print sysroot)/lib/rustlib" -name llvm-profdata -type f 2>/dev/null | head -n 1)
-fi
+# The tool of rustc's own LLVM first: a system llvm-profdata of another version rejects its profile format.
+profdata=$(find "$(rustc --print sysroot)/lib/rustlib" -name llvm-profdata -type f 2>/dev/null | head -n 1)
+[ -n "$profdata" ] || profdata=$(command -v llvm-profdata || true)
 [ -n "$profdata" ] || fail "llvm-profdata not found (rustup component add llvm-tools-preview)"
 
 echo 'fn main() { println!("{}", std::env::args().count()); }' >"$tmp/prog.rs"

@@ -180,11 +180,9 @@ async fn connect_as(path: &Path, own_uid: u32) -> Result<Stream, IpcError> {
     let stream = UnixStream::connect(path)
         .await
         .map_err(|source| crate::client_error(path, source))?;
-    let peer = stream.peer_cred().map_err(|source| IpcError::Io {
-        op: "check the owner of",
-        endpoint: path.to_path_buf(),
-        source,
-    })?;
+    let peer = stream
+        .peer_cred()
+        .map_err(|e| crate::client_error(path, e))?;
     if peer.uid() != own_uid {
         return Err(IpcError::WrongOwner {
             endpoint: path.to_path_buf(),

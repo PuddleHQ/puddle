@@ -310,6 +310,17 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_data_folder_is_the_one_named_else_the_per_user_one() {
+        let named = Options {
+            data_dir: Some(PathBuf::from("named")),
+            ..Options::default()
+        };
+        assert_eq!(data_folder(&named), Some(PathBuf::from("named")));
+        // Only resolved, never created or written.
+        let _ = data_folder(&Options::default());
+    }
+
+    #[test]
     fn the_defaults_pick_a_free_port_and_ask_for_nothing() {
         let options = Options::default();
         assert_eq!(options.port, 0);

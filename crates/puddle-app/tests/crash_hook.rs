@@ -53,3 +53,15 @@ fn a_panic_with_no_text_is_still_a_report() {
     .unwrap();
     assert!(text.contains("message:  (no message)"), "{text}");
 }
+
+#[test]
+fn a_crash_file_that_cannot_be_written_does_not_hide_the_panic() {
+    let data = tempfile::tempdir().unwrap();
+    // A plain file where the folder should be: nothing can be created under it.
+    let folder = data.path().join(crash::FOLDER);
+    std::fs::write(&folder, "in the way").unwrap();
+    crash::install(folder.clone());
+    let thread = std::thread::spawn(|| std::panic::panic_any("still reported"));
+    assert!(thread.join().is_err(), "the panic still unwinds the thread");
+    assert_eq!(std::fs::read_to_string(&folder).unwrap(), "in the way");
+}

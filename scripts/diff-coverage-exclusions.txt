@@ -250,3 +250,43 @@ crates/puddle-e2e/src/lab/web_host.rs | let _ = hyper::server::conn::http2::Buil
 crates/puddle-e2e/src/lab/web_host.rs | .serve_connection(io, service) | HTTP/2 is negotiated only by the guest's curl, so the VM tier covers it (vm_host.rs asserts the HTTP/2 answer)
 crates/puddle-e2e/src/lab/web_host.rs | .await; | HTTP/2 is negotiated only by the guest's curl, so the VM tier covers it (vm_host.rs asserts the HTTP/2 answer)
 crates/puddle-agent/src/capture/dns.rs | tracing::debug!(error = %err, "stub DNS: receive queue left at its default size"); | the kernel refusing both the forced and the capped receive-queue size cannot be provoked from a test (a process may always set the capped size); the arm only logs and the queue stays at its default
+crates/puddle-app/src/desktop.rs | tracing::warn!(%err, "could not open the inbox from a notification"); | the failure of a window's own navigation call, which the mock runtime never reports
+crates/puddle-app/src/desktop.rs | tracing::warn!(%err, "could not count the waiting requests"); | a store that fails to read open requests; the in-memory store of a test does not
+crates/puddle-app/src/desktop.rs | OpenRequests::default() | the same failed read (the empty count after the warning)
+crates/puddle-app/src/desktop.rs | fn on_window_event<R: Runtime>(window: &WebviewWindow<R>, event: &WindowEvent, buttons: &Buttons) { | the window system hands events to this only in a real window; the mock runtime never raises them. The decisions are `Buttons::on_close` and `on_minimize`, tested directly, and the Windows smoke test closes a real window
+crates/puddle-app/src/desktop.rs | WindowEvent::CloseRequested { api, .. } => { | the same real-window event routing (see `on_window_event`)
+crates/puddle-app/src/desktop.rs | if buttons.on_close(window) { | the same real-window event routing
+crates/puddle-app/src/desktop.rs | api.prevent_close(); | the same real-window event routing: only a real close request has an API to call
+crates/puddle-app/src/desktop.rs | WindowEvent::Resized(_) if window.is_minimized().unwrap_or(false) => { | the same real-window event routing
+crates/puddle-app/src/desktop.rs | buttons.on_minimize(window); | the same real-window event routing
+crates/puddle-app/src/desktop.rs | pub fn install_quit_shortcut<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> { | the application menu needs the real window system (GTK on Linux needs a display, the mock runtime has no menus); Windows smoke test and a hands-on check cover it
+crates/puddle-app/src/desktop.rs | let quit = MenuItem::with_id(app, MENU_QUIT, "Quit Puddle", true, Some("CmdOrCtrl+Q"))?; | the application menu (see `install_quit_shortcut`)
+crates/puddle-app/src/desktop.rs | let menu = Menu::with_items(app, &[&Submenu::with_items(app, "Puddle", true, &[&quit])?])?; | the application menu (see `install_quit_shortcut`)
+crates/puddle-app/src/desktop.rs | app.set_menu(menu)?; | the application menu (see `install_quit_shortcut`)
+crates/puddle-app/src/desktop.rs | app.on_menu_event(|app, event| { | the application menu (see `install_quit_shortcut`)
+crates/puddle-app/src/desktop.rs | if event.id().as_ref() == MENU_QUIT { | the application menu (see `install_quit_shortcut`)
+crates/puddle-app/src/desktop.rs | app.exit(0); | the application menu (see `install_quit_shortcut`)
+crates/puddle-app/src/desktop.rs | if let Some(window) = app.get_webview_window(MAIN_LABEL) { | the application menu (see `install_quit_shortcut`)
+crates/puddle-app/src/desktop.rs | window.hide_menu()?; | the application menu (see `install_quit_shortcut`)
+crates/puddle-app/src/desktop.rs | if let Err(err) = notify::show(app, notice, sound) { | the operating system's notification service (D-Bus on Linux, toasts on Windows): a test would pop a real notification on a developer's desktop
+crates/puddle-app/src/desktop.rs | tracing::warn!(%err, "could not show a notification"); | the same notification service failing
+crates/puddle-app/src/desktop.rs | tray.show(count, badge_on); | the tray icon needs a display and a tray host (GTK on Linux); it is built and updated only in a real session
+crates/puddle-app/src/desktop.rs | Err(err) => tracing::debug!(%err, "the settings read did not finish"), | a blocking read that panics or is cancelled; the runtime does not do that in a test
+crates/puddle-app/src/desktop.rs | TrayState::Shown | the tray exists only in a real desktop session (see `Tray::build`)
+crates/puddle-app/src/desktop.rs | open_inbox(&handle, &base, opens); | runs when a real notification is clicked; `tapped` and `open_inbox` are tested directly
+crates/puddle-app/src/desktop.rs | tracing::warn!(%err, "a click on a notification will not open the inbox"); | the notification plugin refusing a handler, which it never does on desktop
+crates/puddle-app/src/notify.rs | pub fn show<R: Runtime>( | hands a notice to the operating system's notification service (D-Bus on Linux, toasts on Windows): a test would pop a real notification on a developer's desktop
+crates/puddle-app/src/notify.rs | let mut builder = app | the same notification service call (see `show`)
+crates/puddle-app/src/notify.rs | .notification() | the same notification service call
+crates/puddle-app/src/notify.rs | .builder() | the same notification service call
+crates/puddle-app/src/notify.rs | .title(&notice.title) | the same notification service call
+crates/puddle-app/src/notify.rs | .body(&notice.body); | the same notification service call
+crates/puddle-app/src/notify.rs | if let Some(id) = notice.request { | the same notification service call
+crates/puddle-app/src/notify.rs | builder = builder.extra(REQUEST_EXTRA, id); | the same notification service call
+crates/puddle-app/src/notify.rs | if sound { | the same notification service call
+crates/puddle-app/src/notify.rs | builder = builder.sound(SOUND); | the same notification service call
+crates/puddle-app/src/notify.rs | builder.show() | the same notification service call
+crates/puddle-app/src/shell.rs | crash::install(folder.join(crash::FOLDER)); | `run` drives the real window system's event loop, which a test process cannot start; `crash::install` has its own test program (tests/crash_hook.rs)
+crates/puddle-app/src/shell.rs | if let Err(err) = desktop::install_quit_shortcut(app.handle()) { | `run` drives the real window system's event loop, which a test process cannot start; the Ctrl+Q menu is covered by the Windows smoke test and a hands-on check
+crates/puddle-app/src/shell.rs | tracing::warn!(%err, "Ctrl+Q will not quit"); | the same `run` path: the menu failing to install
+crates/puddle-app/src/shell.rs | .or_else(|| puddle_fs::data_dir().ok()) | the per-user data folder lookup runs in `run` and in `open` for the real host only; a test names its own folder

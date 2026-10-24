@@ -79,14 +79,24 @@ fn can_show() -> bool {
 /// Whether the session bus has a `StatusNotifier` host.
 #[cfg(target_os = "linux")]
 fn can_show() -> bool {
-    const WATCHER: &str = "org.kde.StatusNotifierWatcher";
-    let asked = || -> zbus::Result<bool> {
-        let connection = zbus::blocking::Connection::session()?;
-        let bus = zbus::blocking::fdo::DBusProxy::new(&connection)?;
-        let name = zbus::names::BusName::try_from(WATCHER)?;
-        Ok(bus.name_has_owner(name)?)
+    let watcher = || {
+        let bus = zbus::blocking::Connection::session().ok()?;
+        let name = zbus::names::BusName::try_from("org.kde.StatusNotifierWatcher").ok()?;
+        zbus::blocking::fdo::DBusProxy::new(&bus)
+            .ok()?
+            .name_has_owner(name)
+            .ok()
     };
-    asked().unwrap_or(false)
+    watcher().unwrap_or(false)
+}
+
+/// The app icon, and the same with the badge dot when it can be drawn on it.
+fn icons(app_icon: &Image<'_>) -> (Image<'static>, Option<Image<'static>>) {
+    let (size, rgba) = (app_icon.width(), app_icon.rgba().to_vec());
+    let marked = badge::with_dot(&Pixels { size, rgba })
+        .filter(|dotted| dotted.size == app_icon.height())
+        .map(|dotted| Image::new_owned(dotted.rgba, dotted.size, dotted.size));
+    (app_icon.clone().to_owned(), marked)
 }
 
 /// The tray icon.
@@ -99,41 +109,26 @@ pub struct Tray<R: Runtime> {
 
 impl<R: Runtime> Tray<R> {
     /// Makes the tray icon with its menu and starts it showing `waiting` requests. `None` when
-    /// the desktop has no tray (see [`TrayState::Missing`]): the reason is logged.
+    /// the desktop has no tray (see [`TrayState::Missing`]), for whatever reason: the log says.
     pub fn build(app: &AppHandle<R>, waiting: usize, badge_on: bool) -> Option<Self> {
-        if !can_show() {
+        let made = can_show().then(|| guarded(|| Self::make(app, waiting, badge_on)));
+        let tray = made.flatten().and_then(|made| {
+            made.map_err(|err| tracing::debug!(%err, "the tray icon was refused"))
+                .ok()
+        });
+        if tray.is_none() {
             tracing::warn!(
-                "this desktop shows no tray icons, so closing the window minimizes it instead"
+                "there is no tray icon here, so closing the window minimizes it instead"
             );
-            return None;
         }
-        match guarded(|| Self::make(app, waiting, badge_on)) {
-            Some(Ok(tray)) => Some(tray),
-            Some(Err(err)) => {
-                tracing::warn!(%err, "no tray icon; closing the window minimizes it instead");
-                None
-            }
-            None => {
-                tracing::warn!(
-                    "the tray icon library is missing; closing the window minimizes it instead"
-                );
-                None
-            }
-        }
+        tray
     }
 
     fn make(app: &AppHandle<R>, waiting: usize, badge_on: bool) -> tauri::Result<Self> {
-        let plain = app
+        let app_icon = app
             .default_window_icon()
-            .cloned()
-            .map(Image::to_owned)
             .ok_or_else(|| tauri::Error::AssetNotFound("the app icon".to_owned()))?;
-        let marked = badge::with_dot(&Pixels {
-            size: plain.width(),
-            rgba: plain.rgba().to_vec(),
-        })
-        .filter(|p| p.size == plain.height())
-        .map(|p| Image::new_owned(p.rgba, p.size, p.size));
+        let (plain, marked) = icons(app_icon);
         let line = MenuItem::with_id(
             app,
             "waiting",
@@ -307,6 +302,19 @@ mod tests {
                 "{close:?} {minimize} {tray:?}"
             );
         }
+    }
+
+    #[test]
+    fn the_tray_icon_with_a_dot_is_the_app_icon_with_the_badge_drawn_on_it() {
+        let app_icon = Image::new_owned(vec![0x20; 32 * 32 * 4], 32, 32);
+        let (plain, marked) = icons(&app_icon);
+        assert_eq!(plain.rgba(), app_icon.rgba());
+        let marked = marked.unwrap();
+        assert_eq!((marked.width(), marked.height()), (32, 32));
+        assert_ne!(marked.rgba(), plain.rgba());
+        // An icon that is not square gets no dot.
+        let wide = Image::new_owned(vec![0; 8 * 4 * 4], 8, 4);
+        assert!(icons(&wide).1.is_none());
     }
 
     #[test]

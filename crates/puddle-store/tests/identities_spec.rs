@@ -12,7 +12,7 @@ use puddle_secrets::{AccountName, HostName, SourceSpec};
 use puddle_store::{
     Author, CollisionWhat, Coverage, CredentialBinding, CredentialChoice, GitDefaults,
     IdentityDraft, IdentityId, Limits, ManualClock, Owner, RepoGitRequest, RepoRef, StartBasis,
-    Store, StoreError, SwitchChange, WorkspaceGit,
+    Store, StoreError, SwitchChange, SwitchSource, WorkspaceGit,
 };
 use puddle_types::{CollectingSink, Event, WorkspaceName};
 
@@ -588,37 +588,45 @@ fn two_changes_of_different_default_switches_made_at_once_both_stick() {
 
 #[test]
 fn a_switch_can_go_back_to_following_the_default() {
+    use SwitchSource::{Default, Own};
+    let sources = |git: &WorkspaceGit| (git.push_from, git.pull_from);
     let (sink, store) = fixture();
     let w = ws("w");
-    assert!(store.workspace_git(&w).unwrap().push_follows_default);
+    assert_eq!(
+        sources(&store.workspace_git(&w).unwrap()),
+        (Default, Default)
+    );
     store
         .change_git_switches(&w, SwitchChange::Set(false), SwitchChange::Set(true))
         .unwrap();
     store.set_git_defaults(Some(true), Some(false)).unwrap();
     let own = store.workspace_git(&w).unwrap();
     assert!(!own.only_push_listed && own.only_pull_listed);
-    assert!(!own.push_follows_default && !own.pull_follows_default);
+    assert_eq!(sources(&own), (Own, Own));
 
     // Dropping one own value follows the default at once and leaves the other switch alone.
     let _ = sink.take();
     let back = store
         .change_git_switches(&w, SwitchChange::FollowDefault, SwitchChange::Keep)
         .unwrap();
-    assert!(back.only_push_listed && back.push_follows_default);
-    assert!(back.only_pull_listed && !back.pull_follows_default);
+    assert!(back.only_push_listed && back.only_pull_listed);
+    assert_eq!(sources(&back), (Default, Own));
     assert!(sink.take().contains(&Event::WorkspaceGitChanged {
         workspace: w.clone()
     }));
 
-    // Setting one and dropping the other is one change; dropping what was never set is fine.
+    // Dropping both, then setting one and dropping the other, is one change each; dropping what
+    // was never set is fine.
     let both = store
         .change_git_switches(&w, SwitchChange::FollowDefault, SwitchChange::FollowDefault)
         .unwrap();
-    assert!(both.push_follows_default && both.pull_follows_default && !both.only_pull_listed);
+    assert_eq!(sources(&both), (Default, Default));
+    assert!(!both.only_pull_listed);
     let mixed = store
         .change_git_switches(&w, SwitchChange::Set(false), SwitchChange::FollowDefault)
         .unwrap();
-    assert!(!mixed.only_push_listed && !mixed.push_follows_default && mixed.pull_follows_default);
+    assert!(!mixed.only_push_listed);
+    assert_eq!(sources(&mixed), (Own, Default));
 }
 
 #[test]

@@ -363,10 +363,29 @@ pub struct WorkspaceGitView {
     pub only_push_listed: bool,
     /// Refuse a fetch from a repository not listed with Pull on (default off).
     pub only_pull_listed: bool,
-    /// The push switch is the default's (the workspace set none of its own, or dropped it).
-    pub push_follows_default: bool,
-    /// The pull switch is the default's.
-    pub pull_follows_default: bool,
+    /// Whose value `only_push_listed` is.
+    pub push_from: SwitchSource,
+    /// Whose value `only_pull_listed` is.
+    pub pull_from: SwitchSource,
+}
+
+/// Whose value a workspace's switch holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SwitchSource {
+    /// The workspace set it.
+    Own,
+    /// The workspace never set one, or sent it back: the default for new workspaces holds.
+    Default,
+}
+
+impl From<store::SwitchSource> for SwitchSource {
+    fn from(source: store::SwitchSource) -> Self {
+        match source {
+            store::SwitchSource::Own => Self::Own,
+            store::SwitchSource::Default => Self::Default,
+        }
+    }
 }
 
 /// The identities a workspace has, replacing its list.

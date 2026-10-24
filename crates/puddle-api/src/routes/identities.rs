@@ -42,8 +42,8 @@ fn git_view(
         repos: git.repos.into_iter().map(GitRepoView::from_store).collect(),
         only_push_listed: git.only_push_listed,
         only_pull_listed: git.only_pull_listed,
-        push_follows_default: git.push_follows_default,
-        pull_follows_default: git.pull_follows_default,
+        push_from: git.push_from.into(),
+        pull_from: git.pull_from.into(),
     })
 }
 

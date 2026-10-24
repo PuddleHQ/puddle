@@ -300,7 +300,7 @@
           {git.only_push_listed
             ? "A push is allowed only to a repository whose Push box is ticked."
             : "Off: a push may go to any repository the credential can write to, and the Push boxes change nothing."}
-          {#if git.push_follows_default}
+          {#if git.push_from === "default"}
             It follows the default for new workspaces.
           {:else}
             <button
@@ -331,7 +331,7 @@
           {git.only_pull_listed
             ? "A fetch is allowed only from a repository whose Pull box is ticked."
             : "Off: a fetch may go to any repository the credential can read, and the Pull boxes change nothing."}
-          {#if git.pull_follows_default}
+          {#if git.pull_from === "default"}
             It follows the default for new workspaces.
           {:else}
             <button

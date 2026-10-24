@@ -16,7 +16,7 @@ use crate::identity::{
 };
 use crate::workspace_git::{
     GitDefaults, GitStart, RepoEntry, RepoGitRequest, RepoRef, StartBasis, SwitchChange,
-    WorkspaceGit,
+    SwitchSource, WorkspaceGit,
 };
 
 const COLUMNS: &str = "id, label, author_name, author_email, credentials, signing, is_default, \
@@ -550,8 +550,8 @@ impl Store {
             repos,
             only_push_listed,
             only_pull_listed,
-            push_follows_default: own_push.is_none(),
-            pull_follows_default: own_pull.is_none(),
+            push_from: SwitchSource::of(own_push),
+            pull_from: SwitchSource::of(own_pull),
         })
     }
 

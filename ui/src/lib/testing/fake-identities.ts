@@ -125,8 +125,8 @@ export class FakeIdentities {
       repos: g.repos,
       only_push_listed: g.push ?? this.gitDefaults.only_push_listed,
       only_pull_listed: g.pull ?? this.gitDefaults.only_pull_listed,
-      push_follows_default: g.push === null,
-      pull_follows_default: g.pull === null,
+      push_from: g.push === null ? "default" : "own",
+      pull_from: g.pull === null ? "default" : "own",
     };
   }
 

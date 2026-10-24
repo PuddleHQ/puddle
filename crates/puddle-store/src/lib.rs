@@ -56,5 +56,5 @@ pub use store::{
 pub use sweeper::{DEFAULT_SWEEP_PERIOD, SWEEP_PROBLEM, Sweeper};
 pub use workspace_git::{
     GitDefaults, GitStart, RepoEntry, RepoGitRequest, RepoRef, StartBasis, SwitchChange,
-    WorkspaceGit,
+    SwitchSource, WorkspaceGit,
 };

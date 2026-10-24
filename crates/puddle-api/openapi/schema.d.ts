@@ -3586,6 +3586,11 @@ export interface components {
             /** @description A `stored` source naming the new entry. */
             source: components["schemas"]["CredentialSource"];
         };
+        /**
+         * @description Whose value a workspace's switch holds.
+         * @enum {string}
+         */
+        SwitchSource: "own" | "default";
         /** @description A certificate copied into workspaces. */
         SyncedRoot: {
             /** @description SHA-256 of the certificate, lower-case hex. */
@@ -3753,10 +3758,10 @@ export interface components {
             only_pull_listed: boolean;
             /** @description Refuse a push to a repository not listed with Push on (default on). */
             only_push_listed: boolean;
-            /** @description The pull switch is the default's. */
-            pull_follows_default: boolean;
-            /** @description The push switch is the default's (the workspace set none of its own, or dropped it). */
-            push_follows_default: boolean;
+            /** @description Whose value `only_pull_listed` is. */
+            pull_from: components["schemas"]["SwitchSource"];
+            /** @description Whose value `only_push_listed` is. */
+            push_from: components["schemas"]["SwitchSource"];
             /** @description The repository table. */
             repos: components["schemas"]["GitRepoView"][];
             /** @description The workspace. */

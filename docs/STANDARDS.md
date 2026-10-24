@@ -298,7 +298,8 @@ the owner, then tagged `vX.Y.Z` on `main`.
   although every test passed. `scripts/coverage-run.sh` (the `coverage` gate runs the tests through it) sets
   `LLVM_PROFDATA_FLAGS=--failure-mode=all`, so the merge fails only when no file is readable, and prints a
   `warning: coverage profile dropped: <file> (<reason>)` line per skipped file (a GitHub annotation in CI).
-  The ratchet and diff-coverage still fail when the counters really went missing.
+  The ratchet and diff-coverage still fail when a material share of the counters went missing (a loss under
+  the 0.05-point wobble below is not seen), so read the warning.
 - **The ratchet allows 0.05 points of wobble, the floors none.** Measurement varies by a few hundredths
   between runs of the same code, and a baseline taken from one run would sometimes fail a rerun of the
   same code, which costs a full check. So each total (lines, regions) passes while the value as printed

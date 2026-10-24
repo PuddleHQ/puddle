@@ -1,47 +1,65 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Runs the coverage command given as arguments (scripts/check.sh: `cargo llvm-cov nextest ...`) so that one
-# unreadable profile file does not fail the merge. The instrumented runtime writes one `.profraw` file per
-# process when it exits; a process stopped while it writes leaves a short file, and `llvm-profdata merge`
-# fails the whole merge on one such file although every test passed. `--failure-mode=all` (through
-# LLVM_PROFDATA_FLAGS, which cargo-llvm-cov hands to the merge) makes the merge fail only when no file is
-# readable. The dropped file is named in a warning line (a GitHub annotation in CI), so a loss is never
-# silent; the ratchet and the diff-coverage gate still fail when the counters really went missing.
-# A caller that sets the flag itself (a lane that reports dropped files its own way) gets no second warning.
-# Exit status: the command's.
+# Runs the Rust tests with coverage (`cargo llvm-cov nextest --no-report <args>`) and sets aside the profile files
+# that cannot be read, so the report step that follows merges readable files only (scripts/check.sh runs
+# `cargo llvm-cov report` after this script). The instrumented runtime writes one `.profraw` file per process
+# when it exits; a process stopped while it writes leaves a short or zeroed file, and `llvm-profdata merge`
+# fails on one such file although every test passed. cargo-llvm-cov merges in several batches, so the merge's own
+# `--failure-mode=all` does not help when one batch holds only unreadable files. Checking each file first does.
+# A dropped file is renamed to `<name>.profraw.dropped` (kept as evidence, no longer merged) and named in a
+# warning line (a GitHub annotation in CI), so a loss is never silent. When no readable file is left the report
+# fails, and so does the ratchet and diff-coverage gate when the counters really went missing.
+# usage: coverage-run.sh <cargo> <nextest args...>      Exit status: the test run's, else 0.
 set -u
 
-[ "$#" -gt 0 ] || {
-    echo "usage: coverage-run.sh <command> [args...]" >&2
+[ "$#" -gt 1 ] || {
+    echo "usage: coverage-run.sh <cargo> <nextest args...>" >&2
+    exit 2
+}
+cargo=$1
+shift
+
+"$cargo" llvm-cov nextest --no-report "$@"
+rc=$?
+[ "$rc" = 0 ] || exit "$rc"
+
+# llvm-profdata of the same LLVM as the instrumented code first: another version rejects its profile format.
+profdata=${LLVM_PROFDATA:-}
+[ -n "$profdata" ] || profdata=$(find "$(rustc --print sysroot)/lib/rustlib" -name llvm-profdata -type f 2>/dev/null | head -n 1)
+[ -n "$profdata" ] || profdata=$(command -v llvm-profdata || true)
+[ -n "$profdata" ] || {
+    echo "coverage-run: llvm-profdata not found (rustup component add llvm-tools-preview)" >&2
     exit 2
 }
 
-report=1
-case "${LLVM_PROFDATA_FLAGS:-}" in
-*--failure-mode=*) report=0 ;;
-*) LLVM_PROFDATA_FLAGS="${LLVM_PROFDATA_FLAGS:+$LLVM_PROFDATA_FLAGS }--failure-mode=all" ;;
-esac
-export LLVM_PROFDATA_FLAGS
+# The profile files are in the target directory cargo-llvm-cov reports, or in its `llvm-cov-target` subdirectory
+# (where `nextest` builds); both are searched, one level deep.
+dir=$("$cargo" llvm-cov show-env --sh | sed -n "s/^export CARGO_LLVM_COV_TARGET_DIR=//p" | tr -d "'\"")
+[ -d "$dir" ] || {
+    echo "coverage-run: the profile directory '$dir' does not exist" >&2
+    exit 2
+}
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/coverage-run.XXXXXX") || exit 2
 trap 'rm -rf "$tmp"' EXIT
 
-# The status goes through a file: a pipe into tee would hide it in a POSIX shell.
-(
-    "$@"
-    echo $? >"$tmp/rc"
-) 2>&1 | tee "$tmp/out"
-rc=$(cat "$tmp/rc" 2>/dev/null) || rc=1
+# `llvm-profdata show` reads a whole file and fails on a bad one (`error: <file>: <reason>`); eight at a time,
+# each failure one tab-separated line (short enough to be written whole).
+export profdata
+# shellcheck disable=SC2016 # the script text is for the inner shell
+find "$dir" "$dir/llvm-cov-target" -maxdepth 1 -name '*.profraw' -type f -print0 2>/dev/null | xargs -0 -r -P 8 -n 32 sh -c '
+    for f; do
+        err=$("$profdata" show "$f" 2>&1 >/dev/null) && continue
+        reason=${err#error: "$f": }
+        printf "%s\t%s\n" "$f" "$(printf "%s" "$reason" | tr "\n\t" "  " | cut -c1-200)"
+    done' sh >"$tmp/bad" 2>/dev/null
 
-if [ "$report" = 1 ]; then
-    # llvm-profdata: `warning: <path>.profraw: <reason>`
-    grep -E '^warning: .*\.profraw: ' "$tmp/out" | while IFS= read -r line; do
-        rest=${line#warning: }
-        file=${rest%%.profraw: *}.profraw
-        reason=${rest#*.profraw: }
-        msg="coverage profile dropped: $file ($reason); its counters are missing from the report"
-        echo "warning: $msg" >&2
-        [ -z "${GITHUB_ACTIONS:-}" ] || echo "::warning title=coverage profile dropped::$msg"
-    done
-fi
-exit "$rc"
+sort -u "$tmp/bad" | while IFS="$(printf '\t')" read -r file reason; do
+    [ -n "$file" ] || continue
+    mv -f "$file" "$file.dropped" 2>/dev/null || rm -f "$file"
+    # The shape of llvm-profdata's own merge warning, which the host lanes' evidence block reads.
+    msg="$file: $reason; coverage profile dropped, its counters are missing from the report"
+    echo "warning: $msg" >&2
+    [ -z "${GITHUB_ACTIONS:-}" ] || echo "::warning title=coverage profile dropped::$msg"
+done
+exit 0

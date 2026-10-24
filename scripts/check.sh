@@ -270,15 +270,15 @@ run_gate() {
         RUSTDOCFLAGS="-D warnings" "$cargo" doc --workspace $skip_app --no-deps --all-features --locked
         ;;
     coverage | coverage-ratchet)
-        # The tests with coverage, then the ratchet (floors above, baseline committed) and the
+        # The tests with coverage (unreadable profile files set aside), the reports, then the ratchet (floors above, baseline committed) and the
         # diff-coverage gate on the lcov report. `coverage-ratchet` is the same run; either raises
         # scripts/coverage-baseline.json when coverage went up (not in CI), for you to commit.
         ui_install
         target=${CARGO_TARGET_DIR:-target}
         # shellcheck disable=SC2086
-        scripts/coverage-run.sh "$cargo" llvm-cov nextest --workspace $skip_app --all-features --locked \
-            --profile "${NEXTEST_PROFILE:-default}" \
-            --lcov --output-path "$target/lcov.info"
+        scripts/coverage-run.sh "$cargo" --workspace $skip_app --all-features --locked \
+            --profile "${NEXTEST_PROFILE:-default}"
+        "$cargo" llvm-cov report --lcov --output-path "$target/lcov.info"
         "$cargo" llvm-cov report --summary-only
         "$cargo" llvm-cov report --json --summary-only --output-path "$target/coverage-summary.json"
         ratchet="--summary $target/coverage-summary.json --baseline scripts/coverage-baseline.json"

@@ -114,15 +114,18 @@ export class NoticeWatcher {
     }
   }
 
-  /** Direct SSH failed in a way the `ssh` client can't show; false when the event is not that. */
+  /** Direct SSH failed or recovered in a way the `ssh` client can't show; false when the event is neither. */
   #sshFailed(raw: unknown): boolean {
-    if (
-      typeof raw !== "object" ||
-      raw === null ||
-      (raw as { type?: unknown }).type !== "workspace_ssh_failed"
-    ) {
-      return false;
+    if (typeof raw !== "object" || raw === null) return false;
+    const type = (raw as { type?: unknown }).type;
+    if (type === "workspace_ssh_recovered") {
+      const { workspace } = raw as { workspace?: unknown };
+      if (typeof workspace === "string") {
+        this.#notifier.resolve(sshKey(workspace));
+      }
+      return true;
     }
+    if (type !== "workspace_ssh_failed") return false;
     const { workspace, reason } = raw as {
       workspace?: unknown;
       reason?: unknown;

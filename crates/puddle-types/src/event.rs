@@ -195,6 +195,12 @@ pub enum Event {
         /// What went wrong, for the user.
         reason: String,
     },
+    /// A workspace's direct SSH accepts connections again after a [`Self::WorkspaceSshFailed`]
+    /// that said it kept trying. The app withdraws that notice.
+    WorkspaceSshRecovered {
+        /// The workspace.
+        workspace: WorkspaceName,
+    },
     /// A workspace's repository list changed (an entry was added, managed, cloned again or
     /// removed). Carries nothing more: refetch `GET /api/workspaces/{id}` and its checkouts.
     WorkspaceRepositoriesChanged {
@@ -434,7 +440,8 @@ impl Event {
             | Self::WorkspaceShellInitChanged { workspace }
             | Self::WorkspaceShellInitRestored { workspace }
             | Self::WorkspaceRepositoriesChanged { workspace }
-            | Self::WorkspaceSshFailed { workspace, .. } => Some(workspace),
+            | Self::WorkspaceSshFailed { workspace, .. }
+            | Self::WorkspaceSshRecovered { workspace } => Some(workspace),
             Self::PendingOpened { request } => Some(&request.workspace),
             Self::RulesChanged {}
             | Self::IdentitiesChanged {}
@@ -788,6 +795,13 @@ mod tests {
                 Some(WorkspaceName::new("box").unwrap()),
             ),
             (
+                Event::WorkspaceSshRecovered {
+                    workspace: WorkspaceName::new("box").unwrap(),
+                },
+                r#"{"type":"workspace_ssh_recovered","workspace":"box"}"#,
+                Some(WorkspaceName::new("box").unwrap()),
+            ),
+            (
                 Event::CredentialSignInNeeded {
                     host: "github.com".into(),
                     source: "gh account me on github.com".into(),
@@ -934,6 +948,7 @@ mod tests {
                 "workspace_shell_init_changed",
                 "workspace_shell_init_restored",
                 "workspace_ssh_failed",
+                "workspace_ssh_recovered",
                 "workspace_repositories_changed",
                 "credential_sign_in_needed",
                 "git_access_denied",

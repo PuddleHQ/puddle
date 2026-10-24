@@ -46,6 +46,10 @@ pub trait SshTarget: Send + Sync + 'static {
         let _ = reason;
     }
 
+    /// Tells the owner that the endpoint accepts clients again after a [`SshTarget::failed`]
+    /// that said it kept trying. The default does nothing.
+    fn recovered(&self) {}
+
     /// Serves one SSH connection on `stream` until it ends. Must not time out an idle session.
     ///
     /// # Errors
@@ -162,7 +166,7 @@ async fn accept_loop<T: SshTarget>(
             Some(_) = sessions.join_next(), if !sessions.is_empty() => {}
             accepted = listener.accept() => match accepted {
                 Ok(conn) => {
-                    accept_failing = false;
+                    accept_recovered(|| target.recovered(), &mut accept_failing);
                     next_id += 1;
                     sessions.spawn(session(target.clone(), conn, next_id));
                 }
@@ -201,6 +205,13 @@ fn accept_failed(report: impl FnOnce(String), failing: &mut bool, error: &IpcErr
         report(format!(
             "the SSH endpoint could not accept a connection ({error}); it keeps trying"
         ));
+    }
+}
+
+/// Reports that accepting works again, once, after a failure that was reported.
+fn accept_recovered(report: impl FnOnce(), failing: &mut bool) {
+    if std::mem::take(failing) {
+        report();
     }
 }
 
@@ -264,6 +275,19 @@ mod tests {
     }
 
     #[test]
+    fn a_recovery_is_reported_once_and_only_after_a_reported_failure() {
+        let mut reports = 0;
+        let mut failing = false;
+        accept_recovered(|| reports += 1, &mut failing);
+        assert_eq!(reports, 0, "nothing failed, nothing to withdraw");
+        failing = true;
+        accept_recovered(|| reports += 1, &mut failing);
+        accept_recovered(|| reports += 1, &mut failing);
+        assert_eq!(reports, 1);
+        assert!(!failing);
+    }
+
+    #[test]
     fn starting_outside_a_runtime_is_refused() {
         struct Never;
         impl SshTarget for Never {
@@ -291,6 +315,9 @@ mod tests {
         assert!(matches!(err, IpcError::NoRuntime), "{err}");
         // The helper target itself, so it is no dead code.
         assert_eq!(Never.label(), "never");
+        // The reports default to doing nothing.
+        Never.failed("x");
+        Never.recovered();
         rt.block_on(async {
             assert!(Never.admit().await.is_err());
             Never.serve(tokio::io::duplex(1).0).await.unwrap();

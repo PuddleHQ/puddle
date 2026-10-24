@@ -186,3 +186,87 @@ for (const scheme of ["light", "dark"] as const) {
     expect(await axeViolations(page)).toEqual([]);
   });
 }
+
+test("a direct SSH failure shows its cause and a way to the workspace, and ends when the workspace stops", async ({
+  page,
+  backend,
+}) => {
+  await open(page, backend);
+  await emitUntilShown(
+    backend,
+    page,
+    {
+      type: "workspace_ssh_failed",
+      workspace: "web-shop",
+      reason:
+        "the SSH endpoint stopped accepting connections (the listener closed); restart the workspace to get direct SSH back",
+    },
+    /Direct SSH to web-shop failed\./,
+  );
+  await expect(
+    notices(page).getByText(/the listener closed\); restart the workspace/),
+  ).toBeVisible();
+  await expect(
+    notices(page).getByText(/The workspace itself keeps running\./),
+  ).toBeVisible();
+  expect(await axeViolations(page)).toEqual([]);
+  await notices(page).getByRole("link", { name: "Open workspace" }).click();
+  await expect(page).toHaveURL(/\/workspaces\/web-shop$/);
+  // The endpoint it reported on is gone once the workspace stops.
+  await backend.control.emit({
+    type: "status_changed",
+    workspace: "web-shop",
+    status: "stopped",
+  });
+  await expect(notices(page).getByText(/Direct SSH to web-shop/)).toHaveCount(
+    0,
+  );
+});
+
+test("an activity log that cannot be written is a notice with the reason, and ends with the next good write", async ({
+  page,
+  backend,
+}) => {
+  await open(page, backend);
+  const key = "connection-records";
+  await expect(async () => {
+    await backend.control.step({
+      do: "problem",
+      key,
+      title: "Puddle could not write to its activity log",
+      detail:
+        "the disk is full <b>now</b>. Connections still work, but the activity list is missing the ones made since this started. A full disk is the usual cause: free some space.",
+    });
+    await expect(
+      notices(page).getByText("Puddle could not write to its activity log"),
+    ).toBeVisible({ timeout: 500 });
+  }).toPass();
+  await expect(notices(page).getByText(/free some space/)).toBeVisible();
+  // The reason is text, not markup.
+  await expect(notices(page).locator("b")).toHaveCount(0);
+  expect(await axeViolations(page)).toEqual([]);
+  await backend.control.step({ do: "clear_problem", key });
+  await expect(
+    notices(page).getByText("Puddle could not write to its activity log"),
+  ).toHaveCount(0);
+});
+
+test("a refused key stops the event stream for good and the banner says what to do", async ({
+  page,
+  backend,
+}) => {
+  await backend.control.reset("lived-in");
+  await backend.signIn(page);
+  let attempts = 0;
+  await page.route("**/api/events*", (route) => {
+    attempts += 1;
+    return route.fulfill({ status: 401, body: "no" });
+  });
+  await page.goto("/rules");
+  const banner = page.getByRole("status").filter({
+    hasText: /Live updates stopped: the event stream refused this app's key/,
+  });
+  await expect(banner).toContainText("Open Puddle from its app window");
+  // The first refusal ended it: nothing asked again before the banner could be read.
+  expect(attempts).toBe(1);
+});

@@ -2,7 +2,8 @@
 // The event stream reader (ADR 0004). `EventSource` can't send the bearer token, so this reads
 // `GET /api/events` with `fetch` and feeds the bytes to eventsource-parser. It is an async
 // iterator of `Event`: it reconnects with backoff, tells the caller when a refetch is needed
-// (`lagged`, or any reconnect, because events may have been missed), and ends when aborted.
+// (`lagged`, or any reconnect, because events may have been missed), and ends when aborted or
+// when the service refuses the app's key (401/403: the same key will be refused again).
 import { createParser } from "eventsource-parser";
 import { authHeaders, bootstrapToken } from "./connection.ts";
 import type { components } from "./schema.d.ts";
@@ -10,7 +11,12 @@ import type { components } from "./schema.d.ts";
 export type PuddleEvent = components["schemas"]["Event"];
 export type Lagged = components["schemas"]["Lagged"];
 
-export type StreamState = "connecting" | "connected" | "reconnecting";
+export type StreamState =
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  /** The service refused the app's key; the stream has stopped and will not retry. */
+  | "refused";
 
 export interface EventStreamOptions {
   /** Ends the stream; the iterator then returns without throwing. */
@@ -69,7 +75,10 @@ function streamUrl(options: EventStreamOptions): string {
     : `${base}?workspace=${encodeURIComponent(options.workspace)}`;
 }
 
-/** Yields events until `signal` aborts. Never throws for network or HTTP errors: it retries. */
+/**
+ * Yields events until `signal` aborts. Never throws for network or HTTP errors: it retries,
+ * except after a 401 or 403, where it reports why and ends (the key won't change by waiting).
+ */
 export async function* eventStream(
   options: EventStreamOptions,
 ): AsyncGenerator<PuddleEvent, void> {
@@ -86,6 +95,7 @@ export async function* eventStream(
 
   while (!signal.aborted) {
     let failure = "the connection to the event stream failed";
+    let refused = false;
     try {
       const response = await doFetch(streamUrl(options), {
         signal,
@@ -95,10 +105,10 @@ export async function* eventStream(
         },
       });
       if (!response.ok || response.body === null) {
-        failure =
-          response.status === 401 || response.status === 403
-            ? `the event stream refused this app's key (status ${response.status})`
-            : `the event stream answered ${response.status}`;
+        refused = response.status === 401 || response.status === 403;
+        failure = refused
+          ? `the event stream refused this app's key (status ${response.status})`
+          : `the event stream answered ${response.status}`;
         throw new Error(`event stream answered ${response.status}`);
       }
       if (everConnected) options.onResync?.("reconnect");
@@ -141,6 +151,10 @@ export async function* eventStream(
       options.onError?.(failure);
     }
     if (signal.aborted) break;
+    if (refused) {
+      options.onState?.("refused");
+      return;
+    }
     options.onState?.("reconnecting");
     const delay = backoff[Math.min(failures, backoff.length - 1)] ?? 1000;
     failures += 1;

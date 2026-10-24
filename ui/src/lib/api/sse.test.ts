@@ -199,7 +199,6 @@ describe("eventStream", () => {
     const reasons: string[] = [];
     const t = setup([
       () => new Response("nope", { status: 500 }),
-      () => new Response("no", { status: 401 }),
       () => {
         throw new TypeError("network down");
       },
@@ -208,10 +207,35 @@ describe("eventStream", () => {
     await take(eventStream({ ...t.base, onError: (r) => reasons.push(r) }), 1);
     expect(reasons).toEqual([
       "the event stream answered 500",
-      "the event stream refused this app's key (status 401)",
       "the connection to the event stream failed",
     ]);
   });
+
+  it.each([401, 403])(
+    "stops after a %i, saying why, instead of retrying with the same key",
+    async (code) => {
+      const reasons: string[] = [];
+      const states: string[] = [];
+      const t = setup([
+        () => new Response("no", { status: code }),
+        () => sse([status("never reached")]),
+      ]);
+      const seen: PuddleEvent[] = [];
+      for await (const event of eventStream({
+        ...t.base,
+        onError: (r) => reasons.push(r),
+        onState: (s) => states.push(s),
+      })) {
+        seen.push(event);
+      }
+      expect(seen).toEqual([]);
+      expect(reasons).toEqual([
+        `the event stream refused this app's key (status ${code})`,
+      ]);
+      expect(states).toEqual(["connecting", "refused"]);
+      expect(t.sleeps).toEqual([]);
+    },
+  );
 
   it("uses the default schedule when given none or an empty one", async () => {
     const down = () => new Response("", { status: 500 });

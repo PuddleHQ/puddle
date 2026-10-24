@@ -103,7 +103,7 @@ async fn a_name_the_site_holds_answers_over_plain_http_and_tls_and_the_site_reco
 
 #[tokio::test]
 async fn a_probe_of_a_name_that_cannot_exist_is_answered_before_the_real_request_goes_through() {
-    let web = WebHost::start(&["one.test"], WebOptions { alt_svc: None }).await;
+    let web = WebHost::start(&["one.test"], WebOptions::default()).await;
     let proxy = NameProxy::start(&[]).await;
     web.register(&proxy, &["one.test"]);
     let mut conn = through(

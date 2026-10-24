@@ -26,11 +26,38 @@ use tokio_rustls::TlsAcceptor;
 use super::git_host::{Seen, Versions, tls_config};
 use super::{LOCAL, NameProxy};
 
+/// An answer a [`Responder`] gives instead of the default `200` with the target echoed.
+#[derive(Clone, Debug)]
+pub struct WebAnswer {
+    /// The status code.
+    pub status: u16,
+    /// The `content-type`.
+    pub content_type: &'static str,
+    /// The body.
+    pub body: String,
+}
+
+/// Decides the answer to a request from what the site saw of it (headers, with the `host` first,
+/// and the body); `None` is the default answer. A site that stands in for a service with an API
+/// of its own (a token endpoint) uses it.
+pub type Responder = Arc<dyn Fn(&Seen) -> Option<WebAnswer> + Send + Sync>;
+
 /// What the fake website answers with.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct WebOptions {
     /// An `alt-svc` header value sent on every TLS answer (a site that offers HTTP/3).
     pub alt_svc: Option<String>,
+    /// Answers some requests itself (see [`Responder`]).
+    pub responder: Option<Responder>,
+}
+
+impl std::fmt::Debug for WebOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebOptions")
+            .field("alt_svc", &self.alt_svc)
+            .field("responder", &self.responder.as_ref().map(|_| "..."))
+            .finish()
+    }
 }
 
 struct State {
@@ -209,20 +236,35 @@ async fn handle(
     if let (true, Some(alt_svc)) = (tls, &state.options.alt_svc) {
         answer = answer.header("alt-svc", alt_svc);
     }
-    let answer = answer
-        .body(Full::new(Bytes::from(format!("lab web host: {target}\n"))))
-        .unwrap();
+    let mut seen = Seen {
+        method: parts.method.as_str().to_owned(),
+        target,
+        headers,
+        version,
+        status: 200,
+        body: body.iter().copied().take(64 * 1024).collect(),
+    };
+    let chosen = state.options.responder.as_ref().and_then(|ask| ask(&seen));
+    let answer = if let Some(chosen) = chosen {
+        seen.status = chosen.status;
+        Response::builder()
+            .status(chosen.status)
+            .header("content-type", chosen.content_type)
+            .header("x-lab-web-host", "answered")
+            .body(Full::new(Bytes::from(chosen.body)))
+            .unwrap()
+    } else {
+        answer
+            .body(Full::new(Bytes::from(format!(
+                "lab web host: {}\n",
+                seen.target
+            ))))
+            .unwrap()
+    };
     state
         .seen
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
-        .push(Seen {
-            method: parts.method.as_str().to_owned(),
-            target,
-            headers,
-            version,
-            status: 200,
-            body: body.iter().copied().take(64 * 1024).collect(),
-        });
+        .push(seen);
     answer
 }

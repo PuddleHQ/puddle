@@ -12,7 +12,7 @@
 mod support;
 
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -3429,7 +3429,7 @@ async fn the_global_default_decides_for_workspaces_without_their_own_switch() {
 
 /// The line Puddle adds to the user's ssh config. On Windows the product writes the path with
 /// forward slashes (OpenSSH accepts them, and a backslash is an escape for some parsers).
-fn include_line(path: &Path) -> String {
+fn include_line(path: &std::path::Path) -> String {
     let text = path.display().to_string();
     let text = if cfg!(windows) {
         text.replace('\\', "/")

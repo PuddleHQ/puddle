@@ -194,6 +194,17 @@ pub fn write_atomic(path: &Path, body: &[u8]) -> io::Result<()> {
     result
 }
 
+/// Puts the finished file `from` in place of the existing file `to` in one step. On Unix this is
+/// a rename. On Windows it is `ReplaceFileW`, so `to` keeps the access list it had (a rename
+/// would give it the access list of `from`, which was made owner-only or inherited).
+///
+/// # Errors
+///
+/// Any file-system error; `from` and `to` are left as they were.
+pub fn replace_file(from: &Path, to: &Path) -> io::Result<()> {
+    platform::replace_file(from, to)
+}
+
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     bytes.iter().fold(String::new(), |mut out, b| {

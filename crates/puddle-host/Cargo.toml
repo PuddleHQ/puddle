@@ -53,6 +53,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["fs", "macros", "net", "rt", "sync", "time"] }
 tracing = { workspace = true }
 url = { workspace = true }
+zeroize = { workspace = true }
 
 [dev-dependencies]
 microsandbox = { workspace = true }

@@ -15,7 +15,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::io;
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
@@ -93,8 +93,7 @@ impl SshSetup {
 
     /// Makes `workspace`'s entry name `endpoint` (the caller has checked the direct SSH gate),
     /// and the user's ssh config include Puddle's file. The workspace's host key is forgotten
-    /// first: a sandbox made anew has a new key, and a key left over would stop `ssh` from
-    /// connecting.
+    /// when the endpoint is a new one, and kept when it is the endpoint the entry already names.
     ///
     /// # Errors
     ///
@@ -112,11 +111,17 @@ impl SshSetup {
             identity: login.private_path(),
             known_hosts_dir: &self.dir.join(KNOWN_HOSTS_DIR),
         };
+        // A sandbox made anew has a new endpoint and a new host key, and a key left over would stop
+        // `ssh` from connecting. The same endpoint is the same sandbox: its key stays, so every
+        // later attach is checked against it.
+        let endpoint_changed = before.as_deref() != Some(endpoint);
         let written = render(&entries, &context).and_then(|text| {
-            match std::fs::remove_file(&known_hosts) {
-                Ok(()) => {}
-                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-                Err(e) => return Err(format!("cannot forget the old host key: {e}")),
+            if endpoint_changed {
+                match std::fs::remove_file(&known_hosts) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(format!("cannot forget the old host key: {e}")),
+                }
             }
             puddle_fs::private::create_dir(context.known_hosts_dir)
                 .and_then(|()| {
@@ -222,6 +227,8 @@ fn render(
              \x20   KbdInteractiveAuthentication no\n\
              \x20   ForwardAgent no\n\
              \x20   ForwardX11 no\n\
+             \x20   ControlMaster no\n\
+             \x20   ControlPath none\n\
              \x20   UserKnownHostsFile {known_hosts}\n\
              \x20   HostKeyAlias {host}\n\
              \x20   StrictHostKeyChecking accept-new\n"
@@ -272,28 +279,39 @@ fn proxy_command(bridge: &Path, endpoint: &Path) -> Result<String, String> {
 
 /// Makes the file `user` start with `Include "<puddle's file>"`, changing nothing else in it.
 /// A symlinked config is followed, the file's permissions stay, and a line that is already there
-/// (anywhere in the file) is enough.
+/// at the top level (before the first `Host` or `Match`, where `ssh` applies it to every host) is
+/// enough. The file is not touched when it is read-only, when it is a link to a file that is not
+/// there, or when something else saved it while Puddle was editing.
 ///
 /// # Errors
 ///
-/// Any file-system error, or a path that cannot be quoted.
+/// Any file-system error, one of the refusals above, or a path that cannot be quoted.
 pub(crate) fn ensure_include(user: &Path, puddle: &Path) -> Result<(), String> {
     let line = format!("Include {}", quoted(puddle)?);
     let target = match std::fs::canonicalize(user) {
         Ok(real) => real,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => user.to_path_buf(),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            let is_link = std::fs::symlink_metadata(user).is_ok_and(|m| m.is_symlink());
+            if is_link {
+                return Err(format!(
+                    "{} is a symbolic link to a file that is not there, and Puddle will not replace the link",
+                    user.display()
+                ));
+            }
+            user.to_path_buf()
+        }
         Err(e) => return Err(e.to_string()),
     };
-    let existing = match std::fs::read(&target) {
-        Ok(bytes) => Some(bytes),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+    let (existing, seen) = match std::fs::read(&target) {
+        Ok(bytes) => {
+            let meta = std::fs::metadata(&target).map_err(|e| e.to_string())?;
+            (Some(bytes), Some(meta))
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => (None, None),
         Err(e) => return Err(e.to_string()),
     };
     let old = existing.as_deref().unwrap_or_default();
-    if old
-        .split(|&b| b == b'\n')
-        .any(|l| l.trim_ascii() == line.as_bytes())
-    {
+    if has_top_level_line(old, line.as_bytes()) {
         return Ok(());
     }
     let eol: &[u8] = if old.windows(2).any(|w| w == b"\r\n") {
@@ -307,15 +325,47 @@ pub(crate) fn ensure_include(user: &Path, puddle: &Path) -> Result<(), String> {
         new.extend_from_slice(eol);
         new.extend_from_slice(old);
     }
-    if existing.is_none() {
+    let Some(seen) = seen else {
         return puddle_fs::private::write_atomic(&target, &new).map_err(|e| e.to_string());
+    };
+    if seen.permissions().readonly() {
+        return Err(format!(
+            "{} is read-only, and Puddle will not change it",
+            target.display()
+        ));
     }
-    replace_keeping_permissions(&target, &new).map_err(|e| e.to_string())
+    replace_keeping_permissions(&target, &new, &seen).map_err(|e| e.to_string())
 }
 
-fn replace_keeping_permissions(target: &Path, body: &[u8]) -> io::Result<()> {
+/// Whether `line` is in `old` before its first `Host` or `Match` line: after one, `ssh` applies
+/// an `Include` only to the hosts that block matches.
+fn has_top_level_line(old: &[u8], line: &[u8]) -> bool {
+    for l in old.split(|&b| b == b'\n') {
+        let l = l.trim_ascii();
+        if l == line {
+            return true;
+        }
+        let keyword = l
+            .split(|b| b.is_ascii_whitespace() || *b == b'=')
+            .next()
+            .unwrap_or_default();
+        if keyword.eq_ignore_ascii_case(b"Host") || keyword.eq_ignore_ascii_case(b"Match") {
+            return false;
+        }
+    }
+    false
+}
+
+/// Replaces `target` with `body`, with the permissions it has, through a temporary copy in the
+/// same folder. `seen` is what `target` was when `body` was made: if its length or time of
+/// change differs just before the swap, another program saved it meanwhile and its edit would be
+/// lost, so nothing is replaced.
+fn replace_keeping_permissions(
+    target: &Path,
+    body: &[u8],
+    seen: &std::fs::Metadata,
+) -> io::Result<()> {
     let dir = target.parent().unwrap_or_else(|| Path::new("."));
-    let permissions = std::fs::metadata(target)?.permissions();
     let mut suffix = [0u8; 6];
     getrandom::fill(&mut suffix).map_err(|e| io::Error::other(e.to_string()))?;
     let tmp = dir.join(format!(
@@ -325,9 +375,20 @@ fn replace_keeping_permissions(target: &Path, body: &[u8]) -> io::Result<()> {
         ])
     ));
     let result = (|| {
-        std::fs::write(&tmp, body)?;
-        std::fs::set_permissions(&tmp, permissions)?;
-        std::fs::rename(&tmp, target)
+        // Owner-only from the first byte; the file's own permissions go on when it is complete.
+        let mut file = puddle_fs::private::create_file(&tmp)?;
+        file.write_all(body)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::set_permissions(&tmp, seen.permissions())?;
+        let now = std::fs::metadata(target)?;
+        if now.len() != seen.len() || now.modified()? != seen.modified()? {
+            return Err(io::Error::other(format!(
+                "{} was changed by another program meanwhile",
+                target.display()
+            )));
+        }
+        puddle_fs::private::replace_file(&tmp, target)
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
@@ -372,6 +433,8 @@ mod tests {
             "    IdentityFile \"/data/ssh/login_ed25519\"\n",
             "    IdentitiesOnly yes\n",
             "    IdentityAgent none\n",
+            "    ControlMaster no\n",
+            "    ControlPath none\n",
             "    UserKnownHostsFile \"/data/ssh/known_hosts/web\"\n",
             "    HostKeyAlias puddle-web\n",
         ] {
@@ -637,14 +700,160 @@ mod tests {
         }
 
         #[test]
-        fn an_include_the_user_already_has_is_enough_even_when_it_is_not_first() {
+        fn a_top_level_include_the_user_already_has_is_enough_even_when_it_is_not_first() {
             let dir = tempfile::tempdir().unwrap();
             let user = dir.path().join("config");
             let puddle = dir.path().join("p");
-            let text = format!("Host a\n  Include \"{}\"\n", puddle.display());
+            let text = format!(
+                "# mine\nSendEnv LANG\n  Include \"{}\"\nHost a\n  User x\n",
+                puddle.display()
+            );
             std::fs::write(&user, &text).unwrap();
             ensure_include(&user, &puddle).unwrap();
             assert_eq!(std::fs::read_to_string(&user).unwrap(), text);
+        }
+
+        #[test]
+        fn an_include_inside_a_host_or_match_block_does_not_count() {
+            let dir = tempfile::tempdir().unwrap();
+            let puddle = dir.path().join("p");
+            let line = format!("Include \"{}\"", puddle.display());
+            for opener in [
+                "Host a",
+                "host a",
+                "HOST=a",
+                "Host\ta",
+                "Match all",
+                "match host a",
+                "  Host *",
+            ] {
+                let user = dir.path().join("config");
+                let original = format!("{opener}\n  {line}\n  User x\n");
+                std::fs::write(&user, &original).unwrap();
+                ensure_include(&user, &puddle).unwrap();
+                let now = std::fs::read_to_string(&user).unwrap();
+                assert_eq!(now, format!("{line}\n\n{original}"), "{opener}");
+                ensure_include(&user, &puddle).unwrap();
+                assert_eq!(std::fs::read_to_string(&user).unwrap(), now, "{opener}");
+            }
+        }
+
+        #[test]
+        fn a_word_that_only_starts_like_host_does_not_end_the_top_level() {
+            let dir = tempfile::tempdir().unwrap();
+            let user = dir.path().join("config");
+            let puddle = dir.path().join("p");
+            let text = format!(
+                "HostbasedAuthentication no\nMatchless yes\nInclude \"{}\"\n",
+                puddle.display()
+            );
+            std::fs::write(&user, &text).unwrap();
+            ensure_include(&user, &puddle).unwrap();
+            assert_eq!(std::fs::read_to_string(&user).unwrap(), text);
+        }
+
+        #[test]
+        fn a_link_to_a_file_that_is_not_there_stays_and_is_an_error() {
+            let dir = tempfile::tempdir().unwrap();
+            let link = dir.path().join("config");
+            let missing = dir.path().join("dotfiles/config");
+            std::os::unix::fs::symlink(&missing, &link).unwrap();
+            let err = ensure_include(&link, &dir.path().join("p")).unwrap_err();
+            assert!(err.contains("symbolic link"), "{err}");
+            assert_eq!(std::fs::read_link(&link).unwrap(), missing);
+            assert!(!missing.exists());
+        }
+
+        #[test]
+        fn a_read_only_config_is_not_rewritten_but_one_that_has_the_line_is_fine() {
+            let dir = tempfile::tempdir().unwrap();
+            let user = dir.path().join("config");
+            let puddle = dir.path().join("p");
+            std::fs::write(&user, "Host a\n").unwrap();
+            std::fs::set_permissions(&user, std::fs::Permissions::from_mode(0o444)).unwrap();
+            let err = ensure_include(&user, &puddle).unwrap_err();
+            assert!(err.contains("read-only"), "{err}");
+            assert_eq!(std::fs::read_to_string(&user).unwrap(), "Host a\n");
+            assert_eq!(
+                std::fs::metadata(&user).unwrap().permissions().mode() & 0o777,
+                0o444
+            );
+            let text = format!("Include \"{}\"\n", puddle.display());
+            std::fs::set_permissions(&user, std::fs::Permissions::from_mode(0o644)).unwrap();
+            std::fs::write(&user, &text).unwrap();
+            std::fs::set_permissions(&user, std::fs::Permissions::from_mode(0o444)).unwrap();
+            ensure_include(&user, &puddle).unwrap();
+        }
+
+        #[test]
+        fn a_config_saved_by_another_program_meanwhile_is_not_replaced() {
+            let dir = tempfile::tempdir().unwrap();
+            let user = dir.path().join("config");
+            std::fs::write(&user, "Host a\n").unwrap();
+            let seen = std::fs::metadata(&user).unwrap();
+            // The other program's save: a different length.
+            std::fs::write(&user, "Host a\nHost b\n").unwrap();
+            let err = replace_keeping_permissions(&user, b"Include x\n", &seen).unwrap_err();
+            assert!(
+                err.to_string().contains("changed by another program"),
+                "{err}"
+            );
+            assert_eq!(std::fs::read_to_string(&user).unwrap(), "Host a\nHost b\n");
+            // Same length, later time.
+            let seen = std::fs::metadata(&user).unwrap();
+            std::fs::write(&user, "Host a\nHost c\n").unwrap();
+            let later = seen.modified().unwrap() + std::time::Duration::from_secs(5);
+            std::fs::File::options()
+                .write(true)
+                .open(&user)
+                .unwrap()
+                .set_modified(later)
+                .unwrap();
+            assert!(replace_keeping_permissions(&user, b"Include x\n", &seen).is_err());
+            assert_eq!(std::fs::read_to_string(&user).unwrap(), "Host a\nHost c\n");
+            let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+                .unwrap()
+                .map(|e| e.unwrap().file_name())
+                .collect();
+            assert_eq!(leftovers.len(), 1, "{leftovers:?}");
+        }
+
+        #[test]
+        fn the_swap_keeps_the_files_own_mode_even_a_wide_one() {
+            let dir = tempfile::tempdir().unwrap();
+            let user = dir.path().join("config");
+            std::fs::write(&user, "Host a\n").unwrap();
+            std::fs::set_permissions(&user, std::fs::Permissions::from_mode(0o644)).unwrap();
+            ensure_include(&user, &dir.path().join("p")).unwrap();
+            assert_eq!(
+                std::fs::metadata(&user).unwrap().permissions().mode() & 0o777,
+                0o644
+            );
+        }
+
+        #[test]
+        fn the_same_endpoint_keeps_the_host_key_and_a_new_one_forgets_it() {
+            let dir = tempfile::tempdir().unwrap();
+            let (ssh, _) = setup(dir.path(), false);
+            ssh.publish(&name("web"), Path::new("/run/ep-1")).unwrap();
+            let known = ssh.known_hosts(&name("web"));
+            std::fs::write(&known, "puddle-web ssh-ed25519 AAAA key\n").unwrap();
+            ssh.publish(&name("web"), Path::new("/run/ep-1")).unwrap();
+            assert!(
+                known.exists(),
+                "an attach to the same endpoint keeps the key"
+            );
+            // Another workspace's publish does not touch it either.
+            ssh.publish(&name("db"), Path::new("/run/ep-9")).unwrap();
+            assert!(known.exists());
+            ssh.publish(&name("web"), Path::new("/run/ep-2")).unwrap();
+            assert!(!known.exists());
+            // A host that starts anew has no entries, so its first publish forgets the key.
+            std::fs::write(&known, "puddle-web ssh-ed25519 AAAA key\n").unwrap();
+            drop(ssh);
+            let (again, _) = setup(dir.path(), false);
+            again.publish(&name("web"), Path::new("/run/ep-2")).unwrap();
+            assert!(!known.exists());
         }
 
         #[test]

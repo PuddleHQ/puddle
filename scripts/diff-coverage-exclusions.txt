@@ -297,3 +297,13 @@ crates/puddle-app/src/tray.rs | .ok() | the Linux tray-host probe and the tray b
 crates/puddle-app/src/tray.rs | let made = can_show() | the tray is only made where the probe finds a host, which the test environment has none of; `make` and `show` run on a virtual display in the tray tests
 crates/puddle-app/src/tray.rs | let tray = made.flatten() | the tray is only made where the probe finds a host, which the test environment has none of; `make` and `show` run on a virtual display in the tray tests
 crates/puddle-app/src/tray.rs | made.map_err(|err| tracing::debug! | the tray is only made where the probe finds a host, which the test environment has none of; `make` and `show` run on a virtual display in the tray tests
+crates/puddle-app/src/desktop.rs | Err(err) => { | the failed store read of `open_requests` (see its warning above)
+crates/puddle-app/src/desktop.rs | match event { | the real-window event routing of `on_window_event` (see above)
+crates/puddle-app/src/desktop.rs | _ => {} | the real-window event routing of `on_window_event` (see above)
+crates/puddle-app/src/desktop.rs | } | closing lines of the excluded real-window routing and application menu above
+crates/puddle-app/src/desktop.rs | }); | closing line of the application menu's event closure above
+crates/puddle-app/src/desktop.rs | Ok(()) | the end of `install_quit_shortcut`, which needs the real window system
+crates/puddle-app/src/notify.rs | } | closing lines of `show`'s refused-notice branch above
+crates/puddle-app/src/shell.rs | if let Some(folder) = data_folder(options) { | `run` drives the real window system's event loop, which a test process cannot start; `crash::install` has its own test program
+crates/puddle-app/src/shell.rs | } | closing lines of the `run` statements listed above
+crates/puddle-app/src/tray.rs | * | the closures only a real tray raises (menu entries, a click on the icon) and the builder's error paths; the tray is built and updated for real on a virtual display in `tray` tests, and the pure parts (button matrix, icons, panic guard) are tested directly

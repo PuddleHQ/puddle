@@ -364,7 +364,7 @@ async fn a_host_that_never_answers_is_servfail_after_the_limit() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn lookups_on_the_host_never_exceed_the_limit_and_queries_that_wait_too_long_fail() {
+async fn lookups_on_the_host_never_exceed_the_limit_and_a_query_that_waits_too_long_is_dropped() {
     struct Slot(Arc<AtomicUsize>);
     impl Drop for Slot {
         fn drop(&mut self) {
@@ -373,35 +373,93 @@ async fn lookups_on_the_host_never_exceed_the_limit_and_queries_that_wait_too_lo
     }
     let (current, peak) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
     let (c, p) = (Arc::clone(&current), Arc::clone(&peak));
-    let (stub, _, _) = stub_with(
+    // One slot and a host that takes 1.5 s: the first query is answered at 1.5 s, the second gets
+    // the slot then and is answered at 3 s, and the third has waited its 2 s by then.
+    let (stub, fake, _) = stub_with(
         move |_| {
             let now = c.fetch_add(1, Ordering::SeqCst) + 1;
             p.fetch_max(now, Ordering::SeqCst);
             let slot = Slot(Arc::clone(&c));
             async move {
                 let _slot = slot;
-                std::future::pending::<Result<ResolveAnswer, ResolveError>>().await
+                tokio::time::sleep(Duration::from_millis(1500)).await;
+                Ok(stand_in())
             }
         },
         Limits {
             ask_timeout: Duration::from_secs(2),
-            max_asks: 2,
+            max_asks: 1,
             ..Limits::default()
         },
     );
     let mut set = JoinSet::new();
-    for i in 0..5 {
+    for i in 0..3 {
         let stub = stub.clone();
         set.spawn(async move {
-            ask_stub(&stub, &format!("n{i}.example.com"), TYPE_A)
-                .await
-                .rcode()
+            // A pause per query pins the order in which they queue for the slot.
+            tokio::time::sleep(Duration::from_millis(i)).await;
+            let message = query_bytes(0x4242, &format!("n{i}.example.com"), TYPE_A, None);
+            (
+                i,
+                stub.answer(&message, true)
+                    .await
+                    .map(|r| decode(&r).rcode()),
+            )
         });
     }
-    while let Some(rcode) = set.join_next().await {
-        assert_eq!(rcode.unwrap(), 2);
+    let mut outcomes = Vec::new();
+    while let Some(done) = set.join_next().await {
+        outcomes.push(done.unwrap());
     }
-    assert_eq!(peak.load(Ordering::SeqCst), 2);
+    outcomes.sort_unstable();
+    assert_eq!(outcomes, vec![(0, Some(0)), (1, Some(0)), (2, None)]);
+    assert_eq!(peak.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        fake.asks.load(Ordering::SeqCst),
+        2,
+        "the dropped one was never asked"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_query_that_joins_a_lookup_about_to_give_up_waits_for_a_new_one() {
+    // One slot, a host that takes 1.9 s, a 2 s limit. Names a and b take the slot in turn (a is
+    // answered at 1.9 s, b at 3.8 s). The lookup of c, asked at 0.1 s, gives up at 2.1 s. The
+    // second query for c comes at 1.9 s and joins it, but has waited only 0.2 s by then, so it
+    // starts its own lookup instead of being dropped with it.
+    let (stub, fake, _) = stub_with(
+        move |_| async {
+            tokio::time::sleep(Duration::from_millis(1900)).await;
+            Ok(stand_in())
+        },
+        Limits {
+            ask_timeout: Duration::from_secs(2),
+            max_asks: 1,
+            ..Limits::default()
+        },
+    );
+    let query_after = |name: &'static str, at_ms: u64| {
+        let stub = stub.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(at_ms)).await;
+            let message = query_bytes(0x4242, name, TYPE_A, None);
+            stub.answer(&message, true)
+                .await
+                .map(|r| decode(&r).rcode())
+        })
+    };
+    let queries = [
+        query_after("a.example.com", 0),
+        query_after("b.example.com", 1),
+        query_after("c.example.com", 100),
+        query_after("c.example.com", 1900),
+    ];
+    let mut answers = Vec::new();
+    for query in queries {
+        answers.push(query.await.unwrap());
+    }
+    assert_eq!(answers, vec![Some(0), Some(0), None, Some(0)]);
+    assert_eq!(fake.asks.load(Ordering::SeqCst), 3, "a, b and the second c");
 }
 
 #[tokio::test]
@@ -858,4 +916,26 @@ fn only_answers_of_the_asked_kind_are_kept() {
             assert_eq!(fitted, ResolveAnswer::Unavailable);
         }
     }
+}
+
+/// The kernel drops what does not fit its receive queue, and a dropped query costs its client a
+/// five-second attempt: the queue must hold the burst the stub promises to handle.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn the_udp_receive_queue_is_sized_for_the_queries_the_stub_handles_at_once() {
+    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let default = rustix::net::sockopt::socket_recv_buffer_size(&socket).unwrap();
+    make_room_for_a_burst(&socket, 1024);
+    let now = rustix::net::sockopt::socket_recv_buffer_size(&socket).unwrap();
+    // Without privilege the kernel caps the request at `rmem_max` (and reports it doubled).
+    let cap: usize = std::fs::read_to_string("/proc/sys/net/core/rmem_max")
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let asked = 1024 * UDP_QUEUE_BYTES_PER_QUERY;
+    assert!(
+        now >= default && now >= 2 * cap.min(asked),
+        "receive queue {now} bytes (default {default}, cap {cap})"
+    );
 }

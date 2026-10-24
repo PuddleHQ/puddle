@@ -282,7 +282,7 @@ store.
 - **R-35 A lookup is bounded.** The name must be a plain host name (labels of letters, digits, `-`
   and `_`, at most 253 characters) or the answer is "no such name" without a lookup. A workspace runs
   at most 128 host lookups at once; one over that waits up to one lookup time (3 s) for a free slot
-  and is then "unavailable" (`SERVFAIL` in the guest). One agent session has at most 64 lookups
+  and is then "unavailable" (`SERVFAIL` in the guest). The guest's stub is bounded the same way (128 asks, one lookup time to wait); a query that waited its whole time for a slot was never tried, so the stub drops it and the guest's resolver asks again instead of taking a failure for the name. One agent session has at most 64 lookups
   open (the agent keeps four sessions, so its 128 lookups in flight fit). Each lookup has a
   timeout. An unreadable rules engine is "unavailable", never "not allowed". A burst of 500 distinct
   names asked at once, as a package manager's cold start can, must all be answered (standing test

@@ -682,13 +682,19 @@ async fn a_burst_of_five_hundred_distinct_names_all_resolve_for_a_client_with_gl
         });
     }
     let mut failed = 0;
+    let mut kinds = std::collections::BTreeMap::new();
     while let Some(reply) = set.join_next().await {
-        if !matches!(reply.unwrap(), Some(r) if (r.rcode, r.answers) == (0, 1)) {
+        let reply = reply.unwrap();
+        *kinds.entry(reply.as_ref().map(|r| r.rcode)).or_insert(0) += 1;
+        if !matches!(reply, Some(r) if (r.rcode, r.answers) == (0, 1)) {
             failed += 1;
         }
     }
     println!("burst of 500: {failed} failed, {:?}", started.elapsed());
-    assert_eq!(failed, 0, "names answered SERVFAIL or without an address");
+    assert_eq!(
+        failed, 0,
+        "names answered SERVFAIL or not at all (reply code to count; None is no answer): {kinds:?}"
+    );
 }
 
 #[tokio::test]

@@ -2,32 +2,35 @@
 # Keeps the Actions caches under the repo's 10 GB cap (ci/cache-gc.sh): drops superseded rust-cache
 # entries on develop and stale task-branch caches, so the cargo-xwin cache is never evicted.
 #
-# What the repo keeps (compressed sizes as GitHub reports them, 2026-10-14; the Rust entries grow and
+# What the repo keeps (compressed sizes as GitHub reports them, 2026-10-24; the Rust entries grow and
 # shrink with the dependency tree). Only develop saves them, pull requests restore:
 #
-#   entry                                        saved by (develop only)              GB
-#   rust-cache `linux`                           every push that changes it (ci)    4.79
+#   entry                                        saved by (develop only)              GiB
+#   rust-cache `linux`                           every push that changes it (ci)    6.66
 #   rust-cache `windows`                         nightly, a push that changes a manifest
-#                                                (windows, windows-cache)           1.71
-#   rust-cache `windows-release`                 nightly (windows)                  1.57
-#   Playwright browsers                          a push (ci)                        0.39
-#   cargo-xwin CRT and SDK (never deleted here)  a push (ci)                        0.14
-#   npm caches, Linux and Windows                a push; pull refs 2-day cleanup    0.09
+#                                                (windows, windows-cache)           1.94
+#   Playwright browsers                          a push (ci)                        0.37
+#   cargo-xwin CRT and SDK (never deleted here)  a push (ci)                        0.13
+#   npm caches, Linux and Windows                a push; pull refs 2-day cleanup    0.34
+#   rust-cache `fuzz`                            a fuzz run (fuzz)                  0.17
 #   msb runtime binary                           a push (msb-cache)                 0.02
-#   total wanted                                                                    8.71
+#   total wanted                                                                    9.63 of 10
 #
-# The VM workflows keep no Rust cache: their archive build missed on every one of the last 22 pull
-# requests, and restoring the `linux` entry (exact) saved 9 s of a 150 s build for a 70 s restore, the
-# `windows` one about 30 s of 390 s for a 41 s restore. That removed 2.8 GB from the wanted set.
+# The nightly release build keeps no Rust cache: its 1.55 GiB entry was saved once a night, the
+# 2026-10-24 nightly found none, and while it existed the wanted set was 11.2 GiB, over the 10 GiB
+# cap for good (9.85 GiB sat under it without an eviction). The VM workflows keep no Rust cache
+# either: their archive build missed on every one of the last 22 pull requests, and restoring the
+# `linux` entry (exact) saved 9 s of a 150 s build for a 70 s restore, the `windows` one about 30 s
+# of 390 s for a 41 s restore.
 #
-# A replacement of the `linux` entry briefly holds the old and the new one together (4.8 GB each), which
+# A replacement of the `linux` entry briefly holds the old and the new one together (6.7 GiB each), which
 # is over the cap for a few minutes; GitHub then evicts the least recently used entries, which are
-# `windows-release` and `windows` before `linux`, and this workflow deletes the superseded one right
-# after the run. Before the VM caches went (11.1 GB wanted), 30 of 73 runs of this workflow between
-# 2026-10-09 and 2026-10-14 found the repo above the cap, and the `linux` entry vanished between 10:12 and 10:19 UTC on
-# 2026-10-12 after a run read 11.9 GB at 10:06. Nothing proves the eviction caused that loss (GitHub publishes
-# no eviction log). ci.yml saves the `linux` entry whenever its restore was not an exact hit, so a
-# lost one costs the next develop run, not every pull request until the next dependency change.
+# `windows` and the small ones before `linux`, and this workflow deletes the superseded one right
+# after the run. GitHub publishes no eviction log: on 2026-10-24 the cargo-xwin entry (a miss costs a
+# 12-minute CRT download in a job limited to 30) and the `linux` entry were both gone while
+# the repo sat at 10.5 to 12 GiB, and the develop runs between 06:41 and 07:03 UTC ran into the job limit.
+# ci.yml saves the `linux` entry whenever its restore was not an exact hit, so a lost one costs the
+# next develop run, not every pull request until the next dependency change.
 name: cache-gc
 
 on:

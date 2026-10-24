@@ -85,7 +85,7 @@ jobs:
           fetch-depth: 0 # the diff-coverage gate needs the base commit
       - name: Toolchain (from rust-toolchain.toml)
         run: rustup toolchain install && rustc --version
-      # The 4 GB entry is saved by every develop run whose restore was not an exact hit (rust-cache skips
+      # The 6.7 GB entry is saved by every develop run whose restore was not an exact hit (rust-cache skips
       # the save itself on an exact hit), so a lost entry is back after the next push to develop instead
       # of after the next dependency change. A pull request restores it and never saves.
       # The key hashes the toolchain, the CARGO, RUST, CC, CFLAGS, CXX and CMAKE variables, the manifests and the lockfile's

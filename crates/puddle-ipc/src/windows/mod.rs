@@ -8,7 +8,6 @@
 mod security;
 
 use std::io;
-use std::os::windows::io::AsRawHandle as _;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -221,11 +220,13 @@ async fn connect_as(path: &Path, own_sid: &str) -> Result<Stream, IpcError> {
     loop {
         match options.open(path) {
             Ok(client) => {
-                let served_by = puddle_fs::win::pipe_server_user_sid(client.as_raw_handle())
-                    .map_err(|source| IpcError::Io {
-                        op: "check the owner of",
-                        endpoint: path.to_path_buf(),
-                        source,
+                let served_by =
+                    puddle_fs::win::pipe_server_user_sid(&client).map_err(|source| {
+                        IpcError::Io {
+                            op: "check the owner of",
+                            endpoint: path.to_path_buf(),
+                            source,
+                        }
                     })?;
                 if served_by != own_sid {
                     return Err(IpcError::WrongOwner {

@@ -256,11 +256,11 @@ pub fn process_token(access: TOKEN_ACCESS_MASK) -> io::Result<OwnedHandle> {
 /// # Errors
 ///
 /// The OS error of the first call that failed.
-pub fn pipe_server_user_sid(pipe: HANDLE) -> io::Result<String> {
+pub fn pipe_server_user_sid(pipe: &impl AsRawHandle) -> io::Result<String> {
     let mut pid = 0u32;
-    // SAFETY: `pipe` is a live pipe handle the caller owns for the whole call, and `pid` is a
+    // SAFETY: `pipe` is a live pipe handle the caller borrows for the whole call, and `pid` is a
     // valid out-pointer.
-    if unsafe { GetNamedPipeServerProcessId(pipe, &raw mut pid) } == 0 {
+    if unsafe { GetNamedPipeServerProcessId(pipe.as_raw_handle(), &raw mut pid) } == 0 {
         return Err(io::Error::last_os_error());
     }
     // SAFETY: plain call; the returned handle is null on failure and checked below.

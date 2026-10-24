@@ -9,9 +9,10 @@
 //! that makes stand-ins), the hosts the workspace decrypts for its logins, and the deletion of
 //! the real tokens with the workspace.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use puddle_logins::{LoginNotices, Logins, Problem, Profile, builtin};
+use puddle_logins::{LoginNotices, Logins, Marker, Problem, Profile, builtin};
 use puddle_proxy::StandIns;
 use puddle_secrets::SecretStore;
 use puddle_settings::resolve;
@@ -55,15 +56,34 @@ pub(crate) struct LoginKeeper {
     /// Where the real tokens are kept: the operating system's credential store.
     store: Arc<dyn SecretStore>,
     events: Arc<dyn EventSink>,
+    /// Where the markers are. Without it every start with capture off asks the store.
+    markers: Option<PathBuf>,
 }
 
 impl LoginKeeper {
     pub(crate) fn new(store: Arc<dyn SecretStore>, events: Arc<dyn EventSink>) -> Self {
-        Self { store, events }
+        Self {
+            store,
+            events,
+            markers: None,
+        }
+    }
+
+    /// The same with each workspace's marker in a file of `dir`.
+    pub(crate) fn with_markers(mut self, dir: PathBuf) -> Self {
+        self.markers = Some(dir);
+        self
     }
 
     /// The captured logins of `workspace` for this start, swapping from `registry`. With
     /// `enabled` false nothing is captured and nothing is decrypted for logins.
+    /// The marker of `workspace`: none when the keeper was given no folder.
+    fn marker(&self, workspace: &WorkspaceName) -> Marker {
+        self.markers
+            .as_deref()
+            .map_or_else(Marker::none, |dir| Marker::for_workspace(dir, workspace))
+    }
+
     pub(crate) fn logins(
         &self,
         workspace: &WorkspaceName,
@@ -79,6 +99,7 @@ impl LoginKeeper {
             Arc::new(EventNotices {
                 events: Arc::clone(&self.events),
             }),
+            self.marker(workspace),
         )
     }
 
@@ -90,6 +111,7 @@ impl LoginKeeper {
             tokio::task::spawn_blocking(move || Logins::delete_workspace(&store, &name, builtin()))
                 .await
                 .unwrap_or(usize::MAX);
+        self.marker(workspace).clear();
         if failed > 0 {
             tracing::warn!(%workspace, failed, "a deleted workspace's saved logins could not be removed from the credential store");
         }

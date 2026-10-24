@@ -43,6 +43,13 @@ impl HostPaths {
         self.data.join("workspaces.json")
     }
 
+    /// The markers that say which services have a login kept for a workspace (one small file for
+    /// each), so a start with capture off need not ask the credential store.
+    #[must_use]
+    pub fn login_markers(&self) -> PathBuf {
+        self.data.join("login-markers")
+    }
+
     /// The root every sandbox mount source must be inside (msb mounts only from here).
     #[must_use]
     pub fn guest_share(&self) -> PathBuf {

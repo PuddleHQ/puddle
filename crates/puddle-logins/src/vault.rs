@@ -144,12 +144,18 @@ impl Vault {
 /// The name of the entry for one slot: `login-<16 hex of the workspace's hash>-<profile>-<role>`.
 /// The workspace is hashed because its name and the rest may not fit the store's 64 characters.
 pub(crate) fn slot_id(workspace: &str, profile: &str, role: Role) -> Option<StoredId> {
+    let hex = workspace_hash(workspace);
+    StoredId::new(format!("login-{hex}-{profile}-{}", role.key())).ok()
+}
+
+/// 16 hex characters of the hash of a workspace's name: what names its entries and its marker.
+pub(crate) fn workspace_hash(workspace: &str) -> String {
     let digest = Sha256::digest(workspace.as_bytes());
     let mut hex = String::with_capacity(16);
     for byte in digest.iter().take(8) {
         let _ = write!(hex, "{byte:02x}");
     }
-    StoredId::new(format!("login-{hex}-{profile}-{}", role.key())).ok()
+    hex
 }
 
 #[cfg(test)]

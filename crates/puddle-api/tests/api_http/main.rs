@@ -19,6 +19,7 @@ pub(crate) mod events;
 mod first_run;
 mod guard;
 mod identities;
+mod logins;
 mod network_health;
 mod problems;
 mod repos;

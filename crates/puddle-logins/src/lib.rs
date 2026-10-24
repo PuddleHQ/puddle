@@ -18,6 +18,7 @@
 #![forbid(unsafe_code)]
 
 mod logins;
+mod marker;
 mod profile;
 mod shape;
 #[cfg(test)]
@@ -25,5 +26,6 @@ mod tests;
 mod vault;
 
 pub use logins::{ForgetError, Kept, LoginNotices, Logins, Problem};
+pub use marker::Marker;
 pub use profile::{CLAUDE, Endpoint, Field, GITHUB, Profile, Role, Scope, builtin};
 pub use shape::{ShapeError, stand_in_for};

@@ -328,6 +328,7 @@ impl Tools {
             Arc::clone(&registry),
             Arc::clone(&store) as Arc<dyn SecretStore>,
             Arc::clone(&notices) as Arc<dyn LoginNotices>,
+            puddle_logins::Marker::none(),
         );
         let rig = rig
             .bound(bound.clone())

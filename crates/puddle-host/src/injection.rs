@@ -15,6 +15,7 @@
 //! date, while the guest's own environment is read at its next start.
 
 use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -156,6 +157,12 @@ impl Injection {
             environment: Mutex::new(BTreeMap::new()),
             vault_timeout: VAULT_TIMEOUT,
         }
+    }
+
+    /// Keeps each workspace's login marker in `dir`.
+    pub(crate) fn with_login_markers(mut self, dir: PathBuf) -> Self {
+        self.login_keeper = self.login_keeper.with_markers(dir);
+        self
     }
 
     /// The same with another limit on how long the credential store may take (tests).
@@ -371,6 +378,24 @@ impl Injection {
         let mut running = self.running();
         self.terminations.remove(workspace);
         running.remove(workspace);
+    }
+
+    /// Forgets the login of `service` (its short name or the name the user sees) kept for
+    /// `workspace`: its tokens leave the credential store and, in a running workspace, its
+    /// stand-ins stop being swapped. `Ok(false)` for a service Puddle has no login profile for.
+    /// A workspace that is not running gets a throwaway [`Logins`] over the same store and marker,
+    /// so a notice about a login kept earlier ends the same way.
+    pub(crate) async fn forget_login(
+        &self,
+        workspace: &WorkspaceName,
+        service: &str,
+    ) -> Result<bool, puddle_logins::ForgetError> {
+        let running = self.running().get(workspace).map(|r| r.logins.clone());
+        let logins = running.unwrap_or_else(|| {
+            self.login_keeper
+                .logins(workspace, false, Arc::new(StandIns::new()))
+        });
+        logins.forget(service).await
     }
 
     /// What `workspace` decrypts and the CA that certifies it, while it runs.
@@ -1402,6 +1427,85 @@ mod tests {
         vault.break_it();
         injection.begin(&ws, false).await.unwrap();
         assert_eq!(events.0.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn with_capture_off_the_marker_answers_and_the_credential_store_is_not_asked() {
+        let store = store();
+        let dir = tempfile::tempdir().unwrap();
+        let (injection, terminations, vault, events) = injection_with_events(&store);
+        let injection = injection.with_login_markers(dir.path().to_owned());
+        let ws = workspace("alpha");
+        injection.begin(&ws, true).await.unwrap();
+        claude_answer(&terminations, &ws).await.unwrap();
+        injection.end(&ws);
+
+        // A store that hangs or refuses would make a start without the marker say nothing, or wait.
+        vault.break_it();
+        injection.begin(&ws, false).await.unwrap();
+        assert_eq!(events.0.lock().unwrap().len(), 1);
+        // Another workspace has nothing kept, and the marker says so after its first start.
+        let other = workspace("beta");
+        injection.begin(&other, false).await.unwrap();
+        assert_eq!(events.0.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn forgetting_a_login_ends_its_notice_and_in_a_running_workspace_its_stand_ins() {
+        let store = store();
+        let dir = tempfile::tempdir().unwrap();
+        let (injection, terminations, vault, events) = injection_with_events(&store);
+        let injection = injection.with_login_markers(dir.path().to_owned());
+        let ws = workspace("alpha");
+        injection.begin(&ws, true).await.unwrap();
+        claude_answer(&terminations, &ws).await.unwrap();
+        assert_eq!(login_ids(&terminations, &ws).len(), 2);
+        assert_eq!(injection.forget_login(&ws, "azure").await, Ok(false));
+        assert_eq!(injection.forget_login(&ws, "Claude Code").await, Ok(true));
+        assert_eq!(login_ids(&terminations, &ws).len(), 0);
+        injection.end(&ws);
+
+        // Nothing is kept now, so capture off has nothing to say, and asks nobody.
+        vault.break_it();
+        injection.begin(&ws, false).await.unwrap();
+        assert!(events.0.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_stopped_workspace_forgets_a_login_kept_for_it_and_a_refusing_store_is_an_error() {
+        let store = store();
+        let dir = tempfile::tempdir().unwrap();
+        let (injection, terminations, vault, events) = injection_with_events(&store);
+        let injection = injection.with_login_markers(dir.path().to_owned());
+        let ws = workspace("alpha");
+        injection.begin(&ws, true).await.unwrap();
+        claude_answer(&terminations, &ws).await.unwrap();
+        injection.end(&ws);
+        vault.break_it();
+        assert!(injection.forget_login(&ws, "claude").await.is_err());
+        // The notice stays: the login is still kept.
+        injection.begin(&ws, false).await.unwrap();
+        assert_eq!(events.0.lock().unwrap().len(), 1);
+        injection.end(&ws);
+        vault.heal();
+        assert_eq!(injection.forget_login(&ws, "claude").await, Ok(true));
+        injection.begin(&ws, false).await.unwrap();
+        assert_eq!(events.0.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn deleting_a_workspace_deletes_its_marker_too() {
+        let store = store();
+        let dir = tempfile::tempdir().unwrap();
+        let (injection, terminations, _vault, _events) = injection_with_events(&store);
+        let injection = injection.with_login_markers(dir.path().to_owned());
+        let ws = workspace("alpha");
+        injection.begin(&ws, true).await.unwrap();
+        claude_answer(&terminations, &ws).await.unwrap();
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        injection.end(&ws);
+        injection.forget(&ws).await;
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
     #[tokio::test]

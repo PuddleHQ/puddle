@@ -17,15 +17,22 @@ test.describe("the visual identity, served by the real API", () => {
       if (r.url().endsWith(".woff2")) fontFiles.push(new URL(r.url()).origin);
     });
     await page.goto("/workspaces");
-    await page.evaluate(() => document.fonts.ready);
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Workspaces" }),
+    ).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          [...document.fonts]
+            .filter((f) => f.status === "loaded")
+            .map((f) => f.family.replaceAll('"', "")),
+        ),
+      )
+      .toContain("Inter Variable");
     const used = await page.evaluate(() => ({
       body: getComputedStyle(document.body).fontFamily,
-      loaded: [...document.fonts]
-        .filter((f) => f.status === "loaded")
-        .map((f) => f.family),
     }));
-    expect(used.body).toMatch(/^"Inter Variable"/);
-    expect(used.loaded).toContain("Inter Variable");
+    expect(used.body).toMatch(/^"?Inter Variable"?,/);
     expect(fontFiles.length).toBeGreaterThan(0);
     expect(new Set(fontFiles)).toEqual(new Set([new URL(page.url()).origin]));
     expect(await violations()).toEqual([]);
@@ -57,6 +64,7 @@ test.describe("the visual identity, served by the real API", () => {
     }) => {
       await page.emulateMedia({ colorScheme: scheme });
       await page.goto("/workspaces");
+      await expect(page.locator(".sidebar .brand svg")).toBeVisible();
       const style = await page.evaluate(() => {
         const root = getComputedStyle(document.documentElement);
         return {

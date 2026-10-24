@@ -95,7 +95,7 @@ where
             if quiet >= idle {
                 return;
             }
-            tokio::time::sleep(idle - quiet).await;
+            tokio::time::sleep(idle.saturating_sub(quiet)).await;
         }
     };
     tokio::select! {

@@ -54,7 +54,7 @@ pub(crate) struct H1Conn {
     driver: JoinHandle<()>,
     /// The place this socket holds in the workspace's connection limit, when it is one more than
     /// the guest connection's own.
-    _slot: Option<OwnedSemaphorePermit>,
+    slot: Option<OwnedSemaphorePermit>,
 }
 
 impl Drop for H1Conn {
@@ -191,7 +191,7 @@ pub(crate) async fn connect(cx: &Context, alpn: &[&[u8]]) -> Result<Made, Refusa
             Connected::H1(H1Conn {
                 sender,
                 driver,
-                _slot: None,
+                slot: None,
             })
         }
         Proto::H2 => {
@@ -275,7 +275,7 @@ impl H1Pool {
             .try_acquire_owned()
             .map_err(|_| over_limit(&cx.target.host))?;
         let mut conn = connect(cx, &[ALPN_HTTP11]).await?.conn.into_h1()?;
-        conn._slot = Some(slot);
+        conn.slot = Some(slot);
         Ok(Lease::new(conn, self, permit))
     }
 }

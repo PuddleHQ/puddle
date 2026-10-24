@@ -2,10 +2,6 @@
 //! A hostile guest on an HTTP/2 terminated connection: floods, resets, smuggling by translation,
 //! malformed headers. Each test says what must not happen at the real server, and that the
 //! connection (or stream) ends instead of the proxy giving way.
-#![expect(
-    clippy::unwrap_used,
-    reason = "helpers outside #[test] functions fail the test by panicking"
-)]
 mod terminate_support;
 
 use std::sync::Arc;
@@ -15,78 +11,15 @@ use std::time::Duration;
 use bytes::Bytes;
 use http::Request;
 use puddle_proxy::ProxyConfig;
-use terminate_support::h2_rig::{H2Server, Handler, Script, reply};
-use terminate_support::{FakeServer, Flaw, Pki, Reply, RigBuilder, TestInjector, TlsStream};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-const PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
-
-fn frame(kind: u8, flags: u8, stream: u32, payload: &[u8]) -> Vec<u8> {
-    let [_, a, b, c] = u32::try_from(payload.len()).unwrap().to_be_bytes();
-    let mut out = vec![a, b, c, kind, flags];
-    out.extend_from_slice(&stream.to_be_bytes());
-    out.extend_from_slice(payload);
-    out
-}
-
-/// An HPACK literal without indexing (RFC 7541 §6.2.2), no Huffman coding.
-fn literal(name: &str, value: &[u8]) -> Vec<u8> {
-    let mut out = vec![0x00, u8::try_from(name.len()).unwrap()];
-    out.extend_from_slice(name.as_bytes());
-    out.push(u8::try_from(value.len()).unwrap());
-    out.extend_from_slice(value);
-    out
-}
-
-/// `GET <path> https bound.test`, as an HPACK block.
-fn get_block(path: &[u8]) -> Vec<u8> {
-    let mut block = vec![0x82, 0x87];
-    block.extend(literal(":path", path));
-    block.extend(literal(":authority", b"bound.test"));
-    block
-}
+use terminate_support::h2_rig::{
+    H2Server, Handler, Script, ack_server_settings, frame, frames_until_end, get_block, literal,
+    raw, reply,
+};
+use terminate_support::{FakeServer, Flaw, Pki, Reply, RigBuilder, TestInjector};
+use tokio::io::AsyncWriteExt;
 
 fn ok() -> Script {
     Arc::new(|_| reply(200, "fine"))
-}
-
-/// A connection to the proxy that has sent the HTTP/2 preface and nothing else.
-async fn raw(guest: &mut terminate_support::Guest) -> TlsStream {
-    let client = guest
-        .tls_with("bound.test:443", None, &[b"h2"], true)
-        .await
-        .unwrap();
-    assert_eq!(client.alpn.as_deref(), Some(&b"h2"[..]));
-    let mut tls = client.stream.into_inner();
-    tls.write_all(PREFACE).await.unwrap();
-    tls.write_all(&frame(4, 0, 0, &[])).await.unwrap();
-    tls
-}
-
-/// Reads frames until the connection ends or `limit` passes; the (type, stream, payload) of each.
-async fn frames_until_end(tls: &mut TlsStream, limit: Duration) -> (Vec<(u8, u32, Vec<u8>)>, bool) {
-    let mut seen = Vec::new();
-    let deadline = tokio::time::Instant::now() + limit;
-    loop {
-        let mut head = [0_u8; 9];
-        match tokio::time::timeout_at(deadline, tls.read_exact(&mut head)).await {
-            Err(_) => return (seen, false),
-            Ok(Err(_)) => return (seen, true),
-            Ok(Ok(_)) => {}
-        }
-        let len = (usize::from(head[0]) << 16) | (usize::from(head[1]) << 8) | usize::from(head[2]);
-        let stream = u32::from_be_bytes([head[5] & 0x7f, head[6], head[7], head[8]]);
-        let mut payload = vec![0_u8; len];
-        match tokio::time::timeout_at(deadline, tls.read_exact(&mut payload)).await {
-            Err(_) => return (seen, false),
-            Ok(Err(_)) => return (seen, true),
-            Ok(Ok(_)) => {}
-        }
-        if head[3] == 4 && head[4] & 1 == 0 {
-            let _ = tls.write_all(&frame(4, 1, 0, &[])).await;
-        }
-        seen.push((head[3], stream, payload));
-    }
 }
 
 /// HTTP/2 error code 0xb (RFC 9113 §7): the peer is generating excessive load.
@@ -102,21 +35,6 @@ fn goaway_code(frames: &[(u8, u32, Vec<u8>)]) -> Option<u32> {
             let code: [u8; 4] = payload.get(4..8)?.try_into().ok()?;
             Some(u32::from_be_bytes(code))
         })
-}
-
-/// Reads the server's own `SETTINGS` and acknowledges them, before anything else is sent.
-async fn ack_server_settings(tls: &mut TlsStream) {
-    loop {
-        let mut head = [0_u8; 9];
-        tls.read_exact(&mut head).await.unwrap();
-        let len = (usize::from(head[0]) << 16) | (usize::from(head[1]) << 8) | usize::from(head[2]);
-        let mut payload = vec![0_u8; len];
-        tls.read_exact(&mut payload).await.unwrap();
-        if head[3] == 4 && head[4] & 1 == 0 {
-            tls.write_all(&frame(4, 1, 0, &[])).await.unwrap();
-            return;
-        }
-    }
 }
 
 fn rig_with(

@@ -18,6 +18,7 @@ const live = vi.hoisted(() => ({
   problem: null as null | "unauthorized" | "unreachable" | "failing",
   problemDetail: null as string | null,
   streamError: null as string | null,
+  stream: "connected" as string,
   start: vi.fn(() => () => undefined),
   subscribe: vi.fn(() => () => undefined),
 }));
@@ -44,6 +45,7 @@ beforeEach(() => {
   live.problem = null;
   live.problemDetail = null;
   live.streamError = null;
+  live.stream = "connected";
   live.start.mockClear();
   live.subscribe.mockClear();
   health.start.mockClear();
@@ -171,7 +173,6 @@ describe("root layout", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       /Live updates stopped: the event stream refused this app's key \(status 401\)\. Open Puddle from its app window or tray icon to sign in again\./,
     );
-    live.stream = "connecting";
   });
 
   it("leaves the sidebar out of the first-run flow and names its step in the title", () => {

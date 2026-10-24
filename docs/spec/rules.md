@@ -173,7 +173,7 @@ readable as JSONL (one record per line).
 - **R-24 Record types** in `puddle-store`: `connection` (written by the proxy: `workspace_id`, `host`, `port`,
   `resolved_ip`, `decision` (`allow`, `deny`, `pending`, `blocked`), `outcome` (how reaching the destination went after an allow: `connected`, `upstream_refused`, `connect_failed`, `timeout`; `null` where nothing was attempted and in older records), `reason` (`rule`, `no_rule`,
   `toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`, `local_address`, `settings_unreadable`,
-  `policy_unavailable`, `sni_mismatch`, `guest_tls_rejected`, `connection_limit`, `suppressed`, `merged`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `pending_id`, `binding_id`, `injected`, `placeholder_unbound` (a secret stand-in went to a host outside
+  `policy_unavailable`, `sni_mismatch`, `guest_tls_rejected`, `limit:<code>`, `connection_limit`, `suppressed`, `merged`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `pending_id`, `binding_id`, `injected`, `placeholder_unbound` (a secret stand-in went to a host outside
   its hosts and was sent unchanged),
   `method` and `path` on terminated hosts, plain-HTTP requests and `CONNECT` tunnels that carry
   plain HTTP/1.x only, `bytes_up`, `bytes_down`), `pending_created`, `pending_decided`, `pending_expired` (only when a workspace is deleted),
@@ -183,6 +183,12 @@ readable as JSONL (one record per line).
   (`workspace_id`, `count`) and `pending_expired` with reason `stale`; nothing writes them any more.
   On a decrypted host whose client refuses Puddle's certificate (it does not
   trust the workspace's CA) the decision stays what the rule said and the reason is `guest_tls_rejected`.
+  When a limit of the proxy ended a decrypted connection or cut one of its streams or pipes (a header
+  block left open, a control-frame flood, a stream with no frame for an hour, a peer that ignored the
+  shutdown, a silent WebSocket) the decision stays too and the reason is `limit:<code>`
+  (`header_block_too_slow`, `control_frame_flood`, `stream_idle`, `shutdown_ignored`,
+  `websocket_idle`); a request refused for the workspace's HTTP/2 stream budget is `blocked` with
+  `stream_limit`.
   The proxy writes one `connection` record per request whose destination it parsed, when the
   connection ends; a request refused before that (bad request, head too large or too slow) has no
   destination and only goes to the log. A connection over the workspace's limit is read for up to

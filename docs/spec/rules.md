@@ -187,7 +187,7 @@ readable as JSONL (one record per line).
   block left open, a control-frame flood, a stream with no frame for an hour, a peer that ignored the
   shutdown, a silent WebSocket) the decision stays too and the reason is `limit:<code>`
   (`header_block_too_slow`, `control_frame_flood`, `stream_idle`, `shutdown_ignored`,
-  `websocket_idle`); a request refused for the workspace's HTTP/2 stream budget is `blocked` with
+  `websocket_idle`; the first limit that fires on a connection is the one recorded); a request refused for the workspace's HTTP/2 stream budget is `blocked` with
   `stream_limit`.
   The proxy writes one `connection` record per request whose destination it parsed, when the
   connection ends; a request refused before that (bad request, head too large or too slow) has no

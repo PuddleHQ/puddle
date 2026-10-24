@@ -140,7 +140,7 @@ pub enum ConnectionReason {
     /// A limit of the proxy ended the connection, or cut a stream or pipe of it (a stream idle
     /// for an hour, an agreed WebSocket that went silent, a flood of control frames, a header
     /// block left open). The decision of the rule stands. The text is the limit's code, shown as
-    /// `limit:<code>`.
+    /// `limit:<code>`. A connection records the first limit that fired.
     LimitEnded(&'static str),
     /// Puddle's own request (a repository listing) that could not be completed: the code says
     /// why (`unreachable`, `tls`, `timeout`, `too_large`, `protocol`, `bad_token`, or

@@ -142,15 +142,26 @@ impl SshSetup {
     }
 
     /// Takes `workspace`'s entry out of the file. Nothing is written when it had none.
-    pub(crate) fn withdraw(&self, workspace: &WorkspaceName) {
+    ///
+    /// # Errors
+    ///
+    /// Why the file could not be rewritten: the entry is then still in it, naming an endpoint that
+    /// is about to close, and the caller says so. The entry is out of the live set either way, so
+    /// the next write of the file (any workspace's) drops it.
+    pub(crate) fn withdraw(&self, workspace: &WorkspaceName) -> Result<(), String> {
         let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
         if entries.remove(workspace).is_none() {
-            return;
+            return Ok(());
         }
         if let Err(e) = self.write_config(&entries) {
-            tracing::warn!(%workspace, error = %e, "cannot take the workspace out of Puddle's ssh config");
+            return Err(format!(
+                "cannot take {} out of {}: {e}",
+                ssh_host(workspace),
+                self.config_path().display()
+            ));
         }
         let _ = std::fs::remove_file(self.known_hosts(workspace));
+        Ok(())
     }
 
     /// The endpoint `workspace`'s entry names now.
@@ -507,7 +518,7 @@ mod tests {
                 user_text,
                 format!("Include \"{}\"\n", ssh.config_path().display())
             );
-            ssh.withdraw(&name("web"));
+            ssh.withdraw(&name("web")).unwrap();
             assert!(
                 !std::fs::read_to_string(ssh.config_path())
                     .unwrap()
@@ -515,6 +526,35 @@ mod tests {
             );
             assert_eq!(std::fs::read_to_string(&user).unwrap(), user_text);
             assert_eq!(ssh.endpoint(&name("web")), None);
+        }
+
+        #[test]
+        fn a_withdraw_that_cannot_write_says_so_and_the_next_write_drops_the_entry() {
+            let dir = tempfile::tempdir().unwrap();
+            let (ssh, _) = setup(dir.path(), false);
+            ssh.publish(&name("web"), Path::new("/run/ep-1")).unwrap();
+            // A folder with a file in it where Puddle's file should be: the swap fails.
+            let file = ssh.config_path();
+            std::fs::remove_file(&file).unwrap();
+            std::fs::create_dir_all(file.join("in")).unwrap();
+            let err = ssh.withdraw(&name("web")).unwrap_err();
+            assert!(
+                err.contains("puddle-web") && err.contains("cannot take"),
+                "{err}"
+            );
+            assert_eq!(ssh.endpoint(&name("web")), None);
+            std::fs::remove_dir_all(&file).unwrap();
+            ssh.publish(&name("db"), Path::new("/run/ep-2")).unwrap();
+            let text = std::fs::read_to_string(&file).unwrap();
+            assert!(text.contains("Host puddle-db") && !text.contains("puddle-web"));
+        }
+
+        #[test]
+        fn withdrawing_a_workspace_without_an_entry_writes_nothing() {
+            let dir = tempfile::tempdir().unwrap();
+            let (ssh, _) = setup(dir.path(), false);
+            ssh.withdraw(&name("web")).unwrap();
+            assert!(!ssh.config_path().exists());
         }
 
         #[test]

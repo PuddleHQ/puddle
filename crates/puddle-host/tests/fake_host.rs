@@ -3585,6 +3585,32 @@ async fn an_entry_that_cannot_be_written_is_a_problem_that_ends_when_it_can() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_entry_that_cannot_be_taken_out_is_a_problem_until_the_file_can_be_written() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    allow_direct_ssh(&api, "acme", true).await;
+    eventually("the entry", || {
+        std::fs::read_to_string(rig.puddle_ssh_config()).is_ok_and(|t| t.contains("puddle-acme"))
+    })
+    .await;
+    // A folder with a file in it where Puddle's file is: the file cannot be rewritten.
+    std::fs::remove_file(rig.puddle_ssh_config()).unwrap();
+    std::fs::create_dir_all(rig.puddle_ssh_config().join("in")).unwrap();
+    allow_direct_ssh(&api, "acme", false).await;
+    let (title, detail) = problem_is(&api, "ssh:acme", true).await.unwrap();
+    assert!(title.contains("still names acme"), "{title}");
+    assert!(detail.contains("cannot take puddle-acme"), "{detail}");
+    // Fixed: the next entry written for it ends the problem.
+    std::fs::remove_dir_all(rig.puddle_ssh_config()).unwrap();
+    allow_direct_ssh(&api, "acme", true).await;
+    assert!(problem_is(&api, "ssh:acme", false).await.is_none());
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_problem_with_direct_ssh_ends_when_the_switch_goes_off_or_the_workspace_stops() {
     for ending in ["off", "stop"] {
         let rig = Rig::new();

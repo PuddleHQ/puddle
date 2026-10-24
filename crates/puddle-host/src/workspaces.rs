@@ -1736,10 +1736,29 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     }
 
     /// Ends `name`'s SSH way in: the entry first, so nothing names a closed endpoint, then the
-    /// endpoint, and the problem about it.
+    /// endpoint, and the problem about it. An entry that cannot be taken out is a problem that
+    /// stays: the file names an endpoint that is closed.
     async fn close_ssh(&self, name: &WorkspaceName, ssh: SshEndpoint) {
-        self.inner.ssh.withdraw(name);
-        self.inner.problems.clear(&problem_key("ssh", name));
+        let key = problem_key("ssh", name);
+        match self.inner.ssh.withdraw(name) {
+            Ok(()) => self.inner.problems.clear(&key),
+            Err(reason) => {
+                tracing::warn!(workspace = %name, %reason, "the ssh config still names a closed endpoint");
+                self.inner.problems.raise(
+                    Problem::new(
+                        key,
+                        format!("Puddle's ssh config still names {name}"),
+                        format!(
+                            "{reason}. The entry points at an endpoint that is now closed, so \
+                             `ssh {}` finds nothing; Puddle writes the file again the next time \
+                             any workspace's direct SSH starts or stops.",
+                            ssh_host(name)
+                        ),
+                    )
+                    .about(name.clone()),
+                );
+            }
+        }
         ssh.close().await;
     }
 

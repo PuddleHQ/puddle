@@ -1,0 +1,148 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Forgetting a login Puddle kept, from the notice that says it can't be used (fixture scenario
+// `lived-in`). The whole path runs by keyboard; the store's refusal shows its way out in the
+// dialog. Layout is checked by computed styles and box sizes, never by pictures.
+import type { Page } from "@playwright/test";
+import { type Backend, expect, test } from "./fixture";
+import { axeViolations } from "./support";
+
+const notices = (page: Page) => page.getByRole("region", { name: "Notices" });
+const forgetButton = (page: Page) =>
+  notices(page).getByRole("button", { name: "Forget Claude Code login" });
+const dialog = (page: Page) => page.getByRole("alertdialog");
+
+const capturedOff = {
+  type: "login_problem",
+  workspace: "web-shop",
+  service: "Claude Code",
+  kind: "capture_off",
+};
+
+async function open(page: Page, backend: Backend) {
+  await backend.control.reset("lived-in");
+  await backend.signIn(page);
+  await page.goto("/inbox");
+  await expect(notices(page)).toBeAttached();
+  // The stream may connect after the page loaded: emit until the notice shows.
+  await expect(async () => {
+    await backend.control.emit(capturedOff);
+    await expect(forgetButton(page)).toBeVisible({ timeout: 500 });
+  }).toPass();
+}
+
+test("a kept login is forgotten by keyboard, after a confirmation that says what goes", async ({
+  page,
+  backend,
+}) => {
+  await open(page, backend);
+  expect(await axeViolations(page)).toEqual([]);
+
+  await forgetButton(page).focus();
+  await page.keyboard.press("Enter");
+  await expect(dialog(page)).toBeVisible();
+  await expect(dialog(page)).toHaveAccessibleName(
+    "Forget the Claude Code login in web-shop?",
+  );
+  await expect(dialog(page)).toContainText("credential store");
+  await expect(dialog(page)).toContainText("asks you to sign in again");
+  // The safe choice has the focus; the confirm button is one Tab away.
+  await expect(
+    dialog(page).getByRole("button", { name: "Cancel" }),
+  ).toBeFocused();
+  expect(await axeViolations(page)).toEqual([]);
+  await page.keyboard.press("Tab");
+  await expect(
+    dialog(page).getByRole("button", { name: "Forget login" }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+
+  await expect(dialog(page)).toHaveCount(0);
+  await expect(notices(page).getByText(/can't be used/)).toHaveCount(0);
+  // The notice and its button are gone: the focus is on the page, not lost.
+  await expect(page.locator("#main")).toBeFocused();
+  expect(await axeViolations(page)).toEqual([]);
+});
+
+test("Escape leaves the login and its notice alone", async ({
+  page,
+  backend,
+}) => {
+  await open(page, backend);
+  await forgetButton(page).focus();
+  await page.keyboard.press("Enter");
+  await expect(dialog(page)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog(page)).toHaveCount(0);
+  await expect(forgetButton(page)).toBeVisible();
+});
+
+test("a store that refuses shows its way out in the dialog and keeps the notice, and the next try works", async ({
+  page,
+  backend,
+}) => {
+  await open(page, backend);
+  await backend.control.step({ do: "login_store_refuses", refuses: true });
+  await forgetButton(page).focus();
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Enter");
+
+  const why = dialog(page).getByRole("alert");
+  await expect(why).toContainText(
+    "credential store did not delete a saved login; unlock it or start it and ask again",
+  );
+  await expect(dialog(page)).toBeVisible();
+  await expect(forgetButton(page)).toHaveCount(1);
+  expect(await axeViolations(page)).toEqual([]);
+
+  // Layout: the message has its own border colour next to the dialog's, nothing leaves the
+  // dialog, and every button is a target of at least 24 by 24 CSS pixels (WCAG 2.5.8).
+  const look = await dialog(page).evaluate((el) => {
+    const message = el.querySelector<HTMLElement>(".confirm-error")!;
+    return {
+      message: getComputedStyle(message).borderTopColor,
+      dialog: getComputedStyle(el).borderTopColor,
+    };
+  });
+  expect(look.message).not.toBe(look.dialog);
+  const edge = (await dialog(page).boundingBox())!;
+  const view = page.viewportSize()!;
+  expect(edge.x).toBeGreaterThanOrEqual(0);
+  expect(edge.x + edge.width).toBeLessThanOrEqual(view.width);
+  expect(edge.y + edge.height).toBeLessThanOrEqual(view.height);
+  for (const control of [
+    dialog(page).getByRole("button", { name: "Cancel" }),
+    dialog(page).getByRole("button", { name: "Forget login" }),
+  ]) {
+    const box = (await control.boundingBox())!;
+    expect(box.width).toBeGreaterThanOrEqual(24);
+    expect(box.height).toBeGreaterThanOrEqual(24);
+    expect(box.x + box.width).toBeLessThanOrEqual(edge.x + edge.width);
+  }
+
+  // The store answers again: the same dialog, one more press.
+  await backend.control.step({ do: "login_store_refuses", refuses: false });
+  await dialog(page).getByRole("button", { name: "Forget login" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(dialog(page)).toHaveCount(0);
+  await expect(notices(page).getByText(/can't be used/)).toHaveCount(0);
+});
+
+test("the Forget button of a notice is a target big enough to hit and does not overflow the notice", async ({
+  page,
+  backend,
+}) => {
+  await open(page, backend);
+  const notice = page.locator(".notice", { has: forgetButton(page) });
+  const edge = (await notice.boundingBox())!;
+  const box = (await forgetButton(page).boundingBox())!;
+  expect(box.width).toBeGreaterThanOrEqual(24);
+  expect(box.height).toBeGreaterThanOrEqual(24);
+  expect(box.x + box.width).toBeLessThanOrEqual(edge.x + edge.width);
+  // The warning notice's border carries the warning colour; its Forget button is an ordinary button.
+  const colours = await notice.evaluate((el) => ({
+    border: getComputedStyle(el).borderTopColor,
+    plain: getComputedStyle(el.querySelector("button.dismiss")!).borderTopColor,
+  }));
+  expect(colours.border).not.toBe(colours.plain);
+});

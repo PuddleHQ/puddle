@@ -676,6 +676,47 @@ async fn scripted_steps_hold_and_fail_workspace_operations() {
 }
 
 #[tokio::test]
+async fn a_kept_login_is_forgotten_until_the_script_makes_the_store_refuse() {
+    let run = start("lived-in").await;
+    let step = |body: Value| {
+        let run = &run;
+        async move { run.control("POST", "/control/step", Some(&body)).await }
+    };
+    let forget = |service: &'static str| {
+        let run = &run;
+        async move {
+            run.api(
+                "DELETE",
+                &format!("/api/workspaces/web-shop/logins/{service}"),
+                None,
+            )
+            .await
+        }
+    };
+    // The name the notice carries works too, as the real host accepts it.
+    assert_eq!(forget("Claude%20Code").await.status, 204);
+
+    assert_eq!(
+        step(json!({"do": "login_store_refuses", "refuses": true}))
+            .await
+            .status,
+        204
+    );
+    let refused = forget("claude").await;
+    assert_eq!(refused.status, 503, "{}", refused.body);
+    assert!(
+        refused.json()["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("unlock it or start it and ask again")),
+        "{}",
+        refused.body
+    );
+
+    step(json!({"do": "login_store_refuses", "refuses": false})).await;
+    assert_eq!(forget("claude").await.status, 204);
+}
+
+#[tokio::test]
 async fn scripted_steps_raise_and_end_background_problems() {
     let run = start("lived-in").await;
     let mut stream = run.events().await;

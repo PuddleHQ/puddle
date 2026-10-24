@@ -2,9 +2,12 @@
 <script lang="ts">
   import {
     notices as defaultCenter,
+    type Notice,
+    type NoticeAction,
     type NoticeCenter,
   } from "#lib/notify/notices.svelte.ts";
   import "#lib/theme/controls.css";
+  import ConfirmDialog from "./ConfirmDialog.svelte";
 
   let { center = defaultCenter }: { center?: NoticeCenter } = $props();
 
@@ -16,6 +19,36 @@
   const list = $derived([...center.items].reverse());
   const shown = $derived(all ? list : list.slice(0, FOLDED));
   let region = $state<HTMLElement>();
+
+  /** The action whose confirmation is open, and what its last try said. */
+  let asking = $state<{ notice: Notice; action: NoticeAction } | null>(null);
+  let askOpen = $state(false);
+  let working = $state(false);
+  let failure = $state<string | null>(null);
+
+  function click(notice: Notice, action: NoticeAction) {
+    if (!action.confirm) {
+      void action.run();
+      return;
+    }
+    failure = null;
+    asking = { notice, action };
+    askOpen = true;
+  }
+
+  async function confirmed() {
+    if (!asking) return;
+    const { action } = asking;
+    working = true;
+    try {
+      await action.run();
+      askOpen = false;
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+    } finally {
+      working = false;
+    }
+  }
 
   /** After a dismissal the focus would fall to the page; keep it in the list, or on the page. */
   function dismiss(id: number, button: HTMLElement) {
@@ -51,7 +84,7 @@
                 <button
                   type="button"
                   class="btn"
-                  onclick={() => void action.run()}>{action.label}</button
+                  onclick={() => click(notice, action)}>{action.label}</button
                 >
               {/if}
               {#if notice.link}
@@ -84,6 +117,27 @@
     </div>
   {/if}
 </div>
+
+{#if asking?.action.confirm}
+  {@const confirm = asking.action.confirm}
+  <ConfirmDialog
+    bind:open={askOpen}
+    title={confirm.title}
+    summary={confirm.summary}
+    {...confirm.detail ? { detail: confirm.detail } : {}}
+    confirmLabel={confirm.confirmLabel}
+    tone="deny"
+    holdOpen
+    closeFocus={() =>
+      // The notice went with its cause, and the button the dialog opened from with it.
+      asking && !center.items.some((n) => n.id === asking?.notice.id)
+        ? document.getElementById("main")
+        : undefined}
+    {working}
+    error={failure}
+    onConfirm={() => void confirmed()}
+  />
+{/if}
 
 <style>
   .notices {

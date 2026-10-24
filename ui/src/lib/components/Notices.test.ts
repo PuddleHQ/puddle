@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NoticeCenter } from "#lib/notify/notices.svelte.ts";
 import Notices from "./Notices.svelte";
@@ -101,5 +107,100 @@ describe("Notices", () => {
     );
     expect(run).toHaveBeenCalledOnce();
     expect(screen.getByRole("link", { name: "Git tab" })).toBeInTheDocument();
+  });
+  describe("an action that asks first", () => {
+    const confirm = {
+      title: "Forget the login?",
+      summary: "Puddle deletes the saved sign-in.",
+      detail: "The tool asks you to sign in again.",
+      confirmLabel: "Forget login",
+    };
+
+    /** The dialog hides the page behind it from the accessibility tree, so look inside it. */
+    const confirmButton = async () =>
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Forget login",
+      });
+
+    function withAction(run: () => Promise<void>) {
+      const center = setup();
+      center.add({
+        key: "a",
+        tone: "warning",
+        title: "A login can't be used",
+        action: { label: "Forget login", run, confirm },
+      });
+      return center;
+    }
+
+    it("opens a dialog on the click and runs nothing until it is confirmed", async () => {
+      const run = vi.fn(() => Promise.resolve());
+      withAction(run);
+      await fireEvent.click(
+        await screen.findByRole("button", { name: "Forget login" }),
+      );
+      const dialog = await screen.findByRole("alertdialog");
+      expect(dialog).toHaveAccessibleName("Forget the login?");
+      expect(dialog).toHaveTextContent("Puddle deletes the saved sign-in.");
+      expect(dialog).toHaveTextContent("The tool asks you to sign in again.");
+      expect(run).not.toHaveBeenCalled();
+      await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(run).not.toHaveBeenCalled();
+    });
+
+    it("closes after a confirmed run and puts the focus on the page when the notice went with it", async () => {
+      document.body.insertAdjacentHTML(
+        "beforeend",
+        '<main id="main" tabindex="-1"></main>',
+      );
+      const run = vi.fn(() => {
+        center.resolve("a");
+        return Promise.resolve();
+      });
+      const center: NoticeCenter = withAction(run);
+      await fireEvent.click(
+        await screen.findByRole("button", { name: "Forget login" }),
+      );
+      await fireEvent.click(await confirmButton());
+      expect(run).toHaveBeenCalledOnce();
+      await vi.waitFor(() =>
+        expect(screen.queryByRole("alertdialog")).toBeNull(),
+      );
+      expect(document.activeElement).toBe(document.getElementById("main"));
+      document.getElementById("main")?.remove();
+    });
+
+    it("keeps the dialog open and shows why when the run fails, then lets it be tried again", async () => {
+      const run = vi
+        .fn<() => Promise<void>>()
+        .mockRejectedValueOnce(new Error("The store refused. Unlock it."))
+        .mockResolvedValueOnce(undefined);
+      withAction(run);
+      await fireEvent.click(
+        await screen.findByRole("button", { name: "Forget login" }),
+      );
+      await fireEvent.click(await confirmButton());
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "The store refused. Unlock it.",
+      );
+      expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+      expect(await confirmButton()).toBeEnabled();
+      await fireEvent.click(await confirmButton());
+      await vi.waitFor(() =>
+        expect(screen.queryByRole("alertdialog")).toBeNull(),
+      );
+      expect(run).toHaveBeenCalledTimes(2);
+    });
+
+    it("shows a failure that is not an Error as text", async () => {
+      withAction(() => Promise.reject("plain text failure"));
+      await fireEvent.click(
+        await screen.findByRole("button", { name: "Forget login" }),
+      );
+      await fireEvent.click(await confirmButton());
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "plain text failure",
+      );
+    });
   });
 });

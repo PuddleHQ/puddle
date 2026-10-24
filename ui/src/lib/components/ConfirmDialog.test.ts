@@ -103,4 +103,24 @@ describe("ConfirmDialog", () => {
       expect(screen.queryByRole("alertdialog")).toBeNull(),
     );
   });
+
+  it("with holdOpen stays open after confirming, shows an error and waits while working", async () => {
+    const { onConfirm } = mount({
+      holdOpen: true,
+      error: "The store refused.",
+    });
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Allow in every workspace" }),
+    );
+    expect(onConfirm).toHaveBeenCalledOnce();
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("The store refused.");
+  });
+
+  it("disables the confirm button while working", async () => {
+    mount({ working: true });
+    expect(
+      await screen.findByRole("button", { name: "Allow in every workspace" }),
+    ).toBeDisabled();
+  });
 });

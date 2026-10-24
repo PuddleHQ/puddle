@@ -581,6 +581,12 @@ pub enum Step {
         /// The reason the failed event carries.
         reason: String,
     },
+    /// Makes forgetting a kept login fail (the credential store refuses) or work again, so a
+    /// screen can show the way out the API gives.
+    LoginStoreRefuses {
+        /// Whether the store refuses.
+        refuses: bool,
+    },
     /// Replaces the network-health report and sends `network_changed` with its epoch, as a
     /// network or proxy change would.
     NetworkHealth(Box<NetworkHealth>),

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { asLoginProblem, LoginNotices } from "./logins.ts";
 import { InAppNotifier } from "./notifier.ts";
 import { NoticeCenter } from "./notices.svelte.ts";
@@ -111,6 +111,84 @@ describe("the notice watcher", () => {
     expect(center.items).toHaveLength(1);
     expect(center.items[0]!.title).toBe(
       "GitHub login in web is not protected.",
+    );
+  });
+});
+
+describe("forgetting a kept login from its notice", () => {
+  type Reply = { error?: { message: string } };
+  const forgetting = (reply: () => Promise<Reply>) => {
+    const DELETE = vi.fn(reply);
+    const login = new LoginNotices(new InAppNotifier(center), {
+      DELETE,
+    } as never);
+    return { DELETE, login };
+  };
+
+  it.each(["capture_off", "unreadable"])(
+    "offers Forget on a %s notice and asks first, saying what goes",
+    (kind) => {
+      const { login } = forgetting(() => Promise.resolve({}));
+      login.handle(problem(kind));
+      const action = center.items[0]!.action!;
+      expect(action.label).toBe("Forget Claude Code login");
+      expect(action.confirm).toMatchObject({
+        title: "Forget the Claude Code login in web?",
+        confirmLabel: "Forget login",
+      });
+      expect(action.confirm!.summary).toContain("credential store");
+      expect(action.confirm!.detail).toContain("sign in again");
+    },
+  );
+
+  it.each([
+    "store_unavailable",
+    "unexpected_answer",
+    "unusable_token",
+    "bound_token",
+    "unknown",
+  ])("offers nothing to forget on a %s notice", (kind) => {
+    notices.handle(problem(kind));
+    expect(center.items[0]!.action).toBeUndefined();
+  });
+
+  it("deletes the login by workspace and the service's name, then ends the notice", async () => {
+    const { DELETE, login } = forgetting(() => Promise.resolve({}));
+    login.handle(problem("capture_off"));
+    await center.items[0]!.action!.run();
+    expect(DELETE).toHaveBeenCalledWith(
+      "/api/workspaces/{id}/logins/{service}",
+      { params: { path: { id: "web", service: "Claude Code" } } },
+    );
+    expect(center.items).toEqual([]);
+  });
+
+  it("rejects with the API's own words as a sentence and keeps the notice when the store refuses", async () => {
+    const { login } = forgetting(() =>
+      Promise.resolve({
+        error: {
+          message:
+            "the operating system's credential store did not delete a saved login; unlock it or start it and ask again",
+        },
+      }),
+    );
+    login.handle(problem("capture_off"));
+    await expect(center.items[0]!.action!.run()).rejects.toThrow(
+      "The operating system's credential store did not delete a saved login; unlock it or start it and ask again.",
+    );
+    expect(center.items).toHaveLength(1);
+  });
+
+  it("says so when the service does not answer, and when the error has no words", async () => {
+    const down = forgetting(() => Promise.reject(new Error("fetch failed")));
+    down.login.handle(problem("capture_off"));
+    await expect(center.items[0]!.action!.run()).rejects.toThrow(
+      "Puddle's service isn't answering. Try again.",
+    );
+    const bare = forgetting(() => Promise.resolve({ error: { message: "" } }));
+    bare.login.handle(problem("unreadable"));
+    await expect(center.items.at(-1)!.action!.run()).rejects.toThrow(
+      "Puddle couldn't forget the login.",
     );
   });
 });

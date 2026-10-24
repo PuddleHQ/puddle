@@ -100,6 +100,8 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
   control heights, text sizes) against the design tokens, per density, in every browser project, with the
   accessibility checks (axe) covering the rest.
 - **WebKitGTK** (Linux only) for `crates/puddle-app`: `sudo apt install libwebkit2gtk-4.1-dev`. CI installs it.
+  The tray also needs `libayatana-appindicator3-1` (opened at run time) and, for its test, `xvfb`: `sudo apt install libayatana-appindicator3-1 xvfb`.
+  CI installs both in the same step; the tray test fails without either.
   Without it and outside CI, `scripts/check.sh` skips that one crate in its Linux gates (clippy, tests, docs,
   coverage) and says so; `clippy-windows` still checks it for the msvc target. Windows needs WebView2, which
   current Windows has.

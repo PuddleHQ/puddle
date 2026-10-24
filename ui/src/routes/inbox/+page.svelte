@@ -82,6 +82,23 @@
   const rowElement = (id: number) =>
     document.querySelector<HTMLElement>(`[data-request-id="${id}"]`);
 
+  // A system notification opens the window at `/inbox?request=<id>`: that request is the current
+  // one and has the focus, once the list is in. A request decided meanwhile is simply not there.
+  let wanted: number | null = (() => {
+    const id = Number(
+      new URLSearchParams(window.location.search).get("request"),
+    );
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+  })();
+  $effect(() => {
+    if (wanted === null || pending.status !== "ready") return;
+    const id = wanted;
+    wanted = null;
+    if (!flat.some((r) => r.request.id === id)) return;
+    currentId = id;
+    afterPaint(() => rowElement(id)?.focus());
+  });
+
   function request(id: number | null) {
     return pending.rows.find((r) => r.request.id === id);
   }

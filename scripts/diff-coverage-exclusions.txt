@@ -249,3 +249,4 @@ crates/puddle-e2e/src/lab/web_host.rs | return; | a failed TLS handshake with th
 crates/puddle-e2e/src/lab/web_host.rs | let _ = hyper::server::conn::http2::Builder::new(TokioExecutor::new()) | HTTP/2 is negotiated only by the guest's curl, so the VM tier covers it (vm_host.rs asserts the HTTP/2 answer)
 crates/puddle-e2e/src/lab/web_host.rs | .serve_connection(io, service) | HTTP/2 is negotiated only by the guest's curl, so the VM tier covers it (vm_host.rs asserts the HTTP/2 answer)
 crates/puddle-e2e/src/lab/web_host.rs | .await; | HTTP/2 is negotiated only by the guest's curl, so the VM tier covers it (vm_host.rs asserts the HTTP/2 answer)
+crates/puddle-agent/src/capture/dns.rs | tracing::debug!(error = %err, "stub DNS: receive queue left at its default size"); | the kernel refusing both the forced and the capped receive-queue size cannot be provoked from a test (a process may always set the capped size); the arm only logs and the queue stays at its default

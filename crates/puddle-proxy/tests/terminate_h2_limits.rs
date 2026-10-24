@@ -361,27 +361,54 @@ async fn a_stream_queued_behind_the_servers_stream_limit_is_answered_after_the_h
     );
 }
 
+/// A listener that takes every connection and never speaks.
+struct Blackhole {
+    addr: std::net::SocketAddr,
+    accepted: Arc<AtomicUsize>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Blackhole {
+    async fn start() -> Self {
+        let listener = tokio::net::TcpListener::bind((terminate_support::LOCAL, 0))
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let kept = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let task = {
+            let accepted = Arc::clone(&accepted);
+            tokio::spawn(async move {
+                while let Ok((tcp, _)) = listener.accept().await {
+                    accepted.fetch_add(1, Ordering::SeqCst);
+                    kept.lock().unwrap().push(tcp);
+                }
+            })
+        };
+        Self {
+            addr,
+            accepted,
+            task,
+        }
+    }
+
+    fn accepted(&self) -> usize {
+        self.accepted.load(Ordering::SeqCst)
+    }
+}
+
+impl Drop for Blackhole {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
 /// A server that takes the connection and never speaks TLS, asked by five streams at once: one
 /// attempt answers all of them, instead of five attempts one after the other.
 #[tokio::test]
 async fn streams_asking_for_a_dead_server_share_one_attempt() {
     let pki = Pki::new();
-    let listener = tokio::net::TcpListener::bind((terminate_support::LOCAL, 0))
-        .await
-        .unwrap();
-    let addr = listener.local_addr().unwrap();
-    let accepted = Arc::new(AtomicUsize::new(0));
-    let kept = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let accepting = {
-        let accepted = Arc::clone(&accepted);
-        let kept = Arc::clone(&kept);
-        tokio::spawn(async move {
-            while let Ok((tcp, _)) = listener.accept().await {
-                accepted.fetch_add(1, Ordering::SeqCst);
-                kept.lock().unwrap().push(tcp);
-            }
-        })
-    };
+    let dead = Blackhole::start().await;
     let config = ProxyConfig::default().with_terminate_timeouts(
         Duration::from_secs(1),
         Duration::from_secs(60),
@@ -389,48 +416,158 @@ async fn streams_asking_for_a_dead_server_share_one_attempt() {
         Duration::from_secs(10),
     );
     let rig = RigBuilder::new(&pki)
-        .name("bound.test", addr)
+        .name("bound.test", dead.addr)
         .config(config)
         .build();
     let mut guest = rig.guest().await;
     // The handshake's own attempt fails after the TLS timeout; the first stream is told why.
     let client = guest.h2("bound.test:443", &[b"h2"]).await;
-    assert_eq!(accepted.load(Ordering::SeqCst), 1);
+    assert_eq!(dead.accepted(), 1);
     let asked = Instant::now();
-    let mut tasks = Vec::new();
-    for i in 0..5 {
-        let mut sender = client.sender.clone();
-        tasks.push(tokio::spawn(async move {
-            let request = http::Request::builder()
-                .uri(format!("https://bound.test/{i}"))
-                .body(full(Bytes::new()))
-                .unwrap();
-            terminate_support::h2_rig::collect(sender.send_request(request).await.unwrap()).await
-        }));
-    }
-    for task in tasks {
-        assert_eq!(task.await.unwrap().status, 504);
-    }
+    let statuses = concurrent_gets(&client, 5).await;
+    assert_eq!(statuses, [504; 5]);
     assert!(
         asked.elapsed() < Duration::from_millis(3500),
         "five streams cost {:?}, not one attempt's time",
         asked.elapsed()
     );
     assert_eq!(
-        accepted.load(Ordering::SeqCst),
+        dead.accepted(),
         2,
         "one attempt for all five streams, besides the handshake's"
     );
     // The failure is not remembered: the next stream tries again.
-    let mut sender = client.sender.clone();
-    let request = http::Request::builder()
-        .uri("https://bound.test/later")
-        .body(full(Bytes::new()))
+    assert_eq!(concurrent_gets(&client, 1).await, [504]);
+    assert_eq!(dead.accepted(), 3);
+}
+
+/// `count` GETs at once on `client`; their statuses, sorted.
+async fn concurrent_gets(client: &terminate_support::h2_rig::H2Guest, count: usize) -> Vec<u16> {
+    let mut tasks = Vec::new();
+    for i in 0..count {
+        let mut sender = client.sender.clone();
+        tasks.push(tokio::spawn(async move {
+            let request = http::Request::builder()
+                .uri(format!("https://bound.test/{i}"))
+                .body(full(Bytes::new()))
+                .unwrap();
+            terminate_support::h2_rig::collect(sender.send_request(request).await.unwrap())
+                .await
+                .status
+        }));
+    }
+    let mut statuses = Vec::new();
+    for task in tasks {
+        statuses.push(task.await.unwrap());
+    }
+    statuses.sort_unstable();
+    statuses
+}
+
+/// A stream does not wait longer for another stream's attempt than it would for an answer.
+#[tokio::test]
+async fn a_stream_waiting_for_another_streams_attempt_gives_up_after_the_head_timeout() {
+    let pki = Pki::new();
+    let dead = Blackhole::start().await;
+    let config = ProxyConfig::default().with_terminate_timeouts(
+        Duration::from_secs(3),
+        Duration::from_secs(60),
+        Duration::from_secs(1),
+        Duration::from_secs(10),
+    );
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", dead.addr)
+        .config(config)
+        .build();
+    let mut guest = rig.guest().await;
+    let client = guest.h2("bound.test:443", &[b"h2"]).await;
+    // One stream takes the handshake's failure, one makes the attempt (3 s), one waits for it.
+    let asked = Instant::now();
+    assert_eq!(concurrent_gets(&client, 3).await, [503, 504, 504]);
+    assert!(
+        asked.elapsed() < Duration::from_secs(8),
+        "{:?}",
+        asked.elapsed()
+    );
+    assert_eq!(dead.accepted(), 2);
+}
+
+/// A server that refuses its first connection and is fine afterwards, asked by four streams at
+/// once: the one that makes the attempt gives the others its connection.
+#[tokio::test]
+async fn streams_waiting_for_an_attempt_that_works_all_use_its_connection() {
+    let pki = Pki::new();
+    let server = H2Server::recording(&pki, "bound.test", ok()).await;
+    let front = tokio::net::TcpListener::bind((terminate_support::LOCAL, 0))
+        .await
         .unwrap();
-    let got = terminate_support::h2_rig::collect(sender.send_request(request).await.unwrap()).await;
-    assert_eq!(got.status, 504);
-    assert_eq!(accepted.load(Ordering::SeqCst), 3);
-    accepting.abort();
+    let front_addr = front.local_addr().unwrap();
+    let target = server.addr;
+    let fronting = tokio::spawn(async move {
+        let mut first = true;
+        while let Ok((mut inbound, _)) = front.accept().await {
+            if std::mem::take(&mut first) {
+                continue; // dropped: the first connection fails its TLS handshake
+            }
+            tokio::spawn(async move {
+                if let Ok(mut outbound) = tokio::net::TcpStream::connect(target).await {
+                    let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
+                }
+            });
+        }
+    });
+    let rig = RigBuilder::new(&pki).name("bound.test", front_addr).build();
+    let mut guest = rig.guest().await;
+    let client = guest.h2("bound.test:443", &[b"h2"]).await;
+    let statuses = concurrent_gets(&client, 4).await;
+    assert_eq!(
+        statuses,
+        [200, 200, 200, 502],
+        "the first stream gets the handshake's failure"
+    );
+    assert_eq!(
+        server.accepted.load(Ordering::SeqCst),
+        1,
+        "three streams, one connection to the server"
+    );
+    fronting.abort();
+}
+
+/// A stream stuck before the proxy has anything to give (the server never answers) is answered by
+/// the sweep, not left to the five-minute head timeout.
+#[tokio::test]
+async fn a_stream_the_server_never_answers_is_ended_by_the_idle_limit() {
+    let pki = Pki::new();
+    let held = Arc::new(AtomicUsize::new(0));
+    let server = H2Server::streaming(&pki, "bound.test", holding(&held)).await;
+    let config = ProxyConfig::default().with_idle_limits(
+        Duration::from_secs(2),
+        Duration::from_secs(60),
+        Duration::from_secs(20),
+    );
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .config(config)
+        .build();
+    let mut guest = rig.guest().await;
+    let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
+    let asked = Instant::now();
+    let got = tokio::time::timeout(Duration::from_secs(20), client.get("bound.test", "/hold"))
+        .await
+        .expect("the stream was never answered");
+    assert_eq!(got.status, 408);
+    assert!(got.text().contains("moved no data for too long"), "{got:?}");
+    assert!(
+        asked.elapsed() >= Duration::from_secs(2),
+        "{:?}",
+        asked.elapsed()
+    );
+    client.close().await;
+    let events = rig.events(1).await;
+    assert_eq!(
+        reasons(&events),
+        [ConnectionReason::LimitEnded("stream_idle")]
+    );
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -341,6 +341,23 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn a_stream_that_moves_again_after_its_order_still_counts_as_stuck_after_the_grace() {
+        let registry = Arc::new(Registry::default());
+        let guard = registry.open(LIMIT, None);
+        advance(101).await;
+        assert!(!registry.sweep(Instant::now(), GRACE), "just told");
+        advance(10).await;
+        guard.activity().touch();
+        assert!(!registry.sweep(Instant::now(), GRACE), "inside the grace");
+        advance(11).await;
+        guard.activity().touch();
+        assert!(
+            registry.sweep(Instant::now(), GRACE),
+            "a stream that was told to give up and is still open after the grace is stuck"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn the_waker_of_a_polled_body_is_woken_when_its_stream_expires() {
         let registry = Arc::new(Registry::default());
         let guard = registry.open(LIMIT, None);

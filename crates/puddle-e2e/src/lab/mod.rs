@@ -118,13 +118,10 @@ impl StartCost {
     }
 }
 
-/// User plus system CPU time of process `pid` so far (Linux: `/proc/<pid>/stat`).
+/// User plus system CPU time of process `pid` so far, from Linux's `/proc/<pid>/stat`; `None`
+/// where there is no such file.
 fn cpu_time(pid: u32) -> Option<Duration> {
-    if cfg!(target_os = "linux") {
-        parse_cpu_time(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
-    } else {
-        None
-    }
+    parse_cpu_time(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
 }
 
 /// `utime + stime` of a `/proc/<pid>/stat` line, at the 100 Hz tick every Linux target uses. The

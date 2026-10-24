@@ -81,9 +81,9 @@ alive() { # alive <pidfile> [word]
 # gone <pid>: the process has exited (a zombie that is not waited for yet counts: kill -0 says it
 # is there).
 gone() {
-    [ -r "/proc/$1/stat" ] || return 0
-    read -r _ rest <"/proc/$1/stat" || return 0
-    state=${rest##*) }
+    # `cat`, not `read`: dash reads procfs a byte at a time and sees a truncated file.
+    stat=$(cat "/proc/$1/stat" 2>/dev/null) || return 0
+    state=${stat##*) }
     [ "${state%% *}" = Z ]
 }
 

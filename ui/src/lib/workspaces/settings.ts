@@ -2,6 +2,7 @@
 // A workspace's own settings as the form shows them: what each control offers and how a choice
 // becomes an override (a value, or `null` to inherit).
 import type { components } from "#lib/api/schema.d.ts";
+import { CPU_COUNTS, cpuLabel } from "#lib/settings/cpus.ts";
 import { formatMib } from "./model.ts";
 
 export type Layer = components["schemas"]["SettingsLayer"];
@@ -32,6 +33,23 @@ export function memoryOptions(
       .map((mib) => ({ value: String(mib), label: formatMib(mib) })),
   ];
 }
+
+/** `""` follows the global default, anything else is a CPU count. */
+export function cpuOptions(globalCount: number): Option<string>[] {
+  return [
+    {
+      value: "",
+      label: `Use the global default (${cpuLabel(globalCount)})`,
+    },
+    ...CPU_COUNTS.map((n) => ({ value: String(n), label: cpuLabel(n) })),
+  ];
+}
+
+export const cpusFromChoice = (value: string): number | null =>
+  value === "" ? null : Number(value);
+
+export const cpusToChoice = (value: number | null): string =>
+  value === null ? "" : String(value);
 
 export function memoryFromChoice(value: string): number | null {
   return value === "" ? null : Number(value);

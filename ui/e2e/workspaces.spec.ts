@@ -5,6 +5,7 @@
 // Operations finish at once unless a test holds them (`hold_workspaces`) to look at the busy
 // state; the page clock is the fixture's.
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
+import { CPUS_MAX, CPUS_MIN } from "../src/lib/settings/cpus.ts";
 import { type Backend, expect, test } from "./fixture";
 import { axeStops, axeViolations, watchCsp } from "./support";
 
@@ -1075,6 +1076,61 @@ test.describe("the settings tab", () => {
       ((await again.json()) as { overrides: { memory: unknown } }).overrides
         .memory,
     ).toBeNull();
+  });
+
+  test("cpus: choose a count from the keyboard, it is kept, says a running workspace keeps its count, and the API takes 1 to 32 only", async ({
+    page,
+    request,
+    backend,
+  }) => {
+    await openDetail(page, backend, "web-shop", "settings");
+    const cpus = page.getByLabel("CPUs for this workspace");
+    await expect(cpus).toHaveValue("");
+    await expect(cpus.locator("option").first()).toHaveText(
+      "Use the global default (1 CPU)",
+    );
+    await expect(cpus.locator("option")).toHaveCount(CPUS_MAX - CPUS_MIN + 2);
+    await expect(
+      page.getByText(/A running workspace keeps the count it started with/),
+    ).toBeVisible();
+
+    await page.getByLabel("Memory for this workspace").focus();
+    await page.keyboard.press("Tab");
+    await expect(cpus).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(page.getByText("CPUs saved.")).toBeVisible();
+    await expect(
+      page.getByText(/The new CPU count applies the next time/),
+    ).toBeVisible();
+    const url = "/api/settings/workspaces/web-shop";
+    const read = async () =>
+      (await (await request.get(url, { headers: auth(backend) })).json()) as {
+        overrides: { cpus: number | null };
+      };
+    expect((await read()).overrides.cpus).toBe(1);
+    await expect(page.locator("#ws-cpus-desc .chip")).toHaveText(
+      "this workspace",
+    );
+
+    await page.reload();
+    await expect(page.getByLabel("CPUs for this workspace")).toHaveValue("1");
+    await page.getByLabel("CPUs for this workspace").selectOption("");
+    await expect(page.getByText("CPUs saved.")).toBeVisible();
+    expect((await read()).overrides.cpus).toBeNull();
+
+    // The limits the page offers are the ones the API enforces.
+    const { overrides } = await read();
+    const put = async (count: number) =>
+      (
+        await request.put(url, {
+          headers: auth(backend),
+          data: { overrides: { ...overrides, cpus: count } },
+        })
+      ).ok();
+    expect(await put(CPUS_MIN - 1)).toBe(false);
+    expect(await put(CPUS_MAX + 1)).toBe(false);
+    expect(await put(CPUS_MIN)).toBe(true);
+    expect(await put(CPUS_MAX)).toBe(true);
   });
 
   test("local destinations and clipboard follow the global setting until set here", async ({

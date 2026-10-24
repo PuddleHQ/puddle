@@ -4,6 +4,7 @@
 // focus), never on key order or time.
 import type { APIRequestContext, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
+import { CPUS_MAX, CPUS_MIN } from "../src/lib/settings/cpus.ts";
 import { axeViolations, watchCsp } from "./support";
 
 const TERMS = "https://code.visualstudio.com/license/server";
@@ -197,6 +198,76 @@ test("changes wait for Save, are sent together and survive a reload", async ({
   await expect(page.getByLabel("Private networks")).toBeChecked();
   await expect(page.getByLabel("Sound")).toBeChecked();
   await expect(page.getByLabel("Closing the window")).toHaveValue("quit");
+});
+
+test.describe("default CPUs", () => {
+  test("is reached by Tab after memory, changed from the keyboard, and kept after Save and a reload", async ({
+    page,
+    backend,
+    request,
+  }) => {
+    await openSettings(page, backend);
+    const cpus = page.getByLabel("Default CPUs");
+    await expect(cpus).toHaveValue("1");
+    await expect(cpus.locator("option")).toHaveCount(CPUS_MAX - CPUS_MIN + 1);
+    await expect(cpus.locator("option").first()).toHaveText("1 CPU");
+    await expect(cpus.locator("option").last()).toHaveText("32 CPUs");
+
+    await page.getByLabel("Default memory").focus();
+    await page.keyboard.press("Tab");
+    await expect(cpus).toBeFocused();
+    const ring = await cpus.evaluate((el) => {
+      const s = getComputedStyle(el);
+      return { width: s.outlineWidth, style: s.outlineStyle };
+    });
+    expect(ring).toEqual({ width: "2px", style: "solid" });
+    await page.keyboard.press("ArrowDown");
+    await expect(cpus).toHaveValue("2");
+    await expect(
+      page.getByText(/Default CPUs apply when a workspace next starts/),
+    ).toBeVisible();
+    // Nothing is stored before Save.
+    expect(
+      (await stored(request, backend)).workspace_defaults["cpus"],
+    ).toBeNull();
+
+    await pressSave(page);
+    expect((await stored(request, backend)).workspace_defaults["cpus"]).toBe(
+      2,
+    );
+    await page.reload();
+    await expect(page.getByLabel("Default CPUs")).toHaveValue("2");
+  });
+
+  test("says a running workspace keeps its count, in a control that is big enough and stays inside its card at phone width", async ({
+    page,
+    backend,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 800 });
+    await openSettings(page, backend);
+    const cpus = page.getByLabel("Default CPUs");
+    await expect(
+      page.getByText(/A running workspace keeps the count it started with/),
+    ).toBeVisible();
+    const layout = await cpus.evaluate((el) => {
+      const card = el.closest(".card") as HTMLElement;
+      const box = el.getBoundingClientRect();
+      const inside = card.getBoundingClientRect();
+      return {
+        height: box.height,
+        left: box.left - inside.left,
+        right: inside.right - box.right,
+        pageOverflow:
+          document.documentElement.scrollWidth -
+          document.documentElement.clientWidth,
+      };
+    });
+    expect(layout.height).toBeGreaterThanOrEqual(24);
+    expect(layout.left).toBeGreaterThanOrEqual(0);
+    expect(layout.right).toBeGreaterThanOrEqual(0);
+    expect(layout.pageOverflow).toBeLessThanOrEqual(0);
+    expect(await axeViolations(page)).toEqual([]);
+  });
 });
 
 test("Discard drops the edits, and leaving with edits is held back", async ({

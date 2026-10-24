@@ -128,6 +128,23 @@ mod tests {
     }
 
     #[test]
+    fn clearing_removes_the_file_and_a_file_that_cannot_be_removed_is_only_logged() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = Marker::in_file(dir.path().join("one.kept"));
+        marker.clear();
+        marker.write(&set(&["claude"]));
+        marker.clear();
+        assert_eq!(marker.read(), None);
+        assert!(!dir.path().join("one.kept").exists());
+        // A folder where the file should be cannot be removed as a file.
+        let folder = dir.path().join("folder.kept");
+        std::fs::create_dir(&folder).unwrap();
+        Marker::in_file(folder.clone()).clear();
+        assert!(folder.exists());
+        Marker::none().clear();
+    }
+
+    #[test]
     fn no_marker_never_knows_and_a_folder_that_cannot_be_made_only_costs_the_marker() {
         let none = Marker::none();
         none.write(&set(&["claude"]));

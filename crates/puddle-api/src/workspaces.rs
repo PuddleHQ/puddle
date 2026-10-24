@@ -1285,6 +1285,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_service_with_no_credential_store_keeps_no_logins_to_forget() {
+        let id = WorkspaceId::new("w").unwrap();
+        let forgotten = NoWorkspaces.forget_login(&id, "claude").await;
+        assert!(
+            matches!(forgotten, Err(WorkspaceError::Unavailable(ref why)) if why.contains("no logins")),
+            "{forgotten:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn a_service_with_no_guest_does_not_check_shell_init() {
         let id = WorkspaceId::new("w").unwrap();
         let check = NoWorkspaces.check_shell_init(&id, "echo hi\n").await;

@@ -6084,10 +6084,7 @@ async fn an_entrypoint_that_failed_at_once_is_a_problem_until_a_start_where_it_d
         problem.detail
     );
     assert_eq!(
-        problem
-            .workspace
-            .as_ref()
-            .map(puddle_types::WorkspaceName::as_str),
+        problem.workspace.as_ref().map(WorkspaceName::as_str),
         Some("acme")
     );
 

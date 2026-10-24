@@ -37,6 +37,10 @@ fn expect_mode(path: &Path, mode: u32) -> io::Result<()> {
     }
 }
 
+pub(super) fn replace_file(from: &Path, to: &Path) -> io::Result<()> {
+    fs::rename(from, to)
+}
+
 pub(super) fn create_file(path: &Path) -> io::Result<File> {
     OpenOptions::new()
         .write(true)

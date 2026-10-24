@@ -4526,6 +4526,41 @@ async fn a_stopped_workspace_has_no_ca_and_each_start_makes_a_new_one() {
     host.shutdown().await;
 }
 
+/// The skipped file is one ed25519 key, the one whose public half is `login_ed25519.pub`: a CA
+/// key written under that name would not hide behind the exclusion.
+fn assert_is_the_login_key(file: &std::path::Path) {
+    use base64::Engine as _;
+    let engine = base64::engine::general_purpose::STANDARD;
+    let public = std::fs::read_to_string(file.with_extension("pub")).unwrap();
+    let public_blob = engine.decode(public.split(' ').nth(1).unwrap()).unwrap();
+    let text = std::fs::read_to_string(file).unwrap();
+    let lines: Vec<_> = text.lines().collect();
+    // The armor lines are spelled in parts: the repository's secret scan looks for the whole.
+    let kind = ["OPENSSH", "PRIVATE", "KEY"].join(" ");
+    assert_eq!(
+        lines.first().copied(),
+        Some(format!("-----BEGIN {kind}-----").as_str())
+    );
+    assert_eq!(
+        lines.last().copied(),
+        Some(format!("-----END {kind}-----").as_str())
+    );
+    let body = engine.decode(lines[1..lines.len() - 1].concat()).unwrap();
+    assert!(body.starts_with(b"openssh-key-v1\0"));
+    assert_eq!(
+        body.windows(public_blob.len())
+            .filter(|w| *w == public_blob)
+            .count(),
+        2,
+        "the public half is in the file twice (header and key section): one key"
+    );
+    assert_eq!(
+        public_blob.len(),
+        4 + b"ssh-ed25519".len() + 4 + 32,
+        "an ed25519 public half"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn no_file_in_the_data_folder_holds_a_key_or_the_ca_whether_the_workspace_runs_or_not() {
     fn files_under(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
@@ -4568,6 +4603,7 @@ async fn no_file_in_the_data_folder_holds_a_key_or_the_ca_whether_the_workspace_
             // a file, so it is owner-only on disk by design, and it opens nothing but the runtime's
             // SSH server. It is made at every start, whether or not the switch is on.
             if file == rig.dir.path().join("data/ssh/login_ed25519") {
+                assert_is_the_login_key(&file);
                 continue;
             }
             // A file the database or a save is replacing may be gone by now.

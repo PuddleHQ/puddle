@@ -38,6 +38,10 @@ pub(super) fn create_new_dir(dir: &Path) -> io::Result<()> {
     win::create_owner_only_dir(dir)
 }
 
+pub(super) fn replace_file(from: &Path, to: &Path) -> io::Result<()> {
+    win::replace_file(from, to)
+}
+
 pub(super) fn create_file(path: &Path) -> io::Result<File> {
     win::create_owner_only_file(path)
 }

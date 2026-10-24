@@ -31,7 +31,7 @@ use windows_sys::Win32::Security::{
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CREATE_NEW, CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_DELETE,
-    FILE_SHARE_READ, FILE_SHARE_WRITE,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, ReplaceFileW,
 };
 use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
@@ -317,6 +317,34 @@ fn sid_to_string(sid: PSID) -> io::Result<String> {
     };
     drop(owned);
     Ok(text)
+}
+
+/// Replaces the existing file `to` with the finished file `from` through `ReplaceFileW`, which
+/// leaves `to` with its own access list, attributes and creation time (a rename would carry
+/// `from`'s instead). `from` is gone on success.
+///
+/// # Errors
+///
+/// The OS error of the call; both files are as they were.
+pub fn replace_file(from: &Path, to: &Path) -> io::Result<()> {
+    let from = wide_nul(from.as_os_str());
+    let to = wide_nul(to.as_os_str());
+    // SAFETY: both strings are NUL-terminated and outlive the call; the optional backup name and
+    // the two reserved arguments are null as the API requires.
+    let done = unsafe {
+        ReplaceFileW(
+            to.as_ptr(),
+            from.as_ptr(),
+            ptr::null(),
+            0,
+            ptr::null(),
+            ptr::null(),
+        )
+    };
+    if done == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 /// `s` as UTF-16 with a terminating NUL.

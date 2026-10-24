@@ -5,6 +5,7 @@
 //! the holder is the running sandbox whose configuration mounts the volume (ADR 0006 point 8).
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use microsandbox::sandbox::{SandboxConfig, VolumeMount};
 use microsandbox::volume::VolumeHandle;
@@ -106,11 +107,32 @@ pub(crate) fn size_mib(capacity_bytes: Option<u64>, quota_mib: Option<u32>) -> D
     DiskSize::mib(mib)
 }
 
+/// Whole MiB in `bytes`, rounded up so a volume holding anything never reads as empty.
+pub(crate) fn used_mib(bytes: u64) -> DiskSize {
+    DiskSize::mib(u32::try_from(bytes.div_ceil(1024 * 1024)).unwrap_or(u32::MAX))
+}
+
+/// What the volume `name` takes on the host: the allocated part of its disk `image`. msb's own
+/// catalog field for it is never updated after the volume is made, so the file is read. `None`
+/// for a volume with no image of its own, or an image that cannot be looked at (logged, because
+/// the workspace card then shows no use).
+fn used_of(name: &str, image: Option<PathBuf>) -> Option<DiskSize> {
+    let image = image?;
+    match puddle_fs::allocated_bytes(&image) {
+        Ok(bytes) => Some(used_mib(bytes)),
+        Err(e) => {
+            tracing::warn!(volume = name, image = %image.display(), error = %e, "the volume's use of the disk is unknown");
+            None
+        }
+    }
+}
+
 /// The catalog entry as a [`VolumeInfo`].
 pub(crate) fn info(handle: &VolumeHandle, holders: &BTreeMap<String, String>) -> VolumeInfo {
     VolumeInfo {
         name: handle.name().to_owned(),
         size: size_mib(handle.capacity_bytes(), handle.quota_mib()),
+        used: used_of(handle.name(), handle.disk_path()),
         holder: holders.get(handle.name()).cloned(),
     }
 }
@@ -146,6 +168,28 @@ mod tests {
             m("alpha", WorkspaceStatus::Running, &["ws-a"]),
         ]);
         assert_eq!(h.get("ws-a").map(String::as_str), Some("alpha"));
+    }
+
+    #[test]
+    fn use_is_rounded_up_to_whole_mib() {
+        assert_eq!(used_mib(0), DiskSize::mib(0));
+        assert_eq!(used_mib(1), DiskSize::mib(1));
+        assert_eq!(used_mib(1024 * 1024), DiskSize::mib(1));
+        assert_eq!(used_mib(1024 * 1024 + 1), DiskSize::mib(2));
+        assert_eq!(used_mib(u64::MAX), DiskSize::mib(u32::MAX));
+    }
+
+    #[test]
+    fn a_volume_reads_as_what_its_image_holds_and_unknown_without_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = dir.path().join("disk.raw");
+        std::fs::write(&image, vec![1_u8; 2 * 1024 * 1024]).unwrap();
+        let used = used_of("ws-a", Some(image)).unwrap();
+        assert!(used >= DiskSize::mib(2), "{used:?}");
+        assert!(used <= DiskSize::mib(3), "{used:?}");
+        // A directory volume has no image; an image that cannot be looked at is unknown, not zero.
+        assert_eq!(used_of("ws-a", None), None);
+        assert_eq!(used_of("ws-a", Some(dir.path().join("missing.raw"))), None);
     }
 
     #[test]

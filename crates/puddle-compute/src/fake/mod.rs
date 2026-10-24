@@ -198,6 +198,8 @@ impl Default for FakeConfig {
 
 pub(crate) struct VolumeRecord {
     size: DiskSize,
+    /// What the volume "takes on the host", as a test sets it; `None` is a runtime that cannot say.
+    used: Option<DiskSize>,
     files: Files,
 }
 
@@ -300,6 +302,7 @@ impl State {
         VolumeInfo {
             name: name.to_owned(),
             size: v.size,
+            used: v.used,
             holder: self.holder_of(name),
         }
     }
@@ -478,9 +481,18 @@ impl FakeRuntime {
             name.to_owned(),
             VolumeRecord {
                 size,
+                used: None,
                 files: Files::new(),
             },
         );
+    }
+
+    /// Sets what the volume `name` "takes on the host" from now on; the runtime reports it in
+    /// [`VolumeInfo::used`]. A volume that does not exist is left alone.
+    pub fn set_volume_used(&self, name: &VolumeName, used: DiskSize) {
+        if let Some(volume) = self.lock().volumes.get_mut(name.as_str()) {
+            volume.used = Some(used);
+        }
     }
 
     fn handle(&self, name: &SandboxName, boot: u64, owned: bool) -> FakeSandbox {
@@ -594,6 +606,7 @@ impl Runtime for FakeRuntime {
                     .entry(m.volume.to_string())
                     .or_insert_with(|| VolumeRecord {
                         size,
+                        used: None,
                         files: Files::new(),
                     });
             }
@@ -770,6 +783,7 @@ impl Runtime for FakeRuntime {
         }
         let record = VolumeRecord {
             size: spec.size,
+            used: None,
             files: Files::new(),
         };
         let info = state.volume_info(spec.name.as_str(), &record);

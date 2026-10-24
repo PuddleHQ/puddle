@@ -59,6 +59,9 @@ pub struct VolumeInfo {
     pub name: String,
     /// Its capacity, read back from the runtime's catalog.
     pub size: DiskSize,
+    /// What the volume takes on the host now, when the runtime can tell: the part of its disk
+    /// image that holds data, not its capacity.
+    pub used: Option<DiskSize>,
     /// The running sandbox it is attached to, if any (ADR 0006 point 8: single writer).
     pub holder: Option<String>,
 }
@@ -373,6 +376,7 @@ mod tests {
         let vol = VolumeInfo {
             name: "ws-a".into(),
             size: DiskSize::mib(1),
+            used: None,
             holder: None,
         };
         assert_eq!(vol.volume_name().unwrap().as_str(), "ws-a");

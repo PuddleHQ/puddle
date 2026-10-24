@@ -288,6 +288,16 @@ fn workspace_error(e: &puddle_workspace::WorkspaceError) -> WorkspaceError {
     }
 }
 
+/// The use of the volume of workspace `id` among `volumes`.
+fn disk_used(volumes: &[puddle_compute::VolumeInfo], id: &WorkspaceId) -> Option<u64> {
+    let name = id.volume_name();
+    volumes
+        .iter()
+        .find(|v| v.name == name.as_str())
+        .and_then(|v| v.used)
+        .map(|used| u64::from(used.as_mib()))
+}
+
 fn listing(l: &puddle_workspace::Listing) -> Listing {
     let mut out = Listing::default();
     out.items.clone_from(&l.items);
@@ -588,8 +598,25 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         tasks.spawn(async move {
             let _running = running;
             let result = work.await;
+            this.refresh_disk_use().await;
             this.conclude(&id, op, result);
         });
+    }
+
+    /// Reads what every workspace's volume takes on the host into the records, so the list and
+    /// the single-workspace answer both carry it. A runtime that cannot say leaves the earlier
+    /// value; the card shows the size alone until it can.
+    async fn refresh_disk_use(&self) {
+        let volumes = match self.inner.runtime.list_volumes().await {
+            Ok(volumes) => volumes,
+            Err(e) => {
+                tracing::debug!(error = %e, "the volumes' use of the disk is unknown");
+                return;
+            }
+        };
+        for slot in self.state().slots.values_mut() {
+            slot.record.disk_used_mib = disk_used(&volumes, &slot.record.id);
+        }
     }
 
     /// Ends an operation: the busy mark goes, the state follows the outcome, and the last event
@@ -2017,6 +2044,7 @@ fn boot_message(e: &BootError) -> String {
 impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
     fn list(&self) -> BoxFuture<'_, Result<Vec<WorkspaceRecord>, WorkspaceError>> {
         Box::pin(async move {
+            self.refresh_disk_use().await;
             Ok(self
                 .state()
                 .slots

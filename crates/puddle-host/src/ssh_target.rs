@@ -110,7 +110,7 @@ mod tests {
                     reason: "the endpoint died".into(),
                 },
                 Event::WorkspaceSshFailed {
-                    workspace,
+                    workspace: workspace.clone(),
                     reason: "direct SSH has no endpoint (address in use); restart the workspace to try again"
                         .into(),
                 },

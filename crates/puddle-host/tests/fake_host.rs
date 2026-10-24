@@ -6046,6 +6046,13 @@ async fn the_list_and_one_workspace_say_what_the_volume_takes_when_the_runtime_k
     let one = api.get("/api/workspaces/acme").await.json();
     assert_eq!(one["disk_used_mib"], 1536, "{one}");
 
+    // A runtime that cannot list its volumes does not stop the list: the last value stays.
+    rig.runtime
+        .inject(Op::ListVolumes, Fault::once(disk_error("list volumes")));
+    let list = api.get("/api/workspaces").await;
+    assert_eq!(list.status, 200, "{}", list.body);
+    assert_eq!(list.json()["workspaces"][0]["disk_used_mib"], 1536);
+
     // A workspace's own answer follows an operation without a list being asked for.
     rig.runtime.set_volume_used(
         &WorkspaceId::new("acme").unwrap().volume_name(),

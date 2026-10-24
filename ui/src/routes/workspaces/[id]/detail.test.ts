@@ -764,6 +764,43 @@ describe("the settings tab", () => {
     await vi.waitFor(() => expect(api.overrides["demo"]?.memory).toBeNull());
   });
 
+  it("saves a CPU count at once; a running workspace is told it keeps its count until the next start", async () => {
+    await open();
+    const cpus = screen.getByLabelText(
+      "CPUs for this workspace",
+    ) as HTMLSelectElement;
+    expect(cpus.value).toBe("");
+    expect(cpus.options[0]?.text).toBe("Use the global default (1 CPU)");
+    expect(
+      screen.getByText(/A running workspace keeps the count it started with/),
+    ).toBeInTheDocument();
+    await fireEvent.change(cpus, { target: { value: "4" } });
+    await screen.findByText("CPUs saved.");
+    expect(api.overrides["demo"]?.cpus).toBe(4);
+    expect(
+      await screen.findByText(/The new CPU count applies the next time/),
+    ).toBeInTheDocument();
+    await fireEvent.change(cpus, { target: { value: "" } });
+    await vi.waitFor(() => expect(api.overrides["demo"]?.cpus).toBeNull());
+  });
+
+  it("says nothing of a restart for a stopped workspace and puts the CPU choice back when the save is refused", async () => {
+    api.list = [workspace("demo", { status: "stopped" })];
+    await open();
+    const cpus = screen.getByLabelText(
+      "CPUs for this workspace",
+    ) as HTMLSelectElement;
+    await fireEvent.change(cpus, { target: { value: "2" } });
+    await screen.findByText("CPUs saved.");
+    expect(screen.queryByText(/The new CPU count/)).toBeNull();
+    api.refuse.set("PUT /api/settings/workspaces/{workspace}", {
+      status: 422,
+      message: "no",
+    });
+    await fireEvent.change(cpus, { target: { value: "8" } });
+    await vi.waitFor(() => expect(cpus.value).toBe("2"));
+  });
+
   it("doesn't mention a restart for a workspace that isn't running", async () => {
     api.list = [workspace("demo", { status: "stopped" })];
     const memory = await open();

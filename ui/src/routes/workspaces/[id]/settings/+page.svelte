@@ -4,6 +4,7 @@
   import UnknownFields from "#lib/components/UnknownFields.svelte";
   import { page } from "$app/state";
   import { LOCAL_LABELS, type LocalCategory } from "#lib/decision/local.ts";
+  import { CPUS_NOTE, cpuLabel } from "#lib/settings/cpus.ts";
   import { WorkspaceSettings } from "#lib/stores/workspace-settings.svelte.ts";
   import { workspaceActions as actions } from "#lib/stores/workspace-actions.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
@@ -13,6 +14,9 @@
   } from "#lib/workspaces/direct-ssh.ts";
   import {
     clipboardOptions,
+    cpuOptions,
+    cpusFromChoice,
+    cpusToChoice,
     memoryFromChoice,
     memoryOptions,
     memoryToChoice,
@@ -33,6 +37,7 @@
   let saved = $state<string | null>(null);
   let problem = $state<string | null>(null);
   let restartHint = $state(false);
+  let cpusHint = $state(false);
   let captureHint = $state(false);
 
   // Reload only for another workspace, not on every status change of this one.
@@ -83,6 +88,19 @@
       },
     );
     restartHint = ok && workspace?.status === "running";
+    cpusHint = false;
+  }
+
+  async function saveCpus(select: HTMLSelectElement) {
+    const ok = await save(
+      { cpus: cpusFromChoice(select.value) },
+      "CPUs",
+      () => {
+        select.value = cpusToChoice(settings.overrides?.cpus ?? null);
+      },
+    );
+    restartHint = false;
+    cpusHint = ok && workspace?.status === "running";
   }
 
   async function saveToggle(
@@ -130,6 +148,7 @@
       },
     );
     restartHint = false;
+    cpusHint = false;
     captureHint = ok && workspace?.status === "running";
   }
 
@@ -172,6 +191,12 @@
       {#if restartHint}
         <p>The new memory applies the next time the workspace starts.</p>
       {/if}
+      {#if cpusHint}
+        <p>
+          The new CPU count applies the next time the workspace starts; it keeps
+          its current count until then.
+        </p>
+      {/if}
       {#if captureHint}
         <p>The new login setting applies the next time the workspace starts.</p>
       {/if}
@@ -197,6 +222,30 @@
           onchange={(e) => void saveMemory(e.currentTarget)}
         >
           {#each memoryOptions(overrides.memory, global.memory.value) as option (option.value)}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="cpus-h">
+      <h2 id="cpus-h">CPUs</h2>
+      <div class="setting">
+        <div class="grow">
+          <label for="ws-cpus">CPUs for this workspace</label>
+          <p class="desc" id="ws-cpus-desc">
+            {CPUS_NOTE} Now in effect:
+            {cpuLabel(effective.cpus.value)}
+            <span class="chip">{sourceLabel(effective.cpus.source)}</span>
+          </p>
+        </div>
+        <select
+          id="ws-cpus"
+          aria-describedby="ws-cpus-desc"
+          value={cpusToChoice(overrides.cpus)}
+          onchange={(e) => void saveCpus(e.currentTarget)}
+        >
+          {#each cpuOptions(global.cpus.value) as option (option.value)}
             <option value={option.value}>{option.label}</option>
           {/each}
         </select>

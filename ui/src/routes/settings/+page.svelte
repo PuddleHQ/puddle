@@ -8,6 +8,7 @@
   import Toast from "#lib/components/Toast.svelte";
   import { api } from "#lib/api/client.ts";
   import { LOCAL_LABELS, type LocalCategory } from "#lib/decision/local.ts";
+  import { CPU_COUNTS, CPUS_NOTE, cpuLabel } from "#lib/settings/cpus.ts";
   import {
     EMPTY_DRAFT,
     isDirty,
@@ -455,6 +456,26 @@
           >
             {#each memorySizes(eff.memory.value) as size (size.value)}
               <option value={String(size.value)}>{size.label}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="setting">
+          <div class="grow">
+            <label for="set-cpus">Default CPUs</label>
+            <span class="restart">{RESTART_NOTE}</span>
+            <p class="desc" id="set-cpus-desc">
+              Used by every workspace that has no count of its own. {CPUS_NOTE}
+            </p>
+          </div>
+          <select
+            id="set-cpus"
+            aria-describedby="set-cpus-desc"
+            value={String(layerValue("cpus", eff.cpus.value))}
+            onchange={(e) =>
+              editLayer("cpus", Number(e.currentTarget.value), eff.cpus.value)}
+          >
+            {#each CPU_COUNTS as count (count)}
+              <option value={String(count)}>{cpuLabel(count)}</option>
             {/each}
           </select>
         </div>

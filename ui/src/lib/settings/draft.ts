@@ -28,6 +28,7 @@ export const EMPTY_DRAFT: Draft = {
 /** Settings that act only when a workspace next starts, with the name the notes use. */
 export const NEEDS_RESTART: Partial<Record<LayerKey, string>> = {
   memory: "Default memory",
+  cpus: "Default CPUs",
   capture_logins: "Login capture",
 };
 

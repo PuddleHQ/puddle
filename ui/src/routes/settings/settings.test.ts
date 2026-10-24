@@ -224,7 +224,7 @@ describe("explicit Save", () => {
     await open();
     expect(
       screen.getAllByText("Applies when a workspace next starts."),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     await choose("Default memory", "16384");
     expect(
       screen.getByText(/Default memory apply when a workspace next starts/),
@@ -234,6 +234,29 @@ describe("explicit Save", () => {
       "Settings saved. Default memory apply when a workspace next starts.",
     );
     expect(api.layer.memory).toBe(16_384);
+  });
+
+  it("sets the default CPU count from 1 to 32 and says a running workspace keeps its own", async () => {
+    await open();
+    const cpus = screen.getByLabelText("Default CPUs") as HTMLSelectElement;
+    expect(cpus).toHaveValue("1");
+    expect([...cpus.options].map((o) => o.value)).toEqual(
+      Array.from({ length: 32 }, (_, i) => String(i + 1)),
+    );
+    expect(cpus.options[0]?.text).toBe("1 CPU");
+    expect(cpus.options[3]?.text).toBe("4 CPUs");
+    expect(
+      screen.getByText(/A running workspace keeps the count it started with/),
+    ).toBeInTheDocument();
+    await choose("Default CPUs", "4");
+    expect(
+      screen.getByText(/Default CPUs apply when a workspace next starts/),
+    ).toBeInTheDocument();
+    await save(
+      "Settings saved. Default CPUs apply when a workspace next starts.",
+    );
+    expect(api.layer.cpus).toBe(4);
+    expect(screen.getByLabelText("Default CPUs")).toHaveValue("4");
   });
 
   it("says nothing about a restart for settings that apply at once", async () => {

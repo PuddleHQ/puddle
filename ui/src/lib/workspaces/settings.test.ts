@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   CLIPBOARD_OPTIONS,
   clipboardOptions,
+  cpuOptions,
+  cpusFromChoice,
+  cpusToChoice,
   memoryFromChoice,
   memoryOptions,
   memoryToChoice,
@@ -102,5 +105,25 @@ describe("sources", () => {
     expect(sourceLabel("workspace")).toBe("this workspace");
     expect(sourceLabel("global")).toBe("global setting");
     expect(sourceLabel("default")).toBe("Puddle's default");
+  });
+});
+
+describe("cpus", () => {
+  it("offers the global default first, then 1 to 32", () => {
+    const options = cpuOptions(2);
+    expect(options[0]).toEqual({
+      value: "",
+      label: "Use the global default (2 CPUs)",
+    });
+    expect(options).toHaveLength(33);
+    expect(options[1]).toEqual({ value: "1", label: "1 CPU" });
+    expect(options[32]).toEqual({ value: "32", label: "32 CPUs" });
+  });
+
+  it("maps a choice to an override and back", () => {
+    expect(cpusFromChoice("")).toBeNull();
+    expect(cpusFromChoice("8")).toBe(8);
+    expect(cpusToChoice(null)).toBe("");
+    expect(cpusToChoice(8)).toBe("8");
   });
 });

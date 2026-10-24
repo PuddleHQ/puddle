@@ -71,9 +71,6 @@ const GUEST_CONNECTION_WINDOW: u32 = 2 * 1024 * 1024;
 /// What an HTTP/1.1 pool checkout may wait for a free connection.
 const POOL_WAIT: Duration = Duration::from_secs(30);
 
-/// What a stream may wait while another stream of the connection sets up the upstream connection.
-const LEG_WAIT: Duration = Duration::from_secs(30);
-
 /// A response body or request body as the HTTP/2 server and the upstream clients take it.
 type RespBody = http_body_util::combinators::UnsyncBoxBody<Bytes, BoxError>;
 
@@ -120,11 +117,10 @@ struct Shared {
     streams: Arc<Registry>,
 }
 
-/// What the upstream leg offers a stream right now.
+/// What the upstream leg offers a stream.
 enum Usable {
     H2(hyper::client::conn::http2::SendRequest<UpBody>),
     Pool(H1Pool),
-    None,
 }
 
 impl Shared {
@@ -139,46 +135,45 @@ impl Shared {
             return Err(refusal);
         }
         let usable = match self.usable() {
-            Usable::None => self.connect_leg().await?,
-            usable => usable,
+            Some(usable) => usable,
+            None => self.connect_leg().await?,
         };
         match usable {
             Usable::H2(sender) => Ok(Route::H2(sender)),
             Usable::Pool(pool) => pool.checkout(&self.cx, POOL_WAIT).await.map(Route::H1),
-            Usable::None => Err(Refusal::new(
-                "502 Bad Gateway",
-                "the upstream connection is gone",
-            )),
         }
     }
 
-    fn usable(&self) -> Usable {
+    fn usable(&self) -> Option<Usable> {
         match &*self.leg.lock().unwrap_or_else(PoisonError::into_inner) {
-            LegState::H2(conn) if !conn.sender.is_closed() => Usable::H2(conn.sender.clone()),
-            LegState::H1(pool) => Usable::Pool(pool.clone()),
-            _ => Usable::None,
+            LegState::H2(conn) if !conn.sender.is_closed() => Some(Usable::H2(conn.sender.clone())),
+            LegState::H1(pool) => Some(Usable::Pool(pool.clone())),
+            _ => None,
         }
     }
 
-    /// Connects to the real server, once for every stream that is waiting for it: a stream that
+    /// Connects to the real server, once for every stream that is waiting for it (each waits at most
+    /// the upstream-head time for the attempt in progress): a stream that
     /// came while an attempt was running gets that attempt's failure, not an attempt of its own,
     /// so a dead server costs one timeout however many streams ask.
     async fn connect_leg(&self) -> Result<Usable, Refusal> {
         let asked = Instant::now();
-        let mut gate = tokio::time::timeout(LEG_WAIT, self.connecting.lock())
-            .await
-            .map_err(|_| {
-                Refusal::new(
-                    "503 Service Unavailable",
-                    format!(
-                        "the connection to {} is still being set up",
-                        self.cx.target.host
-                    ),
-                )
-            })?;
-        match self.usable() {
-            Usable::None => {}
-            usable => return Ok(usable),
+        let mut gate = tokio::time::timeout(
+            self.cx.proxy.config.upstream_head_timeout,
+            self.connecting.lock(),
+        )
+        .await
+        .map_err(|_| {
+            Refusal::new(
+                "503 Service Unavailable",
+                format!(
+                    "the connection to {} is still being set up",
+                    self.cx.target.host
+                ),
+            )
+        })?;
+        if let Some(usable) = self.usable() {
+            return Ok(usable);
         }
         if let Some((failed_at, refusal)) = gate.as_ref()
             && *failed_at >= asked

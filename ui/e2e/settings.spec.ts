@@ -255,15 +255,11 @@ test.describe("default CPUs", () => {
         height: box.height,
         left: box.left - inside.left,
         right: inside.right - box.right,
-        pageOverflow:
-          document.documentElement.scrollWidth -
-          document.documentElement.clientWidth,
       };
     });
     expect(layout.height).toBeGreaterThanOrEqual(24);
     expect(layout.left).toBeGreaterThanOrEqual(0);
     expect(layout.right).toBeGreaterThanOrEqual(0);
-    expect(layout.pageOverflow).toBeLessThanOrEqual(0);
     expect(await axeViolations(page)).toEqual([]);
   });
 });

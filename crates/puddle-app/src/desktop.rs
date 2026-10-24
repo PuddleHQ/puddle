@@ -96,6 +96,13 @@ fn tapped(performed: &ActionPerformed) -> Option<Opens> {
     })
 }
 
+/// A click on a notification: opens the inbox where the notification pointed.
+fn on_tap<R: Runtime>(app: &AppHandle<R>, base: &Url, performed: &ActionPerformed) {
+    if let Some(opens) = tapped(performed) {
+        open_inbox(app, base, opens);
+    }
+}
+
 /// Brings the main window up on the inbox, at the request a notification was about.
 fn open_inbox<R: Runtime>(app: &AppHandle<R>, base: &Url, opens: Opens) {
     crate::shell::focus_main(app);
@@ -248,15 +255,9 @@ impl Outputs {
         let showing = app.clone();
         Self {
             in_front: Arc::new(move || in_front(&front)),
-            notify: Arc::new(move |notice, sound| show_notice(&notifying, notice, sound)),
+            notify: Arc::new(move |notice, sound| notify::show(&notifying, notice, sound)),
             badge: Arc::new(move |count, on| show_badge(&showing, tray.as_deref(), count, on)),
         }
-    }
-}
-
-fn show_notice<R: Runtime>(app: &AppHandle<R>, notice: &Notice, sound: bool) {
-    if let Err(err) = notify::show(app, notice, sound) {
-        tracing::warn!(%err, "could not show a notification");
     }
 }
 
@@ -396,11 +397,9 @@ pub fn attach<R: Runtime>(
     let out = Outputs::system(app, tray);
 
     let (handle, base) = (app.clone(), backend.url().clone());
-    let registered = app.notification().on_action(move |performed| {
-        if let Some(opens) = tapped(performed) {
-            open_inbox(&handle, &base, opens);
-        }
-    });
+    let registered = app
+        .notification()
+        .on_action(move |performed| on_tap(&handle, &base, performed));
     if let Err(err) = registered {
         tracing::warn!(%err, "a click on a notification will not open the inbox");
     }
@@ -898,11 +897,17 @@ mod behaviour_tests {
 
     #[test]
     fn only_a_click_on_the_notification_itself_opens_anything() {
+        let rig = rig(TrayState::Shown);
         assert_eq!(tapped(&performed("tap", Some(7))), Some(Opens::Request(7)));
         assert_eq!(tapped(&performed("tap", None)), Some(Opens::Inbox));
         assert_eq!(tapped(&performed("dismiss", Some(7))), None);
         let unreadable: ActionPerformed =
             serde_json::from_value(json!({"actionId": "tap", "notification": "garbled"})).unwrap();
         assert_eq!(tapped(&unreadable), Some(Opens::Inbox));
+        // Both ends run on the test runtime: a click navigates the window, any other action does not.
+        let app = rig.app.handle();
+        let base = Url::parse("http://127.0.0.1:4000/").unwrap();
+        on_tap(app, &base, &performed("tap", Some(7)));
+        on_tap(app, &base, &performed("dismiss", None));
     }
 }

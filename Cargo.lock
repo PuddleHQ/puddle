@@ -5976,6 +5976,7 @@ dependencies = [
 name = "puddle-app"
 version = "0.0.0"
 dependencies = [
+ "gtk",
  "puddle-api",
  "puddle-certs",
  "puddle-compute",

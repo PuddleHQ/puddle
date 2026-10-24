@@ -255,16 +255,9 @@ const SOUND: &str = "Ping";
 const SOUND: &str = "message-new-instant";
 
 /// Shows `notice` through the operating system, with the system sound when `sound` is on. No
-/// sound is asked for otherwise: the platforms play none then.
-///
-/// # Errors
-///
-/// The plugin's error when the notice could not be prepared.
-pub fn show<R: Runtime>(
-    app: &AppHandle<R>,
-    notice: &Notice,
-    sound: bool,
-) -> tauri_plugin_notification::Result<()> {
+/// sound is asked for otherwise: the platforms play none then. A notice the system refuses is
+/// logged: the same event is also in the inbox and the in-app notices.
+pub fn show<R: Runtime>(app: &AppHandle<R>, notice: &Notice, sound: bool) {
     let mut builder = app
         .notification()
         .builder()
@@ -276,7 +269,9 @@ pub fn show<R: Runtime>(
     if sound {
         builder = builder.sound(SOUND);
     }
-    builder.show()
+    if let Err(err) = builder.show() {
+        tracing::warn!(%err, "could not show a notification");
+    }
 }
 
 #[cfg(test)]

@@ -272,8 +272,9 @@ jobs:
           if-no-files-found: ignore
 
   # Nightly, pull requests to main and manual runs from develop only: it compiles everything a
-  # second time, which a pull request to develop does not need. Only the nightly and a manual run
-  # from develop save its cache (`save-if` below), so the nightly starts warm.
+  # second time, which a pull request to develop does not need. It keeps no Rust cache: the 1.6 GB
+  # entry was gone when the nightly looked for it and held the repo over its 10 GB cap
+  # (cache-gc.yml); a cold build took 21 minutes of the 45 on 2026-10-24.
   release:
     name: windows release build
     if: >-
@@ -298,11 +299,6 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: rustup toolchain install && rustc --version
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        if: steps.changed.outputs.run == 'true'
-        with:
-          shared-key: windows-release
-          save-if: ${{ github.ref == 'refs/heads/develop' }}
       # The binaries embed ui/build, so it is built first, as the release build always saw it.
       - name: Node for the UI
         if: steps.changed.outputs.run == 'true'

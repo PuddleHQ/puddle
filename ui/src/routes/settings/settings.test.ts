@@ -410,6 +410,7 @@ describe("notification and inbox switches", () => {
       true,
     ],
     ["Keyboard shortcuts in the inbox", "inbox_shortcuts", false],
+    ["Minimizing hides Puddle in the tray", "minimize_to_tray", false],
   ];
 
   it("shows each switch at Puddle's default and saves a change on Save", async () => {

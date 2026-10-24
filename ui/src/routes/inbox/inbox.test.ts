@@ -125,6 +125,36 @@ describe("the inbox page", () => {
     expect(rowOf("a.example.com")).toHaveAttribute("aria-current", "true");
   });
 
+  it("makes the request a notification named current, and focuses it", async () => {
+    seed();
+    window.history.replaceState(null, "", "/inbox?request=3");
+    try {
+      render(InboxPage);
+      await screen.findByRole("heading", { level: 2, name: "example.com" });
+      expect(rowOf("registry.other.org")).toHaveAttribute(
+        "aria-current",
+        "true",
+      );
+      await vi.waitFor(() =>
+        expect(document.querySelector('[data-request-id="3"]')).toHaveFocus(),
+      );
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
+  it("keeps the first request current for a request that is gone or a link that is no id", async () => {
+    seed();
+    for (const query of ["?request=99", "?request=abc", "?request=-2"]) {
+      window.history.replaceState(null, "", `/inbox${query}`);
+      const view = render(InboxPage);
+      await screen.findByRole("heading", { level: 2, name: "example.com" });
+      expect(rowOf("a.example.com")).toHaveAttribute("aria-current", "true");
+      view.unmount();
+    }
+    window.history.replaceState(null, "", "/");
+  });
+
   it("says so when the service didn't answer, and shows an empty state when nothing waits", async () => {
     inbox.down = true;
     const view = render(InboxPage);

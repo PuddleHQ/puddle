@@ -31,6 +31,7 @@ const noUi = (): S["UiPrefs"] => ({
   notifications: null,
   sound: null,
   close_behaviour: null,
+  minimize_to_tray: null,
   notify_only_unfocused: null,
   badge: null,
   notify_oom: null,

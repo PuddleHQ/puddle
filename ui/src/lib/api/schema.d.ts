@@ -1792,7 +1792,7 @@ export interface components {
          */
         ClipboardRead: "ask" | "allow" | "deny";
         /**
-         * @description What closing the window does while a workspace runs.
+         * @description What the close button does.
          * @enum {string}
          */
         CloseBehaviour: "tray" | "quit";
@@ -3648,6 +3648,8 @@ export interface components {
             density: components["schemas"]["DensityChoice"] | null;
             /** @description The inbox's single-key shortcuts A, D, J and K (default off). */
             inbox_shortcuts: boolean | null;
+            /** @description Minimizing hides the window to the tray instead of the taskbar (default off). */
+            minimize_to_tray: boolean | null;
             /** @description A system notification for a new request (default on). */
             notifications: boolean | null;
             /** @description Notify only while Puddle's window is not focused (default on). */

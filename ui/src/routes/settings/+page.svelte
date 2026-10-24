@@ -164,6 +164,7 @@
   /** The preferences that are plain on/off switches. */
   type BoolPref =
     | "notifications"
+    | "minimize_to_tray"
     | "notify_only_unfocused"
     | "sound"
     | "badge"
@@ -351,7 +352,7 @@
           "notifications",
           "set-notify",
           "System notifications for new requests",
-          "One notification per host, at most one every 10 seconds per workspace. Clicking it opens the request.",
+          "At most one notification every 10 seconds per workspace, naming what it asked for. Clicking it opens the request.",
           true,
         )}
         {@render uiToggle(
@@ -414,6 +415,13 @@
             {/each}
           </select>
         </div>
+        {@render uiToggle(
+          "minimize_to_tray",
+          "set-minimize",
+          "Minimizing hides Puddle in the tray",
+          "Off: minimizing leaves Puddle in the taskbar.",
+          false,
+        )}
       </section>
 
       <section class="card" id="s-inbox" aria-labelledby="h-inbox">

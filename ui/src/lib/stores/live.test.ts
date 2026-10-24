@@ -119,8 +119,11 @@ describe("LiveState.start", () => {
       // A poll that works while the stream is fine opens nothing new.
       await vi.advanceTimersByTimeAsync(1000);
       expect(opened).toHaveLength(1);
+      const refusal = { reason: "the service said no", advice: "Restart." };
+      opened[0]?.onRefused?.(refusal);
       opened[0]?.onState?.("refused");
       expect(live.stream).toBe("refused");
+      expect(live.streamRefusal).toEqual(refusal);
       // The poll answering all along does not reopen a stream whose key was refused.
       await vi.advanceTimersByTimeAsync(2000);
       expect(opened).toHaveLength(1);
@@ -135,8 +138,13 @@ describe("LiveState.start", () => {
       expect(opened[0]?.signal.aborted).toBe(true);
       expect(live.stream).toBe("connecting");
       // Late words from the old stream change nothing.
+      opened[0]?.onRefused?.({ reason: "late", advice: "late" });
       opened[0]?.onState?.("refused");
       expect(live.stream).toBe("connecting");
+      expect(live.streamRefusal).toEqual(refusal);
+      // A connection that works clears what the refusal said.
+      opened[1]?.onState?.("connected");
+      expect(live.streamRefusal).toBeNull();
       stop();
       expect(opened[1]?.signal.aborted).toBe(true);
     } finally {

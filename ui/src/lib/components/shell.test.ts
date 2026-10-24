@@ -18,6 +18,7 @@ const live = vi.hoisted(() => ({
   problem: null as null | "unauthorized" | "unreachable" | "failing",
   problemDetail: null as string | null,
   streamError: null as string | null,
+  streamRefusal: null as null | { reason: string; advice: string },
   stream: "connected" as string,
   start: vi.fn(() => () => undefined),
   subscribe: vi.fn(() => () => undefined),
@@ -45,6 +46,7 @@ beforeEach(() => {
   live.problem = null;
   live.problemDetail = null;
   live.streamError = null;
+  live.streamRefusal = null;
   live.stream = "connected";
   live.start.mockClear();
   live.subscribe.mockClear();
@@ -165,13 +167,17 @@ describe("root layout", () => {
     );
   });
 
-  it("says a refused event stream stopped for good and what to do", () => {
-    live.problem = null;
+  it("says a refused event stream stopped for good, with the service's reason and what to do", () => {
     live.stream = "refused";
-    live.streamError = "the event stream refused this app's key (status 401)";
+    live.streamRefusal = {
+      reason:
+        "the service refused the event stream: requests from this origin are not allowed (status 403)",
+      advice:
+        "Open Puddle from its own app window or tray icon, not from another address.",
+    };
     render(Layout, { children: (() => {}) as never });
     expect(screen.getByRole("status")).toHaveTextContent(
-      /Live updates stopped: the event stream refused this app's key \(status 401\)\. Open Puddle from its app window or tray icon to sign in again\./,
+      "Live updates stopped: the service refused the event stream: requests from this origin are not allowed (status 403). Open Puddle from its own app window or tray icon, not from another address.",
     );
   });
 

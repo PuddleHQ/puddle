@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use rustls::client::Resumption;
 use rustls::pki_types::{CertificateDer, ServerName};
-use rustls::{ClientConfig, RootCertStore};
+use rustls::{CertificateError, ClientConfig, RootCertStore};
 use rustls_platform_verifier::Verifier;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::TlsConnector;
@@ -39,8 +39,9 @@ pub enum TlsConnectError {
     /// The name is not a valid DNS name (an IP literal is refused too: Puddle verifies names).
     #[error("{0:?} is not a valid server name")]
     InvalidName(String),
-    /// The server's certificate was not accepted: unknown issuer, expired, wrong name, ... The
-    /// text is rustls's own reason.
+    /// The server's certificate was not accepted: unknown issuer, expired, wrong name, ... For
+    /// the common reasons the text is one fixed sentence on every platform (see
+    /// [`certificate_reason`]); for the rest it is rustls's own reason.
     #[error("{0}")]
     Certificate(String),
     /// Any other handshake or transport failure.
@@ -54,13 +55,44 @@ impl TlsConnectError {
             .get_ref()
             .and_then(|inner| inner.downcast_ref::<rustls::Error>());
         match tls {
-            Some(inner @ rustls::Error::InvalidCertificate(_)) => {
-                Self::Certificate(inner.to_string())
+            Some(rustls::Error::InvalidCertificate(why)) => {
+                Self::Certificate(certificate_reason(why))
             }
             Some(other) => Self::Handshake(other.to_string()),
             None => Self::Handshake(err.to_string()),
         }
     }
+}
+
+/// One wording for a refused certificate, whichever platform verifier refused it. The verifiers
+/// word the same reason differently ("certificate expired: verification time ..." through webpki,
+/// a bare "Expired" from the Windows chain engine), so the common ones get a fixed sentence and
+/// the name rustls gives the reason; anything else keeps the verifier's own text, which may be
+/// all there is to go on.
+fn certificate_reason(why: &CertificateError) -> String {
+    use CertificateError as C;
+    let (code, what) = match why {
+        C::Expired | C::ExpiredContext { .. } => ("Expired", "the certificate has expired"),
+        C::NotValidYet | C::NotValidYetContext { .. } => (
+            "NotValidYet",
+            "the certificate is not valid yet; check that this computer's clock is right",
+        ),
+        C::UnknownIssuer => (
+            "UnknownIssuer",
+            "the certificate was issued by an authority this computer does not trust",
+        ),
+        C::NotValidForName | C::NotValidForNameContext { .. } => (
+            "NotValidForName",
+            "the certificate is for a different name than the one asked for",
+        ),
+        C::Revoked => ("Revoked", "the certificate was revoked by its issuer"),
+        C::BadSignature => (
+            "BadSignature",
+            "the certificate has a signature that does not check out",
+        ),
+        _ => return rustls::Error::InvalidCertificate(why.clone()).to_string(),
+    };
+    format!("invalid peer certificate: {code} ({what})")
 }
 
 /// An extra root certificate [`TlsClient::new`] could not use.
@@ -364,6 +396,47 @@ mod tests {
         );
     }
 
+    #[test]
+    fn every_reason_has_one_wording_and_the_rest_keep_the_verifiers_text() {
+        use CertificateError as C;
+        let now = rustls::pki_types::UnixTime::since_unix_epoch(Duration::from_secs(100));
+        for (why, code) in [
+            (C::Expired, "Expired"),
+            (
+                C::ExpiredContext {
+                    time: now,
+                    not_after: now,
+                },
+                "Expired",
+            ),
+            (C::NotValidYet, "NotValidYet"),
+            (
+                C::NotValidYetContext {
+                    time: now,
+                    not_before: now,
+                },
+                "NotValidYet",
+            ),
+            (C::UnknownIssuer, "UnknownIssuer"),
+            (C::NotValidForName, "NotValidForName"),
+            (C::Revoked, "Revoked"),
+            (C::BadSignature, "BadSignature"),
+        ] {
+            let said = certificate_reason(&why);
+            assert!(
+                said.starts_with(&format!(
+                    "invalid peer certificate: {code} (the certificate "
+                )),
+                "{said}"
+            );
+            assert!(!said.contains("verification time"), "{said}");
+        }
+        assert_eq!(
+            certificate_reason(&C::BadEncoding),
+            "invalid peer certificate: BadEncoding"
+        );
+    }
+
     #[tokio::test]
     async fn the_wrong_name_and_the_wrong_time_are_refused() {
         let wrong_name = server("other.test", (-1, 1)).await;
@@ -373,11 +446,12 @@ mod tests {
         let expired = server("host.test", (-3, -2)).await;
         let client = TlsClient::new([expired.root.clone()]).unwrap();
         let err = dial(&expired, &client, "host.test").await.unwrap_err();
-        // The platform verifier words it per OS: "certificate expired: ..." through webpki,
-        // "Expired" from the Windows chain engine.
-        assert!(
-            matches!(&err, TlsConnectError::Certificate(r) if r.to_lowercase().contains("expired")),
-            "{err}"
+        // The platform verifiers word it differently; the user reads one sentence.
+        assert_eq!(
+            err,
+            TlsConnectError::Certificate(
+                "invalid peer certificate: Expired (the certificate has expired)".to_owned()
+            )
         );
     }
 

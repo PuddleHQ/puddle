@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Setup for the tests that draw components, after vitest.globals.ts.
 import "@testing-library/jest-dom/vitest";
 
 // The first render and the first role query in a test file build Svelte's and testing-library's

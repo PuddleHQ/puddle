@@ -46,6 +46,7 @@ export default defineConfig({
             "tools/**/*.test.ts",
             "scripts/**/*.test.ts",
           ],
+          // A test file in any new directory lands here by default.
           exclude: ["src/routes/**", "src/lib/components/**"],
           setupFiles: ["./vitest.globals.ts"],
         },

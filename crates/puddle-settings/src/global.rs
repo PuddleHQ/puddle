@@ -156,9 +156,12 @@ pub struct UiPrefs {
     /// Play the system sound with a notification; default off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sound: Option<bool>,
-    /// What closing the window does while a workspace runs; default keep running in the tray.
+    /// What the close button does; default keep running in the tray.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub close_behaviour: Option<CloseBehaviour>,
+    /// Whether minimizing the window hides it to the tray instead of the taskbar; default off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimize_to_tray: Option<bool>,
     /// Raise the system notification only while Puddle's window is not focused; default on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notify_only_unfocused: Option<bool>,
@@ -186,6 +189,8 @@ impl UiPrefs {
     pub const DEFAULT_NOTIFICATIONS: bool = true;
     /// Puddle's default for [`UiPrefs::sound`].
     pub const DEFAULT_SOUND: bool = false;
+    /// Puddle's default for [`UiPrefs::minimize_to_tray`].
+    pub const DEFAULT_MINIMIZE_TO_TRAY: bool = false;
     /// Puddle's default for [`UiPrefs::notify_only_unfocused`].
     pub const DEFAULT_NOTIFY_ONLY_UNFOCUSED: bool = true;
     /// Puddle's default for [`UiPrefs::badge`].
@@ -227,6 +232,13 @@ impl UiPrefs {
     #[must_use]
     pub fn close_behaviour(&self) -> CloseBehaviour {
         self.close_behaviour.unwrap_or_default()
+    }
+
+    /// Whether minimizing hides the window to the tray.
+    #[must_use]
+    pub fn minimize_to_tray(&self) -> bool {
+        self.minimize_to_tray
+            .unwrap_or(Self::DEFAULT_MINIMIZE_TO_TRAY)
     }
 
     /// Whether a notification waits for the window to lose focus.
@@ -325,6 +337,7 @@ mod tests {
         assert!(!ui.sound());
         assert_eq!(ui.close_behaviour(), CloseBehaviour::Tray);
         assert!(ui.notify_only_unfocused());
+        assert!(!ui.minimize_to_tray());
         assert!(ui.badge());
         assert!(ui.notify_oom());
         assert!(ui.notify_unexpected_stop());
@@ -334,7 +347,7 @@ mod tests {
         let doc = json!({
             "schema_version": 2,
             "vscode_server": { "server": "microsoft" },
-            "ui": { "theme": "dark", "density": "compact", "notifications": false, "sound": true, "close_behaviour": "quit",
+            "ui": { "theme": "dark", "density": "compact", "notifications": false, "sound": true, "close_behaviour": "quit", "minimize_to_tray": true,
                      "notify_only_unfocused": false, "badge": false, "notify_oom": false,
                      "notify_unexpected_stop": false, "confirm_global_rules": false, "inbox_shortcuts": true },
         });
@@ -350,6 +363,7 @@ mod tests {
         assert!(loaded.settings.ui.sound());
         assert_eq!(loaded.settings.ui.close_behaviour(), CloseBehaviour::Quit);
         let ui = &loaded.settings.ui;
+        assert!(ui.minimize_to_tray());
         assert!(!ui.notify_only_unfocused());
         assert!(!ui.badge());
         assert!(!ui.notify_oom());

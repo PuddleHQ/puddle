@@ -23,16 +23,22 @@
 //!   with the `fixture` feature shows the in-memory fixture instead when `PUDDLE_APP_FIXTURE=1`.
 //! * Quitting runs [`shell::stop`]: the workspaces' editor windows close, then the host trims and
 //!   stops every workspace before its API ends.
-//! * Tray, notifications, badges and close behaviour come later: they run in Rust, driven from
-//!   [`backend::Backend::events`].
+//! * The tray, the close and minimize buttons, the badge and the operating-system notifications
+//!   run in Rust ([`desktop`]), driven by [`backend::Backend::events`] and the settings; the page
+//!   calls no Tauri API for any of them. A panic writes a crash file ([`crash`]), nothing is sent.
 #![forbid(unsafe_code)]
 
 pub mod backend;
+pub mod badge;
+pub mod crash;
+pub mod desktop;
 #[cfg(feature = "fixture")]
 mod fixture;
 pub mod links;
 pub mod navigation;
+pub mod notify;
 pub mod shell;
+pub mod tray;
 pub mod window;
 
 pub use shell::{Options, ShellError, context, run, with_plugins};

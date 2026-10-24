@@ -12,11 +12,12 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use puddle_api::{ConnectionFileError, ConnectionInfo, EventHub, ServeError};
+use puddle_api::{ConnectionFileError, ConnectionInfo, EventHub, ServeError, SettingsRepo};
 use puddle_host::{
     Host, HostConfig, HostError, HostOptions, HostShutdown, MsbFactory, Platform, Prepared,
     RuntimeFactory, prepare,
 };
+use puddle_store::Store;
 use puddle_types::Problems;
 use tokio::sync::Mutex;
 use url::Url;
@@ -145,6 +146,8 @@ pub struct Backend {
     url: Url,
     events: Arc<EventHub>,
     problems: Arc<Problems>,
+    store: Arc<Store>,
+    settings: Arc<dyn SettingsRepo>,
     stop: Mutex<Option<Stop>>,
 }
 
@@ -161,6 +164,8 @@ impl Backend {
         info: ConnectionInfo,
         events: Arc<EventHub>,
         problems: Arc<Problems>,
+        store: Arc<Store>,
+        settings: Arc<dyn SettingsRepo>,
         stop: Stop,
     ) -> Result<Self, BackendError> {
         Ok(Self {
@@ -168,6 +173,8 @@ impl Backend {
             info,
             events,
             problems,
+            store,
+            settings,
             stop: Mutex::new(Some(stop)),
         })
     }
@@ -177,16 +184,20 @@ impl Backend {
     fn of_host<R: puddle_compute::Runtime + Clone + 'static>(
         host: Host<R>,
     ) -> Result<Self, BackendError> {
-        let (info, events, problems) = (
+        let (info, events, problems, store, settings) = (
             host.connection().clone(),
             host.events().clone(),
             host.problems().clone(),
+            host.store().clone(),
+            host.settings().clone(),
         );
         let host = Arc::new(host);
         Self::new(
             info,
             events,
             problems,
+            store,
+            settings,
             Box::new(move || Box::pin(async move { host.shutdown().await })),
         )
     }
@@ -208,6 +219,18 @@ impl Backend {
     #[must_use]
     pub fn events(&self) -> &Arc<EventHub> {
         &self.events
+    }
+
+    /// The database: the shell counts the open requests from it for the badge.
+    #[must_use]
+    pub fn store(&self) -> &Arc<Store> {
+        &self.store
+    }
+
+    /// The settings documents, which the shell's tray, notifications and close behaviour read.
+    #[must_use]
+    pub fn settings(&self) -> &Arc<dyn SettingsRepo> {
+        &self.settings
     }
 
     /// The background problems the page lists as notices: where the shell raises what it has to

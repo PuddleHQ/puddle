@@ -9,8 +9,9 @@
 // - `fixture` (default): the in-memory fixture (a debug build with the `fixture` feature); the
 //   fixture's seeded pending request must show in the sidebar.
 // - `host`: the Puddle host, with the runtime folder beside the program (`runtime\msb.exe` and
-//   `libkrunfw.dll`) and a fresh data folder; the system check must answer, and closing the window
-//   must run the quit sequence and end the program by itself.
+//   `libkrunfw.dll`) and a fresh data folder; the system check must answer, closing the window hides
+//   it in the tray, and with "quit" chosen in Settings closing it must run the quit sequence and end
+//   the program by itself.
 //
 // Environment: PUDDLE_APP_EXE (the built shell), CDP_PORT (default 9333), SMOKE_BACKEND.
 // tauri-driver + msedgedriver was tried first and failed with "DevToolsActivePort file doesn't
@@ -188,7 +189,7 @@ try {
   const refused = await run(`
     const internals = window.__TAURI_INTERNALS__;
     if (!internals || typeof internals.invoke !== "function") return { bridge: false, results: [] };
-    const commands = ["ping", "plugin:app|version", "plugin:opener|open_url", "plugin:path|resolve_directory", "plugin:event|listen"];
+    const commands = ["ping", "plugin:app|version", "plugin:notification|notify", "plugin:opener|open_url", "plugin:path|resolve_directory", "plugin:event|listen"];
     const results = await Promise.all(commands.map((cmd) =>
       internals.invoke(cmd, cmd === "plugin:opener|open_url" ? { url: "https://example.org/" } : {})
         .then(() => ({ cmd, refused: false, message: "succeeded" }),
@@ -199,10 +200,28 @@ try {
     check(`invoke ${r.cmd} is refused`, r.refused && /not allowed/i.test(r.message), r.message.split("\n")[0]);
   }
   if (backend === "host") {
-    // What the close button does: the window closes, the app quits and runs the quit sequence.
+    const closeMainWindow = () =>
+      spawnSync("powershell", ["-NoProfile", "-Command", `(Get-Process -Id ${app.pid}).CloseMainWindow() | Out-Null`], { stdio: "inherit" });
+    // By default the close button hides the window in the tray and Puddle keeps running.
+    closeMainWindow();
+    await Promise.race([exited, sleep(8_000)]);
+    check(
+      "closing the window with the default setting keeps Puddle running in the tray",
+      !appExited && /hid the window in the tray/.test(appLog),
+      `exited: ${appExited}, log: ${appLog.split("\n").filter((l) => l.includes("tray")).join(" | ")}`,
+    );
+    // A second launch brings the hidden window back (the tray's Open does the same).
+    spawnSync(exe, [], { env, stdio: "ignore", timeout: 60_000 });
+    const back = await run(`return { origin: location.origin, token: typeof window.__PUDDLE__?.token };`).catch((err) => ({ error: String(err) }));
+    check("the window comes back with its page and token", back?.token === "string", JSON.stringify(back));
+    // With "quit" chosen in Settings, the close button closes the window, the app quits and runs the quit sequence.
+    const chosen = await run(`const r = await fetch("/api/settings", { method: "PUT", headers: { Authorization: "Bearer " + window.__PUDDLE__.token, "Content-Type": "application/json" },
+      body: JSON.stringify({ ui: { close_behaviour: "quit" } }) });
+      return { status: r.status, close: (await r.json()).ui?.close_behaviour };`).catch((err) => ({ error: String(err) }));
+    check("the close choice is saved through the API", chosen?.status === 200 && chosen.close === "quit", JSON.stringify(chosen));
     page.close();
     page = undefined;
-    spawnSync("powershell", ["-NoProfile", "-Command", `(Get-Process -Id ${app.pid}).CloseMainWindow() | Out-Null`], { stdio: "inherit" });
+    closeMainWindow();
     await Promise.race([exited, sleep(90_000)]);
     check("closing the window ends the program by itself", appExited && appExitCode === 0, `exited: ${appExited}, code: ${appExitCode}`);
     check(

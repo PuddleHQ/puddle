@@ -12,8 +12,8 @@ use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
 use crate::backend::{Backend, BackendError, Source};
-use crate::links;
 use crate::window::{MAIN_LABEL, OpenExternal, Refused, open_main};
+use crate::{crash, desktop, links};
 
 /// Why the shell didn't start or ended badly.
 #[derive(Debug, thiserror::Error)]
@@ -80,6 +80,14 @@ impl Options {
     }
 }
 
+/// The data folder the host uses: the one `options` name, else the per-user one.
+fn data_folder(options: &Options) -> Option<PathBuf> {
+    options
+        .data_dir
+        .clone()
+        .or_else(|| puddle_fs::data_dir().ok())
+}
+
 /// Tauri's context for the app: `tauri.conf.json`, the capabilities and the ACL manifest.
 #[must_use]
 pub fn context<R: Runtime>() -> tauri::Context<R> {
@@ -91,6 +99,7 @@ pub fn context<R: Runtime>() -> tauri::Context<R> {
 pub fn with_plugins<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
 }
 
@@ -145,7 +154,7 @@ pub fn open<R: Runtime>(
     options: &Options,
     backend: Backend,
 ) -> Result<(), ShellError> {
-    open_main(
+    let window = open_main(
         app,
         backend.url(),
         backend.token(),
@@ -155,6 +164,13 @@ pub fn open<R: Runtime>(
         refuser(backend.problems()),
     )?;
     tracing::info!(url = %backend.url(), "main window open");
+    // The fixture is for developing the window: it leaves no marker in the user's data folder.
+    let marker_folder = if options.fixture {
+        None
+    } else {
+        data_folder(options)
+    };
+    desktop::attach(app, &window, &backend, marker_folder);
     app.manage(backend);
     Ok(())
 }
@@ -204,8 +220,8 @@ fn quit_warnings(shutdown: &HostShutdown) -> Vec<String> {
     lines
 }
 
-/// Runs the app until it quits. Closing the main window quits (that will change to hiding to the
-/// tray).
+/// Runs the app until it quits. The close button hides the window to the tray or quits, as Settings
+/// say ([`desktop`]).
 ///
 /// # Errors
 ///
@@ -215,6 +231,10 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
     let _ = tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .try_init();
+    // Every panic after this writes a crash file into the data folder (nothing is sent).
+    if let Some(folder) = data_folder(options) {
+        crash::install(folder.join(crash::FOLDER));
+    }
     // Before the runtime starts any machine: if the shell dies, Windows ends them with it.
     puddle_lifecycle::job::contain_this_process()?;
     // While this is the only thread: the host pins the process environment.
@@ -229,6 +249,9 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
     let app = with_plugins(builder)
         .setup(move |app| {
             start(app.handle(), &options, source)?;
+            if let Err(err) = desktop::install_quit_shortcut(app.handle()) {
+                tracing::warn!(%err, "Ctrl+Q will not quit");
+            }
             Ok(())
         })
         .build(context())?;

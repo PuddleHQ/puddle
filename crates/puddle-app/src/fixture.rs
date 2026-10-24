@@ -33,13 +33,9 @@ pub(crate) async fn start(port: u16) -> Result<Backend, BackendError> {
         .map_err(|e| fixture("seed", &e))?;
     let events = Arc::new(EventHub::default());
     let problems = Arc::new(Problems::new(events.clone()));
-    let services = Services::new(
-        store,
-        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
-        events.clone(),
-        clock,
-    )
-    .with_problems(problems.clone());
+    let settings = Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>;
+    let services = Services::new(store.clone(), settings.clone(), events.clone(), clock)
+        .with_problems(problems.clone());
     let server =
         ApiServer::bind(ApiConfig::with_port(port), ApiToken::generate()?, services).await?;
     let info = server.connection_info();
@@ -48,6 +44,8 @@ pub(crate) async fn start(port: u16) -> Result<Backend, BackendError> {
         info,
         events,
         problems,
+        store,
+        settings,
         Box::new(move || {
             Box::pin(async move {
                 running.shutdown().await;

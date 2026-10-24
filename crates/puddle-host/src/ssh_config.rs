@@ -454,6 +454,33 @@ mod tests {
         assert_eq!(text.matches("Host puddle-").count(), 1);
     }
 
+    /// The Windows shape is checked against a real `ssh.exe` (OpenSSH for Windows 9.5): it runs the
+    /// line as `exec <line>` through its own `CreateProcess`, and a program in a folder with a
+    /// space and an endpoint with backslashes both arrive intact with four quotes and no outer pair
+    /// (a doubled outer pair is refused with `CreateProcessW failed error:87`).
+    #[cfg(windows)]
+    #[test]
+    fn the_windows_entry_quotes_the_program_and_the_endpoint_and_nothing_around_them() {
+        let mut entries = BTreeMap::new();
+        entries.insert(name("web"), PathBuf::from(r"\\.\pipe\puddle-ab12"));
+        let text = render(
+            &entries,
+            &context(
+                Path::new(r"C:\Program Files\Puddle\puddle.exe"),
+                Path::new(r"C:\Users\Ada\AppData\Local\Puddle\ssh\login_ed25519"),
+                Path::new(r"C:\Users\Ada\AppData\Local\Puddle\ssh\known_hosts"),
+            ),
+        )
+        .unwrap();
+        for want in [
+            "    ProxyCommand \"C:\\Program Files\\Puddle\\puddle.exe\" ssh-bridge \"\\\\.\\pipe\\puddle-ab12\"\n",
+            "    IdentityFile \"C:/Users/Ada/AppData/Local/Puddle/ssh/login_ed25519\"\n",
+            "    UserKnownHostsFile \"C:/Users/Ada/AppData/Local/Puddle/ssh/known_hosts/web\"\n",
+        ] {
+            assert!(text.contains(want), "{want:?} in\n{text}");
+        }
+    }
+
     #[test]
     fn no_entries_is_just_the_header() {
         let text = render(

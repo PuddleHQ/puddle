@@ -364,6 +364,63 @@ fn entrypoint_is_chained_once_with_puddle_env_and_workdir() {
     }
 }
 
+/// Boots `script` as the image's entrypoint and returns what the hook said.
+fn entrypoint_report(sh: &std::path::Path, script: &str) -> String {
+    let fr = FakeRoot::new(sh);
+    let entry = fr.path("/entry.sh");
+    std::fs::write(&entry, script).unwrap();
+    std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let plan = BootPlan::builder(&image(&[entry.display().to_string()], &[]))
+        .build()
+        .unwrap();
+    let out = fr.run(&plan);
+    assert!(out.status.success(), "{}", show(&out));
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+#[test]
+fn an_entrypoint_that_fails_at_once_is_reported_with_its_status_and_output() {
+    for sh in shells() {
+        let said = entrypoint_report(
+            &sh,
+            "#!/bin/sh\necho 'cannot open /dev/kvm' >&2\necho second\nexit 3\n",
+        );
+        let line = said
+            .lines()
+            .find(|l| l.contains("entrypoint exited"))
+            .unwrap_or_else(|| panic!("no report in:\n{said}"));
+        assert_eq!(
+            line,
+            "puddle-boot: entrypoint exited with status 3: cannot open /dev/kvm second"
+        );
+        assert!(
+            said.contains("puddle-boot: ready"),
+            "the boot still ends ready:\n{said}"
+        );
+    }
+}
+
+#[test]
+fn an_entrypoint_that_cannot_start_says_so() {
+    for sh in shells() {
+        let said = entrypoint_report(&sh, "#!/nonexistent/interpreter\n");
+        assert!(
+            said.contains("puddle-boot: entrypoint exited with status 127:"),
+            "{said}"
+        );
+    }
+}
+
+#[test]
+fn an_entrypoint_that_finishes_cleanly_or_keeps_running_is_not_reported() {
+    for sh in shells() {
+        for script in ["#!/bin/sh\nexit 0\n", "#!/bin/sh\nexec sleep 1000\n"] {
+            let said = entrypoint_report(&sh, script);
+            assert!(!said.contains("entrypoint exited"), "{script}: {said}");
+        }
+    }
+}
+
 #[test]
 fn boot_d_steps_run_in_name_order_and_a_failing_one_fails_the_boot() {
     let fr = FakeRoot::new(&shells()[0]);

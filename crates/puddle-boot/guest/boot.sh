@@ -78,6 +78,15 @@ alive() { # alive <pidfile> [word]
     return 1
 }
 
+# gone <pid>: the process has exited (a zombie that is not waited for yet counts: kill -0 says it
+# is there).
+gone() {
+    [ -r "/proc/$1/stat" ] || return 0
+    read -r _ rest <"/proc/$1/stat" || return 0
+    state=${rest##*) }
+    [ "${state%% *}" = Z ]
+}
+
 say "start (boot $boot_id)"
 
 # --- 1. The plan ------------------------------------------------------------------------------
@@ -371,8 +380,26 @@ if [ "$#" -gt 0 ]; then
             if [ -n "$ENTRY_CWD" ]; then cd "$ROOT$ENTRY_CWD" || exit 126; fi
             if command -v setsid >/dev/null 2>&1; then exec setsid "$@"; else exec "$@"; fi
         ) </dev/null >>"$RUN/entrypoint.log" 2>&1 &
-        printf '%s %s\n' "$boot_id" "$!" >"$RUN/entrypoint.pid"
+        entry_pid=$!
+        printf '%s %s\n' "$boot_id" "$entry_pid" >"$RUN/entrypoint.pid"
         say "entrypoint chained: $1"
+        # One second to fail at once (a missing program, a bad directory, a crash): that is the
+        # failure the user can still fix, and the one place the hook can see it. Exit 0 is an
+        # entrypoint that did its job, and one that dies later leaves only its log.
+        i=0
+        while [ "$i" -lt "$TICKS_PER_S" ] && ! gone "$entry_pid"; do
+            i=$((i + 1))
+            sleep "$TICK"
+        done
+        if gone "$entry_pid"; then
+            entry_code=0
+            wait "$entry_pid" || entry_code=$?
+            if [ "$entry_code" -ne 0 ]; then
+                entry_tail=$(tail -n 3 "$RUN/entrypoint.log" 2>/dev/null | tr '\n\t' '  ' | cut -c1-300)
+                while case $entry_tail in *' ') true ;; *) false ;; esac; do entry_tail=${entry_tail% }; done
+                say "entrypoint exited with status $entry_code: ${entry_tail:-no output}"
+            fi
+        fi
     fi
 fi
 

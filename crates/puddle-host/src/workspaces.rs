@@ -1347,6 +1347,32 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
+    /// After a boot: the image's entrypoint that failed at once becomes a problem on the workspace
+    /// (the start goes on: the workspace is usable without it, and a refusal would lock the user
+    /// out of the way to look at it); a boot where it did not fail clears the earlier one.
+    fn settle_entrypoint(&self, name: &WorkspaceName, report: &puddle_boot::BootReport) {
+        let key = problem_key("entrypoint", name);
+        match report.entrypoint_failure() {
+            Some(failure) => {
+                tracing::warn!(workspace = %name, %failure, "the image's entrypoint exited at once");
+                self.inner.problems.raise(
+                    Problem::new(
+                        key,
+                        format!("The image's entrypoint in {name} stopped right after it started"),
+                        format!(
+                            "It exited with status {failure}. The workspace keeps running without \
+                             it, so whatever it should have started (a service or a daemon) is \
+                             not running. Its full output is in /run/puddle/entrypoint.log in the \
+                             workspace; starting the workspace again runs it again."
+                        ),
+                    )
+                    .about(name.clone()),
+                );
+            }
+            None => self.inner.problems.clear(&key),
+        }
+    }
+
     /// After a boot: tell the user when something inside the workspace had changed its shell init
     /// (the folder, or the file that loads it), and check that the saved script still parses and
     /// prints nothing. A script that fails the check does not stop the start: it is a problem on
@@ -1496,6 +1522,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .map_err(|e| e.to_string())?;
         self.report_locks(name, locks);
         self.settle_shell_init(name, &gated).await;
+        self.settle_entrypoint(name, gated.boot_report());
         let root = Layout::new(id).map_err(|e| e.to_string())?.mount().clone();
         self.check_start_folder(name, &gated, &root, record.start_folder.as_ref())
             .await;

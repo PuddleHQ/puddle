@@ -200,6 +200,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_stream_closed_before_its_request_is_dropped() {
+        let (mut host, _serving) = serve(Forwards::new(vec![]), b"\0puddle-forward/1\n80").await;
+        host.shutdown().await.unwrap();
+        let mut buf = Vec::new();
+        let read = tokio::time::timeout(Duration::from_secs(5), host.read_to_end(&mut buf)).await;
+        assert!(read.is_ok(), "the stream was left open");
+        assert!(buf.is_empty(), "answered {buf:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stream_that_sends_no_request_in_time_is_dropped() {
+        let (mut host, _serving) = serve(Forwards::new(vec![]), b"\0puddle-forward/1\n").await;
+        let mut buf = Vec::new();
+        let read = tokio::time::timeout(ANSWER_TIMEOUT * 2, host.read_to_end(&mut buf)).await;
+        assert!(read.is_ok(), "the stream was left open");
+        assert!(buf.is_empty(), "answered {buf:?}");
+    }
+
+    #[tokio::test]
     async fn past_the_limit_a_forward_is_refused_with_a_reason() {
         let forwards = Forwards::new(vec![]);
         let held = forwards

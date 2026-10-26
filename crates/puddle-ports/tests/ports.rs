@@ -781,3 +781,44 @@ async fn a_bad_port_a_stopped_workspace_and_a_broken_store_are_refused_in_words(
     rig.started().await;
     assert!(rig.events().iter().any(|e| matches!(e, Event::WorkspacePortForwardFailed { reason, .. } if reason.contains("could not be restored"))));
 }
+
+#[tokio::test]
+async fn the_same_listening_report_twice_announces_one_change() {
+    let rig = rig("twice").await;
+    assert_eq!(format!("{:?}", rig.ports), "Ports { .. }");
+    rig.started().await;
+    rig.events();
+    GuestWatcher::ports(&rig.ports, &rig.workspace, vec![4000, 4001]);
+    GuestWatcher::ports(&rig.ports, &rig.workspace, vec![4000, 4001]);
+    let changes = rig
+        .events()
+        .into_iter()
+        .filter(|e| matches!(e, Event::WorkspacePortsChanged { .. }))
+        .count();
+    assert_eq!(changes, 1);
+}
+
+#[tokio::test]
+async fn a_forward_whose_workspace_has_no_agent_link_resets_and_says_the_agent_is_not_connected() {
+    // No agent was started: nothing ever gives the workspace a link.
+    let ports = Ports::with_programs(
+        PuddleEndpoints::new(),
+        Arc::new(MemoryPins::default()),
+        Arc::new(CollectingSink::default()),
+        Arc::new(Named(None)),
+    );
+    let workspace = name("shop");
+    ports.started(&workspace).await;
+    let host = free_port().await;
+    ports
+        .forward(&workspace, 3000, Some(host), false)
+        .await
+        .unwrap();
+    let back = through(host, b"x").await;
+    assert!(back.is_err() || back.unwrap().is_empty());
+    let problem = ports.view(&workspace).unwrap().ports[0]
+        .problem
+        .clone()
+        .unwrap();
+    assert!(problem.contains("agent is not connected"), "{problem}");
+}

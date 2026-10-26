@@ -153,6 +153,7 @@ async fn echo() -> u16 {
 async fn the_hosts_forward_reaches_a_port_in_the_guest_and_carries_bytes_both_ways() {
     let rig = rig("through").await;
     let link = rig.link().await;
+    assert_eq!(format!("{link:?}"), "GuestLink { .. }");
     let port = echo().await;
     let mut stream = link.open_forward(port).await.unwrap();
     // 3 MiB each way, written and read at once so neither side stalls on flow control.

@@ -97,6 +97,22 @@ async fn the_list_shows_what_listens_and_a_forward_pins_and_stops() {
         .await;
     assert_eq!(again.status, 404, "{}", again.body);
     assert_eq!(again.error(), "not_found");
+
+    // The guest's report replaces the listening flags: 3000 stays (forwarded), 8080 is no longer
+    // listed once nothing listens there; a forward of a port that never listened vanishes with its stop.
+    api.ports.set_listening(&shop(), &[3000]);
+    let list = api.get("/api/workspaces/shop/ports").await.json();
+    assert_eq!(list["ports"].as_array().unwrap().len(), 1, "{list}");
+    let ahead = api
+        .send("PUT", "/api/workspaces/shop/ports/5000", Some(&json!({})))
+        .await;
+    assert_eq!(ahead.status, 200, "{}", ahead.body);
+    let stopped = api
+        .send("DELETE", "/api/workspaces/shop/ports/5000", None)
+        .await;
+    assert_eq!(stopped.status, 204, "{}", stopped.body);
+    let list = api.get("/api/workspaces/shop/ports").await.json();
+    assert_eq!(list["ports"].as_array().unwrap().len(), 1, "{list}");
 }
 
 #[tokio::test]

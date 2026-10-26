@@ -44,6 +44,16 @@ function mount(props: Record<string, unknown> = {}) {
   return { onDecide, onClose, anchor };
 }
 
+// The first popover in a file builds bits-ui's, floating-ui's and the role queries' tables: unloaded
+// about 90 ms on top of the first test, on a busy host seconds, over its 5000 ms. Pay it here,
+// outside any test's clock.
+mount({ sets: [{ id: 4, name: "Warm-up", everywhere: false }] });
+const warm = await show();
+await fireEvent.click(
+  within(warm).getByRole("radio", { name: /Into rule set Warm-up/ }),
+);
+cleanup();
+
 describe("OptionsPopover", () => {
   it("offers your rule sets that are on here, and sends the one chosen", async () => {
     const { onDecide } = mount({

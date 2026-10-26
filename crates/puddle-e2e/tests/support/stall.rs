@@ -197,6 +197,10 @@ pub(crate) struct Progress<'a> {
     kernel_at_last: Duration,
     /// The gap with the largest own time.
     pub(crate) worst: Gap,
+    /// The gap with the largest wall-clock time, whatever part of it was the kernel's. It is the
+    /// one a planted drop makes; `worst` can be another gap, a few hundred milliseconds of
+    /// scheduling on a loaded host, once the drop's own time is subtracted.
+    pub(crate) longest: Gap,
 }
 
 impl<'a> Progress<'a> {
@@ -206,6 +210,7 @@ impl<'a> Progress<'a> {
             last: Instant::now(),
             kernel_at_last: backoff.accrued(),
             worst: Gap::default(),
+            longest: Gap::default(),
         }
     }
 
@@ -222,6 +227,9 @@ impl<'a> Progress<'a> {
         let gap = self.gap();
         if gap.own() >= self.worst.own() {
             self.worst = gap;
+        }
+        if gap.raw >= self.longest.raw {
+            self.longest = gap;
         }
         self.last = Instant::now();
         self.kernel_at_last = self.backoff.accrued();

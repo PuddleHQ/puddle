@@ -133,8 +133,8 @@ fn two_sockets_in_backoff_at_once_count_once() {
     assert_eq!(accrual.total(), Duration::from_millis(60));
 }
 
-/// Writes 1 MiB chunks to `server` for `run` and returns the worst gap seen.
-async fn send_for(client: &mut TcpStream, backoff: &Backoff, run: Duration) -> support::stall::Gap {
+/// Writes 1 MiB chunks to `server` for `run` and returns the progress it measured.
+async fn send_for<'a>(client: &mut TcpStream, backoff: &'a Backoff, run: Duration) -> Progress<'a> {
     let chunk = vec![7u8; CHUNK];
     let mut progress = Progress::new(backoff);
     let until = Instant::now() + run;
@@ -143,7 +143,7 @@ async fn send_for(client: &mut TcpStream, backoff: &Backoff, run: Duration) -> s
         progress.mark();
     }
     client.shutdown().await.unwrap();
-    progress.worst
+    progress
 }
 
 async fn drain(listener: TcpListener, pause_after_first: Duration) {
@@ -169,7 +169,9 @@ async fn a_reader_that_stops_reading_is_still_a_stall() {
     let sink = tokio::spawn(drain(listener, PAUSE));
     let mut client = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     let backoff = Backoff::watch(vec![port, client.local_addr().unwrap().port()]);
-    let worst = send_for(&mut client, &backoff, Duration::from_secs(6)).await;
+    let worst = send_for(&mut client, &backoff, Duration::from_secs(6))
+        .await
+        .worst;
     sink.await.unwrap();
     eprintln!("planted pause: {worst:?}");
     assert!(
@@ -215,17 +217,22 @@ async fn kernel_drop_inner() {
         tokio::time::sleep(DROP_FOR).await;
         sh("iptables -F INPUT");
     });
-    let worst = send_for(&mut client, &backoff, Duration::from_secs(14)).await;
+    let progress = send_for(&mut client, &backoff, Duration::from_secs(14)).await;
     sink.await.unwrap();
-    println!("planted drop: {worst:?}");
+    // The drop is the longest gap by wall clock. On a loaded host another gap can have more own
+    // time than the drop's remainder (the meter's `worst`), so the case reads the drop's gap and
+    // then holds every gap, the drop's included, to the bound.
+    let (drop, worst) = (progress.longest, progress.worst);
+    println!("planted drop: {drop:?}, worst by own time: {worst:?}");
     assert!(
-        worst.raw >= BOUND + BOUND / 2,
-        "the kernel did not back off: {worst:?}"
+        drop.raw >= BOUND + BOUND / 2,
+        "the kernel did not back off: {drop:?}"
     );
     assert!(
-        worst.own() < BOUND,
-        "the backoff was not subtracted: {worst:?}"
+        drop.own() < BOUND,
+        "the backoff was not subtracted: {drop:?}"
     );
+    assert!(worst.own() < BOUND, "a gap over the bound: {worst:?}");
 }
 
 #[test]

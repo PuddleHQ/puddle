@@ -160,6 +160,12 @@
         Your image is in use; choose another icon and save before removing it.
       {/if}
     </p>
+    {#if stored === "custom" && !custom}
+      <p class="error" role="alert">
+        Your image is missing, so the duck is shown. Choose an image again or
+        pick another icon.
+      </p>
+    {/if}
     {#if note}<p class="ok" role="status">{note}</p>{/if}
     {#if problem}<p class="error" role="alert">{problem}</p>{/if}
   {/if}

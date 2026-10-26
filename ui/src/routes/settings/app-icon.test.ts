@@ -176,6 +176,14 @@ describe("the App icon section", () => {
     ).toBeTruthy();
   });
 
+  it("says so when the saved icon is your image but the image is gone", async () => {
+    api.ui.app_icon = "custom";
+    await open();
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "Your image is missing, so the duck is shown",
+    );
+  });
+
   it("shows what the service says when removing is refused", async () => {
     api.customIcon = "own-png";
     await open();

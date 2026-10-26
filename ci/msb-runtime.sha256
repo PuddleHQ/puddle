@@ -8,6 +8,11 @@
 #
 # Fork tags (TijsVK/microsandbox, 2026-10-06). The tag's source commit pins the Linux build.
 # Older tags stay listed so earlier commits still fetch their runtime (e.g. windows-e2e.ps1 -Bisect).
+v0.7.8-puddle.5 msb-windows-x86_64.exe bbd6343b2eeaf8fa618e27534abc9803fbb035159889b7288c54ffbf243ece5c
+v0.7.8-puddle.5 libkrunfw-windows-x86_64.dll 375f4455feae83e66a7b7a2c1509796eab1d5b2e802da4b474a2e092869b543c
+v0.7.8-puddle.5 agentd-x86_64 db6ab978b93933c02e001a60fc688adbce491aaf040595142e6bd78b8c39b5b6
+v0.7.8-puddle.5 source-commit b1066f60b69728646da434e43829768f7c9a623e
+v0.7.8-puddle.5 libkrunfw-linux-version 5.6.1
 v0.7.8-puddle.4 msb-windows-x86_64.exe 2b6bf9bd2fb9466ccdc08cc75988ccd7d10b3b0577b9ec7effb1b4c5e27ca807
 v0.7.8-puddle.4 libkrunfw-windows-x86_64.dll 375f4455feae83e66a7b7a2c1509796eab1d5b2e802da4b474a2e092869b543c
 v0.7.8-puddle.4 agentd-x86_64 575496ec171e60e342f2fd1477d8528f6c1277aebffbd2bf5778de5edafe014d

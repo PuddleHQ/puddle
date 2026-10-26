@@ -2813,6 +2813,140 @@ async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox(
     host.shutdown().await;
 }
 
+/// What the guest runs to stand in for the editor server's processes: node from the real release,
+/// with the arguments that mark an extension host or a pty host. Each extension host has a
+/// debuggee below it (`--marker=dbg`); the pty host has a terminal job (`sleep 600`). Run as root, in
+/// the background, with the shell gone so the stand-ins are children of init like the server's own.
+#[cfg(not(windows))]
+const START_STANDINS: &str = r#"
+N=/puddle/code-server/lib/node
+for i in $(seq 20); do
+  setsid nohup $N -e "require('child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', '--marker=dbg'], {stdio: 'ignore'}); setInterval(() => {}, 1000)" --type=extensionHost >/dev/null 2>&1 &
+done
+setsid nohup $N -e "require('child_process').spawn('sleep', ['600'], {stdio: 'ignore'}); setInterval(() => {}, 1000)" --type=ptyHost >/dev/null 2>&1 &
+# A debuggee whose extension host is long gone: a child of init whose debug socket does not exist.
+VSCODE_INSPECTOR_OPTIONS='{"inspectorIpc":"/tmp/node-cdp.0-0.sock"}' setsid nohup sleep 601 >/dev/null 2>&1 &
+"#;
+
+/// The counts the guest sees: extension hosts, their debuggees, terminal jobs, orphans and the
+/// editor server's health.
+#[cfg(not(windows))]
+const COUNT_STANDINS: &str = r#"
+c() { ps -eo args= | grep -c -e "$1" || true; }
+echo "hosts=$(c '--type=extensionHos[t]') debuggees=$(c '--marker=db[g]') jobs=$(c '^sleep 60[0]') orphans=$(c '^sleep 60[1]') pty=$(c '--type=ptyHos[t]')"
+echo "health=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:41337/healthz)"
+"#;
+
+/// K tier. The window of a sandbox closes: the host tells the agent to end the editor's extension
+/// hosts. 20 stand-in extension hosts, each with a debuggee, end together within a second, and so
+/// does a debuggee orphaned long ago; the pty host with its terminal job and the editor server stay.
+/// (Real extension hosts need a browser client; the stand-ins are node from the real release with
+/// the same marks. The processes it picks are tested with the real ones' shape in the agent's own
+/// tests.)
+#[cfg(not(windows))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_ending_the_extension_hosts_takes_the_debuggees_with_them_and_leaves_terminals() {
+    let release = std::path::PathBuf::from(std::env::var_os("PUDDLE_CODE_SERVER_DIR").expect(
+        "PUDDLE_CODE_SERVER_DIR: the unpacked code-server release (ci/fetch-code-server.sh)",
+    ));
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host_config("exth", hermetic_options(), |config| {
+        config.guest.code_server = Some(release);
+    })
+    .await;
+
+    let name = format!("{}-exth", settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    host.store()
+        .add_rule(&NewRule {
+            scope: Scope::Workspace(sandbox.clone()),
+            pattern: Pattern::parse(REPO_HOST).unwrap(),
+            effect: Effect::Allow,
+            expires_at: None,
+            created_by: Actor::Cli,
+        })
+        .unwrap();
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 2048}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    editor_up(&runtime, &sandbox).await;
+
+    guest(&runtime, &sandbox, START_STANDINS).await;
+    // Wait until every stand-in runs its child.
+    let mut counts = String::new();
+    for _ in 0..60 {
+        counts = guest(&runtime, &sandbox, COUNT_STANDINS).await;
+        if counts.contains("hosts=20 debuggees=20 jobs=1 orphans=1 pty=1") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    assert!(
+        counts.contains("hosts=20 debuggees=20 jobs=1 orphans=1 pty=1"),
+        "the stand-ins did not start: {counts}"
+    );
+
+    // The agent link needs a moment after the start before the host can use it.
+    let mut ended = None;
+    for _ in 0..60 {
+        let started = std::time::Instant::now();
+        match host.workspaces().end_extension_hosts(&sandbox).await {
+            Ok(reply) => {
+                ended = Some((reply, started.elapsed()));
+                break;
+            }
+            Err(puddle_host::EndExtensionHostsError::NotRunning) => {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            Err(other) => panic!("{other}"),
+        }
+    }
+    let (reply, took) = ended.expect("the agent never connected");
+    assert!(
+        matches!(
+            reply,
+            puddle_agent_proto::host_control::HostReply::Done { hosts: 20, processes, orphans: 1 }
+                if processes >= 40
+        ),
+        "{reply:?}"
+    );
+    assert!(took < Duration::from_secs(1), "cleanup took {took:?}");
+
+    let after = guest(&runtime, &sandbox, COUNT_STANDINS).await;
+    assert!(
+        after.contains("hosts=0 debuggees=0 jobs=1 orphans=0 pty=1")
+            && after.contains("health=200"),
+        "{after}"
+    );
+    // Asking again is harmless.
+    let again = host
+        .workspaces()
+        .end_extension_hosts(&sandbox)
+        .await
+        .unwrap();
+    assert_eq!(
+        again,
+        puddle_agent_proto::host_control::HostReply::done(0, 0, 0)
+    );
+
+    host.shutdown().await;
+}
+
 /// K tier. A workspace with no start folder and two checkouts: an attach writes the multi-root
 /// file listing both (and the volume root, for the loose file), and the real code-server, started
 /// again, opens that file: a signed-in client is sent to `?workspace=<file>`, not to the volume.

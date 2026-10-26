@@ -16,7 +16,8 @@
 //!   (some networks resolve internet names only at the proxy): then a stand-in, and the proxy
 //!   decides when the connect arrives.
 //! - **`SRV`, `TXT`, `MX`** are looked up for allowed names only; for any other name the answer is
-//!   `NODATA`. An `SRV` query for a name **no rule matches** also raises one pending request for
+//!   `NODATA`. An `SRV` answer keeps only the targets the rules allow (see
+//!   `WorkspaceHandler::only_reachable_targets`). An `SRV` query for a name **no rule matches** also raises one pending request for
 //!   the base name (deduplicated like any other), because a client that starts with `SRV`
 //!   (`mongodb+srv://`) would otherwise fail without the user ever seeing it. A denied name raises
 //!   nothing, and neither do `TXT` and `MX`. The leading service labels of an `SRV` name (`_mongodb._tcp.`) are not part of what
@@ -26,7 +27,7 @@
 //! guest allocates itself.
 
 use puddle_agent_proto::resolve::{
-    MAX_RECORDS, RecordType, ResolveAnswer, ResolveQuery, StandInReason,
+    MAX_RECORDS, Record, RecordType, ResolveAnswer, ResolveQuery, StandInReason,
 };
 use puddle_netpolicy::normalise_host;
 use puddle_types::{BlockReason, DomainName, EgressRequest, Host, SuffixAllows, WorkspaceName};
@@ -88,6 +89,10 @@ impl WorkspaceHandler {
         };
         match query.rtype {
             RecordType::A => address_answer(proxy, &self.workspace, &name).await,
+            RecordType::Srv => {
+                let answer = records_answer(proxy, &query.name, RecordType::Srv).await;
+                self.only_reachable_targets(&name, answer).await
+            }
             rtype => records_answer(proxy, &query.name, rtype).await,
         }
     }
@@ -104,6 +109,69 @@ impl WorkspaceHandler {
                 tracing::warn!(workspace = %self.workspace, error = %err, "rules unreadable; name lookup refused");
                 ResolveAnswer::Unavailable
             }
+        }
+    }
+}
+
+impl WorkspaceHandler {
+    /// Keeps the `SRV` records whose target this workspace may reach. A connection to a stand-in
+    /// is accepted before the proxy decides, so a client never sees a refused target as a failed
+    /// connect and never falls back to the next record or to the name itself (apt does both);
+    /// a target nothing allows would only break it. A dropped target no rule matches raises one
+    /// request for itself at the record's port, so a client that has no fallback
+    /// (`mongodb+srv://`) shows up for approval. With every target dropped the answer is `NODATA`.
+    async fn only_reachable_targets(
+        &self,
+        owner: &DomainName,
+        answer: ResolveAnswer,
+    ) -> ResolveAnswer {
+        let ResolveAnswer::Records { records, ttl } = answer else {
+            return answer;
+        };
+        let mut kept = Vec::with_capacity(records.len());
+        for record in records {
+            let Record::Srv { port, target, .. } = &record else {
+                kept.push(record);
+                continue;
+            };
+            let Ok(target_host) = normalise_host(target).map(puddle_netpolicy::Target::into_host)
+            else {
+                continue;
+            };
+            let blocked = self
+                .proxy
+                .addresses()
+                .check_target(
+                    &self.workspace,
+                    &puddle_netpolicy::Target::from_host(target_host.clone()),
+                    *port,
+                )
+                .is_some();
+            let verdict = if blocked {
+                Allowed::No
+            } else {
+                allowed(&self.proxy, &self.workspace, &target_host).await
+            };
+            match verdict {
+                Allowed::Yes => kept.push(record),
+                Allowed::No => {
+                    tracing::info!(workspace = %self.workspace, %owner, target = %target_host, port, "service record left out: its target is denied or blocked");
+                }
+                Allowed::Unmatched => {
+                    tracing::info!(workspace = %self.workspace, %owner, target = %target_host, port, "service record left out: no rule allows its target; a request for it is raised");
+                    let request = EgressRequest::new(self.workspace.clone(), target_host, *port);
+                    if let Err(err) = self.proxy.decide(&request, SuffixAllows::Count).await {
+                        tracing::warn!(workspace = %self.workspace, error = %err, "rules unreadable; name lookup refused");
+                        return ResolveAnswer::Unavailable;
+                    }
+                }
+                Allowed::Unreadable => return ResolveAnswer::Unavailable,
+            }
+        }
+        if kept.is_empty() {
+            ResolveAnswer::NoData { ttl: NEGATIVE_TTL }
+        } else {
+            ResolveAnswer::Records { records: kept, ttl }
         }
     }
 }

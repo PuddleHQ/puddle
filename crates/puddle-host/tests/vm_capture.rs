@@ -34,7 +34,7 @@ use puddle_store::{Actor, Effect, NewRule, Pattern, Resolution, Scope};
 use puddle_types::WorkspaceName;
 use serde_json::json;
 use support::{Api, ended, hermetic_options};
-use vm_support::{VmHost, guest, start_vm_host_platform, web_internet};
+use vm_support::{VmHost, guest, start_vm_host, start_vm_host_platform, web_internet};
 
 /// The fake website's name (it answers plain HTTP and HTTPS), and a small public repository to
 /// create the workspace from.
@@ -379,6 +379,46 @@ async fn vm_capture_survives_a_root_that_deletes_the_rules() {
         allowed_connections(&vm, "1.0.0.1", 80) == 0,
         "a connection to 1.0.0.1 was allowed"
     );
+
+    let down = vm.host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
+/// apt with neither its proxy file nor a proxy variable: the stub resolves its names and the
+/// capture carries its connections. apt asks for `_http._tcp.<mirror>` `SRV` records first and
+/// connects to their target; Debian's point at a CDN name the user never allowed, and a stand-in
+/// accepts the connect before the proxy refuses it, so apt would never fall back to the mirror's
+/// own name. The host leaves such a record out of the answer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_capture_apt_update_works_with_no_proxy_file_and_no_proxy_setting() {
+    let vm = start_vm_host("aptn").await;
+    let api = Api::new(vm.host.url(), vm.host.token());
+    let workspace = create_workspace(
+        &vm,
+        &api,
+        "aptn",
+        &[REPO_HOST, "deb.debian.org", "security.debian.org"],
+    )
+    .await;
+    let before = allowed_connections(&vm, "deb.debian.org", 80);
+    let out = guest(
+        &vm.runtime,
+        &workspace,
+        &bash_script(
+            "rm -f /etc/apt/apt.conf.d/99puddle-proxy; rm -rf /var/lib/apt/lists/*
+             env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin apt-get update 2>&1 | tail -20
+             echo \"apt=${PIPESTATUS[0]}\"",
+        ),
+    )
+    .await;
+    eprintln!("{out}");
+    assert_eq!(field(&out, "apt="), "0", "{out}");
+    assert!(
+        !out.contains("Err:") && !out.contains("W: "),
+        "apt-get update reported a failure: {out}"
+    );
+    wait_for_connection_record(&vm, "deb.debian.org", 80, before).await;
+    eprintln!("open rows: {:?}", open_rows(&vm, &workspace));
 
     let down = vm.host.shutdown().await;
     assert!(down.sandboxes.all_stopped(), "{down:?}");

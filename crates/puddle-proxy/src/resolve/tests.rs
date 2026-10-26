@@ -330,8 +330,9 @@ async fn srv_records_come_back_for_an_allowed_name_decided_without_its_service_l
         StaticRecords::new().with("_mongodb._tcp.db.example.net", RecordType::Srv, srv.clone()),
         |p| p,
     );
-    // The rule is for the cluster's name, not for the service name.
+    // The rule is for the cluster's name, not for the service name; the target has its own.
     r.policy.allow(&host("db.example.net"));
+    r.policy.allow(&host("shard0.db.example.net"));
     assert_eq!(
         r.handler
             .resolve_name(ResolveQuery::new(
@@ -349,6 +350,132 @@ async fn srv_records_come_back_for_an_allowed_name_decided_without_its_service_l
         0,
         "no address lookup for a record query"
     );
+}
+
+fn srv(priority: u16, port: u16, target: &str) -> Record {
+    Record::Srv {
+        priority,
+        weight: 1,
+        port,
+        target: target.into(),
+    }
+}
+
+/// apt asks `_http._tcp.deb.debian.org` first and connects to the target. A stand-in's connect
+/// always succeeds, so a target nothing allows would be a refused request apt never falls back
+/// from; with it left out, apt connects to the name the user allowed.
+#[tokio::test]
+async fn an_srv_target_nothing_allows_is_left_out_and_raises_a_request_at_its_port() {
+    let name = "_http._tcp.deb.debian.org";
+    let r = rig_with(
+        StaticResolver::new(),
+        StaticRecords::new().with(
+            name,
+            RecordType::Srv,
+            vec![srv(10, 80, "debian.map.fastlydns.net")],
+        ),
+        |p| p,
+    );
+    r.policy.allow(&host("deb.debian.org"));
+    for _ in 0..2 {
+        assert_eq!(
+            r.handler
+                .resolve_name(ResolveQuery::new(name, RecordType::Srv))
+                .await,
+            ResolveAnswer::NoData { ttl: 20 }
+        );
+    }
+    let pending = r.policy.pending();
+    assert_eq!(pending.len(), 1, "deduplicated: {pending:?}");
+    assert_eq!(
+        (&pending[0].host, pending[0].port),
+        (&host("debian.map.fastlydns.net"), 80)
+    );
+    assert_eq!(r.resolver.lookups(), 0, "the target is not looked up");
+
+    // Once the user allows the target, the record comes back.
+    r.policy.allow(&host("debian.map.fastlydns.net"));
+    assert_eq!(
+        r.handler
+            .resolve_name(ResolveQuery::new(name, RecordType::Srv))
+            .await,
+        ResolveAnswer::Records {
+            records: vec![srv(10, 80, "debian.map.fastlydns.net")],
+            ttl: 30
+        }
+    );
+}
+
+#[tokio::test]
+async fn an_srv_answer_keeps_the_allowed_targets_and_drops_denied_and_blocked_ones_quietly() {
+    let name = "_mongodb._tcp.db.example.net";
+    let r = rig_with(
+        StaticResolver::new(),
+        StaticRecords::new().with(
+            name,
+            RecordType::Srv,
+            vec![
+                srv(0, 27017, "denied.example.net"),
+                srv(0, 27017, "localhost"),
+                srv(1, 27017, "shard1.db.example.net"),
+            ],
+        ),
+        |p| p.with_address_check(Arc::new(NetPolicy::new(Arc::new(LocalAccess::NONE)))),
+    );
+    r.policy.allow(&host("db.example.net"));
+    r.policy.allow(&host("shard1.db.example.net"));
+    r.policy.allow(&host("localhost"));
+    r.policy.deny_host(&host("denied.example.net"));
+    assert_eq!(
+        r.handler
+            .resolve_name(ResolveQuery::new(name, RecordType::Srv))
+            .await,
+        ResolveAnswer::Records {
+            records: vec![srv(1, 27017, "shard1.db.example.net")],
+            ttl: 30
+        }
+    );
+    assert_eq!(
+        r.policy.pending(),
+        vec![],
+        "a denied or blocked target raises nothing"
+    );
+}
+
+#[tokio::test]
+async fn an_srv_answer_with_unreadable_rules_for_its_targets_is_unavailable() {
+    /// Answers one record and makes the rules unreadable on the way: the owner was checked
+    /// before the lookup, so only the target's check fails.
+    struct ThenUnreadable(Arc<StaticPolicy>);
+    impl RecordResolver for ThenUnreadable {
+        fn records<'a>(
+            &'a self,
+            _fqdn: &'a str,
+            _rtype: RecordType,
+        ) -> BoxFuture<'a, Result<Records, RecordError>> {
+            self.0.set_unavailable(true);
+            Box::pin(async {
+                Ok(Records {
+                    records: vec![srv(0, 1, "b.example")],
+                    ttl: Duration::from_secs(30),
+                })
+            })
+        }
+    }
+    let policy = Arc::new(StaticPolicy::new());
+    policy.allow(&host("a.example"));
+    let proxy = Proxy::new(policy.clone(), Arc::new(NullSink))
+        .with_record_resolver(Arc::new(ThenUnreadable(policy.clone())))
+        .with_address_check(Arc::new(AnyAddress));
+    let handler = Arc::new(proxy).handler(workspace());
+    assert_eq!(
+        handler
+            .resolve_name(ResolveQuery::new("_x._tcp.a.example", RecordType::Srv))
+            .await,
+        ResolveAnswer::Unavailable
+    );
+    policy.set_unavailable(false);
+    assert_eq!(policy.pending(), vec![]);
 }
 
 #[tokio::test]

@@ -631,3 +631,191 @@ async fn a_tool_that_did_not_answer_in_time_is_a_sign_in_problem_with_its_name()
         "git did not answer in time; it may be waiting for a sign-in"
     );
 }
+
+/// Lets the tasks the test runtime holds run until they wait for something.
+async fn settle() {
+    for _ in 0..50 {
+        tokio::task::yield_now().await;
+    }
+}
+
+/// `rig` with someone listening for lists that changed behind the caller's back, and the number
+/// of times they were told.
+fn listening(rig: &Rig) -> Arc<AtomicUsize> {
+    let told = Arc::new(AtomicUsize::new(0));
+    let counter = told.clone();
+    rig.repos.on_change(Arc::new(move || {
+        counter.fetch_add(1, Ordering::SeqCst);
+    }));
+    told
+}
+
+async fn read_once_with_two_repositories(rig: &Rig, ids: &[puddle_store::Identity]) {
+    rig.api.reply(
+        "api.github.com",
+        REPOS_PATH,
+        ok_json("github_user_repos_page2.json"),
+    );
+    let first = rig.lists(ids, Freshness::Cached).await;
+    assert_eq!(first.first().unwrap().repos.len(), 2);
+}
+
+#[tokio::test]
+async fn an_old_list_is_served_at_once_and_renewed_behind_the_callers_back_with_a_word_when_it_changed()
+ {
+    let rig = rig_signed_in();
+    let told = listening(&rig);
+    let ids = one_gh_identity();
+    read_once_with_two_repositories(&rig, &ids).await;
+
+    rig.clock.advance(11 * MINUTE);
+    rig.api.clear("api.github.com", REPOS_PATH);
+    rig.api
+        .reply("api.github.com", REPOS_PATH, ApiReply::new(200, "[]"));
+    let served = rig.lists(&ids, Freshness::Cached).await;
+
+    assert_eq!(served[0].repos.len(), 2, "the old list answers the caller");
+    assert_eq!(served[0].refreshed_at, Some(T0));
+    assert_eq!(served[0].state, ListState::Ok);
+    assert_eq!(rig.api.count(), 1, "nothing was asked before it answered");
+    settle().await;
+    assert_eq!(rig.api.count(), 2);
+    assert_eq!(told.load(Ordering::SeqCst), 1);
+    let renewed = rig.lists(&ids, Freshness::Cached).await;
+    assert_eq!(renewed[0].repos.len(), 0);
+    assert_eq!(renewed[0].refreshed_at, Some(T0 + 11 * MINUTE));
+    assert_eq!(rig.api.count(), 2, "and the new list is current again");
+}
+
+#[tokio::test]
+async fn a_renewal_that_found_nothing_new_is_not_announced() {
+    let rig = rig_signed_in();
+    let told = listening(&rig);
+    let ids = one_gh_identity();
+    read_once_with_two_repositories(&rig, &ids).await;
+
+    rig.clock.advance(11 * MINUTE);
+    rig.lists(&ids, Freshness::Cached).await;
+    settle().await;
+
+    assert_eq!(rig.api.count(), 2, "it was read again");
+    assert_eq!(told.load(Ordering::SeqCst), 0, "and said the same");
+}
+
+#[tokio::test]
+async fn a_renewal_that_failed_is_announced_and_the_old_list_stays_on_show_as_stale() {
+    let rig = rig_signed_in();
+    let told = listening(&rig);
+    let ids = one_gh_identity();
+    read_once_with_two_repositories(&rig, &ids).await;
+
+    rig.clock.advance(11 * MINUTE);
+    rig.api.clear("api.github.com", REPOS_PATH);
+    rig.api.fail(
+        "api.github.com",
+        REPOS_PATH,
+        TransportError::Unreachable("offline".to_owned()),
+    );
+    let served = rig.lists(&ids, Freshness::Cached).await;
+    assert_eq!(
+        served[0].state,
+        ListState::Ok,
+        "the caller was not kept waiting"
+    );
+    settle().await;
+
+    assert_eq!(told.load(Ordering::SeqCst), 1);
+    let now = rig.lists(&ids, Freshness::Cached).await;
+    assert_eq!(now[0].state, ListState::Stale);
+    assert_eq!(now[0].repos.len(), 2);
+    assert_eq!(
+        now[0].problem.as_ref().unwrap().kind,
+        ProblemKind::Unreachable
+    );
+}
+
+#[tokio::test]
+async fn screens_asking_while_a_list_renews_cause_no_second_read() {
+    let rig = rig_signed_in();
+    let _told = listening(&rig);
+    let ids = one_gh_identity();
+    read_once_with_two_repositories(&rig, &ids).await;
+
+    rig.clock.advance(11 * MINUTE);
+    for _ in 0..5 {
+        rig.lists(&ids, Freshness::Cached).await;
+    }
+    settle().await;
+
+    assert_eq!(rig.api.count(), 2);
+}
+
+#[tokio::test]
+async fn a_list_never_read_and_a_refresh_are_still_waited_for_even_when_someone_listens() {
+    let rig = rig_signed_in();
+    let told = listening(&rig);
+    rig.api.reply(
+        "api.github.com",
+        REPOS_PATH,
+        ok_json("github_user_repos_page2.json"),
+    );
+    let ids = one_gh_identity();
+
+    let first = rig.lists(&ids, Freshness::Cached).await;
+    assert_eq!(
+        first[0].repos.len(),
+        2,
+        "nothing to show meanwhile, so it waits"
+    );
+
+    rig.clock.advance(11 * MINUTE);
+    rig.api.clear("api.github.com", REPOS_PATH);
+    rig.api
+        .reply("api.github.com", REPOS_PATH, ApiReply::new(200, "[]"));
+    let refreshed = rig.lists(&ids, Freshness::Reload).await;
+    assert_eq!(
+        refreshed[0].repos.len(),
+        0,
+        "the user's Refresh waits for the answer"
+    );
+    assert_eq!(
+        told.load(Ordering::SeqCst),
+        0,
+        "and needs no word afterwards"
+    );
+}
+
+#[tokio::test]
+async fn without_a_listener_an_old_list_is_read_before_it_is_served() {
+    let rig = rig_signed_in();
+    let ids = one_gh_identity();
+    read_once_with_two_repositories(&rig, &ids).await;
+
+    rig.clock.advance(11 * MINUTE);
+    rig.api.clear("api.github.com", REPOS_PATH);
+    rig.api
+        .reply("api.github.com", REPOS_PATH, ApiReply::new(200, "[]"));
+    let served = rig.lists(&ids, Freshness::Cached).await;
+
+    assert_eq!(served[0].repos.len(), 0);
+    assert_eq!(rig.api.count(), 2);
+}
+
+#[tokio::test]
+async fn a_listener_that_is_set_twice_keeps_the_first() {
+    let rig = rig_signed_in();
+    let first = listening(&rig);
+    let second = listening(&rig);
+    let ids = one_gh_identity();
+    read_once_with_two_repositories(&rig, &ids).await;
+
+    rig.clock.advance(11 * MINUTE);
+    rig.api.clear("api.github.com", REPOS_PATH);
+    rig.api
+        .reply("api.github.com", REPOS_PATH, ApiReply::new(200, "[]"));
+    rig.lists(&ids, Freshness::Cached).await;
+    settle().await;
+
+    assert_eq!(first.load(Ordering::SeqCst), 1);
+    assert_eq!(second.load(Ordering::SeqCst), 0);
+}

@@ -4,10 +4,13 @@
 //!
 //! Nothing here runs on its own: a list is read when a screen asks for it, never on a timer, and
 //! a list that could not be refreshed is served from the last good read with the reason beside
-//! it. The lists live in memory only and go with the process.
+//! it. A list older than [`Config::fresh_for`] that was read before is served as it is while a
+//! read in the background renews it, when someone has asked to hear about the result
+//! ([`Repos::on_change`]); otherwise the caller waits for that read. The lists live in memory only
+//! and go with the process.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
 use futures_util::future::{BoxFuture, join_all};
@@ -137,6 +140,8 @@ struct Entry {
     strikes: u32,
     /// Counts finished reads, so a caller that waited its turn can see another one finished.
     generation: u64,
+    /// A read in the background is under way, so no second one is started for the same list.
+    revalidating: bool,
 }
 
 struct Slot {
@@ -310,14 +315,23 @@ fn standing_notes(source: &SourceSpec, kind: &Kind) -> Vec<Note> {
     Vec::new()
 }
 
-/// The lists. Cheap to share behind an [`Arc`].
+/// Called when a read in the background changed what a list shows.
+pub type OnChange = Arc<dyn Fn() + Send + Sync>;
+
+/// The lists. Cheap to clone: a clone is the same lists.
+#[derive(Clone)]
 pub struct Repos {
+    inner: Arc<Inner>,
+}
+
+struct Inner {
     api: Arc<dyn Api>,
     secrets: Arc<dyn Secrets>,
     clock: Arc<dyn Clock>,
     config: Config,
     slots: Mutex<HashMap<Target, Arc<Slot>>>,
     reads: Semaphore,
+    on_change: OnceLock<OnChange>,
 }
 
 impl std::fmt::Debug for Repos {
@@ -342,25 +356,24 @@ impl Repos {
         config: Config,
     ) -> Self {
         Self {
-            api,
-            secrets,
-            clock,
-            reads: Semaphore::new(config.concurrent_reads.max(1)),
-            config,
-            slots: Mutex::new(HashMap::new()),
+            inner: Arc::new(Inner {
+                api,
+                secrets,
+                clock,
+                reads: Semaphore::new(config.concurrent_reads.max(1)),
+                config,
+                slots: Mutex::new(HashMap::new()),
+                on_change: OnceLock::new(),
+            }),
         }
     }
 
-    fn slots(&self) -> MutexGuard<'_, HashMap<Target, Arc<Slot>>> {
-        self.slots.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn slot(&self, target: Target) -> Arc<Slot> {
-        let mut slots = self.slots();
-        let slot = slots
-            .entry(target)
-            .or_insert_with_key(|target| Arc::new(Slot::new(target.clone())));
-        Arc::clone(slot)
+    /// Asks to be told when a read in the background changed what a list shows (a new repository,
+    /// a failure, a limit). Until someone does, an old list is read before it is served, as a
+    /// caller that cannot be told later needs; once someone does, it is served at once and
+    /// renewed behind the caller's back. Only the first call has an effect.
+    pub fn on_change(&self, notify: OnChange) {
+        let _ = self.inner.on_change.set(notify);
     }
 
     /// The lists of `identities`' credentials (one per credential, one per organisation on Azure
@@ -371,6 +384,7 @@ impl Repos {
     /// forgotten here, so pass every identity, with `read.only` to narrow what is read and
     /// returned.
     pub async fn lists(&self, identities: &[Identity], read: Read) -> Vec<SourceList> {
+        let inner = &self.inner;
         let everything = plan(identities, None);
         let wanted: HashSet<&Target> = everything
             .iter()
@@ -379,7 +393,7 @@ impl Repos {
                 Plan::Cannot(_) => None,
             })
             .collect();
-        self.slots().retain(|target, _| wanted.contains(target));
+        inner.slots().retain(|target, _| wanted.contains(target));
 
         let rows = if read.only.is_some() {
             plan(identities, read.only)
@@ -391,7 +405,7 @@ impl Repos {
             .map(|(meta, plan)| {
                 let resolved = match plan {
                     Plan::Cannot(problem) => Resolved::Cannot(problem),
-                    Plan::Read(target) => Resolved::Read(self.slot(target)),
+                    Plan::Read(target) => Resolved::Read(inner.slot(target)),
                 };
                 (meta, resolved)
             })
@@ -405,13 +419,63 @@ impl Repos {
             }
         }
         let force = read.freshness == Freshness::Reload;
-        join_all(distinct.iter().map(|slot| self.refresh(slot, force))).await;
+        let waiting = distinct
+            .into_iter()
+            .filter(|slot| force || !self.revalidate_behind(slot));
+        join_all(waiting.map(|slot| inner.refresh(slot, force, false))).await;
 
-        let now = self.clock.now_ms();
+        let now = inner.clock.now_ms();
         resolved
             .into_iter()
             .map(|(meta, resolved)| snapshot(meta, &resolved, now))
             .collect()
+    }
+
+    /// Starts the read of an old list that was read before in the background, and says so. Not
+    /// when nobody listens, for a list never read (there is nothing to show meanwhile) or for one
+    /// already being read.
+    fn revalidate_behind(&self, slot: &Arc<Slot>) -> bool {
+        let inner = &self.inner;
+        if inner.on_change.get().is_none() {
+            return false;
+        }
+        {
+            let mut entry = slot.entry();
+            if entry.loaded_at.is_none() || !inner.wants_read(&entry, inner.clock.now_ms(), false) {
+                return false;
+            }
+            if entry.revalidating {
+                return true;
+            }
+            entry.revalidating = true;
+        }
+        let (inner, slot) = (Arc::clone(&self.inner), Arc::clone(slot));
+        tokio::spawn(async move {
+            inner.refresh(&slot, false, true).await;
+            slot.entry().revalidating = false;
+        });
+        true
+    }
+
+    /// Who a credential's account is, to prefill an identity: its author and the organisations to
+    /// offer as coverage. Reads from the host (GitHub) or from the credential itself (Azure
+    /// DevOps, whose profile only a Microsoft Entra sign-in may read).
+    pub async fn profile(&self, source: &SourceSpec) -> ProfileRead {
+        self.inner.profile(source).await
+    }
+}
+
+impl Inner {
+    fn slots(&self) -> MutexGuard<'_, HashMap<Target, Arc<Slot>>> {
+        self.slots.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn slot(&self, target: Target) -> Arc<Slot> {
+        let mut slots = self.slots();
+        let slot = slots
+            .entry(target)
+            .or_insert_with_key(|target| Arc::new(Slot::new(target.clone())));
+        Arc::clone(slot)
     }
 
     fn wants_read(&self, entry: &Entry, now: u64, force: bool) -> bool {
@@ -433,7 +497,9 @@ impl Repos {
         force || !recently_failed
     }
 
-    async fn refresh(&self, slot: &Slot, force: bool) {
+    /// Reads `slot`'s list if it is due. `announce`: say so through [`Repos::on_change`] when
+    /// the read changed what the list shows (a read the caller waits for needs no telling).
+    async fn refresh(&self, slot: &Slot, force: bool, announce: bool) {
         let seen = slot.entry().generation;
         let mut pages = slot.turn.lock().await;
         let strikes = {
@@ -457,11 +523,21 @@ impl Repos {
             }
         };
         let now = self.clock.now_ms();
-        let mut entry = slot.entry();
-        entry.generation += 1;
-        match outcome {
-            Ok(listed) => entry.succeed(listed, now),
-            Err(problem) => entry.fail(problem, now, &slot.target),
+        let changed = {
+            let mut entry = slot.entry();
+            let before = entry.shown(now);
+            entry.generation += 1;
+            match outcome {
+                Ok(listed) => entry.succeed(listed, now),
+                Err(problem) => entry.fail(problem, now, &slot.target),
+            }
+            before != entry.shown(now)
+        };
+        if announce
+            && changed
+            && let Some(notify) = self.on_change.get()
+        {
+            notify();
         }
     }
 
@@ -537,10 +613,7 @@ impl Repos {
         }
     }
 
-    /// Who a credential's account is, to prefill an identity: its author and the organisations to
-    /// offer as coverage. Reads from the host (GitHub) or from the credential itself (Azure
-    /// DevOps, whose profile only a Microsoft Entra sign-in may read).
-    pub async fn profile(&self, source: &SourceSpec) -> ProfileRead {
+    async fn profile(&self, source: &SourceSpec) -> ProfileRead {
         match self.read_profile(source).await {
             Ok(profile) => ProfileRead {
                 profile,
@@ -638,7 +711,25 @@ fn azure_profile(source: &SourceSpec) -> Profile {
     }
 }
 
+/// What a screen can see of a list besides its age: a change of it is worth telling about.
+#[derive(PartialEq)]
+struct Shown {
+    repos: Arc<[crate::model::Repository]>,
+    notes: Vec<Note>,
+    problem: Option<Problem>,
+    retry_at: Option<u64>,
+}
+
 impl Entry {
+    fn shown(&self, now: u64) -> Shown {
+        Shown {
+            repos: Arc::clone(&self.repos),
+            notes: self.notes.clone(),
+            problem: self.problem.clone(),
+            retry_at: self.blocked_until.filter(|until| *until > now),
+        }
+    }
+
     fn succeed(&mut self, listed: Listed, now: u64) {
         self.repos = listed.repos.into();
         self.notes = listed.notes;

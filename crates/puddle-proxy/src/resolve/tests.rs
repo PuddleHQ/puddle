@@ -407,7 +407,7 @@ async fn an_srv_target_nothing_allows_is_left_out_and_raises_a_request_at_its_po
 }
 
 #[tokio::test]
-async fn an_srv_answer_keeps_the_allowed_targets_and_drops_denied_and_blocked_ones_quietly() {
+async fn an_srv_answer_keeps_the_allowed_targets_and_drops_the_rest_with_no_request() {
     let name = "_mongodb._tcp.db.example.net";
     let r = rig_with(
         StaticResolver::new(),
@@ -417,6 +417,7 @@ async fn an_srv_answer_keeps_the_allowed_targets_and_drops_denied_and_blocked_on
             vec![
                 srv(0, 27017, "denied.example.net"),
                 srv(0, 27017, "localhost"),
+                srv(0, 27017, "not a host name"),
                 srv(1, 27017, "shard1.db.example.net"),
             ],
         ),

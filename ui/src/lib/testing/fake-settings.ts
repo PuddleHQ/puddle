@@ -37,6 +37,7 @@ const noUi = (): S["UiPrefs"] => ({
   sound: null,
   close_behaviour: null,
   minimize_to_tray: null,
+  app_icon: null,
   notify_only_unfocused: null,
   badge: null,
   notify_oom: null,
@@ -55,6 +56,8 @@ export class FakeSettings {
     auto_update: null,
   };
   ui: S["UiPrefs"] = noUi();
+  /** The user's own app icon, as the PNG text the API would send; `null` until one is stored. */
+  customIcon: string | null = null;
   consent: S["Consent"] = { state: "not_asked" };
   calls: string[] = [];
   bodies: unknown[] = [];
@@ -72,6 +75,7 @@ export class FakeSettings {
     this.layer = fresh.layer;
     this.vscode = fresh.vscode;
     this.ui = fresh.ui;
+    this.customIcon = null;
     this.consent = fresh.consent;
     this.calls = [];
     this.bodies = [];
@@ -163,6 +167,13 @@ export class FakeSettings {
         return this.reply(200, this.view());
       case "/api/consents":
         return this.reply(200, this.consents());
+      case "/api/app-icons":
+        return this.reply(200, {
+          built_in: (
+            ["duck", "duck_pond", "duck_night", "duck_sun"] as const
+          ).map((choice) => ({ choice, png_base64: `${choice}-png` })),
+          custom_png_base64: this.customIcon,
+        } satisfies S["AppIcons"]);
       case "/api/health":
         return this.reply(200, { version: this.version, api_version: "0.3.0" });
     }
@@ -178,6 +189,13 @@ export class FakeSettings {
     if (this.down) throw new TypeError("down");
     const refused = this.refusal(`PUT ${path}`);
     if (refused) return refused;
+    if (path === "/api/app-icons/custom") {
+      if ((init.body as File).size === 0) {
+        return this.reply(422, undefined, "invalid", "the file is empty");
+      }
+      this.customIcon = "own-png";
+      return this.reply(200, { png_base64: this.customIcon });
+    }
     if (path === "/api/consents/{kind}") {
       const b = init.body as S["ConsentRequest"];
       this.consent =
@@ -195,6 +213,14 @@ export class FakeSettings {
       return this.reply(200, this.consents());
     }
     const b = init.body as Body;
+    if (b.ui?.app_icon === "custom" && this.customIcon === null) {
+      return this.reply(
+        422,
+        undefined,
+        "invalid",
+        "ui.app_icon: give Puddle an image before choosing your own icon",
+      );
+    }
     if (
       b.vscode_server?.server === "microsoft" &&
       this.consent.state !== "granted"
@@ -215,5 +241,22 @@ export class FakeSettings {
     };
     this.ui = { ...noUi(), ...b.ui };
     return this.reply(200, this.view());
+  };
+
+  DELETE = async (path: string) => {
+    this.calls.push(`DELETE ${path}`);
+    if (this.down) throw new TypeError("down");
+    const refused = this.refusal(`DELETE ${path}`);
+    if (refused) return refused;
+    if (this.ui.app_icon === "custom") {
+      return this.reply(
+        409,
+        undefined,
+        "conflict",
+        "your own image is the icon in use; choose another icon and save first",
+      );
+    }
+    this.customIcon = null;
+    return { response: { status: 204, ok: true } as Response };
   };
 }

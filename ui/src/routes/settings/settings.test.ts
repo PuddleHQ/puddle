@@ -121,6 +121,7 @@ describe("the screen", () => {
       .map((h) => h.textContent);
     expect(names).toEqual([
       "Appearance",
+      "App icon",
       "Notifications",
       "Inbox",
       "Workspaces",

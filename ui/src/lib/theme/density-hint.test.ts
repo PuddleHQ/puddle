@@ -10,7 +10,7 @@ const page = readFileSync(
   join(import.meta.dirname, "..", "..", "app.html"),
   "utf8",
 );
-const scripts = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(
+const scripts = [...page.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)].map(
   (m) => m[1] ?? "",
 );
 

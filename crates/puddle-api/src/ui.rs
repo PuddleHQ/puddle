@@ -5,8 +5,9 @@
 //!
 //! Static files need no token (the page has to load before it can present one) but keep the
 //! `Host` and `Origin` checks. They are served with a strict `Content-Security-Policy` and no
-//! framing. The only inline script in the build is `SvelteKit`'s bootstrap, which changes with
-//! every build, so its hash is computed from `index.html` when the server starts.
+//! framing. The inline scripts in the build (`SvelteKit`'s bootstrap, which changes with every
+//! build, and the density hint from `app.html`) are allowed by hashes computed from `index.html`
+//! when the server starts.
 
 use std::borrow::Cow;
 use std::fmt::Debug;

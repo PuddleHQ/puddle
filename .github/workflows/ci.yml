@@ -85,7 +85,7 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
-          PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
+          PUDDLE_QUEUE: "on" # temp: dry run of the light mode
         run: ci/scope.sh
 
   # A push to develop whose commit a green merge queue run of this workflow already tested (the queue
@@ -344,7 +344,7 @@ jobs:
       - name: the gates the light mode skips ran
         if: ${{ !cancelled() }}
         env:
-          PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
+          PUDDLE_QUEUE: "on" # temp: dry run of the light mode
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: ci/scope.sh full-steps git-env=${{ steps.git-env.outcome }} notices=${{ steps.notices.outcome }}
 
@@ -507,7 +507,7 @@ jobs:
       - name: the end-to-end tests ran on every browser
         if: ${{ !cancelled() }}
         env:
-          PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
+          PUDDLE_QUEUE: "on" # temp: dry run of the light mode
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: ci/scope.sh full-steps ui-e2e=${{ steps.ui-e2e.outcome }}
 
@@ -587,7 +587,7 @@ jobs:
       - name: every needed job passed
         env:
           NEEDS: ${{ toJSON(needs) }}
-          PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
+          PUDDLE_QUEUE: "on" # temp: dry run of the light mode
           PUDDLE_QUEUE_SKIP_PUSH: ${{ vars.PUDDLE_QUEUE_SKIP_PUSH }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: ci/scope.sh verdict rust=ci_rust,pushskip msvc=ci_rust,pushskip light='!ci_rust' ui=ui,pushskip

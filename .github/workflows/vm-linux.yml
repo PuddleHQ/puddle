@@ -78,7 +78,7 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
-          PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
+          PUDDLE_QUEUE: "on" # temp: dry run of the light mode
         run: ci/scope.sh
 
   build:
@@ -282,6 +282,6 @@ jobs:
       - name: every needed job passed
         env:
           NEEDS: ${{ toJSON(needs) }}
-          PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
+          PUDDLE_QUEUE: "on" # temp: dry run of the light mode
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: ci/scope.sh verdict --nightly-skips build=vm,queue tests=vm,queue

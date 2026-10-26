@@ -42,7 +42,9 @@ const rowFor = (page: Page, pattern: string, workspace?: string): Locator =>
     .locator("tbody tr", {
       // The pattern sits in `span.mono`; a suffix rule's "and subdomains" chip is a sibling.
       // `:text-is` is an exact match on text, so the pattern is never read as a regexp.
-      has: page.locator(`td.host span.mono:text-is(${JSON.stringify(pattern)})`),
+      has: page.locator(
+        `td.host span.mono:text-is(${JSON.stringify(pattern)})`,
+      ),
     })
     .filter(workspace ? { hasText: workspace } : {});
 

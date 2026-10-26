@@ -7512,6 +7512,19 @@ async fn a_pinned_forward_follows_the_workspace_through_stop_start_and_delete() 
     assert_eq!(back["ports"][0]["host_port"], port);
     assert!(tokio::net::TcpStream::connect(addr).await.is_ok());
 
+    // Stopping the forward by hand closes it and takes the pin with it; pinning again restores both.
+    let released = api.delete("/api/workspaces/acme/ports/3000", None).await;
+    assert_eq!(released.status, 204, "{}", released.body);
+    assert!(tokio::net::TcpStream::connect(addr).await.is_err());
+    assert_eq!(
+        host.store()
+            .pinned_ports(&WorkspaceName::new("acme").unwrap())
+            .unwrap(),
+        []
+    );
+    let again = api.put("/api/workspaces/acme/ports/3000", &body).await;
+    assert_eq!(again.status, 200, "{}", again.body);
+
     // Deleting the workspace removes its pins with it.
     api.post("/api/workspaces/acme/stop", "").await;
     events.until(ended("acme"), Duration::from_secs(20)).await;

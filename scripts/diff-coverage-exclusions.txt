@@ -323,3 +323,25 @@ crates/puddle-host/src/workspaces.rs | self.endpoint_failed(name, &e); | both ar
 crates/puddle-host/src/workspaces.rs | None => Some(ssh), | the switch going off, or the workspace going away, in the instant between the endpoint starting and its being kept: a race with no way to hold it open in a test
 crates/puddle-host/src/workspaces.rs | leftover.close().await; | an endpoint the new one replaced (the endpoint is opened once per start and again only after a switch change that closed the first) or the new one when the switch went off in the instant it started: neither can be held open in a test
 crates/puddle-host/src/agent_reports.rs | _ => None, | `AgentReport` is non-exhaustive in puddle-agent-proto; every variant this version has is handled above, so no test can reach the fallback
+crates/puddle-agent-proto/src/forward.rs | Err(e) => Err(OpenError::Io(e.to_string())), | an answer line that does not parse needs an agent that speaks wrongly; the tests run the real agent, and the parser's own errors are tested in `Answer::from_line`
+crates/puddle-agent/src/forward.rs | return; | the host's stream is gone between the request and the answer: a reset the in-memory session cannot be made to deliver at that instant
+crates/puddle-agent/src/forward.rs | return false; | the stream is gone while the answer is written: a reset the in-memory session cannot be made to deliver at that instant
+crates/puddle-agent/src/forward.rs | Err(_) => failure = io::ErrorKind::TimedOut, | a connect that neither succeeds nor is refused for five seconds needs a black-holed address, which a portable test cannot make; the text for it is tested in `failure_text`
+crates/puddle-agent/src/forward.rs | task.await.unwrap(); | the test helper's tail, which runs once the session ends, after the test's own assertions
+crates/puddle-agent/src/forward.rs | }); | the test helper's tail, which runs once the session ends, after the test's own assertions
+crates/puddle-agent/src/ports.rs | Err(_) => return, | the watch's task ends when its report channel closes, which is the agent shutting down; no test observes a task after shutdown
+crates/puddle-host/src/ports.rs | fn failed( | wraps a store failure in words; the store failing is tested in puddle-ports (a broken `Pins`) and the 503 in puddle-api, not through the real store
+crates/puddle-host/src/ports.rs | PinsError(format!("the pinned forwards could not be | wraps a store failure in words; the store failing is tested in puddle-ports (a broken `Pins`) and the 503 in puddle-api, not through the real store
+crates/puddle-host/src/ports.rs | } | closing brace of `failed`, see above
+crates/puddle-ports/src/forward.rs | tracing::warn!(guest_port, error = %err, "a forward could not accept"); | an accept error on a loopback listener (descriptor exhaustion) cannot be provoked portably
+crates/puddle-ports/src/forward.rs | tokio::time::sleep(Duration::from_millis(50)).await; | the pause after an accept error; see above
+crates/puddle-ports/src/forward.rs | Err(err) => { | an accept error on a loopback listener cannot be provoked portably
+crates/puddle-ports/src/forward.rs | _ => None, | a link wait that ends in a closed channel: the workspace's entry is dropped while a connection waits, a race the tests cannot hold still
+crates/puddle-ports/src/forward.rs | a forwarded connection ended with an error | a log line for a connection reset in flight
+crates/puddle-ports/src/forward.rs | zero linger on a refused forward connection | a log line for a socket option the system refused
+crates/puddle-ports/src/ports.rs | None => unreachable!("with_connection_limit is for a fresh Ports"), | a programming error guard: the builder is called on the only handle
+crates/puddle-ports/src/ports.rs | reason: if err.kind() == std::io::ErrorKind::PermissionDenied { | a bind refused for a reason other than a taken port: privileged ports are refused on Linux and allowed on Windows, so a portable test cannot force it
+crates/puddle-ports/src/ports.rs | the system does not let Puddle use it | see above
+crates/puddle-ports/src/ports.rs | err.to_string() | see above
+crates/puddle-ports/src/ports.rs | host_port, | see above
+crates/puddle-store/src/store/ports.rs | )?; | preparing a fixed statement fails only on a broken database file

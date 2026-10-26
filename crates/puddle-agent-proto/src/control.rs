@@ -342,10 +342,9 @@ mod tests {
             AgentMessage::ports([3000])
         );
         let widest = AgentMessage::ports((60_000..).take(MAX_PORTS + 100));
-        let AgentMessage::Ports { listening } = &widest else {
-            unreachable!("ports() builds a Ports message");
-        };
-        assert_eq!(listening.len(), MAX_PORTS);
+        assert!(
+            matches!(&widest, AgentMessage::Ports { listening } if listening.len() == MAX_PORTS)
+        );
         assert!(widest.to_line().unwrap().len() < MAX_LINE);
     }
 

@@ -2585,7 +2585,11 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             let record = self.get(id).await?;
             let list = self.inner.injection.kept_logins(&record.name).await;
             Ok(KeptLogins {
-                logins: list.logins.into_iter().map(kept_login_row).collect(),
+                logins: list
+                    .logins
+                    .into_iter()
+                    .map(|login| kept_login_row(&login))
+                    .collect(),
                 store_readable: list.store_answered,
             })
         })
@@ -2690,7 +2694,7 @@ pub(crate) fn known_ids(stored: &[Stored]) -> BTreeSet<WorkspaceId> {
 }
 
 /// One kept login as the API lists it.
-fn kept_login_row(login: puddle_logins::KeptLogin) -> KeptLogin {
+fn kept_login_row(login: &puddle_logins::KeptLogin) -> KeptLogin {
     KeptLogin {
         service: login.profile.to_owned(),
         name: login.name.to_owned(),
@@ -2704,7 +2708,7 @@ mod kept_login_rows {
 
     #[test]
     fn a_row_carries_the_short_name_the_display_name_and_the_time() {
-        let row = kept_login_row(puddle_logins::KeptLogin {
+        let row = kept_login_row(&puddle_logins::KeptLogin {
             profile: "claude",
             name: "Claude Code",
             since_ms: Some(1_761_480_000_000),

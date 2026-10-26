@@ -256,7 +256,6 @@ async fn vm_ssh_reports_a_signal_killed_command_as_a_failure() {
 /// count, metadata included) and `du` over the files.
 #[expect(
     clippy::unwrap_used,
-    clippy::expect_used,
     reason = "VM test helper: a failed step fails the test"
 )]
 async fn guest_use_mib<S: Sandbox>(sb: &S, mount: &str) -> (u64, u64) {

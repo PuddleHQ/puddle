@@ -33,6 +33,7 @@ pub mod control;
 pub mod editor;
 pub mod forward;
 pub mod host;
+pub mod host_control;
 pub mod kind;
 pub mod relay;
 pub mod resolve;

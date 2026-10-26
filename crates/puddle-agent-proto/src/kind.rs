@@ -13,7 +13,7 @@
 //! | `forward` v1 | host | served by the agent: the host reaches a guest port ([`crate::forward`]) |
 //! | `connect` | agent | reserved: a raw connection to a named destination (`puddle-agent connect`, the `ssh` `ProxyCommand`, goes through the agent's listener as a `CONNECT` for now: [`crate::ssh`]) |
 //! | `ssh-agent` | agent | reserved: filtered SSH agent / signing |
-//! | `host-control` | host | reserved: [`crate::control::HostMessage`] lines, host → guest |
+//! | `host-control` v1 | host | served by the agent: one [`crate::host_control::HostMessage`] line, one reply line ([`crate::host_control`]) |
 //!
 //! The host closes a stream of a reserved or unknown kind, or an unsupported version, with a
 //! logged reason.

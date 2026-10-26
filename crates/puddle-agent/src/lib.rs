@@ -38,6 +38,7 @@ pub mod connect;
 pub mod control;
 pub mod editor;
 pub mod entrypoint;
+pub mod exthost;
 pub mod forward;
 #[cfg(target_os = "linux")]
 mod ifaddrs;

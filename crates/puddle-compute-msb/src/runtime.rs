@@ -4,8 +4,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime};
 
 use microsandbox::sandbox::{SandboxHandle, SandboxStatus as SdkStatus};
 use microsandbox::volume::Volume;
@@ -55,6 +56,58 @@ pub(crate) fn status(s: SdkStatus) -> WorkspaceStatus {
     }
 }
 
+/// The error of a database that did not open, with what the evidence needs: how long the open
+/// took (a timeout shows as the pool's wait) and what is in the database folder (a journal or
+/// write-ahead log left by a process that did not close it, a migration lock still held).
+fn open_failure(home: &Path, took: Duration, error: &dyn std::fmt::Display) -> ComputeError {
+    let files = database_files(&home.join("db"), SystemTime::now());
+    tracing::error!(home = %home.display(), took_ms = took.as_millis(), files = %files, error = %error,
+        "msb's database did not open");
+    runtime(
+        "open",
+        &format!(
+            "{error} (after {:.1} s; database folder {}: {files})",
+            took.as_secs_f32(),
+            home.join("db").display()
+        ),
+    )
+}
+
+/// One line naming each file of the database folder with its size and age, or why the folder
+/// cannot be listed.
+fn database_files(dir: &Path, now: SystemTime) -> String {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) => return format!("cannot be listed: {e}"),
+    };
+    let mut files: Vec<String> = entries
+        .filter_map(Result::ok)
+        .map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            match entry.metadata() {
+                Ok(m) => {
+                    let age = m
+                        .modified()
+                        .ok()
+                        .and_then(|t| now.duration_since(t).ok())
+                        .map_or_else(
+                            || "age unknown".to_owned(),
+                            |d| format!("{} s old", d.as_secs()),
+                        );
+                    format!("{name} {} B, {age}", m.len())
+                }
+                Err(e) => format!("{name} unreadable: {e}"),
+            }
+        })
+        .collect();
+    files.sort();
+    if files.is_empty() {
+        "empty".to_owned()
+    } else {
+        files.join("; ")
+    }
+}
+
 impl MsbRuntime {
     /// Opens msb's database in `config.home` (created if missing), after writing its
     /// `config.json` with the runtime pair. Also creates the guest-share root.
@@ -75,9 +128,10 @@ impl MsbRuntime {
         if let Some(proxy) = &config.registry_proxy {
             builder = builder.registry_proxy(proxy.expose());
         }
+        let opening = Instant::now();
         let local = Box::pin(builder.build())
             .await
-            .map_err(|e| runtime("open", &e))?;
+            .map_err(|e| open_failure(&config.home, opening.elapsed(), &e))?;
         let local = Arc::new(local);
         let sandboxes_dir = local.sandboxes_dir();
         let backend: Arc<dyn Backend> = local.clone();
@@ -257,7 +311,7 @@ pub(crate) fn is_boot_race(error: &MicrosandboxError) -> bool {
 }
 
 /// The last `max` bytes of every file in `dir`, each under its name; empty if there are none.
-pub(crate) fn log_tail(dir: &std::path::Path, max: usize) -> String {
+pub(crate) fn log_tail(dir: &Path, max: usize) -> String {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return String::new();
     };
@@ -783,6 +837,45 @@ mod tests {
         let wrong = refusal(FileMount::read_only(share.join("tree"), guest())).await;
         assert!(wrong.contains("is not a file"), "{wrong}");
         drop(rt);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_database_folder_is_listed_with_sizes_and_ages_for_the_evidence_of_a_failed_open() {
+        let dir = std::env::temp_dir().join(format!("puddle-msb-dbfiles-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(database_files(&dir, SystemTime::now()).starts_with("cannot be listed"));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(database_files(&dir, SystemTime::now()), "empty");
+        std::fs::write(dir.join("msb.db"), [0u8; 10]).unwrap();
+        std::fs::write(dir.join("msb.db-journal"), [0u8; 3]).unwrap();
+        // A file newer than the clock reading has no age to give.
+        assert!(database_files(&dir, SystemTime::UNIX_EPOCH).contains("msb.db 10 B, age unknown"),);
+        let later = SystemTime::now() + Duration::from_secs(60);
+        let listed = database_files(&dir, later);
+        assert!(
+            listed.starts_with("msb.db 10 B, 6") && listed.contains("; msb.db-journal 3 B, 6"),
+            "{listed}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_database_that_cannot_open_says_how_long_it_took_and_what_its_folder_holds() {
+        let base = std::env::temp_dir().join(format!("puddle-msb-noopen-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let home = base.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        // A file where msb wants its database folder.
+        std::fs::write(home.join("db"), b"not a folder").unwrap();
+        let config = MsbConfig::new(home, "/no/msb", "/no/libkrunfw", base.join("share"));
+        let error = MsbRuntime::open(config).await.err().unwrap().to_string();
+        assert!(
+            error.contains("(after ")
+                && error.contains("database folder")
+                && error.contains("cannot be listed"),
+            "{error}"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 

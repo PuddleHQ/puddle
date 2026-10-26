@@ -42,6 +42,11 @@ updates:
       # this once all three accept 7.
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
+      # axe-core 4.14 (brought by @axe-core/playwright 4.14) switches on label-content-name-mismatch
+      # (WCAG 2.5.3, label in name), which about twenty buttons fail: their aria-label does not
+      # contain their visible text. Drop this once those labels are fixed.
+      - dependency-name: "@axe-core/playwright"
+        versions: [">=4.14.0"]
   - package-ecosystem: npm
     directory: /crates/puddle-api/openapi
     target-branch: develop

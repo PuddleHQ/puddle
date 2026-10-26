@@ -1265,6 +1265,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_repository_list_renewed_behind_the_callers_back_is_announced_as_an_event() {
+        use std::collections::BTreeSet;
+
         use puddle_store::{
             Coverage, CredentialBinding, IdentityDraft, Limits, ManualClock, Store,
         };
@@ -1284,7 +1286,7 @@ mod tests {
                     CredentialBinding::new(
                         &host,
                         source,
-                        Coverage::new(Default::default(), true).unwrap(),
+                        Coverage::new(BTreeSet::new(), true).unwrap(),
                     )
                     .unwrap(),
                 ],

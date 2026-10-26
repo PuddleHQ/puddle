@@ -136,26 +136,21 @@ impl WorkspaceHandler {
             };
             let Ok(target_host) = normalise_host(target).map(puddle_netpolicy::Target::into_host)
             else {
+                tracing::info!(workspace = %self.workspace, %owner, target, port, "service record left out: its target is not a host name");
                 continue;
             };
-            let blocked = self
-                .proxy
-                .addresses()
-                .check_target(
-                    &self.workspace,
-                    &puddle_netpolicy::Target::from_host(target_host.clone()),
-                    *port,
-                )
-                .is_some();
-            let verdict = if blocked {
-                Allowed::No
-            } else {
-                allowed(&self.proxy, &self.workspace, &target_host).await
-            };
-            match verdict {
+            if let Some(reason) = self.proxy.addresses().check_target(
+                &self.workspace,
+                &puddle_netpolicy::Target::from_host(target_host.clone()),
+                *port,
+            ) {
+                tracing::info!(workspace = %self.workspace, %owner, target = %target_host, port, ?reason, "service record left out: its target is blocked");
+                continue;
+            }
+            match allowed(&self.proxy, &self.workspace, &target_host).await {
                 Allowed::Yes => kept.push(record),
                 Allowed::No => {
-                    tracing::info!(workspace = %self.workspace, %owner, target = %target_host, port, "service record left out: its target is denied or blocked");
+                    tracing::info!(workspace = %self.workspace, %owner, target = %target_host, port, "service record left out: a rule denies its target");
                 }
                 Allowed::Unmatched => {
                     tracing::info!(workspace = %self.workspace, %owner, target = %target_host, port, "service record left out: no rule allows its target; a request for it is raised");

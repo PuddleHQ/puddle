@@ -32,6 +32,8 @@
 //!   and limits of its own (streams, header list, resets, header-read time).
 //!   A client that refuses the certificate (it does not trust the workspace's CA) is recorded with
 //!   the audit reason `guest_tls_rejected`; the rule's decision stands, since Puddle blocked nothing.
+//!   A certificate Puddle's own CA could not make for the host is recorded as `certificate_unavailable`,
+//!   and the rule's decision stands there too.
 //! - **Requests**: a request for another host (`Host`, `:authority` or an absolute target) is
 //!   `421`; an ambiguous one is `400`. The [`Injector`] is asked the same way on both versions.
 //! - **Upstream leg**: one connection per guest connection, never shared, verified against the

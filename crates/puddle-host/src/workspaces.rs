@@ -29,8 +29,9 @@ use futures_util::future::BoxFuture;
 use puddle_agent_proto::editor::EditorServer;
 use puddle_api::{
     AttachMode, Attached, DEFAULT_IMAGE, DeleteCheck, DesktopTarget, DisplayName, GitSetup,
-    Launcher, Listing, NewWorkspace, Operation, RepoFindings, Repository, ShellInitCheck,
-    StartFolder, StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService,
+    KeptLogin, KeptLogins, Launcher, Listing, NewWorkspace, Operation, RepoFindings, Repository,
+    ShellInitCheck, StartFolder, StartFolderChange, WorkspaceError, WorkspaceRecord,
+    WorkspaceService,
 };
 use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
@@ -2573,6 +2574,28 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     },
                 }),
             }
+        })
+    }
+
+    fn kept_logins<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+    ) -> BoxFuture<'a, Result<KeptLogins, WorkspaceError>> {
+        Box::pin(async move {
+            let record = self.get(id).await?;
+            let list = self.inner.injection.kept_logins(&record.name).await;
+            Ok(KeptLogins {
+                logins: list
+                    .logins
+                    .into_iter()
+                    .map(|login| KeptLogin {
+                        service: login.profile.to_owned(),
+                        name: login.name.to_owned(),
+                        since: login.since_ms,
+                    })
+                    .collect(),
+                store_readable: list.store_answered,
+            })
         })
     }
 

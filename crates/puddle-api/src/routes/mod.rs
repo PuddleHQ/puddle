@@ -172,6 +172,7 @@ fn environment_router() -> OpenApiRouter<AppState> {
             shell_init::put_shell_init,
             shell_init::delete_shell_init
         ))
+        .routes(routes!(logins::list_logins))
         .routes(routes!(logins::forget_login))
 }
 

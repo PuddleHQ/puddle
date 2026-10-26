@@ -3406,6 +3406,28 @@ async fn a_kept_login_is_forgotten_through_the_api_by_the_services_short_name() 
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_kept_logins_list_says_nothing_is_kept_and_does_not_wait_on_the_credential_store() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let listed = api.get("/api/workspaces/acme/logins").await;
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    let listed: serde_json::Value = serde_json::from_str(&listed.body).unwrap();
+    assert_eq!(listed, json!({"logins": [], "store_readable": true}));
+    // Puddle's own record answers now, so a store that is locked or gone does not stall the list.
+    rig.secrets.break_it();
+    let down = api.get("/api/workspaces/acme/logins").await;
+    assert_eq!(down.status, 200, "{}", down.body);
+    let down: serde_json::Value = serde_json::from_str(&down.body).unwrap();
+    assert_eq!(down, json!({"logins": [], "store_readable": true}));
+    let no_workspace = api.get("/api/workspaces/nobody/logins").await;
+    assert_eq!(no_workspace.status, 404, "{}", no_workspace.body);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_global_default_decides_for_workspaces_without_their_own_switch() {
     let rig = Rig::new();
     let host = rig.start().await;

@@ -800,6 +800,27 @@ pub enum ShellInitCheck {
     Refused(String),
 }
 
+/// A service Puddle keeps a login for in a workspace: names and a time, never a value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptLogin {
+    /// The service as the API names it (`claude`, `github`): what forgetting takes.
+    pub service: String,
+    /// What the user calls it (`Claude Code`).
+    pub name: String,
+    /// Epoch ms Puddle first noted the login as kept; `None` when it does not know.
+    pub since: Option<u64>,
+}
+
+/// The logins kept for a workspace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptLogins {
+    /// The services with a login kept.
+    pub logins: Vec<KeptLogin>,
+    /// `false` when the credential store did not answer and Puddle had no record of its own: the
+    /// list is empty because it is not known.
+    pub store_readable: bool,
+}
+
 /// The workspaces resource. Implemented by the application over the runtime, and by
 /// [`crate::FakeWorkspaces`].
 ///
@@ -905,6 +926,23 @@ pub trait WorkspaceService: Send + Sync {
         Box::pin(async {
             Ok(ShellInitCheck::NotRun(
                 "this Puddle has no workspace to run it in".to_owned(),
+            ))
+        })
+    }
+
+    /// The logins Puddle keeps for workspace `id`, from its own record of them (the credential
+    /// store is asked only when there is none yet), so a locked store does not stall the answer.
+    ///
+    /// # Errors
+    /// [`WorkspaceError::NotFound`] for no such workspace, [`WorkspaceError::Unavailable`] when
+    /// this Puddle keeps no logins.
+    fn kept_logins<'a>(
+        &'a self,
+        _id: &'a WorkspaceId,
+    ) -> BoxFuture<'a, Result<KeptLogins, WorkspaceError>> {
+        Box::pin(async {
+            Err(WorkspaceError::Unavailable(
+                "this Puddle keeps no logins".to_owned(),
             ))
         })
     }
@@ -1298,8 +1336,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_service_with_no_credential_store_keeps_no_logins_to_forget() {
+    async fn a_service_with_no_credential_store_keeps_no_logins_to_list_or_forget() {
         let id = WorkspaceId::new("w").unwrap();
+        let listed = NoWorkspaces.kept_logins(&id).await;
+        assert!(
+            matches!(listed, Err(WorkspaceError::Unavailable(ref why)) if why.contains("no logins")),
+            "{listed:?}"
+        );
         let forgotten = NoWorkspaces.forget_login(&id, "claude").await;
         assert!(
             matches!(forgotten, Err(WorkspaceError::Unavailable(ref why)) if why.contains("no logins")),

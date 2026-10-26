@@ -16,7 +16,7 @@ async fn workspace(api: &Api, name: &str) {
         .send(
             "POST",
             "/api/workspaces",
-            Some(&json!({"name": name, "repo_url": REPO})),
+            Some(&json!({"name": name, "repositories": [{"url": REPO}]})),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -181,7 +181,7 @@ async fn without_a_ports_service_every_call_says_it_is_unavailable() {
     let made = send(
         "POST",
         "/api/workspaces",
-        &json!({"name": "shop", "repo_url": REPO}).to_string(),
+        &json!({"name": "shop", "repositories": [{"url": REPO}]}).to_string(),
     )
     .await;
     assert_eq!(made.status, 202, "{}", made.body);

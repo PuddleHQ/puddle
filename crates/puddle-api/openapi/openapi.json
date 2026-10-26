@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.19.0"
+    "version": "0.20.0"
   },
   "paths": {
     "/api/app-icons": {

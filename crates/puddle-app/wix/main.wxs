@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SPDX-License-Identifier: GPL-3.0-or-later
+
+  Puddle's installer template for Tauri's WiX 3 bundler (`bundle.windows.wix.template`). It replaces
+  Tauri's own because that one installs per machine, under Program Files, for administrators only.
+  This one installs per user, under %LOCALAPPDATA%\Programs\Puddle, and needs no administrator
+  rights; `ci/build-msi.sh` builds it and `ci/msi-install-test.ps1` installs, runs, upgrades and
+  removes it on a clean runner. The double-brace values are Tauri's (Handlebars), filled in at build time.
+
+  What differs from Tauri's template, and why:
+  - InstallScope is perUser and INSTALLDIR is set by a SetDirectory action instead of sitting
+    under LocalAppDataFolder in the Directory table. The files then do not trip ICE38, ICE64 and
+    ICE91 (which want a registry key path for every component in the user profile; Tauri's
+    generated resource components use files). SetDirectory is a built-in action, not a script.
+  - No custom action runs a script or downloads anything (no WebView2 bootstrapper, no update
+    task): a missing WebView2 runtime stops the install with a message naming it.
+  - No desktop shortcut, file associations, deep links or merge modules: the program has none.
+  - The program asks for no PATH change.
+-->
+<?if $(sys.BUILDARCH)="x64"?>
+    <?define Win64 = "yes" ?>
+<?elseif $(sys.BUILDARCH)="arm64"?>
+    <?define Win64 = "yes" ?>
+<?else?>
+    <?error Unsupported value of sys.BUILDARCH=$(sys.BUILDARCH)?>
+<?endif?>
+
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+    <Product
+            Id="*"
+            Name="{{product_name}}"
+            UpgradeCode="{{upgrade_code}}"
+            Language="!(loc.TauriLanguage)"
+            Manufacturer="{{manufacturer}}"
+            Version="{{version}}">
+
+        <Package Id="*"
+                 Keywords="Installer"
+                 InstallerVersion="500"
+                 Languages="0"
+                 Compressed="yes"
+                 InstallScope="perUser"
+                 SummaryCodepage="!(loc.TauriCodepage)"/>
+
+        <!-- Reinstall all files, rewrite registry entries and shortcuts. -->
+        <Property Id="REINSTALLMODE" Value="amus" />
+
+        {{#if allow_downgrades}}
+            <MajorUpgrade Schedule="afterInstallInitialize" AllowDowngrades="yes" />
+        {{else}}
+            <MajorUpgrade Schedule="afterInstallInitialize" DowngradeErrorMessage="!(loc.DowngradeErrorMessage)" AllowSameVersionUpgrades="yes" />
+        {{/if}}
+
+        <InstallExecuteSequence>
+            <RemoveShortcuts>Installed AND NOT UPGRADINGPRODUCTCODE</RemoveShortcuts>
+        </InstallExecuteSequence>
+
+        <Media Id="1" Cabinet="app.cab" EmbedCab="yes" />
+
+        <Icon Id="ProductIcon" SourceFile="{{icon_path}}"/>
+        <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
+        <Property Id="ARPNOREPAIR" Value="yes" Secure="yes" />
+        <SetProperty Id="ARPNOMODIFY" Value="1" After="InstallValidate" Sequence="execute"/>
+        {{#if homepage}}
+        <Property Id="ARPURLINFOABOUT" Value="{{homepage}}"/>
+        <Property Id="ARPHELPLINK" Value="{{homepage}}"/>
+        {{/if}}
+
+        <!-- WebView2 is on Windows 11 and installed with Edge on Windows 10; the installer does not
+             fetch it. These are the keys Microsoft documents for detecting it. -->
+        <Property Id="INSTALLED_WEBVIEW2_VERSION">
+            <RegistrySearch Id="Webview2VersionSystemx64" Root="HKLM" Key="SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" Name="pv" Type="raw" />
+            <RegistrySearch Id="Webview2VersionSystemx86" Root="HKLM" Key="SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" Name="pv" Type="raw" />
+            <RegistrySearch Id="Webview2VersionUser" Root="HKCU" Key="SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" Name="pv" Type="raw" />
+        </Property>
+        <Condition Message="Puddle needs the Microsoft Edge WebView2 Runtime, which comes with Windows 11 and with Microsoft Edge on Windows 10. Install it from https://developer.microsoft.com/microsoft-edge/webview2/ and run this installer again.">
+            <![CDATA[Installed OR INSTALLED_WEBVIEW2_VERSION]]>
+        </Condition>
+
+        <!-- The folder of an earlier install, so an upgrade stays where the first install went. -->
+        <Property Id="INSTALLDIR">
+            <RegistrySearch Id="PrevInstallDir" Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}" Name="InstallDir" Type="raw" />
+        </Property>
+
+        <!-- Launch checkbox on the last page. -->
+        <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="!(loc.LaunchApp)" />
+        <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1"/>
+        <CustomAction Id="LaunchApplication" Impersonate="yes" FileKey="Path" ExeCommand="" Return="asyncNoWait" />
+
+        <UI>
+            <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed</Publish>
+
+            <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR" />
+
+            <!-- No licence dialog: the licences ship in the licenses folder. -->
+            <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="2">1</Publish>
+            <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2">1</Publish>
+        </UI>
+
+        <UIRef Id="WixUI_InstallDir" />
+
+        <Directory Id="TARGETDIR" Name="SourceDir">
+            <Directory Id="INSTALLDIR" Name="{{product_name}}"/>
+            <Directory Id="ProgramMenuFolder">
+                <Directory Id="ApplicationProgramsFolder" Name="{{product_name}}"/>
+            </Directory>
+        </Directory>
+
+        <!-- A first install goes to %LOCALAPPDATA%\Programs\<name>, the per-user programs folder. -->
+        <SetDirectory Id="INSTALLDIR" Value="[LocalAppDataFolder]Programs\{{product_name}}">NOT INSTALLDIR</SetDirectory>
+
+        <DirectoryRef Id="INSTALLDIR">
+            <Component Id="RegistryEntries" Guid="*">
+                <RegistryKey Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}">
+                    <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLDIR]" KeyPath="yes" />
+                </RegistryKey>
+            </Component>
+            <Component Id="Path" Guid="{{path_component_guid}}" Win64="$(var.Win64)">
+                <File Id="Path" Source="{{main_binary_path}}" KeyPath="yes" Checksum="yes"/>
+            </Component>
+            {{#each binaries as |bin| ~}}
+            <Component Id="{{ bin.id }}" Guid="{{bin.guid}}" Win64="$(var.Win64)">
+                <File Id="Bin_{{ bin.id }}" Source="{{bin.path}}" KeyPath="yes"/>
+            </Component>
+            {{/each~}}
+            {{resources}}
+            <Component Id="CMP_RemoveInstallDir" Guid="*">
+                <RemoveFolder Id="RemoveInstallDir" On="uninstall" />
+                <RegistryValue Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}" Name="Install Folder" Type="integer" Value="1" KeyPath="yes" />
+            </Component>
+        </DirectoryRef>
+
+        <DirectoryRef Id="ApplicationProgramsFolder">
+            <Component Id="ApplicationShortcut" Guid="*">
+                <Shortcut Id="ApplicationStartMenuShortcut"
+                    Name="{{product_name}}"
+                    Description="Runs {{product_name}}"
+                    Target="[!Path]"
+                    Icon="ProductIcon"
+                    WorkingDirectory="INSTALLDIR">
+                    <ShortcutProperty Key="System.AppUserModel.ID" Value="{{bundle_id}}"/>
+                </Shortcut>
+                <RemoveFolder Id="ApplicationProgramsFolder" On="uninstall"/>
+                <RegistryValue Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}" Name="Start Menu Shortcut" Type="integer" Value="1" KeyPath="yes"/>
+            </Component>
+        </DirectoryRef>
+
+        <Feature
+                Id="MainProgram"
+                Title="Application"
+                Description="!(loc.InstallAppFeature)"
+                Level="1"
+                ConfigurableDirectory="INSTALLDIR"
+                AllowAdvertise="no"
+                Display="expand"
+                Absent="disallow">
+            <ComponentRef Id="RegistryEntries"/>
+            <ComponentRef Id="Path"/>
+            <ComponentRef Id="CMP_RemoveInstallDir"/>
+            <ComponentRef Id="ApplicationShortcut"/>
+            {{#each binaries as |bin| ~}}
+            <ComponentRef Id="{{ bin.id }}"/>
+            {{/each~}}
+            {{#each resource_file_ids as |resource_file_id| ~}}
+            <ComponentRef Id="{{ resource_file_id }}"/>
+            {{/each~}}
+        </Feature>
+
+        <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLDIR]" After="CostFinalize"/>
+    </Product>
+</Wix>

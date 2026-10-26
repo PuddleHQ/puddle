@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The Tauri command line Puddle's MSI is built with: `<version> <release asset> <sha256>`. The
+# version matches the `tauri` crate's minor version in Cargo.lock; `ci/fetch-tauri-cli.sh` refuses a
+# download that does not match. Values are the SHA-256 GitHub shows for the asset
+# (`gh release view tauri-cli-v<version> -R tauri-apps/tauri --json assets`), checked against a download.
+# Dependabot does not watch this file: bump it by hand together with the `tauri` crates.
+2.12.3 cargo-tauri-x86_64-pc-windows-msvc.zip 563cb2aef280c393688cebaff1a9fd4a2f6df4fdb9be2c665ff3c798a4ffe7c2

@@ -1,0 +1,121 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Builds Puddle's per-user MSI on a clean windows-2025 runner and tests it the way a user meets it:
+# a silent install, the installed program starting and finding its runtime, an upgrade over the
+# previous MSI that keeps the data folder, and an uninstall that leaves nothing outside Puddle's
+# own data folders (ci/msi-install-test.ps1). Not a required check: it runs on pull requests that
+# touch the installer (paths below), nightly on develop (skipped when this workflow already has a
+# green run on the commit), and by hand. The MSI of the run is kept as an artifact.
+name: msi
+
+on:
+  schedule:
+    - cron: "45 3 * * *"
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - .github/workflows/msi.yml
+      - ci/build-msi.sh
+      - ci/msi-install-test.ps1
+      - ci/fetch-tauri-cli.sh
+      - ci/tauri-cli.sha256
+      - ci/msb-runtime.sha256
+      - ci/code-server.sha256
+      - crates/puddle-app/tauri.conf.json
+      - crates/puddle-app/wix/**
+      - crates/puddle-app/build.rs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: msi-${{ github.ref == 'refs/heads/develop' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/develop' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  msi:
+    name: msi (build, install, upgrade, uninstall)
+    runs-on: windows-2025
+    timeout-minutes: 60
+    # `actions: read` for ci/should-run.sh.
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: anything new since the last green run?
+        id: changed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ci/should-run.sh msi.yml
+      - name: Toolchain (from rust-toolchain.toml)
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        run: rustup toolchain install && rustc --version
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        if: steps.changed.outputs.run == 'true'
+        with:
+          tool: cargo-about@0.9.2
+      - name: Node for the UI
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Tauri command line (pinned, checksum-verified)
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        run: |
+          ci/fetch-tauri-cli.sh "$RUNNER_TEMP/tauri-cli"
+          cygpath -w "$RUNNER_TEMP/tauri-cli" >>"$GITHUB_PATH"
+      - name: UI build (the shell embeds it)
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        run: cd ui && npm ci --ignore-scripts --no-audit --no-fund && npm run build
+      - name: stage the runtime, code-server, agent and CLI
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ci/build-msi.sh stage "$RUNNER_TEMP/msi-stage"
+      # The workspace's own version, then the next patch: the upgrade test installs the first and
+      # upgrades to the second. The first MSI is the one kept.
+      - name: build the MSI and a newer one for the upgrade test
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        run: |
+          current=$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)
+          next=${current%.*}.$(( ${current##*.} + 1 ))
+          echo "current=$current next=$next"
+          ci/build-msi.sh bundle "$RUNNER_TEMP/msi-stage" "$RUNNER_TEMP/msi-out" "$current"
+          ci/build-msi.sh bundle "$RUNNER_TEMP/msi-stage" "$RUNNER_TEMP/msi-out" "$next"
+          ls -l "$RUNNER_TEMP/msi-out"
+          echo "FIRST_MSI=$(cygpath -w "$RUNNER_TEMP/msi-out/Puddle_${current}_x64_en-US.msi")" >>"$GITHUB_ENV"
+          echo "NEXT_MSI=$(cygpath -w "$RUNNER_TEMP/msi-out/Puddle_${next}_x64_en-US.msi")" >>"$GITHUB_ENV"
+      - name: install, start, upgrade, uninstall
+        if: steps.changed.outputs.run == 'true'
+        shell: pwsh
+        run: ./ci/msi-install-test.ps1 -Msi $env:FIRST_MSI -UpgradeMsi $env:NEXT_MSI -LogDir "$env:RUNNER_TEMP\msi-logs"
+      - name: upload the MSI
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: puddle-msi
+          path: ${{ runner.temp }}/msi-out/*.msi
+          retention-days: 14
+          if-no-files-found: ignore
+      - name: upload the installer logs
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: puddle-msi-logs
+          path: ${{ runner.temp }}/msi-logs
+          retention-days: 14
+          if-no-files-found: ignore

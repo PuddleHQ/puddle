@@ -6,8 +6,12 @@
 #     Cargo.lock hash leaves a 1-3 GB entry behind that nothing restores any more);
 #   - on develop/main, an entry of those groups unused for a week (a group whose key was renamed
 #     leaves its last entry behind, and the newest-of-group rule keeps it for ever);
-#   - on any other ref (task branches, pull requests), entries not used for two days.
+#   - on any other ref (task branches, pull requests), entries not used for two days;
+#   - on a merge queue ref (refs/heads/gh-readonly-queue/...), every entry at once: only a rerun of
+#     that one queue entry could read it, and the steps that save on a miss on any ref (npm,
+#     cargo-xwin, the msb build) would otherwise add hundreds of MB per landing.
 # Never touches the cargo-xwin entry on develop. DRY_RUN=1 lists instead of deleting.
+# Self-test: ci/cache-gc-test.sh.
 # Needs GH_TOKEN, GITHUB_REPOSITORY and, to delete, `actions: write`.
 set -euo pipefail
 
@@ -29,7 +33,8 @@ gh api --paginate "repos/$repo/actions/caches?per_page=100" --jq '.actions_cache
         | map(sort_by(.created_at) | reverse | .[1:][]) ) as $old
       | ( [ .[] | select(trunk and (group != null) and (.last_accessed_at < $week)) ] ) as $orphans
       | ( [ .[] | select((trunk | not) and (.last_accessed_at < $cutoff)) ] ) as $stale
-      | ($old + $orphans + $stale | unique_by(.id))[] | [.id, .ref, .key, .size_in_bytes] | @tsv' |
+      | ( [ .[] | select(.ref | startswith("refs/heads/gh-readonly-queue/")) ] ) as $queue
+      | ($old + $orphans + $stale + $queue | unique_by(.id))[] | [.id, .ref, .key, .size_in_bytes] | @tsv' |
     while IFS=$'\t' read -r id ref key size; do
         echo "delete $id  $ref  $key  $((size / 1000000)) MB"
         [ "${DRY_RUN:-}" = "1" ] || gh api -X DELETE "repos/$repo/actions/caches/$id" --silent

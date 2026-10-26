@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Linux gates on every push to develop/main and every pull request (docs/STANDARDS.md, "CI").
+# Linux gates on every push to develop/main, every pull request and every merge queue run
+# (docs/STANDARDS.md, "CI").
 # Two jobs run side by side: the Rust and repository gates, and the UI gates (the browser tests are
 # the longest step). A third job, `linux (all gates)`, waits for both and is the one result to
 # require. Every gate runs even when an earlier one fails, so one run shows every problem.
@@ -7,16 +8,25 @@
 # job): a docs-only or UI-only change runs a light job (typos, spdx, shellcheck, standalone, secrets)
 # instead of the Rust gates, and a change with no UI-relevant path skips the UI job. Every other
 # event, and any doubt, runs everything. `linux (all gates)` accepts a skip only when `scope` said so.
+# A merge queue run (`merge_group`) is scoped the same way, by the group's diff against develop.
+# With the repository variable PUDDLE_QUEUE set to `on`, a pull request to develop runs in the light
+# mode (ci/scope.sh): the `git-env` and `notices` gates skip and the UI end-to-end tests run on
+# Chromium only; the merge queue runs them all on the commit that lands. Unset, every pull request
+# runs the full set. With PUDDLE_QUEUE_SKIP_PUSH set to `on`, a push to develop whose commit a green
+# merge queue run of this workflow tested skips the Rust, msvc and UI jobs when their caches exist
+# (the `queue-tested` job); it still runs the advisories.
 # Advisories (RustSec, npm) are not one of those gates: a new advisory fails every pull request at once, whatever
 # the pull request changes. The separate `advisories` and `advisories-npm` jobs run on pull requests to main, on
-# pushes, nightly and by hand, never on a pull request to develop (the `cargo-deny` step there checks bans,
-# licences and sources).
+# pushes, nightly and by hand, never on a pull request to develop or a merge queue run (the `cargo-deny` step
+# there checks bans, licences and sources).
 name: ci
 
 on:
   push:
     branches: [develop, main]
   pull_request:
+  merge_group:
+    types: [checks_requested]
   # The nightly runs only the two advisories jobs (every other job skips on this event) and keeps its tracking issue.
   schedule:
     - cron: "30 5 * * *"
@@ -42,9 +52,10 @@ env:
   # the msb SDK (puddle-vm-tests) stay small enough for the runner's disk (full debug info filled
   # it: `ld terminated with signal 7 [Bus error]`).
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
-  # The commit the diff-coverage gate measures from: the PR's base, or the push's previous head
-  # (empty or unknown, e.g. a new branch or a manual run: scripts/check.sh uses the merge base with origin/develop).
-  DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+  # The commit the diff-coverage gate measures from: the PR's base, the merge queue's base, or the push's
+  # previous head (empty or unknown, e.g. a new branch or a manual run: scripts/check.sh uses the merge
+  # base with origin/develop).
+  DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
 
 jobs:
   # Which jobs this pull request needs (ci/scope.sh; it falls open to "all" on any doubt). Checks out
@@ -60,6 +71,7 @@ jobs:
     outputs:
       ci_rust: ${{ steps.scope.outputs.ci_rust }}
       ui: ${{ steps.scope.outputs.ui }}
+      light: ${{ steps.scope.outputs.light }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -71,12 +83,87 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
         run: ci/scope.sh
+
+  # A push to develop whose commit a green merge queue run of this workflow already tested (the queue
+  # fast-forwards develop to the commit it tested) need not build and test it again. Runs only with
+  # PUDDLE_QUEUE_SKIP_PUSH=on, and says skip=true only when that run exists and the caches the heavy
+  # jobs would save (the Rust `linux` entry, the Playwright browsers, cargo-xwin) are all on develop
+  # for this exact key. Any error or doubt says skip=false and everything runs.
+  queue-tested:
+    name: already tested in the merge queue?
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && vars.PUDDLE_QUEUE_SKIP_PUSH == 'on' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      skip: ${{ steps.decide.outputs.skip }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: a green merge queue run on this commit?
+        id: queue
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUDDLE_QUEUE_SKIP_PUSH: ${{ vars.PUDDLE_QUEUE_SKIP_PUSH }}
+        run: ci/should-run.sh ci.yml --queue-tested
+      # The Rust key hashes the toolchain, the manifests and the environment, as in the rust job (no extra
+      # CARGO or RUST variables may be set in this job, or the key differs).
+      - name: Toolchain (from rust-toolchain.toml)
+        if: steps.queue.outputs.tested == 'true'
+        continue-on-error: true
+        run: rustup toolchain install && rustc --version
+      - name: Rust cache entry (lookup only)
+        id: rust-cache
+        if: steps.queue.outputs.tested == 'true'
+        continue-on-error: true
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: linux
+          lookup-only: true
+          save-if: false
+      - name: Playwright browsers entry (lookup only)
+        id: browsers
+        if: steps.queue.outputs.tested == 'true'
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
+          lookup-only: true
+      - name: cargo-xwin entry (lookup only)
+        id: xwin
+        if: steps.queue.outputs.tested == 'true'
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/cargo-xwin
+          key: cargo-xwin-0.23.1-x86_64
+          lookup-only: true
+      - name: skip the heavy jobs?
+        id: decide
+        env:
+          TESTED: ${{ steps.queue.outputs.tested }}
+          RUST_HIT: ${{ steps.rust-cache.outputs.cache-hit }}
+          BROWSERS_HIT: ${{ steps.browsers.outputs.cache-hit }}
+          XWIN_HIT: ${{ steps.xwin.outputs.cache-hit }}
+        run: |
+          echo "merge queue tested this commit: ${TESTED:-unknown}; cache hits: rust ${RUST_HIT:-none}, browsers ${BROWSERS_HIT:-none}, cargo-xwin ${XWIN_HIT:-none}"
+          if [ "$TESTED" = true ] && [ "$RUST_HIT" = true ] && [ "$BROWSERS_HIT" = true ] && [ "$XWIN_HIT" = true ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
 
   rust:
     name: linux (Rust and repository gates)
-    needs: scope
-    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.scope.outputs.ci_rust != 'false' }}
+    needs: [scope, queue-tested]
+    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.scope.outputs.ci_rust != 'false' && needs.queue-tested.outputs.skip != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     # `actions: write` is for the cache-drop step, which frees the superseded Rust entry on a develop push
@@ -196,8 +283,10 @@ jobs:
       - name: hooks (pre-push hook and runtime fetch tests)
         if: ${{ !cancelled() }}
         run: scripts/check.sh hooks
+      # The light pull request mode skips the two slowest repository gates; the merge queue runs them.
       - name: git-env (gates run with the variables git sets for a hook)
-        if: ${{ !cancelled() }}
+        id: git-env
+        if: ${{ !cancelled() && needs.scope.outputs.light != 'true' }}
         run: scripts/check.sh git-env
       - name: clippy (linux)
         if: ${{ !cancelled() }}
@@ -206,7 +295,8 @@ jobs:
         if: ${{ !cancelled() }}
         run: scripts/check.sh deny
       - name: licence notices (cargo-about)
-        if: ${{ !cancelled() }}
+        id: notices
+        if: ${{ !cancelled() && needs.scope.outputs.light != 'true' }}
         run: scripts/check.sh notices
       - name: API contract (openapi.json and schema.d.ts are current)
         if: ${{ !cancelled() }}
@@ -247,14 +337,21 @@ jobs:
             target/lcov.info
           retention-days: 14
           if-no-files-found: ignore
+      # Off the light mode (worked out again from the event, not from `scope`) both gates must have run.
+      - name: the gates the light mode skips ran
+        if: ${{ !cancelled() }}
+        env:
+          PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: ci/scope.sh full-steps git-env=${{ steps.git-env.outcome }} notices=${{ steps.notices.outcome }}
 
   # The msvc cross-check, in its own job: its 12 to 14 minute CRT download on a cargo-xwin cache miss runs next to the
   # Rust job instead of inside its 30 minutes. No Rust cache of its own (the 10 GB cap has no room), so it builds
   # the check target cold every time.
   msvc:
     name: clippy (windows-msvc, cross-checked)
-    needs: scope
-    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.scope.outputs.ci_rust != 'false' }}
+    needs: [scope, queue-tested]
+    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.scope.outputs.ci_rust != 'false' && needs.queue-tested.outputs.skip != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -331,10 +428,14 @@ jobs:
 
   ui:
     name: linux (UI gates)
-    needs: scope
-    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.scope.outputs.ui != 'false' }}
+    needs: [scope, queue-tested]
+    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.scope.outputs.ui != 'false' && needs.queue-tested.outputs.skip != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      # The light pull request mode runs the end-to-end tests on Chromium only (ui/playwright.config.ts);
+      # the merge queue runs both browsers. Empty means every browser.
+      PUDDLE_E2E_PROJECTS: ${{ needs.scope.outputs.light == 'true' && 'chromium' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -360,15 +461,18 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
-      - name: Playwright browsers (Chromium and WebKit; their system libraries every time)
+      - name: Playwright browsers (Chromium and WebKit, or Chromium alone in the light mode; their system libraries every time)
         timeout-minutes: 10
         run: |
           ci/apt-setup.sh
           cd ui
           npm ci --ignore-scripts --no-audit --no-fund
-          ../ci/apt-retry.sh npx playwright install-deps chromium webkit
+          browsers="${PUDDLE_E2E_PROJECTS:-chromium webkit}"
+          # shellcheck disable=SC2086 # one word per browser
+          ../ci/apt-retry.sh npx playwright install-deps $browsers
           if [ "${{ steps.browsers.outputs.cache-hit }}" != true ]; then
-            npx playwright install chromium webkit
+            # shellcheck disable=SC2086
+            npx playwright install $browsers
           fi
       - name: Save the Playwright browsers
         if: ${{ github.ref == 'refs/heads/develop' && steps.browsers.outputs.cache-hit != 'true' }}
@@ -382,6 +486,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: scripts/check.sh ui-licences
       - name: UI end-to-end (Playwright, Chromium and WebKit, axe)
+        id: ui-e2e
         if: ${{ !cancelled() }}
         run: scripts/check.sh ui-e2e
       - name: upload UI test results
@@ -395,15 +500,22 @@ jobs:
             ui/coverage/lcov.info
           retention-days: 14
           if-no-files-found: ignore
+      # Off the light mode (worked out again from the event) both browsers must have run.
+      - name: the end-to-end tests ran on every browser
+        if: ${{ !cancelled() }}
+        env:
+          PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: ci/scope.sh full-steps ui-e2e=${{ steps.ui-e2e.outcome }}
 
   # RustSec advisories (`scripts/check.sh advisories`). The result job needs it, but it skips on a pull request to
-  # develop by its own event rule (not a scope verdict; the result job accepts a skip of a job it does not scope), so
+  # develop and on a merge queue run by its own event rule (not a scope verdict; the result job accepts a skip of a job it does not scope), so
   # a new advisory fails no pull request to develop. It runs where the answer matters: a release path (pull request
   # to main, where it fails `linux (all gates)`), every push to develop and main, the nightly (which the result job
   # skips) and by hand. The nightly also opens, rewrites or closes the tracking issue (ci/advisories-issue.sh).
   advisories:
     name: advisories (RustSec)
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.base.ref == 'main' }}
+    if: ${{ github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.pull_request.base.ref == 'main') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -425,11 +537,11 @@ jobs:
         run: ci/advisories-issue.sh rust
 
   # npm advisories (`scripts/check.sh ui-audit`), the same shape as `advisories` above: skipped on a pull request to
-  # develop, run on a pull request to main (where it fails `linux (all gates)`), every push, the nightly and by hand.
+  # develop and a merge queue run, run on a pull request to main (where it fails `linux (all gates)`), every push, the nightly and by hand.
   # Its own job, so it is not tied to the UI job's scope verdict: a UI-free pull request to main still gets it.
   advisories-npm:
     name: advisories (npm)
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.base.ref == 'main' }}
+    if: ${{ github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.pull_request.base.ref == 'main') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -455,11 +567,12 @@ jobs:
 
   # One stable result for the jobs above.
   # The develop ruleset requires it by this name: a rename changes the ruleset in the same change.
-  # On a pull request a job may be skipped only when `scope` said it was not needed (ci/scope.sh
-  # verdict); a failed `scope` job leaves its outputs empty, which runs everything.
+  # On a pull request or a merge queue run a job may be skipped only when `scope` said it was not needed
+  # (ci/scope.sh verdict); a failed `scope` job leaves its outputs empty, which runs everything. On a
+  # develop push the Rust, msvc and UI jobs may also skip when `queue-tested` said so (`pushskip`).
   linux:
     name: linux (all gates)
-    needs: [scope, rust, msvc, light, ui, advisories, advisories-npm]
+    needs: [scope, queue-tested, rust, msvc, light, ui, advisories, advisories-npm]
     if: ${{ always() && github.event_name != 'schedule' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -470,4 +583,7 @@ jobs:
       - name: every needed job passed
         env:
           NEEDS: ${{ toJSON(needs) }}
-        run: ci/scope.sh verdict rust=ci_rust msvc=ci_rust light='!ci_rust' ui=ui
+          PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
+          PUDDLE_QUEUE_SKIP_PUSH: ${{ vars.PUDDLE_QUEUE_SKIP_PUSH }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: ci/scope.sh verdict rust=ci_rust,pushskip msvc=ci_rust,pushskip light='!ci_rust' ui=ui,pushskip

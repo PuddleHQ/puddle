@@ -124,6 +124,25 @@ pub(crate) struct Context {
     pub(crate) streams: Arc<tokio::sync::Semaphore>,
 }
 
+/// Records why the guest's TLS handshake failed: Puddle could not make the certificate, or the
+/// client refused it (a certificate alert), or neither (an ordinary connection).
+fn note_handshake_failure(
+    cx: &Context,
+    gate: &super::guest::GateFlags,
+    err: &io::Error,
+    outcome: &mut Outcome,
+) {
+    if gate.leaf_failed.load(Ordering::Relaxed) {
+        outcome.certificate_unavailable = true;
+        tracing::warn!(workspace = %cx.workspace, host = %cx.target.host, error = %err, "the guest's TLS handshake failed because Puddle could not make a certificate for the host");
+    } else if let Some(alert) = super::handshake::rejected_certificate(err) {
+        outcome.certificate_refused = true;
+        tracing::info!(workspace = %cx.workspace, host = %cx.target.host, alert, "the client in the workspace did not accept Puddle's certificate for this host");
+    } else {
+        tracing::debug!(host = %cx.target.host, error = %err, "guest TLS handshake failed");
+    }
+}
+
 /// Terminates `reader`'s connection (a `CONNECT` whose head was just read). The guest's
 /// `ClientHello` is read first and its name checked; then the real server is connected to, offering
 /// the protocols the guest offered, and the guest is offered what the server chose.
@@ -198,15 +217,7 @@ where
     {
         Ok(Ok(tls)) => tls,
         Ok(Err(err)) => {
-            if gate.leaf_failed.load(Ordering::Relaxed) {
-                outcome.certificate_unavailable = true;
-                tracing::warn!(workspace = %cx.workspace, host = %cx.target.host, error = %err, "the guest's TLS handshake failed because Puddle could not make a certificate for the host");
-            } else if let Some(alert) = super::handshake::rejected_certificate(&err) {
-                outcome.certificate_refused = true;
-                tracing::info!(workspace = %cx.workspace, host = %cx.target.host, alert, "the client in the workspace did not accept Puddle's certificate for this host");
-            } else {
-                tracing::debug!(host = %cx.target.host, error = %err, "guest TLS handshake failed");
-            }
+            note_handshake_failure(&cx, &gate, &err, &mut outcome);
             return outcome;
         }
         Err(_) => {

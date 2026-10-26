@@ -357,6 +357,26 @@ async fn pages_asked_at_once_use_a_connection_each_and_all_are_kept_for_later() 
 }
 
 #[tokio::test]
+async fn no_more_than_four_connections_are_kept_for_a_host() {
+    let pki = Pki::new("localhost");
+    let server = Server::start(&pki, Mode::Answer(Arc::new(|_| Reply::ok("[]")))).await;
+    let host = format!("localhost:{}", server.addr.port());
+    let api = Arc::new(api(direct_chain(), &pki));
+    let five_at_once = || {
+        futures_util::future::join_all((0..5).map(|n| {
+            let (api, host) = (api.clone(), host.clone());
+            async move { api.get(request(&host, &format!("/p?n={n}"))).await }
+        }))
+    };
+
+    assert!(five_at_once().await.iter().all(Result::is_ok));
+    assert_eq!(server.connections(), 5);
+    // Four of the five were kept, so the next five open one new connection.
+    assert!(five_at_once().await.iter().all(Result::is_ok));
+    assert_eq!(server.connections(), 6);
+}
+
+#[tokio::test]
 async fn a_host_that_says_it_closes_gets_a_new_connection_next_time() {
     let pki = Pki::new("localhost");
     let server = Server::start(

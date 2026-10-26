@@ -69,27 +69,15 @@ impl MsbRuntime {
         }
         std::fs::write(config.config_path(), config.config_json())
             .map_err(|e| runtime("open", &e))?;
-        let mut attempt = 1;
-        let local = loop {
-            let mut builder = LocalBackend::builder()
-                .home(&config.home)
-                .config_path(config.config_path());
-            if let Some(proxy) = &config.registry_proxy {
-                builder = builder.registry_proxy(proxy.expose());
-            }
-            let opened = Box::pin(builder.build()).await;
-            match opened {
-                Ok(local) => break local,
-                // SQLite on Windows: an msb process that is just exiting can still hold the
-                // database, and the open fails with "disk I/O error" (seen on hosted CI runners).
-                Err(e) if attempt < OPEN_ATTEMPTS => {
-                    tracing::warn!(error = %e, attempt, "msb database busy at open; retrying");
-                    tokio::time::sleep(OPEN_BACKOFF).await;
-                    attempt += 1;
-                }
-                Err(e) => return Err(runtime("open", &e)),
-            }
-        };
+        let mut builder = LocalBackend::builder()
+            .home(&config.home)
+            .config_path(config.config_path());
+        if let Some(proxy) = &config.registry_proxy {
+            builder = builder.registry_proxy(proxy.expose());
+        }
+        let local = Box::pin(builder.build())
+            .await
+            .map_err(|e| runtime("open", &e))?;
         let local = Arc::new(local);
         let sandboxes_dir = local.sandboxes_dir();
         let backend: Arc<dyn Backend> = local.clone();
@@ -254,10 +242,6 @@ impl MsbRuntime {
         ))
     }
 }
-
-/// How often [`MsbRuntime::open`] tries to open msb's database, and how long it waits between.
-const OPEN_ATTEMPTS: u32 = 5;
-const OPEN_BACKOFF: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// How much of each msb log file a lost boot race logs.
 const LOG_TAIL_BYTES: usize = 4096;

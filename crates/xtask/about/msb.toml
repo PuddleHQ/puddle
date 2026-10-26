@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # cargo-about: third-party notices for the bundled msb, run on the fork tag's source
-# (`cargo xtask runtime`). xtask passes `--target` for the folder's OS, so no `targets` key here.
+# (`cargo xtask runtime`); xtask passes `--target` for the folder's OS.
 # Attribution only: msb's own deny.toml decides what msb may use. The list is msb's allow list
 # plus the licences its tree is known to carry (aws-lc: OpenSSL, webpki-roots: CDLA-Permissive-2.0).
 accepted = [

@@ -2821,11 +2821,11 @@ async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox(
 const START_STANDINS: &str = r#"
 N=/puddle/code-server/lib/node
 for i in $(seq 20); do
-  setsid nohup $N -e "require('child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', '--marker=dbg'], {stdio: 'ignore'}); setInterval(() => {}, 1000)" --type=extensionHost >/dev/null 2>&1 &
+  setsid nohup $N -e "require('child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', '--marker=dbg'], {stdio: 'ignore'}); setInterval(() => {}, 1000)" --type=extensionHost >>/tmp/standins.log 2>&1 &
 done
-setsid nohup $N -e "require('child_process').spawn('sleep', ['600'], {stdio: 'ignore'}); setInterval(() => {}, 1000)" --type=ptyHost >/dev/null 2>&1 &
+setsid nohup $N -e "require('child_process').spawn('sleep', ['600'], {stdio: 'ignore'}); setInterval(() => {}, 1000)" --type=ptyHost >>/tmp/standins.log 2>&1 &
 # A debuggee whose extension host is long gone: a child of init whose debug socket does not exist.
-VSCODE_INSPECTOR_OPTIONS='{"inspectorIpc":"/tmp/node-cdp.0-0.sock","deferredMode":false}' setsid nohup sleep 601 >/dev/null 2>&1 &
+VSCODE_INSPECTOR_OPTIONS='{"inspectorIpc":"/tmp/node-cdp.0-0.sock","deferredMode":false}' setsid nohup sleep 601 >>/tmp/standins.log 2>&1 &
 "#;
 
 /// The counts the guest sees: extension hosts, their debuggees, terminal jobs, orphans and the
@@ -2898,7 +2898,13 @@ async fn vm_host_ending_the_extension_hosts_takes_the_debuggees_with_them_and_le
     }
     assert!(
         counts.contains("hosts=20 debuggees=20 jobs=1 orphans=1 pty=1"),
-        "the stand-ins did not start: {counts}"
+        "the stand-ins did not start: {counts}{}",
+        guest(
+            &runtime,
+            &sandbox,
+            "cat /tmp/standins.log; ps -eo pid,ppid,args | head -40"
+        )
+        .await
     );
 
     // The agent link needs a moment after the start before the host can use it.

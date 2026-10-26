@@ -28,6 +28,7 @@ use std::time::Duration;
 /// The argument that marks an extension host.
 const HOST_ARG: &str = "--type=extensionHost";
 /// The variable js-debug puts in a debuggee's environment.
+#[cfg(target_os = "linux")]
 const INSPECTOR_VAR: &str = "VSCODE_INSPECTOR_OPTIONS";
 
 /// How long a `TERM`ed tree has before it is `KILL`ed.
@@ -281,6 +282,7 @@ pub fn snapshot_of(reaper: i32) -> Vec<Proc> {
         .collect()
 }
 
+/// Nothing is found off Linux.
 #[cfg(not(target_os = "linux"))]
 #[must_use]
 pub fn snapshot_of(_reaper: i32) -> Vec<Proc> {

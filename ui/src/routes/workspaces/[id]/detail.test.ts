@@ -914,6 +914,37 @@ describe("the settings tab", () => {
     ).toBe(false);
   });
 
+  it("keeps the row and says why when the forget is refused, and Cancel closes the dialog", async () => {
+    api.kept["demo"] = {
+      store_readable: true,
+      logins: [{ service: "claude", name: "Claude Code", since: null }],
+    };
+    api.refuse.set("DELETE /api/workspaces/{id}/logins/{service}", {
+      status: 500,
+      message: "boom",
+    });
+    await open();
+    const list = await screen.findByRole("region", { name: "Kept logins" });
+    await fireEvent.click(
+      within(list).getByRole("button", {
+        name: "Forget the Claude Code login",
+      }),
+    );
+    const dialog = await screen.findByRole("alertdialog");
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Forget login" }),
+    );
+    expect(await within(dialog).findByText("Boom.")).toBeInTheDocument();
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    );
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("alertdialog")).toBeNull(),
+    );
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+  });
+
   it("says so when no login is kept, when the list can't be read, and when the credential store did not answer", async () => {
     await open();
     expect(

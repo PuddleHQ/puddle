@@ -11,6 +11,9 @@
 //!
 //! - a list is read when a screen asks for it, never on a timer, and counts as current for ten
 //!   minutes; a refresh reads again unless the list was read moments ago;
+//! - a list that was read before and is older than that is served as it is while a read in the
+//!   background renews it, once [`Repos::on_change`] says who to tell; the first read of a list
+//!   (nothing to show yet) and a refresh are waited for;
 //! - one read per credential at a time, however many screens ask;
 //! - a host that limits requests (GitHub's primary and secondary limits, Azure DevOps' `429`) is
 //!   left alone until it allows, with the wait doubling on each repeat, and nothing is sent while
@@ -39,7 +42,7 @@ mod model;
 mod transport;
 
 pub use api::{Api, ApiReply, ApiRequest, Authorization, MAX_BODY, TransportError};
-pub use engine::{Config, Freshness, ProfileRead, Read, Repos, Secrets};
+pub use engine::{Config, Freshness, OnChange, ProfileRead, Read, Repos, Secrets};
 #[cfg(any(test, feature = "testing"))]
 pub use fake::{FakeApi, Seen};
 pub use model::{

@@ -7394,3 +7394,28 @@ async fn an_entrypoint_that_dies_later_and_failing_lookups_are_problems_the_gues
     );
     host.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_that_fails_leaves_the_workspace_running_and_its_reports_still_count() {
+    use puddle_agent_proto::{AgentMessage, StubDnsTrouble};
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    rig.runtime
+        .inject(Op::Stop, Fault::once(disk_error("stop")).only_for("acme"));
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+
+    let session = agent_says(
+        &rig,
+        "acme",
+        &[AgentMessage::stub_dns(StubDnsTrouble::LookupFailed, 2)],
+    )
+    .await;
+    let problem = wait_for_problem(&host, "stub-dns:acme").await;
+    assert_eq!(problem.title, "Name lookups in acme are failing");
+    session.abort();
+    host.shutdown().await;
+}

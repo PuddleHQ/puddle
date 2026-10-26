@@ -112,12 +112,6 @@ pub(crate) struct ReportDesk {
     runs: Mutex<BTreeMap<WorkspaceName, Run>>,
 }
 
-impl std::fmt::Debug for ReportDesk {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ReportDesk").finish_non_exhaustive()
-    }
-}
-
 impl ReportDesk {
     pub(crate) fn new(problems: Arc<Problems>) -> Self {
         Self {

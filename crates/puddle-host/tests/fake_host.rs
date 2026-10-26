@@ -4926,11 +4926,13 @@ fn has_problem(host: &Host<FakeRuntime>, key: &str) -> bool {
 }
 
 fn problem_of(host: &Host<FakeRuntime>, key: &str) -> puddle_types::Problem {
-    host.problems()
-        .list()
-        .into_iter()
-        .find(|p| p.key == key)
-        .unwrap_or_else(|| panic!("no problem {key}: {:?}", host.problems().list()))
+    let found = host.problems().list().into_iter().find(|p| p.key == key);
+    assert!(
+        found.is_some(),
+        "no problem {key}: {:?}",
+        host.problems().list()
+    );
+    found.unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread")]

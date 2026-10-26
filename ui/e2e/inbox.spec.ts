@@ -39,9 +39,8 @@ async function ask(
 
 const rowFor = (page: Page, host: string): Locator =>
   page.locator("li.req", {
-    has: page.locator(".host", {
-      hasText: new RegExp(`^${host.replace(/\./g, "\\.")}$`),
-    }),
+    // `:text-is` is an exact, case-sensitive match and takes the host as text, never as a pattern.
+    has: page.locator(`.host:text-is(${JSON.stringify(host)})`),
   });
 
 async function openInbox(page: Page, backend: Backend): Promise<void> {

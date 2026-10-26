@@ -40,11 +40,9 @@ const SEEDED_EXPIRY_HEAD_ROOM = 60_000;
 const rowFor = (page: Page, pattern: string, workspace?: string): Locator =>
   page
     .locator("tbody tr", {
-      has: page.locator("td.host", {
-        hasText: new RegExp(
-          `^\\s*${pattern.replace(/[.*]/g, "\\$&")}( and subdomains)?\\s*$`,
-        ),
-      }),
+      // The pattern sits in `span.mono`; a suffix rule's "and subdomains" chip is a sibling.
+      // `:text-is` is an exact match on text, so the pattern is never read as a regexp.
+      has: page.locator(`td.host span.mono:text-is(${JSON.stringify(pattern)})`),
     })
     .filter(workspace ? { hasText: workspace } : {});
 

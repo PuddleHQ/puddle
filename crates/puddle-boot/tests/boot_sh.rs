@@ -578,6 +578,22 @@ fn without_sysctl_the_hook_writes_proc_sys_directly() {
 }
 
 #[test]
+fn the_hook_reports_the_guests_git_version_when_there_is_a_git() {
+    for shell in shells() {
+        let fr = FakeRoot::new(&shell);
+        let with_git = |version: &str| format!("#!/bin/sh\necho 'git version {version}'\n");
+        fr.stub("git", &with_git("2.34.1"));
+        let out = fr.run(&full_plan("CA\n"));
+        assert!(out.status.success(), "{}", show(&out));
+        let report = puddle_boot::BootReport {
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            ..Default::default()
+        };
+        assert_eq!(report.git_version(), Some((2, 34)));
+    }
+}
+
+#[test]
 fn no_credential_helper_is_ever_written() {
     let fr = FakeRoot::new(&shells()[0]);
     assert!(fr.run(&full_plan("CA\n")).status.success());

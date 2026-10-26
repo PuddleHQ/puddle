@@ -133,6 +133,11 @@ impl FakeRoot {
         }
     }
 
+    /// Puts a command on the hook's `PATH`, ahead of the host's own.
+    pub(crate) fn stub(&self, name: &str, script: &str) {
+        write_exec(&self.stubs.join(name), script);
+    }
+
     /// A path inside the root.
     pub(crate) fn path(&self, guest: &str) -> PathBuf {
         self.root.join(guest.trim_start_matches('/'))

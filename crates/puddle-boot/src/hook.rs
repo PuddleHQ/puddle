@@ -70,6 +70,20 @@ impl BootReport {
             .find_map(|line| line.strip_prefix("puddle-boot: entrypoint exited with status "))
     }
 
+    /// The git the guest has, as `(major, minor)`, when the hook found one and could read its
+    /// version (`puddle-boot: git version 2.39.5`). `None` for a guest with no git yet.
+    #[must_use]
+    pub fn git_version(&self) -> Option<(u32, u32)> {
+        let text = self
+            .stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("puddle-boot: git version "))?;
+        let mut parts = text.split(|c: char| !c.is_ascii_digit());
+        let major = parts.next()?.parse().ok()?;
+        let minor = parts.next()?.parse().ok()?;
+        Some((major, minor))
+    }
+
     /// The merged files the hook could not parse and so left as they were: each with the reason
     /// it gave (`<path> left as it is: <reason>`).
     #[must_use]
@@ -380,6 +394,31 @@ mod tests {
             None
         );
         assert_eq!(BootReport::default().entrypoint_failure(), None);
+    }
+
+    #[test]
+    fn the_report_names_the_guests_git_version() {
+        let said = |stdout: &str| BootReport {
+            duration: Duration::ZERO,
+            stdout: stdout.into(),
+        };
+        assert_eq!(
+            said("puddle-boot: git version 2.39.5\n").git_version(),
+            Some((2, 39))
+        );
+        assert_eq!(
+            said("puddle-boot: git version 2.34.1.windows.1\n").git_version(),
+            Some((2, 34))
+        );
+        assert_eq!(
+            said("puddle-boot: git version 2.39.3 (Apple Git-146)\n").git_version(),
+            Some((2, 39))
+        );
+        assert_eq!(
+            said("puddle-boot: git version unknown\n").git_version(),
+            None
+        );
+        assert_eq!(said("puddle-boot: ready\n").git_version(), None);
     }
 
     #[test]

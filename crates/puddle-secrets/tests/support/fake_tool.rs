@@ -109,5 +109,9 @@ fn leave(code: i32) -> ! {
         _exit(code)
     }
     #[cfg(not(unix))]
+    #[expect(
+        clippy::exit,
+        reason = "no profile to skip off unix; a stand-in exits with its code"
+    )]
     std::process::exit(code)
 }

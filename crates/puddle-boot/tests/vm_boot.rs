@@ -73,6 +73,10 @@ async fn sh<S: Sandbox>(sb: &GatedSandbox<S>, script: &str) -> (i32, String) {
 
 /// Boots `image` with a CA file from a "provider", a git identity and the proxy env, and checks
 /// every VM item of the bar, after create and again after stop + start.
+#[expect(
+    clippy::print_stderr,
+    reason = "VM test: the git version the guest and the hook state goes to the log as evidence"
+)]
 async fn check_image(image: &str, tag: &str) {
     let (rt, settings) = runtime().await;
     let rt = &rt;
@@ -109,6 +113,25 @@ async fn check_image(image: &str, tag: &str) {
             || report.contains("update-ca-certificates skipped (not in this image)"),
         "{report}"
     );
+
+    // The host reads the guest's git version from the hook's report: the line is there exactly when
+    // the image has git (busybox's `command -v` included), and it is the version git itself prints.
+    let (code, said) = sh(&sb, "git --version 2>/dev/null").await;
+    let line = report
+        .lines()
+        .find(|l| l.starts_with("puddle-boot: git version "));
+    eprintln!("{tag}: guest says {said:?}, hook says {line:?}");
+    if code == 0 {
+        assert_eq!(
+            line.map(|l| l.trim_start_matches("puddle-boot: ")),
+            Some(said.trim()),
+            "{report}"
+        );
+        assert!(sb.boot_report().git_version().is_some(), "{report}");
+    } else {
+        assert_eq!(line, None, "{report}");
+        assert_eq!(sb.boot_report().git_version(), None);
+    }
 
     check_boot(&sb, &config, "create").await;
     sb.stop().await.unwrap();

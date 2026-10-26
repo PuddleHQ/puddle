@@ -52,11 +52,19 @@ const KNOWN_GAPS: &[&str] = &[];
 const SETUP_STEPS: &[(&str, &str)] = &[
     ("apt update", "apt-get update -qq"),
     (
-        // Names and routes the install needs, so a stall can be told from a dead network.
+        // Names and routes the install needs, so a stall can be told from a dead network. The
+        // lookup is timed on its own.
+        "name lookup",
+        "t=$(date +%s%N); getent ahosts deb.debian.org | head -4; \
+         echo \"lookup ms=$((($(date +%s%N) - t) / 1000000))\"",
+    ),
+    (
+        // Node ends the process itself: after the response it would otherwise wait for the idle
+        // keep-alive connection to close, which took about 8 s of every probe.
         "network probe",
-        "getent ahosts deb.debian.org | head -4; node -e \"const t = Date.now(); \\
+        "node -e \"const t = Date.now(); \\
          fetch('http://deb.debian.org/debian/dists/trixie/InRelease', {signal: AbortSignal.timeout(20000)}) \\
-         .then((r) => console.log('debian http=' + r.status + ' ms=' + (Date.now() - t))) \\
+         .then((r) => { console.log('debian http=' + r.status + ' ms=' + (Date.now() - t)); process.exit(0); }) \\
          .catch((e) => { console.log('debian failed ms=' + (Date.now() - t) + ' ' + e); process.exit(1); })\"",
     ),
     (

@@ -4,6 +4,7 @@
 //! can go wrong. The servers are local; nothing here touches the internet.
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -22,7 +23,7 @@ use puddle_upstream::{
     Hop, NoAuth, ProxyConfig, TlsClient,
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
@@ -69,6 +70,9 @@ enum Mode {
     Hang,
     Raw(&'static [u8]),
     HangUp,
+    /// Answers one request on a connection and drops it when the next one arrives, as a host
+    /// does that closed an idle connection.
+    AnswerOnceThenDrop,
 }
 
 struct Pki {
@@ -115,6 +119,8 @@ impl Pki {
 struct Server {
     addr: SocketAddr,
     seen: Arc<Mutex<Vec<Seen>>>,
+    /// TLS connections accepted so far.
+    connections: Arc<AtomicUsize>,
 }
 
 impl Server {
@@ -125,8 +131,11 @@ impl Server {
         let acceptor = pki.acceptor();
         let mode = Arc::new(mode);
         let log = seen.clone();
+        let connections = Arc::new(AtomicUsize::new(0));
+        let counted = connections.clone();
         tokio::spawn(async move {
             while let Ok((tcp, _)) = listener.accept().await {
+                counted.fetch_add(1, Ordering::SeqCst);
                 let (acceptor, mode, log) = (acceptor.clone(), mode.clone(), log.clone());
                 tokio::spawn(async move {
                     let Ok(mut tls) = acceptor.accept(tcp).await else {
@@ -138,6 +147,17 @@ impl Server {
                             let _ = tls.shutdown().await;
                         }
                         Mode::HangUp => drop(tls),
+                        Mode::AnswerOnceThenDrop => {
+                            let mut buf = [0_u8; 4096];
+                            if !matches!(tls.read(&mut buf).await, Ok(n) if n > 0) {
+                                return;
+                            }
+                            let answer = b"HTTP/1.1 200 OK\r\ncontent-length: 4\r\n\r\nsame";
+                            if tls.write_all(answer).await.is_ok() {
+                                // The next request on this connection gets no answer.
+                                let _ = tls.read(&mut buf).await;
+                            }
+                        }
                         Mode::Hang => pending::<()>().await,
                         Mode::Answer(answer) => {
                             let answer = answer.clone();
@@ -187,7 +207,15 @@ impl Server {
                 });
             }
         });
-        Self { addr, seen }
+        Self {
+            addr,
+            seen,
+            connections,
+        }
+    }
+
+    fn connections(&self) -> usize {
+        self.connections.load(Ordering::SeqCst)
     }
 
     fn seen(&self) -> Vec<Seen> {
@@ -286,8 +314,118 @@ async fn a_request_goes_out_with_the_headers_a_git_host_expects_and_the_answer_c
         Some("application/vnd.github+json")
     );
     assert_eq!(seen[0].header("x-github-api-version"), Some("2022-11-28"));
-    assert_eq!(seen[0].header("connection"), Some("close"));
+    assert_eq!(seen[0].header("connection"), None);
     assert_eq!(seen[0].header("host"), Some(host.as_str()));
+}
+
+#[tokio::test]
+async fn the_pages_of_a_list_travel_over_one_connection() {
+    let pki = Pki::new("localhost");
+    let server = Server::start(&pki, Mode::Answer(Arc::new(|_| Reply::ok("[]")))).await;
+    let host = format!("localhost:{}", server.addr.port());
+    let api = api(direct_chain(), &pki);
+
+    for page in 1..=5 {
+        let reply = api
+            .get(request(&host, &format!("/user/repos?page={page}")))
+            .await
+            .unwrap();
+        assert_eq!(reply.status, 200);
+    }
+
+    assert_eq!(server.seen().len(), 5);
+    assert_eq!(server.connections(), 1);
+}
+
+#[tokio::test]
+async fn pages_asked_at_once_use_a_connection_each_and_all_are_kept_for_later() {
+    let pki = Pki::new("localhost");
+    let server = Server::start(&pki, Mode::Answer(Arc::new(|_| Reply::ok("[]")))).await;
+    let host = format!("localhost:{}", server.addr.port());
+    let api = Arc::new(api(direct_chain(), &pki));
+
+    let first = futures_util::future::join_all((0..3).map(|n| {
+        let (api, host) = (api.clone(), host.clone());
+        async move { api.get(request(&host, &format!("/a?n={n}"))).await }
+    }))
+    .await;
+    assert!(first.iter().all(Result::is_ok));
+    assert_eq!(server.connections(), 3);
+
+    api.get(request(&host, "/b")).await.unwrap();
+    assert_eq!(server.connections(), 3);
+}
+
+#[tokio::test]
+async fn a_host_that_says_it_closes_gets_a_new_connection_next_time() {
+    let pki = Pki::new("localhost");
+    let server = Server::start(
+        &pki,
+        Mode::Answer(Arc::new(|_| Reply {
+            headers: vec![("connection", "close")],
+            ..Reply::ok("[]")
+        })),
+    )
+    .await;
+    let host = format!("localhost:{}", server.addr.port());
+    let api = api(direct_chain(), &pki);
+
+    api.get(request(&host, "/one")).await.unwrap();
+    api.get(request(&host, "/two")).await.unwrap();
+
+    assert_eq!(server.connections(), 2);
+}
+
+#[tokio::test]
+async fn a_kept_connection_the_host_closed_meanwhile_is_replaced_and_the_request_still_answers() {
+    let pki = Pki::new("localhost");
+    let server = Server::start(&pki, Mode::AnswerOnceThenDrop).await;
+    let host = format!("localhost:{}", server.addr.port());
+    let api = api(direct_chain(), &pki);
+    assert_eq!(api.get(request(&host, "/x")).await.unwrap().body, b"same");
+
+    let reply = api.get(request(&host, "/x")).await.unwrap();
+
+    assert_eq!(reply.body, b"same");
+    assert_eq!(server.connections(), 2);
+}
+
+#[tokio::test]
+async fn a_connection_idle_for_too_long_is_not_used_again() {
+    let pki = Pki::new("localhost");
+    let server = Server::start(&pki, Mode::Answer(Arc::new(|_| Reply::ok("[]")))).await;
+    let host = format!("localhost:{}", server.addr.port());
+    let api = api(direct_chain(), &pki).with_idle_time(Duration::from_millis(20));
+
+    api.get(request(&host, "/one")).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    api.get(request(&host, "/two")).await.unwrap();
+
+    assert_eq!(server.connections(), 2);
+}
+
+#[tokio::test]
+async fn a_request_that_failed_for_another_reason_is_not_sent_again_on_a_new_connection() {
+    let pki = Pki::new("localhost");
+    let server = Server::start(
+        &pki,
+        Mode::Answer(Arc::new(|seen| {
+            if seen.path == "/big" {
+                Reply::ok(&"x".repeat(MAX_BODY + 1))
+            } else {
+                Reply::ok("[]")
+            }
+        })),
+    )
+    .await;
+    let host = format!("localhost:{}", server.addr.port());
+    let api = api(direct_chain(), &pki);
+    api.get(request(&host, "/small")).await.unwrap();
+
+    let err = api.get(request(&host, "/big")).await.unwrap_err();
+
+    assert_eq!(err, TransportError::TooLarge);
+    assert_eq!(server.seen().len(), 2);
 }
 
 #[tokio::test]

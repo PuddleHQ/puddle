@@ -2,18 +2,24 @@
 //! The real route to a Git host: Puddle's own connection through the company proxy chain, TLS
 //! checked the way the host's own programs check it, then one HTTP/1.1 request.
 //!
+//! A connection that answered stays open for a moment and serves the next request to the same host
+//! (the pages of one list, a list and a profile): opening one through a company proxy costs a
+//! sign-in and a TLS handshake, which a long list would pay for every page.
+//!
 //! Nothing is guarded the way a workspace's request is: the destination is the credential's own
 //! host, chosen by the user. A redirect is never followed, so the token goes to that host and
 //! nowhere else, and an answer is read up to [`MAX_BODY`] bytes.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use bytes::Bytes;
 use futures_util::future::BoxFuture;
-use http::header::{ACCEPT, AUTHORIZATION, CONNECTION, HOST, IF_NONE_MATCH, USER_AGENT};
+use http::header::{ACCEPT, AUTHORIZATION, HOST, IF_NONE_MATCH, USER_AGENT};
 use http::{HeaderValue, Request};
 use http_body_util::{BodyExt, Empty, Limited};
+use hyper::client::conn::http1::SendRequest;
 use hyper_util::rt::TokioIo;
 use puddle_types::{
     ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason, Host, HttpRequestLine,
@@ -21,12 +27,26 @@ use puddle_types::{
 };
 use puddle_upstream::host::connect;
 use puddle_upstream::{Chain, Destination, Form, Scheme, TlsClient, TlsConnectError};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::time::Instant;
 
 use crate::api::{Api, ApiReply, ApiRequest, MAX_BODY, TransportError};
 
 /// The time one request may take, connection and TLS included.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// How long an answered connection waits for the next request before it is not used again. Hosts
+/// close idle connections after a minute or so; shorter keeps the first request on one from
+/// finding it closed.
+const IDLE_FOR: Duration = Duration::from_secs(15);
+
+/// Most idle connections kept for one host: a read is four lists at once at most.
+const MAX_IDLE_PER_HOST: usize = 4;
+
+/// A connection that answered and may answer again.
+struct Idle {
+    sender: SendRequest<Empty<Bytes>>,
+    since: Instant,
+}
 
 /// Requests over Puddle's own route. Cheap to share.
 pub struct HostApi {
@@ -34,6 +54,9 @@ pub struct HostApi {
     tls: TlsClient,
     timeout: Duration,
     log: Arc<dyn ConnectionLog>,
+    /// Answered connections by `host[:port]`, newest last.
+    idle: Mutex<HashMap<String, Vec<Idle>>>,
+    idle_for: Duration,
 }
 
 impl std::fmt::Debug for HostApi {
@@ -51,6 +74,8 @@ impl HostApi {
             tls,
             timeout: REQUEST_TIMEOUT,
             log: Arc::new(NullConnectionLog),
+            idle: Mutex::new(HashMap::new()),
+            idle_for: IDLE_FOR,
         }
     }
 
@@ -69,12 +94,39 @@ impl HostApi {
         self
     }
 
+    /// The same with another time an answered connection waits for its next request.
+    #[must_use]
+    pub fn with_idle_time(mut self, idle_for: Duration) -> Self {
+        self.idle_for = idle_for;
+        self
+    }
+
     async fn exchange(&self, request: ApiRequest) -> Result<ApiReply, TransportError> {
         let authorization = request
             .authorization
             .header_value()
             .ok_or(TransportError::BadToken)?;
-        let (name, port) = split_port(&request.host);
+        // A kept connection the host closed meanwhile fails before it answers anything: a `GET`
+        // is safe to send again on a new one.
+        while let Some(mut sender) = self.take_idle(&request.host) {
+            match send(&mut sender, &request, authorization.clone()).await {
+                Ok(reply) => {
+                    self.keep(&request.host, sender, &reply);
+                    return Ok(reply);
+                }
+                Err(TransportError::Protocol(_)) => {}
+                Err(other) => return Err(other),
+            }
+        }
+        let mut sender = self.open(&request.host).await?;
+        let reply = send(&mut sender, &request, authorization).await?;
+        self.keep(&request.host, sender, &reply);
+        Ok(reply)
+    }
+
+    /// A new connection to `host` (through the chain, TLS checked), served by its own task.
+    async fn open(&self, host: &str) -> Result<SendRequest<Empty<Bytes>>, TransportError> {
+        let (name, port) = split_port(host);
         let destination = Destination::new(Scheme::Https, name, port.unwrap_or(443));
         let connected = connect(&self.chain, &destination, Form::Tunnel)
             .await
@@ -90,7 +142,55 @@ impl HostApi {
                 TlsConnectError::Certificate(why) => TransportError::Tls(why),
                 other => TransportError::Unreachable(format!("the TLS handshake failed: {other}")),
             })?;
-        send(stream, &request, authorization).await
+        let (sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+            .await
+            .map_err(protocol)?;
+        // Ends when the sender is dropped or the host closes.
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        Ok(sender)
+    }
+
+    fn idle(&self) -> std::sync::MutexGuard<'_, HashMap<String, Vec<Idle>>> {
+        self.idle.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The newest connection to `host` that is still open and not idle for too long.
+    fn take_idle(&self, host: &str) -> Option<SendRequest<Empty<Bytes>>> {
+        let mut idle = self.idle();
+        let kept = idle.get_mut(host)?;
+        let found = std::iter::from_fn(|| kept.pop())
+            .find(|c| !c.sender.is_closed() && c.since.elapsed() < self.idle_for)
+            .map(|c| c.sender);
+        if kept.is_empty() {
+            idle.remove(host);
+        }
+        found
+    }
+
+    /// Keeps `sender` for the next request to `host`, unless the host said it closes after this
+    /// answer. Connections that went stale are dropped here, which closes them.
+    fn keep(&self, host: &str, sender: SendRequest<Empty<Bytes>>, reply: &ApiReply) {
+        let closing = reply
+            .header("connection")
+            .is_some_and(|v| v.eq_ignore_ascii_case("close"));
+        if closing || sender.is_closed() {
+            return;
+        }
+        let mut idle = self.idle();
+        idle.retain(|_, kept| {
+            kept.retain(|c| !c.sender.is_closed() && c.since.elapsed() < self.idle_for);
+            !kept.is_empty()
+        });
+        let kept = idle.entry(host.to_owned()).or_default();
+        if kept.len() >= MAX_IDLE_PER_HOST {
+            kept.remove(0);
+        }
+        kept.push(Idle {
+            sender,
+            since: Instant::now(),
+        });
     }
 }
 
@@ -163,26 +263,20 @@ fn protocol(err: impl std::fmt::Display) -> TransportError {
     TransportError::Protocol(err.to_string())
 }
 
-/// One `GET` over `io`, which closes after the answer.
-async fn send<T>(
-    io: T,
+/// One `GET` on `sender`; the connection can serve another once the answer is read.
+async fn send(
+    sender: &mut SendRequest<Empty<Bytes>>,
     request: &ApiRequest,
     authorization: HeaderValue,
-) -> Result<ApiReply, TransportError>
-where
-    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-{
-    let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(io))
-        .await
-        .map_err(protocol)?;
+) -> Result<ApiReply, TransportError> {
+    sender.ready().await.map_err(protocol)?;
     let mut builder = Request::builder()
         .method("GET")
         .uri(&request.path)
         .header(HOST, &request.host)
         .header(USER_AGENT, "puddle")
         .header(ACCEPT, request.accept)
-        .header(AUTHORIZATION, authorization)
-        .header(CONNECTION, "close");
+        .header(AUTHORIZATION, authorization);
     for (name, value) in request.headers {
         builder = builder.header(*name, *value);
     }
@@ -190,45 +284,30 @@ where
         builder = builder.header(IF_NONE_MATCH, etag);
     }
     let request = builder.body(Empty::<Bytes>::new()).map_err(protocol)?;
-    tokio::pin!(connection);
-    let answered = async {
-        let response = sender.send_request(request).await.map_err(protocol)?;
-        let (parts, body) = response.into_parts();
-        let body = Limited::new(body, MAX_BODY)
-            .collect()
-            .await
-            .map_err(|err| {
-                if err.is::<http_body_util::LengthLimitError>() {
-                    TransportError::TooLarge
-                } else {
-                    protocol(err)
-                }
-            })?
-            .to_bytes();
-        let mut headers = std::collections::BTreeMap::new();
-        for (name, value) in &parts.headers {
-            if let Ok(value) = value.to_str() {
-                headers
-                    .entry(name.as_str().to_owned())
-                    .or_insert_with(|| value.to_owned());
+    let response = sender.send_request(request).await.map_err(protocol)?;
+    let (parts, body) = response.into_parts();
+    let body = Limited::new(body, MAX_BODY)
+        .collect()
+        .await
+        .map_err(|err| {
+            if err.is::<http_body_util::LengthLimitError>() {
+                TransportError::TooLarge
+            } else {
+                protocol(err)
             }
+        })?
+        .to_bytes();
+    let mut headers = std::collections::BTreeMap::new();
+    for (name, value) in &parts.headers {
+        if let Ok(value) = value.to_str() {
+            headers
+                .entry(name.as_str().to_owned())
+                .or_insert_with(|| value.to_owned());
         }
-        Ok(ApiReply {
-            status: parts.status.as_u16(),
-            headers,
-            body: body.to_vec(),
-        })
-    };
-    tokio::pin!(answered);
-    tokio::select! {
-        biased;
-        reply = &mut answered => reply,
-        // The connection ends as soon as the answer is handed over, and it can win this race
-        // with the answer still in the channel: the answer is read first, and the connection's
-        // own error only explains one that did not arrive.
-        ended = &mut connection => match answered.await {
-            Ok(reply) => Ok(reply),
-            Err(err) => Err(ended.map_or_else(protocol, |()| err)),
-        },
     }
+    Ok(ApiReply {
+        status: parts.status.as_u16(),
+        headers,
+        body: body.to_vec(),
+    })
 }

@@ -129,7 +129,7 @@ impl Agent {
             None => (None, None),
         };
         if let Some(editor) = config.editor.clone() {
-            tasks.spawn(exthost::sweep_loop());
+            tasks.spawn(exthost::sweep_loop(1));
             tasks.spawn(editor::run(editor));
         }
         if let Some(watch) = config.entrypoint.clone() {

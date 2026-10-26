@@ -207,49 +207,42 @@ async fn with_no_extension_host_there_is_nothing_to_end() {
     cleanup(pty).await;
 }
 
-#[tokio::test]
-async fn an_orphaned_debuggee_with_a_dead_socket_is_swept_and_one_with_a_live_socket_is_not() {
+/// Debuggees started by a shell that exits at once, so this process (the subreaper) adopts them.
+/// Each is `(socket it names, shell command, tag)`; returns their ids once all are adopted.
+fn orphans(dir: &Path, specs: &[(PathBuf, &str, &str)]) -> Vec<i32> {
     // Orphans go to the nearest ancestor that is a subreaper, not to process 1: be that ancestor.
     rustix::process::set_child_subreaper(Some(rustix::process::getpid())).unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    let live = dir.path().join("live.sock");
-    std::fs::write(&live, "").unwrap();
-    let options = |sock: &Path| {
-        format!(
-            "{{\"inspectorIpc\":\"{}\",\"deferredMode\":false}}",
-            sock.display()
-        )
-    };
-    // Double fork so the shell's parent exits at once and the debuggee is reparented.
-    let start = |sock: PathBuf, tag: &str| {
-        let script = format!(
-            "(sleep 601 & echo $! >{}/{tag}.pid) &",
-            dir.path().display()
-        );
+    for (sock, command, tag) in specs {
+        let script = format!("({command} & echo $! >{}/{tag}.pid) &", dir.display());
         std::process::Command::new("sh")
             .arg("-c")
             .arg(script)
-            .env("VSCODE_INSPECTOR_OPTIONS", options(&sock))
+            .env(
+                "VSCODE_INSPECTOR_OPTIONS",
+                format!(
+                    "{{\"inspectorIpc\":\"{}\",\"deferredMode\":false}}",
+                    sock.display()
+                ),
+            )
             .status()
             .unwrap();
-    };
-    start(dir.path().join("dead.sock"), "dead");
-    start(live.clone(), "live");
-    let read = |tag: &str| -> i32 {
-        loop {
-            if let Ok(text) = std::fs::read_to_string(dir.path().join(format!("{tag}.pid")))
-                && let Ok(pid) = text.trim().parse()
-            {
-                return pid;
+    }
+    let ids: Vec<i32> = specs
+        .iter()
+        .map(|(_, _, tag)| {
+            loop {
+                if let Ok(text) = std::fs::read_to_string(dir.join(format!("{tag}.pid")))
+                    && let Ok(pid) = text.trim().parse()
+                {
+                    break pid;
+                }
+                std::thread::sleep(Duration::from_millis(20));
             }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    };
-    let (dead, live_pid) = (read("dead"), read("live"));
+        })
+        .collect();
     let me = i32::try_from(std::process::id()).unwrap();
-    // Wait until both orphans have been adopted by this process, the reaper the test names.
     let deadline = Instant::now() + Duration::from_secs(10);
-    while ![dead, live_pid].iter().all(|pid| {
+    while !ids.iter().all(|pid| {
         exthost::snapshot()
             .iter()
             .any(|p| p.pid == *pid && p.ppid == me)
@@ -257,19 +250,88 @@ async fn an_orphaned_debuggee_with_a_dead_socket_is_swept_and_one_with_a_live_so
         assert!(Instant::now() < deadline, "the orphans were not adopted");
         std::thread::sleep(Duration::from_millis(20));
     }
+    ids
+}
+
+/// The orphan tests share one subreaper (this process) and each sweeps all of its orphans, so they
+/// run one at a time.
+static ONE_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn running(pid: i32) -> bool {
+    exthost::snapshot()
+        .iter()
+        .any(|p| p.pid == pid && !p.zombie)
+}
+
+#[tokio::test]
+async fn an_orphaned_debuggee_with_a_dead_socket_is_swept_and_one_with_a_live_socket_is_not() {
+    let _only = ONE_AT_A_TIME.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let live = dir.path().join("live.sock");
+    std::fs::write(&live, "").unwrap();
+    let ids = orphans(
+        dir.path(),
+        &[
+            (dir.path().join("dead.sock"), "sleep 601", "dead"),
+            (live, "sleep 601", "live"),
+        ],
+    );
+    let me = i32::try_from(std::process::id()).unwrap();
 
     let swept = exthost::sweep_orphans_of(me).await;
 
-    let running = |pid: i32| {
-        exthost::snapshot()
-            .iter()
-            .any(|p| p.pid == pid && !p.zombie)
-    };
-    let (dead_left, live_left) = (running(dead), running(live_pid));
-    kill(live_pid);
+    let (dead_left, live_left) = (running(ids[0]), running(ids[1]));
+    kill(ids[1]);
     assert_eq!(swept, 1);
     assert!(!dead_left, "the orphan with a dead socket survived");
     assert!(live_left, "the debuggee with a live socket was ended");
+}
+
+#[tokio::test]
+async fn an_orphaned_debuggee_that_ignores_term_is_killed_after_the_grace() {
+    let _only = ONE_AT_A_TIME.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    // An ignored signal stays ignored through `exec`, so the `sleep` shrugs off `TERM` too.
+    let ids = orphans(
+        dir.path(),
+        &[(
+            dir.path().join("dead.sock"),
+            "sh -c 'trap \"\" TERM; sleep 602'",
+            "stubborn",
+        )],
+    );
+    let me = i32::try_from(std::process::id()).unwrap();
+    let started = Instant::now();
+
+    let swept = exthost::sweep_orphans_of(me).await;
+
+    let left = running(ids[0]);
+    kill(ids[0]);
+    assert_eq!(swept, 1);
+    assert!(!left, "the orphan that ignores TERM survived");
+    assert!(started.elapsed() >= exthost::TERM_GRACE);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_sweep_loop_ends_an_orphan_when_its_time_comes_and_not_before() {
+    let _only = ONE_AT_A_TIME.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let ids = orphans(
+        dir.path(),
+        &[(dir.path().join("dead.sock"), "sleep 603", "dead")],
+    );
+    let me = i32::try_from(std::process::id()).unwrap();
+    let looping = tokio::spawn(exthost::sweep_loop(me));
+
+    tokio::time::sleep(exthost::SWEEP_EVERY / 2).await;
+    let before = running(ids[0]);
+    tokio::time::sleep(exthost::SWEEP_EVERY * 2).await;
+    let after = running(ids[0]);
+    looping.abort();
+    kill(ids[0]);
+
+    assert!(before, "the loop ended the orphan before its first sweep");
+    assert!(!after, "the loop never ended the orphan");
 }
 
 fn kill(pid: i32) {

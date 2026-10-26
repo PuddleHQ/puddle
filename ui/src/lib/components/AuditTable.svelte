@@ -150,7 +150,12 @@
               class="toggle"
               aria-expanded={open}
               aria-controls="raw-{entry.id}"
-              aria-label="{open ? 'Hide' : 'Show'} the raw record of {row.type}"
+              aria-label="{open
+                ? 'Hide'
+                : 'Show'} the raw record of {row.type} at {clockTime(
+                row.ts,
+                dayStart,
+              )}"
               onclick={(e) => {
                 e.stopPropagation();
                 toggle(entry.id);

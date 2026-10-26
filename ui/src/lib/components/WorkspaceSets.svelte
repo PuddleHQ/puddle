@@ -63,13 +63,13 @@
             <button
               type="button"
               class="btn"
-              aria-label="Turn {ruleSet.name} on in {workspace}"
+              aria-label="On here: {ruleSet.name} in {workspace}"
               onclick={() => void set(ruleSet, true)}>On here</button
             >
             <button
               type="button"
               class="btn"
-              aria-label="Turn {ruleSet.name} off in {workspace}"
+              aria-label="Off here: {ruleSet.name} in {workspace}"
               onclick={() => void set(ruleSet, false)}>Off here</button
             >
             {#if overrides(ruleSet, workspace)}

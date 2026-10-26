@@ -169,7 +169,7 @@
   <button
     type="button"
     class="btn"
-    aria-label="Remove {entry.directory} from the list"
+    aria-label="Remove from the list: {entry.directory}"
     onclick={() => askRemove(entry)}>Remove from the list</button
   >
 {/snippet}
@@ -263,7 +263,7 @@
               <button
                 type="button"
                 class="btn"
-                aria-label="Manage {checkout.directory}"
+                aria-label="Manage this: {checkout.directory}"
                 onclick={() => askManage(checkout.directory, remoteUrl)}
                 >Manage this</button
               >
@@ -286,7 +286,7 @@
               type="button"
               class="btn"
               disabled={cloneOff !== null}
-              aria-label="Clone {entry.directory} again"
+              aria-label="Clone again: {entry.directory}"
               aria-describedby={cloneOff ? "repos-clone-reason" : undefined}
               onclick={() => void cloneAgain(entry)}>Clone again</button
             >

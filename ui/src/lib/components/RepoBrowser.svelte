@@ -164,7 +164,7 @@
               <button
                 type="button"
                 class="btn primary"
-                aria-label="Create a workspace for {repo.full_name}"
+                aria-label="Create a workspace for this: {repo.full_name}"
                 onclick={() => onCreate(repo)}
                 >Create a workspace for this</button
               >

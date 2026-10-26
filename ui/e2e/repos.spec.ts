@@ -32,7 +32,7 @@ const rowOf = (page: Page, name: string) =>
   repos(page).getByRole("row", { name: new RegExp(`^${name} `) });
 const create = (page: Page, name: string) =>
   page.getByRole("button", {
-    name: `Create a workspace for ${name}`,
+    name: `Create a workspace for this: ${name}`,
     exact: true,
   });
 const dialog = (page: Page) =>

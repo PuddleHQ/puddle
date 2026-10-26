@@ -344,7 +344,7 @@ describe("one identity", () => {
     render(Page);
     await fireEvent.click(
       await screen.findByRole("button", {
-        name: "Create a workspace for acme/web",
+        name: "Create a workspace for this: acme/web",
       }),
     );
     const dialog = await screen.findByRole("dialog", { name: "New workspace" });
@@ -408,7 +408,7 @@ describe("one identity", () => {
     render(Page);
     await fireEvent.click(
       await screen.findByRole("button", {
-        name: "Create a workspace for acme/web",
+        name: "Create a workspace for this: acme/web",
       }),
     );
     await fireEvent.click(
@@ -421,7 +421,7 @@ describe("one identity", () => {
     });
     await fireEvent.click(
       await screen.findByRole("button", {
-        name: "Create a workspace for acme/web",
+        name: "Create a workspace for this: acme/web",
       }),
     );
     await fireEvent.click(

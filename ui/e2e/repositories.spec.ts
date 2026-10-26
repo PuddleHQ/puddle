@@ -53,7 +53,7 @@ test.describe("the checkouts on the disk", () => {
     // A listed entry with no folder on the disk.
     await expect(rowOf(page, "docs")).toContainText("Not on the disk");
     await expect(
-      rowOf(page, "docs").getByRole("button", { name: "Clone docs again" }),
+      rowOf(page, "docs").getByRole("button", { name: "Clone again: docs" }),
     ).toBeEnabled();
   });
 
@@ -83,7 +83,7 @@ test.describe("the checkouts on the disk", () => {
   }) => {
     await open(page, backend);
     const manage = rowOf(page, "scratch").getByRole("button", {
-      name: "Manage scratch",
+      name: "Manage this: scratch",
     });
     await manage.focus();
     await page.keyboard.press("Enter");
@@ -127,7 +127,7 @@ test.describe("the checkouts on the disk", () => {
       });
     });
     await rowOf(page, "scratch")
-      .getByRole("button", { name: "Manage scratch" })
+      .getByRole("button", { name: "Manage this: scratch" })
       .click();
     const dialog = page.getByRole("dialog", { name: "Manage scratch" });
     await dialog.getByRole("button", { name: "Manage this" }).click();
@@ -144,7 +144,7 @@ test.describe("the checkouts on the disk", () => {
   }) => {
     await open(page, backend);
     await rowOf(page, "api")
-      .getByRole("button", { name: "Remove api from the list" })
+      .getByRole("button", { name: "Remove from the list: api" })
       .click();
     const dialog = page.getByRole("alertdialog");
     await expect(dialog).toContainText("the folder and its files stay");
@@ -238,7 +238,7 @@ for (const scheme of ["light", "dark"] as const) {
       await expect(rowOf(page, "scratch")).toBeVisible();
       await scan(page, "the section");
       await rowOf(page, "scratch")
-        .getByRole("button", { name: "Manage scratch" })
+        .getByRole("button", { name: "Manage this: scratch" })
         .click();
       await expect(
         page.getByRole("dialog", { name: "Manage scratch" }),

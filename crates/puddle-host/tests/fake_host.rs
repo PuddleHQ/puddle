@@ -6464,10 +6464,7 @@ async fn an_entrypoint_that_failed_at_once_is_a_problem_until_a_start_where_it_d
         .into_iter()
         .find(|p| p.key == "entrypoint:acme")
         .unwrap_or_else(|| panic!("no problem: {:?}", host.problems().list()));
-    assert_eq!(
-        problem.title,
-        "The image's entrypoint in acme stopped right after it started"
-    );
+    assert_eq!(problem.title, "The image's entrypoint in acme stopped");
     assert!(
         problem.detail.contains("status 127: dockerd: not found")
             && problem.detail.contains("/run/puddle/entrypoint.log"),
@@ -7233,4 +7230,105 @@ async fn an_attach_that_cannot_list_or_write_the_editors_file_says_so_until_one_
         attach().await;
         assert!(problem_is(&api, "editor-file:acme", false).await.is_none());
     }
+}
+
+// ---- reports from the guest agent ---------------------------------------------------------
+
+/// Speaks to the host as `name`'s guest agent would: one session on the workspace's route, one
+/// control stream with `lines` on it. The session stays open until the returned guard drops.
+async fn agent_says(
+    rig: &Rig,
+    name: &str,
+    lines: &[puddle_agent_proto::AgentMessage],
+) -> tokio::task::JoinHandle<()> {
+    use futures_util::StreamExt as _;
+    use puddle_agent_proto::tokio_yamux::Session;
+    use tokio::io::AsyncWriteExt as _;
+    let sandbox = WorkspaceName::new(name).unwrap().sandbox_name();
+    let routes = rig.runtime.routes(&sandbox);
+    let route = routes.first().unwrap();
+    let conn = puddle_ipc::connect(&route.host).await.unwrap();
+    let mut session = Session::new_client(conn, puddle_agent_proto::yamux::client_config());
+    let mut control = session.control();
+    let driver = tokio::spawn(async move { while let Some(Ok(_)) = session.next().await {} });
+    let mut stream = control.open_stream().await.unwrap();
+    stream
+        .write_all(puddle_agent_proto::control::PREAMBLE)
+        .await
+        .unwrap();
+    for line in lines {
+        stream.write_all(&line.to_line().unwrap()).await.unwrap();
+    }
+    stream.flush().await.unwrap();
+    driver
+}
+
+async fn wait_for_problem(host: &Host<FakeRuntime>, key: &str) -> puddle_types::Problem {
+    for _ in 0..500 {
+        if let Some(p) = host.problems().list().into_iter().find(|p| p.key == key) {
+            return p;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    // It never came: fail here.
+    host.problems()
+        .list()
+        .into_iter()
+        .find(|p| p.key == key)
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_entrypoint_that_dies_later_and_failing_lookups_are_problems_the_guest_cannot_widen() {
+    use puddle_agent_proto::{AgentMessage, StubDnsTrouble};
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    create(&api, &mut events, "other").await;
+
+    let session = agent_says(
+        &rig,
+        "acme",
+        &[
+            AgentMessage::entrypoint_exited(1, "dockerd: failed to start".to_owned()),
+            AgentMessage::entrypoint_exited(2, "a second, different story".to_owned()),
+            AgentMessage::stub_dns(StubDnsTrouble::UdpDropped, 40),
+            AgentMessage::stub_dns(StubDnsTrouble::LookupTimedOut, 3),
+        ],
+    )
+    .await;
+    let problem = wait_for_problem(&host, "stub-dns:acme").await;
+    assert_eq!(problem.title, "Name lookups in acme are failing");
+    let entry = wait_for_problem(&host, "entrypoint:acme").await;
+    assert_eq!(entry.title, "The image's entrypoint in acme stopped");
+    assert!(
+        entry.detail.contains("status 1: dockerd: failed to start"),
+        "{}",
+        entry.detail
+    );
+    assert!(
+        host.problems()
+            .list()
+            .iter()
+            .all(|p| p.workspace.as_ref().map(WorkspaceName::as_str) == Some("acme")),
+        "{:?}",
+        host.problems().list()
+    );
+
+    // A stop ends the DNS problem with the machine; the entrypoint problem stays until a start.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let keys: Vec<_> = host.problems().list().into_iter().map(|p| p.key).collect();
+    assert_eq!(keys, ["entrypoint:acme"]);
+    session.abort();
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(
+        host.problems().list().is_empty(),
+        "{:?}",
+        host.problems().list()
+    );
+    host.shutdown().await;
 }

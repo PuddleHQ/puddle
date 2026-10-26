@@ -421,6 +421,50 @@ fn an_entrypoint_that_finishes_cleanly_or_keeps_running_is_not_reported() {
     }
 }
 
+/// The exit line the wrapper writes for the guest agent, once `script` has ended.
+fn exit_line(sh: &std::path::Path, script: &str) -> (String, String) {
+    let fr = FakeRoot::new(sh);
+    let entry = fr.path("/entry.sh");
+    std::fs::write(&entry, script).unwrap();
+    std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let plan = BootPlan::builder(&image(&[entry.display().to_string()], &[]))
+        .build()
+        .unwrap();
+    let out = fr.run(&plan);
+    assert!(out.status.success(), "{}", show(&out));
+    let written = FakeRoot::wait_for(Duration::from_secs(10), || {
+        fr.path("/run/puddle/entrypoint.exit").exists()
+    });
+    assert!(written.is_some(), "no exit line:\n{}", show(&out));
+    let boot_id = fr.read("/proc/sys/kernel/random/boot_id").trim().to_owned();
+    (fr.read("/run/puddle/entrypoint.exit"), boot_id)
+}
+
+#[test]
+fn an_entrypoint_that_fails_after_the_hook_left_leaves_its_exit_for_the_agent() {
+    for sh in shells() {
+        let (line, boot) = exit_line(
+            &sh,
+            "#!/bin/sh\nsleep 2\necho 'dockerd: cannot open\tdevice' >&2\nexit 5\n",
+        );
+        assert_eq!(
+            line,
+            format!("{boot} 5 dockerd: cannot open device\n"),
+            "{sh:?}"
+        );
+    }
+}
+
+#[test]
+fn an_entrypoint_that_fails_at_once_or_ends_cleanly_leaves_its_exit_too() {
+    for sh in shells() {
+        let (line, boot) = exit_line(&sh, "#!/bin/sh\necho bye\nexit 0\n");
+        assert_eq!(line, format!("{boot} 0 bye\n"), "{sh:?}");
+        let (line, boot) = exit_line(&sh, "#!/bin/sh\nexit 3\n");
+        assert_eq!(line, format!("{boot} 3 \n"), "{sh:?}");
+    }
+}
+
 #[test]
 fn boot_d_steps_run_in_name_order_and_a_failing_one_fails_the_boot() {
     let fr = FakeRoot::new(&shells()[0]);

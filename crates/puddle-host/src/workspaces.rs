@@ -19,6 +19,7 @@
 //! a create whose final save fails is undone before anyone works in it, and a delete is refused
 //! when the entry can't be taken out first (principle 7, "your work is never lost by accident").
 
+use crate::agent_reports::{ReportDesk, entrypoint_problem};
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -122,6 +123,8 @@ pub(crate) struct Parts<R: Runtime + Clone> {
     pub(crate) book: WorkspaceBook,
     pub(crate) injection: Arc<Injection>,
     pub(crate) problems: Arc<Problems>,
+    /// The guest agents' reports, which a run of a workspace opens and closes.
+    pub(crate) reports: Arc<ReportDesk>,
 }
 
 struct Slot {
@@ -199,6 +202,7 @@ struct Inner<R: Runtime + Clone> {
     book: WorkspaceBook,
     injection: Arc<Injection>,
     problems: Arc<Problems>,
+    reports: Arc<ReportDesk>,
     state: Mutex<State>,
     live: tokio::sync::Mutex<BTreeMap<WorkspaceName, Live<R>>>,
     tasks: tokio::sync::Mutex<JoinSet<()>>,
@@ -398,6 +402,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 book: parts.book,
                 injection: parts.injection,
                 problems: parts.problems,
+                reports: parts.reports,
                 state: Mutex::new(State {
                     slots,
                     closed: false,
@@ -641,6 +646,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             (Err(_), Operation::Stopping) => {
                 slot.record.status = WorkspaceStatus::Running;
                 status_changed = true;
+                self.inner.reports.resume(&name);
             }
             (Err(_), Operation::Reclaiming | Operation::Deleting)
             | (Ok(()), Operation::Reclaiming)
@@ -1364,27 +1370,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// After a boot: the image's entrypoint that failed at once becomes a problem on the workspace
     /// (the start goes on: the workspace is usable without it, and a refusal would lock the user
-    /// out of the way to look at it); a boot where it did not fail clears the earlier one.
+    /// out of the way to look at it). The start cleared the earlier one ([`ReportDesk::begin`]);
+    /// one that fails later is the guest agent's report, in the same words.
     fn settle_entrypoint(&self, name: &WorkspaceName, report: &puddle_boot::BootReport) {
-        let key = problem_key("entrypoint", name);
-        match report.entrypoint_failure() {
-            Some(failure) => {
-                tracing::warn!(workspace = %name, %failure, "the image's entrypoint exited at once");
-                self.inner.problems.raise(
-                    Problem::new(
-                        key,
-                        format!("The image's entrypoint in {name} stopped right after it started"),
-                        format!(
-                            "It exited with status {failure}. The workspace keeps running without \
-                             it, so whatever it should have started (a service or a daemon) is \
-                             not running. Its full output is in /run/puddle/entrypoint.log in the \
-                             workspace; starting the workspace again runs it again."
-                        ),
-                    )
-                    .about(name.clone()),
-                );
-            }
-            None => self.inner.problems.clear(&key),
+        if let Some(failure) = report.entrypoint_failure() {
+            tracing::warn!(workspace = %name, %failure, "the image's entrypoint exited at once");
+            self.inner.problems.raise(entrypoint_problem(name, failure));
         }
     }
 
@@ -1839,6 +1830,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             leftovers.push(format!("the machine {name} may still be running ({e})"));
         }
         self.quiesce(name, remove).await;
+        self.inner.reports.end(name);
         if remove {
             match inner.runtime.remove(&name.sandbox_name()).await {
                 Ok(()) | Err(ComputeError::NotFound { .. }) => {}
@@ -1862,6 +1854,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     }
 
     async fn create_work(&self, record: WorkspaceRecord) -> Result<(), String> {
+        self.inner.reports.begin(&record.name);
         let mut created_volume = false;
         self.boot_new(&record, &mut created_volume, true, true)
             .await?;
@@ -1937,6 +1930,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let name = &record.name;
         self.progress(name, WorkspaceStep::Starting, None);
         inner.problems.clear(&problem_key("forced-stop", name));
+        inner.reports.begin(name);
         let exists = inner
             .runtime
             .list()
@@ -2094,6 +2088,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             );
         }
         self.quiesce(name, false).await;
+        self.inner.reports.end(name);
         Ok(())
     }
 
@@ -2111,6 +2106,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .await
             .map_err(|e| e.to_string())?;
         self.quiesce(&record.name, true).await;
+        self.inner.reports.forget(&record.name);
         // What the workspace held in Puddle's settings goes with it: its rules, its identities,
         // its environment and the values of its own secrets.
         inner.injection.forget(&record.name).await;
@@ -2303,6 +2299,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 },
                 |r| r.status = WorkspaceStatus::Draining,
             )?;
+            self.inner.reports.pause(&record.name);
             self.status_event(&record);
             let this = self.clone();
             let work = record.clone();

@@ -12,6 +12,7 @@
 //! Every step is recorded as a [`Step`], in order, so tests (and a log reader) can see the
 //! sequence that ran.
 
+use crate::agent_reports::ReportDesk;
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::path::PathBuf;
@@ -472,6 +473,7 @@ impl<R: Runtime + Clone> Host<R> {
         // The way out: the company network (discovery, sign-in as the user, then Basic) for the
         // sandbox proxy and the pull proxy alike.
         let connections = Arc::new(ConnectionRecorder::new(store.clone(), problems.clone()));
+        let reports = Arc::new(ReportDesk::new(problems.clone()));
         let egress = Egress::build(
             &config,
             &options,
@@ -479,7 +481,7 @@ impl<R: Runtime + Clone> Host<R> {
             &endpoints,
             &connections,
             &events,
-            EgressParts::new(injecting.termination(), &proxy_passwords),
+            EgressParts::new(injecting.termination(), &proxy_passwords, &reports),
         );
         let (proxy, upstream, discovery) = (egress.proxy, egress.upstream, egress.discovery);
         let network_health = network_health_of(&egress.chain, &discovery, &clock, &roots);
@@ -558,6 +560,7 @@ impl<R: Runtime + Clone> Host<R> {
                 book,
                 injection: injecting.injection.clone(),
                 problems: problems.clone(),
+                reports,
             },
             stored,
             &status,
@@ -908,17 +911,21 @@ struct EgressParts {
     terminations: Arc<Terminations>,
     tls: TlsClient,
     proxy_passwords: Arc<ProxyPasswords>,
+    /// Where the guest agents' reports go.
+    reports: Arc<ReportDesk>,
 }
 
 impl EgressParts {
     fn new(
         (terminations, tls): (Arc<Terminations>, TlsClient),
         proxy_passwords: &Arc<ProxyPasswords>,
+        reports: &Arc<ReportDesk>,
     ) -> Self {
         Self {
             terminations,
             tls,
             proxy_passwords: proxy_passwords.clone(),
+            reports: reports.clone(),
         }
     }
 }
@@ -945,6 +952,7 @@ impl Egress {
             terminations,
             tls,
             proxy_passwords,
+            reports,
         } = parts;
         let discovery = options.discovery.clone().unwrap_or_else(|| {
             Discovery::new(
@@ -973,7 +981,8 @@ impl Egress {
             .with_connection_log(connections.clone())
             .with_address_check(Arc::new(guard))
             .with_upstream(upstream.clone())
-            .with_termination(terminations, tls),
+            .with_termination(terminations, tls)
+            .with_agent_reports(reports),
         );
         Self {
             proxy,

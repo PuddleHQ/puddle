@@ -24,6 +24,7 @@
 //! [`SHUTDOWN_STEPS`].
 #![deny(unsafe_code)]
 
+mod agent_reports;
 mod boot;
 mod changes;
 mod config;

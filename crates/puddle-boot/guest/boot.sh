@@ -366,10 +366,25 @@ for step in "$HERE"/boot.d/*.sh; do
 done
 
 # --- 6. The image's own ENTRYPOINT (+CMD), after setup, with Puddle's env, detached -------------
+# The entrypoint runs under a wrapper that leads its own session, waits for it and writes
+# "<boot id> <status> <end of output>" to entrypoint.exit (renamed into place), then exits with
+# its status. The guest agent reads that file and tells the host of an exit after the hook has
+# left; the hook's own one-second watch below sees the wrapper's status, which is the entrypoint's.
+# shellcheck disable=SC2016 # expanded by the wrapper's shell, not here
+ENTRY_WRAP='run=$1 boot=$2
+shift 2
+code=0
+"$@" || code=$?
+tail=$(tail -n 3 "$run/entrypoint.log" 2>/dev/null | tr "\n\t" "  " | cut -c1-300)
+while case $tail in *" ") true ;; *) false ;; esac; do tail=${tail% }; done
+printf "%s %s %s\n" "$boot" "$code" "$tail" >"$run/entrypoint.exit.new" &&
+    mv -f "$run/entrypoint.exit.new" "$run/entrypoint.exit"
+exit "$code"'
 if [ "$#" -gt 0 ]; then
     if alive "$RUN/entrypoint.pid"; then
         say "entrypoint already running"
     else
+        rm -f "$RUN/entrypoint.exit"
         (
             if [ -f "$RUN/entry-env" ]; then
                 while IFS= read -r f; do
@@ -378,14 +393,18 @@ if [ "$#" -gt 0 ]; then
                 done <"$RUN/entry-env"
             fi
             if [ -n "$ENTRY_CWD" ]; then cd "$ROOT$ENTRY_CWD" || exit 126; fi
-            if command -v setsid >/dev/null 2>&1; then exec setsid "$@"; else exec "$@"; fi
+            if command -v setsid >/dev/null 2>&1; then
+                exec setsid /bin/sh -c "$ENTRY_WRAP" puddle-entrypoint "$RUN" "$boot_id" "$@"
+            else
+                exec /bin/sh -c "$ENTRY_WRAP" puddle-entrypoint "$RUN" "$boot_id" "$@"
+            fi
         ) </dev/null >>"$RUN/entrypoint.log" 2>&1 &
         entry_pid=$!
         printf '%s %s\n' "$boot_id" "$entry_pid" >"$RUN/entrypoint.pid"
         say "entrypoint chained: $1"
         # One second to fail at once (a missing program, a bad directory, a crash): that is the
-        # failure the user can still fix, and the one place the hook can see it. Exit 0 is an
-        # entrypoint that did its job, and one that dies later leaves only its log.
+        # failure the user can still fix. Exit 0 is an entrypoint that did its job; one that fails
+        # later is the agent's to report, from entrypoint.exit.
         i=0
         while [ "$i" -lt "$TICKS_PER_S" ] && ! gone "$entry_pid"; do
             i=$((i + 1))

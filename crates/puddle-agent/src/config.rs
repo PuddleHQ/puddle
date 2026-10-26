@@ -15,6 +15,7 @@
 //! | `PUDDLE_AGENT_KMSG` | `/dev/kmsg` | where `Killed process` lines are read |
 //! | `PUDDLE_AGENT_OOM_POLL_MS` | `250` | how often the counter is read |
 //! | `PUDDLE_AGENT_OOM_GRACE_MS` | `1000` | how long a counter increase waits for its kernel log line before it is reported unnamed |
+//! | `PUDDLE_AGENT_ENTRYPOINT_EXIT` | `/run/puddle/entrypoint.exit` | where the boot hook's wrapper writes the image entrypoint's exit, read once a second and reported to the host; `off` turns the watch off |
 //! | `PUDDLE_AGENT_DNS` | `off` | the stub DNS server for tools that ignore the proxy settings: `on` (`198.18.0.1:53`), `off`, or `<ipv4>:<port>`. Binds exactly that address, retrying until an interface has it |
 //! | `PUDDLE_AGENT_DNS_TABLE` | `/run/puddle/dns-table` | where the stub keeps its name ⇄ address table across restarts; `off` keeps none |
 //! | `PUDDLE_AGENT_EDITOR_DIR` (+ `_PORT`, `_DATA`, `_FOLDER`, `_GRACE`) | unset | the browser editor's server: the release folder switches it on; the rest are in `puddle_agent_proto::editor` |
@@ -105,6 +106,27 @@ impl Default for OomSources {
     }
 }
 
+/// Where the image entrypoint's exit is read from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntrypointWatch {
+    /// The file the boot hook's wrapper writes: `<boot id> <status> <end of output>`.
+    pub exit_file: PathBuf,
+    /// The kernel's id of this boot, which an exit must carry to count.
+    pub boot_id: PathBuf,
+    /// How often the file is read.
+    pub poll: Duration,
+}
+
+impl Default for EntrypointWatch {
+    fn default() -> Self {
+        Self {
+            exit_file: PathBuf::from("/run/puddle/entrypoint.exit"),
+            boot_id: PathBuf::from("/proc/sys/kernel/random/boot_id"),
+            poll: Duration::from_secs(1),
+        }
+    }
+}
+
 /// The Docker bridge listener.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BridgeConfig {
@@ -186,6 +208,8 @@ pub struct Config {
     pub oom: Option<OomSources>,
     /// The stub DNS server, `None` when it is off.
     pub dns: Option<DnsConfig>,
+    /// The watch on the image entrypoint's exit, `None` when it is off.
+    pub entrypoint: Option<EntrypointWatch>,
     /// The browser editor's server, `None` when the host asks for none.
     pub editor: Option<EditorConfig>,
     /// Transparent capture, `None` when it is off. Needs [`Config::dns`].
@@ -205,6 +229,7 @@ impl Default for Config {
             window: STREAM_WINDOW,
             oom: Some(OomSources::default()),
             dns: None,
+            entrypoint: Some(EntrypointWatch::default()),
             editor: None,
             capture: None,
             log: tracing::Level::INFO,
@@ -289,6 +314,14 @@ impl Config {
             Some((v, _)) if v == "1" => Some(oom),
             Some((v, _)) if v == "0" => None,
             Some((v, var)) => return Err(bad(var, &v, "expected 0 or 1")),
+        };
+        config.entrypoint = match lookup("PUDDLE_AGENT_ENTRYPOINT_EXIT") {
+            None => Some(EntrypointWatch::default()),
+            Some((v, _)) if v == "off" => None,
+            Some((v, var)) => Some(EntrypointWatch {
+                exit_file: path(var, &v)?,
+                ..EntrypointWatch::default()
+            }),
         };
         let mut dns = DnsConfig::default();
         if let Some((v, var)) = lookup("PUDDLE_AGENT_DNS_TABLE") {
@@ -605,6 +638,23 @@ mod tests {
             "0 turns the watch off"
         );
         assert!(from(&[("PUDDLE_AGENT_OOM", "1")]).unwrap().oom.is_some());
+        assert_eq!(
+            from(&[]).unwrap().entrypoint,
+            Some(EntrypointWatch::default())
+        );
+        assert_eq!(
+            from(&[("PUDDLE_AGENT_ENTRYPOINT_EXIT", "off")])
+                .unwrap()
+                .entrypoint,
+            None
+        );
+        assert_eq!(
+            from(&[("PUDDLE_AGENT_ENTRYPOINT_EXIT", "/tmp/exit")])
+                .unwrap()
+                .entrypoint
+                .map(|w| w.exit_file),
+            Some(PathBuf::from("/tmp/exit"))
+        );
     }
 
     #[test]

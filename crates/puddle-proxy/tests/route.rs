@@ -12,8 +12,11 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
+use puddle_agent_proto::control::PREAMBLE;
+use puddle_agent_proto::host::{AgentReport, AgentReports};
 use puddle_agent_proto::tokio_yamux::{Control, Session, StreamHandle};
 use puddle_agent_proto::yamux::client_config;
+use puddle_agent_proto::{AgentMessage, StubDnsTrouble};
 use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{
     AnyAddress, CollectingConnectionLog, StaticPolicy, StaticResolver, node_fetch,
@@ -1288,4 +1291,60 @@ async fn a_tunnel_only_ever_reaches_the_checked_address_whatever_it_carries() {
     assert_eq!(read_all(&mut reader).await.unwrap(), hello);
     let events = rig.events(2).await;
     assert_eq!(events[1].http, None);
+}
+
+/// Keeps every agent report with the workspace the proxy gave it.
+#[derive(Default)]
+struct KeptReports(std::sync::Mutex<Vec<(WorkspaceName, AgentReport)>>);
+
+impl AgentReports for KeptReports {
+    fn report(&self, workspace: &WorkspaceName, report: AgentReport) {
+        self.0.lock().unwrap().push((workspace.clone(), report));
+    }
+}
+
+#[tokio::test]
+async fn an_agent_report_is_about_the_workspace_of_its_route_whatever_it_says() {
+    let reports = Arc::new(KeptReports::default());
+    let proxy = Arc::new(
+        Proxy::new(Arc::new(StaticPolicy::new()), Arc::new(NullSink))
+            .with_agent_reports(reports.clone()),
+    );
+    let root = IpcRoot::new().unwrap();
+    let alpha = proxy.serve_route(root.listen().unwrap(), workspace("alpha"));
+    let _beta = proxy.serve_route(root.listen().unwrap(), workspace("beta"));
+    let mut guest = Guest::connect(&alpha).await;
+    let mut control = guest.stream().await;
+    control.write_all(PREAMBLE).await.unwrap();
+    for msg in [
+        AgentMessage::entrypoint_exited(3, "beta".to_owned()),
+        AgentMessage::stub_dns(StubDnsTrouble::RecordsLeftOut, 2),
+    ] {
+        control.write_all(&msg.to_line().unwrap()).await.unwrap();
+    }
+    control.flush().await.unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while reports.0.lock().unwrap().len() < 2 {
+        assert!(Instant::now() < deadline, "the reports never arrived");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        *reports.0.lock().unwrap(),
+        vec![
+            (
+                workspace("alpha"),
+                AgentReport::EntrypointExited {
+                    status: 3,
+                    tail: "beta".to_owned()
+                }
+            ),
+            (
+                workspace("alpha"),
+                AgentReport::StubDns {
+                    kind: StubDnsTrouble::RecordsLeftOut,
+                    count: 2
+                }
+            ),
+        ]
+    );
 }

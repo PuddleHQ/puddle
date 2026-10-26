@@ -78,9 +78,63 @@ pub enum AgentMessage {
         /// Datagrams refused since the last report for this destination.
         count: u32,
     },
+    /// The image's entrypoint, which the boot hook started, exited. `tail` is the end of its
+    /// output as the hook's wrapper wrote it. Both are the guest's claim; the host cleans them.
+    EntrypointExited {
+        /// The exit status as the shell gives it (a signal is 128 plus its number).
+        status: u8,
+        /// The last lines of its output, joined into one line.
+        #[serde(default)]
+        tail: String,
+    },
+    /// The stub DNS turned something away or could not carry it. Sent at once for the first one of
+    /// a kind, then at most once every ten seconds per kind with the number since the last report.
+    StubDns {
+        /// What happened.
+        kind: StubDnsTrouble,
+        /// How often since the last report of this kind.
+        count: u32,
+    },
     /// A message type this side doesn't know (from a newer agent). Ignored.
     #[serde(other)]
     Unknown,
+}
+
+/// What the stub DNS reports in [`AgentMessage::StubDns`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum StubDnsTrouble {
+    /// A lookup on the host failed; the client got `SERVFAIL`.
+    LookupFailed,
+    /// A lookup on the host did not answer in time; the client got `SERVFAIL`.
+    LookupTimedOut,
+    /// No lookup slot came free in time; the query got no answer and the client asks again.
+    NoLookupSlot,
+    /// The stand-in address range had no address left; the client got `SERVFAIL`.
+    NoStandInAddress,
+    /// Records the stub cannot carry were left out of an answer.
+    RecordsLeftOut,
+    /// UDP queries were dropped because too many were open at once; the client asks again.
+    UdpDropped,
+    /// TCP connections were closed because too many were open at once; the client asks again.
+    TcpRefused,
+    /// A kind this side doesn't know (from a newer agent).
+    #[serde(other)]
+    Unknown,
+}
+
+impl StubDnsTrouble {
+    /// Every kind an agent sends.
+    pub const ALL: [Self; 7] = [
+        Self::LookupFailed,
+        Self::LookupTimedOut,
+        Self::NoLookupSlot,
+        Self::NoStandInAddress,
+        Self::RecordsLeftOut,
+        Self::UdpDropped,
+        Self::TcpRefused,
+    ];
 }
 
 impl AgentMessage {
@@ -119,6 +173,18 @@ impl AgentMessage {
             port,
             count,
         }
+    }
+
+    /// An [`AgentMessage::EntrypointExited`].
+    #[must_use]
+    pub fn entrypoint_exited(status: u8, tail: String) -> Self {
+        Self::EntrypointExited { status, tail }
+    }
+
+    /// An [`AgentMessage::StubDns`].
+    #[must_use]
+    pub fn stub_dns(kind: StubDnsTrouble, count: u32) -> Self {
+        Self::StubDns { kind, count }
     }
 
     /// The message as one control line, newline included.
@@ -317,6 +383,42 @@ mod tests {
         assert_eq!(
             got[1].as_ref().unwrap_err().kind(),
             io::ErrorKind::UnexpectedEof
+        );
+    }
+
+    #[test]
+    fn the_report_messages_have_a_fixed_shape_and_unknown_kinds_still_parse() {
+        let exit = AgentMessage::entrypoint_exited(127, "x: not found".into());
+        assert_eq!(
+            exit.to_line().unwrap(),
+            b"{\"type\":\"entrypoint_exited\",\"status\":127,\"tail\":\"x: not found\"}\n"
+        );
+        let dns = AgentMessage::stub_dns(StubDnsTrouble::NoStandInAddress, 3);
+        assert_eq!(
+            dns.to_line().unwrap(),
+            b"{\"type\":\"stub_dns\",\"kind\":\"no_stand_in_address\",\"count\":3}\n"
+        );
+        for kind in StubDnsTrouble::ALL {
+            let msg = AgentMessage::stub_dns(kind, 1);
+            assert_eq!(
+                AgentMessage::from_line(&msg.to_line().unwrap()).unwrap(),
+                msg
+            );
+        }
+        assert_eq!(
+            AgentMessage::from_line(
+                b"{\"type\":\"stub_dns\",\"kind\":\"cosmic_rays\",\"count\":1}"
+            )
+            .unwrap(),
+            AgentMessage::stub_dns(StubDnsTrouble::Unknown, 1)
+        );
+        assert_eq!(
+            AgentMessage::from_line(b"{\"type\":\"entrypoint_exited\",\"status\":1}").unwrap(),
+            AgentMessage::entrypoint_exited(1, String::new())
+        );
+        // A status no shell gives is not a message.
+        assert!(
+            AgentMessage::from_line(b"{\"type\":\"entrypoint_exited\",\"status\":256}").is_err()
         );
     }
 

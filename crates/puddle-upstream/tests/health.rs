@@ -307,6 +307,28 @@ async fn changes_the_os_layer_cannot_watch_are_reported_when_the_watch_fails_and
 }
 
 #[tokio::test]
+async fn a_watch_that_stops_mid_run_starts_a_new_epoch_so_clients_refetch_the_report() {
+    let os = FakeOs::new(ProxyConfig::default());
+    let d = Discovery::new(os.clone(), Config::default());
+    let mut epochs = d.subscribe();
+    let _watching = d.watch().expect("fake can watch");
+    assert_eq!(d.epoch(), 0);
+    assert!(os.fire_watch_problem("the registry watch stopped (error 6)"));
+    // At once, with no quiet period: a client that refetches on a new epoch shows the notice.
+    assert!(epochs.has_changed().unwrap());
+    assert_eq!(*epochs.borrow_and_update(), 1);
+    assert_eq!(d.health().await.problems.len(), 1);
+
+    // A watch that could not be armed is listed by the first read of the report, with no epoch.
+    let failing = Discovery::new(
+        FakeOs::failing_watch(ProxyConfig::default(), "registry key could not be opened"),
+        Config::default(),
+    );
+    assert!(failing.watch().is_none());
+    assert_eq!(failing.epoch(), 0);
+}
+
+#[tokio::test]
 async fn only_the_system_mode_cares_about_changes_it_cannot_watch() {
     let os = FakeOs::failing_watch(ProxyConfig::default(), "no registry");
     let d = Discovery::new(

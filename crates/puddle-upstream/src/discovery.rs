@@ -290,17 +290,31 @@ impl Discovery {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clear();
-        let on_problem: ProblemCallback = Arc::new(move |why: String| {
-            tracing::warn!(error = %why, "proxy and network changes are not all noticed");
-            problems
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .push(why);
-        });
+        // A watcher that dies mid-run is told to clients the way a change is: a new epoch, so the
+        // notice shows at once instead of at the next read of the report. A problem found while
+        // arming is not announced; the first read of the report lists it.
+        let armed = Arc::new(AtomicBool::new(false));
+        let this = Arc::downgrade(self);
+        let on_problem: ProblemCallback = {
+            let armed = Arc::clone(&armed);
+            let this = this.clone();
+            Arc::new(move |why: String| {
+                tracing::warn!(error = %why, "proxy and network changes are not all noticed");
+                problems
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push(why);
+                if armed.load(Ordering::SeqCst)
+                    && let Some(discovery) = this.upgrade()
+                {
+                    discovery.bump_epoch();
+                }
+            })
+        };
         let guard = self
             .os
             .watch(Arc::new(move || signal.notify_one()), on_problem)?;
-        let this = Arc::downgrade(self);
+        armed.store(true, Ordering::SeqCst);
         let debounce = self.config.debounce;
         let task = tokio::spawn(async move {
             loop {

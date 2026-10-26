@@ -75,3 +75,28 @@ pub struct CustomIcon {
     /// The stored icon: a 256 pixel PNG, base64.
     pub png_base64: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_choice_converts_both_ways_unchanged() {
+        for choice in [
+            settings::AppIconChoice::Duck,
+            settings::AppIconChoice::DuckPond,
+            settings::AppIconChoice::DuckNight,
+            settings::AppIconChoice::DuckSun,
+            settings::AppIconChoice::Custom,
+        ] {
+            assert_eq!(
+                settings::AppIconChoice::from(AppIconChoice::from(choice)),
+                choice
+            );
+        }
+        assert_eq!(
+            serde_json::to_string(&AppIconChoice::DuckSun).unwrap(),
+            r#""duck_sun""#
+        );
+    }
+}

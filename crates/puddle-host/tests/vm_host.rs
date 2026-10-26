@@ -2821,9 +2821,9 @@ async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox(
 const START_STANDINS: &str = r#"
 N=/puddle/code-server/lib/node
 for i in $(seq 20); do
-  setsid nohup $N -e "require('child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', '--marker=dbg'], {stdio: 'ignore'}); setInterval(() => {}, 1000)" --type=extensionHost >>/tmp/standins.log 2>&1 &
+  setsid nohup $N -e "require('child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', '--', '--marker=dbg'], {stdio: 'ignore'}); setInterval(() => {}, 1000)" -- --type=extensionHost >>/tmp/standins.log 2>&1 &
 done
-setsid nohup $N -e "require('child_process').spawn('sleep', ['600'], {stdio: 'ignore'}); setInterval(() => {}, 1000)" --type=ptyHost >>/tmp/standins.log 2>&1 &
+setsid nohup $N -e "require('child_process').spawn('sleep', ['600'], {stdio: 'ignore'}); setInterval(() => {}, 1000)" -- --type=ptyHost >>/tmp/standins.log 2>&1 &
 # A debuggee whose extension host is long gone: a child of init whose debug socket does not exist.
 VSCODE_INSPECTOR_OPTIONS='{"inspectorIpc":"/tmp/node-cdp.0-0.sock","deferredMode":false}' setsid nohup sleep 601 >>/tmp/standins.log 2>&1 &
 "#;

@@ -108,7 +108,7 @@
         </Directory>
 
         <!-- A first install goes to %LOCALAPPDATA%\Programs\<name>, the per-user programs folder. -->
-        <SetDirectory Id="INSTALLDIR" Value="[LocalAppDataFolder]Programs\{{product_name}}">NOT INSTALLDIR</SetDirectory>
+        <SetDirectory Id="INSTALLDIR" Value="[LocalAppDataFolder]Programs\\{{product_name}}">NOT INSTALLDIR</SetDirectory>
 
         <DirectoryRef Id="INSTALLDIR">
             <Component Id="RegistryEntries" Guid="*">

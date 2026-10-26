@@ -72,6 +72,20 @@ pub(crate) async fn rig() -> Rig {
     }
 }
 
+/// Prints the proxy's own log lines (info and up) to stderr, which nextest shows only for a test
+/// that fails. A guest is told "502" and nothing more when the proxy cannot connect out; the line
+/// with the operating system's error is the only record of why. For the load tests, whose failures
+/// have no other trace.
+pub(crate) fn log_proxy_to_stderr() {
+    let _ = tracing::subscriber::set_global_default(
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(io::stderr)
+            .with_ansi(false)
+            .finish(),
+    );
+}
+
 pub(crate) fn allow(store: &Store, host: &str) {
     store
         .add_rule(&NewRule {

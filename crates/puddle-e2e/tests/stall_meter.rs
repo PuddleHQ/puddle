@@ -245,9 +245,10 @@ fn a_kernel_drop_and_its_backoff_are_not_a_stall() {
     ] {
         let out = Command::new(prefix[0])
             .args(&prefix[1..])
+            .arg("env")
+            .arg(format!("{INNER}=1"))
             .arg(&exe)
             .args(filter)
-            .env(INNER, "1")
             .output()
             .unwrap();
         let text = format!(

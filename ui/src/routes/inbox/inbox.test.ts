@@ -105,6 +105,15 @@ async function ready() {
   return view;
 }
 
+// A role query with a name works out the accessible name of every candidate, and each of those reads
+// the computed style of every node it passes: in jsdom the dialog's radios cost 5 ms apiece and the
+// page's chevron 4 ms, a label query 0.5 ms. These tests are about what the choices do, so they look
+// the radios and the chevron up by their label.
+const moreChoices = () =>
+  screen.getByLabelText(/^More choices for a\.example\.com/);
+const choice = (dialog: HTMLElement, label: RegExp) =>
+  within(dialog).getByLabelText(label);
+
 const rowOf = (host: string) =>
   screen.getByText(host, { selector: ".host" }).closest("li") as HTMLElement;
 const press = (key: string, target: Element = document.body) =>
@@ -116,13 +125,9 @@ const press = (key: string, target: Element = document.body) =>
 // seconds: it took the first test over its 5000 ms. Pay it here, outside any test's clock.
 seed();
 await ready();
-await fireEvent.click(
-  screen.getByRole("button", { name: /^More choices for a\.example\.com/ }),
-);
+await fireEvent.click(moreChoices());
 const warmDialog = await showOptions();
-await fireEvent.click(
-  within(warmDialog).getByRole("radio", { name: /^Everything under/ }),
-);
+await fireEvent.click(choice(warmDialog, /^Everything under/));
 cleanup();
 reset();
 
@@ -398,16 +403,10 @@ describe("deciding with the buttons", () => {
     await vi.waitFor(() =>
       expect(setsApi.calls).toContain("GET /api/rule-sets"),
     );
-    await fireEvent.click(
-      screen.getByRole("button", { name: /^More choices for a\.example\.com/ }),
-    );
+    await fireEvent.click(moreChoices());
     const dialog = await showOptions();
-    expect(
-      within(dialog).queryByRole("radio", { name: /Elsewhere/ }),
-    ).toBeNull();
-    await fireEvent.click(
-      within(dialog).getByRole("radio", { name: /Into rule set Client X/ }),
-    );
+    expect(within(dialog).queryByLabelText(/Elsewhere/)).toBeNull();
+    await fireEvent.click(choice(dialog, /Into rule set Client X/));
     await fireEvent.click(
       within(dialog).getByRole("button", { name: /Allow/ }),
     );
@@ -430,13 +429,9 @@ describe("deciding with the buttons", () => {
     inbox.add(request(1, { host: "a.example.com" }), "example.com");
     inbox.add(request(2, { host: "b.example.com" }), "example.com");
     await ready();
-    await fireEvent.click(
-      screen.getByRole("button", { name: /^More choices for a\.example\.com/ }),
-    );
+    await fireEvent.click(moreChoices());
     const dialog = await showOptions();
-    await fireEvent.click(
-      within(dialog).getByRole("radio", { name: /^Everything under/ }),
-    );
+    await fireEvent.click(choice(dialog, /^Everything under/));
     await fireEvent.click(
       within(dialog).getByRole("button", { name: /Allow/ }),
     );
@@ -491,13 +486,9 @@ describe("every workspace needs a confirm", () => {
   async function chooseGlobal(effect: "Allow" | "Deny") {
     seed();
     await ready();
-    await fireEvent.click(
-      screen.getByRole("button", { name: /^More choices for a\.example\.com/ }),
-    );
+    await fireEvent.click(moreChoices());
     const dialog = await showOptions();
-    await fireEvent.click(
-      within(dialog).getByRole("radio", { name: /^Every workspace/ }),
-    );
+    await fireEvent.click(choice(dialog, /^Every workspace/));
     await fireEvent.click(
       within(dialog).getByRole("button", { name: new RegExp(effect) }),
     );
@@ -523,7 +514,9 @@ describe("every workspace needs a confirm", () => {
   it("decides for every workspace only after Confirm", async () => {
     await chooseGlobal("Allow");
     await fireEvent.click(
-      await screen.findByRole("button", { name: "Allow in every workspace" }),
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Allow in every workspace",
+      }),
     );
     await vi.waitFor(() => expect(inbox.rules).toHaveLength(1));
     expect(inbox.rules[0]?.scope).toEqual({ type: "global" });

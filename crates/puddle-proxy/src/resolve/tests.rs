@@ -418,6 +418,9 @@ async fn an_srv_answer_keeps_the_allowed_targets_and_drops_the_rest_with_no_requ
                 srv(0, 27017, "denied.example.net"),
                 srv(0, 27017, "localhost"),
                 srv(0, 27017, "not a host name"),
+                Record::Txt {
+                    strings: vec!["passed on as it came".into()],
+                },
                 srv(1, 27017, "shard1.db.example.net"),
             ],
         ),
@@ -432,7 +435,12 @@ async fn an_srv_answer_keeps_the_allowed_targets_and_drops_the_rest_with_no_requ
             .resolve_name(ResolveQuery::new(name, RecordType::Srv))
             .await,
         ResolveAnswer::Records {
-            records: vec![srv(1, 27017, "shard1.db.example.net")],
+            records: vec![
+                Record::Txt {
+                    strings: vec!["passed on as it came".into()],
+                },
+                srv(1, 27017, "shard1.db.example.net"),
+            ],
             ttl: 30
         }
     );
@@ -477,6 +485,46 @@ async fn an_srv_answer_with_unreadable_rules_for_its_targets_is_unavailable() {
     );
     policy.set_unavailable(false);
     assert_eq!(policy.pending(), vec![]);
+}
+
+#[tokio::test]
+async fn an_srv_target_whose_request_cannot_be_recorded_makes_the_answer_unavailable() {
+    /// Reads rules (the owner is allowed, the target unmatched) but cannot record a request.
+    struct ReadOnly;
+    impl Policy for ReadOnly {
+        fn decide(&self, _: &EgressRequest, _: SuffixAllows) -> Result<Decision, PolicyError> {
+            Err(PolicyError {
+                reason: "store is read-only for this test".into(),
+            })
+        }
+        fn lookup(
+            &self,
+            request: &EgressRequest,
+            _: SuffixAllows,
+        ) -> Result<Option<Decision>, PolicyError> {
+            Ok(
+                (request.host == host("a.example")).then_some(Decision::Allow {
+                    rule_id: RuleId(1),
+                    pattern: PatternKind::Exact,
+                }),
+            )
+        }
+    }
+    let name = "_x._tcp.a.example";
+    let proxy = Proxy::new(Arc::new(ReadOnly), Arc::new(NullSink))
+        .with_record_resolver(Arc::new(StaticRecords::new().with(
+            name,
+            RecordType::Srv,
+            vec![srv(0, 1, "b.example")],
+        )))
+        .with_address_check(Arc::new(AnyAddress));
+    assert_eq!(
+        Arc::new(proxy)
+            .handler(workspace())
+            .resolve_name(ResolveQuery::new(name, RecordType::Srv))
+            .await,
+        ResolveAnswer::Unavailable
+    );
 }
 
 #[tokio::test]

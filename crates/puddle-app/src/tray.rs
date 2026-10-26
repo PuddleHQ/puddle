@@ -238,7 +238,9 @@ impl<R: Runtime> Tray<R> {
             look.marked = marked;
             look.image()
         };
-        let _ = self.icon.set_icon(Some(image));
+        if let Err(err) = self.icon.set_icon(Some(image)) {
+            tracing::warn!(%err, "the tray did not take the app icon");
+        }
     }
 }
 

@@ -23,12 +23,16 @@
 # `linux` entry (exact) saved 9 s of a 150 s build for a 70 s restore, the `windows` one about 30 s
 # of 390 s for a 41 s restore.
 #
-# A replacement of the `linux` entry briefly holds the old and the new one together (6.7 GiB each), which
-# is over the cap for a few minutes; GitHub then evicts the least recently used entries, which are
-# `windows` and the small ones before `linux`, and this workflow deletes the superseded one right
-# after the run. GitHub publishes no eviction log: on 2026-10-24 the cargo-xwin entry (a miss costs a
-# 12-minute CRT download in a job limited to 30) and the `linux` entry were both gone while
-# the repo sat at 10.5 to 12 GiB, and the develop runs between 06:41 and 07:03 UTC ran into the job limit.
+# A replacement of the `linux` entry holds the old and the new one together (6.7 GiB each), which is over
+# the cap; GitHub then evicts entries without a log. The develop run that saves the replacement deletes the
+# entry it restored right after rust-cache's save (ci/cache-drop.sh, run by .github/actions/cache-drop; its
+# test lists the guards), so the overrun lasts seconds. Deleting it earlier would leave pull requests no
+# entry to restore (a cold build takes about 35 minutes of a job limited to 30). This workflow deletes any
+# other superseded entry right after the run.
+#
+# GitHub publishes no eviction log: on 2026-10-24 the cargo-xwin entry (a miss costs a 12-minute CRT
+# download in a job limited to 30) and the `linux` entry were both gone while the repo sat at 10.5 to 12 GiB,
+# and the develop runs between 06:41 and 07:03 UTC ran into the job limit.
 # ci.yml saves the `linux` entry whenever its restore was not an exact hit, so a lost one costs the
 # next develop run, not every pull request until the next dependency change.
 name: cache-gc

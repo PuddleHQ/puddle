@@ -79,6 +79,11 @@ jobs:
     if: ${{ !cancelled() && github.event_name != 'schedule' && needs.scope.outputs.ci_rust != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # `actions: write` is for the cache-drop step, which frees the superseded Rust entry on a develop push
+    # (ci/cache-drop.sh; a pull request, a queue branch or a fork never deletes anything).
+    permissions:
+      contents: read
+      actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -91,7 +96,16 @@ jobs:
       # The key hashes the toolchain, the CARGO, RUST, CC, CFLAGS, CXX and CMAKE variables, the manifests and the lockfile's
       # registry packages; a restore of a slightly older entry (same toolchain and variables) only
       # rebuilds what changed, but a changed toolchain or variable finds nothing, so it must save.
-      # cache-gc.yml (budget table at its top) deletes the superseded entry.
+      # On a develop run, the step below remembers the entry rust-cache restores and deletes it once rust-cache has
+      # saved the replacement (its post step runs after rust-cache's), so the repo holds both for seconds, not until
+      # cache-gc.yml runs; a pull request, a queue branch or a run with no save deletes nothing (ci/cache-drop.sh).
+      - name: Free the Rust cache entry the save below replaces (develop only)
+        if: ${{ github.ref == 'refs/heads/develop' }}
+        uses: ./.github/actions/cache-drop
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          prefix: v0-rust-linux-
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: linux # the UI job restores this entry
@@ -159,12 +173,14 @@ jobs:
           echo "$HOME/llvm-rc-bin" >> "$GITHUB_PATH"
       - name: clang for the msvc cross-check (preinstalled on the runner)
         run: clang --version
+      # A miss costs a 12 to 14 minute MSVC CRT download; cache-gc.yml never deletes this entry. It is saved by the
+      # step after the cross-check, not by a post step, so a later red or cancelled step cannot lose it.
       - name: Cache the MSVC CRT and Windows SDK that cargo-xwin downloads
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: xwin
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/cargo-xwin
           key: cargo-xwin-0.23.1-x86_64
-          # A miss costs a 14-minute MSVC CRT download; cache-gc.yml never deletes this entry.
       - name: fmt
         run: scripts/check.sh fmt
       # ci/ is an always-run path, so a change to the scoping rules or this test runs this job.
@@ -205,6 +221,18 @@ jobs:
       - name: clippy (windows-msvc, cross-checked)
         if: ${{ !cancelled() }}
         run: scripts/check.sh clippy-windows
+      # cargo-xwin writes `xwin/DONE` when the download is complete; a download that failed halfway is never saved.
+      - name: Is the cargo-xwin download complete?
+        id: xwin-done
+        if: ${{ !cancelled() && steps.xwin.outputs.cache-hit != 'true' }}
+        run: |
+          if [ -f "$HOME/.cache/cargo-xwin/xwin/DONE" ]; then echo "complete=true" >> "$GITHUB_OUTPUT"; else echo "cargo-xwin download incomplete, not saving"; fi
+      - name: Save the MSVC CRT and Windows SDK
+        if: ${{ steps.xwin-done.outputs.complete == 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/cargo-xwin
+          key: cargo-xwin-0.23.1-x86_64
       - name: cargo-deny (bans, licences, sources; advisories run in their own job)
         if: ${{ !cancelled() }}
         run: scripts/check.sh deny

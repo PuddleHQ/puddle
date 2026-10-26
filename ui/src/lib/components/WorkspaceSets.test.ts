@@ -75,7 +75,7 @@ describe("a workspace's rule sets", () => {
   it("switches a set there, and back to following every workspace", async () => {
     render(WorkspaceSets, { props: { store, workspace: "api" } } as never);
     await fireEvent.click(
-      screen.getByRole("button", { name: "Turn GitHub on in api" }),
+      screen.getByRole("button", { name: "On here: GitHub in api" }),
     );
     await waitFor(() =>
       expect(toasts.items.at(-1)?.message).toBe("GitHub: on in api."),
@@ -93,7 +93,7 @@ describe("a workspace's rule sets", () => {
     );
     api.refuse = { status: 500, message: "boom" };
     await fireEvent.click(
-      screen.getByRole("button", { name: "Turn Work off in api" }),
+      screen.getByRole("button", { name: "Off here: Work in api" }),
     );
     await waitFor(() => expect(toasts.items.at(-1)?.message).toBe("Boom."));
   });

@@ -125,12 +125,14 @@ describe("AuditTable", () => {
     const evil = connection(1, { host: "<img src=x onerror=alert(1)>.test" });
     render(AuditTable, { entries: [evil, ...many(0)], now: NOW });
     const button = screen.getByRole("button", {
-      name: "Show the raw record of Connection",
+      name: /^Show the raw record of Connection at \d{2}:\d{2}/,
     });
     expect(button).toHaveAttribute("aria-expanded", "false");
     await fireEvent.click(button);
     expect(
-      screen.getByRole("button", { name: "Hide the raw record of Connection" }),
+      screen.getByRole("button", {
+        name: /^Hide the raw record of Connection at \d{2}:\d{2}/,
+      }),
     ).toHaveAttribute("aria-expanded", "true");
     const raw = screen.getByLabelText("Raw record 1");
     expect(raw.textContent).toContain(

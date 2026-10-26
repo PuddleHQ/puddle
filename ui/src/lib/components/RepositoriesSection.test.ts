@@ -139,7 +139,7 @@ describe("the checkouts of a running workspace", () => {
       ),
     );
     expect(
-      section().getByRole("button", { name: "Remove api from the list" }),
+      section().getByRole("button", { name: "Remove from the list: api" }),
     ).toBeInTheDocument();
   });
 
@@ -149,7 +149,7 @@ describe("the checkouts of a running workspace", () => {
       section().getByText("Not managed by Puddle: works as is"),
     ).toBeInTheDocument();
     expect(
-      section().getByRole("button", { name: "Manage scratch" }),
+      section().getByRole("button", { name: "Manage this: scratch" }),
     ).toBeInTheDocument();
   });
 
@@ -165,7 +165,7 @@ describe("the checkouts of a running workspace", () => {
     );
     expect(section().getByText("It has no remote.")).toBeInTheDocument();
     expect(
-      section().queryByRole("button", { name: /Manage local/ }),
+      section().queryByRole("button", { name: /Manage this: local/ }),
     ).toBeNull();
   });
 
@@ -213,7 +213,7 @@ describe("Manage this", () => {
   it("sends the address the user saw with the request and puts the checkout on the list", async () => {
     await mount({ repositories: [] }, listing([checkout("scratch")]));
     await fireEvent.click(
-      section().getByRole("button", { name: "Manage scratch" }),
+      section().getByRole("button", { name: "Manage this: scratch" }),
     );
     const dialog = await screen.findByRole("dialog", {
       name: "Manage scratch",
@@ -242,7 +242,7 @@ describe("Manage this", () => {
   it("sends the chosen identity and the cleared boxes", async () => {
     await mount({ repositories: [] }, listing([checkout("scratch")]));
     await fireEvent.click(
-      section().getByRole("button", { name: "Manage scratch" }),
+      section().getByRole("button", { name: "Manage this: scratch" }),
     );
     const dialog = await screen.findByRole("dialog", {
       name: "Manage scratch",
@@ -270,7 +270,7 @@ describe("Manage this", () => {
         "the remote of scratch is now https://github.com/new/scratch.git, not https://github.com/acme/scratch.git",
     });
     await fireEvent.click(
-      section().getByRole("button", { name: "Manage scratch" }),
+      section().getByRole("button", { name: "Manage this: scratch" }),
     );
     const dialog = await screen.findByRole("dialog", {
       name: "Manage scratch",
@@ -288,7 +288,7 @@ describe("removing and cloning again", () => {
   it("says the files stay, then removes the entry from the list only", async () => {
     await mount();
     await fireEvent.click(
-      section().getByRole("button", { name: "Remove api from the list" }),
+      section().getByRole("button", { name: "Remove from the list: api" }),
     );
     const dialog = await screen
       .findByRole("alertdialog")
@@ -315,7 +315,7 @@ describe("removing and cloning again", () => {
     await mount({}, listing([], { missing: ["api"] }));
     expect(section().getByText("Not on the disk")).toBeInTheDocument();
     await fireEvent.click(
-      section().getByRole("button", { name: "Clone api again" }),
+      section().getByRole("button", { name: "Clone again: api" }),
     );
     await waitFor(() =>
       expect(api.calls).toContain(
@@ -334,7 +334,7 @@ describe("removing and cloning again", () => {
       message: "the workspace is busy",
     });
     await fireEvent.click(
-      section().getByRole("button", { name: "Remove api from the list" }),
+      section().getByRole("button", { name: "Remove from the list: api" }),
     );
     const dialog = await screen
       .findByRole("alertdialog")
@@ -498,7 +498,7 @@ describe("identities and empty states", () => {
       ]),
     );
     await fireEvent.click(
-      section().getByRole("button", { name: "Manage lab" }),
+      section().getByRole("button", { name: "Manage this: lab" }),
     );
     const dialog = await screen.findByRole("dialog", { name: "Manage lab" });
     expect(
@@ -520,7 +520,7 @@ describe("identities and empty states", () => {
       listing([], { missing: ["api"], running: false }),
     );
     expect(
-      section().getByRole("button", { name: "Clone api again" }),
+      section().getByRole("button", { name: "Clone again: api" }),
     ).toBeDisabled();
     expect(
       section().getByText("Start the workspace to clone it again."),

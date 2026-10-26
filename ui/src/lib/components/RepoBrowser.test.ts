@@ -70,7 +70,7 @@ describe("RepoBrowser", () => {
     const { onCreate } = await show();
     await fireEvent.click(
       await screen.findByRole("button", {
-        name: "Create a workspace for acme/web",
+        name: "Create a workspace for this: acme/web",
       }),
     );
     expect(onCreate).toHaveBeenCalledWith(
@@ -160,7 +160,7 @@ describe("RepoBrowser", () => {
     );
     expect(
       screen.getByRole("button", {
-        name: "Create a workspace for contoso/Shop Floor/scanner",
+        name: "Create a workspace for this: contoso/Shop Floor/scanner",
       }),
     ).toBeEnabled();
   });

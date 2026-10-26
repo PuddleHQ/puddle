@@ -2327,6 +2327,9 @@ export interface components {
             type: "identities_changed";
         } | {
             /** @enum {string} */
+            type: "repo_lists_changed";
+        } | {
+            /** @enum {string} */
             type: "workspace_git_changed";
             /** @description The workspace. */
             workspace: components["schemas"]["WorkspaceName"];

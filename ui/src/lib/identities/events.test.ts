@@ -3,10 +3,18 @@ import { describe, expect, it } from "vitest";
 import {
   asCredentialEvent,
   isIdentitiesChanged,
+  isRepoListsChanged,
   isWorkspaceGitChanged,
 } from "./events.ts";
 
 describe("identity events", () => {
+  it("recognises that the repository lists changed and only that", () => {
+    expect(isRepoListsChanged({ type: "repo_lists_changed" })).toBe(true);
+    expect(isRepoListsChanged({ type: "identities_changed" })).toBe(false);
+    expect(isRepoListsChanged(null)).toBe(false);
+    expect(isRepoListsChanged("repo_lists_changed")).toBe(false);
+  });
+
   it("recognises the two change events and only them", () => {
     expect(isIdentitiesChanged({ type: "identities_changed" })).toBe(true);
     expect(isIdentitiesChanged({ type: "rules_changed" })).toBe(false);

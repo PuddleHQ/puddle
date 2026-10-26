@@ -148,6 +148,10 @@ pub enum Event {
     /// The list of identities, their order, the default or an identity's author or credentials
     /// changed. Carries no data: refetch `GET /api/identities`.
     IdentitiesChanged {},
+    /// A repository list Puddle renews in the background changed: a repository came or went, or
+    /// the list could not be read, or a Git host started or stopped limiting requests. Carries no
+    /// data: refetch `GET /api/repos`.
+    RepoListsChanged {},
     /// A workspace's identities, repository table or "only listed" switches changed (also when an
     /// identity it has changed). Refetch `GET /api/workspaces/{id}/git`.
     WorkspaceGitChanged {
@@ -466,6 +470,7 @@ impl Event {
             Self::PendingOpened { request } => Some(&request.workspace),
             Self::RulesChanged {}
             | Self::IdentitiesChanged {}
+            | Self::RepoListsChanged {}
             | Self::GlobalEnvChanged {}
             | Self::CredentialSignInNeeded { .. }
             | Self::AuditAppended { .. }
@@ -739,6 +744,11 @@ mod tests {
                 None,
             ),
             (
+                Event::RepoListsChanged {},
+                r#"{"type":"repo_lists_changed"}"#,
+                None,
+            ),
+            (
                 Event::WorkspaceGitChanged {
                     workspace: WorkspaceName::new("box").unwrap(),
                 },
@@ -989,6 +999,7 @@ mod tests {
                 "pending_closed",
                 "rules_changed",
                 "identities_changed",
+                "repo_lists_changed",
                 "workspace_git_changed",
                 "global_env_changed",
                 "workspace_env_changed",

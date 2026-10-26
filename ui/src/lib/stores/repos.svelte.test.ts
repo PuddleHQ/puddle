@@ -1,15 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { FakeSource } from "#lib/testing/fake-inbox.ts";
 import { FakeRepos, repoSource, repoView } from "#lib/testing/fake-repos.ts";
 import { RepoLists } from "./repos.svelte.ts";
 
 let api: FakeRepos;
 let clock: number;
+let events: FakeSource;
 const make = () =>
-  new RepoLists({ api: api as never, slowAfterMs: 1500, now: () => clock });
+  new RepoLists({
+    api: api as never,
+    source: events,
+    slowAfterMs: 1500,
+    now: () => clock,
+  });
 
 beforeEach(() => {
   vi.useFakeTimers();
+  events = new FakeSource();
   api = new FakeRepos();
   clock = 5_000_000;
   api.repos = [
@@ -120,6 +128,60 @@ describe("load", () => {
     api.release();
     await reading;
     expect(lists.message).toBeNull();
+  });
+});
+
+describe("a list the host renewed", () => {
+  it("is read again quietly when the host says so, with the same search", async () => {
+    const lists = make();
+    await lists.load({ query: "acme", limit: 20 });
+    expect(api.calls).toHaveLength(1);
+    api.repos = [repoView("acme", "new")];
+    events.emit({ type: "repo_lists_changed" });
+    expect(lists.status).toBe("ready");
+    expect(lists.slow).toBe(false);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(api.calls).toHaveLength(2);
+    expect(api.queries.at(-1)).toEqual({ query: "acme", limit: 20 });
+    expect(lists.listing?.repos.map((r) => r.full_name)).toEqual(["acme/new"]);
+  });
+
+  it("is read again when events may have been missed", async () => {
+    const lists = make();
+    await lists.load({});
+    events.resync();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(api.calls).toHaveLength(2);
+  });
+
+  it("ignores other events, and one that comes before anything was read", async () => {
+    const lists = make();
+    events.emit({ type: "repo_lists_changed" });
+    await lists.load({});
+    events.emit({ type: "identities_changed" });
+    events.emit("repo_lists_changed");
+    await vi.advanceTimersByTimeAsync(10);
+    expect(api.calls).toHaveLength(1);
+  });
+
+  it("is not listened for once the screen is gone, and again after the next read", async () => {
+    const lists = make();
+    await lists.load({});
+    lists.stop();
+    expect(events.listeners.size).toBe(0);
+    await lists.load({});
+    expect(events.listeners.size).toBe(1);
+    lists.stop();
+    events.emit({ type: "repo_lists_changed" });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(api.calls).toHaveLength(2);
+  });
+
+  it("listens once however many reads are made", async () => {
+    const lists = make();
+    await lists.load({});
+    await lists.load({ query: "x" });
+    expect(events.listeners.size).toBe(1);
   });
 });
 

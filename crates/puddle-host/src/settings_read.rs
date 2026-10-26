@@ -80,6 +80,9 @@ mod tests {
     fn the_unreadable_repo_still_accepts_saves() {
         Unreadable.save_global(json!({})).unwrap();
         Unreadable.save_workspace(&a(), json!({})).unwrap();
+        assert_eq!(Unreadable.load_app_icon().unwrap(), None);
+        Unreadable.save_app_icon(b"x").unwrap();
+        Unreadable.delete_app_icon().unwrap();
     }
 
     #[test]

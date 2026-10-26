@@ -322,6 +322,9 @@ mod tests {
         Unreadable.save_global(json!({})).unwrap();
         let name = WorkspaceName::new("box").unwrap();
         Unreadable.save_workspace(&name, json!({})).unwrap();
+        assert_eq!(Unreadable.load_app_icon().unwrap(), None);
+        Unreadable.save_app_icon(b"x").unwrap();
+        Unreadable.delete_app_icon().unwrap();
     }
 
     #[test]

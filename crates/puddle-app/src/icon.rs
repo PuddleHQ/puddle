@@ -152,6 +152,49 @@ mod tests {
         assert_eq!(damaged.draw().unwrap(), duck);
     }
 
+    /// A store whose image cannot be read.
+    struct Broken;
+
+    impl SettingsRepo for Broken {
+        fn load_global(&self) -> Result<Option<serde_json::Value>, puddle_api::SettingsRepoError> {
+            Ok(None)
+        }
+        fn save_global(&self, _: serde_json::Value) -> Result<(), puddle_api::SettingsRepoError> {
+            Ok(())
+        }
+        fn load_workspace(
+            &self,
+            _: &puddle_types::WorkspaceName,
+        ) -> Result<Option<serde_json::Value>, puddle_api::SettingsRepoError> {
+            Ok(None)
+        }
+        fn save_workspace(
+            &self,
+            _: &puddle_types::WorkspaceName,
+            _: serde_json::Value,
+        ) -> Result<(), puddle_api::SettingsRepoError> {
+            Ok(())
+        }
+        fn load_app_icon(&self) -> Result<Option<Vec<u8>>, puddle_api::SettingsRepoError> {
+            Err(puddle_api::SettingsRepoError::new("permission denied"))
+        }
+        fn save_app_icon(&self, _: &[u8]) -> Result<(), puddle_api::SettingsRepoError> {
+            Ok(())
+        }
+        fn delete_app_icon(&self) -> Result<(), puddle_api::SettingsRepoError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn an_image_that_cannot_be_read_shows_the_duck() {
+        let wanted = Wanted::read(&Broken, &prefs(Some(AppIconChoice::Custom)));
+        assert_eq!(
+            wanted.draw().unwrap(),
+            built_in(AppIconChoice::Duck, SIZE).unwrap()
+        );
+    }
+
     #[test]
     fn the_image_for_tauri_keeps_the_pixels() {
         let icon = built_in(AppIconChoice::DuckSun, 32).unwrap();

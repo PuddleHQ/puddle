@@ -354,3 +354,10 @@ crates/puddle-agent/src/host_streams.rs | return; | a silent stream is dropped a
 crates/puddle-host/src/workspaces.rs | link.send(&HostMessage::EndExtensionHosts) | the host's call into a running guest: fake_host has no connected agent, so it is covered by the VM tier (`vm_host_ending_the_extension_hosts_takes_the_debuggees_with_them_and_leaves_terminals`); the not-running branch is tested in fake_host.rs
 crates/puddle-host/src/workspaces.rs | .await | the host's call into a running guest: fake_host has no connected agent, so it is covered by the VM tier (`vm_host_ending_the_extension_hosts_takes_the_debuggees_with_them_and_leaves_terminals`); the not-running branch is tested in fake_host.rs
 crates/puddle-host/src/workspaces.rs | .map_err(EndExtensionHostsError::Agent) | the host's call into a running guest: fake_host has no connected agent, so it is covered by the VM tier (`vm_host_ending_the_extension_hosts_takes_the_debuggees_with_them_and_leaves_terminals`); the not-running branch is tested in fake_host.rs
+crates/puddle-api/src/extract.rs | ApiError::bad_request("the file could not be read") | a body that fails mid-read for a reason other than the size limit: a dropped connection, which a loopback test cannot cut at a chosen byte
+crates/puddle-api/src/routes/app_icon.rs | IconError::Encode(_) => ApiError::internal(err), | writing a PNG into memory fails only when memory runs out
+crates/puddle-app/src/desktop.rs | tracing::warn!(%err, "the window did not take the app icon"); | the window system refusing an icon; the test runtime accepts every one
+crates/puddle-app/src/desktop.rs | tray.set_app_icon(picture); | needs a real tray, which needs a display and a tray host; `tray.rs` tests `set_app_icon` on a virtual display
+crates/puddle-app/src/desktop.rs | Err(err) => tracing::debug!(%err, "the app icon read did not finish"), | the blocking task being cancelled or panicking
+crates/puddle-app/src/desktop.rs | app.default_window_icon() | the fallback when the chosen icon cannot be drawn at all, which no input produces
+crates/puddle-app/src/desktop.rs | .map(|bundled| bundled.clone().to_owned()) | see above

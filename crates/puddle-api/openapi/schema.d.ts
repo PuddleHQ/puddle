@@ -1053,6 +1053,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{id}/ports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The workspace's ports: the ones a process in it listens on (as the workspace reports them),
+         *     the ones forwarded to this computer and the pinned ones. A stopped workspace lists its pinned
+         *     forwards only.
+         */
+        get: operations["list_ports"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/ports/{port}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Forwards a port of the running workspace to a port of this computer's loopback, and keeps it
+         *     (`pinned`) or not. Asking again for what is already so changes nothing. The port of this
+         *     computer is bound by Puddle and only on `127.0.0.1`; if something else has it, the refusal
+         *     says who.
+         */
+        put: operations["forward_port"];
+        post?: never;
+        /** Stops the forward of a port of the workspace and unpins it. */
+        delete: operations["release_port"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{id}/reclaim": {
         parameters: {
             query?: never;
@@ -2329,6 +2373,28 @@ export interface components {
             /** @description The workspace. */
             workspace: components["schemas"]["WorkspaceName"];
         } | {
+            /** @enum {string} */
+            type: "workspace_ports_changed";
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
+        } | {
+            /**
+             * Format: int32
+             * @description The port in the workspace.
+             */
+            guest_port: number;
+            /**
+             * Format: int32
+             * @description The port on this computer.
+             */
+            host_port: number;
+            /** @description What went wrong and what to do, for the user. */
+            reason: string;
+            /** @enum {string} */
+            type: "workspace_port_forward_failed";
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
+        } | {
             /** @description The Git host the workspace was talking to. */
             host: string;
             /** @description The source, as one line of names (`gh account me on github.com`). */
@@ -2949,6 +3015,49 @@ export interface components {
             registrable_domain: string;
             /** @description The workspace that asked. */
             workspace: components["schemas"]["WorkspaceName"];
+        };
+        /** @description One port of a workspace. */
+        PortEntry: {
+            /** @description A forward to it is open now: connecting to `host_port` on this computer reaches it. */
+            forwarded: boolean;
+            /**
+             * Format: int32
+             * @description The port in the workspace.
+             */
+            guest_port: number;
+            /**
+             * Format: int32
+             * @description The port on this computer: the open forward's, or the one a pinned forward wants. `null`
+             *     for a port that is neither forwarded nor pinned.
+             */
+            host_port: number | null;
+            /**
+             * @description A process in the workspace listens on it now. Reported by the workspace itself, so a
+             *     workspace that is not running lists none, and one that hides a listener hides it here.
+             */
+            listening: boolean;
+            /** @description The forward comes back, on the same `host_port`, every time the workspace starts. */
+            pinned: boolean;
+            /**
+             * @description Why it does not work: the pinned forward could not be restored (the port of this computer
+             *     is in use, and by whom), or the last connection through it failed. May quote the guest's
+             *     or the system's words: escape it when rendering. `null` when there is no problem.
+             */
+            problem: string | null;
+        };
+        /** @description Forwards a port of the workspace to this computer. */
+        PortForwardRequest: {
+            /**
+             * Format: int32
+             * @description The port on this computer, 1 to 65535. Left out or `null`: the workspace port's own number.
+             */
+            host_port?: number | null;
+            /**
+             * @description Keep the forward across restarts of the workspace (default false). Asking again with
+             *     `true` pins a forward that is open; with `false` it unpins one and leaves it open until
+             *     the workspace stops.
+             */
+            pinned?: boolean;
         };
         /** @description One background problem, as `GET /api/problems` lists it. */
         Problem: {
@@ -3863,6 +3972,16 @@ export interface components {
          * @enum {string}
          */
         WorkspaceOperation: "creating" | "starting" | "stopping" | "reclaiming" | "cloning" | "deleting";
+        /** @description What a workspace's Ports tab lists. */
+        WorkspacePorts: {
+            /** @description The ports, by number: the ones that listen, the ones forwarded, the ones pinned. */
+            ports: components["schemas"]["PortEntry"][];
+            /**
+             * @description The workspace runs: ports can be forwarded. A stopped workspace lists its pinned forwards
+             *     only.
+             */
+            running: boolean;
+        };
         /**
          * @description One repository Puddle manages for a workspace. Its identity and its Pull and Push toggles are
          *     the workspace's Git settings (`GET /api/workspaces/{id}/git`), matched in the repository
@@ -9010,6 +9129,261 @@ export interface operations {
                 };
             };
             /** @description the credential store refused a deletion; what was deleted stays deleted */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_ports: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the workspace's ports */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspacePorts"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description ports are not available in this build */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    forward_port: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+                /** @description the port in the workspace */
+                port: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PortForwardRequest"];
+            };
+        };
+        responses: {
+            /** @description the port now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortEntry"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the workspace is not running, or the port of this computer is in use (the message says by whom) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description a port that is not 1 to 65535 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description ports are not available in this build */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    release_port: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+                /** @description the port in the workspace */
+                port: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description stopped and unpinned */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace, or that port is neither forwarded nor pinned */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description ports are not available in this build */
             503: {
                 headers: {
                     [name: string]: unknown;

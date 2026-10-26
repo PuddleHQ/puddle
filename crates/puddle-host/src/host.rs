@@ -488,12 +488,7 @@ impl<R: Runtime + Clone> Host<R> {
             &endpoints,
             &connections,
             &events,
-            EgressParts::new(
-                injecting.termination(),
-                &proxy_passwords,
-                &reports,
-                &ports,
-            ),
+            EgressParts::new(injecting.termination(), &proxy_passwords, &reports, &ports),
         );
         let (proxy, upstream, discovery) = (egress.proxy, egress.upstream, egress.discovery);
         let network_health = network_health_of(&egress.chain, &discovery, &clock, &roots);

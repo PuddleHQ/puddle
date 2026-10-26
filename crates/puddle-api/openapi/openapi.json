@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.16.0"
+    "version": "0.17.0"
   },
   "paths": {
     "/api/audit": {
@@ -6176,6 +6176,325 @@
         }
       }
     },
+    "/api/workspaces/{id}/ports": {
+      "get": {
+        "tags": [
+          "ports"
+        ],
+        "summary": "The workspace's ports: the ones a process in it listens on (as the workspace reports them),\nthe ones forwarded to this computer and the pinned ones. A stopped workspace lists its pinned\nforwards only.",
+        "operationId": "list_ports",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the workspace's ports",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspacePorts"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "ports are not available in this build",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/ports/{port}": {
+      "put": {
+        "tags": [
+          "ports"
+        ],
+        "summary": "Forwards a port of the running workspace to a port of this computer's loopback, and keeps it\n(`pinned`) or not. Asking again for what is already so changes nothing. The port of this\ncomputer is bound by Puddle and only on `127.0.0.1`; if something else has it, the refusal\nsays who.",
+        "operationId": "forward_port",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "port",
+            "in": "path",
+            "description": "the port in the workspace",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PortForwardRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the port now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortEntry"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the workspace is not running, or the port of this computer is in use (the message says by whom)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "a port that is not 1 to 65535",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "ports are not available in this build",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "ports"
+        ],
+        "summary": "Stops the forward of a port of the workspace and unpins it.",
+        "operationId": "release_port",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "port",
+            "in": "path",
+            "description": "the port in the workspace",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "stopped and unpinned"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace, or that port is neither forwarded nor pinned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "ports are not available in this build",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/workspaces/{id}/reclaim": {
       "post": {
         "tags": [
@@ -9928,6 +10247,65 @@
           },
           {
             "type": "object",
+            "description": "The ports a workspace listens on, its forwards or its pinned forwards changed. Carries no\ndata: refetch `GET /api/workspaces/{id}/ports`.",
+            "required": [
+              "workspace",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "workspace_ports_changed"
+                ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A forward could not be set up or kept: a pinned forward that could not be restored at the\nworkspace's start, or one whose port on this computer another program took. `reason` names\nthe port and, when known, who has it; it may quote the operating system's error.",
+            "required": [
+              "workspace",
+              "guest_port",
+              "host_port",
+              "reason",
+              "type"
+            ],
+            "properties": {
+              "guest_port": {
+                "type": "integer",
+                "format": "int32",
+                "description": "The port in the workspace.",
+                "minimum": 0
+              },
+              "host_port": {
+                "type": "integer",
+                "format": "int32",
+                "description": "The port on this computer.",
+                "minimum": 0
+              },
+              "reason": {
+                "type": "string",
+                "description": "What went wrong and what to do, for the user."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "workspace_port_forward_failed"
+                ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace."
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "A workspace asked for a credential and the source of it cannot supply one (not signed in,\nor the sign-in ran out). The user signs in from Puddle; a request never opens a sign-in\nwindow. Global: every subscriber gets it. Names only, never a value.",
             "required": [
               "host",
@@ -11339,6 +11717,75 @@
             "description": "The workspace that asked."
           }
         }
+      },
+      "PortEntry": {
+        "type": "object",
+        "description": "One port of a workspace.",
+        "required": [
+          "guest_port",
+          "listening",
+          "forwarded",
+          "pinned",
+          "host_port",
+          "problem"
+        ],
+        "properties": {
+          "forwarded": {
+            "type": "boolean",
+            "description": "A forward to it is open now: connecting to `host_port` on this computer reaches it."
+          },
+          "guest_port": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The port in the workspace.",
+            "minimum": 0
+          },
+          "host_port": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The port on this computer: the open forward's, or the one a pinned forward wants. `null`\nfor a port that is neither forwarded nor pinned.",
+            "minimum": 0
+          },
+          "listening": {
+            "type": "boolean",
+            "description": "A process in the workspace listens on it now. Reported by the workspace itself, so a\nworkspace that is not running lists none, and one that hides a listener hides it here."
+          },
+          "pinned": {
+            "type": "boolean",
+            "description": "The forward comes back, on the same `host_port`, every time the workspace starts."
+          },
+          "problem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it does not work: the pinned forward could not be restored (the port of this computer\nis in use, and by whom), or the last connection through it failed. May quote the guest's\nor the system's words: escape it when rendering. `null` when there is no problem."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PortForwardRequest": {
+        "type": "object",
+        "description": "Forwards a port of the workspace to this computer.",
+        "properties": {
+          "host_port": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The port on this computer, 1 to 65535. Left out or `null`: the workspace port's own number.",
+            "minimum": 0
+          },
+          "pinned": {
+            "type": "boolean",
+            "description": "Keep the forward across restarts of the workspace (default false). Asking again with\n`true` pins a forward that is open; with `false` it unpins one and leaves it open until\nthe workspace stops."
+          }
+        },
+        "additionalProperties": false
       },
       "Problem": {
         "type": "object",
@@ -13508,6 +13955,28 @@
           "deleting"
         ]
       },
+      "WorkspacePorts": {
+        "type": "object",
+        "description": "What a workspace's Ports tab lists.",
+        "required": [
+          "running",
+          "ports"
+        ],
+        "properties": {
+          "ports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PortEntry"
+            },
+            "description": "The ports, by number: the ones that listen, the ones forwarded, the ones pinned."
+          },
+          "running": {
+            "type": "boolean",
+            "description": "The workspace runs: ports can be forwarded. A stopped workspace lists its pinned forwards\nonly."
+          }
+        },
+        "additionalProperties": false
+      },
       "WorkspaceRepository": {
         "type": "object",
         "description": "One repository Puddle manages for a workspace. Its identity and its Pull and Push toggles are\nthe workspace's Git settings (`GET /api/workspaces/{id}/git`), matched in the repository\ntable's spelling.",
@@ -13688,6 +14157,10 @@
     {
       "name": "workspaces",
       "description": "Workspaces: their own disk with the repositories Puddle manages for them, and the sandbox that runs them"
+    },
+    {
+      "name": "ports",
+      "description": "A workspace's ports: what listens in it, forwards to this computer's loopback, pinned forwards"
     },
     {
       "name": "environment",

@@ -25,8 +25,7 @@ accepted = [
     "CDLA-Permissive-2.0",
     "Unlicense",
 ]
-# The platforms Puddle ships for (host on Windows, guest agent on Linux musl) and develops on.
-targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"]
+# The platforms come from xtask (`PUDDLE_TARGETS`), which passes `--target`.
 ignore-dev-dependencies = true
 ignore-build-dependencies = false
 private = { ignore = true }

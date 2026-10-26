@@ -177,6 +177,35 @@ mod tests {
             .unwrap();
     }
 
+    #[tokio::test]
+    async fn an_exit_that_finds_the_queue_full_is_sent_at_a_later_tick() {
+        let dir = tempfile::tempdir().unwrap();
+        let (exit_file, boot) = (dir.path().join("exit"), dir.path().join("boot_id"));
+        std::fs::write(&boot, "b1\n").unwrap();
+        std::fs::write(&exit_file, "b1 4 late\n").unwrap();
+        let (tx, mut rx) = mpsc::channel(1);
+        tx.try_send(AgentMessage::entrypoint_exited(9, "filler".into()))
+            .unwrap();
+        let task = tokio::spawn(watch(
+            EntrypointWatch {
+                exit_file,
+                boot_id: boot,
+                poll: Duration::from_millis(10),
+            },
+            tx,
+        ));
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        assert_eq!(
+            rx.recv().await,
+            Some(AgentMessage::entrypoint_exited(9, "filler".into()))
+        );
+        let got = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .unwrap();
+        assert_eq!(got, Some(AgentMessage::entrypoint_exited(4, "late".into())));
+        task.abort();
+    }
+
     #[test]
     fn a_boot_id_that_cannot_be_read_is_the_one_the_boot_hook_writes_then() {
         assert_eq!(boot_id(Path::new("/nonexistent/boot_id")), UNKNOWN_BOOT);

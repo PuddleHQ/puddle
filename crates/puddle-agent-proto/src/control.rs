@@ -5,8 +5,8 @@
 //! [`AgentMessage`] per line (`\n`-terminated, at most [`MAX_LINE`] bytes including the newline).
 //! Data flows guest → host only. The first message is [`AgentMessage::Hello`].
 //!
-//! Host → guest messages will use the same line format on a host-opened `host-control` stream
-//! ([`HostMessage`], [`crate::kind::StreamKind::HostControl`]); none are defined yet.
+//! Host → guest messages use the same line format on a host-opened `host-control` stream
+//! ([`crate::host_control`]).
 //!
 //! ```
 //! use puddle_agent_proto::AgentMessage;
@@ -236,18 +236,6 @@ impl AgentMessage {
     }
 }
 
-/// One message from the host to the agent, on a `host-control` stream. Reserved: no messages are
-/// defined yet (extension-host cleanup, idle cache drop and CA rotation are candidates).
-/// An agent ignores types it doesn't know.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum HostMessage {
-    /// A message type this side doesn't know. Ignored.
-    #[serde(other)]
-    Unknown,
-}
-
 /// A control line that can't be written or read.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LineError {
@@ -464,12 +452,6 @@ mod tests {
         assert!(
             AgentMessage::from_line(b"{\"type\":\"entrypoint_exited\",\"status\":256}").is_err()
         );
-    }
-
-    #[test]
-    fn host_messages_of_any_type_are_ignored_for_now() {
-        let msg: HostMessage = serde_json::from_slice(b"{\"type\":\"drop_caches\"}").unwrap();
-        assert_eq!(msg, HostMessage::Unknown);
     }
 
     proptest! {

@@ -3413,7 +3413,7 @@ async fn vm_host_ports_are_listed_forwarded_and_pinned_across_a_restart() {
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repo_url": REPO, "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);

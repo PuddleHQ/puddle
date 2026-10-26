@@ -4,6 +4,7 @@
 use std::io;
 use std::pin::pin;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use bytes::Bytes;
 use http_body_util::BodyExt as _;
@@ -80,6 +81,9 @@ pub(crate) struct Outcome {
     pub(crate) connect: Option<ConnectionOutcome>,
     /// The guest asked for a name other than the `CONNECT` host in its TLS handshake.
     pub(crate) sni_mismatch: bool,
+    /// Puddle could not make the certificate for the host (its CA failed to issue the leaf), so
+    /// the guest's handshake failed through no fault of the client.
+    pub(crate) certificate_unavailable: bool,
     /// The guest's client refused the certificate (it does not trust the workspace's CA).
     pub(crate) certificate_refused: bool,
     /// The code of the first refusal the credential rules gave a request (`x-puddle-blocked`).
@@ -183,7 +187,7 @@ where
         .inspect_err(
             |err| tracing::error!(error = %err, "could not build the guest TLS configuration"),
         );
-    let Ok((server_config, _)) = built else {
+    let Ok((server_config, gate)) = built else {
         return outcome; // the CA cannot sign for a name it was checked to permit
     };
     let tls = match tokio::time::timeout(
@@ -194,7 +198,10 @@ where
     {
         Ok(Ok(tls)) => tls,
         Ok(Err(err)) => {
-            if let Some(alert) = super::handshake::rejected_certificate(&err) {
+            if gate.leaf_failed.load(Ordering::Relaxed) {
+                outcome.certificate_unavailable = true;
+                tracing::warn!(workspace = %cx.workspace, host = %cx.target.host, error = %err, "the guest's TLS handshake failed because Puddle could not make a certificate for the host");
+            } else if let Some(alert) = super::handshake::rejected_certificate(&err) {
                 outcome.certificate_refused = true;
                 tracing::info!(workspace = %cx.workspace, host = %cx.target.host, alert, "the client in the workspace did not accept Puddle's certificate for this host");
             } else {

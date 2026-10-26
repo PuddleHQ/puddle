@@ -301,8 +301,11 @@ async fn refused_pulls_are_recorded_and_unauthorised_ones_are_not() {
     let auth = format!("Basic {good}");
     let (head, _) = send(own, &connect("169.254.169.254:80", Some(&auth))).await;
     assert!(head.starts_with("HTTP/1.1 403 "), "{head}");
-    let (head, _) = send(own, &connect("registry.test:443", Some(&auth))).await;
+    let (head, mut stream) = send(own, &connect("registry.test:443", Some(&auth))).await;
     assert!(head.starts_with("HTTP/1.1 502 "), "{head}");
+    let mut body = String::new();
+    stream.read_to_string(&mut body).await.unwrap();
+    assert!(body.contains("no such name"), "{body}");
     let events = log.wait_for(2, Duration::from_secs(5)).await;
     assert_eq!(events.len(), 2, "{events:?}");
     assert!(events.iter().all(|e| e.origin == ConnectionOrigin::Puddle));
@@ -340,6 +343,42 @@ impl Resolver for Stuck {
     ) -> BoxFuture<'a, std::io::Result<Vec<std::net::SocketAddr>>> {
         Box::pin(std::future::pending())
     }
+}
+
+/// A resolver whose lookups fail without saying anything about the name.
+struct Broken;
+
+impl Resolver for Broken {
+    fn resolve<'a>(
+        &'a self,
+        _name: &'a DomainName,
+        _port: u16,
+    ) -> BoxFuture<'a, std::io::Result<Vec<std::net::SocketAddr>>> {
+        Box::pin(async { Err(std::io::Error::other("no resolver answered")) })
+    }
+}
+
+#[tokio::test]
+async fn a_pull_says_when_the_lookup_failed_rather_than_the_name_not_existing() {
+    let endpoints = PuddleEndpoints::new();
+    let proxy = PullProxy::bind(&endpoints)
+        .unwrap()
+        .with_resolver(Arc::new(Broken));
+    let auth = format!(
+        "Basic {}",
+        BASE64.encode(format!("puddle:{}", proxy.token().expose()))
+    );
+    let route = proxy.serve().unwrap();
+    let (head, mut stream) = send(
+        route.local_addr(),
+        &connect("registry.test:443", Some(&auth)),
+    )
+    .await;
+    assert!(head.starts_with("HTTP/1.1 502 "), "{head}");
+    let mut body = String::new();
+    stream.read_to_string(&mut body).await.unwrap();
+    assert!(body.contains("lookup for registry.test failed"), "{body}");
+    assert!(!body.contains("no such name"), "{body}");
 }
 
 #[tokio::test]

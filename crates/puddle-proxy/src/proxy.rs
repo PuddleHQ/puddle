@@ -739,6 +739,9 @@ async fn relay(
         if done.sni_mismatch {
             event.decision = ConnectionDecision::Blocked;
             event.reason = ConnectionReason::SniMismatch;
+        } else if done.certificate_unavailable {
+            // Puddle's own failure, not the client's: the rule's decision stands.
+            event.reason = ConnectionReason::CertificateUnavailable;
         } else if done.certificate_refused {
             // Puddle blocked nothing: the rule's decision stands and the tool refused.
             event.reason = ConnectionReason::GuestTlsRejected;
@@ -928,7 +931,7 @@ async fn admit_into(
                 }
                 Ok(Err(err)) => {
                     tracing::info!(%host, error = %err, "resolve failed");
-                    return unresolved(proxy, host, Unresolved::Failed);
+                    return unresolved(proxy, host, Unresolved::from_error(&err));
                 }
                 Ok(Ok(addrs)) => addrs,
             }
@@ -998,37 +1001,64 @@ async fn admit_into(
     Ok(Admitted::checked(usable, name_ok))
 }
 
-/// A name this host could not resolve, when the company proxy may resolve it instead: no address
-/// exists to guard, so the rules' decision on the name is all that applies (the audit shows no
-/// `resolved_ip`).
 /// How resolving a name here came to nothing.
 #[derive(Debug, Clone, Copy)]
-enum Unresolved {
+pub(crate) enum Unresolved {
     TimedOut,
+    /// The resolver answered that the name does not exist ([`io::ErrorKind::NotFound`]).
+    NoSuchName,
+    /// The lookup itself failed (no resolver answered, the network is down): the name may exist.
     Failed,
     NoAddresses,
 }
 
+impl Unresolved {
+    /// What an error from [`Resolver::resolve`] means, by the `NotFound` contract.
+    pub(crate) fn from_error(err: &io::Error) -> Self {
+        if err.kind() == io::ErrorKind::NotFound {
+            Self::NoSuchName
+        } else {
+            Self::Failed
+        }
+    }
+
+    /// The reason for the log and the response the guest gets: a `504` for a timeout and a `502`
+    /// for anything else, each saying which.
+    pub(crate) fn refusal(self, host: &Host) -> (&'static str, Refusal) {
+        let (why, status, message, outcome) = match self {
+            Self::TimedOut => (
+                "timed out",
+                "504 Gateway Timeout",
+                format!("resolving {host} timed out"),
+                ConnectionOutcome::Timeout,
+            ),
+            Self::NoSuchName => (
+                "no such name",
+                "502 Bad Gateway",
+                format!("no such name: {host} does not exist"),
+                ConnectionOutcome::ConnectFailed,
+            ),
+            Self::Failed => (
+                "failed",
+                "502 Bad Gateway",
+                format!("the lookup for {host} failed, so it is not known whether the name exists"),
+                ConnectionOutcome::ConnectFailed,
+            ),
+            Self::NoAddresses => (
+                "returned no addresses",
+                "502 Bad Gateway",
+                format!("{host} has no addresses"),
+                ConnectionOutcome::ConnectFailed,
+            ),
+        };
+        (why, Refusal::new(status, message).failed(outcome))
+    }
+}
+
 /// A name this host could not resolve: the company proxy resolves it when that is on, else the
-/// guest gets a `504` for a timeout and a `502` for anything else, and the audit says which.
+/// guest gets the refusal and the audit says which.
 fn unresolved(proxy: &Proxy, host: &Host, how: Unresolved) -> Result<Admitted, Refusal> {
-    let (why, refusal) = match how {
-        Unresolved::TimedOut => (
-            "timed out",
-            Refusal::new("504 Gateway Timeout", format!("resolving {host} timed out"))
-                .failed(ConnectionOutcome::Timeout),
-        ),
-        Unresolved::Failed => (
-            "failed",
-            Refusal::new("502 Bad Gateway", format!("could not resolve {host}"))
-                .failed(ConnectionOutcome::ConnectFailed),
-        ),
-        Unresolved::NoAddresses => (
-            "returned no addresses",
-            Refusal::new("502 Bad Gateway", format!("{host} has no addresses"))
-                .failed(ConnectionOutcome::ConnectFailed),
-        ),
-    };
+    let (why, refusal) = how.refusal(host);
     left_to_upstream(proxy, host, why).ok_or(refusal)
 }
 

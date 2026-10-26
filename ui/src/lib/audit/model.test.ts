@@ -234,6 +234,19 @@ describe("a record as a row", () => {
       "the tool in the workspace didn't accept Puddle's certificate (it may keep its own list of trusted roots)",
     );
   });
+  it("says when Puddle could not make its certificate, beside the rule that allowed it", () => {
+    const failed = row(
+      connection(1, {
+        decision: "allow",
+        reason: "certificate_unavailable",
+        rule_id: 12,
+      }).record,
+    );
+    expect(failed.outcome).toEqual({ label: "Allowed", tone: "allow" });
+    expect(failed.detail).toBe(
+      "rule 12 · Puddle could not make its certificate for this host, so the connection failed on Puddle's side",
+    );
+  });
   it("says when an allowed connection could not reach its destination", () => {
     const refused = row(
       connection(1, { outcome: "upstream_refused", method: null }).record,

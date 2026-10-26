@@ -58,7 +58,9 @@ use tracing::Instrument;
 use crate::counted::Counted;
 use crate::destination::{Resolver, SystemResolver};
 use crate::http::{self, Head};
-use crate::proxy::{ProxyConfig, Refusal, forward, parse_request, read_request, refuse, tunnel};
+use crate::proxy::{
+    ProxyConfig, Refusal, Unresolved, forward, parse_request, read_request, refuse, tunnel,
+};
 use crate::target::Target;
 use crate::upstream::{Admitted, Upstream, connect_out};
 
@@ -590,17 +592,13 @@ async fn admit(
             .await
             {
                 Err(_) => {
-                    return left_to_upstream(shared, host, "timed out").ok_or_else(|| {
-                        Refusal::new("504 Gateway Timeout", format!("resolving {host} timed out"))
-                            .failed(ConnectionOutcome::Timeout)
-                    });
+                    let (why, refusal) = Unresolved::TimedOut.refusal(host);
+                    return left_to_upstream(shared, host, why).ok_or(refusal);
                 }
                 Ok(Err(err)) => {
                     tracing::info!(%host, error = %err, "image-pull resolve failed");
-                    return left_to_upstream(shared, host, "failed").ok_or_else(|| {
-                        Refusal::new("502 Bad Gateway", format!("could not resolve {host}"))
-                            .failed(ConnectionOutcome::ConnectFailed)
-                    });
+                    let (why, refusal) = Unresolved::from_error(&err).refusal(host);
+                    return left_to_upstream(shared, host, why).ok_or(refusal);
                 }
                 Ok(Ok(addrs)) => addrs,
             }

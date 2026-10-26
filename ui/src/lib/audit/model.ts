@@ -229,6 +229,8 @@ const OUTCOME_NOTES: Record<string, string> = {
 const NOTES: Record<string, string> = {
   guest_tls_rejected:
     "the tool in the workspace didn't accept Puddle's certificate (it may keep its own list of trusted roots)",
+  certificate_unavailable:
+    "Puddle could not make its certificate for this host, so the connection failed on Puddle's side",
 };
 
 const DECISIONS: Record<string, { label: string; tone: Tone }> = {

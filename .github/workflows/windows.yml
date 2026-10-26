@@ -128,7 +128,7 @@ jobs:
         with:
           tool: cargo-nextest@0.9.146
       # The corporate-lab fixtures (crates/puddle-e2e/src/lab) run mitmproxy as the NTLM proxy and the
-      # TLS interceptor; pinned with hashes in ci/lab/requirements.txt (Dependabot's pip entry bumps it).
+      # TLS interceptor; pinned with hashes in ci/lab/requirements.txt (Dependabot's uv entry bumps it).
       - name: mitmproxy for the corporate-lab fixtures
         if: steps.changed.outputs.run == 'true'
         shell: bash

@@ -193,15 +193,26 @@ impl Cargo {
         run(&mut cmd)
     }
 
-    /// cargo-about's JSON report for the tree at `manifest`, with the config at `config`.
+    /// cargo-about's JSON report for the tree at `manifest` on `targets`, with the config at
+    /// `config`. The targets go on the command line (they override the config's `targets`), so
+    /// the report covers the same platforms as [`Cargo::shipped`] and the config cannot drift.
     ///
     /// # Errors
     ///
     /// [`XtaskError::Tool`] (cargo-about missing: `cargo install cargo-about --locked --features cli`).
-    pub fn about(&self, manifest: &Path, config: &Path, features: &Features) -> Result<String> {
+    pub fn about(
+        &self,
+        manifest: &Path,
+        config: &Path,
+        features: &Features,
+        targets: &[&str],
+    ) -> Result<String> {
         let mut cmd = self.command();
         cmd.args(["about", "generate", "--format", "json", "--config"])
             .arg(config);
+        for target in targets {
+            cmd.args(["--target", target]);
+        }
         self.common(&mut cmd, manifest, features);
         run(&mut cmd)
     }
@@ -221,7 +232,11 @@ impl Cargo {
         workspace: bool,
     ) -> Result<Inventory> {
         let required = self.shipped(manifest, features, targets, workspace)?;
-        Inventory::new(tree, &self.about(manifest, config, features)?, required)
+        Inventory::new(
+            tree,
+            &self.about(manifest, config, features, targets)?,
+            required,
+        )
     }
 }
 
@@ -286,6 +301,28 @@ mod tests {
         assert!(
             shipped.iter().all(|p| !p.name.starts_with("puddle")),
             "own crates are local"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn about_passes_every_target_to_cargo_about() {
+        // `echo` stands in for cargo: it prints the arguments `about` would have run cargo with.
+        let cargo = Cargo {
+            program: "echo".into(),
+            offline: false,
+        };
+        let args = cargo
+            .about(
+                Path::new("m/Cargo.toml"),
+                Path::new("c.toml"),
+                &Features::All,
+                &["a-linux", "b-windows"],
+            )
+            .unwrap();
+        assert!(
+            args.contains("--target a-linux --target b-windows"),
+            "{args}"
         );
     }
 

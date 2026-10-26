@@ -1838,10 +1838,10 @@ impl From<&settings::UiPrefs> for UiPrefs {
             theme: u.theme.map(Into::into),
             density: u.density.map(Into::into),
             palette: u.palette.map(Into::into),
-            custom_accent: colour_text(&u.custom_accent),
-            custom_background: colour_text(&u.custom_background),
-            custom_surface: colour_text(&u.custom_surface),
-            custom_text: colour_text(&u.custom_text),
+            custom_accent: colour_text(u.custom_accent.as_ref()),
+            custom_background: colour_text(u.custom_background.as_ref()),
+            custom_surface: colour_text(u.custom_surface.as_ref()),
+            custom_text: colour_text(u.custom_text.as_ref()),
             notifications: u.notifications,
             sound: u.sound,
             close_behaviour: u.close_behaviour.map(Into::into),
@@ -1856,8 +1856,8 @@ impl From<&settings::UiPrefs> for UiPrefs {
     }
 }
 
-fn colour_text(colour: &Option<settings::HexColour>) -> Option<String> {
-    colour.as_ref().map(|c| c.as_str().to_owned())
+fn colour_text(colour: Option<&settings::HexColour>) -> Option<String> {
+    colour.map(|c| c.as_str().to_owned())
 }
 
 fn parse_colour(text: Option<String>) -> Result<Option<settings::HexColour>, ApiError> {
@@ -2478,8 +2478,11 @@ mod tests {
         assert_eq!(g.ui.theme(), settings::ThemeChoice::Dark);
         assert_eq!(g.ui.density(), settings::DensityChoice::Compact);
         assert_eq!(g.ui.palette(), settings::PaletteChoice::Custom);
-        assert_eq!(colour_text(&g.ui.custom_accent).as_deref(), Some("#0a6a85"));
-        assert_eq!(colour_text(&g.ui.custom_background), None);
+        assert_eq!(
+            colour_text(g.ui.custom_accent.as_ref()).as_deref(),
+            Some("#0a6a85")
+        );
+        assert_eq!(colour_text(g.ui.custom_background.as_ref()), None);
         assert!(!g.ui.notifications());
         assert!(g.ui.sound());
         assert_eq!(g.ui.close_behaviour(), settings::CloseBehaviour::Quit);

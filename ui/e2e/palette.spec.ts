@@ -96,11 +96,11 @@ test.describe("the palette setting", () => {
     await page.getByLabel("Colours", { exact: true }).selectOption("custom");
     await expect(page.getByText(/hard to read/)).toBeHidden();
 
-    await page.getByLabel("Accent colour").fill("#7a1fa2");
+    await page.locator("#set-colour-accent").fill("#7a1fa2");
     await expect.poll(() => accent(page)).toContain("#7a1fa2");
     await expect(page.getByText(/hard to read/)).toBeHidden();
 
-    await page.getByLabel("Text", { exact: true }).fill("#cccccc");
+    await page.locator("#set-colour-text").fill("#cccccc");
     const warning = page
       .getByRole("status")
       .filter({ hasText: /hard to read/ });
@@ -125,7 +125,7 @@ test.describe("the palette setting", () => {
 
     await page.evaluate(() => localStorage.clear());
     await page.goto("/settings");
-    await expect(page.getByLabel("Accent colour")).toHaveValue("#7a1fa2");
+    await expect(page.locator("#set-colour-accent")).toHaveValue("#7a1fa2");
     expect(await accent(page)).toContain("#7a1fa2");
     expect(await csp()).toEqual([]);
   });
@@ -144,10 +144,10 @@ test.describe("the palette setting", () => {
           const ground = theme === "light" ? "#f5f2ea" : "#14110c";
           const ink = theme === "light" ? "#1c1710" : "#f1ebdd";
           const tint = theme === "light" ? "#7a3d00" : "#ffb866";
-          await page.getByLabel("Background").fill(ground);
-          await page.getByLabel("Cards and panels").fill(ground);
-          await page.getByLabel("Text", { exact: true }).fill(ink);
-          await page.getByLabel("Accent colour").fill(tint);
+          await page.locator("#set-colour-background").fill(ground);
+          await page.locator("#set-colour-surface").fill(ground);
+          await page.locator("#set-colour-text").fill(ink);
+          await page.locator("#set-colour-accent").fill(tint);
           await expect(page.getByText(/hard to read/)).toBeHidden();
         }
         await expect(page.locator("html")).toHaveAttribute("data-theme", theme);

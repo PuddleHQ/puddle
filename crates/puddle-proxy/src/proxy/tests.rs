@@ -477,6 +477,17 @@ async fn the_audit_event_follows_each_admit_path() {
     );
 }
 
+struct Broken;
+impl Resolver for Broken {
+    fn resolve<'a>(
+        &'a self,
+        _: &'a puddle_types::DomainName,
+        _: u16,
+    ) -> crate::BoxFuture<'a, io::Result<Vec<SocketAddr>>> {
+        Box::pin(async { Err(io::Error::other("no resolver answered")) })
+    }
+}
+
 #[tokio::test]
 async fn resolve_failures_are_502_and_504() {
     struct Never;
@@ -496,10 +507,24 @@ async fn resolve_failures_are_502_and_504() {
     let p = proxy(policy, StaticResolver::new().with("empty.example", &[]));
     let refusal = admit(&p, &request("gone.example")).await.unwrap_err();
     assert_eq!(refusal.status, "502 Bad Gateway");
-    assert!(refusal.message.contains("could not resolve"));
+    assert!(refusal.message.contains("no such name"), "{refusal:?}");
     let refusal = admit(&p, &request("empty.example")).await.unwrap_err();
     assert_eq!(refusal.status, "502 Bad Gateway");
     assert!(refusal.message.contains("no addresses"));
+    // A lookup that failed says nothing about the name, and the answer must not say it is missing.
+    let p = Proxy::new(
+        {
+            let policy = Arc::new(StaticPolicy::new());
+            policy.allow(&host("flaky.example"));
+            policy
+        },
+        Arc::new(NullSink),
+    )
+    .with_resolver(Arc::new(Broken));
+    let refusal = admit(&p, &request("flaky.example")).await.unwrap_err();
+    assert_eq!(refusal.status, "502 Bad Gateway");
+    assert!(refusal.message.contains("lookup for flaky.example failed"));
+    assert!(!refusal.message.contains("no such name"));
 
     let policy = Arc::new(StaticPolicy::new());
     policy.allow(&host("slow.example"));

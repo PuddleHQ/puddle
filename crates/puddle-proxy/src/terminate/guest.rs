@@ -134,37 +134,47 @@ fn provider() -> Arc<CryptoProvider> {
 struct SniGate {
     ca: Arc<WorkspaceCa>,
     host: String,
-    mismatch: Arc<AtomicBool>,
+    flags: Arc<GateFlags>,
+}
+
+/// What the gate saw go wrong on one connection.
+#[derive(Debug, Default)]
+pub(crate) struct GateFlags {
+    /// The client asked for another name, or none.
+    pub(crate) mismatch: AtomicBool,
+    /// The client asked for the right name and the CA could not make a certificate for it.
+    pub(crate) leaf_failed: AtomicBool,
 }
 
 impl ResolvesServerCert for SniGate {
     fn resolve(&self, hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
         if !name_is(hello.server_name(), &self.host) {
-            self.mismatch.store(true, Ordering::Relaxed);
+            self.flags.mismatch.store(true, Ordering::Relaxed);
             return None;
         }
         match self.ca.leaf(&self.host) {
             Ok(leaf) => Some(leaf),
             Err(err) => {
                 tracing::warn!(host = %self.host, error = %err, "no certificate for a bound host");
+                self.flags.leaf_failed.store(true, Ordering::Relaxed);
                 None
             }
         }
     }
 }
 
-/// The server configuration for one connection to `host`, offering `alpn`, and the flag that
-/// says the client asked for another name.
+/// The server configuration for one connection to `host`, offering `alpn`, and the flags that say
+/// what the gate refused.
 pub(crate) fn server_config(
     ca: &Arc<WorkspaceCa>,
     host: &Host,
     alpn: &[&[u8]],
-) -> Result<(Arc<ServerConfig>, Arc<AtomicBool>), rustls::Error> {
-    let mismatch = Arc::new(AtomicBool::new(false));
+) -> Result<(Arc<ServerConfig>, Arc<GateFlags>), rustls::Error> {
+    let flags = Arc::new(GateFlags::default());
     let gate = SniGate {
         ca: Arc::clone(ca),
         host: host.to_string(),
-        mismatch: Arc::clone(&mismatch),
+        flags: Arc::clone(&flags),
     };
     let mut config = ServerConfig::builder_with_provider(provider())
         .with_safe_default_protocol_versions()?
@@ -174,7 +184,7 @@ pub(crate) fn server_config(
     // One connection per config: nothing to resume, and no tickets that outlive it.
     config.send_tls13_tickets = 0;
     config.session_storage = Arc::new(rustls::server::NoServerSessionStorage {});
-    Ok((Arc::new(config), mismatch))
+    Ok((Arc::new(config), flags))
 }
 
 /// A stream that first yields bytes already read from it, then reads on.

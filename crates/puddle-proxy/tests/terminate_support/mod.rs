@@ -703,6 +703,19 @@ impl Rig {
         );
     }
 
+    /// Makes `box` decrypt with `ca` from the next connection on (the guest keeps trusting
+    /// `self.ca`).
+    pub(crate) fn use_ca(&self, ca: Arc<WorkspaceCa>) {
+        self.terminations.insert(
+            workspace("box"),
+            Termination::new(
+                TerminationSet::parse(["bound.test"]).unwrap(),
+                ca,
+                Arc::clone(&self.injector),
+            ),
+        );
+    }
+
     pub(crate) async fn guest(&self) -> Guest {
         Guest::connect(&self.route, Arc::clone(&self.ca)).await
     }

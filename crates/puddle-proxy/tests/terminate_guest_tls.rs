@@ -87,6 +87,42 @@ async fn an_http2_client_that_does_not_trust_the_workspace_ca_is_recorded_the_sa
 }
 
 #[tokio::test]
+async fn a_certificate_puddle_could_not_make_is_recorded_as_its_own_failure_not_the_clients() {
+    let pki = Pki::new();
+    let server = upstream(&pki).await;
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .build();
+    // A CA that has already expired cannot issue the leaf.
+    let expired = Arc::new(
+        puddle_ca::CaBuilder::new("Puddle test CA (expired)")
+            .ca_validity(std::time::Duration::from_millis(20))
+            .leaf_validity(std::time::Duration::from_millis(10))
+            .backdate(std::time::Duration::ZERO)
+            .build()
+            .unwrap(),
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+    rig.use_ca(expired);
+    let guest = rig.guest().await;
+    let (port, _bridge) = guest.bridge("bound.test:443").await;
+    let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let config = Guest::client_config(std::slice::from_ref(&pki.root), &[]);
+    let failed = tokio_rustls::TlsConnector::from(Arc::new(config))
+        .connect(ServerName::try_from("bound.test").unwrap(), tcp)
+        .await;
+    assert!(failed.is_err(), "no certificate was served");
+
+    let events = rig.events(1).await;
+    assert_eq!(events[0].reason.to_string(), "certificate_unavailable");
+    // The rule allowed it and Puddle refused nothing on purpose.
+    assert_eq!(events[0].decision, ConnectionDecision::Allow);
+    assert!(server.recorded().is_empty());
+}
+
+#[tokio::test]
 async fn a_client_that_goes_away_before_the_handshake_is_not_a_refused_certificate() {
     let pki = Pki::new();
     let server = upstream(&pki).await;

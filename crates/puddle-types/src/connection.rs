@@ -103,7 +103,7 @@ impl fmt::Display for ConnectionOutcome {
 
 /// Why the proxy decided as it did (R-24). Serialised as a string: `rule`, `no_rule`, a
 /// [`BlockReason::code`] (`toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`,
-/// `local_address`, `settings_unreadable`), `policy_unavailable`, `puddle_request`, `sni_mismatch`, `guest_tls_rejected`,
+/// `local_address`, `settings_unreadable`), `policy_unavailable`, `puddle_request`, `sni_mismatch`, `guest_tls_rejected`, `certificate_unavailable`,
 /// `connection_limit`, `suppressed`, `merged`, `limit:<code>` (a limit ended the connection or cut a stream of it), `puddle_request_failed:<code>` or, for a request the credential rules refused on a decrypted connection, the
 /// refusal's code (`push_denied`, `pull_denied`, `credential_unavailable`, ...).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,6 +125,10 @@ pub enum ConnectionReason {
     /// A terminated TLS connection's client refused Puddle's certificate for the host (it does not
     /// trust the workspace's CA). Nothing is blocked: the decision of the rule stands.
     GuestTlsRejected,
+    /// A terminated TLS connection's handshake failed because Puddle could not make the
+    /// certificate for the host (its CA failed to issue it): Puddle's own failure, not the
+    /// client's. Nothing is blocked on purpose: the decision of the rule stands.
+    CertificateUnavailable,
     /// The workspace already had its limit of open connections, so this one was refused with a
     /// `503` before the rules were asked.
     ConnectionLimit,
@@ -160,6 +164,7 @@ impl fmt::Display for ConnectionReason {
             Self::SniMismatch => f.write_str("sni_mismatch"),
             Self::ConnectionLimit => f.write_str("connection_limit"),
             Self::GuestTlsRejected => f.write_str("guest_tls_rejected"),
+            Self::CertificateUnavailable => f.write_str("certificate_unavailable"),
             Self::Suppressed => f.write_str("suppressed"),
             Self::Merged => f.write_str("merged"),
             Self::LimitEnded(code) => write!(f, "limit:{code}"),
@@ -473,6 +478,10 @@ mod tests {
             (ConnectionReason::SniMismatch, "sni_mismatch"),
             (ConnectionReason::ConnectionLimit, "connection_limit"),
             (ConnectionReason::GuestTlsRejected, "guest_tls_rejected"),
+            (
+                ConnectionReason::CertificateUnavailable,
+                "certificate_unavailable",
+            ),
             (ConnectionReason::Suppressed, "suppressed"),
             (ConnectionReason::Merged, "merged"),
             (ConnectionReason::Refused("push_denied"), "push_denied"),

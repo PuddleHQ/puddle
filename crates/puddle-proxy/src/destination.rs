@@ -13,6 +13,8 @@ use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
 
+use dns_lookup::{AddrInfoHints, LookupError, LookupErrorKind, SockType};
+
 pub use puddle_netpolicy::AddressVerdict;
 use puddle_netpolicy::{NetPolicy, Target};
 use puddle_types::{BlockReason, DomainName, Host, WorkspaceName};
@@ -85,109 +87,87 @@ impl Resolver for SystemResolver {
         port: u16,
     ) -> BoxFuture<'a, io::Result<Vec<SocketAddr>>> {
         Box::pin(async move {
-            let addrs = tokio::net::lookup_host((name.as_str(), port))
+            let host = name.as_str().to_owned();
+            tokio::task::spawn_blocking(move || lookup(&host, port))
                 .await
-                .map_err(name_error)?;
-            Ok(addrs.collect())
+                .map_err(io::Error::other)?
         })
     }
 }
 
-/// `err` from `getaddrinfo`, with "the name does not exist" told apart from "the lookup failed":
-/// the first becomes [`io::ErrorKind::NotFound`] (the original text kept), the second is passed
-/// on. Windows gives the Winsock code. Unix gives only the text of `gai_strerror`, in the
-/// process's language, so there a failure is recognised by the English texts that say so, and
-/// anything else stays "no such name", as every error was before; a system in another language
-/// therefore never has a name that exists refused, and at worst keeps the old answer.
-fn name_error(err: io::Error) -> io::Error {
-    if lookup_failed(&err) {
-        err
+/// One blocking `getaddrinfo` for stream sockets, like `std`'s own lookup but with the error
+/// code kept.
+fn lookup(host: &str, port: u16) -> io::Result<Vec<SocketAddr>> {
+    let hints = AddrInfoHints {
+        socktype: SockType::Stream.into(),
+        ..AddrInfoHints::default()
+    };
+    let infos = dns_lookup::getaddrinfo(Some(host), None, Some(hints)).map_err(name_error)?;
+    let mut addrs = Vec::new();
+    for info in infos {
+        let mut addr = info?.sockaddr;
+        addr.set_port(port);
+        addrs.push(addr);
+    }
+    Ok(addrs)
+}
+
+/// `err` from `getaddrinfo`, with "the name does not exist" told apart from "the lookup failed"
+/// by the error code, which is the same on every system: the first becomes
+/// [`io::ErrorKind::NotFound`] (the original text kept), the second is passed on. A code that is
+/// not known to mean "no such name" counts as a failure, so a name that exists is never reported
+/// as missing.
+fn name_error(err: LookupError) -> io::Error {
+    if names_nothing(err.kind()) {
+        io::Error::new(io::ErrorKind::NotFound, io::Error::from(err))
     } else {
-        tracing::debug!(error = %err, "name lookup error read as no such name");
-        io::Error::new(io::ErrorKind::NotFound, err)
+        io::Error::from(err)
     }
 }
 
-/// Whether `err` says the lookup itself failed (no resolver answered, the network is down)
-/// rather than that the name does not exist.
-fn lookup_failed(err: &io::Error) -> bool {
-    /// `WSAHOST_NOT_FOUND` and `WSANO_DATA`: the Winsock resolver's own "no such name" answers.
-    /// Any other Winsock code (`WSATRY_AGAIN`, `WSANO_RECOVERY`, a network error), and the errno of
-    /// `EAI_SYSTEM` on Unix, is a failure.
-    const WINSOCK_NO_SUCH_NAME: [i32; 2] = [11001, 11004];
-    /// What `gai_strerror` says for `EAI_AGAIN` and `EAI_FAIL` in glibc, musl and the BSDs
-    /// (lower case).
-    const FAILURE_TEXTS: [&str; 4] = [
-        "temporary failure in name resolution",
-        "non-recoverable failure in name resolution",
-        "try again",
-        "system error",
-    ];
-    if let Some(code) = err.raw_os_error() {
-        return !WINSOCK_NO_SUCH_NAME.contains(&code);
-    }
-    if matches!(
-        err.kind(),
-        io::ErrorKind::TimedOut
-            | io::ErrorKind::ConnectionRefused
-            | io::ErrorKind::ConnectionReset
-            | io::ErrorKind::ConnectionAborted
-            | io::ErrorKind::NotConnected
-            | io::ErrorKind::HostUnreachable
-            | io::ErrorKind::NetworkUnreachable
-            | io::ErrorKind::NetworkDown
-    ) {
-        return true;
-    }
-    let text = err.to_string().to_ascii_lowercase();
-    FAILURE_TEXTS.iter().any(|known| text.contains(known))
+/// Whether `kind` says the resolver answered that the name has no address (`EAI_NONAME`,
+/// `EAI_NODATA`; `WSAHOST_NOT_FOUND`, `WSANO_DATA` on Windows) rather than that it could not
+/// answer (`EAI_AGAIN`, `EAI_FAIL`, `EAI_SYSTEM`, memory, an unknown code).
+const fn names_nothing(kind: LookupErrorKind) -> bool {
+    matches!(kind, LookupErrorKind::NoName | LookupErrorKind::NoData)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    use windows_sys::Win32::Networking::WinSock::{
+        WSA_NOT_ENOUGH_MEMORY, WSAENETDOWN, WSAHOST_NOT_FOUND, WSANO_DATA, WSANO_RECOVERY,
+        WSATRY_AGAIN,
+    };
 
     #[test]
     fn a_name_that_does_not_exist_is_told_apart_from_a_lookup_that_failed() {
-        let gai =
-            |text: &str| io::Error::other(format!("failed to lookup address information: {text}"));
-        for missing in [
-            gai("Name or service not known"),
-            gai("No address associated with hostname"),
-            gai("nodename nor servname provided, or not known"),
-            // A system in another language: the text is not recognised, which keeps the answer
-            // every error used to get.
-            gai("Naam of service onbekend"),
-            io::Error::from_raw_os_error(11001),
-            io::Error::from_raw_os_error(11004),
-        ] {
-            let shown = missing.to_string();
-            assert_eq!(
-                name_error(missing).kind(),
-                io::ErrorKind::NotFound,
-                "{shown}"
-            );
+        #[cfg(unix)]
+        let codes = [
+            ("EAI_NONAME", libc::EAI_NONAME, true),
+            ("EAI_NODATA", libc::EAI_NODATA, true),
+            ("EAI_AGAIN", libc::EAI_AGAIN, false),
+            ("EAI_FAIL", libc::EAI_FAIL, false),
+            ("EAI_MEMORY", libc::EAI_MEMORY, false),
+            ("EAI_SYSTEM", libc::EAI_SYSTEM, false),
+            ("an unknown code", -9999, false),
+        ];
+        #[cfg(windows)]
+        let codes = [
+            ("WSAHOST_NOT_FOUND", WSAHOST_NOT_FOUND, true),
+            ("WSANO_DATA", WSANO_DATA, true),
+            ("WSATRY_AGAIN", WSATRY_AGAIN, false),
+            ("WSANO_RECOVERY", WSANO_RECOVERY, false),
+            ("WSA_NOT_ENOUGH_MEMORY", WSA_NOT_ENOUGH_MEMORY, false),
+            ("WSAENETDOWN", WSAENETDOWN, false),
+        ];
+        for (label, code, missing) in codes {
+            let err = name_error(LookupError::new(code));
+            assert_eq!(err.kind() == io::ErrorKind::NotFound, missing, "{label}");
+            // The system's own text stays, whichever way it was classified.
+            assert!(!err.to_string().is_empty(), "{label}");
         }
-        for failed in [
-            gai("Temporary failure in name resolution"),
-            gai("Non-recoverable failure in name resolution"),
-            gai("Try again"),
-            // `EAI_SYSTEM` on Unix, `WSATRY_AGAIN` and `WSAENETDOWN` on Windows.
-            io::Error::from_raw_os_error(111),
-            io::Error::from_raw_os_error(11002),
-            io::Error::from_raw_os_error(10050),
-            io::Error::from(io::ErrorKind::TimedOut),
-            io::Error::from(io::ErrorKind::NetworkUnreachable),
-        ] {
-            let shown = failed.to_string();
-            assert_ne!(
-                name_error(failed).kind(),
-                io::ErrorKind::NotFound,
-                "{shown}"
-            );
-        }
-        let kept = name_error(gai("Name or service not known")).to_string();
-        assert!(kept.contains("Name or service not known"), "{kept}");
     }
 
     #[tokio::test]

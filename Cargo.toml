@@ -100,6 +100,8 @@ memchr = "2.8"
 # The per-user data folder per OS; no own per-OS code for it.
 dirs = "7"
 windows-sys = "0.61"
+# `getaddrinfo` with its error code kept (the proxy tells "no such name" from "lookup failed" by it); std and tokio keep only text.
+dns-lookup = "4.0.2"
 # Per-sandbox CA and leaf certificates. ring, not aws-lc-rs: aws-lc-sys carries the
 # OpenSSL licence, which deny.toml does not allow; ring is Apache-2.0 AND ISC.
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }

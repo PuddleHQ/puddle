@@ -228,6 +228,19 @@ impl Api {
         raw(self.addr, head.as_bytes()).await
     }
 
+    /// A request whose body is `file` as it is (a file upload), with the token.
+    pub(crate) async fn send_file(&self, method: &str, path: &str, file: &[u8]) -> Reply {
+        let head = format!(
+            "{method} {path} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nConnection: close\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
+            self.host(),
+            self.token,
+            file.len()
+        );
+        let mut request = head.into_bytes();
+        request.extend_from_slice(file);
+        raw(self.addr, &request).await
+    }
+
     pub(crate) async fn get(&self, path: &str) -> Reply {
         self.send("GET", path, None).await
     }

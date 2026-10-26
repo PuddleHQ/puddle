@@ -34,6 +34,7 @@ pub mod crash;
 pub mod desktop;
 #[cfg(feature = "fixture")]
 mod fixture;
+pub mod icon;
 pub mod links;
 pub mod navigation;
 pub mod notify;

@@ -46,6 +46,7 @@ puddle-inject = { path = "crates/puddle-inject" }
 puddle-repos = { path = "crates/puddle-repos" }
 puddle-logins = { path = "crates/puddle-logins" }
 puddle-ports = { path = "crates/puddle-ports" }
+puddle-appicon = { path = "crates/puddle-appicon" }
 
 # External
 # msb SDK from Puddle's fork, tag `v<release>-puddle.N`. The SDK and the bundled runtime
@@ -140,6 +141,10 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 # (nothing is served through Tauri's asset protocol: the SPA comes from puddle-api) and no devtools
 # feature. `tray-icon` is the tray icon and the application menu.
 tauri = { version = "2.12.1", default-features = false, features = ["wry", "x11", "tray-icon"] }
+# The user's icon image: PNG, JPEG and WebP in, a 256 pixel PNG out. No other formats, no threads.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+# Draws the built-in duck icons (anti-aliased paths); `png-format` encodes them.
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "png-format"] }
 tauri-build = { version = "2.7.1", default-features = false }
 tauri-plugin-notification = { version = "2.7.0", default-features = false }
 tauri-plugin-single-instance = "2.5.2"

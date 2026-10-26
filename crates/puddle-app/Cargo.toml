@@ -28,6 +28,7 @@ path = "src/main.rs"
 [dependencies]
 # `embedded-ui`: the SPA is part of the binary (build `ui/` first, `scripts/check.sh ui`).
 puddle-api = { workspace = true, features = ["embedded-ui"] }
+puddle-appicon = { workspace = true }
 puddle-compute = { workspace = true }
 puddle-host = { workspace = true, features = ["embedded-ui"] }
 puddle-lifecycle = { workspace = true }

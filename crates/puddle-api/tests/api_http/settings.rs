@@ -36,7 +36,7 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
         view["ui"],
         json!({"theme": null, "density": null, "palette": null, "custom_accent": null, "custom_background": null,
                "custom_surface": null, "custom_text": null, "notifications": null, "sound": null, "close_behaviour": null,
-               "minimize_to_tray": null, "notify_only_unfocused": null, "badge": null, "notify_oom": null, "notify_unexpected_stop": null,
+               "minimize_to_tray": null, "app_icon": null, "notify_only_unfocused": null, "badge": null, "notify_oom": null, "notify_unexpected_stop": null,
                "confirm_global_rules": null, "inbox_shortcuts": null})
     );
     assert_eq!(view["unknown_fields"], json!([]));
@@ -359,7 +359,7 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
     let body = json!({
         "vscode_server": {"server": "microsoft", "telemetry": false},
         "ui": {"theme": "dark", "density": "compact", "palette": "custom", "custom_accent": "#0A6A85", "custom_text": "#102030", "notifications": false, "sound": true, "close_behaviour": "quit",
-                "minimize_to_tray": true, "notify_only_unfocused": false, "badge": false, "notify_oom": false, "notify_unexpected_stop": false,
+                "minimize_to_tray": true, "app_icon": "duck_night", "notify_only_unfocused": false, "badge": false, "notify_oom": false, "notify_unexpected_stop": false,
                 "confirm_global_rules": false, "inbox_shortcuts": true}
     });
     let reply = api.send("PUT", "/api/settings", Some(&body)).await;
@@ -382,6 +382,7 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
         assert_eq!(view["ui"][key], false, "{key}");
     }
     assert_eq!(view["ui"]["inbox_shortcuts"], true);
+    assert_eq!(view["ui"]["app_icon"], "duck_night");
     let stored = api.settings.load_global().unwrap().unwrap();
     assert_eq!(stored["ui"]["theme"], "dark");
     assert_eq!(stored["vscode_server"]["server"], "microsoft");

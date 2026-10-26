@@ -14,6 +14,236 @@
     "version": "0.17.0"
   },
   "paths": {
+    "/api/app-icons": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "The built-in icons drawn to preview, and the user's own image when one was uploaded.",
+        "operationId": "list_app_icons",
+        "responses": {
+          "200": {
+            "description": "the icons to choose between",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppIcons"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the stored image cannot be read (settings_unreadable)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/app-icons/custom": {
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Gives Puddle an image of the user's own to use as the app icon. The body is the image file\n(PNG, JPEG or WebP, at most 8 MB, 32 to 8192 pixels on each side). It is checked and stored as\na 256 pixel square PNG, replacing an earlier one; one that is not square is fitted on a clear\nsquare. This does not choose it: set `ui.app_icon` to `custom` for that.",
+        "operationId": "put_custom_icon",
+        "requestBody": {
+          "description": "the image file",
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the stored icon",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomIcon"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "over 8 MB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "not a usable image; the message says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Removes the user's own image. Refused while it is the icon in use: choose another icon and\nsave first, so the window never ends up with an icon that is gone.",
+        "operationId": "delete_custom_icon",
+        "responses": {
+          "204": {
+            "description": "removed (or there was none)"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "it is the icon in use",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/audit": {
       "get": {
         "tags": [
@@ -7688,6 +7918,42 @@
           }
         }
       },
+      "AppIconChoice": {
+        "type": "string",
+        "description": "Which icon the window, the tray and the taskbar show.",
+        "enum": [
+          "duck",
+          "duck_pond",
+          "duck_night",
+          "duck_sun",
+          "custom"
+        ]
+      },
+      "AppIcons": {
+        "type": "object",
+        "description": "The icons the user can choose between.",
+        "required": [
+          "built_in",
+          "custom_png_base64"
+        ],
+        "properties": {
+          "built_in": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuiltInIcon"
+            },
+            "description": "The built-in icons, in the order to show them."
+          },
+          "custom_png_base64": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The user's own image as it will be used (a 256 pixel PNG, base64); `null` until one is\nuploaded."
+          }
+        },
+        "additionalProperties": false
+      },
       "AttachIdentityRequest": {
         "type": "object",
         "description": "Adds one identity to a workspace.",
@@ -8772,6 +9038,25 @@
           "audit_trimmed"
         ]
       },
+      "BuiltInIcon": {
+        "type": "object",
+        "description": "One built-in icon, drawn for the Settings screen to preview.",
+        "required": [
+          "choice",
+          "png_base64"
+        ],
+        "properties": {
+          "choice": {
+            "$ref": "#/components/schemas/AppIconChoice",
+            "description": "The choice that selects it."
+          },
+          "png_base64": {
+            "type": "string",
+            "description": "A 64 pixel PNG of the icon, base64 (standard alphabet, padded)."
+          }
+        },
+        "additionalProperties": false
+      },
       "CheckRequest": {
         "type": "object",
         "description": "A credential to try.",
@@ -9270,6 +9555,20 @@
           }
         ],
         "description": "Where the host reads a credential's value. A closed list; there is no command-line source."
+      },
+      "CustomIcon": {
+        "type": "object",
+        "description": "The user's own image after it was checked and resized.",
+        "required": [
+          "png_base64"
+        ],
+        "properties": {
+          "png_base64": {
+            "type": "string",
+            "description": "The stored icon: a 256 pixel PNG, base64."
+          }
+        },
+        "additionalProperties": false
       },
       "DeadProxy": {
         "type": "object",
@@ -13586,6 +13885,7 @@
           "sound",
           "close_behaviour",
           "minimize_to_tray",
+          "app_icon",
           "notify_only_unfocused",
           "badge",
           "notify_oom",
@@ -13594,6 +13894,17 @@
           "inbox_shortcuts"
         ],
         "properties": {
+          "app_icon": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AppIconChoice",
+                "description": "The icon of the window, the tray and the taskbar (default `duck`). `custom` needs an\nuploaded image."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "badge": {
             "type": [
               "boolean",

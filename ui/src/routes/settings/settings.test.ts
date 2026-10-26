@@ -25,6 +25,8 @@ import { microsoftChosenToast, MS_TERMS_VERSION } from "#lib/settings/model.ts";
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import { density } from "#lib/theme/density.svelte.ts";
+import { palette } from "#lib/theme/palette.svelte.ts";
+import { NO_CUSTOM } from "#lib/theme/palette.ts";
 import { theme } from "#lib/theme/theme.svelte.ts";
 import Page from "./+page.svelte";
 
@@ -41,6 +43,10 @@ beforeEach(() => {
   theme.choice = "system";
   delete document.documentElement.dataset["density"];
   density.choice = "comfortable";
+  delete document.documentElement.dataset["palette"];
+  document.documentElement.removeAttribute("style");
+  palette.choice = "pond";
+  palette.custom = { ...NO_CUSTOM };
 });
 afterEach(cleanup);
 
@@ -378,6 +384,100 @@ describe("appearance and notifications", () => {
     await save();
     expect(api.ui.density).toBe("comfortable");
     expect(document.documentElement.dataset["density"]).toBeUndefined();
+  });
+
+  it("previews a palette at once and stores it on Save, and Discard puts Pond back", async () => {
+    await open();
+    expect(screen.getByLabelText("Colours")).toHaveValue("pond");
+    await choose("Colours", "meadow");
+    expect(document.documentElement.dataset["palette"]).toBe("meadow");
+    expect(api.ui.palette).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(document.documentElement.dataset["palette"]).toBeUndefined();
+    expect(screen.getByLabelText("Colours")).toHaveValue("pond");
+    await choose("Colours", "ember");
+    await save();
+    expect(api.ui.palette).toBe("ember");
+    expect(localStorage.getItem("puddle.palette")).toContain("ember");
+  });
+
+  it("shows the stored palette and colours when the screen opens", async () => {
+    api.ui.palette = "custom";
+    api.ui.custom_accent = "#7a1fa2";
+    await palette.sync(); // the root layout does this once per launch
+    await open();
+    await waitFor(() =>
+      expect(screen.getByLabelText("Accent colour")).toHaveValue("#7a1fa2"),
+    );
+    expect(screen.getByLabelText("Colours")).toHaveValue("custom");
+  });
+
+  it("lets the user pick colours for Custom, previews them and stores them", async () => {
+    await open();
+    expect(screen.queryByLabelText("Accent colour")).toBeNull();
+    await choose("Colours", "custom");
+    const accent = screen.getByLabelText("Accent colour") as HTMLInputElement;
+    accent.value = "#7a1fa2";
+    await fireEvent.input(accent);
+    expect(
+      document.documentElement.style.getPropertyValue("--color-accent"),
+    ).toContain("#7a1fa2");
+    await save();
+    expect(api.ui.palette).toBe("custom");
+    expect(api.ui.custom_accent).toBe("#7a1fa2");
+    expect(api.ui.custom_text).toBeNull();
+  });
+
+  it("resets one custom colour to Pond's, and that is an edit until saved", async () => {
+    api.ui.palette = "custom";
+    api.ui.custom_accent = "#7a1fa2";
+    api.ui.custom_text = "#102030";
+    await palette.sync();
+    await open();
+    const reset = await screen.findByRole("button", {
+      name: "Reset accent colour",
+    });
+    await waitFor(() => expect(reset).toBeEnabled());
+    expect(
+      screen.getByRole("button", { name: "Reset background" }),
+    ).toBeDisabled();
+    await fireEvent.click(reset);
+    expect(reset).toBeDisabled();
+    await save();
+    expect(api.ui.custom_accent).toBeNull();
+    expect(api.ui.custom_text).toBe("#102030");
+  });
+
+  it("warns, naming the pair, when picked colours miss AA, and not for ones that pass", async () => {
+    await open();
+    await choose("Theme", "light");
+    await choose("Colours", "custom");
+    expect(screen.queryByText(/hard to read/)).toBeNull();
+    const text = screen.getByLabelText("Text") as HTMLInputElement;
+    text.value = "#cccccc";
+    await fireEvent.input(text);
+    const warning = screen.getByText(/hard to read/).closest("[role=status]");
+    expect(warning).toHaveTextContent(
+      /Text on the background has \d\.\d:1 in the light theme; it needs 4\.5:1\./,
+    );
+    expect(warning).toHaveTextContent(/and \d+ more\./);
+    text.value = "#101010";
+    await fireEvent.input(text);
+    expect(screen.queryByText(/hard to read/)).toBeNull();
+  });
+
+  it("lists a short warning in full, for a pale accent", async () => {
+    await open();
+    await choose("Theme", "light");
+    await choose("Colours", "custom");
+    const accent = screen.getByLabelText("Accent colour") as HTMLInputElement;
+    accent.value = "#0a8aa5";
+    await fireEvent.input(accent);
+    const warning = screen.getByText(/hard to read/).closest("[role=status]");
+    expect(warning).toHaveTextContent(
+      /The accent on the background has \d\.\d:1/,
+    );
+    expect(warning).not.toHaveTextContent(/more\./);
   });
 
   it("saves each notification setting", async () => {

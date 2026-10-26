@@ -1,10 +1,16 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { palette } from "#lib/theme/palette.svelte.ts";
+  import { isPaletteChoice } from "#lib/theme/palette.ts";
   import { density } from "#lib/theme/density.svelte.ts";
   import { isDensityChoice } from "#lib/theme/density.ts";
   import { theme } from "#lib/theme/theme.svelte.ts";
   import { isThemeChoice } from "#lib/theme/theme.ts";
-  import { DENSITY_OPTIONS, THEME_OPTIONS } from "#lib/welcome/look.ts";
+  import {
+    DENSITY_OPTIONS,
+    PALETTE_PRESET_OPTIONS,
+    THEME_OPTIONS,
+  } from "#lib/welcome/look.ts";
   import StepHeading from "#lib/welcome/StepHeading.svelte";
   import { around } from "#lib/welcome/steps.ts";
   import "#lib/theme/controls.css";
@@ -23,6 +29,16 @@
       problem = `The theme changed here but Puddle couldn't save it. ${result.message}`;
   }
 
+  async function choosePalette(value: string) {
+    if (!isPaletteChoice(value)) return;
+    saved = null;
+    problem = null;
+    const result = await palette.set(value);
+    if (result.ok) saved = "Colours saved.";
+    else
+      problem = `The colours changed here but Puddle couldn't save them. ${result.message}`;
+  }
+
   async function chooseDensity(value: string) {
     if (!isDensityChoice(value)) return;
     saved = null;
@@ -36,7 +52,7 @@
 
 <StepHeading
   title="Look"
-  lead="Optional. Both apply at once, and you can change them any time in Settings."
+  lead="Optional. Each applies at once, and you can change them any time in Settings, where you can also pick your own colours."
 />
 
 <div class="status" aria-live="polite">
@@ -58,6 +74,31 @@
       <span>
         <b>{option.label}</b>
         <span class="desc">{option.hint}</span>
+      </span>
+    </label>
+  {/each}
+</fieldset>
+
+<fieldset class="card">
+  <legend>Colours</legend>
+  {#each PALETTE_PRESET_OPTIONS as option (option.value)}
+    <label class="choice">
+      <input
+        type="radio"
+        name="palette"
+        value={option.value}
+        checked={palette.choice === option.value}
+        onchange={() => void choosePalette(option.value)}
+      />
+      <span>
+        <b>{option.label}</b>
+        <span class="desc">{option.hint}</span>
+      </span>
+      <span class="swatches" aria-hidden="true">
+        {#each option.swatch as [light, dark] (light + dark)}
+          <span class="swatch" style:background="light-dark({light}, {dark})"
+          ></span>
+        {/each}
       </span>
     </label>
   {/each}
@@ -129,6 +170,17 @@
     width: 1.5rem;
     height: 1.5rem;
     margin: 0;
+  }
+  .swatches {
+    display: flex;
+    margin-left: auto;
+  }
+  .swatch {
+    width: 1.25rem;
+    height: 1.25rem;
+    margin-left: -0.25rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-pill);
   }
   .actions {
     display: flex;

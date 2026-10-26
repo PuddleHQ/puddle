@@ -113,6 +113,9 @@ test("a fresh install is led through every step and then opens on the workspaces
   await page.getByRole("radio", { name: /^Compact/ }).check();
   await expect(page.locator("html")).toHaveAttribute("data-density", "compact");
   await expect(page.getByText("Density saved.")).toBeVisible();
+  await page.getByRole("radio", { name: /^Meadow/ }).check();
+  await expect(page.locator("html")).toHaveAttribute("data-palette", "meadow");
+  await expect(page.getByText("Colours saved.")).toBeVisible();
   await page.getByRole("link", { name: "Continue" }).click();
 
   // First workspace: the usual form, then the workspace list with the workspace on it.

@@ -11502,6 +11502,18 @@
           "unknown"
         ]
       },
+      "PaletteChoice": {
+        "type": "string",
+        "description": "Which colour palette the window uses over the light or dark base.",
+        "enum": [
+          "pond",
+          "dusk",
+          "meadow",
+          "ember",
+          "graphite",
+          "custom"
+        ]
+      },
       "PatternKind": {
         "type": "string",
         "description": "How a rule's pattern matches.",
@@ -13565,6 +13577,11 @@
         "required": [
           "theme",
           "density",
+          "palette",
+          "custom_accent",
+          "custom_background",
+          "custom_surface",
+          "custom_text",
           "notifications",
           "sound",
           "close_behaviour",
@@ -13601,6 +13618,38 @@
               "null"
             ],
             "description": "Ask before a decision creates a rule for every workspace (default on)."
+          },
+          "custom_accent": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `custom` palette's accent colour, `#rrggbb`; `null` keeps Pond's.",
+            "pattern": "^#[0-9a-fA-F]{6}$"
+          },
+          "custom_background": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `custom` palette's page background, `#rrggbb`; `null` keeps Pond's.",
+            "pattern": "^#[0-9a-fA-F]{6}$"
+          },
+          "custom_surface": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `custom` palette's cards and panels, `#rrggbb`; `null` keeps Pond's.",
+            "pattern": "^#[0-9a-fA-F]{6}$"
+          },
+          "custom_text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `custom` palette's text, `#rrggbb`; `null` keeps Pond's.",
+            "pattern": "^#[0-9a-fA-F]{6}$"
           },
           "density": {
             "oneOf": [
@@ -13654,6 +13703,17 @@
               "null"
             ],
             "description": "Notify when a workspace stops or crashes without being asked to (default on)."
+          },
+          "palette": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PaletteChoice",
+                "description": "The colour palette over the light or dark base (default `pond`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "sound": {
             "type": [

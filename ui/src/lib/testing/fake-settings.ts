@@ -28,6 +28,11 @@ const noLayer = (): S["SettingsLayer"] => ({
 const noUi = (): S["UiPrefs"] => ({
   theme: null,
   density: null,
+  palette: null,
+  custom_accent: null,
+  custom_background: null,
+  custom_surface: null,
+  custom_text: null,
   notifications: null,
   sound: null,
   close_behaviour: null,

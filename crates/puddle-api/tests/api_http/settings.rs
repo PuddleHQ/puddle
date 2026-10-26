@@ -34,7 +34,8 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
     );
     assert_eq!(
         view["ui"],
-        json!({"theme": null, "density": null, "notifications": null, "sound": null, "close_behaviour": null,
+        json!({"theme": null, "density": null, "palette": null, "custom_accent": null, "custom_background": null,
+               "custom_surface": null, "custom_text": null, "notifications": null, "sound": null, "close_behaviour": null,
                "minimize_to_tray": null, "notify_only_unfocused": null, "badge": null, "notify_oom": null, "notify_unexpected_stop": null,
                "confirm_global_rules": null, "inbox_shortcuts": null})
     );
@@ -357,7 +358,7 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
         .await;
     let body = json!({
         "vscode_server": {"server": "microsoft", "telemetry": false},
-        "ui": {"theme": "dark", "density": "compact", "notifications": false, "sound": true, "close_behaviour": "quit",
+        "ui": {"theme": "dark", "density": "compact", "palette": "custom", "custom_accent": "#0A6A85", "custom_text": "#102030", "notifications": false, "sound": true, "close_behaviour": "quit",
                 "minimize_to_tray": true, "notify_only_unfocused": false, "badge": false, "notify_oom": false, "notify_unexpected_stop": false,
                 "confirm_global_rules": false, "inbox_shortcuts": true}
     });
@@ -368,6 +369,9 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
     assert_eq!(view["ui"]["theme"], "dark");
     assert_eq!(view["ui"]["close_behaviour"], "quit");
     assert_eq!(view["ui"]["density"], "compact");
+    assert_eq!(view["ui"]["palette"], "custom");
+    assert_eq!(view["ui"]["custom_accent"], "#0a6a85");
+    assert_eq!(view["ui"]["custom_background"], json!(null));
     for key in [
         "notify_only_unfocused",
         "badge",
@@ -402,11 +406,23 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
         api.send("PUT", "/api/settings", Some(&bad)).await.status,
         422
     );
+    for bad in [
+        json!({"ui": {"palette": "neon"}}),
+        json!({"ui": {"custom_accent": "teal"}}),
+        json!({"ui": {"custom_surface": "#12345"}}),
+    ] {
+        assert_eq!(
+            api.send("PUT", "/api/settings", Some(&bad)).await.status,
+            422,
+            "{bad}"
+        );
+    }
     // A client from before the density field leaves it out: the document stays valid.
     let old = json!({"ui": {"theme": "light", "notifications": null, "sound": null, "close_behaviour": null}});
     let reply = api.send("PUT", "/api/settings", Some(&old)).await;
     assert_eq!(reply.status, 200, "{}", reply.body);
     assert_eq!(reply.json()["ui"]["density"], json!(null));
+    assert_eq!(reply.json()["ui"]["palette"], json!(null));
     api.running.shutdown().await;
 }
 

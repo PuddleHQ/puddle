@@ -2898,6 +2898,11 @@ export interface components {
          */
         PacState: "not_used" | "not_asked" | "answering" | "unreachable" | "unknown";
         /**
+         * @description Which colour palette the window uses over the light or dark base.
+         * @enum {string}
+         */
+        PaletteChoice: "pond" | "dusk" | "meadow" | "ember" | "graphite" | "custom";
+        /**
          * @description How a rule's pattern matches.
          * @enum {string}
          */
@@ -3827,6 +3832,14 @@ export interface components {
             close_behaviour: components["schemas"]["CloseBehaviour"] | null;
             /** @description Ask before a decision creates a rule for every workspace (default on). */
             confirm_global_rules: boolean | null;
+            /** @description The `custom` palette's accent colour, `#rrggbb`; `null` keeps Pond's. */
+            custom_accent: string | null;
+            /** @description The `custom` palette's page background, `#rrggbb`; `null` keeps Pond's. */
+            custom_background: string | null;
+            /** @description The `custom` palette's cards and panels, `#rrggbb`; `null` keeps Pond's. */
+            custom_surface: string | null;
+            /** @description The `custom` palette's text, `#rrggbb`; `null` keeps Pond's. */
+            custom_text: string | null;
             density: components["schemas"]["DensityChoice"] | null;
             /** @description The inbox's single-key shortcuts A, D, J and K (default off). */
             inbox_shortcuts: boolean | null;
@@ -3840,6 +3853,7 @@ export interface components {
             notify_oom: boolean | null;
             /** @description Notify when a workspace stops or crashes without being asked to (default on). */
             notify_unexpected_stop: boolean | null;
+            palette: components["schemas"]["PaletteChoice"] | null;
             /** @description The system sound with a notification (default off). */
             sound: boolean | null;
             theme: components["schemas"]["ThemeChoice"] | null;

@@ -41,6 +41,16 @@
   import { toasts } from "#lib/stores/toasts.svelte.ts";
   import { density } from "#lib/theme/density.svelte.ts";
   import { isDensityChoice } from "#lib/theme/density.ts";
+  import { palette } from "#lib/theme/palette.svelte.ts";
+  import {
+    customFrom,
+    isPaletteChoice,
+    NO_CUSTOM,
+    type Custom,
+    type CustomColour,
+    type PaletteChoice,
+  } from "#lib/theme/palette.ts";
+  import PaletteSettings from "#lib/components/PaletteSettings.svelte";
   import { theme } from "#lib/theme/theme.svelte.ts";
   import {
     DIRECT_SSH_HINT,
@@ -110,6 +120,40 @@
     if (isThemeChoice(stored)) theme.preview(stored);
     const density_ = view.ui.density ?? "comfortable";
     if (isDensityChoice(density_)) density.preview(density_);
+    const stored_palette = view.ui.palette ?? "pond";
+    palette.preview(
+      isPaletteChoice(stored_palette) ? stored_palette : "pond",
+      storedColours(view.ui),
+    );
+  }
+
+  const COLOUR_FIELD = {
+    accent: "custom_accent",
+    background: "custom_background",
+    surface: "custom_surface",
+    text: "custom_text",
+  } as const;
+
+  /** The custom colours a settings document holds. */
+  function storedColours(ui: Ui): Custom {
+    return customFrom({
+      accent: ui.custom_accent,
+      background: ui.custom_background,
+      surface: ui.custom_surface,
+      text: ui.custom_text,
+    });
+  }
+
+  /** The palette's colours as the screen shows them: an unsaved edit (a reset is one too) over what is stored. */
+  function shownColours(): Custom {
+    const view = store.view;
+    const colours = view ? storedColours(view.ui) : { ...NO_CUSTOM };
+    for (const key of Object.keys(COLOUR_FIELD) as CustomColour[]) {
+      const field = COLOUR_FIELD[key];
+      if (field in draft.ui)
+        colours[key] = customFrom({ [key]: draft.ui[field] })[key];
+    }
+    return colours;
   }
 
   function discard() {
@@ -196,6 +240,23 @@
     if (!isDensityChoice(value) || !view) return;
     density.preview(value);
     edit(setUi(draft, "density", value, view.ui.density ?? "comfortable"));
+  }
+
+  function choosePalette(choice: PaletteChoice) {
+    const view = store.view;
+    if (!view) return;
+    palette.preview(choice, shownColours());
+    edit(setUi(draft, "palette", choice, view.ui.palette ?? "pond"));
+  }
+
+  function chooseColour(colour: CustomColour, value: string | null) {
+    const view = store.view;
+    if (!view) return;
+    const field = COLOUR_FIELD[colour];
+    const next = setUi(draft, field, value, view.ui[field] ?? null);
+    const shown = { ...shownColours(), [colour]: value } satisfies Custom;
+    palette.preview(palette.choice, customFrom(shown));
+    edit(next);
   }
 
   function chooseServer(select: HTMLSelectElement) {
@@ -344,6 +405,13 @@
             <option value="compact">Compact</option>
           </select>
         </div>
+        <PaletteSettings
+          choice={palette.choice}
+          custom={palette.custom}
+          theme={theme.choice}
+          onchoose={choosePalette}
+          onpick={chooseColour}
+        />
       </section>
 
       <section class="card" id="s-notify" aria-labelledby="h-notify">

@@ -1491,7 +1491,7 @@ mod tests {
         let injection = injection.with_login_markers(dir.path().to_owned());
         let ws = workspace("alpha");
         injection.begin(&ws, true).await.unwrap();
-        assert!(injection.kept_logins(&ws).await.logins.is_empty());
+        assert_eq!(injection.kept_logins(&ws).await.logins.len(), 0);
         claude_answer(&terminations, &ws).await.unwrap();
         let running = injection.kept_logins(&ws).await;
         assert_eq!(running.logins.len(), 1);
@@ -1504,7 +1504,7 @@ mod tests {
         assert_eq!(injection.kept_logins(&ws).await, running);
         vault.heal();
         assert_eq!(injection.forget_login(&ws, "claude").await, Ok(true));
-        assert!(injection.kept_logins(&ws).await.logins.is_empty());
+        assert_eq!(injection.kept_logins(&ws).await.logins.len(), 0);
     }
 
     #[tokio::test]

@@ -24,10 +24,10 @@ use windows_sys::Win32::Security::Authorization::{
     SDDL_REVISION_1, SE_FILE_OBJECT, SetNamedSecurityInfoW,
 };
 use windows_sys::Win32::Security::{
-    ACCESS_ALLOWED_ACE, ACL, ACL_SIZE_INFORMATION, AclSizeInformation, DACL_SECURITY_INFORMATION,
-    EqualSid, GetAce, GetAclInformation, GetSecurityDescriptorDacl, GetTokenInformation,
-    PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
-    TOKEN_ACCESS_MASK, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_SIZE_INFORMATION, AclSizeInformation,
+    DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation, GetSecurityDescriptorDacl,
+    GetTokenInformation, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+    SECURITY_ATTRIBUTES, TOKEN_ACCESS_MASK, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CREATE_NEW, CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_DELETE,
@@ -66,7 +66,11 @@ pub fn owner_only_sddl(sid: &str, rights: &str, inherit: bool) -> String {
 ///
 /// The OS error, `AlreadyExists` included.
 pub fn create_owner_only_file(path: &Path) -> io::Result<File> {
-    let descriptor = owner_only_descriptor("FA", false)?;
+    create_new_with(path, &owner_only_descriptor("FA", false)?)
+}
+
+/// Creates `path` for writing, failing if it exists, with `descriptor` set at creation.
+fn create_new_with(path: &Path, descriptor: &LocalBox) -> io::Result<File> {
     let attrs = descriptor.attributes();
     let wide = wide_nul(path.as_os_str());
     // SAFETY: `wide` is NUL-terminated and outlives the call; `attrs` points at a descriptor
@@ -216,13 +220,16 @@ pub fn dacl_is_owner_only(file: &File) -> io::Result<Result<(), String>> {
         if unsafe { GetAce(dacl, index, &raw mut ace) } == 0 {
             return Err(io::Error::last_os_error());
         }
-        // SAFETY: every ACE starts with an ACE_HEADER, which ACCESS_ALLOWED_ACE begins with.
-        let ace = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
-        if u32::from(ace.Header.AceType) != ACCESS_ALLOWED_ACE_TYPE {
+        // SAFETY: GetAce succeeded, so `ace` points at an ACE in the ACL, and every ACE starts
+        // with an ACE_HEADER. Only the header is read until the type says how long the ACE is.
+        let header = unsafe { &*ace.cast::<ACE_HEADER>() };
+        if u32::from(header.AceType) != ACCESS_ALLOWED_ACE_TYPE {
             return Ok(Err(format!("entry {index} is not a plain allow entry")));
         }
-        // SAFETY: the type check above makes this an ACCESS_ALLOWED_ACE, whose SID starts at
-        // SidStart; the user's SID is valid while `user` lives.
+        // SAFETY: the type check above makes this an ACCESS_ALLOWED_ACE.
+        let ace = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
+        // SAFETY: an ACCESS_ALLOWED_ACE's SID starts at SidStart; the user's SID is valid while
+        // `user` lives.
         let same = unsafe { EqualSid((&raw const ace.SidStart).cast_mut().cast(), user.sid()) };
         if same == 0 {
             return Ok(Err(format!(
@@ -484,6 +491,21 @@ mod tests {
         assert_eq!(
             owner_only_sddl("S-1-5-21-1-2-3-1001", "FA", true),
             "D:P(A;OICI;FA;;;S-1-5-21-1-2-3-1001)"
+        );
+    }
+
+    #[test]
+    fn an_access_list_with_a_deny_entry_is_not_owner_only() {
+        // Every entry names the current user, so only the entry's type makes it fail.
+        let sid = current_user_sid().unwrap();
+        let descriptor =
+            LocalBox::security_descriptor(&format!("D:P(D;;WD;;;{sid})(A;;FA;;;{sid})")).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f");
+        drop(create_new_with(&path, &descriptor).unwrap());
+        assert_eq!(
+            dacl_is_owner_only(&File::open(&path).unwrap()).unwrap(),
+            Err("entry 0 is not a plain allow entry".to_owned())
         );
     }
 }

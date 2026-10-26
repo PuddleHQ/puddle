@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test as base, type Page } from "@playwright/test";
+import {
+  expect,
+  test as base,
+  type Locator,
+  type Page,
+} from "@playwright/test";
 import { readFileSync } from "node:fs";
 
 function connection(): { url: string; token: string } {
@@ -36,6 +41,82 @@ export async function watchCsp(page: Page): Promise<() => Promise<string[]>> {
   });
   return () =>
     page.evaluate(() => (window as unknown as { __csp: string[] }).__csp);
+}
+
+type FocusWindow = { __focusLog: string[] };
+
+/**
+ * Starts the focus history `expectFocused` prints: every focus change, key press and click on the
+ * page, with the time and a short description of the element, oldest dropped past 60 entries.
+ * Call it before the first `goto`.
+ */
+export async function watchFocus(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const log: string[] = [];
+    (window as unknown as FocusWindow).__focusLog = log;
+    const describe = (n: EventTarget | null) => {
+      if (!(n instanceof Element)) return String(n);
+      const id = n.id ? `#${n.id}` : "";
+      const name = n.getAttribute("aria-label") ?? n.textContent?.trim() ?? "";
+      return `${n.tagName.toLowerCase()}${id} "${name.slice(0, 30)}"`;
+    };
+    const note = (what: string, target: EventTarget | null, more = "") => {
+      log.push(
+        `${Math.round(performance.now())}ms ${what} ${describe(target)}${more}`,
+      );
+      if (log.length > 60) log.shift();
+    };
+    for (const kind of ["focusin", "focusout"])
+      window.addEventListener(kind, (e) => note(kind, e.target), true);
+    window.addEventListener(
+      "keydown",
+      (e) => note("keydown", e.target, ` ${e.key}`),
+      true,
+    );
+    window.addEventListener("click", (e) => note("click", e.target), true);
+  });
+}
+
+/**
+ * `expect(locator).toBeFocused()` that, on a miss, prints what had the focus instead and the focus
+ * history, so a failure on a machine we cannot attach to still says who took the focus. Needs
+ * `watchFocus(page)` first (the history is empty without it).
+ */
+export async function expectFocused(
+  page: Page,
+  locator: Locator,
+): Promise<void> {
+  try {
+    await expect(locator).toBeFocused();
+  } catch (error) {
+    const seen = await page
+      .evaluate(() => {
+        const a = document.activeElement;
+        return {
+          active: a
+            ? `${a.tagName.toLowerCase()}${a.id ? `#${a.id}` : ""} "${(a.textContent ?? "").trim().slice(0, 30)}"`
+            : "none",
+          hasFocus: document.hasFocus(),
+          history: (window as unknown as Partial<FocusWindow>).__focusLog ?? [],
+        };
+      })
+      .catch((e: unknown) => ({
+        active: `unreadable: ${String(e)}`,
+        hasFocus: false,
+        history: [] as string[],
+      }));
+    const report = [
+      `focus miss on ${String(locator)}`,
+      `active element: ${seen.active} (document.hasFocus(): ${seen.hasFocus})`,
+      "focus history, oldest first:",
+      ...seen.history.map((line) => `  ${line}`),
+    ].join("\n");
+    console.error(report);
+    await test
+      .info()
+      .attach("focus-miss", { body: report, contentType: "text/plain" });
+    throw error;
+  }
 }
 
 /**

@@ -6,7 +6,7 @@
 // host showing an old list). Waits are on conditions, never on time.
 import type { Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeStops, watchCsp } from "./support";
+import { axeStops, expectFocused, watchCsp, watchFocus } from "./support";
 
 const WORK = 1;
 const PERSONAL = 2;
@@ -26,6 +26,10 @@ async function open(page: Page, backend: Backend, identity: number) {
     page.getByRole("heading", { level: 2, name: "Repos it can reach" }),
   ).toBeVisible();
 }
+
+test.beforeEach(async ({ page }) => {
+  await watchFocus(page);
+});
 
 const repos = (page: Page) => page.getByTestId("identity-repos");
 const rowOf = (page: Page, name: string) =>
@@ -215,7 +219,7 @@ test("the create form's picker searches every identity's repositories and fills 
   await expect(form.getByLabel("Git repository (HTTPS)")).toHaveValue(
     "https://github.com/tijs-demo/dotfiles",
   );
-  await expect(form.getByLabel("Name")).toBeFocused();
+  await expectFocused(page, form.getByLabel("Name"));
   await expect(
     form.getByLabel("Git identity").locator("option:checked"),
   ).toHaveText(/Personal/);
@@ -255,13 +259,13 @@ test("keyboard only: from the repository row to the finished form", async ({
   await create(page, "tijs-demo/dotfiles").focus();
   await page.keyboard.press("Enter");
   const form = dialog(page);
-  await expect(form.getByLabel("Git repository (HTTPS)")).toBeFocused();
+  await expectFocused(page, form.getByLabel("Git repository (HTTPS)"));
   await expect(form.getByLabel("Git repository (HTTPS)")).toHaveValue(
     "https://github.com/tijs-demo/dotfiles",
   );
   await page.keyboard.press("Escape");
   await expect(form).toBeHidden();
-  await expect(create(page, "tijs-demo/dotfiles")).toBeFocused();
+  await expectFocused(page, create(page, "tijs-demo/dotfiles"));
 
   // Open the picker with the keyboard from the workspaces list.
   await page.goto("/workspaces");
@@ -281,9 +285,9 @@ test("keyboard only: from the repository row to the finished form", async ({
     form.getByRole("button", { name: /tijs-demo\/docs-site/ }),
   ).toHaveCount(0);
   await page.keyboard.press("Tab");
-  await expect(dotfiles).toBeFocused();
+  await expectFocused(page, dotfiles);
   await page.keyboard.press("Enter");
-  await expect(form.getByLabel("Name")).toBeFocused();
+  await expectFocused(page, form.getByLabel("Name"));
   await expect(form.getByLabel("Git repository (HTTPS)")).toHaveValue(
     "https://github.com/tijs-demo/dotfiles",
   );

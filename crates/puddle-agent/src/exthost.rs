@@ -227,11 +227,12 @@ pub async fn sweep_orphans_of(reaper: i32) -> u32 {
     u32::try_from(orphans.len()).unwrap_or(u32::MAX)
 }
 
-/// Looks for orphaned debuggees every [`SWEEP_EVERY`], for as long as the agent runs.
-pub async fn sweep_loop() {
+/// Looks for the debuggees `reaper` adopted every [`SWEEP_EVERY`], for as long as the agent runs
+/// (process 1 in the guest).
+pub async fn sweep_loop(reaper: i32) {
     loop {
         tokio::time::sleep(SWEEP_EVERY).await;
-        let n = sweep_orphans().await;
+        let n = sweep_orphans_of(reaper).await;
         if n > 0 {
             tracing::info!(count = n, "ended orphaned debuggees");
         }
@@ -272,10 +273,10 @@ pub fn snapshot() -> Vec<Proc> {
 #[cfg(target_os = "linux")]
 #[must_use]
 pub fn snapshot_of(reaper: i32) -> Vec<Proc> {
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return Vec::new();
-    };
-    entries
+    // A `/proc` that cannot be read is an empty table, the same as off Linux.
+    std::fs::read_dir("/proc")
+        .into_iter()
+        .flatten()
         .filter_map(Result::ok)
         .filter_map(|e| e.file_name().to_str()?.parse::<i32>().ok())
         .filter_map(|pid| read_proc(pid, reaper))
@@ -466,6 +467,19 @@ mod tests {
             orphan_debuggees(&[debuggee], 1, |_| false),
             Vec::<i32>::new()
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(start_paused = true)]
+    async fn waiting_for_the_killed_to_leave_gives_up_after_two_seconds() {
+        let me = i32::try_from(std::process::id()).unwrap();
+        let start = snapshot().iter().find(|p| p.pid == me).unwrap().start;
+        let started = tokio::time::Instant::now();
+
+        // This process never leaves the table.
+        kill_settle(&HashMap::from([(me, start)])).await;
+
+        assert_eq!(started.elapsed(), POLL * 40);
     }
 
     #[cfg(target_os = "linux")]

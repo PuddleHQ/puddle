@@ -633,6 +633,97 @@ async fn a_marker_that_says_nothing_is_kept_is_believed_and_the_store_is_not_ask
     assert_eq!(later.notices.seen().len(), 1);
 }
 
+fn names(list: &crate::KeptList) -> Vec<&'static str> {
+    list.logins.iter().map(|login| login.profile).collect()
+}
+
+#[tokio::test]
+async fn the_list_of_kept_logins_comes_from_the_marker_with_the_time_each_was_noted_and_no_value() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let on = rig_marked(&store, true, marker_in(&dir));
+    on.logins.load().await;
+    assert_eq!(
+        on.logins.kept_list().await,
+        crate::KeptList {
+            logins: vec![],
+            store_answered: true
+        }
+    );
+    claude_login(&on, REAL_ACCESS, REAL_REFRESH).await;
+
+    // The store is down: the marker still answers, without waiting on it.
+    store.break_it();
+    let off = rig_marked(&store, false, marker_in(&dir));
+    let list = off.logins.kept_list().await;
+    assert!(list.store_answered);
+    assert_eq!(names(&list), ["claude"]);
+    assert_eq!(list.logins[0].name, "Claude Code");
+    assert!(
+        list.logins[0]
+            .since_ms
+            .is_some_and(|ms| ms > 1_700_000_000_000)
+    );
+    let shown = format!("{list:?}");
+    assert!(!shown.contains("CANARY"), "no token value: {shown}");
+
+    // A later write keeps the time the service was first noted.
+    let first = list.logins[0].since_ms;
+    store.heal();
+    on.logins.load().await;
+    assert_eq!(off.logins.kept_list().await.logins[0].since_ms, first);
+}
+
+#[tokio::test]
+async fn with_no_marker_the_list_asks_the_store_once_and_a_store_that_does_not_answer_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(MemoryStore::new());
+    claude_login(&rig_on(&store, true), REAL_ACCESS, REAL_REFRESH).await;
+
+    store.break_it();
+    let down = rig_marked(&store, false, marker_in(&dir));
+    assert_eq!(
+        down.logins.kept_list().await,
+        crate::KeptList {
+            logins: vec![],
+            store_answered: false
+        }
+    );
+    assert_eq!(down.logins.inner_marker_kept(), None);
+
+    store.heal();
+    let list = down.logins.kept_list().await;
+    assert!(list.store_answered);
+    assert_eq!(names(&list), ["claude"]);
+    // When it became kept is not known from a store that carries no times.
+    assert_eq!(list.logins[0].since_ms, None);
+    assert_eq!(
+        down.logins.inner_marker_kept(),
+        Some(vec!["claude".to_owned()])
+    );
+}
+
+#[tokio::test]
+async fn a_forgotten_login_leaves_the_list_and_a_marker_naming_a_stranger_is_ignored() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let on = rig_marked(&store, true, marker_in(&dir));
+    on.logins.load().await;
+    claude_login(&on, REAL_ACCESS, REAL_REFRESH).await;
+    assert_eq!(on.logins.forget("claude").await, Ok(true));
+    assert_eq!(names(&on.logins.kept_list().await), Vec::<&str>::new());
+
+    std::fs::write(
+        dir.path().join("alpha.kept"),
+        "puddle-logins-kept v2\n../../etc/passwd 12\ngithub not-a-number\nclaude 7 8\n",
+    )
+    .unwrap();
+    let list = on.logins.kept_list().await;
+    assert_eq!(names(&list), ["claude", "github"]);
+    assert_eq!(list.logins[0].since_ms, None);
+    assert_eq!(list.logins[1].since_ms, None);
+}
+
 #[tokio::test]
 async fn forgetting_a_login_ends_the_notice_even_when_the_entries_were_already_gone() {
     let dir = tempfile::tempdir().unwrap();

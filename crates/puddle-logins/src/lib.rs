@@ -25,7 +25,7 @@ mod shape;
 mod tests;
 mod vault;
 
-pub use logins::{ForgetError, Kept, LoginNotices, Logins, Problem};
+pub use logins::{ForgetError, Kept, KeptList, KeptLogin, LoginNotices, Logins, Problem};
 pub use marker::Marker;
 pub use profile::{CLAUDE, Endpoint, Field, GITHUB, Profile, Role, Scope, builtin};
 pub use shape::{ShapeError, stand_in_for};

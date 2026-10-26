@@ -11,7 +11,8 @@
 //!   that names a file below one of the servers' folders. Its tree is everything below it by parent
 //!   id (language servers, debuggees). The servers' pty hosts are not below it, so terminals and
 //!   their jobs stay.
-//! - **Orphan sweep:** a process a debug session started carries `VSCODE_INSPECTOR_OPTIONS`; when its
+//! - **Orphan sweep:** a process a debug session launched carries `VSCODE_INSPECTOR_OPTIONS` (with
+//!   `deferredMode` off; a terminal's auto attach sets it on and is left alone); when its
 //!   parent is gone (it is the child of process 1) and the socket the options name for the debug
 //!   session no longer exists, nothing can reach it and it is ended. A job the user left running
 //!   on purpose from a terminal carries the variable only when auto attach is on, and then its
@@ -101,11 +102,16 @@ pub fn tree(procs: &[Proc], roots: &[i32]) -> HashSet<i32> {
 /// The path a debug session's inspector options name as its socket, `None` when they name none.
 fn inspector_socket(options: &str) -> Option<PathBuf> {
     let value: serde_json::Value = serde_json::from_str(options).ok()?;
+    // Only a program a debug session launched itself is a debuggee. A terminal's auto attach sets the
+    // same variable with `deferredMode` on, and what it started may be a job the user means to keep.
+    if value.get("deferredMode")?.as_bool()? {
+        return None;
+    }
     value.get("inspectorIpc")?.as_str().map(PathBuf::from)
 }
 
 /// The ids of debuggees nobody can reach: children of `reaper` (process 1 in the guest) whose inspector options name a
-/// debug socket that is gone (`socket_exists` answers for a path). Options that name no socket
+/// debug socket that is gone and that a debug session launched (`deferredMode` off; `socket_exists` answers for a path). Options that name no socket
 /// are left alone: nothing says the process is orphaned.
 #[must_use]
 pub fn orphan_debuggees(
@@ -434,6 +440,9 @@ mod tests {
         alive.inspector = opts("/tmp/node-cdp.99-1.sock");
         let mut no_path = p(52, 1, &["node", "dbg.js"]);
         no_path.inspector = Some("{}".into());
+        let mut deferred = p(56, 1, &["node", "job.js"]);
+        deferred.inspector =
+            Some("{\"inspectorIpc\":\"/tmp/gone.sock\",\"deferredMode\":true}".into());
         let mut unreadable = p(53, 1, &["node", "dbg.js"]);
         unreadable.inspector = Some("not json".into());
         // Not a child of init: its parent can still use it.
@@ -441,7 +450,7 @@ mod tests {
         parented.inspector = opts("/tmp/node-cdp.20-1.sock");
         // A job of the user's: no inspector options.
         let job = p(55, 1, &["sleep", "600"]);
-        let procs = [gone, alive, no_path, unreadable, parented, job];
+        let procs = [gone, alive, no_path, unreadable, parented, job, deferred];
         let exists = |path: &Path| path == Path::new("/tmp/node-cdp.99-1.sock");
         assert_eq!(orphan_debuggees(&procs, 1, exists), [50]);
     }
@@ -449,7 +458,7 @@ mod tests {
     #[test]
     fn only_the_named_reapers_children_are_orphans() {
         let mut debuggee = p(60, 7, &["node", "dbg.js"]);
-        debuggee.inspector = Some("{\"inspectorIpc\":\"/gone\"}".into());
+        debuggee.inspector = Some("{\"inspectorIpc\":\"/gone\",\"deferredMode\":false}".into());
         assert_eq!(orphan_debuggees(&[debuggee.clone()], 7, |_| false), [60]);
         assert_eq!(
             orphan_debuggees(&[debuggee], 1, |_| false),

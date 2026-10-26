@@ -5,6 +5,7 @@
   import { beforeNavigate } from "$app/navigation";
   import DirectSshDialog from "#lib/components/DirectSshDialog.svelte";
   import MicrosoftServerDialog from "#lib/components/MicrosoftServerDialog.svelte";
+  import AppIconSettings from "#lib/components/AppIconSettings.svelte";
   import Toast from "#lib/components/Toast.svelte";
   import { api } from "#lib/api/client.ts";
   import { LOCAL_LABELS, type LocalCategory } from "#lib/decision/local.ts";
@@ -22,6 +23,7 @@
     type Draft,
     type LayerKey,
   } from "#lib/settings/draft.ts";
+  import type { AppIconChoice } from "#lib/settings/app-icon.ts";
   import {
     CLOSE_OPTIONS,
     LOCAL_EXPLAIN,
@@ -62,6 +64,7 @@
 
   const SECTIONS: [string, string][] = [
     ["s-app", "Appearance"],
+    ["s-icon", "App icon"],
     ["s-notify", "Notifications"],
     ["s-inbox", "Inbox"],
     ["s-ws", "Workspaces"],
@@ -259,6 +262,12 @@
     edit(next);
   }
 
+  function chooseIcon(choice: AppIconChoice) {
+    const view = store.view;
+    if (!view) return;
+    edit(setUi(draft, "app_icon", choice, view.ui.app_icon ?? "duck"));
+  }
+
   function chooseServer(select: HTMLSelectElement) {
     const view = store.view;
     const consent = store.consents?.vscode_server;
@@ -411,6 +420,15 @@
           theme={theme.choice}
           onchoose={choosePalette}
           onpick={chooseColour}
+        />
+      </section>
+
+      <section class="card" id="s-icon" aria-labelledby="h-icon">
+        <h2 id="h-icon">App icon</h2>
+        <AppIconSettings
+          choice={draft.ui.app_icon ?? view.ui.app_icon ?? "duck"}
+          stored={view.ui.app_icon ?? "duck"}
+          onchoose={chooseIcon}
         />
       </section>
 

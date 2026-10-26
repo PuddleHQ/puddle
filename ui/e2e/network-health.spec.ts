@@ -15,6 +15,9 @@ async function open(page: Page, backend: Backend, scenario: string) {
   ).toBeVisible();
 }
 
+const leftOutHeading = (page: Page) =>
+  page.getByRole("heading", { name: "Left out of Puddle's own TLS checks" });
+
 const notices = (page: Page) => page.getByRole("region", { name: "Notices" });
 
 test("a corporate network: the setup, sign-in, roots and routes, no notice, no CSP violation", async ({
@@ -54,7 +57,7 @@ test("a network change updates the open page, and trouble raises a notice that c
   await expect(page.getByText(/is marked as not answering/)).toHaveCount(0);
 
   await backend.control.script("network-trouble");
-  await expect(page.getByText("3 problems found.")).toBeVisible();
+  await expect(page.getByText("4 problems found.")).toBeVisible();
   const notice = notices(page).getByText(/^Network trouble:/);
   await expect(notice).toBeVisible();
   // Nothing moved the focus to the notice.
@@ -88,6 +91,32 @@ test("trouble on a fresh start: the notice links to the screen, which says what 
   ).toBeVisible();
   await page.getByRole("button", { name: "Check again" }).click();
   await expect(page.getByRole("button", { name: "Check again" })).toBeEnabled();
+});
+
+test("a company certificate Puddle's own TLS checks can't use is listed with why, and is a problem", async ({
+  page,
+  backend,
+}) => {
+  await open(page, backend, "network-trouble");
+  await expect(leftOutHeading(page)).toBeVisible();
+  const item = page.getByRole("listitem").filter({
+    hasText: "Corp Inspection Root",
+  });
+  await expect(item).toContainText("e5e5e5e5e5e5e5e5");
+  await expect(item).toContainText(
+    "its extended key usage is not valid as a trust anchor",
+  );
+  // The summary says so too, with what to do.
+  await expect(
+    page.getByText(/Puddle can't use a company certificate when it checks/),
+  ).toBeVisible();
+  await expect(page.getByText(/Ask IT for it again/)).toBeVisible();
+});
+
+test("with nothing left out the list says so", async ({ page, backend }) => {
+  await open(page, backend, "corporate-network");
+  await expect(leftOutHeading(page)).toBeVisible();
+  await expect(page.getByText("No certificate was left out.")).toBeVisible();
 });
 
 test("settings link to the details", async ({ page, backend }) => {

@@ -42,7 +42,13 @@
       "certificates": [],
       "skipped": [],
       "unreadable_stores": ["LocalMachine\\Root\\.GroupPolicy: access denied"],
-      "left_out_of_tls": []
+      "left_out_of_tls": [
+        {
+          "subject": "Corp Inspection Root",
+          "fingerprint": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5",
+          "reason": "its extended key usage is not valid as a trust anchor"
+        }
+      ]
     },
     "pull_proxy": {
       "active": true,

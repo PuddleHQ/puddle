@@ -1292,6 +1292,11 @@ mod tests {
                 ],
             })
             .unwrap();
+        // The token source answers the same for as long as it is asked.
+        OneToken.invalidate(&SourceSpec::Gh {
+            host: host.clone(),
+            account: puddle_secrets::AccountName::new("octocat").unwrap(),
+        });
         let api = Arc::new(FakeApi::new());
         let path = "/user/repos?per_page=100&sort=full_name&direction=asc";
         api.reply("api.github.com", path, ApiReply::new(200, "[]"));

@@ -35,6 +35,7 @@ use tokio::sync::{mpsc, oneshot};
 /// 0 failures, none slower than 5 s.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn parallel_connects_256_through_agent_proxy_and_store() {
+    support::log_proxy_to_stderr();
     let rig = rig().await;
     allow(&rig.store, "echo.test");
     let echo = echo_server();
@@ -59,7 +60,7 @@ async fn parallel_connects_256_through_agent_proxy_and_store() {
         failures.is_empty(),
         "{} of 256 failed: {:?}",
         failures.len(),
-        failures.first()
+        &failures[..failures.len().min(5)]
     );
     let slowest = results
         .iter()

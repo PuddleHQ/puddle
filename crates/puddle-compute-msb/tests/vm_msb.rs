@@ -254,6 +254,11 @@ async fn vm_ssh_reports_a_signal_killed_command_as_a_failure() {
 
 /// What the guest says a mounted volume holds, in MiB: `df`'s used column (the file system's own
 /// count, metadata included) and `du` over the files.
+#[expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "VM test helper: a failed step fails the test"
+)]
 async fn guest_use_mib<S: Sandbox>(sb: &S, mount: &str) -> (u64, u64) {
     let out = sh(
         sb,
@@ -268,6 +273,11 @@ async fn guest_use_mib<S: Sandbox>(sb: &S, mount: &str) -> (u64, u64) {
 }
 
 /// The volume's `used` as the runtime reports it, in MiB.
+#[expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "VM test helper: a failed step fails the test"
+)]
 async fn volume_used_mib(rt: &puddle_compute_msb::MsbRuntime, vol: &VolumeName) -> u64 {
     u64::from(
         rt.volume(vol)

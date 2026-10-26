@@ -5,6 +5,16 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
+    <script>
+      // The density hint goes on <html> before anything is styled (density.ts, density-hint.test.ts):
+      // set later, the first styles are comfortable, and WebKit's getComputedStyle() can keep them.
+      try {
+        if (localStorage.getItem("puddle.density") === "compact")
+          document.documentElement.dataset.density = "compact";
+      } catch {
+        // No storage: the stored setting applies once it is read.
+      }
+    </script>
     <link
       rel="icon"
       href="%sveltekit.assets%/favicon.svg"

@@ -113,6 +113,42 @@ test.describe("the density setting", () => {
     expect(await spaceFour(page)).toBe(roomy);
   });
 
+  test("a compact choice is on the page before its body is, so nothing is styled roomy first", async ({
+    page,
+    backend,
+  }) => {
+    await open(page, backend, "/settings");
+    await setDensity(page, "compact");
+    // Records, in document order, when <html> gets the mark and when <body> is parsed.
+    await page.addInitScript(() => {
+      const seen: string[] = [];
+      (window as unknown as { __seen: string[] }).__seen = seen;
+      new MutationObserver((records) => {
+        for (const r of records) {
+          if (r.type === "attributes")
+            seen.push(
+              `density=${(r.target as Element).getAttribute("data-density")}`,
+            );
+          for (const node of r.addedNodes)
+            if (node.nodeName === "BODY") seen.push("body");
+        }
+      }).observe(document, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ["data-density"],
+      });
+    });
+    await page.goto("/activity");
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Activity" }),
+    ).toBeVisible();
+    const seen = await page.evaluate(
+      () => (window as unknown as { __seen: string[] }).__seen,
+    );
+    expect(seen.slice(0, 2)).toEqual(["density=compact", "body"]);
+  });
+
   test("picked while the app is still reading the settings, stays picked", async ({
     page,
     backend,
@@ -258,13 +294,6 @@ async function measure(page: Page, selector: string): Promise<Box | null> {
       return r.width > 0 && r.height > 0;
     });
     if (!el) return null;
-    // WebKit has been seen to keep an element's old padding after a custom property changed
-    // (the styles of the page were right, the element's were not), so the element is made to
-    // recompute its style before it is read.
-    const shown = (el as HTMLElement).style.display;
-    (el as HTMLElement).style.display = "none";
-    void (el as HTMLElement).offsetHeight;
-    (el as HTMLElement).style.display = shown;
     const s = getComputedStyle(el);
     const px = (v: string) => (v === "normal" ? 0 : parseFloat(v));
     return {

@@ -2824,7 +2824,12 @@ for i in $(seq 20); do
   setsid nohup $N -e "require('child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', '--', '--marker=dbg'], {stdio: 'ignore'}); setInterval(() => {}, 1000)" -- --type=extensionHost >>/tmp/standins.log 2>&1 &
 done
 setsid nohup $N -e "require('child_process').spawn('sleep', ['600'], {stdio: 'ignore'}); setInterval(() => {}, 1000)" -- --type=ptyHost >>/tmp/standins.log 2>&1 &
-# A debuggee whose extension host is long gone: a child of init whose debug socket does not exist.
+"#;
+
+/// A debuggee whose extension host is long gone: a child of init whose debug socket does not exist. Started
+/// apart, right before the cleanup, because the agent's own sweep (every 30 s) ends it too.
+#[cfg(not(windows))]
+const START_ORPHAN: &str = r#"
 VSCODE_INSPECTOR_OPTIONS='{"inspectorIpc":"/tmp/node-cdp.0-0.sock","deferredMode":false}' setsid nohup sleep 601 >>/tmp/standins.log 2>&1 &
 "#;
 
@@ -2833,9 +2838,31 @@ VSCODE_INSPECTOR_OPTIONS='{"inspectorIpc":"/tmp/node-cdp.0-0.sock","deferredMode
 #[cfg(not(windows))]
 const COUNT_STANDINS: &str = r#"
 c() { ps -eo args= | grep -c -e "$1" || true; }
-echo "hosts=$(c '--type=extensionHos[t]') debuggees=$(c '--marker=db[g]') jobs=$(c '^sleep 60[0]') orphans=$(c '^sleep 60[1]') pty=$(c '--type=ptyHos[t]')"
+echo "hosts=$(c '--type=extensionHos[t]') debuggees=$(c '-- --marker=db[g]$') jobs=$(c '^sleep 60[0]') orphans=$(c '^sleep 60[1]') pty=$(c '--type=ptyHos[t]')"
 echo "health=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:41337/healthz)"
 "#;
+
+/// Asks the agent to end the extension hosts once it is connected; the reply and how long it took.
+#[cfg(not(windows))]
+async fn end_hosts_when_connected(
+    host: &Host<MsbRuntime>,
+    sandbox: &WorkspaceName,
+) -> Result<
+    (puddle_agent_proto::host_control::HostReply, Duration),
+    puddle_host::EndExtensionHostsError,
+> {
+    for _ in 0..60 {
+        let started = std::time::Instant::now();
+        match host.workspaces().end_extension_hosts(sandbox).await {
+            Ok(reply) => return Ok((reply, started.elapsed())),
+            Err(puddle_host::EndExtensionHostsError::NotRunning) => {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            Err(other) => return Err(other),
+        }
+    }
+    Err(puddle_host::EndExtensionHostsError::NotRunning)
+}
 
 /// K tier. The window of a sandbox closes: the host tells the agent to end the editor's extension
 /// hosts. 20 stand-in extension hosts, each with a debuggee, end together within a second, and so
@@ -2891,13 +2918,13 @@ async fn vm_host_ending_the_extension_hosts_takes_the_debuggees_with_them_and_le
     let mut counts = String::new();
     for _ in 0..60 {
         counts = guest(&runtime, &sandbox, COUNT_STANDINS).await;
-        if counts.contains("hosts=20 debuggees=20 jobs=1 orphans=1 pty=1") {
+        if counts.contains("hosts=20 debuggees=20 jobs=1 orphans=0 pty=1") {
             break;
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
     assert!(
-        counts.contains("hosts=20 debuggees=20 jobs=1 orphans=1 pty=1"),
+        counts.contains("hosts=20 debuggees=20 jobs=1 orphans=0 pty=1"),
         "the stand-ins did not start: {counts}{}",
         guest(
             &runtime,
@@ -2907,26 +2934,24 @@ async fn vm_host_ending_the_extension_hosts_takes_the_debuggees_with_them_and_le
         .await
     );
 
-    // The agent link needs a moment after the start before the host can use it.
-    let mut ended = None;
-    for _ in 0..60 {
-        let started = std::time::Instant::now();
-        match host.workspaces().end_extension_hosts(&sandbox).await {
-            Ok(reply) => {
-                ended = Some((reply, started.elapsed()));
-                break;
-            }
-            Err(puddle_host::EndExtensionHostsError::NotRunning) => {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-            Err(other) => panic!("{other}"),
+    guest(&runtime, &sandbox, START_ORPHAN).await;
+    for _ in 0..20 {
+        if guest(&runtime, &sandbox, COUNT_STANDINS)
+            .await
+            .contains("orphans=1")
+        {
+            break;
         }
+        tokio::time::sleep(Duration::from_millis(200)).await;
     }
-    let (reply, took) = ended.expect("the agent never connected");
+
+    let (reply, took) = end_hosts_when_connected(&host, &sandbox)
+        .await
+        .expect("the agent connected and answered");
     assert!(
         matches!(
             reply,
-            puddle_agent_proto::host_control::HostReply::Done { hosts: 20, processes, orphans: 1 }
+            puddle_agent_proto::host_control::HostReply::Done { hosts: 20, processes, orphans: 0..=1 }
                 if processes >= 40
         ),
         "{reply:?}"

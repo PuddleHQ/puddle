@@ -55,15 +55,24 @@ async function open() {
   await screen.findByRole("heading", { level: 2, name: "Appearance" });
 }
 
-// The first open of "Third-party licences" costs a lot of cold code: jsdom's queued `toggle` event,
-// the dev server's first transform of the 31 kB notices file, and the first render of the text.
-// Under load that outlasted the one-second wait of the licence test, which is the first to do
-// it, so run it once before any test's clock starts.
-await open();
-await fireEvent.click(screen.getByText("Third-party licences"));
-await screen.findByLabelText("Third-party licences", { selector: "pre" });
-cleanup();
-api.reset();
+// The licence test is the first to open "Third-party licences", which needs jsdom's queued `toggle`
+// event, vitest's first load of the notices file and the first render of its text. Under load
+// those cold steps outlasted that test's one-second wait, so open it once here, before the tests.
+// The waits are long on purpose: nothing is asserted about speed, and a slow warm-up must not
+// fail the whole file at collection.
+{
+  const slow = { timeout: 30_000 };
+  render(Page);
+  await screen.findByRole("heading", { level: 2, name: "About" }, slow);
+  await fireEvent.click(screen.getByText("Third-party licences"));
+  await screen.findByLabelText(
+    "Third-party licences",
+    { selector: "pre" },
+    slow,
+  );
+  cleanup();
+  api.reset();
+}
 
 async function choose(label: string | RegExp, value: string) {
   const select = screen.getByLabelText(label) as HTMLSelectElement;

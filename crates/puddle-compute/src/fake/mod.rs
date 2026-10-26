@@ -431,6 +431,17 @@ impl FakeRuntime {
         self.lock().handlers.insert(0, Arc::new(handler));
     }
 
+    /// The vsock routes `name` was made with, so a test can speak to the host as its guest would.
+    /// Empty when there is no such sandbox.
+    #[must_use]
+    pub fn routes(&self, name: &SandboxName) -> Vec<crate::VsockRoute> {
+        self.lock()
+            .sandboxes
+            .get(name.as_str())
+            .map(|r| r.spec.routes.clone())
+            .unwrap_or_default()
+    }
+
     /// Simulates the VM dying: a running sandbox becomes `Crashed`. Returns whether it was
     /// running.
     #[must_use = "false means the sandbox wasn't running"]

@@ -29,9 +29,10 @@ use futures_util::future::{BoxFuture, Shared};
 use puddle_agent_proto::resolve::{
     self, Record as HostRecord, RecordType, ResolveAnswer, ResolveError, ResolveQuery,
 };
+use puddle_agent_proto::{AgentMessage, StubDnsTrouble};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, UdpSocket};
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, mpsc};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 
@@ -156,6 +157,56 @@ struct State<A> {
     inflight: Mutex<HashMap<Key, Flight>>,
     asks: Semaphore,
     limits: Limits,
+    /// What went wrong, counted per kind for the host.
+    tally: Mutex<Tally>,
+    /// The control stream's queue; `None` tells the host nothing.
+    reports: Option<mpsc::Sender<AgentMessage>>,
+}
+
+impl<A> State<A> {
+    /// Counts one `kind` of trouble and reports it to the host when a report is due (CP-44).
+    fn trouble(&self, kind: StubDnsTrouble) {
+        let Some(reports) = &self.reports else { return };
+        let due = self
+            .tally
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .count(kind, Instant::now());
+        if let Some(count) = due
+            && reports
+                .try_send(AgentMessage::stub_dns(kind, count))
+                .is_err()
+        {
+            tracing::debug!(
+                ?kind,
+                count,
+                "stub DNS report not queued: the host isn't taking reports"
+            );
+        }
+    }
+}
+
+/// Counts each kind of trouble and says when to report it: the first one at once, then at most one
+/// report per [`Tally::EVERY`] with the number since the last.
+#[derive(Debug, Default)]
+pub(crate) struct Tally {
+    kinds: HashMap<StubDnsTrouble, (Option<Instant>, u32)>,
+}
+
+impl Tally {
+    /// Shortest time between two reports of one kind.
+    pub(crate) const EVERY: Duration = Duration::from_secs(10);
+
+    /// Counts one `kind`; the number to report when a report is due now.
+    pub(crate) fn count(&mut self, kind: StubDnsTrouble, now: Instant) -> Option<u32> {
+        let (since, count) = self.kinds.entry(kind).or_default();
+        *count = count.saturating_add(1);
+        if since.is_some_and(|at| now.duration_since(at) < Self::EVERY) {
+            return None;
+        }
+        *since = Some(now);
+        Some(std::mem::take(count))
+    }
 }
 
 /// The stub's brain: turns a DNS query into a DNS answer. Cheap to clone.
@@ -175,6 +226,18 @@ impl<A: Ask> Stub<A> {
     /// A stub that asks `ask` and hands out addresses from `stand_ins`.
     #[must_use]
     pub fn new(ask: A, stand_ins: StandIns, limits: Limits) -> Self {
+        Self::reporting(ask, stand_ins, limits, None)
+    }
+
+    /// [`Stub::new`] that also tells the host, through `reports` (the control stream's queue),
+    /// what it turns away or cannot carry.
+    #[must_use]
+    pub fn reporting(
+        ask: A,
+        stand_ins: StandIns,
+        limits: Limits,
+        reports: Option<mpsc::Sender<AgentMessage>>,
+    ) -> Self {
         Self {
             shared: Arc::new(State {
                 ask,
@@ -186,6 +249,8 @@ impl<A: Ask> Stub<A> {
                 inflight: Mutex::new(HashMap::new()),
                 asks: Semaphore::new(limits.max_asks.max(1)),
                 limits,
+                tally: Mutex::new(Tally::default()),
+                reports,
             }),
         }
     }
@@ -247,6 +312,7 @@ impl<A: Ask> Stub<A> {
                 Ok(ip) => (Rcode::NoError, vec![stand_in_record(None, ip, ttl)], vec![]),
                 Err(err) => {
                     tracing::warn!(%name, error = %err, "no stand-in address left");
+                    self.shared.trouble(StubDnsTrouble::NoStandInAddress);
                     (Rcode::ServFail, vec![], vec![])
                 }
             },
@@ -288,6 +354,7 @@ impl<A: Ask> Stub<A> {
                 }
                 if left_out > 0 {
                     tracing::warn!(%name, ?rtype, left_out, "records the stub cannot carry (other types, or a target that is not a plain host name) were left out of the answer");
+                    self.shared.trouble(StubDnsTrouble::RecordsLeftOut);
                 }
                 if answers.is_empty() {
                     (Rcode::NoError, vec![], vec![])
@@ -365,6 +432,7 @@ impl<A: Ask> State<A> {
         let limit = self.limits.ask_timeout;
         let Ok(Ok(_slot)) = tokio::time::timeout(limit, self.asks.acquire()).await else {
             tracing::warn!(name = %key.0, "no free lookup slot in time; query dropped, the client asks again");
+            self.trouble(StubDnsTrouble::NoLookupSlot);
             return None;
         };
         let query = ResolveQuery::new(key.0.clone(), key.1);
@@ -372,10 +440,12 @@ impl<A: Ask> State<A> {
             Ok(Ok(answer)) => answer,
             Ok(Err(err)) => {
                 tracing::warn!(name = %key.0, error = %err, "lookup on the host failed; answered SERVFAIL");
+                self.trouble(StubDnsTrouble::LookupFailed);
                 return Some(ResolveAnswer::Unavailable);
             }
             Err(_) => {
                 tracing::warn!(name = %key.0, "lookup on the host timed out; answered SERVFAIL");
+                self.trouble(StubDnsTrouble::LookupTimedOut);
                 return Some(ResolveAnswer::Unavailable);
             }
         };
@@ -611,6 +681,7 @@ async fn serve_udp<A: Ask>(socket: UdpSocket, stub: Stub<A>, limits: Limits) {
         };
         let Ok(slot) = Arc::clone(&slots).try_acquire_owned() else {
             dropped.note(Instant::now());
+            stub.shared.trouble(StubDnsTrouble::UdpDropped);
             continue;
         };
         let message = buf.get(..n).unwrap_or_default().to_vec();
@@ -642,6 +713,7 @@ async fn serve_tcp<A: Ask>(listener: TcpListener, stub: Stub<A>, limits: Limits)
         };
         let Ok(slot) = Arc::clone(&slots).try_acquire_owned() else {
             dropped.note(Instant::now());
+            stub.shared.trouble(StubDnsTrouble::TcpRefused);
             continue;
         };
         let stub = stub.clone();

@@ -13,7 +13,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use puddle_agent_proto::host::{GuestStream, HostConfig, StreamHandler, UdpRefusal};
+use puddle_agent_proto::host::{
+    AgentReport, AgentReports, GuestStream, HostConfig, StreamHandler, UdpRefusal,
+};
 use puddle_agent_proto::relay::splice;
 use puddle_agent_proto::resolve::{ResolveAnswer, ResolveQuery};
 use puddle_types::{
@@ -221,6 +223,7 @@ pub struct Proxy {
     upstream: Option<Upstream>,
     terminations: Option<TerminationConfig>,
     pub(crate) sink: Arc<dyn EventSink>,
+    reports: Option<Arc<dyn AgentReports>>,
     pub(crate) config: ProxyConfig,
 }
 
@@ -250,8 +253,17 @@ impl Proxy {
             upstream: None,
             terminations: None,
             sink,
+            reports: None,
             config: ProxyConfig::default(),
         }
+    }
+
+    /// Passes the guest agents' reports (an entrypoint exit, stub DNS trouble) to `reports`, each
+    /// with the workspace of the route it came on. Without it they are only logged.
+    #[must_use]
+    pub fn with_agent_reports(mut self, reports: Arc<dyn AgentReports>) -> Self {
+        self.reports = Some(reports);
+        self
     }
 
     /// Uses `resolver` for allowed names.
@@ -466,6 +478,13 @@ impl StreamHandler for WorkspaceHandler {
 
     async fn udp_refused(&self, refusal: UdpRefusal) {
         self.record_udp_refusal(&refusal).await;
+    }
+
+    fn agent_report(&self, report: AgentReport) -> impl Future<Output = ()> + Send {
+        if let Some(reports) = &self.proxy.reports {
+            reports.report(&self.workspace, report);
+        }
+        std::future::ready(())
     }
 }
 

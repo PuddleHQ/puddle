@@ -8,7 +8,9 @@
 //!   containers inside the sandbox reach the same proxy ([`bridge`]);
 //! - watches the guest kernel's OOM killer and reports each kill on the control stream
 //!   ([`oom`], [`control`]), which the host turns into
-//!   [`puddle_types::Event::OomKill`].
+//!   [`puddle_types::Event::OomKill`];
+//! - reports an exit of the image's entrypoint ([`entrypoint`]) and what the stub DNS turns away,
+//!   which the host turns into problems on the workspace.
 //!
 //! - answers DNS for tools that ignore the proxy settings, when switched on: a stub on one
 //!   address hands out stand-in addresses and asks the host about each name ([`capture`]);
@@ -33,6 +35,7 @@ pub mod config;
 pub mod connect;
 pub mod control;
 pub mod editor;
+pub mod entrypoint;
 #[cfg(target_os = "linux")]
 mod ifaddrs;
 pub mod merge_file;
@@ -105,9 +108,10 @@ impl Agent {
             }
             None => {}
         }
+        let (tx, rx) = mpsc::channel(REPORT_QUEUE);
         let (stand_ins, dns) = match &config.dns {
             Some(dns_config) => {
-                let (table, bound) = start_dns(dns_config, &upstream, &mut tasks).await;
+                let (table, bound) = start_dns(dns_config, &upstream, &tx, &mut tasks).await;
                 (Some(table), bound)
             }
             None => (None, None),
@@ -115,7 +119,9 @@ impl Agent {
         if let Some(editor) = config.editor.clone() {
             tasks.spawn(editor::run(editor));
         }
-        let (tx, rx) = mpsc::channel(REPORT_QUEUE);
+        if let Some(watch) = config.entrypoint.clone() {
+            tasks.spawn(entrypoint::watch(watch, tx.clone()));
+        }
         let capture =
             start_capture(&config, stand_ins.as_ref(), &upstream, &tx, &mut tasks).await?;
         tasks.spawn(control::run(upstream, rx));
@@ -188,6 +194,7 @@ impl Agent {
 async fn start_dns(
     config: &config::DnsConfig,
     upstream: &Arc<upstream::Upstream>,
+    reports: &mpsc::Sender<AgentMessage>,
     tasks: &mut JoinSet<()>,
 ) -> (capture::table::StandIns, Option<(SocketAddr, SocketAddr)>) {
     let table = match &config.table {
@@ -195,10 +202,11 @@ async fn start_dns(
         None => capture::table::StandIns::in_memory(),
     };
     let limits = capture::dns::Limits::default();
-    let stub = capture::dns::Stub::new(
+    let stub = capture::dns::Stub::reporting(
         capture::dns::HostAsk::new(Arc::clone(upstream), limits.ask_timeout),
         table.clone(),
         limits,
+        Some(reports.clone()),
     );
     let listen = SocketAddr::V4(config.listen);
     match capture::dns::DnsServer::bind(stub.clone(), listen).await {

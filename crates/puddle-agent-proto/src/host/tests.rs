@@ -160,6 +160,7 @@ async fn oom_kills_on_the_control_stream_become_events_for_the_routes_workspace(
 struct Told {
     udp: std::sync::Mutex<Vec<UdpRefusal>>,
     tampered: std::sync::Mutex<Vec<bool>>,
+    reports: std::sync::Mutex<Vec<AgentReport>>,
 }
 
 struct Listening(Arc<Told>);
@@ -173,6 +174,10 @@ impl StreamHandler for Listening {
 
     async fn capture_tampered(&self, table_missing: bool) {
         self.0.tampered.lock().unwrap().push(table_missing);
+    }
+
+    async fn agent_report(&self, report: AgentReport) {
+        self.0.reports.lock().unwrap().push(report);
     }
 }
 
@@ -225,6 +230,77 @@ async fn capture_reports_reach_the_handler_with_the_guests_text_cleaned() {
         udp[1].address
     );
     assert_eq!(*told.tampered.lock().unwrap(), vec![true, false]);
+    h.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn entrypoint_and_stub_dns_reports_reach_the_handler_cleaned_and_unknown_kinds_do_not() {
+    let told = Arc::new(Told::default());
+    let mut h = start_handler(
+        Arc::new(Listening(Arc::clone(&told))),
+        HostConfig::default(),
+    );
+    let mut c = h.control_stream().await;
+    send(
+        &mut c,
+        &AgentMessage::entrypoint_exited(127, "x: not found".into()),
+    )
+    .await;
+    send(
+        &mut c,
+        &AgentMessage::entrypoint_exited(1, "\u{1b}[2Jboom\u{7}".repeat(100)),
+    )
+    .await;
+    c.write_all(b"{\"type\":\"stub_dns\",\"kind\":\"cosmic_rays\",\"count\":9}\n")
+        .await
+        .unwrap();
+    send(
+        &mut c,
+        &AgentMessage::stub_dns(StubDnsTrouble::LookupTimedOut, 4),
+    )
+    .await;
+    for _ in 0..100 {
+        if told.reports.lock().unwrap().len() == 3 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let reports = told.reports.lock().unwrap().clone();
+    assert_eq!(reports.len(), 3, "{reports:?}");
+    assert_eq!(
+        reports[0],
+        AgentReport::EntrypointExited {
+            status: 127,
+            tail: "x: not found".into()
+        }
+    );
+    let AgentReport::EntrypointExited { tail, .. } = &reports[1] else {
+        panic!("{reports:?}");
+    };
+    assert_eq!(tail.chars().count(), MAX_TAIL_CHARS);
+    assert!(tail.starts_with("?[2Jboom?") && !tail.chars().any(char::is_control));
+    assert_eq!(
+        reports[2],
+        AgentReport::StubDns {
+            kind: StubDnsTrouble::LookupTimedOut,
+            count: 4
+        }
+    );
+    h.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_handler_that_takes_no_reports_still_gets_the_events_after_them() {
+    let mut h = start();
+    let mut c = h.control_stream().await;
+    send(&mut c, &AgentMessage::entrypoint_exited(0, String::new())).await;
+    send(
+        &mut c,
+        &AgentMessage::stub_dns(StubDnsTrouble::UdpDropped, 1),
+    )
+    .await;
+    send(&mut c, &AgentMessage::oom_kill(Some(1), Some("a".into()))).await;
+    assert_eq!(h.next_event().await, Event::oom_kill(name(), 1, "a"));
     h.close().await.unwrap();
 }
 

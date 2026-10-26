@@ -37,7 +37,7 @@ use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tokio_yamux::{Session, StreamHandle};
 
-use crate::control::{self, AgentMessage, MAX_LINE, PROTOCOL_VERSION};
+use crate::control::{self, AgentMessage, MAX_LINE, PROTOCOL_VERSION, StubDnsTrouble};
 use crate::kind::{MAX_PREAMBLE, StreamKind, parse_preamble};
 use crate::resolve::{self, ResolveAnswer, ResolveQuery};
 use crate::yamux::{VERSION_BYTE, server_config};
@@ -48,6 +48,10 @@ const MAX_REASON_CHARS: usize = 200;
 /// Longest destination address text taken from a UDP refusal report (an IPv6 address with a zone
 /// is under 50).
 const MAX_ADDRESS_CHARS: usize = 64;
+
+/// Longest end-of-output text taken from an entrypoint exit report (what the boot hook's wrapper
+/// writes is 300 characters at most).
+pub const MAX_TAIL_CHARS: usize = 300;
 
 /// Name used in [`Event::OomKill`] when the agent couldn't tell which process was killed (its pid
 /// is then 0).
@@ -130,6 +134,43 @@ pub trait StreamHandler: Send + Sync + 'static {
         let _ = table_missing;
         async {}
     }
+
+    /// Takes a report about the workspace (an entrypoint exit, stub DNS trouble), already cleaned
+    /// and logged by the session. The default does nothing more. The report is the guest's claim:
+    /// it may become a notice for this workspace, never a decision.
+    fn agent_report(&self, report: AgentReport) -> impl Future<Output = ()> + Send {
+        let _ = report;
+        async {}
+    }
+}
+
+/// Where a host program takes the agent reports of all its workspaces. The proxy's handler passes
+/// each report on with the workspace of the route that carried it. Must not block.
+pub trait AgentReports: Send + Sync {
+    /// Takes one report about `workspace`.
+    fn report(&self, workspace: &WorkspaceName, report: AgentReport);
+}
+
+/// A report from the guest agent about its own workspace, cleaned by the session. Nothing in it
+/// names the workspace: that is the route's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AgentReport {
+    /// The image's entrypoint exited.
+    EntrypointExited {
+        /// Its exit status.
+        status: u8,
+        /// The end of its output, at most [`MAX_TAIL_CHARS`] characters, control characters
+        /// replaced by `?`.
+        tail: String,
+    },
+    /// The stub DNS turned something away or could not carry it.
+    StubDns {
+        /// What happened (never [`StubDnsTrouble::Unknown`]: the session drops those).
+        kind: StubDnsTrouble,
+        /// How often since the agent's last report of this kind.
+        count: u32,
+    },
 }
 
 /// A report from the guest that UDP was refused: the guest's own claim, cleaned by the host
@@ -484,6 +525,31 @@ async fn on_message<H: StreamHandler>(msg: AgentMessage, shared: &Shared<H>) {
                 count,
             };
             shared.handler.udp_refused(refusal).await;
+        }
+        AgentMessage::EntrypointExited { status, tail } => {
+            let tail = clean(&tail, MAX_TAIL_CHARS);
+            if status == 0 {
+                tracing::info!(%workspace, "the image's entrypoint exited with status 0");
+            } else {
+                tracing::warn!(%workspace, status, %tail, "the image's entrypoint exited with a failure");
+            }
+            shared
+                .handler
+                .agent_report(AgentReport::EntrypointExited { status, tail })
+                .await;
+        }
+        AgentMessage::StubDns {
+            kind: StubDnsTrouble::Unknown,
+            ..
+        } => {
+            tracing::debug!(%workspace, "stub DNS report of an unknown kind ignored");
+        }
+        AgentMessage::StubDns { kind, count } => {
+            tracing::warn!(%workspace, ?kind, count, "the guest's stub DNS turned lookups away");
+            shared
+                .handler
+                .agent_report(AgentReport::StubDns { kind, count })
+                .await;
         }
         AgentMessage::Unknown => {
             tracing::debug!(%workspace, "unknown control message ignored");

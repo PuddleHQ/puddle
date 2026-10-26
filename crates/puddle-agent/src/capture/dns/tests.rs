@@ -939,3 +939,69 @@ async fn the_udp_receive_queue_is_sized_for_the_queries_the_stub_handles_at_once
         "receive queue {now} bytes (default {default}, cap {cap})"
     );
 }
+
+// ---- reports to the host ----
+
+#[test]
+fn a_tally_reports_the_first_of_a_kind_at_once_then_a_count_every_ten_seconds() {
+    let mut tally = Tally::default();
+    let t0 = Instant::now();
+    let kind = StubDnsTrouble::LookupFailed;
+    assert_eq!(tally.count(kind, t0), Some(1));
+    assert_eq!(tally.count(kind, t0 + Duration::from_secs(1)), None);
+    assert_eq!(tally.count(kind, t0 + Duration::from_secs(2)), None);
+    // Another kind has its own window.
+    assert_eq!(tally.count(StubDnsTrouble::UdpDropped, t0), Some(1));
+    assert_eq!(tally.count(kind, t0 + Tally::EVERY), Some(3));
+}
+
+#[tokio::test]
+async fn trouble_the_stub_logs_is_reported_to_the_host_by_kind() {
+    let (tx, mut rx) = mpsc::channel(16);
+    let table = StandIns::open_with_capacity(None, 1);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&calls);
+    let fake = Arc::new(Fake::new(move |q: ResolveQuery| {
+        let n = seen.fetch_add(1, Ordering::SeqCst);
+        std::future::ready(match (n, q.name.as_str()) {
+            (0, _) => Err(ResolveError::NoAnswer),
+            _ => Ok(stand_in()),
+        })
+    }));
+    let stub = Stub::reporting(
+        Arc::clone(&fake),
+        table.clone(),
+        Limits::default(),
+        Some(tx),
+    );
+    // A failed lookup, twice: one report at once, the second waits for its window.
+    assert_eq!(ask_stub(&stub, "a.example.com", TYPE_A).await.rcode(), 2);
+    let first = ask_stub(&stub, "a.example.com", TYPE_A).await;
+    assert_eq!(first.rcode(), 0);
+    // Every stand-in in use: no address left.
+    let _held = table.hold(first.answers[0].ip()).unwrap();
+    assert_eq!(ask_stub(&stub, "b.example.com", TYPE_A).await.rcode(), 2);
+    assert_eq!(ask_stub(&stub, "c.example.com", TYPE_A).await.rcode(), 2);
+    let mut got = Vec::new();
+    while let Ok(msg) = rx.try_recv() {
+        got.push(msg);
+    }
+    assert_eq!(
+        got,
+        [
+            AgentMessage::stub_dns(StubDnsTrouble::LookupFailed, 1),
+            AgentMessage::stub_dns(StubDnsTrouble::NoStandInAddress, 1),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_stub_whose_report_queue_is_full_still_answers() {
+    let (tx, _rx) = mpsc::channel(1);
+    tx.try_send(AgentMessage::hello()).unwrap();
+    let fake = Arc::new(Fake::new(|_| {
+        std::future::ready(Err(ResolveError::NoAnswer))
+    }));
+    let stub = Stub::reporting(fake, StandIns::in_memory(), Limits::default(), Some(tx));
+    assert_eq!(ask_stub(&stub, "a.example.com", TYPE_A).await.rcode(), 2);
+}

@@ -86,5 +86,28 @@ fn main() {
     }
     print!("{stdout}");
     let _ = std::io::stdout().flush();
-    std::process::exit(exit);
+    leave(exit);
+}
+
+/// Ends the process without the exit-time profile write of an instrumented build.
+///
+/// The tests kill this tool on a timeout (`kill_on_drop`), and a kill during that write leaves a
+/// short `.profraw` file that fails the whole coverage merge. The file is under `tests/`, which
+/// the coverage report leaves out, so its profile is never read anyway.
+fn leave(code: i32) -> ! {
+    #[cfg(unix)]
+    {
+        // Declared here because a `[[bin]]` build doesn't link the dev-dependencies, and `libc`
+        // isn't a dependency of this crate.
+        #[expect(
+            unsafe_code,
+            reason = "a one-function C declaration; `_exit` has no preconditions"
+        )]
+        unsafe extern "C" {
+            safe fn _exit(code: i32) -> !;
+        }
+        _exit(code)
+    }
+    #[cfg(not(unix))]
+    std::process::exit(code)
 }

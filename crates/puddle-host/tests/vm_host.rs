@@ -2202,8 +2202,7 @@ echo "RADAR dns_tcp agent_log_refusal_lines=$(grep -c 'connections closed: too m
 /// resolved by the stub DNS server and every connection captured, the widest use of the stub:
 /// the proxy variables go. apt keeps its proxy file: with none, `apt-get update` fails with
 /// `Connection failed [IP: 198.18.0.2 80]` although curl reaches the same URL in the same guest.
-const RADAR_NO_PROXY_ENV: &str = r#"unset http_proxy https_proxy all_proxy no_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY NODE_USE_ENV_PROXY MAVEN_ARGS
-"#;
+const RADAR_NO_PROXY_ENV: &str = "unset http_proxy https_proxy all_proxy no_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY NODE_USE_ENV_PROXY MAVEN_ARGS\n";
 
 /// The stub DNS server's TCP side and UDP traffic as the radar script measured them.
 #[derive(Debug)]
@@ -2217,11 +2216,13 @@ struct StubDnsReading {
 impl StubDnsReading {
     fn parse(out: &str) -> Self {
         let number = |key: &str| -> u32 {
-            out.lines()
+            let value = out
+                .lines()
                 .filter(|l| l.starts_with("RADAR dns_"))
                 .find_map(|l| l.split_whitespace().find_map(|w| w.strip_prefix(key)))
-                .and_then(|n| n.parse().ok())
-                .unwrap_or_else(|| panic!("no {key} in the radar output:\n{out}"))
+                .and_then(|n| n.parse().ok());
+            assert!(value.is_some(), "no {key} in the radar output:\n{out}");
+            value.unwrap_or_default()
         };
         Self {
             tools_peak_open: number("tools_peak_open="),

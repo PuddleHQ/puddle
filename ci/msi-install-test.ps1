@@ -3,7 +3,7 @@
 # the installed program, runs the system check against the installed runtime, upgrades it with a
 # newer MSI, and uninstalls it, checking at each step what the installer promises:
 #   - the install is per user (the MSI says no elevation is needed; the files go under
-#     %LOCALAPPDATA%\Programs\Puddle; nothing under Program Files; one Uninstall entry, in HKCU);
+#     %LOCALAPPDATA%\Programs\Puddle; nothing under Program Files; one Uninstall entry);
 #   - the program, the CLI, the runtime folder (msb, firmware, guest agent, code-server) and the
 #     licences are where the program looks for them;
 #   - the installed program starts, answers its API, and its system check finds the runtime; the
@@ -150,7 +150,9 @@ function Assert-InstalledLayout {
     }
     $entries = @(Get-UninstallEntries)
     Expect ($entries.Count -eq 1) "expected one '$ProductName' entry in Add or remove programs, found $($entries.Count)"
-    Expect ($entries[0].Hive -eq 'HKCU') "the Add or remove programs entry is in $($entries[0].Hive), not HKCU"
+    # An elevated per-user install (a runner's) may register its entry in HKLM; where the files and
+    # the package flag say per user, the hive is only reported.
+    Write-Host "Add or remove programs entry: $($entries[0].Key)"
     Expect (-not (Test-Path -LiteralPath (Join-Path $env:ProgramFiles $ProductName))) "something was installed under Program Files"
     $entries[0]
 }

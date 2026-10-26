@@ -27,6 +27,7 @@ use url::Url;
 
 use crate::backend::Backend;
 use crate::badge::{self, OpenRequests};
+use crate::icon::{self, Wanted};
 use crate::notify::{self, Notice, Notifier, REQUEST_EXTRA};
 use crate::tray::{self, CloseAction, MENU_QUIT, MinimizeAction, Tray, TrayState};
 use crate::window::MAIN_LABEL;
@@ -245,6 +246,8 @@ struct Outputs {
     notify: ShowNotice,
     /// Shows the waiting count (and whether the badge is on) on the title, the tray and the taskbar.
     badge: Arc<dyn Fn(usize, bool) + Send + Sync>,
+    /// Sets the app icon of the window, the taskbar and the tray.
+    icon: Arc<dyn Fn(&puddle_appicon::Icon) + Send + Sync>,
 }
 
 impl Outputs {
@@ -253,11 +256,33 @@ impl Outputs {
         let front = app.clone();
         let notifying = app.clone();
         let showing = app.clone();
+        let decorated = app.clone();
+        let tray_icon = tray.clone();
         Self {
             in_front: Arc::new(move || in_front(&front)),
             notify: Arc::new(move |notice, sound| notify::show(&notifying, notice, sound)),
             badge: Arc::new(move |count, on| show_badge(&showing, tray.as_deref(), count, on)),
+            icon: Arc::new(move |picture| {
+                show_icon(&decorated, tray_icon.as_deref(), &icon::image(picture));
+            }),
         }
+    }
+}
+
+/// Sets `picture` as the icon of the main window (the taskbar button and the title bar) and of the
+/// tray. A platform with no window icon (macOS) ignores the window's.
+fn show_icon<R: Runtime>(
+    app: &AppHandle<R>,
+    tray: Option<&Tray<R>>,
+    picture: &tauri::image::Image<'_>,
+) {
+    if let Some(window) = app.get_webview_window(MAIN_LABEL)
+        && let Err(err) = window.set_icon(picture.clone().to_owned())
+    {
+        tracing::debug!(%err, "the window did not take the app icon");
+    }
+    if let Some(tray) = tray {
+        tray.set_app_icon(picture);
     }
 }
 
@@ -295,6 +320,8 @@ struct Loop {
     prefs: UiPrefs,
     /// The badge as last shown, so only a change reaches the outputs.
     shown: (usize, bool),
+    /// The app icon as last set, so only a change is drawn and set again.
+    icon: Wanted,
     /// How often the settings are read while no event arrives.
     poll: Duration,
 }
@@ -325,8 +352,30 @@ impl Loop {
         }
     }
 
+    /// Sets the app icon again when the choice, or the user's own image, changed.
+    async fn reload_icon(&mut self) {
+        let (repo, prefs, shown) = (self.settings.clone(), self.prefs.clone(), self.icon.clone());
+        let read = tokio::task::spawn_blocking(move || {
+            let wanted = Wanted::read(repo.as_ref(), &prefs);
+            if wanted == shown {
+                return None;
+            }
+            wanted.draw().map(|drawn| (wanted, drawn))
+        })
+        .await;
+        match read {
+            Ok(Some((wanted, drawn))) => {
+                (self.out.icon)(&drawn);
+                self.icon = wanted;
+            }
+            Ok(None) => {}
+            Err(err) => tracing::debug!(%err, "the app icon read did not finish"),
+        }
+    }
+
     async fn on_event(&mut self, event: &Event) {
         self.reload_prefs().await;
+        self.reload_icon().await;
         if self.open.apply(event) {
             self.refresh_badge();
         }
@@ -370,6 +419,7 @@ impl Loop {
                 }
                 _ = poll.tick() => {
                     self.reload_prefs().await;
+                    self.reload_icon().await;
                     self.refresh_badge();
                 }
             }
@@ -388,7 +438,16 @@ pub fn attach<R: Runtime>(
 ) {
     let prefs = prefs_or_default(backend.settings().as_ref());
     let open = open_requests(backend.store());
-    let tray = Tray::build(app, open.count(), prefs.badge()).map(Arc::new);
+    let first = Wanted::read(backend.settings().as_ref(), &prefs)
+        .draw()
+        .map(|drawn| icon::image(&drawn))
+        .or_else(|| {
+            app.default_window_icon()
+                .map(|bundled| bundled.clone().to_owned())
+        });
+    let tray = first
+        .and_then(|first| Tray::build(app, &first, open.count(), prefs.badge()))
+        .map(Arc::new);
     let tray_state = if tray.is_some() {
         TrayState::Shown
     } else {
@@ -441,6 +500,10 @@ fn attach_with<R: Runtime>(
 
     let shown = (open.count(), prefs.badge());
     (out.badge)(shown.0, shown.1);
+    let icon = Wanted::read(settings.as_ref(), &prefs);
+    if let Some(drawn) = icon.draw() {
+        (out.icon)(&drawn);
+    }
     let state = Loop {
         out,
         store: backend.store().clone(),
@@ -449,6 +512,7 @@ fn attach_with<R: Runtime>(
         notifier: Notifier::default(),
         prefs,
         shown,
+        icon,
         poll: SETTINGS_POLL,
     };
     tauri::async_runtime::spawn(state.run(stream));
@@ -542,13 +606,15 @@ mod behaviour_tests {
     struct Recorded {
         notices: Mutex<Vec<(Notice, bool)>>,
         badges: Mutex<Vec<(usize, bool)>>,
+        icons: Mutex<Vec<puddle_appicon::Icon>>,
         told: AtomicUsize,
         in_front: AtomicBool,
     }
 
     impl Recorded {
         fn outputs(self: &Arc<Self>) -> Outputs {
-            let (front, notices, badges) = (self.clone(), self.clone(), self.clone());
+            let (front, notices, badges, icons) =
+                (self.clone(), self.clone(), self.clone(), self.clone());
             Outputs {
                 in_front: Arc::new(move || front.in_front.load(Ordering::SeqCst)),
                 notify: Arc::new(move |notice, sound| {
@@ -559,6 +625,7 @@ mod behaviour_tests {
                         .push((notice.clone(), sound));
                 }),
                 badge: Arc::new(move |count, on| badges.badges.lock().unwrap().push((count, on))),
+                icon: Arc::new(move |icon| icons.icons.lock().unwrap().push(icon.clone())),
             }
         }
 
@@ -568,6 +635,10 @@ mod behaviour_tests {
 
         fn badges(&self) -> Vec<(usize, bool)> {
             self.badges.lock().unwrap().clone()
+        }
+
+        fn icons(&self) -> Vec<puddle_appicon::Icon> {
+            self.icons.lock().unwrap().clone()
         }
     }
 
@@ -775,6 +846,7 @@ mod behaviour_tests {
         let prefs = prefs_or_default(settings.as_ref());
         let open = open_requests(rig.backend.store());
         let shown = (open.count(), prefs.badge());
+        let icon = Wanted::read(settings.as_ref(), &prefs);
         let state = Loop {
             out: rig.recorded.outputs(),
             store: rig.backend.store().clone(),
@@ -783,6 +855,7 @@ mod behaviour_tests {
             notifier,
             prefs,
             shown,
+            icon,
             poll,
         };
         tauri::async_runtime::spawn(state.run(stream));
@@ -814,6 +887,7 @@ mod behaviour_tests {
             notifier: Notifier::default(),
             prefs: UiPrefs::default(),
             shown: (0, true),
+            icon: Wanted::read(rig.backend.settings().as_ref(), &UiPrefs::default()),
             poll: Duration::from_secs(60),
         };
         tauri::async_runtime::spawn(state.run(stream));
@@ -849,6 +923,69 @@ mod behaviour_tests {
         save(&rig, &json!({"badge": false}));
         wait_for("the badge going off", || {
             rig.recorded.badges().last() == Some(&(1, false))
+        });
+    }
+
+    #[test]
+    fn the_window_takes_the_app_icon_and_a_missing_window_or_tray_is_no_error() {
+        let rig = rig(TrayState::Missing);
+        let picture = icon::image(&drawn(puddle_settings::AppIconChoice::DuckPond));
+        show_icon(rig.app.handle(), None, &picture);
+        let empty = with_plugins(mock_builder()).build(context()).unwrap();
+        show_icon(empty.handle(), None, &picture);
+    }
+
+    fn drawn(choice: puddle_settings::AppIconChoice) -> puddle_appicon::Icon {
+        puddle_appicon::built_in(choice, puddle_appicon::SIZE).unwrap()
+    }
+
+    #[test]
+    fn the_app_icon_is_set_at_start_and_follows_the_choice_in_settings_without_any_event() {
+        use puddle_settings::AppIconChoice::{Duck, DuckNight, DuckSun};
+        let rig = rig(TrayState::Shown);
+        assert_eq!(rig.recorded.icons(), [drawn(Duck)], "the duck at start");
+
+        let hub = Arc::new(puddle_api::EventHub::default());
+        start_loop(&rig, &hub, Notifier::default(), Duration::from_millis(50));
+        save(&rig, &json!({"app_icon": "duck_night"}));
+        wait_for("the night duck", || {
+            rig.recorded.icons().last() == Some(&drawn(DuckNight))
+        });
+        // An event reads the settings too, so the next choice shows on it, not only on the poll.
+        save(&rig, &json!({"app_icon": "duck_sun"}));
+        wait_for("the sun duck", || {
+            rig.recorded.icons().last() == Some(&drawn(DuckSun))
+        });
+    }
+
+    #[test]
+    fn your_own_image_is_set_when_chosen_and_again_when_replaced_and_a_vanished_one_is_the_duck() {
+        use puddle_settings::AppIconChoice::Duck;
+        let rig = rig(TrayState::Shown);
+        let hub = Arc::new(puddle_api::EventHub::default());
+        start_loop(&rig, &hub, Notifier::default(), Duration::from_millis(50));
+        let colour = |rgba: [u8; 4]| puddle_appicon::Icon {
+            size: puddle_appicon::SIZE,
+            rgba: rgba.repeat((puddle_appicon::SIZE * puddle_appicon::SIZE) as usize),
+        };
+        let (red, blue) = (colour([200, 0, 0, 255]), colour([0, 0, 200, 255]));
+
+        let settings = rig.backend.settings();
+        settings.save_app_icon(&red.to_png().unwrap()).unwrap();
+        save(&rig, &json!({"app_icon": "custom"}));
+        wait_for("the red image", || {
+            rig.recorded.icons().last() == Some(&red)
+        });
+
+        settings.save_app_icon(&blue.to_png().unwrap()).unwrap();
+        wait_for("the blue image", || {
+            rig.recorded.icons().last() == Some(&blue)
+        });
+
+        // The file went away behind our back: the window keeps an icon.
+        settings.delete_app_icon().unwrap();
+        wait_for("the duck again", || {
+            rig.recorded.icons().last() == Some(&drawn(Duck))
         });
     }
 

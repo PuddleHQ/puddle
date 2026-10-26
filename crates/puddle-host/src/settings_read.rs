@@ -61,6 +61,15 @@ mod tests {
         fn save_workspace(&self, _: &WorkspaceName, _: Value) -> Result<(), SettingsRepoError> {
             Ok(())
         }
+        fn load_app_icon(&self) -> Result<Option<Vec<u8>>, SettingsRepoError> {
+            Ok(None)
+        }
+        fn save_app_icon(&self, _: &[u8]) -> Result<(), SettingsRepoError> {
+            Ok(())
+        }
+        fn delete_app_icon(&self) -> Result<(), SettingsRepoError> {
+            Ok(())
+        }
     }
 
     fn a() -> WorkspaceName {

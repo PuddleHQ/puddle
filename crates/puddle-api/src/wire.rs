@@ -23,6 +23,7 @@ use utoipa::ToSchema;
 
 use crate::error::ApiError;
 
+mod app_icon;
 mod credentials;
 mod doctor;
 mod environment;
@@ -38,6 +39,7 @@ mod shell_init;
 mod start_folder;
 mod workspaces;
 
+pub use app_icon::{AppIconChoice, AppIcons, BuiltInIcon, CustomIcon};
 pub(crate) use credentials::source_problem;
 pub use credentials::{
     CheckRequest, CheckResult, FoundAccount, FoundAccounts, FoundProblem, FoundVia, SignInRequest,
@@ -1806,6 +1808,11 @@ pub struct UiPrefs {
     #[serde(default)]
     #[schema(required = true)]
     pub minimize_to_tray: Option<bool>,
+    /// The icon of the window, the tray and the taskbar (default `duck`). `custom` needs an
+    /// uploaded image.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub app_icon: Option<AppIconChoice>,
     /// Notify only while Puddle's window is not focused (default on).
     #[serde(default)]
     #[schema(required = true)]
@@ -1846,6 +1853,7 @@ impl From<&settings::UiPrefs> for UiPrefs {
             sound: u.sound,
             close_behaviour: u.close_behaviour.map(Into::into),
             minimize_to_tray: u.minimize_to_tray,
+            app_icon: u.app_icon.map(Into::into),
             notify_only_unfocused: u.notify_only_unfocused,
             badge: u.badge,
             notify_oom: u.notify_oom,
@@ -1880,6 +1888,7 @@ impl UiPrefs {
             sound,
             close_behaviour,
             minimize_to_tray,
+            app_icon,
             notify_only_unfocused,
             badge,
             notify_oom,
@@ -1898,6 +1907,7 @@ impl UiPrefs {
         prefs.sound = sound;
         prefs.close_behaviour = close_behaviour.map(Into::into);
         prefs.minimize_to_tray = minimize_to_tray;
+        prefs.app_icon = app_icon.map(Into::into);
         prefs.notify_only_unfocused = notify_only_unfocused;
         prefs.badge = badge;
         prefs.notify_oom = notify_oom;
@@ -2464,6 +2474,7 @@ mod tests {
                 sound: Some(true),
                 close_behaviour: Some(CloseBehaviour::Quit),
                 minimize_to_tray: Some(true),
+                app_icon: Some(AppIconChoice::DuckSun),
                 notify_only_unfocused: Some(false),
                 badge: Some(false),
                 notify_oom: Some(false),
@@ -2487,6 +2498,7 @@ mod tests {
         assert!(g.ui.sound());
         assert_eq!(g.ui.close_behaviour(), settings::CloseBehaviour::Quit);
         assert!(g.ui.minimize_to_tray());
+        assert_eq!(g.ui.app_icon(), settings::AppIconChoice::DuckSun);
         assert!(!g.ui.notify_only_unfocused());
         assert!(!g.ui.badge());
         assert!(!g.ui.notify_oom());

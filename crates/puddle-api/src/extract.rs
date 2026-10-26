@@ -143,6 +143,31 @@ fn push(buf: &mut Zeroizing<Vec<u8>>, data: &[u8]) {
     buf.extend_from_slice(data);
 }
 
+/// A body that is a file, as it came (any `Content-Type`): the route checks what it is.
+#[derive(Debug)]
+pub(crate) struct File(pub(crate) axum::body::Bytes);
+
+impl<S: Send + Sync> FromRequest<S> for File {
+    type Rejection = ApiError;
+
+    async fn from_request(request: Request, state: &S) -> Result<Self, ApiError> {
+        axum::body::Bytes::from_request(request, state)
+            .await
+            .map(Self)
+            .map_err(|rejection| {
+                if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                    ApiError::new(
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        ErrorCode::PayloadTooLarge,
+                        "the file is too large",
+                    )
+                } else {
+                    ApiError::bad_request("the file could not be read")
+                }
+            })
+    }
+}
+
 /// Path parameters.
 #[derive(Debug, FromRequestParts)]
 #[from_request(via(axum::extract::Path), rejection(ApiError))]

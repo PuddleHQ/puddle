@@ -54,6 +54,8 @@ struct Cache {
     global: Option<Value>,
     global_read: bool,
     workspaces: BTreeMap<WorkspaceName, Option<Value>>,
+    app_icon: Option<Vec<u8>>,
+    app_icon_read: bool,
 }
 
 impl FileSettings {
@@ -68,6 +70,10 @@ impl FileSettings {
 
     fn global_path(&self) -> PathBuf {
         self.dir.join("global.json")
+    }
+
+    fn app_icon_path(&self) -> PathBuf {
+        self.dir.join("app-icon.png")
     }
 
     fn workspace_path(&self, workspace: &WorkspaceName) -> PathBuf {
@@ -134,6 +140,55 @@ impl SettingsRepo for FileSettings {
         // if the new one were deleted. Failing to remove it changes nothing.
         let _ = std::fs::remove_file(self.legacy_path(workspace));
         cache.workspaces.insert(workspace.clone(), Some(document));
+        Ok(())
+    }
+
+    fn load_app_icon(&self) -> Result<Option<Vec<u8>>, SettingsRepoError> {
+        let mut cache = self.cache();
+        if cache.app_icon_read {
+            return Ok(cache.app_icon.clone());
+        }
+        let path = self.app_icon_path();
+        let loaded = match std::fs::read(&path) {
+            Ok(bytes) => Some(bytes),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+            Err(e) => {
+                return Err(SettingsRepoError::new(format!(
+                    "cannot read {}: {e}",
+                    path.display()
+                )));
+            }
+        };
+        cache.app_icon.clone_from(&loaded);
+        cache.app_icon_read = true;
+        Ok(loaded)
+    }
+
+    fn save_app_icon(&self, png: &[u8]) -> Result<(), SettingsRepoError> {
+        let mut cache = self.cache();
+        let path = self.app_icon_path();
+        puddle_fs::private::write_atomic(&path, png)
+            .map_err(|e| SettingsRepoError::new(format!("cannot write {}: {e}", path.display())))?;
+        cache.app_icon = Some(png.to_vec());
+        cache.app_icon_read = true;
+        Ok(())
+    }
+
+    fn delete_app_icon(&self) -> Result<(), SettingsRepoError> {
+        let mut cache = self.cache();
+        let path = self.app_icon_path();
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(SettingsRepoError::new(format!(
+                    "cannot remove {}: {e}",
+                    path.display()
+                )));
+            }
+        }
+        cache.app_icon = None;
+        cache.app_icon_read = true;
         Ok(())
     }
 }
@@ -469,6 +524,49 @@ mod tests {
         std::fs::write(dir.path().join("global.json"), b"{ nope").unwrap();
         let err = FileSettings::new(dir.path()).load_global().unwrap_err();
         assert!(err.to_string().contains("not valid JSON"), "{err}");
+    }
+
+    #[test]
+    fn the_app_icon_round_trips_survives_a_restart_and_deletes() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = FileSettings::new(dir.path().join("settings"));
+        assert_eq!(repo.load_app_icon().unwrap(), None);
+        repo.delete_app_icon().unwrap();
+        repo.save_app_icon(b"one").unwrap();
+        assert_eq!(repo.load_app_icon().unwrap(), Some(b"one".to_vec()));
+        let again = FileSettings::new(dir.path().join("settings"));
+        assert_eq!(again.load_app_icon().unwrap(), Some(b"one".to_vec()));
+        repo.save_app_icon(b"two").unwrap();
+        assert_eq!(repo.load_app_icon().unwrap(), Some(b"two".to_vec()));
+        repo.delete_app_icon().unwrap();
+        assert_eq!(repo.load_app_icon().unwrap(), None);
+        assert!(!dir.path().join("settings").join("app-icon.png").exists());
+    }
+
+    #[test]
+    fn an_app_icon_that_cannot_be_read_written_or_removed_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        // A folder where the file belongs: reading and removing it fail.
+        std::fs::create_dir(dir.path().join("app-icon.png")).unwrap();
+        let repo = FileSettings::new(dir.path());
+        assert!(
+            repo.load_app_icon()
+                .unwrap_err()
+                .to_string()
+                .contains("cannot read")
+        );
+        assert!(
+            repo.delete_app_icon()
+                .unwrap_err()
+                .to_string()
+                .contains("cannot remove")
+        );
+        assert!(
+            repo.save_app_icon(b"x")
+                .unwrap_err()
+                .to_string()
+                .contains("cannot write")
+        );
     }
 
     #[test]

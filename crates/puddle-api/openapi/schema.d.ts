@@ -6,6 +6,49 @@
  */
 
 export interface paths {
+    "/api/app-icons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The built-in icons drawn to preview, and the user's own image when one was uploaded. */
+        get: operations["list_app_icons"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/app-icons/custom": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Gives Puddle an image of the user's own to use as the app icon. The body is the image file
+         *     (PNG, JPEG or WebP, at most 8 MB, 32 to 8192 pixels on each side). It is checked and stored as
+         *     a 256 pixel square PNG, replacing an earlier one; one that is not square is fitted on a clear
+         *     square. This does not choose it: set `ui.app_icon` to `custom` for that.
+         */
+        put: operations["put_custom_icon"];
+        post?: never;
+        /**
+         * Removes the user's own image. Refused while it is the icon in use: choose another icon and
+         *     save first, so the window never ends up with an icon that is gone.
+         */
+        delete: operations["delete_custom_icon"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/audit": {
         parameters: {
             query?: never;
@@ -1343,6 +1386,21 @@ export interface components {
             /** @description Human-readable, lower case, no trailing period. Never contains a token. */
             message: string;
         };
+        /**
+         * @description Which icon the window, the tray and the taskbar show.
+         * @enum {string}
+         */
+        AppIconChoice: "duck" | "duck_pond" | "duck_night" | "duck_sun" | "custom";
+        /** @description The icons the user can choose between. */
+        AppIcons: {
+            /** @description The built-in icons, in the order to show them. */
+            built_in: components["schemas"]["BuiltInIcon"][];
+            /**
+             * @description The user's own image as it will be used (a 256 pixel PNG, base64); `null` until one is
+             *     uploaded.
+             */
+            custom_png_base64: string | null;
+        };
         /** @description Adds one identity to a workspace. */
         AttachIdentityRequest: {
             /**
@@ -1796,6 +1854,13 @@ export interface components {
          * @enum {string}
          */
         AuditType: "connection" | "pending_created" | "pending_decided" | "pending_expired" | "pending_suppressed" | "rule_created" | "rule_updated" | "rule_deleted" | "rule_expired" | "rule_set_created" | "rule_set_updated" | "rule_set_deleted" | "rule_set_switched" | "rule_set_changed" | "system_managed_changed" | "audit_trimmed";
+        /** @description One built-in icon, drawn for the Settings screen to preview. */
+        BuiltInIcon: {
+            /** @description The choice that selects it. */
+            choice: components["schemas"]["AppIconChoice"];
+            /** @description A 64 pixel PNG of the icon, base64 (standard alphabet, padded). */
+            png_base64: string;
+        };
         /** @description A credential to try. */
         CheckRequest: {
             /** @description Where its value comes from. */
@@ -1986,6 +2051,11 @@ export interface components {
             kind: "stored";
             /** @description The organisation, for tokens that belong to one (Azure DevOps). */
             org: string | null;
+        };
+        /** @description The user's own image after it was checked and resized. */
+        CustomIcon: {
+            /** @description The stored icon: a 256 pixel PNG, base64. */
+            png_base64: string;
         };
         /** @description A proxy that did not answer and is tried last for a while. */
         DeadProxy: {
@@ -3830,6 +3900,7 @@ export interface components {
         };
         /** @description Preferences for Puddle's own window. `null` means Puddle's default. */
         UiPrefs: {
+            app_icon: components["schemas"]["AppIconChoice"] | null;
             /** @description The waiting count on the tray, taskbar and window title (default on). */
             badge: boolean | null;
             close_behaviour: components["schemas"]["CloseBehaviour"] | null;
@@ -4062,6 +4133,213 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_app_icons: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the icons to choose between */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppIcons"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the stored image cannot be read (settings_unreadable) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_custom_icon: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description the image file */
+        requestBody: {
+            content: {
+                "application/octet-stream": number[];
+            };
+        };
+        responses: {
+            /** @description the stored icon */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomIcon"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description over 8 MB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description not a usable image; the message says why */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_custom_icon: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description removed (or there was none) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description it is the icon in use */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
     audit: {
         parameters: {
             query?: {

@@ -6109,6 +6109,7 @@ dependencies = [
  "puddle-types",
  "puddle-vm-tests",
  "rusqlite",
+ "rustix",
  "serde_json",
  "sha2 0.11.1",
  "tempfile",

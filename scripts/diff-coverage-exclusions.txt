@@ -106,6 +106,8 @@ crates/puddle-compute-msb/src/sandbox.rs | fn stopped_by_force(&self) -> bool { 
 crates/puddle-compute-msb/src/sandbox.rs | self.forced.load(Ordering::Relaxed) | as above: the VM tier
 crates/puddle-compute-msb/src/sandbox.rs | .map_err(|e| map("kill", self.name.as_str(), e))?; | the kill after a graceful stop that timed out needs a VM that ignores the stop signal; the VM tier
 crates/puddle-compute-msb/src/sandbox.rs | self.forced.store(true, Ordering::Relaxed); | as above: the VM tier
+crates/puddle-compute-msb/src/sandbox.rs | Err(e) if stop_went_unanswered(&e) => { | the arm runs only when a real VM did not answer the stop (the VM tier freezes one); the decision is unit-tested in `stop_went_unanswered`
+crates/puddle-compute-msb/src/sandbox.rs | tracing::warn!(sandbox = %self.name, error = %e, "graceful stop got no answer; killing the VM"); | as above: the VM tier
 crates/puddle-compute-msb/src/sandbox.rs | Ok(()) | as above: the VM tier (the `Ok(())` after the kill)
 crates/puddle-host/src/workspaces.rs | Err(reason) => return Err(self.abort_attachment(attachment, reason).await), | the egress route failing to open (a socket or named pipe that cannot be made) cannot be made to fail on the fake runtime; the same arm for a failed image config is tested (`a_failed_image_pull_that_cannot_be_cleaned_up_names_what_is_left`)
 crates/puddle-lifecycle/src/reconcile.rs | StopOutcome::Panicked => {} | only `Lifecycle::shutdown` makes this outcome, when the task running the stop died; `trim_and_stop`, which reconcile calls, never returns it

@@ -252,6 +252,60 @@ async fn vm_ssh_reports_a_signal_killed_command_as_a_failure() {
     assert_eq!(seven, 7, "a normal exit code is reported as is");
 }
 
+/// A stop the VM never answers ends in a kill: the stop returns `Ok`, the sandbox is down, and the
+/// handle says it was by force. The VM's process is frozen (`SIGSTOP`), so it cannot take part in
+/// a graceful shutdown (msb gives up on the handshake with it after about 10 s, well inside the
+/// 30 s stop timeout); `SIGKILL` still ends it. Unix only: a Windows process cannot be frozen from
+/// a test without more than this test is worth.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_a_stop_the_vm_never_answers_ends_by_force() {
+    use rustix::process::{Pid, Signal, kill_process};
+
+    let settings = support::settings();
+    let rt = support::runtime(&settings).await;
+    let harness = VmEnv::new(settings.clone()).await.unwrap();
+    let s = spec(&settings, "force");
+    let n = s.name.clone();
+    let sb = rt.create(s).await.expect("create");
+    let pid = harness
+        .scope(Box::pin(async {
+            SdkSandbox::get(n.as_str())
+                .await
+                .map(|h| h.local().and_then(|l| l.pid))
+        }))
+        .await
+        .expect("the sandbox's record")
+        .expect("the record names the VM process");
+    let pid = Pid::from_raw(pid).expect("a process id");
+    kill_process(pid, Signal::STOP).expect("freeze the VM process");
+
+    let stopped = sb.stop().await;
+    let forced = sb.stopped_by_force();
+    let status = sb.status().await;
+    // Leave nothing frozen behind if the stop did not end it.
+    let _ = kill_process(pid, Signal::KILL);
+    cleanup(&rt, &[&n]).await;
+    stopped.expect("a forced stop still returns Ok");
+    assert!(forced, "the stop ended the VM by force but said it did not");
+    assert!(status.unwrap().is_down());
+}
+
+/// The other side of the bar above: a stop the guest answers is not by force.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_a_stop_the_guest_answers_is_not_by_force() {
+    let settings = support::settings();
+    let rt = support::runtime(&settings).await;
+    let s = spec(&settings, "clean");
+    let n = s.name.clone();
+    let sb = rt.create(s).await.expect("create");
+    let stopped = sb.stop().await;
+    let forced = sb.stopped_by_force();
+    cleanup(&rt, &[&n]).await;
+    stopped.unwrap();
+    assert!(!forced);
+}
+
 /// What the guest says a mounted volume holds, in MiB: `df`'s used column (the file system's own
 /// count, metadata included) and `du` over the files.
 #[expect(

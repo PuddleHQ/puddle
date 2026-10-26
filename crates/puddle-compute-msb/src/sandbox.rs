@@ -47,6 +47,21 @@ impl std::fmt::Debug for MsbSandbox {
     }
 }
 
+/// Whether a failed graceful stop means the VM did not answer, so killing it is the way to
+/// finish the stop: the shutdown took longer than the timeout, or the request never reached the
+/// guest (a VM that is hung or frozen does not complete the handshake with msb's relay).
+fn stop_went_unanswered(error: &MicrosandboxError) -> bool {
+    use microsandbox::agent::AgentClientError;
+    matches!(
+        error,
+        MicrosandboxError::StopTimeout { .. }
+            | MicrosandboxError::SandboxStopTimedOut { .. }
+            | MicrosandboxError::AgentClient(
+                AgentClientError::Handshake(_) | AgentClientError::Connect { .. }
+            )
+    )
+}
+
 /// An exec that couldn't start, as the shell would report it: 127 for a missing program, 126 for
 /// one that can't run. Anything else stays an error.
 fn spawn_failure(failure: &microsandbox::protocol::exec::ExecFailed) -> Option<ExecOutput> {
@@ -156,11 +171,8 @@ impl Sandbox for MsbSandbox {
                 .await
             {
                 Ok(()) => Ok(()),
-                Err(
-                    e @ (MicrosandboxError::StopTimeout { .. }
-                    | MicrosandboxError::SandboxStopTimedOut { .. }),
-                ) => {
-                    tracing::warn!(sandbox = %self.name, error = %e, "graceful stop timed out; killing the VM");
+                Err(e) if stop_went_unanswered(&e) => {
+                    tracing::warn!(sandbox = %self.name, error = %e, "graceful stop got no answer; killing the VM");
                     self.runtime
                         .sdk(self.sdk.kill())
                         .await
@@ -294,6 +306,39 @@ mod tests {
             ExecFailureKind::UserSetupFailed,
         ] {
             assert!(spawn_failure(&failed(kind)).is_none());
+        }
+    }
+
+    #[test]
+    fn a_stop_the_vm_did_not_answer_is_ended_by_a_kill_and_any_other_failure_is_not() {
+        use microsandbox::agent::AgentClientError;
+        let unanswered = [
+            MicrosandboxError::StopTimeout {
+                name: "box".into(),
+                identity: "box#1".into(),
+                timeout: Duration::from_secs(30),
+            },
+            MicrosandboxError::SandboxStopTimedOut {
+                name: "box".into(),
+                timeout: Duration::from_secs(30),
+            },
+            AgentClientError::Handshake("read id range: timed out before relay sent bytes".into())
+                .into(),
+            AgentClientError::Connect {
+                path: "/no/relay.sock".into(),
+                source: std::io::Error::other("refused"),
+            }
+            .into(),
+        ];
+        for e in &unanswered {
+            assert!(stop_went_unanswered(e), "{e}");
+        }
+        for e in [
+            MicrosandboxError::SandboxNotFound("box".into()),
+            MicrosandboxError::Runtime("vmm gone".into()),
+            AgentClientError::SandboxNotFound("box".into()).into(),
+        ] {
+            assert!(!stop_went_unanswered(&e), "{e}");
         }
     }
 }

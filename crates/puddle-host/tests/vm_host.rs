@@ -2825,7 +2825,7 @@ for i in $(seq 20); do
 done
 setsid nohup $N -e "require('child_process').spawn('sleep', ['600'], {stdio: 'ignore'}); setInterval(() => {}, 1000)" --type=ptyHost >/dev/null 2>&1 &
 # A debuggee whose extension host is long gone: a child of init whose debug socket does not exist.
-VSCODE_INSPECTOR_OPTIONS='{"inspectorIpc":"/tmp/node-cdp.0-0.sock"}' setsid nohup sleep 601 >/dev/null 2>&1 &
+VSCODE_INSPECTOR_OPTIONS='{"inspectorIpc":"/tmp/node-cdp.0-0.sock","deferredMode":false}' setsid nohup sleep 601 >/dev/null 2>&1 &
 "#;
 
 /// The counts the guest sees: extension hosts, their debuggees, terminal jobs, orphans and the

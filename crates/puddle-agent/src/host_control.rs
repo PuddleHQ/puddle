@@ -24,6 +24,7 @@ pub async fn serve(mut stream: StreamHandle, servers: &[PathBuf]) {
     )
     .await;
     if stream.write_all(&reply.to_line()).await.is_ok() && stream.flush().await.is_ok() {
+        // The reply is out; a close the host already made is not a problem.
         let _ = stream.shutdown().await;
     }
 }

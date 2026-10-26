@@ -75,6 +75,7 @@ impl Server {
             .env("MARK", self.mark())
             .env("STUBBORN", if stubborn { "1" } else { "0" })
             .stdin(Stdio::null())
+            .kill_on_drop(true)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -213,7 +214,12 @@ async fn an_orphaned_debuggee_with_a_dead_socket_is_swept_and_one_with_a_live_so
     let dir = tempfile::tempdir().unwrap();
     let live = dir.path().join("live.sock");
     std::fs::write(&live, "").unwrap();
-    let options = |sock: &Path| format!("{{\"inspectorIpc\":\"{}\"}}", sock.display());
+    let options = |sock: &Path| {
+        format!(
+            "{{\"inspectorIpc\":\"{}\",\"deferredMode\":false}}",
+            sock.display()
+        )
+    };
     // Double fork so the shell's parent exits at once and the debuggee is reparented.
     let start = |sock: PathBuf, tag: &str| {
         let script = format!(

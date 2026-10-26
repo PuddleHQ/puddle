@@ -17,7 +17,6 @@ use std::time::Duration;
 use puddle_agent_proto::forward::{
     ANSWER_TIMEOUT, Answer, MAX_REQUEST_LINE, parse_request, read_line_exact,
 };
-use puddle_agent_proto::kind::{MAX_PREAMBLE, StreamKind, parse_preamble};
 use puddle_agent_proto::relay::splice;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
@@ -48,8 +47,8 @@ impl Forwards {
         })
     }
 
-    /// Serves one stream the host opened, until the connection ends. A stream that is not a
-    /// forward request is dropped.
+    /// Serves one `forward` stream the host opened, whose preamble [`crate::host_streams`] has
+    /// read, until the connection ends. A stream that sends no valid request is dropped.
     pub async fn serve(&self, mut stream: StreamHandle) {
         let Some(port) = self.read_request(&mut stream).await else {
             return;
@@ -88,10 +87,6 @@ impl Forwards {
 
     async fn read_request(&self, stream: &mut StreamHandle) -> Option<u16> {
         let read = async {
-            let preamble = read_line_exact(stream, MAX_PREAMBLE).await?;
-            if parse_preamble(&preamble) != Ok((StreamKind::Forward, 1)) {
-                return Ok(None);
-            }
             let line = read_line_exact(stream, MAX_REQUEST_LINE).await?;
             Ok::<_, io::Error>(parse_request(&line).ok())
         };
@@ -158,9 +153,10 @@ mod tests {
     use tokio_yamux::{Config, Session};
 
     use super::*;
+    use crate::host_streams::HostStreams;
 
     /// Opens a stream from a "host" session, writes `first` on it, and hands the agent's end to
-    /// `Forwards::serve` as the agent would. Returns the host's end and what `serve` took.
+    /// [`HostStreams`] as the agent would. Returns the host's end and what the agent's side took.
     async fn serve(
         forwards: Arc<Forwards>,
         first: &[u8],
@@ -174,7 +170,8 @@ mod tests {
         opened.write_all(first).await.unwrap();
         let serving = tokio::spawn(async move {
             let inbound = agent.next().await.unwrap().unwrap();
-            let task = tokio::spawn(async move { forwards.serve(inbound).await });
+            let streams = HostStreams::new(forwards, Vec::new());
+            let task = tokio::spawn(async move { streams.serve(inbound).await });
             while agent.next().await.is_some() {}
             task.await.unwrap();
         });

@@ -166,7 +166,7 @@ pub enum OpenError {
 /// The host's handle on one agent session: opens streams to the agent. Cheap to clone.
 #[derive(Clone)]
 pub struct GuestLink {
-    control: Control,
+    pub(crate) control: Control,
 }
 
 impl std::fmt::Debug for GuestLink {

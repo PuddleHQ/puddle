@@ -877,6 +877,30 @@ async fn the_apis_address_is_registered_so_no_guest_can_ask_the_proxy_for_it() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn ending_the_extension_hosts_of_a_workspace_that_has_no_agent_says_it_is_not_running() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let name = WorkspaceName::new("hosts").unwrap();
+    let not_running = |result: Result<_, puddle_host::EndExtensionHostsError>| {
+        assert!(
+            matches!(result, Err(puddle_host::EndExtensionHostsError::NotRunning)),
+            "{result:?}"
+        );
+    };
+    // Unknown, then known but without a connected agent (the fake guest runs none): nothing to
+    // reach, and no hang.
+    not_running(host.workspaces().end_extension_hosts(&name).await);
+    create(&api, &mut events, "hosts").await;
+    not_running(host.workspaces().end_extension_hosts(&name).await);
+    api.post("/api/workspaces/hosts/stop", "").await;
+    events.until(ended("hosts"), Duration::from_secs(20)).await;
+    not_running(host.workspaces().end_extension_hosts(&name).await);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_api_and_the_pull_proxy_are_each_registered_once_in_the_one_registry() {
     let rig = Rig::new();
     let host = rig.start().await;

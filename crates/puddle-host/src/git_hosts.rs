@@ -505,6 +505,21 @@ mod tests {
     }
 
     #[test]
+    fn what_was_left_out_is_one_problem_that_names_each_cause_and_none_when_nothing_was() {
+        let ws = WorkspaceName::new("alpha").unwrap();
+        assert_eq!(left_out_problem(&ws, &Authors::default()), None);
+        let mut bad = git(vec![("Bad", vec![credential("github.com", &["a"], false)])]);
+        bad.identities[0].author.name = "two\nlines".to_owned();
+        let (title, detail) = left_out_problem(&ws, &authors(&bad)).unwrap();
+        assert_eq!(title, "Some of alpha's commit authors are not applied");
+        assert!(
+            detail.starts_with("the identity Bad gives commits no author:")
+                && detail.ends_with("gets the first identity's author."),
+            "{detail}"
+        );
+    }
+
+    #[test]
     fn many_owners_are_split_into_rules_and_too_many_rules_drop_the_lowest_priority() {
         let owners: Vec<String> = (0..20).map(|i| format!("org{i}")).collect();
         let refs: Vec<&str> = owners.iter().map(String::as_str).collect();

@@ -2671,7 +2671,11 @@ async fn check_editor_session(runtime: &MsbRuntime, sandbox: &WorkspaceName, nam
     .await;
     let (mode, password) = first_password.split_once('\n').unwrap();
     assert_eq!(mode, "600");
-    assert_eq!(password.len(), 64, "{password}");
+    assert_eq!(
+        password.len(),
+        64,
+        "the editor password has the wrong length"
+    );
     let password = password.to_owned();
     // A client without the password is sent to the login page, with it gets in, and the password
     // is on no command line (the pattern's first character is bracketed so grep does not match itself).

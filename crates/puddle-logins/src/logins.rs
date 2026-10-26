@@ -78,6 +78,27 @@ pub struct Kept {
     pub roles: Vec<Role>,
 }
 
+/// A service Puddle keeps a login for in a workspace, as the user is shown it: no value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptLogin {
+    /// The profile's short name (`claude`).
+    pub profile: &'static str,
+    /// What the user calls the service (`Claude Code`).
+    pub name: &'static str,
+    /// Epoch ms Puddle first noted the login as kept, when it knows.
+    pub since_ms: Option<u64>,
+}
+
+/// The logins kept for a workspace, as [`Logins::kept_list`] answers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptList {
+    /// The services with a login kept, in the order of the profiles.
+    pub logins: Vec<KeptLogin>,
+    /// `false` when the credential store did not answer and no marker could say instead: the
+    /// list is then empty because it is not known, not because nothing is kept.
+    pub store_answered: bool,
+}
+
 /// A token endpoint of a profile and its host, ready to match requests.
 struct Route {
     host: Host,
@@ -361,21 +382,76 @@ impl Logins {
             }
             return;
         }
+        // A store that does not answer says nothing: with capture off there is nothing to protect.
+        let Some(kept) = self.kept_in_store().await else {
+            return;
+        };
+        for profile in self.inner.profiles.iter().filter(|p| kept.contains(p.id)) {
+            self.notify(profile, Problem::CaptureOff);
+        }
+        self.inner.marker.write(&kept);
+    }
+
+    /// The services the credential store holds a login for, or `None` when it did not answer
+    /// (one call that did not answer is enough to know; the next would wait as long).
+    async fn kept_in_store(&self) -> Option<BTreeSet<String>> {
         let mut kept: BTreeSet<String> = BTreeSet::new();
         for profile in self.inner.profiles {
             for role in profile.roles() {
                 match self.store(move |vault| vault.holds(profile, role)).await {
                     Ok(true) => {
                         kept.insert(profile.id.to_owned());
-                        self.notify(profile, Problem::CaptureOff);
                         break;
                     }
                     Ok(false) => {}
-                    Err(_) => return,
+                    Err(_) => return None,
                 }
             }
         }
-        self.inner.marker.write(&kept);
+        Some(kept)
+    }
+
+    /// The services Puddle keeps a login for in this workspace, for the user to look at: names and
+    /// times, never a value. The marker answers when it is known, so opening the list never waits
+    /// on a locked keyring; with no marker the store is asked once and the answer is written to
+    /// the marker. A store that does not answer gives an empty list that says so
+    /// ([`KeptList::store_answered`]).
+    pub async fn kept_list(&self) -> KeptList {
+        let since = match self.inner.marker.read_since() {
+            Some(since) => since,
+            None => match self.kept_in_store().await {
+                Some(kept) => {
+                    self.inner.marker.write(&kept);
+                    // What the marker now says; where it cannot be written, no time is known.
+                    self.inner
+                        .marker
+                        .read_since()
+                        .unwrap_or_else(|| kept.into_iter().map(|id| (id, None)).collect())
+                }
+                None => {
+                    return KeptList {
+                        logins: Vec::new(),
+                        store_answered: false,
+                    };
+                }
+            },
+        };
+        let logins = self
+            .inner
+            .profiles
+            .iter()
+            .filter_map(|profile| {
+                since.get(profile.id).map(|since_ms| KeptLogin {
+                    profile: profile.id,
+                    name: profile.name,
+                    since_ms: *since_ms,
+                })
+            })
+            .collect();
+        KeptList {
+            logins,
+            store_answered: true,
+        }
     }
 
     /// What the marker says is kept, as a sorted list (tests).

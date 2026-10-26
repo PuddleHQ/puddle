@@ -1,10 +1,12 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import KeptLoginsList from "#lib/components/KeptLoginsList.svelte";
   import StartFolderSetting from "#lib/components/StartFolderSetting.svelte";
   import UnknownFields from "#lib/components/UnknownFields.svelte";
   import { page } from "$app/state";
   import { LOCAL_LABELS, type LocalCategory } from "#lib/decision/local.ts";
   import { CPUS_NOTE, cpuLabel } from "#lib/settings/cpus.ts";
+  import { KeptLogins } from "#lib/stores/kept-logins.svelte.ts";
   import { WorkspaceSettings } from "#lib/stores/workspace-settings.svelte.ts";
   import { workspaceActions as actions } from "#lib/stores/workspace-actions.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
@@ -33,6 +35,7 @@
   const id = $derived(page.params["id"] ?? "");
   const workspace = $derived(workspaces.list.find((w) => w.id === id));
   const settings = new WorkspaceSettings();
+  const kept = new KeptLogins();
 
   let saved = $state<string | null>(null);
   let problem = $state<string | null>(null);
@@ -44,6 +47,15 @@
   const name = $derived(workspace?.name);
   $effect(() => {
     if (name) void settings.load(name);
+  });
+
+  // The kept logins come from Puddle's own record, so the list is cheap to read again when the
+  // workspace starts or stops (a login made while it ran is recorded by then).
+  const keptId = $derived(workspace?.id);
+  const keptStatus = $derived(workspace?.status);
+  $effect(() => {
+    void keptStatus;
+    if (keptId) void kept.load(keptId, true);
   });
 
   // Direct SSH can change from the connect step too: read the overrides again when it does.
@@ -334,6 +346,12 @@
           {/each}
         </select>
       </div>
+      <KeptLoginsList
+        store={kept}
+        workspaceName={workspace.name}
+        workspaceLabel={workspace.display_name}
+        reload={() => void kept.load(workspace.id)}
+      />
     </section>
 
     <section class="card" aria-labelledby="clip-h">

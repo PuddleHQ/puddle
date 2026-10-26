@@ -37,6 +37,9 @@ sha2 = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "time"] }
 
+[target.'cfg(unix)'.dev-dependencies]
+rustix = { workspace = true, features = ["process"] }
+
 [target.'cfg(windows)'.dev-dependencies]
 puddle-fs = { workspace = true, features = ["testing"] }
 windows-sys = { workspace = true, features = ["Win32_Foundation"] }

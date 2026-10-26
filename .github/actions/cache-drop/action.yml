@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Runs ci/cache-drop.sh around a rust-cache step: `snapshot` as its main step, `drop` as its post step.
+# GitHub runs post steps in reverse order, so putting this step before rust-cache makes `drop` run after
+# rust-cache's save. Needs GH_TOKEN in the step's env and `actions: write` on the job.
+name: cache-drop
+description: Delete the Rust cache entry this develop run restored once its replacement is saved
+inputs:
+  prefix:
+    description: The cache key prefix of the group (rust-cache's prefix-key, shared-key and OS)
+    required: true
+runs:
+  using: node24
+  main: main.js
+  post: post.js
+  post-if: always()

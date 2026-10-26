@@ -8,7 +8,7 @@
 import { test as base, type Page } from "@playwright/test";
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { loadavg, tmpdir } from "node:os";
 import { join } from "node:path";
 import { FIXTURE_BIN_ENV } from "./fixture-build.ts";
 
@@ -150,6 +150,21 @@ async function startBackend(scenario: string): Promise<Started> {
   };
 }
 
+/** A page open that takes longer than this is reported while it is still going. */
+const SLOW_PAGE_MS = 8_000;
+
+/** When this worker started, and how long its backend took to start. */
+const workerBorn = Date.now();
+let backendStartMs = -1;
+
+/** Where a slow page open was in the worker's life, so one that never returns still leaves a line. */
+function pageOpenState(browserName: string): string {
+  const load = loadavg()
+    .map((n) => n.toFixed(1))
+    .join(" ");
+  return `${browserName} worker up ${Date.now() - workerBorn} ms, backend started in ${backendStartMs} ms, load ${load}`;
+}
+
 export const test = base.extend<
   { backend: Backend },
   { workerBackend: Backend }
@@ -157,7 +172,9 @@ export const test = base.extend<
   workerBackend: [
     // eslint-disable-next-line no-empty-pattern -- Playwright reads the fixtures from the destructuring
     async ({}, use) => {
+      const began = Date.now();
       const started = await startBackend("default");
+      backendStartMs = Date.now() - began;
       await use(started.backend);
       started.stop();
     },
@@ -166,6 +183,28 @@ export const test = base.extend<
   backend: async ({ workerBackend }, use) => {
     await workerBackend.control.reset("default");
     await use(workerBackend);
+  },
+  // As Playwright's own `page`, plus a line when opening it is slow: `newPage` has no time limit
+  // of its own, so a stalled open showed only as "Test timeout exceeded while setting up page".
+  page: async ({ context, browserName }, use) => {
+    const began = Date.now();
+    const slow = setTimeout(() => {
+      console.warn(
+        `page still not open after ${SLOW_PAGE_MS} ms: ${pageOpenState(browserName)}`,
+      );
+    }, SLOW_PAGE_MS);
+    let page: Page;
+    try {
+      page = await context.newPage();
+    } finally {
+      clearTimeout(slow);
+    }
+    if (Date.now() - began >= SLOW_PAGE_MS) {
+      console.warn(
+        `page opened after ${Date.now() - began} ms: ${pageOpenState(browserName)}`,
+      );
+    }
+    await use(page);
   },
   baseURL: async ({ workerBackend }, use) => {
     await use(workerBackend.url);

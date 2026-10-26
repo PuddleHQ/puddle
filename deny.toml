@@ -26,6 +26,29 @@ ignore = [
     # wry/tao on Linux. tauri 2 stays on gtk-rs 0.18 until tauri 3 (alpha); nothing of it
     # runs at runtime. Review at each tauri bump, by 2027-01-06.
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained; build-time dependency of tauri's gtk-rs 0.18 on Linux" },
+    # zstd 0.13.3 and zstd-safe 7.3.0, held by the libkrun fork's `msb_krun_vmm` 0.1.41 (fork tag
+    # msb_krun-v0.1.41-puddle.3); the 0.14 copy is fixed in Cargo.lock. The fork's only zstd call is
+    # `zstd::stream::copy_decode` (src/vmm/src/builder.rs:2488, x86_64 non-Windows): it decompresses
+    # the guest kernel file that the host itself passes in, through `Decoder::new` (a fresh
+    # context), and nothing else names zstd. So no advisory API is reached: not `with_context`
+    # (0391), not seekable, dictionaries, `try_clone`, multithreaded contexts, `train_from_buffer`,
+    # `OutBuffer::around_pos`, `InBuffer::pos` or `CParameter` (0395 to 0402, 0404 to 0406). 0403
+    # needs a corrupt legacy frame written through `zstd::stream::write::Decoder`; the fork reads
+    # through the read-side decoder, and a decode error aborts the boot. The input is never guest or
+    # network data. Remove with the fork's bump to zstd 0.14.3; review by 2027-01-06.
+    { id = "RUSTSEC-2026-0391", reason = "zstd 0.13.3 reused-context leak; fork decodes the host's kernel file with a fresh decoder" },
+    { id = "RUSTSEC-2026-0395", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
+    { id = "RUSTSEC-2026-0396", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
+    { id = "RUSTSEC-2026-0397", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
+    { id = "RUSTSEC-2026-0398", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
+    { id = "RUSTSEC-2026-0399", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
+    { id = "RUSTSEC-2026-0400", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
+    { id = "RUSTSEC-2026-0401", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
+    { id = "RUSTSEC-2026-0402", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
+    { id = "RUSTSEC-2026-0403", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
+    { id = "RUSTSEC-2026-0404", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
+    { id = "RUSTSEC-2026-0405", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
+    { id = "RUSTSEC-2026-0406", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
     # zbus_names, zvariant and zvariant_derive are unmaintained as standalone crates (merged into
     # zbus 6). They are only the Linux Secret Service client: keyring 4.2 ->
     # zbus-secret-service-keyring-store 1.0.1 -> secret-service 5.2.0 -> zbus 5.19. The newest

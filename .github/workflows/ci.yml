@@ -114,7 +114,7 @@ jobs:
           cache-on-failure: ${{ github.ref == 'refs/heads/develop' }}
       - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
         with:
-          tool: cargo-nextest@0.9.146,cargo-llvm-cov@0.9.1,cargo-deny@0.20.2,typos@1.50.3,cargo-xwin@0.23.1,shellcheck@0.11.0,cargo-about@0.9.2
+          tool: cargo-nextest@0.9.146,cargo-llvm-cov@0.9.1,cargo-deny@0.20.2,typos@1.50.3,shellcheck@0.11.0,cargo-about@0.9.2
       - name: Node for the API contract's TypeScript types (openapi gate, ADR 0004)
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -165,22 +165,6 @@ jobs:
             echo "PUDDLE_COPILOT_BIN=$tools/copilot"
             echo "PUDDLE_REQUIRE_LOGIN_TOOLS=1"
           } >> "$GITHUB_ENV"
-      - name: llvm-rc for the msvc cross-check (tauri-winres compiles the shell's Windows resources)
-        run: |
-          rc=$(ls /usr/lib/llvm-*/bin/llvm-rc 2>/dev/null | sort -V | tail -n 1 || true)
-          if [ -z "$rc" ]; then sudo apt-get install -y --no-install-recommends llvm; rc=$(ls /usr/lib/llvm-*/bin/llvm-rc | sort -V | tail -n 1); fi
-          mkdir -p "$HOME/llvm-rc-bin" && ln -sf "$rc" "$HOME/llvm-rc-bin/llvm-rc"
-          echo "$HOME/llvm-rc-bin" >> "$GITHUB_PATH"
-      - name: clang for the msvc cross-check (preinstalled on the runner)
-        run: clang --version
-      # A miss costs a 12 to 14 minute MSVC CRT download; cache-gc.yml never deletes this entry. It is saved by the
-      # step after the cross-check, not by a post step, so a later red or cancelled step cannot lose it.
-      - name: Cache the MSVC CRT and Windows SDK that cargo-xwin downloads
-        id: xwin
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/cargo-xwin
-          key: cargo-xwin-0.23.1-x86_64
       - name: fmt
         run: scripts/check.sh fmt
       # ci/ is an always-run path, so a change to the scoping rules or this test runs this job.
@@ -218,21 +202,6 @@ jobs:
       - name: clippy (linux)
         if: ${{ !cancelled() }}
         run: scripts/check.sh clippy
-      - name: clippy (windows-msvc, cross-checked)
-        if: ${{ !cancelled() }}
-        run: scripts/check.sh clippy-windows
-      # cargo-xwin writes `xwin/DONE` when the download is complete; a download that failed halfway is never saved.
-      - name: Is the cargo-xwin download complete?
-        id: xwin-done
-        if: ${{ !cancelled() && steps.xwin.outputs.cache-hit != 'true' }}
-        run: |
-          if [ -f "$HOME/.cache/cargo-xwin/xwin/DONE" ]; then echo "complete=true" >> "$GITHUB_OUTPUT"; else echo "cargo-xwin download incomplete, not saving"; fi
-      - name: Save the MSVC CRT and Windows SDK
-        if: ${{ steps.xwin-done.outputs.complete == 'true' }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/cargo-xwin
-          key: cargo-xwin-0.23.1-x86_64
       - name: cargo-deny (bans, licences, sources; advisories run in their own job)
         if: ${{ !cancelled() }}
         run: scripts/check.sh deny
@@ -278,6 +247,54 @@ jobs:
             target/lcov.info
           retention-days: 14
           if-no-files-found: ignore
+
+  # The msvc cross-check, in its own job: its 12 to 14 minute CRT download on a cargo-xwin cache miss runs next to the
+  # Rust job instead of inside its 30 minutes. No Rust cache of its own (the 10 GB cap has no room), so it builds
+  # the check target cold every time.
+  msvc:
+    name: clippy (windows-msvc, cross-checked)
+    needs: scope
+    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.scope.outputs.ci_rust != 'false' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
+      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+        with:
+          tool: cargo-xwin@0.23.1
+      - name: llvm-rc for the msvc cross-check (tauri-winres compiles the shell's Windows resources)
+        run: |
+          rc=$(ls /usr/lib/llvm-*/bin/llvm-rc 2>/dev/null | sort -V | tail -n 1 || true)
+          if [ -z "$rc" ]; then sudo apt-get install -y --no-install-recommends llvm; rc=$(ls /usr/lib/llvm-*/bin/llvm-rc | sort -V | tail -n 1); fi
+          mkdir -p "$HOME/llvm-rc-bin" && ln -sf "$rc" "$HOME/llvm-rc-bin/llvm-rc"
+          echo "$HOME/llvm-rc-bin" >> "$GITHUB_PATH"
+      - name: clang for the msvc cross-check (preinstalled on the runner)
+        run: clang --version
+      # A miss costs a 12 to 14 minute MSVC CRT download; cache-gc.yml never deletes this entry. It is saved by the
+      # step after the cross-check, not by a post step, so a later red or cancelled step cannot lose it.
+      - name: Cache the MSVC CRT and Windows SDK that cargo-xwin downloads
+        id: xwin
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/cargo-xwin
+          key: cargo-xwin-0.23.1-x86_64
+      - name: clippy (windows-msvc, cross-checked)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh clippy-windows
+      # cargo-xwin writes `xwin/DONE` when the download is complete; a download that failed halfway is never saved.
+      - name: Is the cargo-xwin download complete?
+        id: xwin-done
+        if: ${{ !cancelled() && steps.xwin.outputs.cache-hit != 'true' }}
+        run: |
+          if [ -f "$HOME/.cache/cargo-xwin/xwin/DONE" ]; then echo "complete=true" >> "$GITHUB_OUTPUT"; else echo "cargo-xwin download incomplete, not saving"; fi
+      - name: Save the MSVC CRT and Windows SDK
+        if: ${{ steps.xwin-done.outputs.complete == 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/cargo-xwin
+          key: cargo-xwin-0.23.1-x86_64
 
   # The gates a change without Rust, fixtures or gate data can still break. It runs instead of `rust`
   # when ci/scope.sh says no Rust gate is needed (a docs-only or UI-only pull request).
@@ -442,7 +459,7 @@ jobs:
   # verdict); a failed `scope` job leaves its outputs empty, which runs everything.
   linux:
     name: linux (all gates)
-    needs: [scope, rust, light, ui, advisories, advisories-npm]
+    needs: [scope, rust, msvc, light, ui, advisories, advisories-npm]
     if: ${{ always() && github.event_name != 'schedule' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -453,4 +470,4 @@ jobs:
       - name: every needed job passed
         env:
           NEEDS: ${{ toJSON(needs) }}
-        run: ci/scope.sh verdict rust=ci_rust light='!ci_rust' ui=ui
+        run: ci/scope.sh verdict rust=ci_rust msvc=ci_rust light='!ci_rust' ui=ui

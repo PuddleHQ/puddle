@@ -135,7 +135,7 @@ run_gate() {
     hooks)
         scripts/pre-push-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
             scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh &&
-            ci/fetch-msb-test.sh && ci/fetch-code-server-test.sh && ci/check-runtime-layout-test.sh &&
+            ci/fetch-msb-test.sh && ci/fetch-code-server-test.sh && ci/fetch-tauri-cli-test.sh && ci/check-runtime-layout-test.sh &&
             ci/scope-test.sh && ci/apt-setup-test.sh && ci/advisories-issue-test.sh && ci/cache-drop-test.sh &&
             ci/should-run-test.sh && ci/cache-gc-test.sh && ci/test-vm-skip-policy.sh
         ;;

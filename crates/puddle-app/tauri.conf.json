@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "puddle",
-  "version": "0.0.0",
+  "productName": "Puddle",
   "identifier": "be.tijsvankampen.puddle",
   "build": {
     "frontendDist": "assets",
@@ -18,6 +17,12 @@
   },
   "bundle": {
     "active": false,
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.png", "icons/icon.ico"]
+    "targets": ["msi"],
+    "publisher": "Puddle",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.png", "icons/icon.ico"],
+    "windows": {
+      "webviewInstallMode": { "type": "skip" },
+      "wix": { "language": "en-US", "template": "wix/main.wxs" }
+    }
   }
 }

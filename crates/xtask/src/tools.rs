@@ -306,24 +306,46 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn about_passes_every_target_to_cargo_about() {
-        // `echo` stands in for cargo: it prints the arguments `about` would have run cargo with.
+    fn inventory_asks_tree_and_about_for_the_same_targets() {
+        use std::os::unix::fs::PermissionsExt;
+        // A fake cargo: `tree` lists one package, `about` reports it under MIT; both log their
+        // arguments so the test sees which targets each was asked for.
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("args.log");
+        let script = dir.path().join("cargo");
+        let report = r#"{"licenses":[{"name":"MIT","id":"MIT","text":"t","used_by":[{"crate":{"name":"dep","version":"1.0.0","repository":null},"path":""}]}]}"#;
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\necho \"$@\" >> '{}'\ncase \"$1\" in\n  tree) echo 'dep v1.0.0' ;;\n  about) echo '{report}' ;;\nesac\n",
+                log.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         let cargo = Cargo {
-            program: "echo".into(),
+            program: script.into_os_string(),
             offline: false,
         };
-        let args = cargo
-            .about(
+        cargo
+            .inventory(
+                "t",
                 Path::new("m/Cargo.toml"),
                 Path::new("c.toml"),
                 &Features::All,
                 &["a-linux", "b-windows"],
+                false,
             )
+            .unwrap()
+            .check()
             .unwrap();
+        let log = std::fs::read_to_string(log).unwrap();
+        let about = log.lines().find(|l| l.starts_with("about")).unwrap();
         assert!(
-            args.contains("--target a-linux --target b-windows"),
-            "{args}"
+            about.contains("--target a-linux --target b-windows"),
+            "{about}"
         );
+        assert!(log.contains("--target a-linux") && log.contains("--target b-windows"));
     }
 
     #[test]

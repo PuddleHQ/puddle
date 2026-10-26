@@ -110,6 +110,22 @@ const rowOf = (host: string) =>
 const press = (key: string, target: Element = document.body) =>
   fireEvent.keyDown(target, { key });
 
+// A page's first render runs every component and store it uses for the first time (V8 compiles each
+// function lazily, with coverage on it also counts), and the first role queries over its rows are the
+// slowest ones. Unloaded that costs the first tests some tens of milliseconds, on a busy host it is
+// seconds: it took the first test over its 5000 ms. Pay it here, outside any test's clock.
+seed();
+await ready();
+await fireEvent.click(
+  screen.getByRole("button", { name: /^More choices for a\.example\.com/ }),
+);
+const warmDialog = await showOptions();
+await fireEvent.click(
+  within(warmDialog).getByRole("radio", { name: /^Everything under/ }),
+);
+cleanup();
+reset();
+
 describe("the inbox page", () => {
   it("shows a loading line, then the groups with their rows", async () => {
     seed();

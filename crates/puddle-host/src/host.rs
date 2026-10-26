@@ -33,7 +33,9 @@ use puddle_repos::{HostApi, Repos};
 use puddle_secrets::{SecretCache, SecretStore, Sources, ToolPaths};
 use puddle_settings::resolve;
 use puddle_store::{ConnectionRecorder, DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock};
-use puddle_types::{ConnectionLog, EventSink, Problem, Problems, WorkspaceName, WorkspaceStatus};
+use puddle_types::{
+    ConnectionLog, Event, EventSink, Problem, Problems, WorkspaceName, WorkspaceStatus,
+};
 use puddle_upstream::{AuthList, BasicAuth, Chain, Discovery, TlsClient, Watching, system_auth};
 use puddle_workspace::Workspaces;
 use tokio::sync::{Mutex as AsyncMutex, OnceCell};
@@ -587,7 +589,7 @@ impl<R: Runtime + Clone> Host<R> {
         .with_network_health(network_health)
         .with_secret_store(vault.clone())
         .with_credentials(Arc::new(HostCredentials::new(ToolPaths::resolve(), vault)))
-        .with_repos(injecting.repos(&egress.chain, &clock, connections.clone()))
+        .with_repos(injecting.repos(&egress.chain, &clock, connections.clone(), &events))
         .with_doctor(system_doctor(&config.layout, &config.expected_runtime))
         .with_dev_cert(dev_cert)
         .with_ports(Arc::new(HostPorts::new(ports)))
@@ -808,6 +810,12 @@ fn network_health_of(
     health
 }
 
+/// Makes a repository list that was renewed behind a screen's back an event, so the screen asks
+/// again.
+fn announce_renewals(repos: &Repos, events: Arc<dyn EventSink>) {
+    repos.on_change(Arc::new(move || events.emit(Event::RepoListsChanged {})));
+}
+
 /// What credential injection is made of, built once at start.
 struct Injecting {
     injection: Arc<Injection>,
@@ -829,14 +837,17 @@ impl Injecting {
         chain: &Arc<Chain>,
         clock: &Arc<SystemClock>,
         log: Arc<dyn ConnectionLog>,
+        events: &Arc<EventHub>,
     ) -> Arc<Repos> {
-        Arc::new(Repos::new(
+        let repos = Arc::new(Repos::new(
             // Listing repositories is Puddle's own traffic: audited with origin `puddle`, like an
             // image pull.
             Arc::new(HostApi::new(chain.clone(), self.tls.clone()).with_connection_log(log)),
             self.secrets.clone(),
             clock.clone(),
-        ))
+        ));
+        announce_renewals(&repos, events.clone());
+        repos
     }
 
     /// Starts following the changes that reach a running workspace: its identities (what it
@@ -1196,6 +1207,8 @@ fn reconcile_problems(report: &puddle_lifecycle::ReconcileReport) -> Vec<Problem
 #[cfg(test)]
 mod tests {
     use puddle_api::MemorySettings;
+    use puddle_repos::{ApiReply, FakeApi, Freshness, Read, Secrets};
+    use puddle_secrets::{Credential, Secret, SourceError, SourceSpec};
     use puddle_settings::WorkspaceSettings;
     use puddle_types::LocalCategory;
     use serde_json::json;
@@ -1230,5 +1243,82 @@ mod tests {
         assert_eq!(local_access(&repo, &name()), LocalAccess::UNREADABLE);
         let reason = local_access_checked(&repo, &name()).unwrap_err();
         assert!(reason.contains("workspace acme"), "{reason}");
+    }
+
+    struct OneToken;
+
+    impl Secrets for OneToken {
+        fn get<'a>(
+            &'a self,
+            _spec: &'a SourceSpec,
+        ) -> futures_util::future::BoxFuture<'a, Result<Credential, SourceError>> {
+            Box::pin(async {
+                Ok(Credential {
+                    username: None,
+                    secret: Arc::new(Secret::new("CANARY-host-token".to_owned())),
+                })
+            })
+        }
+
+        fn invalidate(&self, _spec: &SourceSpec) {}
+    }
+
+    #[tokio::test]
+    async fn a_repository_list_renewed_behind_the_callers_back_is_announced_as_an_event() {
+        use puddle_store::{
+            Coverage, CredentialBinding, IdentityDraft, Limits, ManualClock, Store,
+        };
+
+        let host = puddle_secrets::HostName::new("github.com").unwrap();
+        let source = SourceSpec::Gh {
+            host: host.clone(),
+            account: puddle_secrets::AccountName::new("octocat").unwrap(),
+        };
+        let clock = Arc::new(ManualClock::new(1_700_000_000_000));
+        let store = Store::open_in_memory(clock.clone(), Limits::default()).unwrap();
+        let identity = store
+            .create_identity(IdentityDraft {
+                label: "Me".to_owned(),
+                author: puddle_store::Author::new("Me", "me@example.org").unwrap(),
+                credentials: vec![
+                    CredentialBinding::new(
+                        &host,
+                        source,
+                        Coverage::new(Default::default(), true).unwrap(),
+                    )
+                    .unwrap(),
+                ],
+            })
+            .unwrap();
+        let api = Arc::new(FakeApi::new());
+        let path = "/user/repos?per_page=100&sort=full_name&direction=asc";
+        api.reply("api.github.com", path, ApiReply::new(200, "[]"));
+        let repos = Repos::new(api.clone(), Arc::new(OneToken), clock.clone());
+        let hub = Arc::new(EventHub::default());
+        let mut stream = hub.subscribe();
+        announce_renewals(&repos, hub.clone());
+        let read = Read {
+            only: None,
+            freshness: Freshness::Cached,
+        };
+        repos.lists(std::slice::from_ref(&identity), read).await;
+
+        // A repository appears; the next ask after the list went stale is answered with the old
+        // list and the new one is announced.
+        api.clear("api.github.com", path);
+        api.reply(
+            "api.github.com",
+            path,
+            ApiReply::new(200, r#"[{"id":1,"name":"new","full_name":"octo/new","private":false,"html_url":"https://github.com/octo/new"}]"#),
+        );
+        clock.advance(11 * 60_000);
+        let served = repos.lists(std::slice::from_ref(&identity), read).await;
+
+        assert!(served[0].repos.is_empty());
+        let event = tokio::time::timeout(std::time::Duration::from_secs(5), stream.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(event, Event::RepoListsChanged {});
     }
 }

@@ -1,18 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The repository lists of one screen: the repositories the identities' credentials reach (`GET
 // /api/repos`) and how current each credential's list is. The host reads a list from the Git host
-// when a screen asks and it is missing or old, so a first read can take many seconds: the store
-// says it is `slow` after a moment so the screen can show progress, and it asks again by itself when
-// a host said to wait (`retry_at`), since no event announces a list becoming readable. Each screen
-// makes its own instance; nothing here holds a secret, and every string the host sends is rendered
+// when a screen asks and it was never read, so a first read can take many seconds: the store says it
+// is `slow` after a moment so the screen can show progress. An old list is answered at once and
+// renewed behind the screen's back; the store asks again quietly when `repo_lists_changed` says it
+// was, and by itself when a host said to wait (`retry_at`). Each screen makes its own instance; nothing here holds a secret, and every string the host sends is rendered
 // as text by the screens.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
+import { isRepoListsChanged } from "#lib/identities/events.ts";
 import { sentence } from "#lib/rules/model.ts";
 import {
   nextRetryDelay,
   type RepoListing,
   type RepoQuery,
 } from "#lib/repos/model.ts";
+import { live, type LiveSource } from "./live.svelte.ts";
 
 type StoreApi = Pick<ApiClient, "GET" | "POST">;
 
@@ -20,6 +22,8 @@ export type RepoStatus = "idle" | "loading" | "ready" | "failed";
 
 export interface RepoListsDeps {
   api?: StoreApi;
+  /** Where the host's events come from; the shell's stream unless a test brings its own. */
+  source?: LiveSource;
   /** Milliseconds a read takes before it counts as slow. */
   slowAfterMs?: number;
   now?: () => number;
@@ -42,15 +46,18 @@ export class RepoLists {
   now = $state(0);
 
   readonly #api: StoreApi;
+  readonly #source: LiveSource;
   readonly #slowAfter: number;
   readonly #clock: () => number;
   #query: RepoQuery = {};
   #ticket = 0;
   #slowTimer: ReturnType<typeof setTimeout> | undefined;
   #retryTimer: ReturnType<typeof setTimeout> | undefined;
+  #unsubscribe: (() => void) | undefined;
 
   constructor(deps: RepoListsDeps = {}) {
     this.#api = deps.api ?? defaultApi;
+    this.#source = deps.source ?? live;
     this.#slowAfter = deps.slowAfterMs ?? 1500;
     this.#clock = deps.now ?? Date.now;
     this.now = this.#clock();
@@ -59,6 +66,7 @@ export class RepoLists {
   /** Reads the repositories `query` asks for. `quiet` keeps the screen as it is while it does. */
   async load(query: RepoQuery, quiet = false): Promise<void> {
     this.#query = query;
+    this.#listen();
     const ticket = ++this.#ticket;
     clearTimeout(this.#retryTimer);
     if (!quiet) this.#startWaiting();
@@ -144,9 +152,25 @@ export class RepoLists {
 
   /** Stops waiting and asking: the screen is gone. */
   stop(): void {
+    this.#unsubscribe?.();
+    this.#unsubscribe = undefined;
     this.#ticket++;
     this.#stopWaiting();
     clearTimeout(this.#retryTimer);
+  }
+
+  /** Hears that the host renewed a list (or that events may have been missed) and reads it again. */
+  #listen(): void {
+    if (this.#unsubscribe) return;
+    const again = () => {
+      if (this.status === "ready") void this.load(this.#query, true);
+    };
+    this.#unsubscribe = this.#source.subscribe({
+      event: (event) => {
+        if (isRepoListsChanged(event)) again();
+      },
+      resync: again,
+    });
   }
 
   #startWaiting(): void {

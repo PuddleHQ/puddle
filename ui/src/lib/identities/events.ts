@@ -6,6 +6,7 @@ import type { components } from "#lib/api/schema.d.ts";
 type Event = components["schemas"]["Event"];
 
 export type IdentitiesChanged = Extract<Event, { type: "identities_changed" }>;
+export type RepoListsChanged = Extract<Event, { type: "repo_lists_changed" }>;
 export type WorkspaceGitChanged = Extract<
   Event,
   { type: "workspace_git_changed" }
@@ -22,6 +23,10 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
 
 export function isIdentitiesChanged(v: unknown): v is IdentitiesChanged {
   return isObject(v) && v["type"] === "identities_changed";
+}
+
+export function isRepoListsChanged(v: unknown): v is RepoListsChanged {
+  return isObject(v) && v["type"] === "repo_lists_changed";
 }
 
 /** A change to a workspace's Git settings; `name` narrows it to one workspace. */

@@ -345,3 +345,4 @@ crates/puddle-ports/src/ports.rs | the system does not let Puddle use it | see a
 crates/puddle-ports/src/ports.rs | err.to_string() | see above
 crates/puddle-ports/src/ports.rs | host_port, | see above
 crates/puddle-store/src/store/ports.rs | )?; | preparing a fixed statement fails only on a broken database file
+crates/puddle-ports/src/ports.rs | } | the closing braces of two bodies whose lines ran: the `else` of "the forward we just opened is gone" (the workspace was deleted between opening it and saving the pin, a race a test cannot hold still) and the end of the `AddrInUse` arm, which always returns, so no line runs after it

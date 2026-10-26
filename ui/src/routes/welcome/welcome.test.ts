@@ -62,6 +62,8 @@ import { firstRun } from "#lib/stores/first-run.svelte.ts";
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import { density } from "#lib/theme/density.svelte.ts";
+import { palette } from "#lib/theme/palette.svelte.ts";
+import { NO_CUSTOM } from "#lib/theme/palette.ts";
 import { theme } from "#lib/theme/theme.svelte.ts";
 import Layout from "./+layout.svelte";
 import Welcome from "./+page.svelte";
@@ -100,6 +102,10 @@ beforeEach(() => {
   delete document.documentElement.dataset["density"];
   theme.choice = "system";
   density.choice = "comfortable";
+  delete document.documentElement.dataset["palette"];
+  document.documentElement.removeAttribute("style");
+  palette.choice = "pond";
+  palette.custom = { ...NO_CUSTOM };
 });
 afterEach(cleanup);
 
@@ -257,6 +263,38 @@ describe("look step", () => {
     expect(await screen.findByText("Density saved.")).toBeVisible();
     expect(document.documentElement.dataset["density"]).toBe("compact");
     expect(h.prefs.ui.density).toBe("compact");
+  });
+
+  it("offers the preset palettes, Pond first and selected, and no custom one", () => {
+    render(Look);
+    const names = screen
+      .getAllByRole("radio")
+      .filter((r) => r.getAttribute("name") === "palette")
+      .map((r) => r.closest("label")?.querySelector("b")?.textContent);
+    expect(names).toEqual(["Pond", "Dusk", "Meadow", "Ember", "Graphite"]);
+    expect(radio("Pond")).toBeChecked();
+  });
+
+  it("applies a palette at once and keeps it in the settings", async () => {
+    render(Look);
+    await fireEvent.click(radio("Meadow"));
+    expect(await screen.findByText("Colours saved.")).toBeVisible();
+    expect(document.documentElement.dataset["palette"]).toBe("meadow");
+    expect(h.prefs.ui.palette).toBe("meadow");
+    expect(radio("Meadow")).toBeChecked();
+  });
+
+  it("says when a palette applied here could not be kept", async () => {
+    render(Look);
+    h.prefs.refuse.set("PUT /api/settings", {
+      status: 422,
+      error: "invalid",
+      message: "no",
+    });
+    await fireEvent.click(radio("Ember"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The colours changed here but Puddle couldn't save them. No.",
+    );
   });
 
   it("says when a choice applied here could not be kept", async () => {

@@ -13,7 +13,7 @@
 //! | [`Consent`], [`Consents`], [`ConsentKind`], [`TermsVersion`], [`UnixMillis`] | what the user agreed to or declined, when, and to which version of the terms |
 //! | [`UiPrefs`] | the window's theme, notification and close preferences |
 //! | [`FirstRun`] | whether the first-run flow has been through |
-//! | [`ReconnectionGrace`], [`ClipboardRead`], [`ServerChoice`], [`ThemeChoice`], [`DensityChoice`], [`CloseBehaviour`] | value types for single settings |
+//! | [`ReconnectionGrace`], [`ClipboardRead`], [`ServerChoice`], [`ThemeChoice`], [`DensityChoice`], [`PaletteChoice`], [`HexColour`], [`CloseBehaviour`] | value types for single settings |
 //! | [`Loaded`], [`SettingsError`] | the result of reading a document |
 //!
 //! # Resolution
@@ -75,6 +75,7 @@ pub use global::{GLOBAL_SCHEMA_VERSION, GlobalSettings, UiPrefs, VsCodeServer};
 pub use layer::{LocalToggles, WorkspaceLayer};
 pub use resolve::{Effective, EffectiveToggles, Resolved, Source, resolve};
 pub use values::{
-    ClipboardRead, CloseBehaviour, DensityChoice, ReconnectionGrace, ServerChoice, ThemeChoice,
+    ClipboardRead, CloseBehaviour, DensityChoice, HexColour, PaletteChoice, ReconnectionGrace,
+    ServerChoice, ThemeChoice,
 };
 pub use workspace::{WORKSPACE_SCHEMA_VERSION, WorkspaceSettings};

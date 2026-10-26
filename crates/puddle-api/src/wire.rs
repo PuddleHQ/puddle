@@ -1685,6 +1685,50 @@ impl From<DensityChoice> for settings::DensityChoice {
     }
 }
 
+/// Which colour palette the window uses over the light or dark base.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PaletteChoice {
+    /// Calm water blues with duck yellow for what needs the user (the default).
+    Pond,
+    /// Violet blues.
+    Dusk,
+    /// Soft greens.
+    Meadow,
+    /// Warm reds and ambers.
+    Ember,
+    /// Neutral greys with a blue accent.
+    Graphite,
+    /// The user's own colours, Pond's where one is not set.
+    Custom,
+}
+
+impl From<settings::PaletteChoice> for PaletteChoice {
+    fn from(c: settings::PaletteChoice) -> Self {
+        match c {
+            settings::PaletteChoice::Pond => Self::Pond,
+            settings::PaletteChoice::Dusk => Self::Dusk,
+            settings::PaletteChoice::Meadow => Self::Meadow,
+            settings::PaletteChoice::Ember => Self::Ember,
+            settings::PaletteChoice::Graphite => Self::Graphite,
+            settings::PaletteChoice::Custom => Self::Custom,
+        }
+    }
+}
+
+impl From<PaletteChoice> for settings::PaletteChoice {
+    fn from(c: PaletteChoice) -> Self {
+        match c {
+            PaletteChoice::Pond => Self::Pond,
+            PaletteChoice::Dusk => Self::Dusk,
+            PaletteChoice::Meadow => Self::Meadow,
+            PaletteChoice::Ember => Self::Ember,
+            PaletteChoice::Graphite => Self::Graphite,
+            PaletteChoice::Custom => Self::Custom,
+        }
+    }
+}
+
 /// What the close button does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -1726,6 +1770,26 @@ pub struct UiPrefs {
     #[serde(default)]
     #[schema(required = true)]
     pub density: Option<DensityChoice>,
+    /// The colour palette over the light or dark base (default `pond`).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub palette: Option<PaletteChoice>,
+    /// The `custom` palette's accent colour, `#rrggbb`; `null` keeps Pond's.
+    #[serde(default)]
+    #[schema(required = true, pattern = "^#[0-9a-fA-F]{6}$")]
+    pub custom_accent: Option<String>,
+    /// The `custom` palette's page background, `#rrggbb`; `null` keeps Pond's.
+    #[serde(default)]
+    #[schema(required = true, pattern = "^#[0-9a-fA-F]{6}$")]
+    pub custom_background: Option<String>,
+    /// The `custom` palette's cards and panels, `#rrggbb`; `null` keeps Pond's.
+    #[serde(default)]
+    #[schema(required = true, pattern = "^#[0-9a-fA-F]{6}$")]
+    pub custom_surface: Option<String>,
+    /// The `custom` palette's text, `#rrggbb`; `null` keeps Pond's.
+    #[serde(default)]
+    #[schema(required = true, pattern = "^#[0-9a-fA-F]{6}$")]
+    pub custom_text: Option<String>,
     /// A system notification for a new request (default on).
     #[serde(default)]
     #[schema(required = true)]
@@ -1773,6 +1837,11 @@ impl From<&settings::UiPrefs> for UiPrefs {
         Self {
             theme: u.theme.map(Into::into),
             density: u.density.map(Into::into),
+            palette: u.palette.map(Into::into),
+            custom_accent: colour_text(&u.custom_accent),
+            custom_background: colour_text(&u.custom_background),
+            custom_surface: colour_text(&u.custom_surface),
+            custom_text: colour_text(&u.custom_text),
             notifications: u.notifications,
             sound: u.sound,
             close_behaviour: u.close_behaviour.map(Into::into),
@@ -1787,11 +1856,26 @@ impl From<&settings::UiPrefs> for UiPrefs {
     }
 }
 
+fn colour_text(colour: &Option<settings::HexColour>) -> Option<String> {
+    colour.as_ref().map(|c| c.as_str().to_owned())
+}
+
+fn parse_colour(text: Option<String>) -> Result<Option<settings::HexColour>, ApiError> {
+    text.map(|t| settings::HexColour::new(&t))
+        .transpose()
+        .map_err(|err| ApiError::invalid(err.to_string()))
+}
+
 impl UiPrefs {
-    fn apply_to(self, prefs: &mut settings::UiPrefs) {
+    fn apply_to(self, prefs: &mut settings::UiPrefs) -> Result<(), ApiError> {
         let Self {
             theme,
             density,
+            palette,
+            custom_accent,
+            custom_background,
+            custom_surface,
+            custom_text,
             notifications,
             sound,
             close_behaviour,
@@ -1805,6 +1889,11 @@ impl UiPrefs {
         } = self;
         prefs.theme = theme.map(Into::into);
         prefs.density = density.map(Into::into);
+        prefs.palette = palette.map(Into::into);
+        prefs.custom_accent = parse_colour(custom_accent)?;
+        prefs.custom_background = parse_colour(custom_background)?;
+        prefs.custom_surface = parse_colour(custom_surface)?;
+        prefs.custom_text = parse_colour(custom_text)?;
         prefs.notifications = notifications;
         prefs.sound = sound;
         prefs.close_behaviour = close_behaviour.map(Into::into);
@@ -1815,6 +1904,7 @@ impl UiPrefs {
         prefs.notify_unexpected_stop = notify_unexpected_stop;
         prefs.confirm_global_rules = confirm_global_rules;
         prefs.inbox_shortcuts = inbox_shortcuts;
+        Ok(())
     }
 }
 
@@ -2011,8 +2101,7 @@ impl GlobalSettingsRequest {
         global.vscode_server.server = server.map(Into::into);
         global.vscode_server.telemetry = telemetry;
         global.vscode_server.auto_update = auto_update;
-        ui.apply_to(&mut global.ui);
-        Ok(())
+        ui.apply_to(&mut global.ui)
     }
 }
 
@@ -2311,6 +2400,32 @@ mod tests {
     }
 
     #[test]
+    fn palette_choices_convert_both_ways() {
+        for (wire, stored) in [
+            (PaletteChoice::Pond, settings::PaletteChoice::Pond),
+            (PaletteChoice::Dusk, settings::PaletteChoice::Dusk),
+            (PaletteChoice::Meadow, settings::PaletteChoice::Meadow),
+            (PaletteChoice::Ember, settings::PaletteChoice::Ember),
+            (PaletteChoice::Graphite, settings::PaletteChoice::Graphite),
+            (PaletteChoice::Custom, settings::PaletteChoice::Custom),
+        ] {
+            assert_eq!(settings::PaletteChoice::from(wire), stored);
+            assert_eq!(PaletteChoice::from(stored), wire);
+        }
+    }
+
+    #[test]
+    fn a_custom_colour_that_is_not_hex_is_refused() {
+        let mut prefs = settings::UiPrefs::default();
+        let bad = UiPrefs {
+            custom_text: Some("teal".to_owned()),
+            ..UiPrefs::default()
+        };
+        let err = bad.apply_to(&mut prefs).unwrap_err();
+        assert_eq!(err.status(), axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[test]
     fn density_choices_convert_both_ways() {
         for (wire, stored) in [
             (
@@ -2340,6 +2455,11 @@ mod tests {
             ui: UiPrefs {
                 theme: Some(ThemeChoice::Dark),
                 density: Some(DensityChoice::Compact),
+                palette: Some(PaletteChoice::Custom),
+                custom_accent: Some("#0A6A85".to_owned()),
+                custom_background: None,
+                custom_surface: None,
+                custom_text: Some("#102030".to_owned()),
                 notifications: Some(false),
                 sound: Some(true),
                 close_behaviour: Some(CloseBehaviour::Quit),
@@ -2357,6 +2477,9 @@ mod tests {
         assert_eq!(g.vscode_server.server(), settings::ServerChoice::Microsoft);
         assert_eq!(g.ui.theme(), settings::ThemeChoice::Dark);
         assert_eq!(g.ui.density(), settings::DensityChoice::Compact);
+        assert_eq!(g.ui.palette(), settings::PaletteChoice::Custom);
+        assert_eq!(colour_text(&g.ui.custom_accent).as_deref(), Some("#0a6a85"));
+        assert_eq!(colour_text(&g.ui.custom_background), None);
         assert!(!g.ui.notifications());
         assert!(g.ui.sound());
         assert_eq!(g.ui.close_behaviour(), settings::CloseBehaviour::Quit);

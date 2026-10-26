@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The options of the "Look" step, with the words that go with them.
 import type { DensityChoice } from "#lib/theme/density.ts";
+import { PALETTES, PRESETS, type Preset } from "#lib/theme/palette.ts";
 import type { ThemeChoice } from "#lib/theme/theme.ts";
+import { PALETTE_INFO } from "#lib/theme/palette-options.ts";
 
 export interface Option<T extends string> {
   value: T;
@@ -31,3 +33,21 @@ export const DENSITY_OPTIONS: readonly Option<DensityChoice>[] = [
     hint: "Tighter spacing, so more fits on screen. Buttons stay easy to hit.",
   },
 ];
+
+/** The presets the step offers (Custom is for Settings), each with the colours its swatches show. */
+export const PALETTE_PRESET_OPTIONS: readonly (Option<Preset> & {
+  swatch: readonly [string, string][];
+})[] = PRESETS.map((value) => {
+  const info = PALETTE_INFO[value];
+  const pair = (
+    token: "bg" | "surface" | "accent" | "text",
+  ): [string, string] => [
+    PALETTES[value].light[token],
+    PALETTES[value].dark[token],
+  ];
+  return {
+    value,
+    ...info,
+    swatch: [pair("bg"), pair("surface"), pair("accent"), pair("text")],
+  };
+});

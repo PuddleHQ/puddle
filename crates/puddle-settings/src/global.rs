@@ -9,8 +9,8 @@ use serde_json::Value;
 use crate::document::{self, Document};
 use crate::migrate::{self, Migration};
 use crate::{
-    CloseBehaviour, Consents, DensityChoice, FirstRun, Loaded, ServerChoice, SettingsError,
-    ThemeChoice, WorkspaceLayer,
+    CloseBehaviour, Consents, DensityChoice, FirstRun, HexColour, Loaded, PaletteChoice,
+    ServerChoice, SettingsError, ThemeChoice, WorkspaceLayer,
 };
 
 /// The current shape of [`GlobalSettings`] documents.
@@ -150,6 +150,21 @@ pub struct UiPrefs {
     /// Comfortable or compact spacing for the whole app; default comfortable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub density: Option<DensityChoice>,
+    /// The colour palette over the light or dark base; default Pond.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub palette: Option<PaletteChoice>,
+    /// Custom palette: the accent colour; Pond's where unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_accent: Option<HexColour>,
+    /// Custom palette: the page background; Pond's where unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_background: Option<HexColour>,
+    /// Custom palette: the cards and panels; Pond's where unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_surface: Option<HexColour>,
+    /// Custom palette: the text; Pond's where unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_text: Option<HexColour>,
     /// Show a system notification for a new request; default on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notifications: Option<bool>,
@@ -214,6 +229,12 @@ impl UiPrefs {
     #[must_use]
     pub fn density(&self) -> DensityChoice {
         self.density.unwrap_or_default()
+    }
+
+    /// The palette in use.
+    #[must_use]
+    pub fn palette(&self) -> PaletteChoice {
+        self.palette.unwrap_or_default()
     }
 
     /// Whether a new request raises a system notification.
@@ -333,6 +354,8 @@ mod tests {
         let ui = &loaded.settings.ui;
         assert_eq!(ui.theme(), ThemeChoice::System);
         assert_eq!(ui.density(), DensityChoice::Comfortable);
+        assert_eq!(ui.palette(), PaletteChoice::Pond);
+        assert_eq!(ui.custom_accent, None);
         assert!(ui.notifications());
         assert!(!ui.sound());
         assert_eq!(ui.close_behaviour(), CloseBehaviour::Tray);
@@ -347,7 +370,7 @@ mod tests {
         let doc = json!({
             "schema_version": 2,
             "vscode_server": { "server": "microsoft" },
-            "ui": { "theme": "dark", "density": "compact", "notifications": false, "sound": true, "close_behaviour": "quit", "minimize_to_tray": true,
+            "ui": { "theme": "dark", "density": "compact", "palette": "custom", "custom_accent": "#0a6a85", "notifications": false, "sound": true, "close_behaviour": "quit", "minimize_to_tray": true,
                      "notify_only_unfocused": false, "badge": false, "notify_oom": false,
                      "notify_unexpected_stop": false, "confirm_global_rules": false, "inbox_shortcuts": true },
         });
@@ -359,6 +382,16 @@ mod tests {
         );
         assert_eq!(loaded.settings.ui.theme(), ThemeChoice::Dark);
         assert_eq!(loaded.settings.ui.density(), DensityChoice::Compact);
+        assert_eq!(loaded.settings.ui.palette(), PaletteChoice::Custom);
+        assert_eq!(
+            loaded
+                .settings
+                .ui
+                .custom_accent
+                .as_ref()
+                .map(HexColour::as_str),
+            Some("#0a6a85")
+        );
         assert!(!loaded.settings.ui.notifications());
         assert!(loaded.settings.ui.sound());
         assert_eq!(loaded.settings.ui.close_behaviour(), CloseBehaviour::Quit);

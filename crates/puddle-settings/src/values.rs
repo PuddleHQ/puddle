@@ -124,6 +124,76 @@ pub enum ThemeChoice {
     Dark,
 }
 
+/// Which colour palette Puddle's window uses on top of the light or dark base.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaletteChoice {
+    /// Calm water blues with duck yellow for what needs the user.
+    #[default]
+    Pond,
+    /// Violet blues, quiet and low in contrast noise.
+    Dusk,
+    /// Soft greens.
+    Meadow,
+    /// Warm reds and ambers.
+    Ember,
+    /// Neutral greys with a blue accent.
+    Graphite,
+    /// The user's own colours (see [`UiPrefs::custom_accent`](crate::UiPrefs)), Pond where unset.
+    Custom,
+}
+
+/// A colour written as `#rrggbb`, kept in lower case.
+///
+/// ```
+/// use puddle_settings::HexColour;
+/// assert_eq!(HexColour::new("#0A6A85").unwrap().as_str(), "#0a6a85");
+/// assert!(HexColour::new("teal").is_err());
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct HexColour(String);
+
+impl HexColour {
+    /// Checks that `text` is `#` and six hexadecimal digits, and keeps it in lower case.
+    ///
+    /// # Errors
+    ///
+    /// When `text` is anything else.
+    pub fn new(text: &str) -> Result<Self, ValidationError> {
+        let digits = text.strip_prefix('#').unwrap_or("");
+        if digits.len() == 6 && digits.bytes().all(|b| b.is_ascii_hexdigit()) {
+            Ok(Self(text.to_ascii_lowercase()))
+        } else {
+            Err(ValidationError::new(
+                "colour",
+                text,
+                format_args!("must be # and six hexadecimal digits, like #0a6a85"),
+            ))
+        }
+    }
+
+    /// The colour as `#rrggbb`.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for HexColour {
+    type Error = ValidationError;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        Self::new(&text)
+    }
+}
+
+impl From<HexColour> for String {
+    fn from(c: HexColour) -> String {
+        c.0
+    }
+}
+
 /// How much room Puddle's window leaves around its content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -211,6 +281,12 @@ mod tests {
             DensityChoice::Compact
         );
         assert!(serde_json::from_str::<DensityChoice>(r#""tight""#).is_err());
+        assert_eq!(PaletteChoice::default(), PaletteChoice::Pond);
+        assert_eq!(
+            serde_json::from_str::<PaletteChoice>(r#""custom""#).unwrap(),
+            PaletteChoice::Custom
+        );
+        assert!(serde_json::from_str::<PaletteChoice>(r#""neon""#).is_err());
         assert_eq!(
             serde_json::to_string(&ServerChoice::CodeServer).unwrap(),
             r#""code_server""#
@@ -228,5 +304,25 @@ mod tests {
             CloseBehaviour::Quit
         );
         assert!(serde_json::from_str::<ServerChoice>(r#""other""#).is_err());
+    }
+
+    #[test]
+    fn colours_are_six_digit_hex_in_lower_case() {
+        assert_eq!(HexColour::new("#0A6A85").unwrap().as_str(), "#0a6a85");
+        for bad in [
+            "", "#fff", "0a6a85", "#0a6a8", "#0a6a850", "#0a6a8g", "#+a6a85",
+        ] {
+            let err = HexColour::new(bad).unwrap_err();
+            assert!(err.to_string().contains("six hexadecimal digits"), "{err}");
+        }
+        assert_eq!(
+            serde_json::to_string(&HexColour::new("#ABCDEF").unwrap()).unwrap(),
+            r##""#abcdef""##
+        );
+        assert!(serde_json::from_str::<HexColour>(r#""teal""#).is_err());
+        assert_eq!(
+            String::from(serde_json::from_str::<HexColour>(r##""#112233""##).unwrap()),
+            "#112233"
+        );
     }
 }

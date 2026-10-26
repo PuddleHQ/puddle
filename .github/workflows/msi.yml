@@ -41,7 +41,7 @@ jobs:
   msi:
     name: msi (build, install, upgrade, uninstall)
     runs-on: windows-2025
-    timeout-minutes: 60
+    timeout-minutes: 90
     # `actions: read` for ci/should-run.sh.
     permissions:
       contents: read
@@ -87,7 +87,11 @@ jobs:
         run: ci/build-msi.sh stage "$RUNNER_TEMP/msi-stage"
       # The workspace's own version, then the next patch: the upgrade test installs the first and
       # upgrades to the second. The first MSI is the one kept.
-      - name: build the MSI and a newer one for the upgrade test
+      - name: build the shell (release)
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        run: ci/build-msi.sh shell "$RUNNER_TEMP/msi-stage"
+      - name: pack the MSI and a newer one for the upgrade test
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: |

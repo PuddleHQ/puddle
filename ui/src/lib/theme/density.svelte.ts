@@ -15,8 +15,8 @@ import { browserStorage } from "./theme.ts";
 
 /**
  * The reactive density choice, kept the way the theme is: the stored choice lives in Puddle's
- * settings and a localStorage hint is applied before the first paint. `init()` once in the root
- * layout, then `sync()`.
+ * settings, and an inline script in app.html puts the localStorage hint on <html> before anything
+ * is styled. `init()` once in the root layout, then `sync()`.
  */
 class DensityState {
   choice = $state<DensityChoice>("comfortable");

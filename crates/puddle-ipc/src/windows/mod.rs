@@ -201,18 +201,20 @@ impl Listener {
 }
 
 pub(crate) async fn connect(path: &Path) -> Result<Stream, IpcError> {
-    let own = puddle_fs::win::current_user_sid().map_err(|source| IpcError::Io {
-        op: "read the user of",
-        endpoint: path.to_path_buf(),
-        source,
-    })?;
-    connect_as(path, &own).await
+    connect_as(path, puddle_fs::win::current_user_sid).await
 }
 
-/// Connects, and refuses a pipe whose server process runs as a user other than the one with the
-/// string SID `own_sid`: a second user can create a freed pipe name, and the client's access list
-/// check does not look at who made the pipe.
-async fn connect_as(path: &Path, own_sid: &str) -> Result<Stream, IpcError> {
+/// Connects, and refuses a pipe whose server process runs as a user other than the one `own_sid`
+/// returns (a string SID): a second user can create a freed pipe name, and the client's access
+/// list check does not look at who made the pipe.
+///
+/// `own_sid` runs only once the pipe is open. A caller the pipe's access list refuses (a
+/// restricted token, which cannot even read its own process token) must get that refusal from
+/// the open, not an unrelated error from looking up its own user first.
+async fn connect_as(
+    path: &Path,
+    own_sid: impl Fn() -> io::Result<String>,
+) -> Result<Stream, IpcError> {
     let deadline = tokio::time::Instant::now() + CONNECT_BUSY_TIMEOUT;
     let mut options = ClientOptions::new();
     // Identification only: the server learns who we are but can't act as us.
@@ -228,7 +230,12 @@ async fn connect_as(path: &Path, own_sid: &str) -> Result<Stream, IpcError> {
                             source,
                         }
                     })?;
-                if served_by != own_sid {
+                let own = own_sid().map_err(|source| IpcError::Io {
+                    op: "read the user of",
+                    endpoint: path.to_path_buf(),
+                    source,
+                })?;
+                if served_by != own {
                     return Err(IpcError::WrongOwner {
                         endpoint: path.to_path_buf(),
                     });
@@ -348,10 +355,13 @@ mod tests {
         let root = crate::IpcRoot::new().unwrap();
         let listener = root.listen().unwrap();
         let path = listener.endpoint().path().to_path_buf();
-        let own = puddle_fs::win::current_user_sid().unwrap();
-        connect_as(&path, &own).await.unwrap();
+        connect_as(&path, puddle_fs::win::current_user_sid)
+            .await
+            .unwrap();
         // The local SYSTEM account stands for the other user.
-        let err = connect_as(&path, "S-1-5-18").await.unwrap_err();
+        let err = connect_as(&path, || Ok("S-1-5-18".to_owned()))
+            .await
+            .unwrap_err();
         assert!(matches!(err, IpcError::WrongOwner { .. }), "{err}");
         crate::connect(&path).await.unwrap();
     }

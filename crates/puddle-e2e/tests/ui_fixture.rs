@@ -717,6 +717,62 @@ async fn a_kept_login_is_forgotten_until_the_script_makes_the_store_refuse() {
 }
 
 #[tokio::test]
+async fn a_workspaces_kept_logins_are_listed_as_the_script_sets_them_and_forgetting_one_ends_its_row()
+ {
+    let run = start("lived-in").await;
+    let none = run
+        .api("GET", "/api/workspaces/web-shop/logins", None)
+        .await;
+    assert_eq!(
+        none.json(),
+        json!({"logins": [], "store_readable": true}),
+        "{}",
+        none.body
+    );
+    let set = json!({"do": "kept_logins", "workspace": "web-shop", "logins": [
+        {"service": "claude", "name": "Claude Code", "since": 1_761_480_000_000_u64},
+        {"service": "github", "name": "GitHub"}
+    ]});
+    assert_eq!(
+        run.control("POST", "/control/step", Some(&set))
+            .await
+            .status,
+        204
+    );
+    let listed = run
+        .api("GET", "/api/workspaces/web-shop/logins", None)
+        .await;
+    assert_eq!(listed.json()["logins"][0]["since"], 1_761_480_000_000_u64);
+    assert_eq!(listed.json()["logins"][1]["since"], Value::Null);
+    assert_eq!(
+        run.api("DELETE", "/api/workspaces/web-shop/logins/claude", None)
+            .await
+            .status,
+        204
+    );
+    let after = run
+        .api("GET", "/api/workspaces/web-shop/logins", None)
+        .await;
+    assert_eq!(after.json()["logins"].as_array().map(Vec::len), Some(1));
+
+    let unreadable = json!({"do": "kept_logins", "workspace": "web-shop", "logins": [],
+        "store_readable": false});
+    run.control("POST", "/control/step", Some(&unreadable))
+        .await;
+    let down = run
+        .api("GET", "/api/workspaces/web-shop/logins", None)
+        .await;
+    assert_eq!(down.json()["store_readable"], false);
+    let bad = json!({"do": "kept_logins", "workspace": "not a name!", "logins": []});
+    assert_ne!(
+        run.control("POST", "/control/step", Some(&bad))
+            .await
+            .status,
+        204
+    );
+}
+
+#[tokio::test]
 async fn scripted_steps_raise_and_end_background_problems() {
     let run = start("lived-in").await;
     let mut stream = run.events().await;

@@ -73,6 +73,7 @@ vi.mock("#lib/stores/rules.svelte.ts", async (original) => {
 });
 vi.mock("#lib/api/client.ts", () => ({ api: h.api }));
 
+import { notices } from "#lib/notify/notices.svelte.ts";
 import { pending } from "#lib/stores/pending.svelte.ts";
 import { rulesStore } from "#lib/stores/rules.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
@@ -121,6 +122,7 @@ function reset() {
   api.check = null;
   api.overrides = {};
   api.unknown = {};
+  api.kept = {};
   api.refuse.clear();
   rules.rules = [];
   rules.calls = [];
@@ -867,6 +869,77 @@ describe("the settings tab", () => {
     });
     await fireEvent.change(select, { target: { value: "off" } });
     await vi.waitFor(() => expect(select.value).toBe("on"));
+  });
+
+  it("lists the kept logins on the settings page, forgets one after a confirmation, and ends its notice", async () => {
+    api.kept["demo"] = {
+      store_readable: true,
+      logins: [
+        { service: "claude", name: "Claude Code", since: 1_761_480_000_000 },
+        { service: "github", name: "GitHub", since: null },
+      ],
+    };
+    notices.add({
+      key: "login:demo:Claude Code:capture_off",
+      tone: "warning",
+      title: "Claude Code login in demo can't be used.",
+    });
+    await open();
+    const list = await screen.findByRole("region", { name: "Kept logins" });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    expect(list).toHaveTextContent("Claude Code");
+    expect(list).toHaveTextContent("Kept since a time Puddle did not record.");
+    expect(list.textContent).not.toMatch(/sk-|gho_|token/i);
+
+    await fireEvent.click(
+      within(list).getByRole("button", {
+        name: "Forget the Claude Code login",
+      }),
+    );
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveAccessibleName(
+      "Forget the Claude Code login in demo?",
+    );
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Forget login" }),
+    );
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("alertdialog")).toBeNull(),
+    );
+    expect(api.calls).toContain("DELETE /api/workspaces/{id}/logins/{service}");
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+    expect(list).toHaveTextContent("Forgot the Claude Code login.");
+    expect(
+      notices.items.some((n) => n.key === "login:demo:Claude Code:capture_off"),
+    ).toBe(false);
+  });
+
+  it("says so when no login is kept, when the list can't be read, and when the credential store did not answer", async () => {
+    await open();
+    expect(
+      await screen.findByText(/keeps no logins for this workspace/),
+    ).toBeInTheDocument();
+    cleanup();
+    api.kept["demo"] = { logins: [], store_readable: false };
+    await open();
+    expect(
+      await screen.findByText(/couldn't read this computer's credential store/),
+    ).toBeInTheDocument();
+    cleanup();
+    api.kept = {};
+    api.refuse.set("GET /api/workspaces/{id}/logins", {
+      status: 500,
+      message: "boom",
+    });
+    await open();
+    expect(
+      await screen.findByText("Couldn't read the kept logins."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Boom.")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(
+      await screen.findByText(/keeps no logins for this workspace/),
+    ).toBeInTheDocument();
   });
 
   it("saves a local toggle and the clipboard, keeping the others as they were", async () => {

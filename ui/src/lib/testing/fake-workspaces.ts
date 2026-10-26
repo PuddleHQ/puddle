@@ -138,6 +138,14 @@ export class FakeWorkspaces {
   down = false;
   /** What each workspace's checkout listing says; a running workspace with none listed by default. */
   checkouts: Record<string, CheckoutListing> = {};
+  /** The logins each workspace keeps, by id; none when unset. */
+  kept: Record<
+    string,
+    {
+      logins: components["schemas"]["KeptLoginView"][];
+      store_readable: boolean;
+    }
+  > = {};
   /** The background problems the host lists. */
   problems: {
     key: string;
@@ -255,6 +263,13 @@ export class FakeWorkspaces {
             }),
         );
       }
+      case "/api/workspaces/{id}/logins":
+        return this.find(id)
+          ? this.reply(
+              200,
+              this.kept[String(id)] ?? { logins: [], store_readable: true },
+            )
+          : this.reply(404, undefined, "no such workspace");
       case "/api/problems":
         return this.reply(200, { problems: this.problems });
       case "/api/settings":
@@ -398,6 +413,17 @@ export class FakeWorkspaces {
     if (refused) return refused;
     const found = this.find(init.params.path.id);
     if (!found) return this.reply(404, undefined, "no such workspace");
+    if (path === "/api/workspaces/{id}/logins/{service}") {
+      const gone = (init.params.path as { service?: string }).service;
+      const kept = this.kept[found.id];
+      if (kept) {
+        this.kept[found.id] = {
+          ...kept,
+          logins: kept.logins.filter((l) => l.service !== gone),
+        };
+      }
+      return { data: undefined, response: { status: 204, ok: true } };
+    }
     if (path === "/api/workspaces/{id}/repositories/{directory}") {
       const gone = (init.params.path as { directory?: string }).directory;
       const next: Workspace = {

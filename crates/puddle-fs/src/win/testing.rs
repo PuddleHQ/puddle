@@ -23,12 +23,13 @@ use std::ptr;
 use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT};
 use windows_sys::Win32::Security::{
-    ACCESS_ALLOWED_ACE, ACL, ACL_SIZE_INFORMATION, AclSizeInformation, CreateRestrictedToken,
-    CreateWellKnownSid, DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation,
-    GetSecurityDescriptorControl, ImpersonateLoggedOnUser, LOGON32_LOGON_NETWORK,
-    LOGON32_PROVIDER_DEFAULT, LogonUserW, PSECURITY_DESCRIPTOR, RevertToSelf, SE_DACL_PROTECTED,
-    SECURITY_MAX_SID_SIZE, SID_AND_ATTRIBUTES, TOKEN_DUPLICATE, TOKEN_QUERY, WELL_KNOWN_SID_TYPE,
-    WinAuthenticatedUserSid, WinBuiltinUsersSid, WinInteractiveSid, WinWorldSid,
+    ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_SIZE_INFORMATION, AclSizeInformation,
+    CreateRestrictedToken, CreateWellKnownSid, DACL_SECURITY_INFORMATION, EqualSid, GetAce,
+    GetAclInformation, GetSecurityDescriptorControl, ImpersonateLoggedOnUser,
+    LOGON32_LOGON_NETWORK, LOGON32_PROVIDER_DEFAULT, LogonUserW, PSECURITY_DESCRIPTOR,
+    RevertToSelf, SE_DACL_PROTECTED, SECURITY_MAX_SID_SIZE, SID_AND_ATTRIBUTES, TOKEN_DUPLICATE,
+    TOKEN_QUERY, WELL_KNOWN_SID_TYPE, WinAuthenticatedUserSid, WinBuiltinUsersSid,
+    WinInteractiveSid, WinWorldSid,
 };
 use windows_sys::Win32::Storage::FileSystem::{CreateFileW, OPEN_EXISTING};
 use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
@@ -219,9 +220,12 @@ pub fn assert_owner_only_dacl(object: &impl AsRawHandle, mask: u32) {
     // SAFETY: index 0 exists (AceCount is 1); `ace` points into the DACL.
     let ok = unsafe { GetAce(dacl, 0, &raw mut ace) };
     assert_ne!(ok, 0, "GetAce: {}", io::Error::last_os_error());
-    // SAFETY: the ACE type is checked before the ACE is read as ACCESS_ALLOWED_ACE.
+    // SAFETY: GetAce succeeded, so `ace` points at an ACE, and every ACE starts with an
+    // ACE_HEADER. Only the header is read until the type says how long the ACE is.
+    let header = unsafe { &*ace.cast::<ACE_HEADER>() };
+    assert_eq!(u32::from(header.AceType), ACCESS_ALLOWED_ACE_TYPE);
+    // SAFETY: the type check above makes this an ACCESS_ALLOWED_ACE.
     let ace = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
-    assert_eq!(u32::from(ace.Header.AceType), ACCESS_ALLOWED_ACE_TYPE);
     assert_eq!(ace.Mask, mask);
 
     let token = process_token(TOKEN_QUERY).unwrap();

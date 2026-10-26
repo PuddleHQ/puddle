@@ -70,6 +70,56 @@ function titleFor(e: LoginProblem): string {
   return `${login} is not protected.`;
 }
 
+/** The confirmation before a kept login is forgotten, from the notice and from the settings list. */
+export function forgetConfirm(workspace: string, service: string) {
+  return {
+    title: `Forget the ${service} login in ${workspace}?`,
+    summary: `Puddle deletes the ${service} sign-in it saved for ${workspace} from this computer's credential store.`,
+    detail: `${service} inside ${workspace} stops working with its current login and asks you to sign in again. Other workspaces and other services are not touched.`,
+    confirmLabel: "Forget login",
+  };
+}
+
+/**
+ * Forgets the login Puddle kept for a service: its saved tokens leave the credential store. A
+ * failure throws the API's own words (a store that refuses says how to try again). Nothing kept
+ * any more (forgotten from another window, or the workspace is gone) counts as done: what the
+ * click wanted is true.
+ */
+export async function forgetKeptLogin(
+  api: Pick<ApiClient, "DELETE">,
+  workspace: string,
+  service: string,
+): Promise<void> {
+  let result;
+  try {
+    result = await api.DELETE("/api/workspaces/{id}/logins/{service}", {
+      params: { path: { id: workspace, service } },
+    });
+  } catch {
+    throw new Error("Puddle's service isn't answering. Try again.");
+  }
+  if (result.response.status === 404) return;
+  if (result.error) {
+    throw new Error(
+      sentence(result.error.message || "Puddle couldn't forget the login"),
+    );
+  }
+}
+
+/** Ends the notices about a kept login that was just forgotten. */
+export function endKeptLoginNotices(
+  notifier: Pick<Notifier, "resolve">,
+  workspace: string,
+  service: string,
+): void {
+  for (const kind of ["capture_off", "unreadable"] as const) {
+    notifier.resolve(
+      loginKey({ type: "login_problem", workspace, service, kind }),
+    );
+  }
+}
+
 export class LoginNotices {
   readonly #notifier: Notifier;
   readonly #api: Pick<ApiClient, "DELETE">;
@@ -79,45 +129,13 @@ export class LoginNotices {
     this.#api = api;
   }
 
-  /**
-   * The button that forgets the login a kept-login notice is about: its saved tokens leave the
-   * credential store, and the notice goes with them. A failure rejects with the API's own words
-   * (a store that refuses says how to try again), which the confirmation shows.
-   */
+  /** The button that forgets the login a kept-login notice is about; the notice goes with it. */
   #forget(e: LoginProblem): NoticeAction {
     return {
       label: `Forget ${e.service} login`,
-      confirm: {
-        title: `Forget the ${e.service} login in ${e.workspace}?`,
-        summary: `Puddle deletes the ${e.service} sign-in it saved for ${e.workspace} from this computer's credential store.`,
-        detail: `${e.service} inside ${e.workspace} stops working with its current login and asks you to sign in again. Other workspaces and other services are not touched.`,
-        confirmLabel: "Forget login",
-      },
+      confirm: forgetConfirm(e.workspace, e.service),
       run: async () => {
-        let result;
-        try {
-          result = await this.#api.DELETE(
-            "/api/workspaces/{id}/logins/{service}",
-            {
-              params: { path: { id: e.workspace, service: e.service } },
-            },
-          );
-        } catch {
-          throw new Error("Puddle's service isn't answering. Try again.");
-        }
-        // Nothing is kept for this service any more (forgotten from another window, or the
-        // workspace is gone): the notice is out of date, which is what the click wanted ended.
-        if (result.response.status === 404) {
-          this.#notifier.resolve(loginKey(e));
-          return;
-        }
-        if (result.error) {
-          throw new Error(
-            sentence(
-              result.error.message || "Puddle couldn't forget the login",
-            ),
-          );
-        }
+        await forgetKeptLogin(this.#api, e.workspace, e.service);
         this.#notifier.resolve(loginKey(e));
       },
     };

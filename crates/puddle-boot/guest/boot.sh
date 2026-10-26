@@ -253,6 +253,10 @@ if [ -n "$GIT_INCLUDE" ]; then
         printf '[include]\n%s\n' "$line" >>"$gc" || die "cannot add the include to /etc/gitconfig"
         say "git include added"
     fi
+    # The host reads this line: git before 2.36 ignores the per-remote author rules in the include.
+    if command -v git >/dev/null 2>&1; then
+        gv=$(git --version 2>/dev/null) && say "git version ${gv#git version }"
+    fi
 fi
 
 # Commands to run when a file below a directory changed (update-ca-certificates).

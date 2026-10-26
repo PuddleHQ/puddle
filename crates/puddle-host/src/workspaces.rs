@@ -56,7 +56,10 @@ use tokio::task::JoinSet;
 use crate::HostError;
 use crate::boot::{BootKit, GuestInputs};
 use crate::files::{Stored, WorkspaceBook};
-use crate::git_hosts::{Authors, authors};
+use crate::git_hosts::{
+    Authors, GitProblem, authors, credentials_problem, left_out_problem, never_decrypted,
+    old_git_problem,
+};
 use crate::injection::Injection;
 
 #[path = "repositories.rs"]
@@ -866,11 +869,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let capture = crate::logins::capture_enabled(inner.settings.as_ref(), name);
         let editor = inner.kit.editor(id, self.reconnection_grace(name))?;
         let began = inner.injection.begin(name, capture).await?;
+        let wanted = authors(&began.git);
+        self.report_git_settings(name, &began.git, &wanted);
         let state = GuestState {
             editor,
             image,
             ca: began.certificate,
-            authors: authors(&began.git),
+            authors: wanted,
             env: began.env,
             dev_cert: inner.kit.dev_cert().await,
             start_folder: start_folder.cloned(),
@@ -915,13 +920,66 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         &self,
         name: &WorkspaceName,
     ) -> Option<puddle_store::WorkspaceGit> {
+        let problems = &self.inner.problems;
         match self.inner.injection.resync(name) {
-            Ok(git) => git,
+            Ok(git) => {
+                GitProblem::DecryptSync.settle(problems, name, None);
+                if let Some(git) = &git {
+                    self.report_credentials(name, git);
+                }
+                git
+            }
             Err(reason) => {
-                tracing::warn!(workspace = %name, %reason, "what the workspace decrypts is not updated");
+                GitProblem::DecryptSync.settle(
+                    problems,
+                    name,
+                    Some((
+                        format!("Puddle could not update what {name} decrypts"),
+                        format!(
+                            "{reason}. {name} keeps the credentials it had; the next change to its \
+                             identities tries again."
+                        ),
+                    )),
+                );
                 None
             }
         }
+    }
+
+    /// Tells the user about the credentials of `git` that Puddle never uses.
+    fn report_credentials(&self, name: &WorkspaceName, git: &puddle_store::WorkspaceGit) {
+        let hosts = never_decrypted(git);
+        GitProblem::Credentials.settle(
+            &self.inner.problems,
+            name,
+            credentials_problem(name, &hosts),
+        );
+    }
+
+    /// Tells the user about what the Git settings of `name` ask for that Puddle cannot carry out.
+    fn report_git_settings(
+        &self,
+        name: &WorkspaceName,
+        git: &puddle_store::WorkspaceGit,
+        wanted: &Authors,
+    ) {
+        self.report_credentials(name, git);
+        GitProblem::LeftOut.settle(&self.inner.problems, name, left_out_problem(name, wanted));
+    }
+
+    /// After the hook ran with `wanted` authors: a guest whose git is too old for the author rules
+    /// is a problem on the workspace.
+    fn settle_git_version(
+        &self,
+        name: &WorkspaceName,
+        report: &puddle_boot::BootReport,
+        wanted: &Authors,
+    ) {
+        GitProblem::OldGit.settle(
+            &self.inner.problems,
+            name,
+            old_git_problem(name, report.git_version(), wanted),
+        );
     }
 
     /// Runs the boot plan again in the running guest when its authors differ from what the guest
@@ -937,7 +995,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             let live = inner.live.lock().await;
             match live.get(name) {
                 Some(entry) => Arc::clone(&entry.rewrite),
-                None => return,
+                None => return, // not registered yet
             }
         };
         let _one_at_a_time = rewrite.lock().await;
@@ -950,9 +1008,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 Some(running) => running,
                 // Not booted yet (the start reads the settings itself, and `settle` looks again)
                 // or stopped.
-                None => return,
+                None => return, // not up yet
             }
         };
+        self.report_git_settings(name, git, &wanted);
         if guest.authors == wanted {
             return;
         }
@@ -960,17 +1019,27 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             authors: wanted.clone(),
             ..guest
         };
-        match self.run_plan(name, &gated, &replanned).await {
-            Ok(()) => {
+        match self.run_plan_report(name, &gated, &replanned).await {
+            Ok(report) => {
+                GitProblem::AuthorSync.settle(&inner.problems, name, None);
+                self.settle_git_version(name, &report, &wanted);
                 if let Some(entry) = inner.live.lock().await.get_mut(name)
                     && let Some(state) = entry.guest.as_mut()
                 {
                     state.authors = wanted;
                 }
             }
-            Err(reason) => {
-                tracing::warn!(workspace = %name, %reason, "the authors in the workspace are not updated");
-            }
+            Err(reason) => GitProblem::AuthorSync.settle(
+                &inner.problems,
+                name,
+                Some((
+                    format!("Puddle could not update the commit authors in {name}"),
+                    format!(
+                        "{reason}. The workspace keeps the authors it had; the next change to its \
+                         identities tries again."
+                    ),
+                )),
+            ),
         }
     }
 
@@ -1534,6 +1603,15 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.report_locks(name, locks);
         self.settle_shell_init(name, &gated).await;
         self.settle_entrypoint(name, gated.boot_report());
+        let authors = inner
+            .live
+            .lock()
+            .await
+            .get(name)
+            .and_then(|live| live.guest.as_ref().map(|guest| guest.authors.clone()));
+        if let Some(authors) = authors {
+            self.settle_git_version(name, gated.boot_report(), &authors);
+        }
         let root = Layout::new(id).map_err(|e| e.to_string())?.mount().clone();
         self.check_start_folder(name, &gated, &root, record.start_folder.as_ref())
             .await;
@@ -1808,6 +1886,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         // The CA belongs to one start: a stopped or failed sandbox decrypts nothing.
         self.inner.injection.end(name);
         self.inner.problems.clear(&problem_key("ssh", name));
+        GitProblem::clear_all(&self.inner.problems, name);
         let (ssh, route) = {
             let mut live = self.inner.live.lock().await;
             if drop_route {

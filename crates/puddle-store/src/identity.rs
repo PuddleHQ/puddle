@@ -202,14 +202,22 @@ impl CredentialBinding {
         }
     }
 
-    /// Checks a binding: the source is for the same host, and a token that belongs to one
-    /// organisation covers only that organisation.
+    /// Checks a binding: the host is one Puddle can add a credential to, the source is for the
+    /// same host, and a token that belongs to one organisation covers only that organisation.
     ///
     /// # Errors
     /// [`StoreError::IdentityInvalid`] naming what does not fit.
     pub fn new(host: &HostName, source: SourceSpec, covers: Coverage) -> Result<Self, StoreError> {
         let host = HostName::new(host.as_str().to_ascii_lowercase())
             .map_err(|_| invalid("not a valid host"))?;
+        if let Some((_, port)) = host.as_str().split_once(':')
+            && port != "443"
+        {
+            return Err(invalid(format!(
+                "{host} is on port {port}, and Puddle adds credentials only to HTTPS on port 443, \
+                 so this one would never be used"
+            )));
+        }
         let scope = source.scope();
         if !same_host(&scope.host, &host) {
             return Err(invalid(format!(
@@ -542,6 +550,30 @@ mod tests {
             resolve(&[a, b], "github.com", "acme"),
             CredentialChoice::Ambiguous(vec![IdentityId(1), IdentityId(2)])
         );
+    }
+
+    #[test]
+    fn a_credential_for_a_port_other_than_443_is_refused() {
+        let own = |host: &str| {
+            let host = HostName::new(host).unwrap();
+            let gh = SourceSpec::Gh {
+                host: host.clone(),
+                account: AccountName::new("me").unwrap(),
+            };
+            CredentialBinding::new(&host, gh, Coverage::new(BTreeSet::new(), true).unwrap())
+        };
+        let refused = own("ghe.example:8443").unwrap_err().to_string();
+        assert!(refused.contains("port 8443"), "{refused}");
+        assert!(refused.contains("never be used"), "{refused}");
+        assert!(own("ghe.example:443").is_ok());
+        assert!(own("ghe.example").is_ok());
+    }
+
+    #[test]
+    fn a_stored_binding_for_such_a_port_still_reads() {
+        let stored = r#"{"host":"ghe.example:8443","source":{"kind":"gh","host":"ghe.example:8443","account":"me"},"covers":{"owners":[],"rest_of_host":true}}"#;
+        let read: Result<CredentialBinding, _> = serde_json::from_str(stored);
+        assert!(read.is_ok(), "{read:?}");
     }
 
     #[test]

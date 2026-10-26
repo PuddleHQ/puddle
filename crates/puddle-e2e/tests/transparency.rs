@@ -5,7 +5,10 @@
 //! real endpoint, the real proxy and the real rules engine to local servers.
 //!
 //! Every case has the same bar: no failure, and no stall over 5 s (a stall is a gap between two
-//! pieces of progress on one connection, not a slow total). Throughput is reported next to the
+//! pieces of progress on one connection, not a slow total). The gibibyte case leaves out the time
+//! the kernel's own sockets on the path sat in retransmission backoff after it dropped a loopback
+//! segment (runner kernels 6.16 to 6.19 do, and Puddle cannot prevent it): see `support::stall`
+//! and `stall_meter.rs`, which show that a reader's pause still counts in full. Throughput is reported next to the
 //! same transfer over plain loopback, never asserted: a loaded runner moves both.
 #![cfg(unix)]
 #![expect(
@@ -29,6 +32,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use h2::SendStream;
+use support::stall::{Backoff, Gap, Progress, rcvq_drops};
 use support::{LOCAL, allow, connect_via, echo_server, rig, round_trip};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
@@ -84,7 +88,8 @@ fn raise_descriptors(connections: u64) {
 struct Transfer {
     bytes: u64,
     took: Duration,
-    worst_gap: Duration,
+    /// The gap with the most time no one but the transfer's parties caused.
+    worst: Gap,
 }
 
 impl Transfer {
@@ -152,17 +157,20 @@ async fn pattern_source(bytes: u64) -> SocketAddr {
 }
 
 /// Sends `bytes` of the pattern, closes the sending side, and reads the sink's verdict.
-async fn upload(conn: &mut BufReader<TcpStream>, bytes: u64) -> io::Result<Transfer> {
+async fn upload(
+    conn: &mut BufReader<TcpStream>,
+    backoff: &Backoff,
+    bytes: u64,
+) -> io::Result<Transfer> {
     let started = Instant::now();
-    let (mut sent, mut worst_gap, mut last) = (0u64, Duration::ZERO, Instant::now());
+    let (mut sent, mut progress) = (0u64, Progress::new(backoff));
     while sent < bytes {
         let n = usize::try_from((bytes - sent).min(CHUNK as u64)).unwrap();
         // The chunk is the same on every lap, so the sink's check holds at any offset: a lap
         // starts at a multiple of CHUNK.
         conn.get_mut().write_all(&pattern()[..n]).await?;
         sent += n as u64;
-        worst_gap = worst_gap.max(last.elapsed());
-        last = Instant::now();
+        progress.mark();
     }
     conn.get_mut().shutdown().await?;
     let mut reply = [0u8; 9];
@@ -178,20 +186,34 @@ async fn upload(conn: &mut BufReader<TcpStream>, bytes: u64) -> io::Result<Trans
     Ok(Transfer {
         bytes,
         took,
-        worst_gap,
+        worst: progress.worst,
     })
 }
 
-/// Reads to the end of the source's stream, checking every byte; a read that waits longer than
-/// [`STALL`] fails the transfer instead of hanging it.
-async fn download(conn: &mut BufReader<TcpStream>, bytes: u64) -> io::Result<Transfer> {
+/// Reads to the end of the source's stream, checking every byte; a wait that [`STALL`] passes
+/// (less the kernel's backoff) fails the transfer instead of hanging it.
+async fn download(
+    conn: &mut BufReader<TcpStream>,
+    backoff: &Backoff,
+    bytes: u64,
+) -> io::Result<Transfer> {
     let started = Instant::now();
     let mut buf = vec![0u8; CHUNK];
-    let (mut got, mut worst_gap, mut last) = (0u64, Duration::ZERO, Instant::now());
+    let (mut got, mut progress) = (0u64, Progress::new(backoff));
     loop {
-        let n = tokio::time::timeout(STALL, conn.read(&mut buf))
-            .await
-            .map_err(|_| io::Error::other(format!("no byte for {STALL:?} after {got} bytes")))??;
+        let n = loop {
+            tokio::select! {
+                read = conn.read(&mut buf) => break read?,
+                () = tokio::time::sleep(Duration::from_millis(100)) => {
+                    let gap = progress.gap();
+                    if gap.own() >= STALL {
+                        return Err(io::Error::other(format!(
+                            "no byte for {gap:?} after {got} bytes"
+                        )));
+                    }
+                }
+            }
+        };
         if n == 0 {
             break;
         }
@@ -199,8 +221,7 @@ async fn download(conn: &mut BufReader<TcpStream>, bytes: u64) -> io::Result<Tra
             return Err(io::Error::other(format!("bytes differ after {got}")));
         }
         got += n as u64;
-        worst_gap = worst_gap.max(last.elapsed());
-        last = Instant::now();
+        progress.mark();
     }
     if got != bytes {
         return Err(io::Error::other(format!("{got} of {bytes} bytes arrived")));
@@ -208,7 +229,7 @@ async fn download(conn: &mut BufReader<TcpStream>, bytes: u64) -> io::Result<Tra
     Ok(Transfer {
         bytes,
         took: started.elapsed(),
-        worst_gap,
+        worst: progress.worst,
     })
 }
 
@@ -216,20 +237,37 @@ async fn direct(addr: SocketAddr) -> BufReader<TcpStream> {
     BufReader::new(TcpStream::connect(addr).await.unwrap())
 }
 
-fn report(what: &str, through: &Transfer, plain: &Transfer) {
+/// Watches the sockets of one transfer on the path: the client's, the far end of its connection
+/// (the agent, or the server on a direct one) and the server's port, where the proxy's own
+/// connection to the server ends.
+fn watch(conn: &BufReader<TcpStream>, server: SocketAddr) -> Backoff {
+    let stream = conn.get_ref();
+    Backoff::watch(vec![
+        stream.local_addr().unwrap().port(),
+        stream.peer_addr().unwrap().port(),
+        server.port(),
+    ])
+}
+
+fn report(what: &str, through: &Transfer, plain: &Transfer, drops_before: u64) {
     eprintln!(
-        "{what}: through Puddle {:.0} MiB/s in {:.1?} (worst gap {:.2?}); plain loopback {:.0} MiB/s; \
-         ratio {:.2}",
+        "{what}: through Puddle {:.0} MiB/s in {:.1?} (worst gap {:.2?}, of it {:.2?} kernel backoff); \
+         plain loopback {:.0} MiB/s; ratio {:.2}",
         through.mib_per_s(),
         through.took,
-        through.worst_gap,
+        through.worst.raw,
+        through.worst.kernel,
         plain.mib_per_s(),
         plain.mib_per_s() / through.mib_per_s(),
     );
     assert!(
-        through.worst_gap < STALL,
-        "{what} stalled for {:?}",
-        through.worst_gap
+        through.worst.own() < STALL,
+        "{what} stalled for {:?} of its own (gap {:?}, of it {:?} the kernel's retransmission backoff; \
+         the host dropped {} segments for a full receive queue meanwhile)",
+        through.worst.own(),
+        through.worst.raw,
+        through.worst.kernel,
+        rcvq_drops().saturating_sub(drops_before),
     );
 }
 
@@ -385,21 +423,29 @@ async fn a_gibibyte_goes_up_and_a_gibibyte_comes_down_with_no_stall() {
     let source = pattern_source(GIB).await;
     let agent = rig.agent.local_addr();
 
+    let drops = rcvq_drops();
     let (code, mut conn) = connect_via(agent, &format!("echo.test:{}", sink.port()))
         .await
         .unwrap();
     assert_eq!(code, 200);
-    let through = upload(&mut conn, GIB).await.unwrap();
-    let plain = upload(&mut direct(sink).await, GIB).await.unwrap();
-    report("1 GiB upload", &through, &plain);
+    let backoff = watch(&conn, sink);
+    let through = upload(&mut conn, &backoff, GIB).await.unwrap();
+    let mut plain_conn = direct(sink).await;
+    let backoff = watch(&plain_conn, sink);
+    let plain = upload(&mut plain_conn, &backoff, GIB).await.unwrap();
+    report("1 GiB upload", &through, &plain, drops);
 
     let (code, mut conn) = connect_via(agent, &format!("echo.test:{}", source.port()))
         .await
         .unwrap();
     assert_eq!(code, 200);
-    let through = download(&mut conn, GIB).await.unwrap();
-    let plain = download(&mut direct(source).await, GIB).await.unwrap();
-    report("1 GiB download", &through, &plain);
+    let drops = rcvq_drops();
+    let backoff = watch(&conn, source);
+    let through = download(&mut conn, &backoff, GIB).await.unwrap();
+    let mut plain_conn = direct(source).await;
+    let backoff = watch(&plain_conn, source);
+    let plain = download(&mut plain_conn, &backoff, GIB).await.unwrap();
+    report("1 GiB download", &through, &plain, drops);
 }
 
 /// A server that answers any request with a head and `bytes` of the pattern, then closes (it sees
@@ -467,14 +513,17 @@ async fn a_large_plain_http_response_comes_down_with_no_stall() {
     let request =
         format!("GET http://echo.test:{port}/big HTTP/1.1\r\nHost: echo.test:{port}\r\n\r\n");
     assert_eq!(response_head(&mut conn, &request).await, SIZE);
-    let through = download(&mut conn, SIZE).await.unwrap();
+    let drops = rcvq_drops();
+    let backoff = watch(&conn, source);
+    let through = download(&mut conn, &backoff, SIZE).await.unwrap();
     let mut conn = direct(source).await;
     assert_eq!(
         response_head(&mut conn, "GET /big HTTP/1.1\r\n\r\n").await,
         SIZE
     );
-    let plain = download(&mut conn, SIZE).await.unwrap();
-    report("256 MiB plain-HTTP download", &through, &plain);
+    let backoff = watch(&conn, source);
+    let plain = download(&mut conn, &backoff, SIZE).await.unwrap();
+    report("256 MiB plain-HTTP download", &through, &plain, drops);
 }
 
 /// A client that has closed its sending side still receives the whole answer, and a server that
@@ -494,7 +543,8 @@ async fn a_connection_closed_in_one_direction_keeps_working_in_the_other_both_wa
         .await
         .unwrap();
     assert_eq!(code, 200);
-    upload(&mut conn, BYTES).await.unwrap();
+    let backoff = watch(&conn, sink);
+    upload(&mut conn, &backoff, BYTES).await.unwrap();
 
     // The server finishes first: it sends and closes at once, and keeps reading.
     let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();

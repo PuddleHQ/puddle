@@ -23,6 +23,8 @@ use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
+pub(crate) mod stall;
+
 pub(crate) const LOCAL: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
 pub(crate) fn workspace() -> WorkspaceName {

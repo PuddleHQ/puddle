@@ -9,6 +9,7 @@
     reason = "helpers outside #[test] fns run only in tests; a panic is how a test fails"
 )]
 
+mod app_icon;
 mod common;
 
 mod credentials;

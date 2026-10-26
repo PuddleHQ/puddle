@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "puddle-appicon"
+description = "Puddle's app icons: the built-in duck icons drawn at any size, and the check and resize of an image the user gives"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+image = { workspace = true }
+puddle-settings = { workspace = true }
+thiserror = { workspace = true }
+tiny-skia = { workspace = true }
+
+[lints]
+workspace = true

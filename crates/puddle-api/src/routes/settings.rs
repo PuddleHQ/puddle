@@ -141,6 +141,14 @@ pub(crate) async fn put_global(
                 "vscode_server.server: Microsoft's server needs the user's consent first",
             ));
         }
+        // The icon is never chosen before there is an image to show.
+        if loaded.settings.ui.app_icon() == puddle_settings::AppIconChoice::Custom
+            && repo.load_app_icon()?.is_none()
+        {
+            return Err(ApiError::invalid(
+                "ui.app_icon: give Puddle an image before choosing your own icon",
+            ));
+        }
         repo.save_global(loaded.settings.to_document())?;
         Ok(loaded)
     })
@@ -296,6 +304,15 @@ mod tests {
             Err(SettingsRepoError::new("permission denied"))
         }
         fn save_workspace(&self, _: &WorkspaceName, _: Value) -> Result<(), SettingsRepoError> {
+            Ok(())
+        }
+        fn load_app_icon(&self) -> Result<Option<Vec<u8>>, SettingsRepoError> {
+            Ok(None)
+        }
+        fn save_app_icon(&self, _: &[u8]) -> Result<(), SettingsRepoError> {
+            Ok(())
+        }
+        fn delete_app_icon(&self) -> Result<(), SettingsRepoError> {
             Ok(())
         }
     }

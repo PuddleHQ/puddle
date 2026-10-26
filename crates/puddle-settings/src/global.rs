@@ -9,8 +9,8 @@ use serde_json::Value;
 use crate::document::{self, Document};
 use crate::migrate::{self, Migration};
 use crate::{
-    CloseBehaviour, Consents, DensityChoice, FirstRun, HexColour, Loaded, PaletteChoice,
-    ServerChoice, SettingsError, ThemeChoice, WorkspaceLayer,
+    AppIconChoice, CloseBehaviour, Consents, DensityChoice, FirstRun, HexColour, Loaded,
+    PaletteChoice, ServerChoice, SettingsError, ThemeChoice, WorkspaceLayer,
 };
 
 /// The current shape of [`GlobalSettings`] documents.
@@ -177,6 +177,9 @@ pub struct UiPrefs {
     /// Whether minimizing the window hides it to the tray instead of the taskbar; default off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub minimize_to_tray: Option<bool>,
+    /// The icon of the window, the tray and the taskbar; default the duck.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_icon: Option<AppIconChoice>,
     /// Raise the system notification only while Puddle's window is not focused; default on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notify_only_unfocused: Option<bool>,
@@ -247,6 +250,12 @@ impl UiPrefs {
     #[must_use]
     pub fn sound(&self) -> bool {
         self.sound.unwrap_or(Self::DEFAULT_SOUND)
+    }
+
+    /// The icon of the window, the tray and the taskbar.
+    #[must_use]
+    pub fn app_icon(&self) -> AppIconChoice {
+        self.app_icon.unwrap_or_default()
     }
 
     /// What closing the window does.
@@ -366,13 +375,15 @@ mod tests {
         assert!(ui.notify_unexpected_stop());
         assert!(ui.confirm_global_rules());
         assert!(!ui.inbox_shortcuts());
+        assert_eq!(ui.app_icon(), AppIconChoice::Duck);
 
         let doc = json!({
             "schema_version": 2,
             "vscode_server": { "server": "microsoft" },
             "ui": { "theme": "dark", "density": "compact", "palette": "custom", "custom_accent": "#0a6a85", "notifications": false, "sound": true, "close_behaviour": "quit", "minimize_to_tray": true,
                      "notify_only_unfocused": false, "badge": false, "notify_oom": false,
-                     "notify_unexpected_stop": false, "confirm_global_rules": false, "inbox_shortcuts": true },
+                     "notify_unexpected_stop": false, "confirm_global_rules": false, "inbox_shortcuts": true,
+                     "app_icon": "duck_night" },
         });
         let loaded = GlobalSettings::from_document(doc.clone()).unwrap();
         assert_eq!(loaded.unknown_fields, Vec::<String>::new());
@@ -403,6 +414,7 @@ mod tests {
         assert!(!ui.notify_unexpected_stop());
         assert!(!ui.confirm_global_rules());
         assert!(ui.inbox_shortcuts());
+        assert_eq!(ui.app_icon(), AppIconChoice::DuckNight);
         assert_eq!(loaded.settings.to_document(), doc);
     }
 

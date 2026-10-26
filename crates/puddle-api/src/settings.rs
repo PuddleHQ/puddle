@@ -44,6 +44,27 @@ pub trait SettingsRepo: Send + Sync {
         workspace: &WorkspaceName,
         document: Value,
     ) -> Result<(), SettingsRepoError>;
+
+    /// The user's own app icon (a PNG made by `puddle-appicon`), or `None` if none was given.
+    ///
+    /// # Errors
+    ///
+    /// [`SettingsRepoError`] if the storage fails.
+    fn load_app_icon(&self) -> Result<Option<Vec<u8>>, SettingsRepoError>;
+
+    /// Replaces the user's own app icon.
+    ///
+    /// # Errors
+    ///
+    /// [`SettingsRepoError`] if the storage fails.
+    fn save_app_icon(&self, png: &[u8]) -> Result<(), SettingsRepoError>;
+
+    /// Removes the user's own app icon; removing none is not an error.
+    ///
+    /// # Errors
+    ///
+    /// [`SettingsRepoError`] if the storage fails.
+    fn delete_app_icon(&self) -> Result<(), SettingsRepoError>;
 }
 
 /// A settings storage failure.
@@ -68,6 +89,7 @@ impl SettingsRepoError {
 pub struct MemorySettings {
     global: Mutex<Option<Value>>,
     workspaces: Mutex<BTreeMap<WorkspaceName, Value>>,
+    app_icon: Mutex<Option<Vec<u8>>>,
 }
 
 impl SettingsRepo for MemorySettings {
@@ -107,6 +129,24 @@ impl SettingsRepo for MemorySettings {
             .insert(workspace.clone(), document);
         Ok(())
     }
+
+    fn load_app_icon(&self) -> Result<Option<Vec<u8>>, SettingsRepoError> {
+        Ok(self
+            .app_icon
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone())
+    }
+
+    fn save_app_icon(&self, png: &[u8]) -> Result<(), SettingsRepoError> {
+        *self.app_icon.lock().unwrap_or_else(PoisonError::into_inner) = Some(png.to_vec());
+        Ok(())
+    }
+
+    fn delete_app_icon(&self) -> Result<(), SettingsRepoError> {
+        *self.app_icon.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -131,6 +171,11 @@ mod tests {
             repo.load_workspace(&a).unwrap(),
             Some(json!({"overrides": {}}))
         );
+        assert_eq!(repo.load_app_icon().unwrap(), None);
+        repo.save_app_icon(b"png").unwrap();
+        assert_eq!(repo.load_app_icon().unwrap(), Some(b"png".to_vec()));
+        repo.delete_app_icon().unwrap();
+        assert_eq!(repo.load_app_icon().unwrap(), None);
         assert_eq!(
             SettingsRepoError::new("disk full").to_string(),
             "settings storage failed: disk full"

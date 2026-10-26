@@ -205,6 +205,23 @@ pub enum DensityChoice {
     Compact,
 }
 
+/// The icon of Puddle's window, tray and taskbar button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppIconChoice {
+    /// The duck on its patch of water, on a clear background.
+    #[default]
+    Duck,
+    /// The duck on a pond-blue disc.
+    DuckPond,
+    /// The duck on a dark night-blue disc.
+    DuckNight,
+    /// A white duck on a sunny yellow disc.
+    DuckSun,
+    /// The image the user gave (kept per user, next to the settings).
+    Custom,
+}
+
 /// What closing Puddle's window does while a workspace runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -276,6 +293,16 @@ mod tests {
         assert_eq!(ThemeChoice::default(), ThemeChoice::System);
         assert_eq!(CloseBehaviour::default(), CloseBehaviour::Tray);
         assert_eq!(DensityChoice::default(), DensityChoice::Comfortable);
+        assert_eq!(AppIconChoice::default(), AppIconChoice::Duck);
+        assert_eq!(
+            serde_json::to_string(&AppIconChoice::DuckPond).unwrap(),
+            r#""duck_pond""#
+        );
+        assert_eq!(
+            serde_json::from_str::<AppIconChoice>(r#""custom""#).unwrap(),
+            AppIconChoice::Custom
+        );
+        assert!(serde_json::from_str::<AppIconChoice>(r#""penguin""#).is_err());
         assert_eq!(
             serde_json::from_str::<DensityChoice>(r#""compact""#).unwrap(),
             DensityChoice::Compact

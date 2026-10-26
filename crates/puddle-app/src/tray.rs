@@ -5,9 +5,11 @@
 //! functions. [`Tray`] is the icon, its menu (the number waiting, Open, Quit) and its badge.
 
 use puddle_settings::{CloseBehaviour, UiPrefs};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
+
 use tauri::{AppHandle, Runtime};
 
 use crate::badge::{self, Pixels};
@@ -102,19 +104,43 @@ fn icons(app_icon: &Image<'_>) -> (Image<'static>, Option<Image<'static>>) {
     (app_icon.clone().to_owned(), marked)
 }
 
+/// What the tray icon shows now: the app icon, with and without the badge dot, and how many
+/// requests wait.
+struct Look {
+    plain: Image<'static>,
+    marked: Option<Image<'static>>,
+    waiting: usize,
+    badge_on: bool,
+}
+
+impl Look {
+    /// The image to show: the dotted one while requests wait and the badge is on.
+    fn image(&self) -> Image<'static> {
+        match (&self.marked, self.badge_on && self.waiting > 0) {
+            (Some(marked), true) => marked.clone(),
+            _ => self.plain.clone(),
+        }
+    }
+}
+
 /// The tray icon.
 pub struct Tray<R: Runtime> {
     icon: TrayIcon<R>,
     waiting: MenuItem<R>,
-    plain: Image<'static>,
-    marked: Option<Image<'static>>,
+    look: Mutex<Look>,
 }
 
 impl<R: Runtime> Tray<R> {
-    /// Makes the tray icon with its menu and starts it showing `waiting` requests. `None` when
-    /// the desktop has no tray (see [`TrayState::Missing`]), for whatever reason: the log says.
-    pub fn build(app: &AppHandle<R>, waiting: usize, badge_on: bool) -> Option<Self> {
-        let made = can_show().then(|| guarded(|| Self::make(app, waiting, badge_on)));
+    /// Makes the tray icon from `app_icon`, with its menu, and starts it showing `waiting`
+    /// requests. `None` when the desktop has no tray (see [`TrayState::Missing`]), for whatever
+    /// reason: the log says.
+    pub fn build(
+        app: &AppHandle<R>,
+        app_icon: &Image<'_>,
+        waiting: usize,
+        badge_on: bool,
+    ) -> Option<Self> {
+        let made = can_show().then(|| guarded(|| Self::make(app, app_icon, waiting, badge_on)));
         let tray = made.flatten().and_then(|made| {
             made.map_err(|err| tracing::debug!(%err, "the tray icon was refused"))
                 .ok()
@@ -127,10 +153,12 @@ impl<R: Runtime> Tray<R> {
         tray
     }
 
-    fn make(app: &AppHandle<R>, waiting: usize, badge_on: bool) -> tauri::Result<Self> {
-        let app_icon = app
-            .default_window_icon()
-            .ok_or_else(|| tauri::Error::AssetNotFound("the app icon".to_owned()))?;
+    fn make(
+        app: &AppHandle<R>,
+        app_icon: &Image<'_>,
+        waiting: usize,
+        badge_on: bool,
+    ) -> tauri::Result<Self> {
         let (plain, marked) = icons(app_icon);
         let line = MenuItem::with_id(
             app,
@@ -169,26 +197,47 @@ impl<R: Runtime> Tray<R> {
         let tray = Self {
             icon,
             waiting: line,
-            plain,
-            marked,
+            look: Mutex::new(Look {
+                plain,
+                marked,
+                waiting,
+                badge_on,
+            }),
         };
         tray.show(waiting, badge_on);
         Ok(tray)
     }
 
+    fn look(&self) -> MutexGuard<'_, Look> {
+        self.look.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// Shows how many requests wait: the menu line always, the tooltip and the dot with the badge
     /// on.
     pub fn show(&self, waiting: usize, badge_on: bool) {
-        let dotted = badge_on && waiting > 0;
-        let image = match (&self.marked, dotted) {
-            (Some(marked), true) => marked.clone(),
-            _ => self.plain.clone(),
+        let image = {
+            let mut look = self.look();
+            look.waiting = waiting;
+            look.badge_on = badge_on;
+            look.image()
         };
         // A tray that is being torn down refuses these; there is nothing to do about it.
         let _ = self.waiting.set_text(badge::waiting_line(waiting));
         let _ = self
             .icon
             .set_tooltip(Some(badge::tooltip(waiting, badge_on)));
+        let _ = self.icon.set_icon(Some(image));
+    }
+
+    /// Changes the app icon the tray shows (the user chose another), keeping the count and the dot.
+    pub fn set_app_icon(&self, app_icon: &Image<'_>) {
+        let (plain, marked) = icons(app_icon);
+        let image = {
+            let mut look = self.look();
+            look.plain = plain;
+            look.marked = marked;
+            look.image()
+        };
         let _ = self.icon.set_icon(Some(image));
     }
 }
@@ -384,9 +433,10 @@ mod tests {
         let app = crate::shell::with_plugins(mock_builder())
             .build(crate::shell::context())
             .unwrap();
-        let tray = Tray::make(app.handle(), 0, true).unwrap();
+        let icon = Image::new_owned(vec![0x40; 32 * 32 * 4], 32, 32);
+        let tray = Tray::make(app.handle(), &icon, 0, true).unwrap();
         assert!(
-            tray.marked.is_some(),
+            tray.look().marked.is_some(),
             "the app icon is square, so it gets a dot"
         );
         assert_eq!(tray.waiting.text().unwrap(), "Nothing is waiting");
@@ -395,8 +445,35 @@ mod tests {
         tray.show(3, false);
         tray.show(0, true);
         assert_eq!(tray.waiting.text().unwrap(), "Nothing is waiting");
+        // Another app icon keeps the count: with requests waiting it still carries the dot.
+        tray.show(2, true);
+        let other = Image::new_owned(vec![0xc0; 16 * 16 * 4], 16, 16);
+        tray.set_app_icon(&other);
+        assert_eq!(tray.waiting.text().unwrap(), "2 requests are waiting");
+        assert_eq!(tray.look().plain.rgba(), other.rgba());
+        assert_ne!(tray.look().image().rgba(), other.rgba(), "dotted");
         // No session bus here, so there is no tray host: the shell goes without a tray.
-        assert!(Tray::build(app.handle(), 1, true).is_none());
+        assert!(Tray::build(app.handle(), &icon, 1, true).is_none());
+    }
+
+    #[test]
+    fn the_look_shows_the_dot_only_while_requests_wait_and_the_badge_is_on() {
+        let plain = Image::new_owned(vec![1; 4 * 4 * 4], 4, 4);
+        let marked = Image::new_owned(vec![2; 4 * 4 * 4], 4, 4);
+        let mut look = Look {
+            plain: plain.clone(),
+            marked: Some(marked.clone()),
+            waiting: 0,
+            badge_on: true,
+        };
+        assert_eq!(look.image().rgba(), plain.rgba(), "nothing waits");
+        look.waiting = 2;
+        assert_eq!(look.image().rgba(), marked.rgba());
+        look.badge_on = false;
+        assert_eq!(look.image().rgba(), plain.rgba(), "the badge is off");
+        look.badge_on = true;
+        look.marked = None;
+        assert_eq!(look.image().rgba(), plain.rgba(), "no dot can be drawn");
     }
 
     #[test]

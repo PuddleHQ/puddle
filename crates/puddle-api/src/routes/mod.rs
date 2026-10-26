@@ -20,6 +20,7 @@ use crate::repos::RepoService;
 use crate::settings::SettingsRepo;
 use crate::workspaces::WorkspaceService;
 
+mod app_icon;
 mod audit;
 mod credentials;
 mod doctor;
@@ -96,6 +97,11 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
             settings::get_workspace_settings,
             settings::put_workspace_settings
         ))
+        .routes(routes!(
+            app_icon::list_app_icons,
+            app_icon::delete_custom_icon
+        ))
+        .merge(app_icon_upload_router())
         .routes(routes!(settings::get_consents))
         .routes(routes!(settings::put_consent))
         .routes(routes!(first_run::get_first_run, first_run::put_first_run))
@@ -155,6 +161,15 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(
             identities::set_git_repo,
             identities::remove_git_repo
+        ))
+}
+
+/// The upload of the user's own app icon: the one route whose body may be a few megabytes.
+fn app_icon_upload_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(app_icon::put_custom_icon))
+        .layer(axum::extract::DefaultBodyLimit::max(
+            puddle_appicon::MAX_UPLOAD_BYTES,
         ))
 }
 

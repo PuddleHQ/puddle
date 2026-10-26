@@ -79,15 +79,18 @@ fn can_show() -> bool {
 /// Whether the session bus has a `StatusNotifier` host.
 #[cfg(target_os = "linux")]
 fn can_show() -> bool {
-    let watcher = || {
-        let bus = zbus::blocking::Connection::session().ok()?;
+    // zbus 6 has no blocking API; its default runtime needs no tokio, so any `block_on` drives it.
+    let watcher = async {
+        let bus = zbus::Connection::session().await.ok()?;
         let name = zbus::names::BusName::try_from("org.kde.StatusNotifierWatcher").ok()?;
-        zbus::blocking::fdo::DBusProxy::new(&bus)
+        zbus::fdo::DBusProxy::new(&bus)
+            .await
             .ok()?
             .name_has_owner(name)
+            .await
             .ok()
     };
-    watcher().unwrap_or(false)
+    tauri::async_runtime::block_on(watcher).unwrap_or(false)
 }
 
 /// The app icon, and the same with the badge dot when it can be drawn on it.

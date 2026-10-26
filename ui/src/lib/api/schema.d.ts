@@ -1009,6 +1009,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{id}/logins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The services Puddle keeps a login for in a workspace, with when each was first noted. No token
+         *     or other secret is in the answer. It comes from Puddle's own record of what is kept, so a
+         *     locked credential store does not stall it; only a workspace with no record yet asks the store,
+         *     and a store that does not answer shows as `store_readable: false`.
+         */
+        get: operations["list_logins"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{id}/logins/{service}": {
         parameters: {
             query?: never;
@@ -2628,6 +2650,30 @@ export interface components {
             registrable_domain: string;
             /** @description Open requests, most recent first. */
             requests: components["schemas"]["PendingRequest"][];
+        };
+        /** @description The logins kept for a workspace. No token, stand-in or account detail is in it. */
+        KeptLoginList: {
+            /** @description The services with a login kept; empty when none is. */
+            logins: components["schemas"]["KeptLoginView"][];
+            /**
+             * @description `false` when the operating system's credential store did not answer and Puddle had no
+             *     record of its own: `logins` is then empty because it is not known, not because nothing is
+             *     kept.
+             */
+            store_readable: boolean;
+        };
+        /** @description A service Puddle keeps a login for in a workspace. */
+        KeptLoginView: {
+            /** @description What the user calls it: `Claude Code`, `GitHub`. */
+            name: string;
+            /** @description The service as forgetting names it: `claude` or `github`. */
+            service: string;
+            /**
+             * Format: int64
+             * @description When Puddle first noted the login as kept, epoch ms; `null` when it does not know (the
+             *     login was kept before Puddle wrote times down).
+             */
+            since: number | null;
         };
         /**
          * @description Sent on the event stream as `event: lagged` when a subscriber fell behind and events were
@@ -8811,6 +8857,83 @@ export interface operations {
             };
             /** @description Puddle failed; see its log */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_logins: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the kept logins */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KeptLoginList"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description this Puddle keeps no logins */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -398,6 +398,17 @@ impl Injection {
         logins.forget(service).await
     }
 
+    /// The logins kept for `workspace`, for the user to look at. A workspace that is not running
+    /// gets a throwaway [`Logins`] over the same store and marker, as [`Self::forget_login`] does.
+    pub(crate) async fn kept_logins(&self, workspace: &WorkspaceName) -> puddle_logins::KeptList {
+        let running = self.running().get(workspace).map(|r| r.logins.clone());
+        let logins = running.unwrap_or_else(|| {
+            self.login_keeper
+                .logins(workspace, false, Arc::new(StandIns::new()))
+        });
+        logins.kept_list().await
+    }
+
     /// What `workspace` decrypts and the CA that certifies it, while it runs.
     pub(crate) fn termination(&self, workspace: &WorkspaceName) -> Option<Arc<Termination>> {
         self.terminations.termination(workspace)
@@ -1469,6 +1480,31 @@ mod tests {
         vault.break_it();
         injection.begin(&ws, false).await.unwrap();
         assert!(events.0.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_list_of_kept_logins_follows_a_capture_and_a_forget_in_a_running_or_stopped_workspace()
+     {
+        let store = store();
+        let dir = tempfile::tempdir().unwrap();
+        let (injection, terminations, vault, _events) = injection_with_events(&store);
+        let injection = injection.with_login_markers(dir.path().to_owned());
+        let ws = workspace("alpha");
+        injection.begin(&ws, true).await.unwrap();
+        assert!(injection.kept_logins(&ws).await.logins.is_empty());
+        claude_answer(&terminations, &ws).await.unwrap();
+        let running = injection.kept_logins(&ws).await;
+        assert_eq!(running.logins.len(), 1);
+        assert_eq!(running.logins[0].profile, "claude");
+        assert!(running.logins[0].since_ms.is_some());
+        injection.end(&ws);
+
+        // Stopped, with a store that does not answer: the marker still says what is kept.
+        vault.break_it();
+        assert_eq!(injection.kept_logins(&ws).await, running);
+        vault.heal();
+        assert_eq!(injection.forget_login(&ws, "claude").await, Ok(true));
+        assert!(injection.kept_logins(&ws).await.logins.is_empty());
     }
 
     #[tokio::test]

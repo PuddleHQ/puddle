@@ -28,6 +28,7 @@ mod doctor;
 mod environment;
 mod first_run;
 mod identities;
+mod logins;
 mod network_health;
 mod repos;
 mod repositories;
@@ -53,6 +54,7 @@ pub use identities::{
     IdentityView, NewWorkspaceIdentity, NewWorkspaceIdentityBasis, SwitchSource, TokenLeft,
     WorkspaceGitView, WorkspaceIdentitiesRequest, WorkspaceSwitchesRequest,
 };
+pub use logins::{KeptLoginList, KeptLoginView};
 pub use network_health::{
     DeadProxy, NetworkHealth, PacState, ProxyDetected, ProxyMode, ProxyProblem, ProxyProblemKind,
     ProxyReport, PullProxyReport, RootKind, RootsReport, RouteDecision, RouteSource, SignInAttempt,

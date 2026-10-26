@@ -52,9 +52,10 @@ pub mod scenario;
 
 pub use scenario::{CheckoutSeed, RemoteNoteSeed};
 pub use scenario::{
-    ConnectionSeed, CredentialsSeed, DecisionSeed, EffectSeed, GitRepoSeed, GitSeed, ProblemSeed,
-    RepoItemSeed, RepoListSeed, RepoNoteSeed, RepoProblemSeed, RepoSeed, RequestSeed, RuleSeed,
-    Scenario, SettingsSeed, StatusSeed, Step, UnsavedSeed, WorkspaceOperationSeed, WorkspaceSeed,
+    ConnectionSeed, CredentialsSeed, DecisionSeed, EffectSeed, GitRepoSeed, GitSeed, KeptLoginSeed,
+    ProblemSeed, RepoItemSeed, RepoListSeed, RepoNoteSeed, RepoProblemSeed, RepoSeed, RequestSeed,
+    RuleSeed, Scenario, SettingsSeed, StatusSeed, Step, UnsavedSeed, WorkspaceOperationSeed,
+    WorkspaceSeed,
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
@@ -602,6 +603,28 @@ impl State {
             }
             Step::LoginStoreRefuses { refuses } => {
                 self.workspaces.set_login_store_refuses(*refuses);
+            }
+            Step::KeptLogins {
+                workspace: name,
+                logins,
+                store_readable,
+            } => {
+                let id = WorkspaceId::new(name)
+                    .map_err(|err| format!("workspace id {name:?}: {err}"))?;
+                self.workspaces.set_kept_logins(
+                    &id,
+                    puddle_api::KeptLogins {
+                        logins: logins
+                            .iter()
+                            .map(|login| puddle_api::KeptLogin {
+                                service: login.service.clone(),
+                                name: login.name.clone(),
+                                since: login.since,
+                            })
+                            .collect(),
+                        store_readable: *store_readable,
+                    },
+                );
             }
             Step::NetworkHealth(report) => {
                 let epoch = report.proxy.epoch;

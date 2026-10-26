@@ -18,8 +18,8 @@ use tokio::sync::watch;
 use crate::checkouts::{AddRepository, Checkouts, FoundList, check_addition, checkouts_view};
 use crate::workspaces::{
     AttachMode, Attached, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DeleteCheck, DesktopTarget, DisplayName,
-    GitSetup, LaunchError, Launcher, Listing, NewRepository, NewWorkspace, Operation, RepoFindings,
-    ShellInitCheck, StartFolder, StartFolderChange, WorkspaceError, WorkspaceRecord,
+    GitSetup, KeptLogins, LaunchError, Launcher, Listing, NewRepository, NewWorkspace, Operation,
+    RepoFindings, ShellInitCheck, StartFolder, StartFolderChange, WorkspaceError, WorkspaceRecord,
     WorkspaceService,
 };
 
@@ -95,6 +95,8 @@ struct State {
     forgotten_logins: Vec<(String, String)>,
     /// Whether forgetting a login fails as a credential store that refuses would.
     login_store_refuses: bool,
+    /// The logins each workspace keeps, by workspace id; none when unset.
+    kept_logins: BTreeMap<String, KeptLogins>,
     /// What each running workspace's guest holds: the checkouts a listing would find.
     guest: BTreeMap<WorkspaceId, FoundList>,
     /// The last listing made of each workspace, with its time (epoch ms).
@@ -158,6 +160,7 @@ impl FakeWorkspaces {
                     shell_init_checked: Vec::new(),
                     forgotten_logins: Vec::new(),
                     login_store_refuses: false,
+                    kept_logins: BTreeMap::new(),
                     guest: BTreeMap::new(),
                     last_listing: BTreeMap::new(),
                 }),
@@ -205,6 +208,13 @@ impl FakeWorkspaces {
     #[must_use]
     pub fn forgotten_logins(&self) -> Vec<(String, String)> {
         lock(&self.inner.state).forgotten_logins.clone()
+    }
+
+    /// Sets the logins workspace `id` keeps; forgetting one removes it from the list.
+    pub fn set_kept_logins(&self, id: &WorkspaceId, kept: KeptLogins) {
+        lock(&self.inner.state)
+            .kept_logins
+            .insert(id.to_string(), kept);
     }
 
     /// Makes forgetting a login fail the way a credential store that refuses does.
@@ -863,6 +873,23 @@ impl WorkspaceService for FakeWorkspaces {
         })
     }
 
+    fn kept_logins<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+    ) -> BoxFuture<'a, Result<KeptLogins, WorkspaceError>> {
+        Box::pin(async move {
+            self.get(id).await?;
+            Ok(lock(&self.inner.state)
+                .kept_logins
+                .get(id.as_str())
+                .cloned()
+                .unwrap_or(KeptLogins {
+                    logins: Vec::new(),
+                    store_readable: true,
+                }))
+        })
+    }
+
     fn forget_login<'a>(
         &'a self,
         id: &'a WorkspaceId,
@@ -880,6 +907,10 @@ impl WorkspaceService for FakeWorkspaces {
                 return Err(WorkspaceError::Unavailable(
                     "the operating system's credential store did not delete a saved login; unlock it or start it and ask again (what was already deleted stays deleted)".to_owned(),
                 ));
+            }
+            if let Some(kept) = state.kept_logins.get_mut(id.as_str()) {
+                kept.logins
+                    .retain(|login| login.service != service && login.name != service);
             }
             state
                 .forgotten_logins

@@ -5990,6 +5990,98 @@
         }
       }
     },
+    "/api/workspaces/{id}/logins": {
+      "get": {
+        "tags": [
+          "logins"
+        ],
+        "summary": "The services Puddle keeps a login for in a workspace, with when each was first noted. No token\nor other secret is in the answer. It comes from Puddle's own record of what is kept, so a\nlocked credential store does not stall it; only a workspace with no record yet asks the store,\nand a store that does not answer shows as `store_readable: false`.",
+        "operationId": "list_logins",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the kept logins",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeptLoginList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "this Puddle keeps no logins",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/workspaces/{id}/logins/{service}": {
       "delete": {
         "tags": [
@@ -10661,6 +10753,55 @@
           }
         }
       },
+      "KeptLoginList": {
+        "type": "object",
+        "description": "The logins kept for a workspace. No token, stand-in or account detail is in it.",
+        "required": [
+          "logins",
+          "store_readable"
+        ],
+        "properties": {
+          "logins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KeptLoginView"
+            },
+            "description": "The services with a login kept; empty when none is."
+          },
+          "store_readable": {
+            "type": "boolean",
+            "description": "`false` when the operating system's credential store did not answer and Puddle had no\nrecord of its own: `logins` is then empty because it is not known, not because nothing is\nkept."
+          }
+        }
+      },
+      "KeptLoginView": {
+        "type": "object",
+        "description": "A service Puddle keeps a login for in a workspace.",
+        "required": [
+          "service",
+          "name",
+          "since"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "What the user calls it: `Claude Code`, `GitHub`."
+          },
+          "service": {
+            "type": "string",
+            "description": "The service as forgetting names it: `claude` or `github`."
+          },
+          "since": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When Puddle first noted the login as kept, epoch ms; `null` when it does not know (the\nlogin was kept before Puddle wrote times down).",
+            "minimum": 0
+          }
+        }
+      },
       "Lagged": {
         "type": "object",
         "description": "Sent on the event stream as `event: lagged` when a subscriber fell behind and events were\ndropped for it. The client should refetch the state it shows.",
@@ -13558,7 +13699,7 @@
     },
     {
       "name": "logins",
-      "description": "The logins Puddle kept for a workspace: forgetting one"
+      "description": "The logins Puddle kept for a workspace: listing them and forgetting one"
     },
     {
       "name": "start-folder",

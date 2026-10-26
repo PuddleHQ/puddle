@@ -435,6 +435,19 @@ pub struct RepoSeed {
     pub stashes: Vec<String>,
 }
 
+/// A service a workspace keeps a login for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeptLoginSeed {
+    /// The service as forgetting names it (`claude`, `github`).
+    pub service: String,
+    /// What the user calls it (`Claude Code`).
+    pub name: String,
+    /// Epoch ms it was first noted as kept; unknown when left out.
+    #[serde(default)]
+    pub since: Option<u64>,
+}
+
 /// A long workspace operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -586,6 +599,17 @@ pub enum Step {
     LoginStoreRefuses {
         /// Whether the store refuses.
         refuses: bool,
+    },
+    /// Sets the logins a workspace keeps, which its settings list shows; forgetting one removes it.
+    KeptLogins {
+        /// The workspace's name.
+        workspace: String,
+        /// The services kept.
+        logins: Vec<KeptLoginSeed>,
+        /// Whether the credential store answered; `false` shows the list as unknown. Defaults to
+        /// `true`.
+        #[serde(default = "yes")]
+        store_readable: bool,
     },
     /// Replaces the network-health report and sends `network_changed` with its epoch, as a
     /// network or proxy change would.

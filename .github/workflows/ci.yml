@@ -113,7 +113,8 @@ jobs:
           PUDDLE_QUEUE_SKIP_PUSH: ${{ vars.PUDDLE_QUEUE_SKIP_PUSH }}
         run: ci/should-run.sh ci.yml --queue-tested
       # The Rust key hashes the toolchain, the manifests and the environment, as in the rust job (no extra
-      # CARGO or RUST variables may be set in this job, or the key differs).
+      # CARGO or RUST variables may be set in this job, or the key differs). If the two keys ever drift
+      # apart, the lookup misses and the push run always tests: safe, but option D then saves nothing.
       - name: Toolchain (from rust-toolchain.toml)
         if: steps.queue.outputs.tested == 'true'
         continue-on-error: true
@@ -193,6 +194,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         with:
           prefix: v0-rust-linux-
+      # The queue-tested job looks this entry up by the same key: a CARGO or RUST variable set on this job
+      # or this step must be set there too.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: linux # the UI job restores this entry
@@ -508,9 +511,9 @@ jobs:
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: ci/scope.sh full-steps ui-e2e=${{ steps.ui-e2e.outcome }}
 
-  # RustSec advisories (`scripts/check.sh advisories`). The result job needs it, but it skips on a pull request to
-  # develop and on a merge queue run by its own event rule (not a scope verdict; the result job accepts a skip of a job it does not scope), so
-  # a new advisory fails no pull request to develop. It runs where the answer matters: a release path (pull request
+  # RustSec advisories (`scripts/check.sh advisories`). The result job needs it, but it skips on a pull
+  # request to develop and on a merge queue run by its own event rule (not a scope verdict; the result job
+  # accepts a skip of a job it does not scope), so a new advisory fails no pull request to develop. It runs where the answer matters: a release path (pull request
   # to main, where it fails `linux (all gates)`), every push to develop and main, the nightly (which the result job
   # skips) and by hand. The nightly also opens, rewrites or closes the tracking issue (ci/advisories-issue.sh).
   advisories:
@@ -536,8 +539,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: ci/advisories-issue.sh rust
 
-  # npm advisories (`scripts/check.sh ui-audit`), the same shape as `advisories` above: skipped on a pull request to
-  # develop and a merge queue run, run on a pull request to main (where it fails `linux (all gates)`), every push, the nightly and by hand.
+  # npm advisories (`scripts/check.sh ui-audit`), the same shape as `advisories` above: skipped on a pull
+  # request to develop and a merge queue run, run on a pull request to main (where it fails `linux (all
+  # gates)`), every push, the nightly and by hand.
   # Its own job, so it is not tied to the UI job's scope verdict: a UI-free pull request to main still gets it.
   advisories-npm:
     name: advisories (npm)

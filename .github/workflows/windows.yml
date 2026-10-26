@@ -15,9 +15,11 @@
 # tests and UI here (the light mode, ci/scope.sh) and the merge queue runs them on the commit that
 # lands; the result job still reports. Unset, every pull request runs them.
 # The nightly also reruns each failed test once and lists the ones that pass only on retry
-# (ci/flaky-report.py); it never turns the run red. The tests and the release build count only nightly
-# and manual runs as "already green" (ci/should-run.sh --events), so a merge queue run on develop's
-# commit does not stop them; clippy and UI may skip after any green run.
+# (ci/flaky-report.py); it never turns the run red. The nightly gate (ci/should-run.sh --events) counts
+# only nightly and manual runs as "already green" for the tests and the release build, so a merge
+# queue run on develop's commit does not stop the flake report or the release build; clippy and UI
+# also count a merge queue run, which ran them in full. A pull request run never counts: in the light
+# mode it skips them.
 name: windows
 
 on:
@@ -92,7 +94,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ci/should-run.sh windows.yml
+        run: ci/should-run.sh windows.yml --events schedule,workflow_dispatch,merge_group
       - name: Toolchain (from rust-toolchain.toml)
         if: steps.changed.outputs.run == 'true'
         shell: bash
@@ -213,7 +215,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ci/should-run.sh windows.yml
+        run: ci/should-run.sh windows.yml --events schedule,workflow_dispatch,merge_group
       - name: Toolchain (from rust-toolchain.toml)
         if: steps.changed.outputs.run == 'true'
         shell: bash
@@ -331,8 +333,8 @@ jobs:
   # develop, a merge queue run and a manual run from a task branch (its own `if:`); a skipped job
   # counts as passed there. The scoped jobs may be skipped on a pull request or a merge queue run
   # only when `scope` said so, or in the light mode (`queue`; ci/scope.sh verdict), and `always()`
-  # makes this job report whatever happened. The develop
-  # ruleset requires it by this name: a rename changes the ruleset in the same change.
+  # makes this job report whatever happened. The develop ruleset requires it by this name: a rename
+  # changes the ruleset in the same change.
   windows:
     name: windows-msvc (build, clippy, tests)
     needs: [scope, clippy, tests, ui, release]

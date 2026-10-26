@@ -2,7 +2,8 @@
 # VM tests on Linux KVM (tier K): crate puddle-vm-tests under `nextest --profile vm`, real
 # msb microVMs on the hosted runner. It runs on every pull request to develop (a required check),
 # on every merge queue run, by hand on any branch (`gh workflow run vm-linux.yml --ref <branch>`) and
-# nightly on develop unless it already has a green run on that commit. VM tests are never retried; a
+# nightly on develop unless it already has a green nightly, manual or merge queue run on that commit
+# (a light pull request run skips the VM jobs, so it never counts). VM tests are never retried; a
 # runner without KVM is reported as an infrastructure skip, not a test result, except on a pull
 # request or a merge queue run, where it fails the job (a required check must not pass without
 # running VM tests; ci/vm-skip-policy.sh).
@@ -99,7 +100,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ci/should-run.sh vm-linux.yml
+        run: ci/should-run.sh vm-linux.yml --events schedule,workflow_dispatch,merge_group
       - name: Toolchain (from rust-toolchain.toml)
         if: steps.changed.outputs.run == 'true'
         run: rustup toolchain install && rustc --version

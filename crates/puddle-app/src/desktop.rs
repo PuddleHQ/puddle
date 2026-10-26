@@ -279,7 +279,7 @@ fn show_icon<R: Runtime>(
     if let Some(window) = app.get_webview_window(MAIN_LABEL)
         && let Err(err) = window.set_icon(picture.clone().to_owned())
     {
-        tracing::debug!(%err, "the window did not take the app icon");
+        tracing::warn!(%err, "the window did not take the app icon");
     }
     if let Some(tray) = tray {
         tray.set_app_icon(picture);

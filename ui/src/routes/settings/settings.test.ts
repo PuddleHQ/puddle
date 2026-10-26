@@ -55,6 +55,16 @@ async function open() {
   await screen.findByRole("heading", { level: 2, name: "Appearance" });
 }
 
+// The first open of "Third-party licences" costs a lot of cold code: jsdom's queued `toggle` event,
+// the dev server's first transform of the 31 kB notices file, and the first render of the text.
+// Under load that outlasted the one-second wait of the licence test, which is the first to do
+// it, so run it once before any test's clock starts.
+await open();
+await fireEvent.click(screen.getByText("Third-party licences"));
+await screen.findByLabelText("Third-party licences", { selector: "pre" });
+cleanup();
+api.reset();
+
 async function choose(label: string | RegExp, value: string) {
   const select = screen.getByLabelText(label) as HTMLSelectElement;
   select.value = value;

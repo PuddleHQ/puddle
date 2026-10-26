@@ -31,6 +31,14 @@
 # entry to restore (a cold build takes about 35 minutes of a job limited to 30). This workflow deletes any
 # other superseded entry right after the run.
 #
+# Seconds can still be enough: on 2026-10-26 a develop save of the `linux` entry (4.7 GiB) found the 7.1 GiB one
+# it replaced already evicted at 15:15 (cache-drop: "already gone"), and the repo went from 13 entries to 2 while
+# this workflow logged 10285 MB and had nothing to delete. That total was under 10 GiB, and totals of 10.3 to
+# 10.7 GB sat for hours on the same day without an eviction, so the number this workflow prints is not the
+# trigger and a lower cap in this script would have deleted nothing either. What fits is the replacement
+# arithmetic: every other entry (about 4.1 GB) plus two `linux` entries must stay under 10 GiB, which needs
+# a `linux` entry under about 3.1 GiB; at 4.8 to 5.1 GiB it does not fit.
+#
 # GitHub publishes no eviction log: on 2026-10-24 the cargo-xwin entry (a miss costs a 12-minute CRT
 # download in a job limited to 30) and the `linux` entry were both gone while the repo sat at 10.5 to 12 GiB,
 # and the develop runs between 06:41 and 07:03 UTC ran into the job limit.

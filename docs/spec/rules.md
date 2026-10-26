@@ -282,9 +282,9 @@ store.
 - **R-34 `SRV`, `TXT` and `MX` are looked up for allowed names only.** The rules decide the name
   without its leading service labels (`_mongodb._tcp.db.example.net` is decided as
   `db.example.net`), since a service label is not part of a host the user approves. The targets of
-  `SRV` and `MX` records get stand-ins of their own in the answer. At most 16 records and 8 KiB of
-  text are passed on; records left out (another type, a target that is not a plain host name, more
-  than the cap) are said in the log.
+  the `SRV` records kept (below) and of `MX` records get stand-ins of their own in the answer. At
+  most 16 records and 8 KiB of text are passed on; records left out (another type, a target that
+  is not a plain host name, more than the cap) are said in the log.
   An `SRV` answer keeps only the records whose target a rule allows, because a client can't fall
   back from a target the proxy refuses: the connection to a stand-in is accepted in the guest
   before the proxy decides, so the refusal arrives as a reset after a successful connect. apt asks
@@ -294,7 +294,8 @@ store.
   as it does when there are no records. A target no rule matches also raises one request for
   itself, at the record's port, so a client that has no fallback (`mongodb+srv://`) shows up for
   approval; a denied or blocked target (R-14) raises nothing. When every record is left out the
-  answer is no data. Each record left out is a line in the host log naming the target.
+  answer is no data. Each record left out is a line in the host log naming the target and why
+  (no rule, a deny rule, the block's reason, or not a host name).
 - **R-35 A lookup is bounded.** The name must be a plain host name (labels of letters, digits, `-`
   and `_`, at most 253 characters) or the answer is "no such name" without a lookup. A workspace runs
   at most 128 host lookups at once; one over that waits up to one lookup time (3 s) for a free slot

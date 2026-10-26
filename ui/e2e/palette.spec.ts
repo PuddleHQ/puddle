@@ -141,7 +141,7 @@ test.describe("the palette setting", () => {
         await page.getByLabel("Colours", { exact: true }).selectOption(palette);
         if (palette === "custom") {
           // A set that passes AA: a darker accent and ink on a pale ground, or the reverse.
-          const ground = theme === "light" ? "#f5f2ea" : "#14110c";
+          const ground = theme === "light" ? "#fbf8f1" : "#14110c";
           const ink = theme === "light" ? "#1c1710" : "#f1ebdd";
           const tint = theme === "light" ? "#7a3d00" : "#ffb866";
           await page.locator("#set-colour-background").fill(ground);

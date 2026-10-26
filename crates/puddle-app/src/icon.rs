@@ -188,6 +188,14 @@ mod tests {
 
     #[test]
     fn an_image_that_cannot_be_read_shows_the_duck() {
+        // The rest of the stand-in answers as an empty store.
+        let name = puddle_types::WorkspaceName::new("box").unwrap();
+        assert_eq!(Broken.load_global().unwrap(), None);
+        Broken.save_global(serde_json::json!({})).unwrap();
+        assert_eq!(Broken.load_workspace(&name).unwrap(), None);
+        Broken.save_workspace(&name, serde_json::json!({})).unwrap();
+        Broken.save_app_icon(b"x").unwrap();
+        Broken.delete_app_icon().unwrap();
         let wanted = Wanted::read(&Broken, &prefs(Some(AppIconChoice::Custom)));
         assert_eq!(
             wanted.draw().unwrap(),

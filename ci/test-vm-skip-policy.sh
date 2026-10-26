@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Checks ci/vm-skip-policy.sh: a pull request fails with ::error; schedule, workflow_dispatch and an
+# Checks ci/vm-skip-policy.sh: a pull request and a merge queue run fail with ::error; schedule, workflow_dispatch and an
 # unset GITHUB_EVENT_NAME warn with ::warning and exit 0. Prints ok only when every case passes.
 set -euo pipefail
 
@@ -23,6 +23,7 @@ run_case() {
 }
 
 run_case pull_request 1 '::error'
+run_case merge_group 1 '::error'
 run_case schedule 0 '::warning'
 run_case workflow_dispatch 0 '::warning'
 run_case unset 0 '::warning'

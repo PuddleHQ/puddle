@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Keeps the Actions caches under the repo's 10 GB cap (ci/cache-gc.sh): drops superseded rust-cache
-# entries on develop and stale task-branch caches, so the cargo-xwin cache is never evicted.
+# entries on develop, stale task-branch caches and every merge queue cache, so the cargo-xwin cache
+# is never evicted.
 #
 # What the repo keeps (compressed sizes as GitHub reports them, 2026-10-24; the Rust entries grow and
 # shrink with the dependency tree). Only develop saves them, pull requests restore:
@@ -41,11 +42,12 @@ on:
   schedule:
     - cron: "45 3 * * *"
   # Right after a develop run that may have saved a new entry, so the superseded one (1-4 GB) does
-  # not wait for the nightly run.
+  # not wait for the nightly run, and right after a merge queue run of a required workflow, whose
+  # npm, cargo-xwin or msb entries only a rerun of that queue entry could read.
   workflow_run:
-    workflows: [ci, windows, windows-cache]
+    workflows: [ci, windows, windows-cache, vm-linux, vm-windows]
     types: [completed]
-    branches: [develop]
+    branches: [develop, "gh-readonly-queue/**"]
   workflow_dispatch:
 
 permissions:

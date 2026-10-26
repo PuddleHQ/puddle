@@ -48,9 +48,8 @@ pub(crate) async fn list_app_icons(
     State(state): State<AppState>,
 ) -> Result<Json<AppIcons>, ApiError> {
     let custom = blocking(move || {
-        state
-            .settings
-            .load_app_icon()
+        let repo = state.settings.as_ref();
+        repo.load_app_icon()
             .map_err(|e| ApiError::settings_unreadable("the app icon", &e))
     })
     .await?;
@@ -93,7 +92,7 @@ pub(crate) async fn put_custom_icon(
     let lock = state.settings_lock.lock().await;
     let stored = blocking(move || {
         let png = normalize_upload(&bytes).map_err(|e| refuse(&e))?;
-        state.settings.save_app_icon(&png)?;
+        state.settings.as_ref().save_app_icon(&png)?;
         tracing::info!("custom app icon stored");
         Ok(png)
     })

@@ -136,7 +136,8 @@ run_gate() {
         scripts/pre-push-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
             scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh &&
             ci/fetch-msb-test.sh && ci/fetch-code-server-test.sh && ci/check-runtime-layout-test.sh &&
-            ci/scope-test.sh && ci/apt-setup-test.sh && ci/advisories-issue-test.sh && ci/cache-drop-test.sh
+            ci/scope-test.sh && ci/apt-setup-test.sh && ci/advisories-issue-test.sh && ci/cache-drop-test.sh &&
+            ci/should-run-test.sh && ci/cache-gc-test.sh && ci/test-vm-skip-policy.sh
         ;;
     git-env)
         # Through the coverage gate's build (same arguments), so it compiles no test binary of its own.
@@ -245,7 +246,8 @@ run_gate() {
     ui-e2e)
         # Playwright against the real API serving the built UI. WebKit stands in for WebKitGTK and
         # WKWebView; where it can't start locally (missing system libraries) this runs Chromium
-        # only and says so. CI (CI set) never narrows.
+        # only and says so. CI (CI set) never narrows by itself; PUDDLE_E2E_PROJECTS set by the
+        # caller (ci.yml's light pull request mode) narrows anywhere.
         ui_build
         case "$(uname -s)" in
         MINGW* | MSYS* | CYGWIN*) ;; # Windows runs the installed Edge, not Playwright's browsers

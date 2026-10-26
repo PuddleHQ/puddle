@@ -1,23 +1,39 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Path scoping for pull request checks. A `scope` job in each workflow runs `ci/scope.sh` and
-# the heavy jobs read its outputs, so a pull request only pays for the jobs its files can affect.
+# Path scoping for pull request and merge queue checks. A `scope` job in each workflow runs
+# `ci/scope.sh` and the heavy jobs read its outputs, so a change only pays for the jobs its files
+# can affect.
 #
-#   ci/scope.sh                 work out the outputs for this run and append them to $GITHUB_OUTPUT
-#   ci/scope.sh classify        the same from a file list on stdin (one path per line), for tests
+#   ci/scope.sh                   work out the outputs for this run and append them to $GITHUB_OUTPUT
+#   ci/scope.sh classify          the same from a file list on stdin (one path per line), for tests
 #   ci/scope.sh verdict <spec>... the result job's check (below)
+#   ci/scope.sh full-steps <step>=<outcome>...
+#                                 the last step of a job whose steps the light mode skips (below)
 #
 # Outputs (each `true` or `false`; a job is skipped only on an explicit `false`):
 #   ci_rust   the full Rust and repository gates of ci.yml (false: only the light lint job)
 #   win_rust  windows clippy and tests
 #   ui        the UI gates on both systems
 #   vm        the VM build and test jobs of vm-linux and vm-windows
+#   light     the light pull request mode (below): the Windows and VM jobs skip, and so do the
+#             Linux steps marked for it; true only in that mode, so a lost output runs everything
 #   class     full | docs | ui | rust | mixed (a label for the log and the tests)
 #
 # Fails open: everything runs unless the changed files are known and every one of them is
-# understood. Any other event than a pull request to develop, a failed or stale file list, 300 or
-# more files, an empty list, a path no rule names, and any error in this script all give
-# `true` for every output. The job reading the outputs also treats a missing output as `true`.
+# understood. An event other than a pull request to develop or a merge queue run, a failed or
+# stale file list, 300 or more files, an empty list, a path no rule names, and any error in this
+# script all give `true` for every scoped output (and `light=false`). The job reading the outputs
+# also treats a missing output as `true`.
+#
+# A merge queue run (`merge_group`) is scoped by the diff between the queue's base and the commit
+# it tests (the GitHub compare API), which covers every pull request in the group.
+#
+# Light mode: with the repository variable PUDDLE_QUEUE set to `on`, a pull request to develop
+# runs only the Linux jobs (without the slow `git-env` and `notices` gates, and with the UI
+# end-to-end tests on Chromium only); the merge queue then runs the full set on the commit that
+# lands. Any other value, an unset variable, any other event and a pull request to another branch
+# run the full set. The verdict and `full-steps` work the mode out again from the event, never
+# from the scope job's output, so a wrong `light=true` fails the result.
 #
 # Classes of path (first rule wins; the list is below, in `path_class`):
 #   always   everything runs: manifests and lockfile, toolchain, lint and tool config, workflows and
@@ -31,15 +47,20 @@
 #   crate    crates/<name>/ (a changed Cargo.toml is `always`, so the crate graph below is current)
 #   docs     docs/, root Markdown, LICENSE, .gitignore, .github/ outside workflows/
 #
-# verdict: `ci/scope.sh verdict [--nightly-skips] <job>=<output> [<job>=!<output>]...` reads NEEDS (the result job's
-# `toJSON(needs)`, which must include `scope`). A job may be skipped only when its output is
-# `false` (`!output`: only when it is not `false`, for the light twin of a full job, which is
-# skipped whenever the Rust gates run, so also on every push, nightly and dispatch, where scope
-# prints every output true); a failed, cancelled or otherwise skipped job fails the verdict, so an
-# infrastructure failure can never pass as a scoped skip. Off a pull request --nightly-skips also
-# accepts a skip (the VM workflows, whose test jobs skip when the nightly's commit already has a
-# green run). Jobs not named are held to that rule too, and only the Windows
-# release build, which has its own event rule, may be skipped.
+# verdict: `ci/scope.sh verdict [--nightly-skips] <job>=<output>[,queue][,pushskip] [<job>=!<output>]...`
+# reads NEEDS (the result job's `toJSON(needs)`, which must include `scope`). A job may be skipped
+# only when its output is `false` (`!output`: only when it is not `false`, for the light twin of a
+# full job, which is skipped whenever the Rust gates run, so also on every push, nightly and
+# dispatch, where scope prints every output true); a failed, cancelled or otherwise skipped job
+# fails the verdict, so an infrastructure failure can never pass as a scoped skip. Three more
+# skips are accepted, each only where its own condition holds:
+#   ,queue           the job skips in light mode (a pull request to develop with PUDDLE_QUEUE=on)
+#   ,pushskip        a develop push run whose commit a green merge queue run already tested
+#                    (PUDDLE_QUEUE_SKIP_PUSH=on and the `queue-tested` job said so; ci/should-run.sh)
+#   --nightly-skips  a scheduled run (the VM workflows, whose test jobs skip when the nightly's
+#                    commit already has a green run)
+# Jobs not named are held to that rule too, and only the Windows release build, which has its own
+# event rule, and the `queue-tested` lookup may be skipped.
 set -uo pipefail
 
 # Crates that no VM test depends on (cargo metadata, all dependency kinds; checked by
@@ -72,7 +93,13 @@ path_class() {
 }
 
 full_outputs() {
-    printf 'ci_rust=true\nwin_rust=true\nui=true\nvm=true\nclass=full\n'
+    printf 'ci_rust=true\nwin_rust=true\nui=true\nvm=true\nlight=false\nclass=full\n'
+}
+
+# Light mode: the repository variable PUDDLE_QUEUE is exactly `on` and this is a pull request to
+# develop. Reads only the event's own variables, so the verdict can check the scope job's output.
+light_mode() {
+    [ "${PUDDLE_QUEUE:-}" = on ] && [ "${GITHUB_EVENT_NAME:-}" = pull_request ] && [ "${PR_BASE_REF:-}" = develop ]
 }
 
 # stdin: paths. stdout: the outputs.
@@ -114,12 +141,12 @@ classify() {
     else
         class=mixed
     fi
-    printf 'ci_rust=%s\nwin_rust=%s\nui=%s\nvm=%s\nclass=%s\n' "$ci_rust" "$win_rust" "$uib" "$vmb" "$class"
+    printf 'ci_rust=%s\nwin_rust=%s\nui=%s\nvm=%s\nlight=false\nclass=%s\n' "$ci_rust" "$win_rust" "$uib" "$vmb" "$class"
 }
 
 # The changed paths of this pull request (renames give both names), from the GitHub API. Prints
 # nothing and returns 1 when the list cannot be trusted.
-changed_files() {
+pr_files() {
     local pr=${PR_NUMBER:-} repo=${GITHUB_REPOSITORY:-} head json
     [ -n "$pr" ] && [ -n "$repo" ] || return 1
     # The list is the pull request's current diff: refuse one that is about another head.
@@ -132,15 +159,34 @@ changed_files() {
     printf '%s\n' "$json"
 }
 
+# The changed paths of a merge queue run: the queue's base against the commit under test. The
+# compare API lists at most 300 files, which the 300-file rule turns into a full run. Returns 1
+# unless the tested commit is strictly ahead of the base.
+group_files() {
+    local base=${MERGE_GROUP_BASE_SHA:-} head=${MERGE_GROUP_HEAD_SHA:-} repo=${GITHUB_REPOSITORY:-} json
+    [ -n "$base" ] && [ -n "$head" ] && [ -n "$repo" ] || return 1
+    json=$(gh api "repos/$repo/compare/$base...$head") || return 1
+    [ "$(jq -r .status <<<"$json")" = ahead ] || return 1
+    jq -r '.files[] | .filename, (.previous_filename // empty)' <<<"$json"
+}
+
 scope() {
     local reason="" files out
-    if [ "${GITHUB_EVENT_NAME:-}" != pull_request ]; then
-        reason="event ${GITHUB_EVENT_NAME:-unknown} always runs everything"
-    elif [ "${PR_BASE_REF:-}" != develop ]; then
-        reason="pull request to ${PR_BASE_REF:-an unknown branch}, not develop: everything runs"
-    elif ! files=$(changed_files); then
-        reason="the changed files could not be read or do not match the head: everything runs"
-    fi
+    case ${GITHUB_EVENT_NAME:-} in
+    pull_request)
+        if [ "${PR_BASE_REF:-}" != develop ]; then
+            reason="pull request to ${PR_BASE_REF:-an unknown branch}, not develop: everything runs"
+        elif ! files=$(pr_files); then
+            reason="the changed files could not be read or do not match the head: everything runs"
+        fi
+        ;;
+    merge_group)
+        if ! files=$(group_files); then
+            reason="the merge group's changed files could not be read: everything runs"
+        fi
+        ;;
+    *) reason="event ${GITHUB_EVENT_NAME:-unknown} always runs everything" ;;
+    esac
     if [ -n "$reason" ]; then
         echo "scope: $reason" >&2
         full_outputs
@@ -152,47 +198,76 @@ scope() {
         full_outputs
         return
     fi
+    if light_mode; then
+        echo "scope: light mode (PUDDLE_QUEUE=on, pull request to develop): the merge queue runs the full set" >&2
+        out=${out/light=false/light=true}
+    fi
     printf '%s\n' "$out"
 }
 
 verdict() {
     local nightly=0
     [ "${1:-}" = --nightly-skips ] && { nightly=1; shift; }
-    local needs=${NEEDS:-} bad=0 spec job key neg res want out event=${GITHUB_EVENT_NAME:-} names mapped=" "
+    local needs=${NEEDS:-} bad=0 spec job key neg res want out event=${GITHUB_EVENT_NAME:-} mapped=" "
+    local flags why light=0 tested=0 tag k v skip=""
+    local -A result=() output=()
     [ -n "$needs" ] || { echo "verdict: NEEDS is empty" >&2; return 1; }
-    names=$(jq -r 'keys[]' <<<"$needs") || return 1
+    # One pass over NEEDS: every job's result, the scope job's outputs and the queue-tested lookup's answer.
+    while IFS=$'\t' read -r tag k v; do
+        case $tag in
+        r) result[$k]=$v ;;
+        o) output[$k]=$v ;;
+        t) skip=$v ;;
+        esac
+    done < <(jq -r '(to_entries[] | ["r", .key, (.value.result // "missing" | tostring)]),
+        (.scope.outputs // {} | to_entries[] | ["o", .key, (.value | tostring)]),
+        ["t", "skip", (.["queue-tested"].outputs.skip // "" | tostring)] | @tsv' <<<"$needs" 2>/dev/null) || true
+    [ "${#result[@]}" -gt 0 ] || { echo "verdict: NEEDS is not a jobs object" >&2; return 1; }
+    light_mode && light=1
+    # A develop push run whose commit a green merge queue run tested (the queue-tested job's
+    # output, from ci/should-run.sh --queue-tested and the cache lookups).
+    if [ "${PUDDLE_QUEUE_SKIP_PUSH:-}" = on ] && [ "$event" = push ] && [ "${GITHUB_REF:-}" = refs/heads/develop ] &&
+        [ "${result[queue-tested]:-}" = success ] && [ "$skip" = true ]; then
+        tested=1
+    fi
     for spec in "$@"; do
-        job=${spec%%=*} key=${spec#*=} neg=0
+        job=${spec%%=*} key=${spec#*=} neg=0 flags="," why=""
+        case $key in *,*) flags=",${key#*,}," key=${key%%,*} ;; esac
         case $key in '!'*) neg=1 key=${key#!} ;; esac
         mapped="$mapped$job "
-        res=$(jq -r --arg j "$job" '.[$j].result // "missing"' <<<"$needs")
-        out=$(jq -r --arg k "$key" '.scope.outputs[$k] // ""' <<<"$needs")
+        res=${result[$job]:-missing}
+        out=${output[$key]:-}
         case $res in
         success) want=ok ;;
         skipped)
-            # Off a pull request scope prints every output true: a scoped job runs, and only the
-            # light twin (`!output`) is skipped, so one rule covers every event.
+            # On a push, nightly or dispatch scope prints every output true: a scoped job runs, and
+            # only the light twin (`!output`) is skipped, so one rule covers every event.
             if [ "$neg" = 0 ] && [ "$out" = false ]; then
                 want=ok
             elif [ "$neg" = 1 ] && [ "$out" != false ]; then
                 want=ok
-            elif [ "$nightly" = 1 ] && [ "$event" != pull_request ]; then
+            elif [ "$nightly" = 1 ] && [ "$event" = schedule ]; then
                 want=ok
+            elif [ "$light" = 1 ] && [[ $flags == *,queue,* ]]; then
+                want=ok why=" (light mode: the merge queue runs it)"
+            elif [ "$tested" = 1 ] && [[ $flags == *,pushskip,* ]]; then
+                want=ok why=" (a green merge queue run tested this commit)"
             else
                 want=BAD
             fi
             ;;
         *) want=BAD ;;
         esac
-        echo "$job: $res (scope $key=${out:-unset}) $want"
+        echo "$job: $res (scope $key=${out:-unset}) $want$why"
         [ "$want" = ok ] || bad=1
     done
     local j
-    for j in $names; do
+    for j in "${!result[@]}"; do
         [ "$j" = scope ] && continue
         case "$mapped" in *" $j "*) continue ;; esac
-        res=$(jq -r --arg j "$j" '.[$j].result' <<<"$needs")
-        # An unmapped job (the release build) skips by its own event rule, never by scope.
+        res=${result[$j]}
+        # An unmapped job (the release build, the queue-tested lookup) skips by its own event rule,
+        # never by scope.
         if [ "$res" = success ] || [ "$res" = skipped ]; then
             echo "$j: $res (not scoped) ok"
         else
@@ -203,16 +278,41 @@ verdict() {
     return "$bad"
 }
 
+# full-steps <step>=<outcome>...: off light mode every named step must have succeeded, and the UI
+# end-to-end tests must not be narrowed to some browsers (PUDDLE_E2E_PROJECTS empty). In light mode
+# they may be skipped. Catches a step that the light mode's condition skipped where it must not.
+full_steps() {
+    local spec bad=0
+    if light_mode; then
+        echo "full-steps: light mode, the merge queue runs these steps: $*"
+        return 0
+    fi
+    for spec in "$@"; do
+        if [ "${spec#*=}" = success ]; then
+            echo "${spec%%=*}: success ok"
+        else
+            echo "${spec%%=*}: ${spec#*=} BAD (only the light pull request mode may skip it)"
+            bad=1
+        fi
+    done
+    if [ -n "${PUDDLE_E2E_PROJECTS:-}" ]; then
+        echo "PUDDLE_E2E_PROJECTS=$PUDDLE_E2E_PROJECTS BAD (only the light pull request mode may narrow the browsers)"
+        bad=1
+    fi
+    return "$bad"
+}
+
 main() {
     local out
     case ${1:-} in
     classify) classify ;;
     verdict) shift; verdict "$@" ;;
+    full-steps) shift; full_steps "$@" ;;
     "")
         out=$(scope) || out=$(full_outputs)
-        # Anything but the five keys (or a lost one) means something broke: run everything.
-        out=$(grep -E '^(ci_rust|win_rust|ui|vm|class)=' <<<"$out")
-        [ "$(grep -c . <<<"$out")" = 5 ] || out=$(full_outputs)
+        # Anything but the six keys (or a lost one) means something broke: run everything.
+        out=$(grep -E '^(ci_rust|win_rust|ui|vm|light|class)=' <<<"$out")
+        [ "$(grep -c . <<<"$out")" = 6 ] || out=$(full_outputs)
         echo "$out"
         [ -z "${GITHUB_OUTPUT:-}" ] || echo "$out" >>"$GITHUB_OUTPUT"
         [ -z "${GITHUB_STEP_SUMMARY:-}" ] || {
@@ -222,7 +322,7 @@ main() {
             echo '```'
         } >>"$GITHUB_STEP_SUMMARY"
         ;;
-    *) echo "usage: scope.sh [classify | verdict <job>=<output>...]" >&2; return 2 ;;
+    *) echo "usage: scope.sh [classify | verdict <job>=<output>... | full-steps <step>=<outcome>...]" >&2; return 2 ;;
     esac
 }
 

@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Self-test of ci/scope.sh: replays the merged pull requests in ci/scope-prs.txt, checks that every
 # always-run path forces a full run, plants paths the rules do not know to show the fail-open, drives
-# the whole script with a fake `gh` (a failed, stale, empty or huge file list, other events), runs the
-# result job's verdict on every combination that matters, and checks the four workflows are wired to
+# the whole script with a fake `gh` (a failed, stale, empty or huge file list, a merge queue diff,
+# other events, the light pull request mode on and off), runs the result job's verdict and the
+# full-steps guard on every combination that matters, and checks the four workflows are wired to
 # match (python3 with PyYAML; skipped without it). SCOPE_TEST_METADATA=1 also checks the crate sets
 # against `cargo metadata` (needs cargo and python3). Prints ok only when every case passes.
 set -uo pipefail
@@ -108,9 +109,15 @@ want "rename out of an always-run path" "$FULL" ui/src/a.ts ci/old.sh
 mkdir "$tmp/bin"
 cat >"$tmp/bin/gh" <<'GH'
 #!/usr/bin/env bash
-# fake gh: `gh api repos/R/pulls/N` -> head sha; `gh api --paginate repos/R/pulls/N/files...` -> $FAKE_FILES
+# fake gh: `gh api repos/R/pulls/N` -> head sha; `gh api --paginate repos/R/pulls/N/files...` -> $FAKE_FILES;
+# `gh api repos/R/compare/B...H` -> a compare reply with status $FAKE_STATUS and the files in $FAKE_FILES
 case "$*" in
 */files*) [ "${FAKE_MODE:-}" = error ] && exit 1; cat "$FAKE_FILES" ;;
+*/compare/*)
+    [ "${FAKE_MODE:-}" = error ] && exit 1
+    [ "$*" = "api repos/o/r/compare/base1...head1" ] || exit 1
+    jq -Rn --arg st "${FAKE_STATUS:-ahead}" '{status: $st, files: [inputs | select(. != "") | {filename: .}]}' <"$FAKE_FILES"
+    ;;
 *) [ "${FAKE_MODE:-}" = headerror ] && exit 1; echo "${FAKE_HEAD:-abc123}" ;;
 esac
 GH
@@ -118,12 +125,14 @@ chmod +x "$tmp/bin/gh"
 printf 'ui/src/a.ts\nui/src/b.ts\n' >"$tmp/ui.txt"
 : >"$tmp/empty.txt"
 
-# run_main <event> <base> <FAKE_MODE> <files> [PR_HEAD_SHA] -> key=value lines
+# run_main <event> <base> <FAKE_MODE> <files> [PR_HEAD_SHA [VAR=value...]] -> key=value lines
+# (MAIN_ENV, an array, adds more VAR=value pairs for every call: the light mode and merge queue cases)
+MAIN_ENV=()
 run_main() {
     local event=$1 base=$2 mode=$3 files=$4 head=${5:-abc123}
-    env PATH="$tmp/bin:$PATH" GITHUB_EVENT_NAME="$event" PR_BASE_REF="$base" PR_NUMBER=7 GITHUB_REPOSITORY=o/r \
+    env -u PUDDLE_QUEUE PATH="$tmp/bin:$PATH" GITHUB_EVENT_NAME="$event" PR_BASE_REF="$base" PR_NUMBER=7 GITHUB_REPOSITORY=o/r \
         PR_HEAD_SHA="$head" FAKE_MODE="$mode" FAKE_FILES="$files" FAKE_HEAD=abc123 GITHUB_OUTPUT="$tmp/out" \
-        "$scope" 2>/dev/null
+        "${MAIN_ENV[@]}" "$scope" 2>/dev/null
     local rc=$?
     echo "rc=$rc"
 }
@@ -135,6 +144,8 @@ main_case() { # main_case <label> <want class> <args of run_main>
     grep -q "^class=$exp$" <<<"$out" || bad "main: $label: want class $exp, got: $(tr '\n' ' ' <<<"$out")"
     grep -q '^rc=0$' <<<"$out" || bad "main: $label: exit status not 0"
     grep -q "^class=$exp$" "$tmp/out" || bad "main: $label: GITHUB_OUTPUT lacks class=$exp"
+    [ "$(grep -c . "$tmp/out")" = 6 ] || bad "main: $label: GITHUB_OUTPUT has not exactly the six outputs"
+    grep -q "^light=${WANT_LIGHT:-false}$" "$tmp/out" || bad "main: $label: want light=${WANT_LIGHT:-false}, got: $(tr '\n' ' ' <"$tmp/out")"
 }
 main_case "ui-only pull request to develop" ui pull_request develop ok "$tmp/ui.txt"
 main_case "push" full push develop ok "$tmp/ui.txt"
@@ -154,6 +165,42 @@ out=$(env PATH="$tmp/nothing" GITHUB_EVENT_NAME=pull_request PR_BASE_REF=develop
     "$(command -v bash)" "$scope" 2>/dev/null | grep -c '^class=full$')
 [ "$out" = 1 ] || bad "main: missing gh must run everything"
 
+# Merge queue runs: scoped by the compare diff between the queue's base and the tested commit;
+# anything doubtful runs everything. Never the light mode, whatever PUDDLE_QUEUE says.
+MAIN_ENV=(MERGE_GROUP_BASE_SHA=base1 MERGE_GROUP_HEAD_SHA=head1 PUDDLE_QUEUE=on)
+main_case "merge group, ui-only diff" ui merge_group "" ok "$tmp/ui.txt"
+main_case "merge group, always-run path" full merge_group "" ok "$tmp/rename.txt"
+main_case "merge group, compare fails" full merge_group "" error "$tmp/ui.txt"
+main_case "merge group, empty diff" full merge_group "" ok "$tmp/empty.txt"
+MAIN_ENV=(MERGE_GROUP_BASE_SHA=base1 MERGE_GROUP_HEAD_SHA=head1 FAKE_STATUS=diverged)
+main_case "merge group, head not ahead of base" full merge_group "" ok "$tmp/ui.txt"
+MAIN_ENV=(MERGE_GROUP_BASE_SHA=other MERGE_GROUP_HEAD_SHA=head1)
+main_case "merge group, another base" full merge_group "" ok "$tmp/ui.txt"
+MAIN_ENV=(MERGE_GROUP_HEAD_SHA=head1)
+main_case "merge group, base sha missing" full merge_group "" ok "$tmp/ui.txt"
+mapfile -t many < <(seq 1 300 | sed 's|^|docs/page-|')
+printf '%s\n' "${many[@]}" >"$tmp/many.txt"
+MAIN_ENV=(MERGE_GROUP_BASE_SHA=base1 MERGE_GROUP_HEAD_SHA=head1)
+main_case "merge group, 300 files (the compare API's cap)" full merge_group "" ok "$tmp/many.txt"
+
+# The light mode: only PUDDLE_QUEUE=on exactly, only on a pull request to develop. The scoped
+# outputs stay as the files say; a doubtful file list runs everything without the light mode.
+MAIN_ENV=(PUDDLE_QUEUE=on)
+WANT_LIGHT=true main_case "light: ui-only pull request to develop" ui pull_request develop ok "$tmp/ui.txt"
+WANT_LIGHT=true main_case "light: pull request to develop with an always-run path" full pull_request develop ok "$tmp/rename.txt"
+main_case "light: pull request to main" full pull_request main ok "$tmp/ui.txt"
+main_case "light: push" full push develop ok "$tmp/ui.txt"
+main_case "light: schedule" full schedule develop ok "$tmp/ui.txt"
+main_case "light: workflow_dispatch" full workflow_dispatch develop ok "$tmp/ui.txt"
+main_case "light: file list fails" full pull_request develop error "$tmp/ui.txt"
+main_case "light: stale head" full pull_request develop ok "$tmp/ui.txt" deadbeef
+for v in ON On true 1 yes "on " off ""; do
+    MAIN_ENV=("PUDDLE_QUEUE=$v")
+    main_case "light: PUDDLE_QUEUE='$v' is not on" ui pull_request develop ok "$tmp/ui.txt"
+done
+MAIN_ENV=()
+main_case "light: PUDDLE_QUEUE unset" ui pull_request develop ok "$tmp/ui.txt"
+
 # 6. The result job's verdict. needs <scope outputs> <job=result>... -> NEEDS json
 needs() {
     local sc=$1 j
@@ -162,12 +209,15 @@ needs() {
     for j in "$@"; do o="$o,\"${j%%=*}\":{\"result\":\"${j#*=}\"}"; done
     echo "$o}"
 }
+# VERDICT_ENV (an array of VAR=value) sets the light mode or a tested push for the next calls.
+VERDICT_ENV=()
 verdict() { # verdict <event> <want 0|1> <label> <scope json> <specs...> -- <job=result>...
     local event=$1 exp=$2 label=$3 sc=$4 specs=() rc=0
     shift 4
     while [ "$1" != -- ]; do specs+=("$1"); shift; done
     shift
-    NEEDS=$(needs "$sc" "$@") GITHUB_EVENT_NAME=$event "$scope" verdict "${specs[@]}" >/dev/null 2>&1 || rc=$?
+    env -u PUDDLE_QUEUE -u PUDDLE_QUEUE_SKIP_PUSH -u PR_BASE_REF -u GITHUB_REF NEEDS="$(needs "$sc" "$@")" \
+        GITHUB_EVENT_NAME="$event" "${VERDICT_ENV[@]}" "$scope" verdict "${specs[@]}" >/dev/null 2>&1 || rc=$?
     [ "$rc" = "$exp" ] || bad "verdict: $label: exit $rc, want $exp"
 }
 VM='{"vm":"true"}'
@@ -185,6 +235,8 @@ verdict pull_request 1 "a job missing from needs" "$VM" build=vm tests=vm -- bui
 verdict schedule 0 "nightly skips tests on a green commit" "$VM" --nightly-skips build=vm tests=vm -- build=success tests=skipped
 verdict schedule 0 "nightly skips everything" "$VM" --nightly-skips build=vm tests=vm -- build=skipped tests=skipped
 verdict schedule 1 "nightly failure" "$VM" --nightly-skips build=vm tests=vm -- build=success tests=failure
+verdict merge_group 1 "a merge queue run never skips as a nightly" "$VM" --nightly-skips build=vm tests=vm -- build=skipped tests=skipped
+verdict workflow_dispatch 1 "a dispatch never skips as a nightly" "$VM" --nightly-skips build=vm tests=vm -- build=success tests=skipped
 verdict push 1 "a skipped job off a pull request without the flag" "$CI_FULL" rust=ci_rust -- rust=skipped
 verdict push 0 "ci push, all passed" "$CI_FULL" rust=ci_rust ui=ui -- rust=success ui=success
 CI_UI='{"ci_rust":"false","ui":"true"}'
@@ -208,20 +260,44 @@ verdict pull_request 1 "windows ui-only, ui failed" "$WIN_UI" clippy=win_rust te
     clippy=skipped tests=skipped ui=failure release=skipped
 verdict pull_request 1 "windows release failed" "$WIN_UI" clippy=win_rust tests=win_rust ui=ui -- \
     clippy=skipped tests=skipped ui=success release=failure
-# Every event x scope state x job x result, per result job. Off a pull request scope prints every
-# output true (a push, nightly or dispatch is never scoped); on one each output is true, false or
-# lost. The expectation is written out here, apart from the script: a job passes when it succeeded,
-# or was skipped with its output false (the light twin: with its output not false), or, with the
-# nightly flag, was skipped off a pull request. Each case changes one job's result, the rest succeed.
-matrix() { # matrix <label> <nightly flag or ""> <outputs: key,key> <job=key>...
-    local label=$1 flag=$2 keys=$3 spec job key neg res event st out sc want rc k i n=0
+# Every context x scope state x job x result, per result job. A context is an event with the
+# variables that change the verdict: the light mode (PUDDLE_QUEUE, the pull request's base) and a
+# push that a merge queue run tested (PUDDLE_QUEUE_SKIP_PUSH, the ref, the queue-tested job). On a
+# pull request to develop and a merge queue run scope's outputs are each true, false or lost; on
+# every other event they are all true. The expectation is written out here, apart from the script:
+# a job passes when it succeeded, or was skipped with its output false (the light twin: with its
+# output not false), or skipped with the nightly flag on a schedule, with the queue mark in the
+# light mode, or with the push mark on a tested push. Each case changes one job's result, the rest
+# succeed.
+#   name:event:base:PUDDLE_QUEUE:PUDDLE_QUEUE_SKIP_PUSH:ref:queue-tested result/skip output
+CONTEXTS=(
+    push:push::on::refs/heads/develop:skipped/
+    push-tested:push::on:on:refs/heads/develop:success/true
+    push-tested-off:push::::refs/heads/develop:success/true
+    push-tested-no:push:::on:refs/heads/develop:success/false
+    push-tested-main:push:::on:refs/heads/main:success/true
+    schedule:schedule::on:on:refs/heads/develop:skipped/
+    dispatch:workflow_dispatch::on:on:refs/heads/develop:success/true
+    pr:pull_request:develop:::refs/pull/7/merge:skipped/
+    pr-light:pull_request:develop:on::refs/pull/7/merge:skipped/
+    pr-main-on:pull_request:main:on::refs/pull/7/merge:skipped/
+    queue:merge_group::on:on:refs/heads/gh-readonly-queue/develop/pr-7-abc:skipped/
+)
+matrix() { # matrix <label> <nightly flag or ""> <outputs: key,key> <job=key[,flags]>...
+    local label=$1 flag=$2 keys=$3 spec job key neg flags res st out sc want rc k i n=0 ctx
+    local name event base q sp ref qt scoped light tested
     shift 3
     local -a ks states
     IFS=, read -r -a ks <<<"$keys"
-    for event in push schedule workflow_dispatch pull_request; do
-        # Scope states: one assignment of true/false/lost per output key (3^n on a pull request).
+    for ctx in "${CONTEXTS[@]}"; do
+        IFS=: read -r name event base q sp ref qt <<<"$ctx"
+        scoped=0 light=0 tested=0
+        { [ "$event" = merge_group ] || { [ "$event" = pull_request ] && [ "$base" = develop ]; }; } && scoped=1
+        [ "$event" = pull_request ] && [ "$base" = develop ] && [ "$q" = on ] && light=1
+        [ "$event" = push ] && [ "$sp" = on ] && [ "$ref" = refs/heads/develop ] && [ "$qt" = success/true ] && tested=1
+        # Scope states: one assignment of true/false/lost per output key (3^n when scoped).
         states=("")
-        if [ "$event" = pull_request ]; then
+        if [ "$scoped" = 1 ]; then
             for k in "${ks[@]}"; do
                 local -a nx=()
                 for st in "${states[@]}"; do for out in true false lost; do nx+=("$st$k=$out;"); done; done
@@ -237,7 +313,8 @@ matrix() { # matrix <label> <nightly flag or ""> <outputs: key,key> <job=key>...
             done
             sc="${sc%,}}"
             for spec in "$@"; do
-                job=${spec%%=*} key=${spec#*=} neg=0
+                job=${spec%%=*} key=${spec#*=} neg=0 flags=","
+                case $key in *,*) flags=",${key#*,}," key=${key%%,*} ;; esac
                 case $key in '!'*) neg=1 key=${key#!} ;; esac
                 out=lost
                 for i in ${st//;/ }; do [ "${i%%=*}" = "$key" ] && out=${i#*=}; done
@@ -248,7 +325,9 @@ matrix() { # matrix <label> <nightly flag or ""> <outputs: key,key> <job=key>...
                         want=1
                         [ "$neg" = 0 ] && [ "$out" = false ] && want=0
                         [ "$neg" = 1 ] && [ "$out" != false ] && want=0
-                        [ -n "$flag" ] && [ "$event" != pull_request ] && want=0
+                        [ -n "$flag" ] && [ "$event" = schedule ] && want=0
+                        [ "$light" = 1 ] && [[ $flags == *,queue,* ]] && want=0
+                        [ "$tested" = 1 ] && [[ $flags == *,pushskip,* ]] && want=0
                         ;;
                     *) want=1 ;;
                     esac
@@ -256,10 +335,14 @@ matrix() { # matrix <label> <nightly flag or ""> <outputs: key,key> <job=key>...
                     for other in "$@"; do
                         [ "${other%%=*}" = "$job" ] && results+=("$job=$res") || results+=("${other%%=*}=success")
                     done
+                    results+=("queue-tested=${qt%%/*}")
                     rc=0
-                    NEEDS=$(needs "$sc" "${results[@]}") GITHUB_EVENT_NAME=$event "$scope" verdict ${flag:+"$flag"} "$@" \
-                        >/dev/null 2>&1 || rc=$?
-                    [ "$rc" = "$want" ] || bad "matrix $label: $event, scope $sc, $job $res: exit $rc, want $want"
+                    env -u PUDDLE_QUEUE -u PUDDLE_QUEUE_SKIP_PUSH \
+                        NEEDS="$(needs "$sc" "${results[@]}" | jq -c --arg s "${qt#*/}" '.["queue-tested"].outputs = {skip: $s}')" \
+                        GITHUB_EVENT_NAME="$event" PR_BASE_REF="$base" GITHUB_REF="$ref" \
+                        ${q:+PUDDLE_QUEUE=$q} ${sp:+PUDDLE_QUEUE_SKIP_PUSH=$sp} \
+                        "$scope" verdict ${flag:+"$flag"} "$@" >/dev/null 2>&1 || rc=$?
+                    [ "$rc" = "$want" ] || bad "matrix $label: $name, scope $sc, $job $res: exit $rc, want $want"
                     n=$((n + 1))
                 done
             done
@@ -267,13 +350,98 @@ matrix() { # matrix <label> <nightly flag or ""> <outputs: key,key> <job=key>...
     done
     MATRIX_CASES=$((${MATRIX_CASES:-0} + n))
 }
-matrix ci "" ci_rust,ui rust=ci_rust 'light=!ci_rust' ui=ui
-matrix windows "" win_rust,ui clippy=win_rust tests=win_rust ui=ui
-matrix vm-linux --nightly-skips vm build=vm tests=vm
+# The specs are the result jobs' own (the wiring check below compares them with the workflows).
+# The three run side by side (about 2000 cases); each prints its case count.
+matrix_bg() { (fail=0; matrix "$@"; echo "matrix $1: $MATRIX_CASES cases" >&2; exit "$fail") & mpids+=($!); }
+mpids=()
+matrix_bg ci "" ci_rust,ui rust=ci_rust,pushskip msvc=ci_rust,pushskip 'light=!ci_rust' ui=ui,pushskip
+matrix_bg windows "" win_rust,ui clippy=win_rust,queue tests=win_rust,queue ui=ui,queue
+matrix_bg vm-linux --nightly-skips vm build=vm,queue tests=vm,queue
+for p in "${mpids[@]}"; do wait "$p" || fail=1; done
 verdict push 0 "ci push: light skipped because the Rust gates ran" "$CI_FULL" "${ci_specs[@]}" -- rust=success light=skipped ui=success
 verdict schedule 0 "ci nightly: light skipped" "$CI_FULL" "${ci_specs[@]}" -- rust=success light=skipped ui=success
 verdict workflow_dispatch 0 "ci dispatch: light skipped" "$CI_FULL" "${ci_specs[@]}" -- rust=success light=skipped ui=success
 verdict push 1 "ci push: light ran, rust skipped" "$CI_FULL" "${ci_specs[@]}" -- rust=skipped light=success ui=success
+
+# The light mode: a queue-only job may skip on a pull request to develop with PUDDLE_QUEUE=on, and
+# nowhere else. The verdict works the mode out from the event, not from the scope job's output.
+VM_Q=(--nightly-skips 'build=vm,queue' 'tests=vm,queue')
+WIN_Q=('clippy=win_rust,queue' 'tests=win_rust,queue' 'ui=ui,queue')
+WIN_ALL='{"win_rust":"true","ui":"true","light":"true"}'
+VERDICT_ENV=(PUDDLE_QUEUE=on PR_BASE_REF=develop)
+verdict pull_request 0 "light: vm skipped" "$VM" "${VM_Q[@]}" -- build=skipped tests=skipped
+verdict pull_request 0 "light: windows skipped, release skipped" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped tests=skipped ui=skipped release=skipped
+verdict pull_request 0 "light: vm ran anyway" "$VM" "${VM_Q[@]}" -- build=success tests=success
+verdict pull_request 1 "light: vm build failed" "$VM" "${VM_Q[@]}" -- build=failure tests=skipped
+verdict pull_request 1 "light: a cancelled windows job" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=cancelled tests=skipped ui=skipped release=skipped
+verdict pull_request 1 "light: a skip without the queue mark" "$CI_FULL" "${ci_specs[@]}" -- rust=skipped light=skipped ui=success
+verdict merge_group 1 "light env on a merge queue run" "$VM" "${VM_Q[@]}" -- build=skipped tests=skipped
+verdict push 1 "light env on a push" "$VM" "${VM_Q[@]}" -- build=skipped tests=skipped
+VERDICT_ENV=(PUDDLE_QUEUE=on PR_BASE_REF=main)
+verdict pull_request 1 "light: pull request to main" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped tests=skipped ui=skipped release=success
+VERDICT_ENV=(PUDDLE_QUEUE=ON PR_BASE_REF=develop)
+verdict pull_request 1 "light: PUDDLE_QUEUE=ON is not on" "$VM" "${VM_Q[@]}" -- build=skipped tests=skipped
+VERDICT_ENV=(PR_BASE_REF=develop)
+verdict pull_request 1 "light: PUDDLE_QUEUE unset" "$VM" "${VM_Q[@]}" -- build=skipped tests=skipped
+verdict merge_group 1 "merge queue: a wrongly skipped vm job" "$VM" "${VM_Q[@]}" -- build=skipped tests=skipped
+verdict merge_group 0 "merge queue: vm scoped out by the group's diff" "$VMF" "${VM_Q[@]}" -- build=skipped tests=skipped
+
+# A develop push run whose commit a green merge queue run tested: the heavy ci jobs may skip when
+# PUDDLE_QUEUE_SKIP_PUSH=on and the queue-tested job succeeded and said so; anything else runs them.
+CI_P=('rust=ci_rust,pushskip' 'msvc=ci_rust,pushskip' 'light=!ci_rust' 'ui=ui,pushskip')
+TESTED='queue-tested=success'
+needs_tested() { needs "$@" | jq -c '.["queue-tested"].outputs = {skip: "'"${SKIP_OUT-true}"'"}'; }
+push_case() { # push_case <want> <label> <job=result>...
+    local exp=$1 label=$2 rc=0
+    shift 2
+    env -u PUDDLE_QUEUE -u PUDDLE_QUEUE_SKIP_PUSH NEEDS="$(needs_tested "$CI_FULL" "$@")" GITHUB_EVENT_NAME="${PUSH_EVENT:-push}" \
+        GITHUB_REF="${PUSH_REF:-refs/heads/develop}" "${VERDICT_ENV[@]}" "$scope" verdict "${CI_P[@]}" >/dev/null 2>&1 || rc=$?
+    [ "$rc" = "$exp" ] || bad "verdict: tested push: $label: exit $rc, want $exp"
+}
+VERDICT_ENV=(PUDDLE_QUEUE_SKIP_PUSH=on)
+push_case 0 "all heavy jobs skipped" rust=skipped msvc=skipped light=skipped ui=skipped "$TESTED"
+push_case 0 "heavy jobs ran anyway" rust=success msvc=success light=skipped ui=success "$TESTED"
+push_case 1 "rust failed" rust=failure msvc=skipped light=skipped ui=skipped "$TESTED"
+push_case 1 "lookup failed" rust=skipped msvc=skipped light=skipped ui=skipped queue-tested=failure
+push_case 1 "lookup skipped" rust=skipped msvc=skipped light=skipped ui=skipped queue-tested=skipped
+SKIP_OUT=false push_case 1 "lookup said run" rust=skipped msvc=skipped light=skipped ui=skipped "$TESTED"
+SKIP_OUT="" push_case 1 "lookup output lost" rust=skipped msvc=skipped light=skipped ui=skipped "$TESTED"
+PUSH_REF=refs/heads/main push_case 1 "a push to main" rust=skipped msvc=skipped light=skipped ui=skipped "$TESTED"
+PUSH_EVENT=workflow_dispatch push_case 1 "a dispatch" rust=skipped msvc=skipped light=skipped ui=skipped "$TESTED"
+PUSH_EVENT=merge_group push_case 1 "a merge queue run" rust=skipped msvc=skipped light=skipped ui=skipped "$TESTED"
+VERDICT_ENV=()
+push_case 1 "PUDDLE_QUEUE_SKIP_PUSH unset" rust=skipped msvc=skipped light=skipped ui=skipped "$TESTED"
+VERDICT_ENV=(PUDDLE_QUEUE_SKIP_PUSH=yes)
+push_case 1 "PUDDLE_QUEUE_SKIP_PUSH=yes is not on" rust=skipped msvc=skipped light=skipped ui=skipped "$TESTED"
+VERDICT_ENV=()
+
+# full-steps: off the light mode every guarded step must have succeeded and the browsers must not
+# be narrowed; in the light mode anything goes.
+steps_case() { # steps_case <want> <label> <args>...
+    local exp=$1 label=$2 rc=0
+    shift 2
+    env -u PUDDLE_QUEUE -u PR_BASE_REF -u PUDDLE_E2E_PROJECTS "${STEPS_ENV[@]}" "$scope" full-steps "$@" >/dev/null 2>&1 || rc=$?
+    [ "$rc" = "$exp" ] || bad "full-steps: $label: exit $rc, want $exp"
+}
+for ev in push schedule workflow_dispatch merge_group pull_request; do
+    STEPS_ENV=("GITHUB_EVENT_NAME=$ev" PR_BASE_REF=develop)
+    steps_case 0 "$ev: all ran" git-env=success notices=success
+    steps_case 1 "$ev: one skipped" git-env=skipped notices=success
+    steps_case 1 "$ev: one failed" git-env=success notices=failure
+    steps_case 1 "$ev: one lost" git-env= notices=success
+    STEPS_ENV+=(PUDDLE_E2E_PROJECTS=chromium)
+    steps_case 1 "$ev: browsers narrowed" ui-e2e=success
+    STEPS_ENV=("GITHUB_EVENT_NAME=$ev" PR_BASE_REF=develop PUDDLE_QUEUE=on)
+    if [ "$ev" = pull_request ]; then
+        steps_case 0 "light: skipped" git-env=skipped notices=skipped
+        STEPS_ENV+=(PUDDLE_E2E_PROJECTS=chromium)
+        steps_case 0 "light: browsers narrowed" ui-e2e=success
+    else
+        steps_case 1 "$ev with PUDDLE_QUEUE=on: one skipped" git-env=skipped notices=success
+    fi
+done
+STEPS_ENV=(GITHUB_EVENT_NAME=pull_request PR_BASE_REF=main PUDDLE_QUEUE=on)
+steps_case 1 "pull request to main with PUDDLE_QUEUE=on: one skipped" git-env=skipped
 [ "$(NEEDS='' GITHUB_EVENT_NAME=pull_request "$scope" verdict x=y >/dev/null 2>&1; echo $?)" = 1 ] || bad "verdict: empty NEEDS must fail"
 
 # 7. The workflows are wired to match their result job's verdict (needs PyYAML).
@@ -281,41 +449,71 @@ if python3 -c 'import yaml' 2>/dev/null; then
     python3 -I - "$here/../.github/workflows" <<'PY' || fail=1
 import re, sys, yaml
 d = sys.argv[1]
-results = {  # workflow: (result job id, required name)
-    "ci": ("linux", "linux (all gates)"),
-    "windows": ("windows", "windows-msvc (build, clippy, tests)"),
-    "vm-linux": ("vm-linux", "vm-linux (KVM, msb microVMs)"),
-    "vm-windows": ("vm-windows", "vm-windows (WHP, msb microVMs)"),
+results = {  # workflow: (result job id, required name, verdict specs as the matrix above tests them)
+    "ci": ("linux", "linux (all gates)", "rust=ci_rust,pushskip msvc=ci_rust,pushskip light=!ci_rust ui=ui,pushskip"),
+    "windows": ("windows", "windows-msvc (build, clippy, tests)", "clippy=win_rust,queue tests=win_rust,queue ui=ui,queue"),
+    "vm-linux": ("vm-linux", "vm-linux (KVM, msb microVMs)", "--nightly-skips build=vm,queue tests=vm,queue"),
+    "vm-windows": ("vm-windows", "vm-windows (WHP, msb microVMs)", "--nightly-skips build=vm,queue tests=vm,queue"),
 }
+LIGHT = "needs.scope.outputs.light != 'true'"
+PUSHSKIP = "needs.queue-tested.outputs.skip != 'true'"
 bad = []
-for wf, (rid, rname) in results.items():
+def flat(x):
+    return str(x).replace(" ", "")
+for wf, (rid, rname, want_specs) in results.items():
     doc = yaml.safe_load(open(f"{d}/{wf}.yml"))
+    on = doc.get("on", doc.get(True)) or {}
+    # Every workflow that reports a required check runs on both events, or the check stays pending.
+    if "pull_request" not in on:
+        bad.append(f"{wf}: no pull_request trigger")
+    mg = on.get("merge_group") if isinstance(on, dict) else None
+    if not mg or mg.get("types") != ["checks_requested"]:
+        bad.append(f"{wf}: needs `merge_group: types: [checks_requested]`")
     jobs = doc["jobs"]
     res = jobs[rid]
     if res.get("name") != rname:
         bad.append(f"{wf}: result job name {res.get('name')!r}, want {rname!r}")
     # ci.yml's nightly (schedule) runs only its advisories jobs, so its result job skips on that event.
     want_if = "${{always()&&github.event_name!='schedule'}}" if wf == "ci" else "${{always()}}"
-    if str(res.get("if", "")).replace(" ", "") != want_if:
+    if flat(res.get("if", "")) != want_if:
         bad.append(f"{wf}: result job must run with always()")
     needs = res["needs"]
     sc = jobs.get("scope")
     if not sc or "ci/scope.sh" not in str(sc["steps"]):
         bad.append(f"{wf}: no scope job running ci/scope.sh")
         continue
-    run = [s["run"] for s in res["steps"] if "run" in s][-1]
-    m = re.search(r"ci/scope\.sh verdict (.*)", run)
+    if "light" not in sc.get("outputs", {}):
+        bad.append(f"{wf}: scope job has no output light")
+    scope_env = [s for s in sc["steps"] if s.get("run") == "ci/scope.sh"][0].get("env", {})
+    for k, v in (("PUDDLE_QUEUE", "${{ vars.PUDDLE_QUEUE }}"),
+                 ("MERGE_GROUP_BASE_SHA", "${{ github.event.merge_group.base_sha }}"),
+                 ("MERGE_GROUP_HEAD_SHA", "${{ github.event.merge_group.head_sha }}"),
+                 ("PR_BASE_REF", "${{ github.event.pull_request.base.ref }}")):
+        if scope_env.get(k) != v:
+            bad.append(f"{wf}: scope step env {k}={scope_env.get(k)!r}, want {v!r}")
+    vstep = [s for s in res["steps"] if "run" in s][-1]
+    venv = vstep.get("env", {})
+    for k, v in (("PUDDLE_QUEUE", "${{ vars.PUDDLE_QUEUE }}"), ("PR_BASE_REF", "${{ github.event.pull_request.base.ref }}")):
+        if venv.get(k) != v:
+            bad.append(f"{wf}: verdict step env {k}={venv.get(k)!r}, want {v!r}")
+    if "pushskip" in want_specs and venv.get("PUDDLE_QUEUE_SKIP_PUSH") != "${{ vars.PUDDLE_QUEUE_SKIP_PUSH }}":
+        bad.append(f"{wf}: verdict step needs PUDDLE_QUEUE_SKIP_PUSH from vars")
+    m = re.search(r"ci/scope\.sh verdict (.*)", vstep["run"])
+    got_specs = " ".join(t.replace("'", "") for t in m.group(1).split()) if m else ""
+    if got_specs != want_specs:
+        bad.append(f"{wf}: verdict specs {got_specs!r}, want {want_specs!r} (change the matrix with them)")
     specs = {}
-    for tok in (t for t in (m.group(1).split() if m else []) if not t.startswith("--")):
+    for tok in (t for t in got_specs.split() if not t.startswith("--")):
         j, k = tok.split("=", 1)
-        specs[j] = k.strip("'")
+        specs[j] = k
     for j, k in specs.items():
         if j not in needs:
             bad.append(f"{wf}: verdict names {j} which the result job does not need")
-        key = k.lstrip("!")
+        key, *flags = k.split(",")
+        key = key.lstrip("!")
         jn = jobs[j].get("needs") or []
         jn = [jn] if isinstance(jn, str) else jn
-        # A job behind a scoped job of the same key (a test partition after its build) is skipped
+        # A job behind a scoped job of the same spec (a test partition after its build) is skipped
         # by that job's skip; the others carry the condition themselves.
         behind = any(specs.get(x) == k for x in jn)
         cond = str(jobs[j].get("if", ""))
@@ -324,19 +522,32 @@ for wf, (rid, rname) in results.items():
             bad.append(f"{wf}: job {j} if={cond!r}, want !cancelled() and {want!r}")
         if not behind and "scope" not in jn:
             bad.append(f"{wf}: job {j} does not need scope")
+        # A queue-only job skips exactly in the light mode; a pushskip job exactly when queue-tested says so.
+        if not behind and ("queue" in flags) != (LIGHT in cond):
+            bad.append(f"{wf}: job {j}: the `queue` mark and {LIGHT!r} in its if must go together")
+        if not behind and ("pushskip" in flags) != (PUSHSKIP in cond and "queue-tested" in jn):
+            bad.append(f"{wf}: job {j}: the `pushskip` mark and {PUSHSKIP!r} (needing queue-tested) must go together")
         if key not in sc.get("outputs", {}):
             bad.append(f"{wf}: scope job has no output {key}")
     for j in needs:
         if j == "scope" or j in specs:
             continue
-        # Unscoped jobs: the release build and the advisories checks, each with its own event rule
-        # (advisories: not on a pull request to develop, so a new RustSec or npm entry fails no such pull request).
+        # Unscoped jobs: the release build, the queue-tested lookup and the advisories checks, each with
+        # its own event rule (advisories: not on a pull request to develop or a merge queue run, so a new
+        # RustSec or npm entry fails no such run).
+        cond = flat(jobs[j].get("if", ""))
         if wf == "ci" and j in ("advisories", "advisories-npm"):
-            cond = str(jobs[j].get("if", "")).replace(" ", "")
-            if "github.event.pull_request.base.ref=='main'" not in cond or "github.event_name!='pull_request'" not in cond:
-                bad.append(f"ci: job {j} if={cond!r} must skip exactly on a pull request not to main")
+            if ("github.event.pull_request.base.ref=='main'" not in cond or "github.event_name!='pull_request'" not in cond
+                    or "github.event_name!='merge_group'&&" not in cond):
+                bad.append(f"ci: job {j} if={cond!r} must skip exactly on a merge queue run and a pull request not to main")
+        elif wf == "ci" and j == "queue-tested":
+            for part in ("github.event_name=='push'", "github.ref=='refs/heads/develop'", "vars.PUDDLE_QUEUE_SKIP_PUSH=='on'"):
+                if part not in cond:
+                    bad.append(f"ci: job queue-tested if={cond!r} lacks {part}")
         elif not (wf == "windows" and j == "release"):
             bad.append(f"{wf}: needed job {j} is neither scoped nor the release build")
+    if wf == "windows" and "merge_group" in flat(jobs["release"].get("if", "")):
+        bad.append("windows: the release build has no merge queue twin and must not run there")
     # Every other job of the workflow is reached through the result job (directly or via needs).
     for j, spec in jobs.items():
         if j in (rid, "scope") or j in needs:
@@ -345,6 +556,37 @@ for wf, (rid, rname) in results.items():
         n = [n] if isinstance(n, str) else (n or [])
         if not any(x in needs for x in n):
             bad.append(f"{wf}: job {j} is not covered by the result job")
+    # Steps the light mode skips or narrows inside a running job: the verdict cannot see them, so the
+    # job's full-steps guard names each one (by its id) and reads the event's own variables.
+    for j, spec in jobs.items():
+        steps = spec.get("steps") or []
+        light_steps = [s for s in steps if "outputs.light" in str(s.get("if", ""))]
+        narrows = "outputs.light" in str(spec.get("env", ""))
+        if not light_steps and not narrows:
+            continue
+        guards = [s for s in steps if "ci/scope.sh full-steps" in str(s.get("run", ""))]
+        if len(guards) != 1:
+            bad.append(f"{wf}: job {j} skips or narrows steps in the light mode but has {len(guards)} full-steps guards")
+            continue
+        g = guards[0]
+        if steps[-1] is not g:
+            bad.append(f"{wf}: job {j}: the full-steps guard must be the last step")
+        if flat(g.get("if", "")) != "${{!cancelled()}}":
+            bad.append(f"{wf}: job {j}: the full-steps guard must run with !cancelled()")
+        genv = g.get("env", {})
+        if genv.get("PUDDLE_QUEUE") != "${{ vars.PUDDLE_QUEUE }}" or genv.get("PR_BASE_REF") != "${{ github.event.pull_request.base.ref }}":
+            bad.append(f"{wf}: job {j}: the full-steps guard needs PUDDLE_QUEUE and PR_BASE_REF")
+        for s in light_steps:
+            sid = s.get("id")
+            if not sid or f"{sid}=${{{{ steps.{sid}.outcome }}}}" not in g["run"]:
+                bad.append(f"{wf}: job {j}: step {s.get('name')!r} skips in the light mode but the guard does not check it")
+        if narrows and "PUDDLE_E2E_PROJECTS" not in str(spec.get("env", "")):
+            bad.append(f"{wf}: job {j} narrows something other than PUDDLE_E2E_PROJECTS, which the guard cannot see")
+# The VM workflows fail on a missing hypervisor on a pull request and a merge queue run.
+if "ci/vm-skip-policy.sh" not in open(f"{d}/vm-linux.yml").read():
+    bad.append("vm-linux: the KVM preflight does not use ci/vm-skip-policy.sh")
+if "$env:GITHUB_EVENT_NAME -eq 'merge_group'" not in open(f"{d}/vm-windows.yml").read():
+    bad.append("vm-windows: the WHP preflight does not fail on a merge queue run")
 for b in bad:
     print("FAIL:", b, file=sys.stderr)
 sys.exit(1 if bad else 0)

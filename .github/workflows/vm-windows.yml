@@ -1,13 +1,16 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # VM tests on Windows WHP (tier W): crate puddle-vm-tests under `nextest --profile vm` on the
 # hosted windows-2025 runner, whose Hyper-V/WHP runs msb microVMs (observed, not promised by
-# GitHub). It runs on every pull request to develop (a required check), by hand on any branch
-# (`gh workflow run vm-windows.yml --ref <branch>`) and nightly on develop unless it already has a green run on that
-# commit. VM tests are never retried; a runner without a usable hypervisor
-# is reported as an infrastructure skip, not a test result, except on a pull request, where it fails
-# the job (a required check must not pass without running VM tests; same policy as ci/vm-skip-policy.sh).
-# A pull request whose changed files cannot reach a VM test skips every job here (ci/scope.sh, the
-# `scope` job); the result job accepts that skip only when `scope` said so.
+# GitHub). It runs on every pull request to develop (a required check), on every merge queue run, by
+# hand on any branch (`gh workflow run vm-windows.yml --ref <branch>`) and nightly on develop unless it
+# already has a green run on that commit. VM tests are never retried; a runner without a usable
+# hypervisor is reported as an infrastructure skip, not a test result, except on a pull request or a
+# merge queue run, where it fails the job (a required check must not pass without running VM tests;
+# same policy as ci/vm-skip-policy.sh).
+# A pull request or merge queue run whose changed files cannot reach a VM test skips every job here
+# (ci/scope.sh, the `scope` job); the result job accepts that skip only when `scope` said so. With the
+# repository variable PUDDLE_QUEUE set to `on`, a pull request to develop skips them too (the light
+# mode) and the merge queue runs them on the commit that lands.
 # The test binaries are built once (`cargo nextest archive`) and the tests run in five partitions
 # on five runners at once; `vm-windows (WHP, msb microVMs)` is the one result of all of them.
 name: vm-windows
@@ -17,6 +20,8 @@ on:
     - cron: "15 3 * * *"
   pull_request:
     branches: [develop]
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 permissions:
@@ -53,6 +58,7 @@ jobs:
       pull-requests: read
     outputs:
       vm: ${{ steps.scope.outputs.vm }}
+      light: ${{ steps.scope.outputs.light }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -64,12 +70,15 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
         run: ci/scope.sh
 
   build:
     name: vm-windows build (test archive, guest agent)
     needs: scope
-    if: ${{ !cancelled() && needs.scope.outputs.vm != 'false' }}
+    if: ${{ !cancelled() && needs.scope.outputs.vm != 'false' && needs.scope.outputs.light != 'true' }}
     # `actions: read` for ci/should-run.sh (a separate gate job would be billed a full minute).
     permissions:
       contents: read
@@ -142,7 +151,7 @@ jobs:
           } else {
             # Same policy as ci/vm-skip-policy.sh (kept inline: plain `bash` from pwsh may be WSL).
             $reason = "Windows Hypervisor Platform is not usable on this runner (HypervisorPresent=$($cs.HypervisorPresent), HypervisorPlatform=$whp)"
-            if ($env:GITHUB_EVENT_NAME -eq 'pull_request') {
+            if ($env:GITHUB_EVENT_NAME -eq 'pull_request' -or $env:GITHUB_EVENT_NAME -eq 'merge_group') {
               "::error title=vm-windows cannot run::$reason; a required VM check must not pass without running VM tests"
               exit 1
             }
@@ -202,7 +211,8 @@ jobs:
 
   # One stable result for the build and every partition.
   # The develop ruleset requires it by this name: a rename changes the ruleset in the same change.
-  # A pull request may skip them all only when `scope` said so (ci/scope.sh verdict); the
+  # A pull request or a merge queue run may skip them all only when `scope` said so, or in the light
+  # mode (`queue`), and a nightly when the commit already has a green run (ci/scope.sh verdict); the
   # KVM/WHP infrastructure skip is a skipped step inside a passing job, not a skipped job.
   vm-windows:
     name: vm-windows (WHP, msb microVMs)
@@ -217,4 +227,6 @@ jobs:
       - name: every needed job passed
         env:
           NEEDS: ${{ toJSON(needs) }}
-        run: ci/scope.sh verdict --nightly-skips build=vm tests=vm
+          PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: ci/scope.sh verdict --nightly-skips build=vm,queue tests=vm,queue

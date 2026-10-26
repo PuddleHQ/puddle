@@ -374,13 +374,13 @@ before pushing a change that touches the UI's behaviour, routes or accessibility
 
 | Workflow | Trigger | Runner | Gates |
 |---|---|---|---|
-| `ci.yml` | push to `develop`/`main`, every PR, nightly (the two advisories jobs only), manual (a newer push to a PR or `develop` cancels the run in flight; `main` never) | `ubuntu-24.04` | all of `scripts/check.sh all` (the `pre-push` set plus `ui-e2e`, `advisories` and `ui-audit`) in parallel jobs (Rust and repository gates; UI gates; RustSec advisories; npm advisories) plus `linux (all gates)`, the one result that needs them; every gate runs even if an earlier one fails |
-| `windows.yml` | every PR to `develop` and `main` (a newer push to the PR cancels the run in flight), nightly 02:30 UTC (skipped if it already has a green run on that commit), manual | `windows-2025` | four parallel jobs (clippy; nextest, doc tests, secret scan; UI gates, e2e on Edge and the desktop shell smoke test; release build, MSVC: only on the nightly, on PRs to `main` and on manual runs from `develop`, so PRs to `develop` skip it) plus `windows-msvc (build, clippy, tests)`, the one result that needs them all. The nightly retries each failed test once and lists the flaky ones in the job summary, without failing |
+| `ci.yml` | push to `develop`/`main`, every PR, every merge queue run, nightly (the two advisories jobs only), manual (a newer push to a PR or `develop` cancels the run in flight; `main` never) | `ubuntu-24.04` | all of `scripts/check.sh all` (the `pre-push` set plus `ui-e2e`, `advisories` and `ui-audit`) in parallel jobs (Rust and repository gates; UI gates; RustSec advisories; npm advisories) plus `linux (all gates)`, the one result that needs them; every gate runs even if an earlier one fails |
+| `windows.yml` | every PR to `develop` and `main` (a newer push to the PR cancels the run in flight), every merge queue run, nightly 02:30 UTC (skipped if it already has a green run on that commit; the tests and the release build count only nightly and manual runs), manual | `windows-2025` | four parallel jobs (clippy; nextest, doc tests, secret scan; UI gates, e2e on Edge and the desktop shell smoke test; release build, MSVC: only on the nightly, on PRs to `main` and on manual runs from `develop`, so PRs to `develop` skip it) plus `windows-msvc (build, clippy, tests)`, the one result that needs them all. The nightly retries each failed test once and lists the flaky ones in the job summary, without failing |
 | `windows-cache.yml` | push to `develop` that changes a `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml` or `.cargo/config.toml`, manual | `windows-2025` | builds the test binaries once (no tests) so the pull requests' `windows.yml` runs restore a current `windows` Rust cache entry instead of an older one; only a run on `develop` saves it |
-| `vm-linux.yml` | every PR to `develop` (a newer push to the PR cancels the run in flight), manual on any branch (`gh workflow run vm-linux.yml --ref <branch>`), nightly 03:00 UTC on `develop` (skipped if it already has a green run on that commit) | `ubuntu-24.04` (KVM) | VM tests, tier K: the test binaries are built once (`cargo nextest archive`) and run in 3 hash partitions on 3 runners; `vm-linux (KVM, msb microVMs)` is the one result. No KVM ⇒ warning, infrastructure skip |
-| `vm-windows.yml` | every PR to `develop` (a newer push to the PR cancels the run in flight), manual on any branch, nightly 03:15 UTC on `develop` (skipped if it already has a green run on that commit) | `windows-2025` (WHP) | VM tests, tier W: built once and run in 5 hash partitions on 5 runners; `vm-windows (WHP, msb microVMs)` is the one result. No WHP ⇒ warning, infrastructure skip |
+| `vm-linux.yml` | every PR to `develop` (a newer push to the PR cancels the run in flight), every merge queue run, manual on any branch (`gh workflow run vm-linux.yml --ref <branch>`), nightly 03:00 UTC on `develop` (skipped if it already has a green run on that commit) | `ubuntu-24.04` (KVM) | VM tests, tier K: the test binaries are built once (`cargo nextest archive`) and run in 3 hash partitions on 3 runners; `vm-linux (KVM, msb microVMs)` is the one result. No KVM ⇒ warning, infrastructure skip (on a PR or a merge queue run: failure) |
+| `vm-windows.yml` | every PR to `develop` (a newer push to the PR cancels the run in flight), every merge queue run, manual on any branch, nightly 03:15 UTC on `develop` (skipped if it already has a green run on that commit) | `windows-2025` (WHP) | VM tests, tier W: built once and run in 5 hash partitions on 5 runners; `vm-windows (WHP, msb microVMs)` is the one result. No WHP ⇒ warning, infrastructure skip (on a PR or a merge queue run: failure) |
 | `msb-cache.yml` | every push to `develop`, manual | `ubuntu-24.04` | looks up the `msb-linux-<hash>` cache (no download); on a miss builds msb from source and saves it under `develop`, where every pull request restores it. Seconds on a hit, about 11 minutes once per change to `ci/msb-runtime.sha256`, `ci/fetch-msb.sh` or `rust-toolchain.toml` |
-| `cache-gc.yml` | nightly 03:45 UTC, manual | `ubuntu-24.04` | deletes superseded rust-cache entries and stale branch caches (`ci/cache-gc.sh`) |
+| `cache-gc.yml` | nightly 03:45 UTC, after each `develop` or merge queue run of `ci`, `windows`, `windows-cache` and the VM workflows, manual | `ubuntu-24.04` | deletes superseded rust-cache entries, stale branch caches and every merge queue cache (`ci/cache-gc.sh`) |
 | `perf.yml` | nightly 03:30 UTC, manual | `ubuntu-24.04` | the six `#[ignore]`d `terminate_perf` tests in a release build (`--run-ignored only`): each prints its measurement and asserts a ceiling well above a workstation's number. Not a PR check, and nothing is cached |
 | Dependabot | weekly, grouped | — | opens PRs to `develop`; its `/ci/login-tools` entry bumps the Claude Code and Copilot CLI versions the login tests run against (`ci/login-tools/package.json` and lockfile), and the bump PR's `linux` job runs those tests against the new release; its `/ci/lab` entry (the `uv` ecosystem, which keeps the universal uv-compiled file intact) bumps the mitmproxy the corporate-lab fixtures (`crates/puddle-e2e/src/lab`) run as the TLS interceptor and the NTLM proxy (`ci/lab/requirements.in`, compiled with hashes into `requirements.txt`) |
 
@@ -407,7 +407,26 @@ notices inputs). The result jobs keep their names and accept a skip only when `s
 a failed, cancelled or otherwise skipped job still fails them. `ci/scope-test.sh` (the `hooks` gate, so every hook and CI run; the `ci` Rust job also runs it with the crate-set check) replays 58
 merged PRs from `ci/scope-prs.txt`, plants unknown paths, and checks the workflows against the verdict. When a crate
 dependency changes, its `Cargo.toml` change runs everything; the two crate sets in `ci/scope.sh` follow `cargo metadata`
-(the test checks them).
+(the test checks them). A merge queue run is scoped the same way, by the diff between the queue's base and the commit it
+tests (the compare API; any doubt runs everything).
+
+**Merge queue and the light pull request mode.** All four workflows also run on `merge_group`, so the four required
+names report on the queue's commit too. Two repository variables switch the rest on; unset, nothing changes:
+
+- `PUDDLE_QUEUE=on` (set together with the merge queue rule on `develop`, never before it): a pull request to `develop`
+  runs only the Linux jobs, without the `git-env` and `notices` gates and with the UI end-to-end tests on Chromium only.
+  The Windows jobs and both VM workflows skip, and their result jobs still report. The merge queue then runs the full
+  set on the commit that lands. `scope` sets `light=true`; the result jobs (`ci/scope.sh verdict`, specs marked
+  `,queue`) and a last `full-steps` step in each job with skipped steps work the mode out again from the event, so a
+  skip anywhere else still fails. A pull request to `main` always runs the full set.
+- `PUDDLE_QUEUE_SKIP_PUSH=on`: a push to `develop` whose commit a green merge queue run of `ci` tested skips the Rust,
+  msvc and UI jobs when their cache entries already exist (job `queue-tested`, `ci/should-run.sh --queue-tested`; specs
+  marked `,pushskip`). The advisories still run.
+
+The VM no-hypervisor policy fails a merge queue run like a PR, and `verdict --nightly-skips` accepts a skip only on a
+scheduled run. Self-tests: `ci/scope-test.sh` (light mode and merge queue cases, a verdict matrix over every event and
+variable, the workflow wiring), `ci/should-run-test.sh`, `ci/cache-gc-test.sh`, `ci/test-vm-skip-policy.sh`, all in the
+`hooks` gate.
 Actions are pinned to commit SHAs and must be GitHub-owned or on the repo's allow-list (selected
 actions, SHA pinning required; an unpinned `uses:` ends as a `startup_failure` with no jobs).
 Workflows get `contents: read` unless they need more.
@@ -437,14 +456,14 @@ workspace. `scripts/check-spdx.sh` enforces it. Details and third-party files:
 - **Advisories are checked where the answer matters, not on every pull request.** A new RustSec entry
   fails every open pull request at once, whatever it changes. Gate `deny` (bans, licences, sources) runs on every
   pull request; gate `advisories` runs on pull requests to `main` (a release never ships a known advisory), on pushes
-  to `develop` and `main`, nightly, and by hand. Pull requests to `develop` skip it, so a pull request that adds a
+  to `develop` and `main`, nightly, and by hand. Pull requests to `develop` and merge queue runs skip it, so a pull request that adds a
   vulnerable dependency can land; the push to `develop` and the nightly catch it. The nightly (job `advisories` in
   `ci.yml`, `ci/advisories-issue.sh rust`) opens or rewrites one issue titled "Dependency advisories: cargo deny check
   advisories fails" with the advisory IDs, crates and a link to the run, closes it on the first clean run, and fails visibly.
   `pre-push` skips `advisories`; `scripts/check.sh advisories` runs it by hand.
 - **npm advisories follow the same rule.** Gate `ui-audit` (`npm audit`, section 13) runs in its own job,
   `advisories (npm)`, on the same events as `advisories`: pull requests to `main`, pushes, nightly and by hand, never on a
-  pull request to `develop`. The nightly keeps a second issue, "Dependency advisories: npm audit fails"
+  pull request to `develop` or a merge queue run. The nightly keeps a second issue, "Dependency advisories: npm audit fails"
   (`ci/advisories-issue.sh npm`), with its own life cycle: one issue per source, closed on that source's first clean run,
   untouched when npm cannot answer. `pre-push` skips `ui-audit`.
 - A git dependency is pinned by a tag or a full `rev`, never by `branch =`: a branch moves, and once its

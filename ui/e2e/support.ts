@@ -43,7 +43,10 @@ export async function watchCsp(page: Page): Promise<() => Promise<string[]>> {
     page.evaluate(() => (window as unknown as { __csp: string[] }).__csp);
 }
 
-type FocusWindow = { __focusLog: string[] };
+type FocusWindow = {
+  __focusLog: string[];
+  __focusNow: () => string;
+};
 
 /**
  * Starts the focus history `expectFocused` prints: every focus change, key press and click on the
@@ -53,13 +56,15 @@ type FocusWindow = { __focusLog: string[] };
 export async function watchFocus(page: Page): Promise<void> {
   await page.addInitScript(() => {
     const log: string[] = [];
-    (window as unknown as FocusWindow).__focusLog = log;
     const describe = (n: EventTarget | null) => {
       if (!(n instanceof Element)) return String(n);
       const id = n.id ? `#${n.id}` : "";
       const name = n.getAttribute("aria-label") ?? n.textContent?.trim() ?? "";
       return `${n.tagName.toLowerCase()}${id} "${name.slice(0, 30)}"`;
     };
+    const w = window as unknown as FocusWindow;
+    w.__focusLog = log;
+    w.__focusNow = () => describe(document.activeElement);
     const note = (what: string, target: EventTarget | null, more = "") => {
       log.push(
         `${Math.round(performance.now())}ms ${what} ${describe(target)}${more}`,
@@ -91,18 +96,16 @@ export async function expectFocused(
   } catch (error) {
     const seen = await page
       .evaluate(() => {
-        const a = document.activeElement;
+        const w = window as unknown as Partial<FocusWindow>;
         return {
-          active: a
-            ? `${a.tagName.toLowerCase()}${a.id ? `#${a.id}` : ""} "${(a.textContent ?? "").trim().slice(0, 30)}"`
-            : "none",
-          hasFocus: document.hasFocus(),
-          history: (window as unknown as Partial<FocusWindow>).__focusLog ?? [],
+          active: w.__focusNow?.() ?? "(watchFocus was not called)",
+          hasFocus: String(document.hasFocus()),
+          history: w.__focusLog ?? [],
         };
       })
       .catch((e: unknown) => ({
         active: `unreadable: ${String(e)}`,
-        hasFocus: false,
+        hasFocus: "unknown",
         history: [] as string[],
       }));
     const report = [

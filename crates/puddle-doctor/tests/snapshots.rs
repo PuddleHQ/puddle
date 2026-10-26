@@ -140,7 +140,7 @@ impl Probe for Fake {
         self.boot.clone()
     }
     fn job(&self) -> Option<JobFacts> {
-        self.job
+        self.job.clone()
     }
     fn global_secure_access(&self) -> Option<GsaFacts> {
         self.gsa.clone()
@@ -590,7 +590,7 @@ const DENIED: &str = "error: io error: Access is denied. (os error 5)";
 #[test]
 fn windows_boot_denied_in_a_closed_job_is_the_job_not_edr() {
     let fake = Fake {
-        job: Some(JobFacts {
+        job: Some(JobFacts::Read {
             breakaway_allowed: false,
         }),
         boot: BootFacts::Ran {
@@ -612,7 +612,7 @@ fn windows_boot_denied_in_a_closed_job_is_the_job_not_edr() {
     // The same refusal outside such a job points at endpoint security.
     for job in [
         None,
-        Some(JobFacts {
+        Some(JobFacts::Read {
             breakaway_allowed: true,
         }),
     ] {
@@ -627,6 +627,21 @@ fn windows_boot_denied_in_a_closed_job_is_the_job_not_edr() {
         );
         assert!(r.check(CheckId::JobObject).is_none());
     }
+}
+
+#[test]
+fn windows_job_unreadable_is_said_not_dropped() {
+    let fake = Fake {
+        job: Some(JobFacts::query_failed("QueryInformationJobObject", 87)),
+        ..windows()
+    };
+    let r = check(
+        "windows_job_unreadable",
+        &fake,
+        CheckId::JobObject,
+        Some(Finding::JobUnreadable),
+    );
+    assert_eq!(r.check(CheckId::JobObject).unwrap().status, Status::Info);
 }
 
 #[test]

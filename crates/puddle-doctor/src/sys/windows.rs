@@ -10,7 +10,7 @@ use std::path::Path;
 use windows_sys::Wdk::System::SystemInformation::{
     NtQuerySystemInformation, SystemCodeIntegrityInformation,
 };
-use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, FreeLibrary, GetLastError};
+use windows_sys::Win32::Foundation::{FreeLibrary, GetLastError};
 use windows_sys::Win32::Storage::FileSystem::{FILE_EXECUTE, FILE_READ_DATA, SYNCHRONIZE};
 use windows_sys::Win32::System::JobObjects::{
     IsProcessInJob, JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
@@ -175,12 +175,19 @@ pub(crate) fn job() -> Option<JobFacts> {
     let mut in_job = 0;
     // SAFETY: the pseudo handle of this process, no job handle (any job), a valid out pointer.
     let ok = unsafe { IsProcessInJob(GetCurrentProcess(), std::ptr::null_mut(), &raw mut in_job) };
-    if ok == 0 || in_job == 0 {
+    if ok == 0 {
+        // SAFETY: reads this thread's last error, set by IsProcessInJob just above.
+        return Some(JobFacts::query_failed("IsProcessInJob", unsafe {
+            GetLastError()
+        }));
+    }
+    if in_job == 0 {
         return None;
     }
     // SAFETY: all-zero is a valid value of this plain-data struct.
     let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
-    let size = u32::try_from(size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>()).ok()?;
+    // The struct is a few hundred bytes.
+    let size = u32::try_from(size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>()).unwrap_or(u32::MAX);
     // SAFETY: a null job handle means this process's own (innermost) job; buffer and size match.
     let ok = unsafe {
         QueryInformationJobObject(
@@ -192,10 +199,14 @@ pub(crate) fn job() -> Option<JobFacts> {
         )
     };
     if ok == 0 {
-        return None;
+        // SAFETY: reads this thread's last error, set by QueryInformationJobObject just above.
+        return Some(JobFacts::query_failed(
+            "QueryInformationJobObject",
+            unsafe { GetLastError() },
+        ));
     }
     let flags = info.BasicLimitInformation.LimitFlags;
-    Some(JobFacts {
+    Some(JobFacts::Read {
         breakaway_allowed: flags
             & (JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK)
             != 0,
@@ -232,13 +243,8 @@ fn service_state(scm: SC_HANDLE, name: &str) -> ServiceState {
     let svc = unsafe { OpenServiceW(scm, w.as_ptr(), SERVICE_QUERY_STATUS) };
     if svc.is_null() {
         // SAFETY: reads this thread's last error, set by OpenServiceW just above.
-        // Access denied: it exists, we just may not ask about it. Anything else (usually
-        // ERROR_SERVICE_DOES_NOT_EXIST): not installed.
-        return if unsafe { GetLastError() } == ERROR_ACCESS_DENIED {
-            ServiceState::Unreadable
-        } else {
-            ServiceState::Missing
-        };
+        // Only "does not exist" proves the service is absent.
+        return ServiceState::from_open_error(unsafe { GetLastError() });
     }
     // SAFETY: all-zero is a valid value of this plain-data struct.
     let mut status: SERVICE_STATUS = unsafe { std::mem::zeroed() };

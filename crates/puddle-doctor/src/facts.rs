@@ -235,11 +235,40 @@ pub enum KeptLogs {
     },
 }
 
-/// Whether this process runs in a Windows job object, and what that job allows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct JobFacts {
-    /// Child processes may leave the job (`JOB_OBJECT_LIMIT_BREAKAWAY_OK` or silent breakaway).
-    pub breakaway_allowed: bool,
+/// The Windows job object this process runs in, when there is one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JobFacts {
+    /// The job was read.
+    Read {
+        /// Child processes may leave the job (`JOB_OBJECT_LIMIT_BREAKAWAY_OK` or silent breakaway).
+        breakaway_allowed: bool,
+    },
+    /// Whether there is a job, or what it allows, couldn't be read.
+    Unreadable {
+        /// The failed call and its OS error.
+        detail: String,
+    },
+}
+
+impl JobFacts {
+    /// The facts for a job query `call` that failed with the OS error `os_error`.
+    #[must_use]
+    pub fn query_failed(call: &str, os_error: u32) -> Self {
+        Self::Unreadable {
+            detail: format!("{call} failed: os error {os_error}"),
+        }
+    }
+
+    /// Whether the job is known to forbid child processes leaving it.
+    #[must_use]
+    pub fn forbids_breakaway(&self) -> bool {
+        matches!(
+            self,
+            Self::Read {
+                breakaway_allowed: false
+            }
+        )
+    }
 }
 
 /// Microsoft Entra Global Secure Access client state.
@@ -269,9 +298,24 @@ pub enum ServiceState {
     Stopped,
     /// It exists and runs.
     Running,
-    /// It exists (or may), but its state couldn't be read: access denied, or the status query
-    /// failed.
+    /// It exists (or may), but its state couldn't be read: the service couldn't be opened for any
+    /// reason but "does not exist" (access denied among them), or the status query failed.
     Unreadable,
+}
+
+impl ServiceState {
+    /// What a failed `OpenServiceW` with the OS error `os_error` says about the service: only
+    /// `ERROR_SERVICE_DOES_NOT_EXIST` (1060) proves it isn't installed. Access denied or any other
+    /// failure (a transient one, a busy service manager) proves nothing.
+    #[must_use]
+    pub fn from_open_error(os_error: u32) -> Self {
+        const ERROR_SERVICE_DOES_NOT_EXIST: u32 = 1060;
+        if os_error == ERROR_SERVICE_DOES_NOT_EXIST {
+            Self::Missing
+        } else {
+            Self::Unreadable
+        }
+    }
 }
 
 impl GsaFacts {
@@ -331,6 +375,33 @@ mod tests {
             installed(None)
         );
         assert_eq!(GsaFacts::from_services([Unreadable]), installed(None));
+    }
+
+    #[test]
+    fn only_a_missing_service_reads_as_not_installed() {
+        assert_eq!(ServiceState::from_open_error(1060), Missing);
+        // Access denied, a shutting-down service manager, an invalid name: all unproven.
+        for code in [5, 1115, 1055, 6, 0] {
+            assert_eq!(ServiceState::from_open_error(code), Unreadable, "{code}");
+        }
+    }
+
+    #[test]
+    fn a_failed_job_query_names_the_call_and_the_error() {
+        let facts = JobFacts::query_failed("QueryInformationJobObject", 87);
+        assert_eq!(
+            facts,
+            JobFacts::Unreadable {
+                detail: "QueryInformationJobObject failed: os error 87".into()
+            }
+        );
+        assert!(!facts.forbids_breakaway());
+        assert!(
+            JobFacts::Read {
+                breakaway_allowed: false
+            }
+            .forbids_breakaway()
+        );
     }
 
     #[test]

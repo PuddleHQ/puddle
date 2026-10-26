@@ -27,6 +27,8 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use puddle_agent_proto::editor::EditorServer;
+use puddle_agent_proto::forward::OpenError;
+use puddle_agent_proto::host_control::{HostMessage, HostReply};
 use puddle_api::{
     AttachMode, Attached, DEFAULT_IMAGE, DeleteCheck, DesktopTarget, DisplayName, GitSetup,
     KeptLogin, KeptLogins, Launcher, Listing, NewWorkspace, Operation, RepoFindings, Repository,
@@ -222,6 +224,17 @@ struct Inner<R: Runtime + Clone> {
     env_missed_while_booting: Mutex<BTreeSet<WorkspaceName>>,
     /// The last listing of each workspace's checkouts; see [`repositories::CachedListing`].
     listings: Mutex<BTreeMap<WorkspaceId, repositories::CachedListing>>,
+}
+
+/// Why [`HostWorkspaces::end_extension_hosts`] did not reach the guest.
+#[derive(Debug, thiserror::Error)]
+pub enum EndExtensionHostsError {
+    /// The workspace is stopped, or its agent has not connected yet.
+    #[error("the workspace is not running")]
+    NotRunning,
+    /// The agent could not be reached or did not answer.
+    #[error("the workspace's agent could not end the extension hosts: {0}")]
+    Agent(OpenError),
 }
 
 /// The workspaces service. Cheap to clone; clones share state.
@@ -551,6 +564,28 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     #[must_use]
     pub fn termination(&self, workspace: &WorkspaceName) -> Option<Arc<puddle_proxy::Termination>> {
         self.inner.injection.termination(workspace)
+    }
+
+    /// Ends the editor's extension hosts in `workspace`'s sandbox, and what they started
+    /// (language servers, debuggees), because the sandbox's editor window closed. Terminals and the
+    /// editor server stay. Returns once the guest agent says it is done.
+    ///
+    /// # Errors
+    ///
+    /// [`EndExtensionHostsError::NotRunning`] when the workspace has no connected agent, and
+    /// [`EndExtensionHostsError::Agent`] when the agent could not be reached or did not answer.
+    pub async fn end_extension_hosts(
+        &self,
+        workspace: &WorkspaceName,
+    ) -> Result<HostReply, EndExtensionHostsError> {
+        let link = self
+            .inner
+            .ports
+            .guest_link(workspace)
+            .ok_or(EndExtensionHostsError::NotRunning)?;
+        link.send(&HostMessage::EndExtensionHosts)
+            .await
+            .map_err(EndExtensionHostsError::Agent)
     }
 
     /// The SSH endpoint of a running workspace's sandbox.

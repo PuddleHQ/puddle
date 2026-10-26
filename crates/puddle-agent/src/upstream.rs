@@ -7,6 +7,7 @@
 //! redialled on its next use.
 
 use std::io;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -19,6 +20,7 @@ use tokio_yamux::{Control, Session, StreamHandle};
 
 use crate::config::{Config, Target};
 use crate::forward::Forwards;
+use crate::host_streams::HostStreams;
 
 /// A connection to the host before yamux runs on it.
 trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
@@ -43,8 +45,8 @@ pub struct Upstream {
     yamux: tokio_yamux::Config,
     slots: Vec<Mutex<Option<Slot>>>,
     next: AtomicUsize,
-    /// What the host's own streams (port forwards) are served by.
-    forwards: Arc<Forwards>,
+    /// What the host's own streams (port forwards, messages) are served by.
+    host_streams: Arc<HostStreams>,
 }
 
 impl std::fmt::Debug for Upstream {
@@ -67,7 +69,14 @@ impl Upstream {
             yamux: puddle_agent_proto::yamux::client_config_with_window(config.window),
             slots: (0..config.mux.max(1)).map(|_| Mutex::new(None)).collect(),
             next: AtomicUsize::new(0),
-            forwards: Forwards::new(config.reserved_ports()),
+            host_streams: HostStreams::new(
+                Forwards::new(config.reserved_ports()),
+                config
+                    .editor
+                    .iter()
+                    .map(|e| PathBuf::from(&e.server.dir))
+                    .collect(),
+            ),
         }
     }
 
@@ -93,17 +102,17 @@ impl Upstream {
         }
         let mut session = Session::new_client(self.dial().await?, self.yamux);
         let mut control = session.control();
-        // Driving the session moves its frames. The only streams the host opens are port
-        // forwards; they end with the session.
-        let forwards = Arc::clone(&self.forwards);
+        // Driving the session moves its frames. The streams the host opens (port forwards,
+        // messages) end with the session.
+        let host_streams = Arc::clone(&self.host_streams);
         let driver = tokio::spawn(async move {
             let mut serving = JoinSet::new();
             loop {
                 tokio::select! {
                     next = session.next() => match next {
                         Some(Ok(stream)) => {
-                            let forwards = Arc::clone(&forwards);
-                            serving.spawn(async move { forwards.serve(stream).await });
+                            let host_streams = Arc::clone(&host_streams);
+                            serving.spawn(async move { host_streams.serve(stream).await });
                         }
                         _ => return,
                     },

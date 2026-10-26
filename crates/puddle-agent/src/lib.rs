@@ -40,6 +40,8 @@ pub mod editor;
 pub mod entrypoint;
 pub mod exthost;
 pub mod forward;
+pub mod host_control;
+pub mod host_streams;
 #[cfg(target_os = "linux")]
 mod ifaddrs;
 pub mod merge_file;
@@ -127,6 +129,7 @@ impl Agent {
             None => (None, None),
         };
         if let Some(editor) = config.editor.clone() {
+            tasks.spawn(exthost::sweep_loop());
             tasks.spawn(editor::run(editor));
         }
         if let Some(watch) = config.entrypoint.clone() {

@@ -255,6 +255,14 @@ impl Ports {
         });
     }
 
+    /// The way to open streams to `workspace`'s agent, `None` while the workspace is stopped or its
+    /// agent has not said hello.
+    #[must_use]
+    pub fn guest_link(&self, workspace: &WorkspaceName) -> Option<GuestLink> {
+        let entries = self.entries();
+        entries.get(workspace)?.link.as_ref()?.borrow().clone()
+    }
+
     /// The workspace stopped: its forwards close and what the guest listened on is forgotten. Its
     /// pins stay. Idempotent.
     pub async fn stopped(&self, workspace: &WorkspaceName) {

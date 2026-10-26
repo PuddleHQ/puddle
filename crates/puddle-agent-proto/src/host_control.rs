@@ -17,15 +17,23 @@
 //! assert_eq!(HostReply::from_line(&reply.to_line()), Ok(reply));
 //! ```
 
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
 
 use crate::control::LineError;
+use crate::forward::{GuestLink, OpenError, read_line_exact};
 
 /// Bytes that open a host-control stream ([`crate::kind::StreamKind::HostControl`] v1).
 pub const PREAMBLE: &[u8] = crate::kind::StreamKind::HostControl.preamble();
 
 /// Longest message or reply line, newline included.
 pub const MAX_LINE: usize = 1024;
+
+/// How long the host waits for the reply: the agent ends a process tree before it answers (a
+/// `TERM`, three seconds of grace, a `KILL`), so this is longer than a forward's answer.
+pub const REPLY_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// One message from the host to the agent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,6 +121,34 @@ impl HostReply {
     pub fn from_line(bytes: &[u8]) -> Result<Self, LineError> {
         let bytes = bytes.strip_suffix(b"\n").unwrap_or(bytes);
         serde_json::from_slice(bytes).map_err(|e| LineError::Json(e.to_string()))
+    }
+}
+
+impl GuestLink {
+    /// Sends `message` to the agent on a new `host-control` stream and returns its reply, which
+    /// comes once the agent has done what the message asks.
+    ///
+    /// # Errors
+    ///
+    /// [`OpenError`] says whether the agent is gone, did not answer in [`REPLY_TIMEOUT`], or
+    /// answered with something that is not a reply.
+    pub async fn send(&self, message: &HostMessage) -> Result<HostReply, OpenError> {
+        let mut control = self.control.clone();
+        let mut stream = control
+            .open_stream()
+            .await
+            .map_err(|_| OpenError::Disconnected)?;
+        let exchange = async {
+            stream.write_all(PREAMBLE).await?;
+            stream.write_all(&message.to_line()).await?;
+            stream.flush().await?;
+            read_line_exact(&mut stream, MAX_LINE).await
+        };
+        let bytes = tokio::time::timeout(REPLY_TIMEOUT, exchange)
+            .await
+            .map_err(|_| OpenError::Timeout(REPLY_TIMEOUT))?
+            .map_err(|e| OpenError::Io(e.to_string()))?;
+        HostReply::from_line(&bytes).map_err(|e| OpenError::Io(e.to_string()))
     }
 }
 

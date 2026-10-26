@@ -276,6 +276,35 @@ async fn watch_reports_a_logged_kill_once_with_its_name_and_nothing_from_before_
         .unwrap();
 }
 
+/// The runtime stalls (a loaded host) after the counter moved and just as the log line arrives, so
+/// when it runs again the line and the grace period's end are both ready. The line must win: the
+/// kill is reported once, named. Before the watch loop served log kills first it was a coin toss per
+/// kill, so ten kills in a row make a miss all but certain.
+#[tokio::test]
+async fn a_log_line_ready_together_with_the_end_of_the_grace_period_is_served_first() {
+    let fake = Fake::new("stall", 0);
+    let (tx, mut rx) = mpsc::channel(8);
+    let task = tokio::spawn(watch(fake.sources(), tx));
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    for round in 1..=10_u32 {
+        fake.set_counter(u64::from(round));
+        // The counter is read within a poll (20 ms); the grace period (200 ms) runs from then.
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        fake.log(&format!(
+            "3,{round},{round},-;Out of memory: Killed process {round} (hog) total-vm:9kB\n"
+        ));
+        // Blocks this runtime's only thread, the watch task with it; the log reader has its own.
+        std::thread::sleep(Duration::from_millis(250));
+        assert_eq!(
+            next(&mut rx, Duration::from_secs(2)).await,
+            Some(AgentMessage::oom_kill(Some(round), Some("hog".into()))),
+            "round {round}"
+        );
+    }
+    assert_eq!(next(&mut rx, Duration::from_millis(400)).await, None);
+    task.abort();
+}
+
 #[tokio::test]
 async fn watch_reports_a_counted_kill_without_a_log_line_unnamed() {
     let fake = Fake::new("unnamed", 0);

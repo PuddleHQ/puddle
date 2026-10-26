@@ -170,7 +170,10 @@ pub async fn watch(sources: OomSources, out: mpsc::Sender<AgentMessage>) {
     let mut tick = tokio::time::interval(sources.poll);
     tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
+        // Log kills before the tick: after a stall (a loaded host) both are ready, and a due
+        // check that ran first would report as unnamed a kill whose line is already queued.
         tokio::select! {
+            biased;
             () = out.closed() => return,
             Some(kill) = kills.recv() => {
                 correlator.on_logged();

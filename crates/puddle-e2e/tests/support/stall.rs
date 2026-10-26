@@ -14,10 +14,9 @@
 #![allow(dead_code, reason = "each test binary uses some of the helpers")]
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-
-use tokio::task::JoinHandle;
 
 const SAMPLE_EVERY: Duration = Duration::from_millis(20);
 
@@ -121,21 +120,26 @@ impl Accrual {
     }
 }
 
-/// Samples `/proc/net/tcp` every 20 ms for sockets on the given ports, until dropped.
+/// Samples `/proc/net/tcp` for sockets on the given ports, 20 ms apart, until dropped.
+///
+/// It samples on its own thread, never on the runtime: the kernel builds that file from every TCP
+/// socket on the host, so with tens of thousands open (a busy test suite) one read takes 50 to
+/// 80 ms, and a sampler on the runtime would hold a worker that long, and back to back once its
+/// interval fell behind, starving the very transfer it measures.
 pub(crate) struct Backoff {
     nanos: Arc<AtomicU64>,
-    task: JoinHandle<()>,
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
 }
 
 impl Backoff {
     pub(crate) fn watch(ports: Vec<u16>) -> Self {
         let nanos = Arc::new(AtomicU64::new(0));
-        let shared = Arc::clone(&nanos);
-        let task = tokio::spawn(async move {
+        let stop = Arc::new(AtomicBool::new(false));
+        let (shared, stopped) = (Arc::clone(&nanos), Arc::clone(&stop));
+        let thread = std::thread::spawn(move || {
             let mut accrual = Accrual::default();
-            let mut tick = tokio::time::interval(SAMPLE_EVERY);
-            loop {
-                tick.tick().await;
+            while !stopped.load(Ordering::Relaxed) {
                 let Ok(table) = std::fs::read_to_string("/proc/net/tcp") else {
                     return;
                 };
@@ -144,9 +148,14 @@ impl Backoff {
                     u64::try_from(accrual.total().as_nanos()).unwrap_or(u64::MAX),
                     Ordering::Relaxed,
                 );
+                std::thread::sleep(SAMPLE_EVERY);
             }
         });
-        Self { nanos, task }
+        Self {
+            nanos,
+            stop,
+            thread: Some(thread),
+        }
     }
 
     /// The time seen in backoff since the watch began.
@@ -157,7 +166,10 @@ impl Backoff {
 
 impl Drop for Backoff {
     fn drop(&mut self) {
-        self.task.abort();
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 

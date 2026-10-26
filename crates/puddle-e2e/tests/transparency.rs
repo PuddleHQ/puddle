@@ -156,14 +156,16 @@ async fn pattern_source(bytes: u64) -> SocketAddr {
     addr
 }
 
-/// Sends `bytes` of the pattern, closes the sending side, and reads the sink's verdict.
+/// Sends `bytes` of the pattern to the sink at `server`, closes the sending side, and reads the
+/// sink's verdict.
 async fn upload(
     conn: &mut BufReader<TcpStream>,
-    backoff: &Backoff,
+    server: SocketAddr,
     bytes: u64,
 ) -> io::Result<Transfer> {
+    let backoff = watch(conn, server);
     let started = Instant::now();
-    let (mut sent, mut progress) = (0u64, Progress::new(backoff));
+    let (mut sent, mut progress) = (0u64, Progress::new(&backoff));
     while sent < bytes {
         let n = usize::try_from((bytes - sent).min(CHUNK as u64)).unwrap();
         // The chunk is the same on every lap, so the sink's check holds at any offset: a lap
@@ -190,16 +192,17 @@ async fn upload(
     })
 }
 
-/// Reads to the end of the source's stream, checking every byte; a wait that [`STALL`] passes
-/// (less the kernel's backoff) fails the transfer instead of hanging it.
+/// Reads to the end of the stream from the source at `server`, checking every byte; a wait that
+/// [`STALL`] passes (less the kernel's backoff) fails the transfer instead of hanging it.
 async fn download(
     conn: &mut BufReader<TcpStream>,
-    backoff: &Backoff,
+    server: SocketAddr,
     bytes: u64,
 ) -> io::Result<Transfer> {
+    let backoff = watch(conn, server);
     let started = Instant::now();
     let mut buf = vec![0u8; CHUNK];
-    let (mut got, mut progress) = (0u64, Progress::new(backoff));
+    let (mut got, mut progress) = (0u64, Progress::new(&backoff));
     loop {
         let n = loop {
             tokio::select! {
@@ -428,11 +431,9 @@ async fn a_gibibyte_goes_up_and_a_gibibyte_comes_down_with_no_stall() {
         .await
         .unwrap();
     assert_eq!(code, 200);
-    let backoff = watch(&conn, sink);
-    let through = upload(&mut conn, &backoff, GIB).await.unwrap();
+    let through = upload(&mut conn, sink, GIB).await.unwrap();
     let mut plain_conn = direct(sink).await;
-    let backoff = watch(&plain_conn, sink);
-    let plain = upload(&mut plain_conn, &backoff, GIB).await.unwrap();
+    let plain = upload(&mut plain_conn, sink, GIB).await.unwrap();
     report("1 GiB upload", &through, &plain, drops);
 
     let (code, mut conn) = connect_via(agent, &format!("echo.test:{}", source.port()))
@@ -440,11 +441,9 @@ async fn a_gibibyte_goes_up_and_a_gibibyte_comes_down_with_no_stall() {
         .unwrap();
     assert_eq!(code, 200);
     let drops = rcvq_drops();
-    let backoff = watch(&conn, source);
-    let through = download(&mut conn, &backoff, GIB).await.unwrap();
+    let through = download(&mut conn, source, GIB).await.unwrap();
     let mut plain_conn = direct(source).await;
-    let backoff = watch(&plain_conn, source);
-    let plain = download(&mut plain_conn, &backoff, GIB).await.unwrap();
+    let plain = download(&mut plain_conn, source, GIB).await.unwrap();
     report("1 GiB download", &through, &plain, drops);
 }
 
@@ -514,15 +513,13 @@ async fn a_large_plain_http_response_comes_down_with_no_stall() {
         format!("GET http://echo.test:{port}/big HTTP/1.1\r\nHost: echo.test:{port}\r\n\r\n");
     assert_eq!(response_head(&mut conn, &request).await, SIZE);
     let drops = rcvq_drops();
-    let backoff = watch(&conn, source);
-    let through = download(&mut conn, &backoff, SIZE).await.unwrap();
+    let through = download(&mut conn, source, SIZE).await.unwrap();
     let mut conn = direct(source).await;
     assert_eq!(
         response_head(&mut conn, "GET /big HTTP/1.1\r\n\r\n").await,
         SIZE
     );
-    let backoff = watch(&conn, source);
-    let plain = download(&mut conn, &backoff, SIZE).await.unwrap();
+    let plain = download(&mut conn, source, SIZE).await.unwrap();
     report("256 MiB plain-HTTP download", &through, &plain, drops);
 }
 
@@ -543,8 +540,7 @@ async fn a_connection_closed_in_one_direction_keeps_working_in_the_other_both_wa
         .await
         .unwrap();
     assert_eq!(code, 200);
-    let backoff = watch(&conn, sink);
-    upload(&mut conn, &backoff, BYTES).await.unwrap();
+    upload(&mut conn, sink, BYTES).await.unwrap();
 
     // The server finishes first: it sends and closes at once, and keeps reading.
     let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();

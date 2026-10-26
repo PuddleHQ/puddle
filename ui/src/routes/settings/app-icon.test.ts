@@ -103,6 +103,16 @@ describe("the App icon section", () => {
     expect(radio("Duck").checked).toBe(true);
   });
 
+  it("opens the file chooser from the button", async () => {
+    await open();
+    const input = screen.getByTestId("icon-file") as HTMLInputElement;
+    const opened = vi.spyOn(input, "click");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Choose an image…" }),
+    );
+    expect(opened).toHaveBeenCalledOnce();
+  });
+
   it("stores a picked image at once, chooses it as an unsaved edit and keeps it on Save", async () => {
     await open();
     await give(png());

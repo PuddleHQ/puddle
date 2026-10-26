@@ -76,8 +76,8 @@ pub fn diagnose(probe: &dyn Probe, options: &Options, puddle_version: &str) -> R
         checks.push(code_integrity(&ci));
     }
     let job = probe.job();
-    if let Some(j) = job.filter(|j| !j.breakaway_allowed) {
-        checks.push(job_check(j));
+    if let Some(check) = job.as_ref().and_then(job_check) {
+        checks.push(check);
     }
 
     let rt = probe.runtime();
@@ -106,7 +106,7 @@ pub fn diagnose(probe: &dyn Probe, options: &Options, puddle_version: &str) -> R
             skipped(CheckId::TestBoot, "out of time")
         } else {
             let facts = probe.boot(left.min(MAX_BOOT_TIME));
-            test_boot(os, &rt.msb, &rt.dir, &facts, job)
+            test_boot(os, &rt.msb, &rt.dir, &facts, job.as_ref())
         }
     });
 
@@ -318,17 +318,40 @@ fn code_integrity_state(ci: CodeIntegrity) -> Check {
 
 // ---- job object ----
 
-fn job_check(_job: JobFacts) -> Check {
-    Check::new(
-        CheckId::JobObject,
-        Status::Info,
-        "Puddle runs in a job object that doesn't let child processes leave it",
-    )
-    .finding(Finding::JobWithoutBreakaway)
-    .fix(
-        "Usual under CI runners and some IDE or remote shells. Puddle keeps its VM processes in its own \
+/// The job object's line; a job that allows breakaway needs none.
+fn job_check(job: &JobFacts) -> Option<Check> {
+    match job {
+        JobFacts::Read {
+            breakaway_allowed: true,
+        } => None,
+        JobFacts::Read {
+            breakaway_allowed: false,
+        } => Some(
+            Check::new(
+                CheckId::JobObject,
+                Status::Info,
+                "Puddle runs in a job object that doesn't let child processes leave it",
+            )
+            .finding(Finding::JobWithoutBreakaway)
+            .fix(
+                "Usual under CI runners and some IDE or remote shells. Puddle keeps its VM processes in its own \
 job, so this only matters if \"Test boot\" fails with access denied.",
-    )
+            ),
+        ),
+        JobFacts::Unreadable { detail } => Some(
+            Check::new(
+                CheckId::JobObject,
+                Status::Info,
+                "could not be read; whether Puddle runs in a job object that blocks child processes from leaving it is unknown",
+            )
+            .finding(Finding::JobUnreadable)
+            .fix(
+                "Only matters if \"Test boot\" fails with access denied; if it does, run puddle doctor from a \
+plain terminal outside a CI runner or IDE.",
+            )
+            .detail(detail.clone()),
+        ),
+    }
 }
 
 // ---- runtime ----
@@ -642,7 +665,7 @@ stopped the process. Otherwise reinstall Puddle and include the lines below when
 const SLOW_FIX: &str = "Security software scanning a program it hasn't seen before is the usual cause. \
 Run puddle doctor again; if it keeps timing out, check your endpoint security's log for msb.";
 
-fn test_boot(os: Os, msb: &Path, dir: &Path, facts: &BootFacts, job: Option<JobFacts>) -> Check {
+fn test_boot(os: Os, msb: &Path, dir: &Path, facts: &BootFacts, job: Option<&JobFacts>) -> Check {
     let check = test_boot_outcome(os, msb, dir, facts, job);
     match facts {
         BootFacts::Ran {
@@ -680,7 +703,7 @@ fn test_boot_outcome(
     msb: &Path,
     dir: &Path,
     facts: &BootFacts,
-    job: Option<JobFacts>,
+    job: Option<&JobFacts>,
 ) -> Check {
     let id = CheckId::TestBoot;
     let outcome = match facts {
@@ -729,7 +752,7 @@ fn test_boot_outcome(
         } => {
             let denied =
                 stderr_tail.contains("Access is denied") || stderr_tail.contains("os error 5)");
-            let restrictive_job = job.is_some_and(|j| !j.breakaway_allowed);
+            let restrictive_job = job.is_some_and(JobFacts::forbids_breakaway);
             let how = code.map_or_else(
                 || "was killed by a signal".to_owned(),
                 |c| format!("exited with {}", hex_or_dec(os, c)),

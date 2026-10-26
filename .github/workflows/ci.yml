@@ -137,7 +137,7 @@ jobs:
           test -x /usr/sbin/squid
       # The corporate-lab fixtures (crates/puddle-e2e/src/lab) run mitmproxy as the TLS interceptor and
       # the NTLM proxy. The packages are pinned with hashes in ci/lab/requirements.txt (compiled from
-      # requirements.in; Dependabot's pip entry for /ci/lab bumps them weekly), so a new release reaches
+      # requirements.in; Dependabot's uv entry for /ci/lab bumps them weekly), so a new release reaches
       # the tests through a pull request, not a runner.
       - name: mitmproxy for the corporate-lab fixtures
         run: |

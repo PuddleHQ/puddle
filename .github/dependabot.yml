@@ -56,7 +56,10 @@ updates:
     groups:
       login-tools:
         patterns: ["*"]
-  - package-ecosystem: pip
+  # uv, not pip: requirements.txt is compiled by `uv pip compile --universal`. The pip ecosystem rewrote it
+  # without the environment markers (dropping typing-extensions and the Windows and macOS mitmproxy
+  # packages); the uv ecosystem reruns uv with the flags in the file's header and keeps them.
+  - package-ecosystem: uv
     directory: /ci/lab
     target-branch: develop
     labels: ["dependencies", "python"]

@@ -13,11 +13,10 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use puddle_agent_proto::host::{
-    AgentReport, AgentReports, GuestStream, HostConfig, StreamHandler, UdpRefusal,
-};
 use puddle_agent_proto::forward::GuestLink;
-use puddle_agent_proto::host::{GuestStream, GuestWatcher, HostConfig, StreamHandler, UdpRefusal};
+use puddle_agent_proto::host::{
+    AgentReport, AgentReports, GuestStream, GuestWatcher, HostConfig, StreamHandler, UdpRefusal,
+};
 use puddle_agent_proto::relay::splice;
 use puddle_agent_proto::resolve::{ResolveAnswer, ResolveQuery};
 use puddle_types::{

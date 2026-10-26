@@ -251,3 +251,96 @@ async fn vm_ssh_reports_a_signal_killed_command_as_a_failure() {
     );
     assert_eq!(seven, 7, "a normal exit code is reported as is");
 }
+
+/// What the guest says a mounted volume holds, in MiB: `df`'s used column (the file system's own
+/// count, metadata included) and `du` over the files.
+async fn guest_use_mib<S: Sandbox>(sb: &S, mount: &str) -> (u64, u64) {
+    let out = sh(
+        sb,
+        &format!(
+            "sync; echo $(df -Pm {mount} | awk 'NR==2 {{print $3}}') $(du -sm {mount} | cut -f1)"
+        ),
+    )
+    .await;
+    let text = out.stdout_text();
+    let mut words = text.split_whitespace().map(|w| w.parse::<u64>().unwrap());
+    (words.next().unwrap(), words.next().unwrap())
+}
+
+/// The volume's `used` as the runtime reports it, in MiB.
+async fn volume_used_mib(rt: &puddle_compute_msb::MsbRuntime, vol: &VolumeName) -> u64 {
+    u64::from(
+        rt.volume(vol)
+            .await
+            .unwrap()
+            .expect("the volume exists")
+            .used
+            .expect("the runtime reads the volume's image")
+            .as_mib(),
+    )
+}
+
+/// The `used` of a volume tracks what the guest holds in it: the runtime reads the allocated size
+/// of the volume's disk image, so after the guest writes (and syncs) a known amount, the reading
+/// grows by that amount and sits a fixed offset above the guest's own `df` (the file system's used
+/// count; the offset is the journal and tables, [`OFFSET_MAX_MIB`] at most). The Windows leg reads the image with
+/// `GetCompressedFileSizeW`, the Linux leg with the block count.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_volume_used_matches_what_the_guest_holds() {
+    let settings = support::settings();
+    let rt = support::runtime(&settings).await;
+    let vol = VolumeName::new(&format!("{}-used", settings.prefix)).unwrap();
+    let mount = "/workspaces/ws";
+    let s = spec(&settings, "used")
+        .with_volume(VolumeMount::named(vol.clone(), path(mount)).ensure_size(DiskSize::mib(1024)));
+    let n = s.name.clone();
+    let sb = rt.create(s).await.expect("create");
+
+    let (df0, du0) = guest_use_mib(&sb, mount).await;
+    let used0 = volume_used_mib(&rt, &vol).await;
+    eprintln!("USED empty: runtime={used0} MiB guest df={df0} MiB du={du0} MiB");
+
+    let mut rows = vec![(0, used0, df0)];
+    for written in [128_u64, 512] {
+        sh(
+            &sb,
+            &format!("dd if=/dev/urandom of={mount}/fill-{written} bs=1M count={written} status=none && sync"),
+        )
+        .await;
+        let (df, du) = guest_use_mib(&sb, mount).await;
+        let used = volume_used_mib(&rt, &vol).await;
+        eprintln!(
+            "USED after {written} MiB more: runtime={used} MiB guest df={df} MiB du={du} MiB"
+        );
+        rows.push((written, used, df));
+    }
+    sb.stop().await.unwrap();
+    let stopped = volume_used_mib(&rt, &vol).await;
+    eprintln!("USED stopped: runtime={stopped} MiB");
+    cleanup(&rt, &[&n]).await;
+    let _ = rt.remove_volume(&vol).await;
+
+    // The image holds the file system's own structures (the journal, the tables) before the guest
+    // writes a byte: a constant offset above `df`, which counts them too. What the guest writes
+    // then shows up one for one.
+    let (_, base, base_df) = rows[0];
+    for &(written, used, df) in &rows {
+        assert!(
+            (df..=df + OFFSET_MAX_MIB).contains(&used),
+            "after {written} MiB written the runtime says {used} MiB, the guest's df {df} MiB (the image may hold up to {OFFSET_MAX_MIB} MiB more)"
+        );
+        assert!(
+            used.abs_diff(base + (df - base_df)) <= GROWTH_BOUND_MIB,
+            "after {written} MiB written the runtime says {used} MiB, which is not {base} + {} MiB the guest holds more (bound {GROWTH_BOUND_MIB})",
+            df - base_df
+        );
+    }
+}
+
+/// How far above the guest's `df` the image's allocation may sit, in MiB: measured 65 MiB on a
+/// 1 GiB volume at every step on both Linux and Windows; the headroom covers a larger
+/// journal.
+const OFFSET_MAX_MIB: u64 = 128;
+
+/// How far the runtime's growth may be from the guest's growth, in MiB: measured 0 at 128 and 512.
+const GROWTH_BOUND_MIB: u64 = 16;

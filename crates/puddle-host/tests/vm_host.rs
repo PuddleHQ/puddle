@@ -2070,6 +2070,35 @@ fn audit_summary(records: &[serde_json::Value]) -> String {
 const RADAR_SCRIPT: &str = r#"
 set -u
 export DEBIAN_FRONTEND=noninteractive
+# The stub DNS server's TCP side (198.18.0.1:53, `max_tcp_connections` = 64): sampled from
+# /proc/net/tcp every few milliseconds while the tools run, for the most connections it held at
+# once (established, and with the closing ones) and the distinct clients seen. When
+# /tmp/dns-sampler.mark appears the tools' numbers are kept and the sampler goes on, so the control
+# connections opened after the tools (the sampler must see them) are counted apart.
+udp_in() { awk '/^Udp:/ { n++; if (n == 2) print $2 }' /proc/net/snmp; }
+dns_tcp_sampler() {
+  local peak=0 peak_open=0 sl lo rem st rest est open marked=0 tools_peak tools_open tools_seen
+  local -A seen=()
+  while [ ! -e /tmp/dns-sampler.stop ]; do
+    est=0; open=0
+    while read -r sl lo rem st rest; do
+      if [ "$lo" = 010012C6:0035 ] && [ "$st" != 0A ]; then
+        open=$((open + 1)); seen[$rem]=1
+        [ "$st" = 01 ] && est=$((est + 1))
+      fi
+    done < /proc/net/tcp
+    if [ "$marked" = 0 ] && [ -e /tmp/dns-sampler.mark ]; then
+      marked=1; tools_peak=$peak; tools_open=$peak_open; tools_seen=${#seen[@]}; peak=0; peak_open=0
+    fi
+    [ "$est" -gt "$peak" ] && peak=$est
+    [ "$open" -gt "$peak_open" ] && peak_open=$open
+    sleep 0.005
+  done
+  echo "RADAR dns_tcp tools_peak_established=${tools_peak:-$peak} tools_peak_open=${tools_open:-$peak_open} tools_distinct_clients=${tools_seen:-${#seen[@]}} control_peak_established=$peak cap=64"
+}
+rm -f /tmp/dns-sampler.stop /tmp/dns-sampler.mark
+dns_tcp_sampler > /tmp/dns-sampler.out &
+udp0=$(udp_in)
 env | grep -i -E '^(https?|no|all)_proxy=' | sed 's/^/RADAR env /'
 df -PmT | awk 'NR > 1 && $2 != "devtmpfs" {print "RADAR mount=" $7 " type=" $2 " size_mib=" $3 " free_mib=" $5}'
 step() {
@@ -2157,7 +2186,51 @@ cat > pom.xml <<'XML'
 XML
 step maven_resolve 'cd /tmp/mv && mvn -B dependency:resolve dependency:resolve-plugins'
 echo "RADAR maven_jars=$(find ~/.m2/repository -name '*.jar' | wc -l)"
+touch /tmp/dns-sampler.mark
+echo "RADAR dns_udp datagrams_in_loopback=$(( $(udp_in) - udp0 )) (each query and each answer counts once)"
+sleep 0.3
+fds=()
+for i in $(seq 1 70); do exec {fd}<>/dev/tcp/198.18.0.1/53 && fds+=("$fd"); done
+sleep 0.5
+for fd in "${fds[@]}"; do exec {fd}>&-; done
+touch /tmp/dns-sampler.stop; wait
+cat /tmp/dns-sampler.out
+echo "RADAR dns_tcp agent_log_refusal_lines=$(grep -c 'connections closed: too many open at once' /run/puddle/agent.log 2>/dev/null)"
 "#;
+
+/// Put before [`RADAR_SCRIPT`] for the run where no tool is given a proxy setting: every name is
+/// resolved by the stub DNS server and every connection captured, the widest use of the stub:
+/// the proxy variables go. apt keeps its proxy file: with none, `apt-get update` fails with
+/// `Connection failed [IP: 198.18.0.2 80]` although curl reaches the same URL in the same guest.
+const RADAR_NO_PROXY_ENV: &str = r#"unset http_proxy https_proxy all_proxy no_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY NODE_USE_ENV_PROXY MAVEN_ARGS
+"#;
+
+/// The stub DNS server's TCP side and UDP traffic as the radar script measured them.
+#[derive(Debug)]
+struct StubDnsReading {
+    tools_peak_open: u32,
+    control_peak: u32,
+    datagrams: u32,
+    refusal_lines: u32,
+}
+
+impl StubDnsReading {
+    fn parse(out: &str) -> Self {
+        let number = |key: &str| -> u32 {
+            out.lines()
+                .filter(|l| l.starts_with("RADAR dns_"))
+                .find_map(|l| l.split_whitespace().find_map(|w| w.strip_prefix(key)))
+                .and_then(|n| n.parse().ok())
+                .unwrap_or_else(|| panic!("no {key} in the radar output:\n{out}"))
+        };
+        Self {
+            tools_peak_open: number("tools_peak_open="),
+            control_peak: number("control_peak_established="),
+            datagrams: number("datagrams_in_loopback="),
+            refusal_lines: number("agent_log_refusal_lines="),
+        }
+    }
+}
 
 /// Tools whose refusal of the workspace's certificate the proxy cannot see today: they finish the
 /// TLS handshake (their trust check runs after it) or close without a certificate alert, so the
@@ -2310,7 +2383,7 @@ async fn refusal_matrix(
 /// set the registries' connections are decrypted and re-encrypted by Puddle; without it they are
 /// spliced. Never run by the per-pull-request gate (the name starts `vm_radar_`).
 #[expect(clippy::print_stderr, reason = "the radar's table goes to stderr")]
-async fn radar(tag: &str, terminate: bool) {
+async fn radar(tag: &str, terminate: bool, no_proxy: bool) {
     let (vm, sandbox, api) = radar_workspace(tag, terminate).await;
     // The run means nothing if the registries are not decrypted when they should be (or are when
     // they should not be): the issuer the guest sees says which.
@@ -2326,7 +2399,8 @@ async fn radar(tag: &str, terminate: bool) {
         let out = handle
             .exec(
                 ExecRequest::sh(format!(
-                    "bash -s <<'PUDDLE_EOF'\n{RADAR_SCRIPT}\nPUDDLE_EOF"
+                    "bash -s <<'PUDDLE_EOF'\n{}{RADAR_SCRIPT}\nPUDDLE_EOF",
+                    if no_proxy { RADAR_NO_PROXY_ENV } else { "" }
                 ))
                 .as_user("root")
                 .with_timeout(Duration::from_hours(3)),
@@ -2345,6 +2419,29 @@ async fn radar(tag: &str, terminate: bool) {
     };
     let records = audit_connections(&vm.host);
     eprintln!("terminate={terminate}\n{}", audit_summary(&records));
+    let stub = StubDnsReading::parse(&out);
+    eprintln!("{stub:?}");
+    // The sampler must see what it is there to count: the control opens 70 connections and the
+    // stub holds 64 of them and says so in its log.
+    assert!(
+        stub.control_peak >= 64,
+        "the sampler does not see the control connections:\n{out}"
+    );
+    assert!(
+        stub.refusal_lines >= 1,
+        "the cap closed connections and the agent log did not say so:\n{out}"
+    );
+    // What the tools need: the real tools' own peak, with room to spare.
+    assert!(
+        stub.tools_peak_open < 32,
+        "a real tool came within half of the stub's TCP cap: {stub:?}"
+    );
+    if no_proxy {
+        assert!(
+            stub.datagrams > 50,
+            "the stub saw next to no queries, so the run says nothing about it: {stub:?}"
+        );
+    }
     let steps = out.lines().filter(|l| l.starts_with("RADAR step=")).count();
     assert_eq!(steps, 8, "the radar script stopped early:\n{out}");
     let failing: Vec<&str> = out
@@ -2379,12 +2476,17 @@ async fn radar(tag: &str, terminate: bool) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_radar_package_managers_cold_with_the_registries_decrypted() {
-    radar("radt", true).await;
+    radar("radt", true, false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_radar_package_managers_cold_with_the_registries_spliced() {
-    radar("rads", false).await;
+    radar("rads", false, false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_radar_package_managers_cold_with_no_proxy_setting_through_the_stub_dns() {
+    radar("radn", false, true).await;
 }
 
 /// The variable that turns [`vm_host_second_process_probe`] from a no-op into the second

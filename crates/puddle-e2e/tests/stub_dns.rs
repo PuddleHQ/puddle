@@ -112,6 +112,16 @@ async fn rig_with(options: Options) -> Rig {
                 ],
             )
             .with(
+                "_http._tcp.mirror.example.net",
+                RecordType::Srv,
+                vec![Record::Srv {
+                    priority: 10,
+                    weight: 1,
+                    port: 80,
+                    target: "mirror.cdn.example.com".into(),
+                }],
+            )
+            .with(
                 "db.example.net",
                 RecordType::Txt,
                 vec![Record::Txt {
@@ -398,9 +408,11 @@ async fn a_hundred_thousand_random_denied_names_cause_no_host_lookup_and_no_rows
 }
 
 #[tokio::test]
-async fn srv_and_txt_are_forwarded_for_an_allowed_name_with_a_stand_in_for_each_target() {
+async fn srv_and_txt_are_forwarded_for_an_allowed_name_with_a_stand_in_for_each_allowed_target() {
     let rig = rig().await;
     allow(&rig.store, "db.example.net");
+    allow(&rig.store, "shard0.db.example.net");
+    allow(&rig.store, "shard1.db.example.net");
     let (udp, tcp) = rig.agent.dns_addrs().unwrap();
     let srv = dns(udp, "_mongodb._tcp.db.example.net", TYPE_SRV).await;
     assert_eq!((srv.rcode, srv.answers, srv.additional), (0, 2, 2));
@@ -427,6 +439,24 @@ async fn srv_and_txt_are_forwarded_for_an_allowed_name_with_a_stand_in_for_each_
         rig.counted.records.lookups(),
         2,
         "only the allowed name was looked up"
+    );
+}
+
+/// apt's shape: the user allowed the mirror's name, and its `SRV` record points at a CDN name no
+/// rule matches. The record is left out, so apt connects to the allowed name, and the CDN name is
+/// one request at the record's port.
+#[tokio::test]
+async fn an_srv_target_nothing_allows_is_left_out_and_raised_as_one_request_at_its_port() {
+    let rig = rig().await;
+    allow(&rig.store, "mirror.example.net");
+    let (udp, _) = rig.agent.dns_addrs().unwrap();
+    let srv = dns(udp, "_http._tcp.mirror.example.net", TYPE_SRV).await;
+    assert_eq!((srv.rcode, srv.answers, srv.additional), (0, 0, 0));
+    let open = rig.store.open_pending(None).unwrap();
+    assert_eq!(open.len(), 1, "{open:?}");
+    assert_eq!(
+        (open[0].host.to_string(), open[0].port),
+        ("mirror.cdn.example.com".to_owned(), 80)
     );
 }
 

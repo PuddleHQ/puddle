@@ -35,6 +35,8 @@ const INSPECTOR_VAR: &str = "VSCODE_INSPECTOR_OPTIONS";
 pub const TERM_GRACE: Duration = Duration::from_secs(3);
 /// How often the tree is looked at while waiting.
 const POLL: Duration = Duration::from_millis(50);
+/// How many [`POLL`]s a killed process gets to leave the table.
+const SETTLE_POLLS: u32 = 40;
 /// How often the orphan sweep runs while the editor server is on.
 pub const SWEEP_EVERY: Duration = Duration::from_secs(30);
 
@@ -192,7 +194,7 @@ fn living(members: &HashMap<i32, u64>, procs: &[Proc]) -> Vec<i32> {
 
 /// Waits briefly for processes that got `KILL` to leave the table.
 async fn kill_settle(members: &HashMap<i32, u64>) {
-    for _ in 0..40 {
+    for _ in 0..SETTLE_POLLS {
         if living(members, &snapshot()).is_empty() {
             return;
         }
@@ -471,7 +473,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[tokio::test(start_paused = true)]
-    async fn waiting_for_the_killed_to_leave_gives_up_after_two_seconds() {
+    async fn waiting_for_the_killed_to_leave_gives_up_after_its_polls() {
         let me = i32::try_from(std::process::id()).unwrap();
         let start = snapshot().iter().find(|p| p.pid == me).unwrap().start;
         let started = tokio::time::Instant::now();
@@ -479,7 +481,7 @@ mod tests {
         // This process never leaves the table.
         kill_settle(&HashMap::from([(me, start)])).await;
 
-        assert_eq!(started.elapsed(), POLL * 40);
+        assert_eq!(started.elapsed(), POLL * SETTLE_POLLS);
     }
 
     #[cfg(target_os = "linux")]

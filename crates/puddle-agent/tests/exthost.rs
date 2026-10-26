@@ -292,14 +292,18 @@ async fn an_orphaned_debuggee_that_ignores_term_is_killed_after_the_grace() {
     let _only = ONE_AT_A_TIME.lock().await;
     let dir = tempfile::tempdir().unwrap();
     // An ignored signal stays ignored through `exec`, so the `sleep` shrugs off `TERM` too.
+    let ready = dir.path().join("stubborn.ready");
+    let command = format!("sh -c 'trap \"\" TERM; : >{}; sleep 602'", ready.display());
     let ids = orphans(
         dir.path(),
-        &[(
-            dir.path().join("dead.sock"),
-            "sh -c 'trap \"\" TERM; sleep 602'",
-            "stubborn",
-        )],
+        &[(dir.path().join("dead.sock"), &command, "stubborn")],
     );
+    // A `TERM` that came before the trap would end the shell at once and fake a pass.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !ready.exists() {
+        assert!(Instant::now() < deadline, "the stand-in never ignored TERM");
+        std::thread::sleep(Duration::from_millis(20));
+    }
     let me = i32::try_from(std::process::id()).unwrap();
     let started = Instant::now();
 
@@ -326,6 +330,11 @@ async fn the_sweep_loop_ends_an_orphan_when_its_time_comes_and_not_before() {
     tokio::time::sleep(exthost::SWEEP_EVERY / 2).await;
     let before = running(ids[0]);
     tokio::time::sleep(exthost::SWEEP_EVERY * 2).await;
+    // The sweep's waits run on virtual time, the process dies in real time: give it that.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while running(ids[0]) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
     let after = running(ids[0]);
     looping.abort();
     kill(ids[0]);

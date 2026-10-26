@@ -140,6 +140,36 @@ async fn a_client_that_goes_away_before_the_handshake_is_not_a_refused_certifica
 }
 
 #[tokio::test]
+async fn a_client_that_hangs_up_in_the_middle_of_the_handshake_is_an_ordinary_connection() {
+    use tokio::io::AsyncWriteExt as _;
+    let pki = Pki::new();
+    let server = upstream(&pki).await;
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .build();
+    let guest = rig.guest().await;
+    let (port, _bridge) = guest.bridge("bound.test:443").await;
+    let mut tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    // The first flight of a handshake, then the connection closes with no alert.
+    let config = Guest::client_config(std::slice::from_ref(&pki.root), &[]);
+    let mut client = rustls::ClientConnection::new(
+        Arc::new(config),
+        ServerName::try_from("bound.test").unwrap(),
+    )
+    .unwrap();
+    let mut hello = Vec::new();
+    client.write_tls(&mut hello).unwrap();
+    tcp.write_all(&hello).await.unwrap();
+    drop(tcp);
+
+    let events = rig.events(1).await;
+    assert_eq!(events[0].reason.to_string(), "rule");
+    assert_eq!(events[0].decision, ConnectionDecision::Allow);
+}
+
+#[tokio::test]
 async fn a_client_that_trusts_the_workspace_ca_is_served_as_before() {
     let pki = Pki::new();
     let server = upstream(&pki).await;

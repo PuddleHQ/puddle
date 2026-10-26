@@ -107,8 +107,8 @@ impl HostApi {
             .header_value()
             .ok_or(TransportError::BadToken)?;
         // A kept connection the host closed meanwhile fails before it answers anything: a `GET`
-        // is safe to send again on a new one.
-        while let Some(mut sender) = self.take_idle(&request.host) {
+        // is safe to send again, once, on a new connection.
+        if let Some(mut sender) = self.take_idle(&request.host) {
             match send(&mut sender, &request, authorization.clone()).await {
                 Ok(reply) => {
                     self.keep(&request.host, sender, &reply);

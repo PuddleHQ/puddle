@@ -88,9 +88,9 @@ fn listening_port(log: &str) -> Option<u16> {
 /// Waits until `child` has logged the port it bound, and returns it.
 ///
 /// # Panics
-/// When the child exits first or logs nothing within [`READY`].
-fn wait_listening(child: &mut Child, log_path: &Path) -> u16 {
-    let deadline = Instant::now() + READY;
+/// When the child exits first or logs nothing within `within`.
+fn wait_listening(child: &mut Child, log_path: &Path, within: Duration) -> u16 {
+    let deadline = Instant::now() + within;
     while Instant::now() < deadline {
         if let Some(port) = listening_port(&read(log_path)) {
             return port;
@@ -169,7 +169,7 @@ impl Mitm {
             .spawn()
             .unwrap();
         let log_path = dir.path().join("mitm.log");
-        let port = wait_listening(&mut child, &log_path);
+        let port = wait_listening(&mut child, &log_path, READY);
         wait_ready(port, Some(&mut child), READY, || read(&log_path));
         let started = StartCost::measure(&prefix, begun, Some(&child));
         Some(Self {
@@ -391,6 +391,41 @@ mod tests {
         assert_eq!(listening_port(log), Some(39551));
         assert_eq!(listening_port("[11:29:01.892] loading addons"), None);
         assert_eq!(listening_port("proxy listening at nowhere."), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_logged_port_is_returned_while_the_child_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("log");
+        fs::write(&log, "HTTP(S) proxy listening at 127.0.0.1:4242.\n").unwrap();
+        let mut child = Command::new("sleep").arg("5").spawn().unwrap();
+        let port = wait_listening(&mut child, &log, Duration::from_secs(5));
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert_eq!(port, 4242);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[should_panic(expected = "mitmproxy exited early")]
+    fn a_mitmproxy_that_exits_before_logging_its_port_is_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("log");
+        fs::write(&log, "Error logged during startup, exiting...\n").unwrap();
+        let mut child = Command::new("true").spawn().unwrap();
+        wait_listening(&mut child, &log, Duration::from_secs(5));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[should_panic(expected = "mitmproxy did not log its port")]
+    fn a_mitmproxy_that_logs_no_port_in_time_is_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("log");
+        // The panic skips any cleanup; the child ends by itself after a second.
+        let mut child = Command::new("sleep").arg("1").spawn().unwrap();
+        wait_listening(&mut child, &log, Duration::from_millis(200));
     }
 
     #[test]

@@ -149,7 +149,7 @@ run lane LLVM_PROFDATA_FLAGS=--failure-mode=all
 [ "$(grep -c '^warning: ' "$tmp/lane.out")" = 1 ] || fail "not exactly one warning with the lane's flag"
 
 # shellcheck disable=SC2016 # a literal pattern
-grep -q 'scripts/coverage-run.sh "\$cargo" --workspace' "$here/scripts/check.sh" ||
+grep -q 'scripts/coverage-run.sh "\$plain_cargo" --workspace' "$here/scripts/check.sh" ||
     fail "check.sh does not run the coverage tests through coverage-run.sh"
 grep -q 'llvm-cov report --lcov' "$here/scripts/check.sh" || fail "check.sh does not report after the tests"
 echo "coverage-run-test: ok"

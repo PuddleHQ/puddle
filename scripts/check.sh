@@ -21,7 +21,8 @@
 # The ui gates need Node 24 (the UI's package-lock.json pins every npm package). ui-e2e also needs
 # the Playwright browsers: `cd ui && npx playwright install --with-deps chromium webkit`.
 # Set CARGO to run every Cargo command through a wrapper, e.g. CARGO=mbx for the shared build
-# cache (docs/STANDARDS.md, "Shared build cache"); unset, it runs plain cargo.
+# cache (docs/STANDARDS.md, "Shared build cache"); unset, it runs plain cargo. The coverage gates
+# ignore it: they always run plain cargo (see `plain_cargo` below).
 # Coverage (docs/STANDARDS.md, "Coverage"): the floors live here, the ratchet baseline in
 # scripts/coverage-baseline.json; raise them, never lower them without the owner's OK. The ratchet
 # lets a total measure up to 0.05 points below its baseline (run-to-run wobble); the floors are exact.
@@ -35,6 +36,10 @@ COV_REGIONS=90
 # Unset it so the wrapper itself (mbx looks up `$CARGO` to find Cargo) doesn't call itself.
 cargo="${CARGO:-cargo}"
 unset CARGO
+# The coverage gates never use the wrapper: a shared cache restores instrumented objects built in another
+# checkout, so from the second checkout on the report counts that checkout's files too and the ratchet
+# fails (about 3 points of lines too low with mbx 1.22). Plain cargo is right in every checkout.
+plain_cargo=cargo
 
 cd "$(dirname "$0")/.."
 
@@ -134,7 +139,7 @@ run_gate() {
         ;;
     hooks)
         scripts/pre-push-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
-            scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh &&
+            scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/coverage-cargo-test.sh &&
             ci/fetch-msb-test.sh && ci/fetch-code-server-test.sh && ci/fetch-tauri-cli-test.sh && ci/check-runtime-layout-test.sh &&
             ci/scope-test.sh && ci/apt-setup-test.sh && ci/advisories-issue-test.sh && ci/quality-issue-test.sh && ci/cache-drop-test.sh &&
             ci/should-run-test.sh && ci/cache-gc-test.sh && ci/test-vm-skip-policy.sh
@@ -287,11 +292,11 @@ run_gate() {
         ui_install
         target=${CARGO_TARGET_DIR:-target}
         # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
-        scripts/coverage-run.sh "$cargo" --workspace $skip_app --all-features --locked \
+        scripts/coverage-run.sh "$plain_cargo" --workspace $skip_app --all-features --locked \
             --profile "${NEXTEST_PROFILE:-default}"
-        "$cargo" llvm-cov report --lcov --output-path "$target/lcov.info"
-        "$cargo" llvm-cov report --summary-only
-        "$cargo" llvm-cov report --json --summary-only --output-path "$target/coverage-summary.json"
+        "$plain_cargo" llvm-cov report --lcov --output-path "$target/lcov.info"
+        "$plain_cargo" llvm-cov report --summary-only
+        "$plain_cargo" llvm-cov report --json --summary-only --output-path "$target/coverage-summary.json"
         ratchet="--summary $target/coverage-summary.json --baseline scripts/coverage-baseline.json"
         ratchet="$ratchet --floor-lines $COV_LINES --floor-regions $COV_REGIONS"
         [ -n "${CI:-}" ] || ratchet="$ratchet --write"

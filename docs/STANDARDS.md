@@ -112,7 +112,12 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
   `cargo ...`), so parallel worktrees share compiled output and one CPU/memory budget. Keep your
   own `CARGO_TARGET_DIR`; mbx leaves it alone. Cached files are read-only hard links: delete the
   cache with `mbx gc` or after `chmod -R u+w`. Don't export `CARGO=mbx` in your shell: mbx finds
-  Cargo through `$CARGO` and would call itself. CI runs plain `cargo`.
+  Cargo through `$CARGO` and would call itself. CI runs plain `cargo`. The `coverage` and
+  `coverage-ratchet` gates ignore `$CARGO` and always run plain `cargo`: a shared cache restores
+  instrumented objects built in another checkout, so from the second checkout on mbx's report counts
+  that checkout's files too and fails the ratchet. Only those gates need a plain target (about 27 GB
+  per checkout, set `CARGO_TARGET_DIR` for it and delete it when done); every other gate, and so
+  `CARGO=mbx git push`, runs through the wrapper.
 
 ## 3. Workflow for agents and humans
 

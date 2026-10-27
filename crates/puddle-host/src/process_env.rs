@@ -38,8 +38,9 @@ pub(crate) fn apply(plan: &RuntimeEnv) -> Result<(), HostError> {
     }
     // SAFETY: on Linux the check above saw a single thread. On Windows Rust's environment
     // functions are thread-safe, but a C reader in this process (its own copy of the environment)
-    // is not covered by that; the call happens before the runtime and other threads start.
-    // macOS is unsupported.
+    // is not covered by that. There is no thread count to check on Windows, so that the
+    // call runs before the runtime and other threads start is the caller's contract. macOS is
+    // unsupported.
     unsafe { plan.apply_to_process() };
     Ok(())
 }

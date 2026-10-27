@@ -55,6 +55,7 @@ async fn hostile_hg11_a_hundred_thousand_streams_over_the_cap_are_each_refused_a
     let before = HEAP.restart_peak();
     let started = Instant::now();
     let bystander = async {
+        // The test's timeline: the bystander starts once the flood is under way.
         tokio::time::sleep(Duration::from_millis(500)).await;
         bystander_round(&rig.bystander, rig.echo).await
     };
@@ -108,6 +109,7 @@ async fn guests(path: &Path) {
             .unwrap();
         held.push(stream);
     }
+    // Settle window: the proxy has accepted the flood connections before the timing starts.
     tokio::time::sleep(Duration::from_millis(500)).await;
     let flooder = Guest::connect_at(path).await;
     let before = HEAP.restart_peak();

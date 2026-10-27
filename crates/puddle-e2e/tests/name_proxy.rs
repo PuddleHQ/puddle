@@ -61,6 +61,7 @@ async fn a_held_name_goes_to_its_server_and_any_other_name_is_connected_to_as_it
             .await
             .unwrap(),
     );
+    // Ordering with no signal: the proxy sees the half-open client go away before the next connection.
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     // Another name: connected to as it stands.

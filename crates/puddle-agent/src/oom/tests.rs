@@ -285,6 +285,7 @@ async fn a_log_line_ready_together_with_the_end_of_the_grace_period_is_served_fi
     let fake = Fake::new("stall", 0);
     let (tx, mut rx) = mpsc::channel(8);
     let task = tokio::spawn(watch(fake.sources(), tx));
+    // Ordering with no signal: three polls (20 ms) let the watch read its baseline counter before the test changes it.
     tokio::time::sleep(Duration::from_millis(60)).await;
     for round in 1..=10_u32 {
         fake.set_counter(u64::from(round));
@@ -310,6 +311,7 @@ async fn watch_reports_a_counted_kill_without_a_log_line_unnamed() {
     let fake = Fake::new("unnamed", 0);
     let (tx, mut rx) = mpsc::channel(8);
     let task = tokio::spawn(watch(fake.sources(), tx));
+    // Ordering with no signal: three polls (20 ms) let the watch read its baseline counter before the test changes it.
     tokio::time::sleep(Duration::from_millis(60)).await;
     fake.set_counter(2);
     assert_eq!(
@@ -331,6 +333,7 @@ async fn watch_works_from_the_log_alone_and_gives_up_with_no_source() {
     sources.vmstat = fake.dir.join("missing");
     let (tx, mut rx) = mpsc::channel(8);
     let task = tokio::spawn(watch(sources.clone(), tx));
+    // Ordering with no signal: three polls (20 ms) let the watch open the log before the test writes to it.
     tokio::time::sleep(Duration::from_millis(60)).await;
     fake.log("3,3,3,-;Out of memory: Killed process 7 (x) total-vm:9kB\n");
     assert_eq!(

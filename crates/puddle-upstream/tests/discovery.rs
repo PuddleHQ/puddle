@@ -271,6 +271,7 @@ async fn a_hundred_parallel_connections_share_one_pac_lookup() {
     let counter = Arc::clone(&calls);
     os.set_pac(move |_| {
         counter.fetch_add(1, Ordering::SeqCst);
+        // Simulated slow PAC lookup so the parallel connections overlap.
         std::thread::sleep(Duration::from_millis(50));
         Ok(vec![proxy("squid", 3128)])
     });
@@ -340,6 +341,7 @@ async fn a_new_epoch_retries_a_failed_wpad_at_once() {
 async fn a_pac_hang_is_cut_off_at_the_timeout() {
     let os = FakeOs::new(pac_settings());
     os.set_pac(|_| {
+        // A PAC script that hangs past the timeout under test.
         std::thread::sleep(Duration::from_millis(400));
         Ok(vec![proxy("late", 1)])
     });

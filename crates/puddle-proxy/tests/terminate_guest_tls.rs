@@ -102,6 +102,7 @@ async fn a_certificate_puddle_could_not_make_is_recorded_as_its_own_failure_not_
             .build()
             .unwrap(),
     );
+    // Waits out the 20 ms validity of the test CA so it is expired.
     tokio::time::sleep(std::time::Duration::from_millis(60)).await;
     rig.use_ca(expired);
     let guest = rig.guest().await;

@@ -203,6 +203,7 @@ async fn without_the_hosts_request_no_server_starts() {
     let mut f = fixture();
     f.config.editor = None;
     let _agent = Agent::start(f.config.clone()).await.unwrap();
+    // Absence window: without the host's request no editor server starts.
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(!f.out.join("1.pid").exists());
     assert!(!f.password_file.exists());

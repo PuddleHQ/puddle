@@ -83,6 +83,7 @@ async fn an_open_sign_in_ends_with_its_window_and_can_be_started_again() {
     let signin = SignIns::new(ToolPaths::new(Some(gh.clone()), None))
         .with_window(Duration::from_millis(300));
     signin.begin(&gh_spec()).await.unwrap();
+    // Three times the 300 ms window, so the first sign-in has ended.
     tokio::time::sleep(Duration::from_millis(900)).await;
     signin.begin(&gh_spec()).await.unwrap();
     assert_eq!(Fakes::log(&gh).matches("ARGS ").count(), 2);
@@ -200,6 +201,7 @@ async fn git_sign_in_does_not_keep_an_answer_for_another_target_and_says_so() {
             "the helper answered for another host or path".into()
         )
     );
+    // Absence window: a late `credential approve` would show in the log by now.
     tokio::time::sleep(Duration::from_millis(300)).await;
     let log = Fakes::log(&git);
     assert!(log.contains("credential fill"), "{log}");

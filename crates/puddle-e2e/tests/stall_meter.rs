@@ -212,8 +212,10 @@ async fn kernel_drop_inner() {
     let mut client = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     let backoff = Backoff::watch(vec![port, client.local_addr().unwrap().port()]);
     tokio::spawn(async move {
+        // The test's timeline: the link works for 0.5 s, then is cut for DROP_FOR.
         tokio::time::sleep(Duration::from_millis(500)).await;
         sh("iptables -A INPUT -i lo -j DROP");
+        // The test's timeline: the cut lasts DROP_FOR, then the link is restored.
         tokio::time::sleep(DROP_FOR).await;
         sh("iptables -F INPUT");
     });

@@ -214,10 +214,11 @@ async fn an_address_query_gets_a_stand_in_from_the_range_and_the_same_one_every_
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_hundred_parallel_queries_for_one_name_cost_one_lookup() {
     let (stub, fake, _) = stub_with(
         |_| async {
+            // Virtual time: the lookup stays open until every query has joined it.
             tokio::time::sleep(Duration::from_millis(50)).await;
             Ok(stand_in())
         },
@@ -382,6 +383,7 @@ async fn lookups_on_the_host_never_exceed_the_limit_and_a_query_that_waits_too_l
             let slot = Slot(Arc::clone(&c));
             async move {
                 let _slot = slot;
+                // The host's lookup time, on virtual time.
                 tokio::time::sleep(Duration::from_millis(1500)).await;
                 Ok(stand_in())
             }
@@ -429,6 +431,7 @@ async fn a_query_that_joins_a_lookup_about_to_give_up_waits_for_a_new_one() {
     // starts its own lookup instead of being dropped with it.
     let (stub, fake, _) = stub_with(
         move |_| async {
+            // The host's lookup time, on virtual time.
             tokio::time::sleep(Duration::from_millis(1900)).await;
             Ok(stand_in())
         },
@@ -441,6 +444,7 @@ async fn a_query_that_joins_a_lookup_about_to_give_up_waits_for_a_new_one() {
     let query_after = |name: &'static str, at_ms: u64| {
         let stub = stub.clone();
         tokio::spawn(async move {
+            // Virtual time: each query is sent at its own instant.
             tokio::time::sleep(Duration::from_millis(at_ms)).await;
             let message = query_bytes(0x4242, name, TYPE_A, None);
             stub.answer(&message, true)
@@ -789,8 +793,9 @@ async fn tcp_connections_over_the_limit_are_closed() {
 
 #[tokio::test]
 async fn udp_queries_over_the_limit_are_dropped_and_the_stub_carries_on() {
-    let (server, _) = serve(
+    let (server, fake) = serve(
         |_| async {
+            // The first query stays in flight (real time: a socket test) while the second arrives.
             tokio::time::sleep(Duration::from_millis(150)).await;
             Ok(stand_in())
         },
@@ -802,8 +807,10 @@ async fn udp_queries_over_the_limit_are_dropped_and_the_stub_carries_on() {
     .await;
     let message = query_bytes(1, "a.example.com", TYPE_A, None);
     let (first, second) = tokio::join!(udp_query(&server, &message), async {
-        // Arrives while the first is still being answered.
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // Arrives once the first is being answered.
+        while fake.asks.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
         udp_query(&server, &message).await
     });
     assert!(first.is_some(), "the query that fit is answered");
@@ -855,6 +862,7 @@ async fn binding_waits_for_an_address_that_is_taken_and_then_serves() {
     let (stub, _, _) = answers_with(stand_in());
     assert!(DnsServer::bind(stub.clone(), listen).await.is_err());
     let task = tokio::spawn(bind_when_ready(stub, listen));
+    // Absence window: the retry interval is 1 s, so the bind has been tried again and still waits.
     tokio::time::sleep(Duration::from_millis(1200)).await;
     assert!(!task.is_finished());
     drop((udp, tcp));

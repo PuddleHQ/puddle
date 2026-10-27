@@ -368,6 +368,7 @@ async fn client_eof_reaches_the_server_only_on_unix() {
         .unwrap();
     assert_eq!(&back, b"last");
     if cfg!(windows) {
+        // Absence window: the end of the client's input is not forwarded as an end of the stream.
         tokio::time::sleep(Duration::from_millis(500)).await;
         assert!(!echo.saw_eof.load(Ordering::SeqCst));
         assert!(!client.bridge.is_finished());

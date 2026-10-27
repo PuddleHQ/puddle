@@ -662,6 +662,7 @@ async fn a_burst_of_five_hundred_distinct_names_all_resolve_for_a_client_with_gl
             port: u16,
         ) -> puddle_proxy::BoxFuture<'a, std::io::Result<Vec<SocketAddr>>> {
             Box::pin(async move {
+                // Simulated slow resolver.
                 tokio::time::sleep(Duration::from_millis(150)).await;
                 Ok(vec![SocketAddr::new(
                     IpAddr::V4(Ipv4Addr::new(93, 184, 215, 14)),

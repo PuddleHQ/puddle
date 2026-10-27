@@ -244,6 +244,7 @@ mod tests {
         let deleter = {
             let path = path.clone();
             thread::spawn(move || {
+                // Ordering with no signal: the delete lands while the tighten step retries.
                 thread::sleep(Duration::from_millis(50));
                 fs::remove_file(path).unwrap();
             })

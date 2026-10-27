@@ -666,6 +666,7 @@ async fn a_connection_the_server_dropped_is_replaced_for_the_next_stream() {
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     assert_eq!(client.get("bound.test", "/1").await.text(), "again");
     server.drop_connections();
+    // Ordering with no signal: the proxy sees the dropped upstream connection before the next request.
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     assert_eq!(client.get("bound.test", "/2").await.text(), "again");
     assert_eq!(server.accepted.load(std::sync::atomic::Ordering::SeqCst), 2);

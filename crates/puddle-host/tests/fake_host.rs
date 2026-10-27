@@ -1743,6 +1743,8 @@ async fn the_listing_says_why_a_remote_is_not_shown_and_a_checkout_it_cannot_rea
         .lock()
         .unwrap()
         .push(("broken".to_owned(), "permission denied".to_owned()));
+    // The host's clock counts milliseconds and a listing begun in the call's own millisecond counts
+    // as fresh: the call has to start after the guest changed.
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     let list = checkouts_of(&api, "adds").await;
@@ -1793,6 +1795,8 @@ async fn a_listing_the_guest_cannot_make_is_a_problem_in_the_answer_not_an_error
     create(&api, &mut events, "adds").await;
     after_boot_listing(&rig).await;
     rig.guest.fail_listing.store(true, Ordering::SeqCst);
+    // The host's clock counts milliseconds and a listing begun in the call's own millisecond counts
+    // as fresh: the call has to start after the guest changed.
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     let list = checkouts_of(&api, "adds").await;
@@ -1915,6 +1919,7 @@ async fn a_clone_the_runtime_cannot_run_fails_the_operation_and_keeps_the_entry(
     let mut events = api.events().await;
     create(&api, &mut events, "adds").await;
     after_boot_listing(&rig).await;
+    // Settle window: the boot's background work is over before the fault is armed. Nothing observable marks it.
     tokio::time::sleep(Duration::from_millis(50)).await;
     // The add looks for the folder first; the next command is the clone.
     rig.runtime.inject(
@@ -2495,6 +2500,7 @@ impl Runtime for SlowPull {
         &self,
         image: &ImageRef,
     ) -> Result<ImageConfig, puddle_compute::ComputeError> {
+        // Simulated slow image pull.
         tokio::time::sleep(self.1).await;
         self.0.pull_image(image).await
     }
@@ -4493,6 +4499,7 @@ async fn the_commit_authors_in_the_running_guest_follow_the_identities() {
         )
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
+    // Absence window: a change that moves no author must not boot the guest again.
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(rig.guest.boots(), booted + 2);
 
@@ -7106,6 +7113,7 @@ async fn a_variable_set_while_the_guest_boots_reaches_its_login_shells_once_it_i
 fn during_the_next_boot_from_another_thread(rig: &Rig, change: impl FnOnce() + Send + 'static) {
     *rig.guest.during_boot.lock().unwrap() = Some(Box::new(move || {
         std::thread::spawn(change).join().unwrap();
+        // Simulated busy boot hook: the change has landed before the hook returns.
         std::thread::sleep(Duration::from_millis(300));
     }));
 }
@@ -7438,6 +7446,7 @@ async fn quiet_workspace(rig: &Rig, name: &'static str) -> (Host<FakeRuntime>, A
     let mut events = api.events().await;
     create(&api, &mut events, name).await;
     after_boot_listing(rig).await;
+    // Settle window: the boot's background work is over, so the test sees a quiet guest. Nothing observable marks it.
     tokio::time::sleep(Duration::from_millis(100)).await;
     (host, api)
 }

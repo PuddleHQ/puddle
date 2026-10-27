@@ -254,6 +254,7 @@ async fn a_guest_cannot_dial_the_front_even_with_every_local_toggle_on() {
             "{authority}: never approvable: {headers:?}"
         );
     }
+    // Absence window: a late connection to the editor would show only after the refusals, and nothing signals one that never comes.
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(
         rig.accepted.load(Ordering::SeqCst),

@@ -137,7 +137,7 @@ fn parse_cpu_time(stat: &str) -> Option<Duration> {
 
 /// A free loopback port. Nothing owns it once this returns, so a program that takes its port
 /// by number (Squid reads it from its config file) may find it taken; start such a program
-/// through [`on_free_port`]. A program that can bind port 0 and report it (mitmproxy) should do
+/// through `on_free_port`. A program that can bind port 0 and report it (mitmproxy) should do
 /// that and never use this.
 #[must_use]
 pub fn free_port() -> u16 {

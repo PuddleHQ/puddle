@@ -19,6 +19,12 @@ repo=${GITHUB_REPOSITORY:?GITHUB_REPOSITORY not set}
 cutoff=$(date -u -d '2 days ago' +%Y-%m-%dT%H:%M:%SZ)
 week=$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)
 
+# One line per entry before anything is deleted: GitHub publishes no eviction log, and this workflow runs after
+# every develop push, so these lines (in the run's summary) are the sample of what was there and when it was last read.
+echo "inventory (key, ref, MB, created, last used):"
+gh api --paginate "repos/$repo/actions/caches?per_page=100" --jq '.actions_caches[]' |
+    jq -r '"  \(.key)  \(.ref)  \(.size_in_bytes / 1000000 | floor)  \(.created_at)  \(.last_accessed_at)"'
+
 gh api --paginate "repos/$repo/actions/caches?per_page=100" --jq '.actions_caches[]' |
     jq -rs --arg cutoff "$cutoff" --arg week "$week" '
       def group: if (.key | test("^v0-rust-.*-[0-9a-f]{8}-[0-9a-f]{8}$"))

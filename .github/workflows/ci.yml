@@ -356,7 +356,8 @@ jobs:
 
   # The msvc cross-check, in its own job: its 12 to 14 minute CRT download on a cargo-xwin cache miss runs next to the
   # Rust job instead of inside its 30 minutes. No Rust cache of its own (the 10 GB cap has no room), so it builds
-  # the check target cold every time.
+  # the check target cold every time. Only a push to develop saves the cargo-xwin entry: a pull request or a queue
+  # run that saved it stored a copy no other ref can read, and the next run missed again (31 of 86 runs missed).
   msvc:
     name: clippy (windows-msvc, cross-checked)
     needs: [scope, queue-tested]
@@ -379,20 +380,23 @@ jobs:
       - name: clang for the msvc cross-check (preinstalled on the runner)
         run: clang --version
       # A miss costs a 12 to 14 minute MSVC CRT download; cache-gc.yml never deletes this entry. It is saved by the
-      # step after the cross-check, not by a post step, so a later red or cancelled step cannot lose it.
+      # step after the cross-check, not by a post step, so a later red or cancelled step cannot lose it. The
+      # restore key finds the entry of an older cargo-xwin version when the version in the key was bumped, so a bump
+      # costs one develop run a refresh, not every pull request a download (queue-tested above looks up the exact key only).
       - name: Cache the MSVC CRT and Windows SDK that cargo-xwin downloads
         id: xwin
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/cargo-xwin
           key: cargo-xwin-0.23.1-x86_64
+          restore-keys: cargo-xwin-
       - name: clippy (windows-msvc, cross-checked)
         if: ${{ !cancelled() }}
         run: scripts/check.sh clippy-windows
       # cargo-xwin writes `xwin/DONE` when the download is complete; a download that failed halfway is never saved.
       - name: Is the cargo-xwin download complete?
         id: xwin-done
-        if: ${{ !cancelled() && steps.xwin.outputs.cache-hit != 'true' }}
+        if: ${{ !cancelled() && github.ref == 'refs/heads/develop' && steps.xwin.outputs.cache-hit != 'true' }}
         run: |
           if [ -f "$HOME/.cache/cargo-xwin/xwin/DONE" ]; then echo "complete=true" >> "$GITHUB_OUTPUT"; else echo "cargo-xwin download incomplete, not saving"; fi
       - name: Save the MSVC CRT and Windows SDK
@@ -401,6 +405,23 @@ jobs:
         with:
           path: ~/.cache/cargo-xwin
           key: cargo-xwin-0.23.1-x86_64
+      # What the next measurement reads from the job summary instead of scraping logs.
+      - name: cargo-xwin cache outcome (job summary)
+        if: ${{ always() }}
+        env:
+          XWIN_HIT: ${{ steps.xwin.outputs.cache-hit }}
+          XWIN_MATCHED: ${{ steps.xwin.outputs.cache-matched-key }}
+          XWIN_DONE: ${{ steps.xwin-done.outputs.complete }}
+          XWIN_REF: ${{ github.ref }}
+        run: |
+          if [ "$XWIN_HIT" = true ]; then restore="hit (exact)"
+          elif [ -n "$XWIN_MATCHED" ]; then restore="prefix hit ($XWIN_MATCHED)"
+          else restore="miss"; fi
+          if [ "$XWIN_DONE" = true ]; then saved="saved"
+          elif [ "$XWIN_REF" != refs/heads/develop ]; then saved="not saved (only develop saves)"
+          elif [ "$XWIN_HIT" = true ]; then saved="not needed (exact hit)"
+          else saved="not saved (download incomplete or step skipped)"; fi
+          echo "- cargo-xwin cache: $restore; $saved" | tee -a "$GITHUB_STEP_SUMMARY"
 
   # The gates a change without Rust, fixtures or gate data can still break. It runs instead of `rust`
   # when ci/scope.sh says no Rust gate is needed (a docs-only or UI-only pull request).

@@ -58,6 +58,9 @@ PATH="$tmp/bin:$PATH" GITHUB_REPOSITORY=o/r FAKE_CACHES="$tmp/caches.tsv" FAKE_D
     "$here/cache-gc.sh" >"$tmp/out" 2>&1 || bad "DRY_RUN=1 failed"
 [ ! -s "$tmp/deleted" ] || bad "DRY_RUN=1 deleted entries"
 grep -q 'gh-readonly-queue/develop/pr-7-abc' "$tmp/out" || bad "DRY_RUN=1 does not list the queue entry"
+# The inventory lists every entry, deleted or kept, with ref, size and times.
+grep -q '^  cargo-xwin-0.23.1-x86_64  refs/heads/develop  1  ' "$tmp/out" || bad "the inventory lacks the develop cargo-xwin entry"
+[ "$(grep -c '^  ' "$tmp/out")" = 8 ] || bad "the inventory should list all 8 entries: $(cat "$tmp/out")"
 
 if [ "$fail" = 0 ]; then
     echo "cache-gc-test: ok"

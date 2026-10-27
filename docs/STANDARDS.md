@@ -106,18 +106,20 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
   Without it and outside CI, `scripts/check.sh` skips that one crate in its Linux gates (clippy, tests, docs,
   coverage) and says so; `clippy-windows` still checks it for the msvc target. Windows needs WebView2, which
   current Windows has.
-- **Shared build cache** (optional, local only): `scripts/check.sh` runs Cargo as `$CARGO`
-  (default `cargo`). With [mbx](https://mr-boxington.jdx.dev/) installed, run
-  `CARGO=mbx MBX_CACHE_DIR=<one shared dir> scripts/check.sh` (and `mbx build|test|...` instead of
-  `cargo ...`), so parallel worktrees share compiled output and one CPU/memory budget. Keep your
-  own `CARGO_TARGET_DIR`; mbx leaves it alone. Cached files are read-only hard links: delete the
-  cache with `mbx gc` or after `chmod -R u+w`. Don't export `CARGO=mbx` in your shell: mbx finds
-  Cargo through `$CARGO` and would call itself. CI runs plain `cargo`. The `coverage` and
-  `coverage-ratchet` gates ignore `$CARGO` and always run plain `cargo`: a shared cache restores
-  instrumented objects built in another checkout, so from the second checkout on mbx's report counts
-  that checkout's files too and fails the ratchet. Only those gates need a plain target (about 27 GB
-  per checkout, set `CARGO_TARGET_DIR` for it and delete it when done); every other gate, and so
-  `CARGO=mbx git push`, runs through the wrapper.
+- **Shared build cache** (optional, local only): with [mbx](https://mr-boxington.jdx.dev/) installed,
+  run `mbx setup` once (or `mbx setup --local` to scope it to a mise project); plain `cargo ...` then
+  runs through mbx in every shell that has mise's command-wrappers directory or mbx's shim directory
+  (`mbx doctor` says which) first on `PATH`. Set `MBX_CACHE_DIR=<one shared dir>` so parallel worktrees
+  share compiled output and one CPU/memory budget. Without the shim, `scripts/check.sh` still runs Cargo
+  as `$CARGO` (default `cargo`): `CARGO=mbx scripts/check.sh` works, and `mbx build|test|...` can stand in
+  for `cargo ...`. Keep your own `CARGO_TARGET_DIR`; mbx leaves it alone. Cached files are read-only hard
+  links: delete the cache with `mbx gc` or after `chmod -R u+w`. Don't export `CARGO=mbx` in your shell:
+  mbx finds Cargo through `$CARGO` and would call itself. CI runs plain `cargo`. The `coverage` and
+  `coverage-ratchet` gates always run plain `cargo`, looked up past the shim's directories and ignoring
+  `$CARGO`: a shared cache restores instrumented objects built in another checkout, so from the second
+  checkout on mbx's report counts that checkout's files too and fails the ratchet. Only those gates need
+  a plain target (about 27 GB per checkout, set `CARGO_TARGET_DIR` for it and delete it when done); every
+  other gate, and so `git push`, runs through mbx.
 
 ## 3. Workflow for agents and humans
 

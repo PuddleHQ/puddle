@@ -123,7 +123,7 @@ sweep)
         [ -n "$shard" ] && shard_args="--shard $shard"
         mkdir -p "$out/$c"
         rc=0
-        # shellcheck disable=SC2086
+        # shellcheck disable=SC2086 # shard_args is empty or two words, split on purpose
         "$cargo" mutants -p "$c" -j "$jobs" $shard_args --output "$out/$c" || rc=$?
         report "$out/$c/mutants.out"
         if [ "$rc" -ne 0 ]; then

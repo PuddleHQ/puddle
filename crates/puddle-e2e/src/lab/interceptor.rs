@@ -430,6 +430,8 @@ mod tests {
 
     #[test]
     fn an_interceptor_binds_its_own_port_and_nobody_else_can_take_it() {
+        // `start` panics when `PUDDLE_REQUIRE_MITMPROXY` is set (CI) and prints `skipped:` and
+        // gives `None` otherwise, so a host without mitmdump skips visibly and CI cannot.
         let Some(interceptor) = Interceptor::start(&[]) else {
             return;
         };

@@ -9,6 +9,7 @@
 //! reported, never worked around.
 
 use std::ffi::c_void;
+use std::marker::PhantomData;
 use std::ptr;
 
 use windows_sys::Win32::Foundation::{
@@ -246,12 +247,15 @@ impl CertContext {
     /// Opens the certificate's CNG key silently. Legacy (CAPI) keys fail here, which counts as
     /// not exportable.
     #[expect(unsafe_code, reason = "CryptoAPI key acquisition")]
-    fn open_key(&self) -> Result<KeyHandle, u32> {
+    fn open_key(&self) -> Result<KeyHandle<'_>, u32> {
         let mut handle = 0_usize;
         let mut spec: CERT_KEY_SPEC = 0;
         let mut caller_frees = 0;
-        // SAFETY: the context is valid; the three out pointers are valid for writes. Silent: no
-        // PIN or consent window can appear. Only CNG keys are asked for.
+        // SAFETY: the context is valid; the three out pointers are valid for writes. The silent
+        // flag asks for no PIN or consent window: if the provider needs one, the call fails
+        // (`NTE_SILENT_CONTEXT`) instead of showing it. Only CNG keys are asked for. With
+        // `caller_frees` zero the key belongs to the certificate context, so the returned
+        // `KeyHandle` borrows `self`.
         let ok = unsafe {
             CryptAcquireCertificatePrivateKey(
                 self.0,
@@ -262,18 +266,22 @@ impl CertContext {
                 &raw mut caller_frees,
             )
         };
-        if ok == 0 || spec != CERT_NCRYPT_KEY_SPEC {
-            // SAFETY: no preconditions; reads the last error of the call just made.
-            return Err(unsafe { GetLastError() });
+        // Built first, so a key the caller must free is freed on every path below.
+        let key = (ok != 0).then_some(KeyHandle(handle, caller_frees != 0, PhantomData));
+        match key {
+            Some(key) if spec == CERT_NCRYPT_KEY_SPEC => Ok(key),
+            // SAFETY: no preconditions; reads the last error of the call just made (for a
+            // success with another key spec, which `ONLY_NCRYPT_KEY` rules out, it is stale).
+            _ => Err(unsafe { GetLastError() }),
         }
-        Ok(KeyHandle(handle, caller_frees != 0))
     }
 }
 
-/// A CNG key handle; freed on drop when the call that gave it says the caller must.
-struct KeyHandle(usize, bool);
+/// A CNG key handle; freed on drop when the call that gave it says the caller must. When it is
+/// not freed, it is valid only while the certificate context is, which `'a` ties it to.
+struct KeyHandle<'a>(usize, bool, PhantomData<&'a CertContext>);
 
-impl Drop for KeyHandle {
+impl Drop for KeyHandle<'_> {
     #[expect(unsafe_code, reason = "CNG handle release")]
     fn drop(&mut self) {
         if self.1 {

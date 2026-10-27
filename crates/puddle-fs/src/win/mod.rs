@@ -103,7 +103,8 @@ pub fn create_owner_only_dir(dir: &Path) -> io::Result<()> {
     let descriptor = owner_only_descriptor("FA", true)?;
     let attrs = descriptor.attributes();
     let wide = wide_nul(dir.as_os_str());
-    // SAFETY: as for `create_owner_only_file`.
+    // SAFETY: `wide` is NUL-terminated and outlives the call; `attrs` points at a descriptor that
+    // `descriptor` keeps alive.
     if unsafe { CreateDirectoryW(wide.as_ptr(), &raw const attrs) } == 0 {
         return Err(io::Error::last_os_error());
     }
@@ -226,11 +227,18 @@ pub fn dacl_is_owner_only(file: &File) -> io::Result<Result<(), String>> {
         if u32::from(header.AceType) != ACCESS_ALLOWED_ACE_TYPE {
             return Ok(Err(format!("entry {index} is not a plain allow entry")));
         }
-        // SAFETY: the type check above makes this an ACCESS_ALLOWED_ACE.
-        let ace = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
-        // SAFETY: an ACCESS_ALLOWED_ACE's SID starts at SidStart; the user's SID is valid while
-        // `user` lives.
-        let same = unsafe { EqualSid((&raw const ace.SidStart).cast_mut().cast(), user.sid()) };
+        // SAFETY: the type check above makes this an ACCESS_ALLOWED_ACE. The SID starts at
+        // `SidStart` and extends past the struct, so the pointer is taken straight from the one
+        // `GetAce` gave (no reference to the struct in between, whose provenance would end at the
+        // struct). `EqualSid` only reads it; the user's SID is valid while `user` lives.
+        let same = unsafe {
+            EqualSid(
+                (&raw const (*ace.cast::<ACCESS_ALLOWED_ACE>()).SidStart)
+                    .cast_mut()
+                    .cast(),
+                user.sid(),
+            )
+        };
         if same == 0 {
             return Ok(Err(format!(
                 "entry {index} grants access to another account"
@@ -266,7 +274,10 @@ pub fn process_token(access: TOKEN_ACCESS_MASK) -> io::Result<OwnedHandle> {
 pub fn pipe_server_user_sid(pipe: &impl AsRawHandle) -> io::Result<String> {
     let mut pid = 0u32;
     // SAFETY: `pipe` is a live pipe handle the caller borrows for the whole call, and `pid` is a
-    // valid out-pointer.
+    // valid out-pointer. The documentation names a handle made by `CreateNamedPipe`; the client
+    // end (from `CreateFile`) is used here and works in practice, and a failure is an error.
+    // The pid can be reused by another process between this call and `OpenProcess`, so the
+    // caller must compare the returned SID and never trust the pid itself.
     if unsafe { GetNamedPipeServerProcessId(pipe.as_raw_handle(), &raw mut pid) } == 0 {
         return Err(io::Error::last_os_error());
     }
@@ -367,7 +378,9 @@ fn sid_to_string(sid: PSID) -> io::Result<String> {
 ///
 /// # Errors
 ///
-/// The OS error of the call; both files are as they were.
+/// The OS error of the call. Most failures leave both files as they were;
+/// `ERROR_UNABLE_TO_MOVE_REPLACEMENT` (1176) can leave `to` missing and `from` in place, and
+/// `ERROR_UNABLE_TO_MOVE_REPLACEMENT_2` (1177) leaves `to` under another name.
 pub fn replace_file(from: &Path, to: &Path) -> io::Result<()> {
     let from = wide_nul(from.as_os_str());
     let to = wide_nul(to.as_os_str());

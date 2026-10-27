@@ -8,7 +8,9 @@ use std::sync::{Arc, Weak};
 use std::thread::JoinHandle;
 
 use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE, WAIT_OBJECT_0};
-use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+use windows_sys::Win32::System::LibraryLoader::{
+    GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
+};
 use windows_sys::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, KEY_NOTIFY, REG_NOTIFY_CHANGE_LAST_SET, REG_NOTIFY_THREAD_AGNOSTIC,
     RegCloseKey, RegNotifyChangeKeyValue, RegOpenKeyExW,
@@ -68,8 +70,16 @@ impl WinHttpWatch {
     /// Registers `on_change` with WinHTTP, or says why it could not.
     fn register(on_change: &ChangeCallback) -> Result<Self, String> {
         let library = wide("winhttp.dll");
-        // SAFETY: valid terminated name; winhttp.dll is a system library already loaded by the crate.
-        let module = unsafe { LoadLibraryW(library.as_ptr()) };
+        // SAFETY: valid terminated name; the reserved file handle is null as required. A bare name
+        // would use the DLL search order unless the module is already loaded, so the search is
+        // limited to the system directory.
+        let module = unsafe {
+            LoadLibraryExW(
+                library.as_ptr(),
+                std::ptr::null_mut(),
+                LOAD_LIBRARY_SEARCH_SYSTEM32,
+            )
+        };
         if module.is_null() {
             return Err(format!(
                 "winhttp.dll could not be loaded: {}",
@@ -157,7 +167,7 @@ impl SendHandle {
         self.0
     }
 }
-// SAFETY: event handles may be waited on from any thread.
+// SAFETY: kernel handles (an event, a registry key) are process-wide, not tied to a thread.
 unsafe impl Send for SendHandle {}
 
 /// How one wait of the registry watcher ended.

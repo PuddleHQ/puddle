@@ -92,10 +92,6 @@ struct Context {
     target: Vec<u16>,
 }
 
-// SAFETY: the handles are plain values owned by this struct and used by one caller at a time
-// (`&mut self`); SSPI contexts may be used from any thread.
-unsafe impl Send for Context {}
-
 impl fmt::Debug for Context {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SspiContext")
@@ -114,7 +110,12 @@ impl SecurityContext for Context {
         if let Some(bytes) = input {
             in_buffer.cbBuffer = u32::try_from(bytes.len())
                 .map_err(|_| AuthError::Failed("proxy challenge too large".into()))?;
-            in_buffer.pvBuffer = bytes.as_ptr().cast_mut().cast::<c_void>();
+        }
+        // A private copy: the docs do not promise that `pInput` is never written, and the
+        // challenge bytes are shared.
+        let mut input_copy = input.map(<[u8]>::to_vec);
+        if let Some(bytes) = input_copy.as_mut() {
+            in_buffer.pvBuffer = bytes.as_mut_ptr().cast::<c_void>();
         }
         let in_desc = SecBufferDesc {
             ulVersion: SECBUFFER_VERSION,
@@ -134,9 +135,11 @@ impl SecurityContext for Context {
         let mut attributes = 0u32;
         let mut expiry = 0i64;
         let context: *mut SecHandle = &raw mut self.security;
+        // The SSPs are not thread-safe ("do not use the same context handle in concurrent calls"):
+        // every call on a handle goes through `LOCK`.
         let _guard = locked();
         // SAFETY: every pointer is to a live local or to `self`; the input buffer points into
-        // `input`, which outlives the call and is only read; the output buffer is allocated by
+        // `input_copy`, which outlives the call; the output buffer is allocated by
         // SSPI (`ISC_REQ_ALLOCATE_MEMORY`) and freed below. The same handle is passed as the
         // existing and the new context after the first call, as the API requires. No flag asks
         // for a credential prompt.

@@ -36,8 +36,10 @@ pub(crate) fn apply(plan: &RuntimeEnv) -> Result<(), HostError> {
     if !environment_may_change(thread_count()) {
         return Err(HostError::EnvironmentTooLate);
     }
-    // SAFETY: on Linux the check above saw a single thread; elsewhere the platform's environment
-    // calls are thread-safe (Windows) or Puddle does not run (macOS is unsupported).
+    // SAFETY: on Linux the check above saw a single thread. On Windows Rust's environment
+    // functions are thread-safe, but a C reader in this process (its own copy of the environment)
+    // is not covered by that; the call happens before the runtime and other threads start.
+    // macOS is unsupported.
     unsafe { plan.apply_to_process() };
     Ok(())
 }

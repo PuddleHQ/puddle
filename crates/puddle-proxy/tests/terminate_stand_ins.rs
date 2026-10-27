@@ -101,7 +101,11 @@ async fn a_stand_in_is_swapped_toward_its_host_and_only_the_real_server_sees_the
     let event = &rig.events(1).await[0];
     assert!(event.injected);
     assert_eq!(event.binding_id.as_deref(), Some("stand-in:secret:API_KEY"));
-    assert!(!event.placeholder_unbound);
+    assert_eq!(
+        event.unswapped_stand_ins,
+        ["stand-in:secret:API_KEY"],
+        "the query string is not swapped, and the record says which stand-in was in it"
+    );
     assert_eq!(event.http.as_ref().unwrap().path(), "/v1/models");
     let audit = format!("{event:?}");
     assert!(!audit.contains(REAL_KEY) && !audit.contains(&stand_in));
@@ -208,7 +212,7 @@ async fn a_stand_in_toward_another_decrypted_host_goes_out_unchanged_and_is_flag
     );
     assert!(home.recorded().is_empty());
     let event = &rig.events(1).await[0];
-    assert!(event.placeholder_unbound);
+    assert_eq!(event.unswapped_stand_ins, ["stand-in:secret:API_KEY"]);
     assert!(!event.injected, "nothing was added");
     assert_eq!(event.binding_id, None);
     assert!(!captured_logs().contains(REAL_KEY));
@@ -257,7 +261,7 @@ async fn another_workspaces_stand_in_is_just_a_string() {
     assert!(!seen.iter().any(|r| r.header("x-api-key") == Some(REAL_KEY)));
     let events = rig.events(1).await;
     assert!(
-        !events[0].placeholder_unbound,
+        events[0].unswapped_stand_ins.is_empty(),
         "an unknown stand-in is not one of this workspace's"
     );
 }
@@ -322,7 +326,7 @@ async fn a_server_whose_certificate_is_not_accepted_never_gets_the_real_value() 
     assert!(bad.recorded().is_empty());
     assert!(!format!("{response:?}").contains(REAL_KEY));
     let event = &rig.events(1).await[0];
-    assert!(!event.injected && !event.placeholder_unbound);
+    assert!(!event.injected && event.unswapped_stand_ins.is_empty());
     assert!(!captured_logs().contains(REAL_KEY));
 }
 
@@ -361,4 +365,65 @@ async fn a_stand_in_and_a_credential_binding_work_side_by_side() {
         "the credential binding is the one the audit names"
     );
     assert!(event.injected);
+}
+
+#[tokio::test]
+async fn stand_ins_in_the_path_or_an_escaped_query_go_out_unchanged_and_the_record_names_them() {
+    let pki = Pki::new();
+    let server = upstream(&pki, "bound.test", ok_handler()).await;
+    let (stand_ins, api) = registry();
+    let (token, token_entry) = entry("GH_TOKEN", REAL_TOKEN, &["bound.test"]);
+    stand_ins.insert(token_entry).unwrap();
+    let escaped = format!("%70{}", api.strip_prefix('p').unwrap());
+    let target = format!("/repos/{token}/x?k={escaped}");
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .injector(pass_through())
+        .stand_ins(&stand_ins)
+        .build();
+    let mut guest = rig.guest().await;
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    client
+        .send(format!("GET {target} HTTP/1.1\r\nHost: bound.test\r\n\r\n").as_bytes())
+        .await;
+    assert_eq!(client.response("GET").await.status, 200);
+    client.close().await;
+
+    assert_eq!(
+        server.recorded()[0].target,
+        target,
+        "the target is sent as it came"
+    );
+    let event = &rig.events(1).await[0];
+    assert_eq!(
+        event.unswapped_stand_ins,
+        ["stand-in:secret:API_KEY", "stand-in:secret:GH_TOKEN"],
+        "both toward their own host, each named once"
+    );
+    assert!(!event.injected, "nothing was swapped");
+    assert!(!captured_logs().contains(REAL_KEY));
+    assert!(!captured_logs().contains(REAL_TOKEN));
+}
+
+#[tokio::test]
+async fn a_request_whose_target_holds_no_stand_in_leaves_the_record_list_empty() {
+    let pki = Pki::new();
+    let server = upstream(&pki, "bound.test", ok_handler()).await;
+    let (stand_ins, _) = registry();
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .injector(pass_through())
+        .stand_ins(&stand_ins)
+        .build();
+    let mut guest = rig.guest().await;
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    client
+        .send(b"GET /v1/models?key=%70uddle-secret-not-ours&a=%zz HTTP/1.1\r\nHost: bound.test\r\n\r\n")
+        .await;
+    assert_eq!(client.response("GET").await.status, 200);
+    client.close().await;
+    assert_eq!(
+        rig.events(1).await[0].unswapped_stand_ins,
+        Vec::<String>::new()
+    );
 }

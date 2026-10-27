@@ -347,12 +347,22 @@ function connectionDetail(
   const unreached = unreachedNote(record);
   if (unreached !== null) parts.push(unreached);
   if (record.injected) parts.push("credential added");
-  if (record.placeholder_unbound) {
-    parts.push(
-      "secret stand-in went to a host it is not for (check the secret's hosts)",
-    );
+  if (record.unswapped_stand_ins.length > 0) {
+    parts.push(unswappedNote(record.unswapped_stand_ins));
   }
   return parts.join(" · ");
+}
+
+/** A stand-in id is `stand-in:<secret|login>:<name>`; a name carries no colon. */
+function standInLabel(id: string): string {
+  const [prefix, kind, name] = id.split(":");
+  if (prefix !== "stand-in" || name === undefined) return id;
+  return kind === "login" ? `login ${name}` : name;
+}
+
+function unswappedNote(ids: readonly string[]): string {
+  const names = ids.map(standInLabel).join(", ");
+  return `stand-in for ${names} went out unchanged (check the secret's hosts, and that the tool sends it in a header, not in the URL)`;
 }
 
 function unreachedNote(

@@ -735,7 +735,7 @@ async fn relay(
         event.outcome = done.connect;
         event.injected = done.injected;
         event.binding_id = done.binding_id;
-        event.placeholder_unbound = done.placeholder_unbound;
+        event.unswapped_stand_ins = done.unswapped_stand_ins;
         if done.sni_mismatch {
             event.decision = ConnectionDecision::Blocked;
             event.reason = ConnectionReason::SniMismatch;

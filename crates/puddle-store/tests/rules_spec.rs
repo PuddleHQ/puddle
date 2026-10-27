@@ -1164,20 +1164,23 @@ fn r25_no_secret_reaches_the_audit() {
 }
 
 #[test]
-fn r24_a_stand_in_sent_to_the_wrong_host_is_flagged_in_its_record_only() {
+fn r24_the_stand_ins_sent_unswapped_are_named_in_their_record_only() {
     let (_, store) = fixture();
     let mut flagged = connection("a");
-    flagged.placeholder_unbound = true;
+    flagged.unswapped_stand_ins = vec!["stand-in:secret:GH_TOKEN".to_owned()];
     store.record_connection(&flagged).unwrap();
     store.record_connection(&connection("b")).unwrap();
     let records = audit_of(&store, "connection");
     let flags: Vec<_> = records
         .iter()
-        .map(|r| (r["workspace_id"].clone(), r["placeholder_unbound"].clone()))
+        .map(|r| (r["workspace_id"].clone(), r["unswapped_stand_ins"].clone()))
         .collect();
     assert_eq!(
         flags,
-        [(json!("a"), json!(true)), (json!("b"), json!(false))]
+        [
+            (json!("a"), json!(["stand-in:secret:GH_TOKEN"])),
+            (json!("b"), json!([]))
+        ]
     );
 }
 

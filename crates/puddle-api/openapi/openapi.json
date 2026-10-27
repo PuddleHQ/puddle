@@ -8202,7 +8202,7 @@
               "pending_id",
               "binding_id",
               "injected",
-              "placeholder_unbound",
+              "unswapped_stand_ins",
               "method",
               "path",
               "path_truncated",
@@ -8303,10 +8303,6 @@
                 "format": "int64",
                 "description": "The pending request."
               },
-              "placeholder_unbound": {
-                "type": "boolean",
-                "description": "Whether a secret stand-in went to a host outside its hosts, unchanged. Records written\nbefore it existed read as `false`."
-              },
               "port": {
                 "type": [
                   "integer",
@@ -8353,6 +8349,13 @@
                 "enum": [
                   "connection"
                 ]
+              },
+              "unswapped_stand_ins": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The ids (`stand-in:<secret|login>:<name>`) of the secret stand-ins that went out\nunchanged, to a host outside their hosts or in the path or query. Records written\nbefore it existed read as empty."
               },
               "upstream": {
                 "type": [

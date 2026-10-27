@@ -266,13 +266,28 @@ describe("a record as a row", () => {
       expect(plain.detail).toBe("rule 1");
     }
   });
-  it("flags a secret stand-in that went to a host it is not for", () => {
+  it("names the stand-ins that went out unchanged", () => {
     const view = row(
-      connection(1, { placeholder_unbound: true, method: "GET", path: "/x" })
-        .record,
+      connection(1, {
+        unswapped_stand_ins: ["stand-in:secret:GH_TOKEN"],
+        method: "GET",
+        path: "/x",
+      }).record,
     );
     expect(view.detail).toBe(
-      "GET /x · rule 1 · secret stand-in went to a host it is not for (check the secret's hosts)",
+      "GET /x · rule 1 · stand-in for GH_TOKEN went out unchanged (check the secret's hosts, and that the tool sends it in a header, not in the URL)",
+    );
+    const several = row(
+      connection(3, {
+        unswapped_stand_ins: [
+          "stand-in:secret:API_KEY",
+          "stand-in:login:work-github",
+          "odd",
+        ],
+      }).record,
+    );
+    expect(several.detail).toContain(
+      "stand-in for API_KEY, login work-github, odd went out unchanged",
     );
     expect(row(connection(2, {}).record).detail).not.toContain("stand-in");
   });

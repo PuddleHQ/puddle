@@ -567,7 +567,7 @@ async fn exchange(
     let mut headers =
         request::upstream_headers_h2(request.headers(), &cx.target, injection.as_ref(), version)?;
     record_injection(shared, injection.as_ref());
-    swap_stand_ins(shared, &mut headers, injection.as_ref());
+    swap_stand_ins(shared, &mut headers, &checked.path, injection.as_ref());
     if checked.protocol.is_some() {
         let guest_upgrade = hyper::upgrade::on(&mut request);
         return websocket(shared, guest_upgrade, &checked, route, headers, guard).await;
@@ -1036,19 +1036,27 @@ fn no_random_bytes() -> Refusal {
 }
 
 /// Swaps the workspace's stand-ins in `headers` for their real values, as the HTTP/1.1 path does
-/// (the injected headers are left alone), and notes it for the audit.
-fn swap_stand_ins(shared: &Shared, headers: &mut HeaderMap, injection: Option<&Injection>) {
+/// (the injected headers are left alone), reports the ones in the request `target`, and notes
+/// both for the audit.
+fn swap_stand_ins(
+    shared: &Shared,
+    headers: &mut HeaderMap,
+    target: &str,
+    injection: Option<&Injection>,
+) {
     let host = &shared.cx.target.host;
     let swapped = shared
         .cx
         .termination
         .stand_ins()
         .swap(headers, host, injection);
-    shared
+    let in_target = shared.cx.termination.stand_ins().scan_target(target);
+    let mut outcome = shared
         .outcome
         .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .record_stand_ins(host, &swapped);
+        .unwrap_or_else(PoisonError::into_inner);
+    outcome.record_stand_ins(host, &swapped);
+    outcome.record_stand_ins(host, &in_target);
 }
 
 fn record_injection(shared: &Shared, injection: Option<&Injection>) {

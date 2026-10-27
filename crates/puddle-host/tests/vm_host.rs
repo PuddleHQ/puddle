@@ -1186,7 +1186,7 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
     );
     let swapped = record_where(&api, &name, ALPHA, |r| r["injected"] == true).await;
     assert_eq!(swapped["binding_id"], "stand-in:secret:PROBE_A");
-    assert_eq!(swapped["placeholder_unbound"], false);
+    assert_eq!(swapped["unswapped_stand_ins"], serde_json::json!([]));
     // The site was sent the real value, which only the proxy had. (A failure lists the requests
     // by method and target: their headers hold the secret.)
     let requests = || {
@@ -1206,13 +1206,59 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
 
     // The same stand-in toward another decrypted host goes out unchanged and is flagged.
     guest(&runtime, &sandbox, &curl(BETA, "X-Probe", "$PROBE_A")).await;
-    let flagged = record_where(&api, &name, BETA, |r| r["placeholder_unbound"] == true).await;
+    let flagged = record_where(&api, &name, BETA, |r| {
+        r["unswapped_stand_ins"] == serde_json::json!(["stand-in:secret:PROBE_A"])
+    })
+    .await;
     assert_eq!(flagged["injected"], false);
     let (seen, listed) = requests();
     assert!(
         seen.iter().any(|r| r.headers_named("host") == [BETA]
             && r.headers_named("x-probe") == [stand_a.as_str()]),
         "{BETA} was not sent the stand-in unchanged; requests seen: {listed:?}"
+    );
+
+    // A stand-in in the URL is never swapped, even toward its own host: the site gets it as it
+    // came and the record names the secret.
+    guest(
+        &runtime,
+        &sandbox,
+        &format!(
+            "curl -s -o /dev/null --max-time 60 \"https://{ALPHA}/in-the-url/$PROBE_A?k=$PROBE_A\""
+        ),
+    )
+    .await;
+    let in_url = record_where(&api, &name, ALPHA, |r| {
+        r["unswapped_stand_ins"] == serde_json::json!(["stand-in:secret:PROBE_A"])
+    })
+    .await;
+    assert_eq!(in_url["injected"], false);
+    let (seen, listed) = requests();
+    assert!(
+        seen.iter()
+            .any(|r| r.target == format!("/in-the-url/{stand_a}?k={stand_a}")),
+        "{ALPHA} was not sent the URL as it came; requests seen: {listed:?}"
+    );
+
+    // A stand-in this workspace's proxy does not hold (another workspace's has other random
+    // bytes) is only a string: not swapped, not flagged.
+    let foreign = format!("puddle-secret-PROBE_A-{}", "0123456789abcdef".repeat(2));
+    assert_ne!(foreign, stand_a);
+    guest(&runtime, &sandbox, &curl(ALPHA, "X-Foreign", &foreign)).await;
+    let mut foreign_seen = false;
+    for _ in 0..60 {
+        let (seen, _) = requests();
+        foreign_seen = seen
+            .iter()
+            .any(|r| r.headers_named("x-foreign") == [foreign.as_str()]);
+        if foreign_seen {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    assert!(
+        foreign_seen,
+        "{ALPHA} did not get the foreign stand-in as it came"
     );
 
     // A secret added to the running workspace: its host is decrypted from the next connection,

@@ -432,7 +432,7 @@ fn connection(ts: u64, workspace: &str, host: &str, decision: ConnectionDecision
         pending_id: None,
         binding_id: None,
         injected: false,
-        placeholder_unbound: false,
+        unswapped_stand_ins: Vec::new(),
         method: None,
         path: None,
         path_truncated: false,

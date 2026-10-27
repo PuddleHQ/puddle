@@ -267,10 +267,12 @@ pub struct ConnectionEvent {
     pub binding_id: Option<String>,
     /// Whether a credential was injected.
     pub injected: bool,
-    /// Whether a secret stand-in was sent to a host outside the hosts it is for, and so went out
-    /// unchanged. The stand-in is worthless there; the flag shows a wrong host list or a
-    /// workspace that sends its environment somewhere it should not.
-    pub placeholder_unbound: bool,
+    /// The ids of the secret stand-ins that went out unchanged, each once: to a host outside the
+    /// hosts they are for, or inside the request's path or query, which is never swapped. A
+    /// stand-in is worthless there; the list shows a wrong host list, a tool that sends its
+    /// secret in the URL, or a workspace that sends its environment somewhere it should not.
+    /// An id reads `stand-in:<secret|login>:<name>`; it never carries a value.
+    pub unswapped_stand_ins: Vec<String>,
     /// Method and path, when the proxy saw the request in clear.
     pub http: Option<HttpRequestLine>,
     /// Bytes from the guest.
@@ -302,7 +304,7 @@ impl ConnectionEvent {
             pending_id: None,
             binding_id: None,
             injected: false,
-            placeholder_unbound: false,
+            unswapped_stand_ins: Vec::new(),
             http: None,
             bytes_up: 0,
             bytes_down: 0,
@@ -333,7 +335,7 @@ impl ConnectionEvent {
             pending_id: None,
             binding_id: None,
             injected: false,
-            placeholder_unbound: false,
+            unswapped_stand_ins: Vec::new(),
             http: None,
             bytes_up: 0,
             bytes_down: 0,

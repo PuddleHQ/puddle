@@ -58,6 +58,10 @@ where
     .await;
 }
 
+/// Most stand-in ids one connection record carries; a workspace has few secrets, and a record
+/// stays small however many a guest names.
+pub(crate) const MAX_UNSWAPPED_STAND_INS: usize = 16;
+
 /// What a connection did, for the audit record.
 #[derive(Debug, Default)]
 #[expect(
@@ -71,8 +75,9 @@ pub(crate) struct Outcome {
     pub(crate) injected: bool,
     /// The binding that supplied it.
     pub(crate) binding_id: Option<String>,
-    /// A secret stand-in went to a host it is not for, and out unchanged.
-    pub(crate) placeholder_unbound: bool,
+    /// The ids of the stand-ins that went out unchanged (wrong host, or in the request target),
+    /// each once, at most [`MAX_UNSWAPPED_STAND_INS`].
+    pub(crate) unswapped_stand_ins: Vec<String>,
     /// The address first connected to.
     pub(crate) resolved_ip: Option<std::net::IpAddr>,
     /// The company-proxy hop that carried the first connection.
@@ -95,17 +100,23 @@ pub(crate) struct Outcome {
 
 impl Outcome {
     /// Notes what the stand-in swap did to a request: a swapped stand-in counts as an injected
-    /// credential (its id is the binding unless a binding already is), an unbound one raises the
-    /// flag.
+    /// credential (its id is the binding unless a binding already is), one that went out
+    /// unchanged joins the record's list.
     pub(crate) fn record_stand_ins(&mut self, host: &Host, swapped: &Swapped) {
-        if !swapped.unbound.is_empty() {
-            tracing::info!(%host, stand_ins = ?swapped.unbound, "a stand-in went to a host it is not for, unchanged");
+        if !swapped.unswapped.is_empty() {
+            tracing::info!(%host, stand_ins = ?swapped.unswapped, "a stand-in went out unchanged (a host it is not for, or the request target)");
         }
         if let Some(id) = swapped.swapped.first() {
             self.injected = true;
             self.binding_id.get_or_insert_with(|| id.clone());
         }
-        self.placeholder_unbound |= !swapped.unbound.is_empty();
+        for id in &swapped.unswapped {
+            if self.unswapped_stand_ins.len() < MAX_UNSWAPPED_STAND_INS
+                && !self.unswapped_stand_ins.contains(id)
+            {
+                self.unswapped_stand_ins.push(id.clone());
+            }
+        }
     }
 }
 
@@ -385,7 +396,7 @@ where
             Ok(headers) => headers,
             Err(refusal) => return self.refuse(&refusal).await,
         };
-        let headers = self.add_credentials(headers, injection.as_ref());
+        let headers = self.add_credentials(headers, &parsed.target, injection.as_ref());
         let view = RequestView::new(&parsed.method, &parsed.target, &head.headers);
         let (headers, prefetched, mut exchange) = match self
             .begin_exchange(&parsed, &view, headers, prefetched)
@@ -503,10 +514,12 @@ where
     }
 
     /// Notes the injected credential for the audit, then swaps the workspace's stand-ins in
-    /// `headers` for their real values (the injected headers are left alone).
+    /// `headers` for their real values (the injected headers are left alone) and reports the ones
+    /// found in the request `target`.
     fn add_credentials(
         &mut self,
         mut headers: ::http::HeaderMap,
+        target: &str,
         injection: Option<&Injection>,
     ) -> ::http::HeaderMap {
         if let Some(injection) = injection {
@@ -522,6 +535,8 @@ where
             .stand_ins()
             .swap(&mut headers, host, injection);
         self.outcome.record_stand_ins(host, &swapped);
+        let in_target = self.cx.termination.stand_ins().scan_target(target);
+        self.outcome.record_stand_ins(host, &in_target);
         headers
     }
 
@@ -906,4 +921,30 @@ pub(crate) fn upstream_tls_refusal(name: &str, err: &TlsConnectError) -> Refusal
     Refusal::new("502 Bad Gateway", message)
         .header("x-puddle-blocked-by", "upstream-tls")
         .failed(ConnectionOutcome::ConnectFailed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unswapped(ids: &[String]) -> Swapped {
+        Swapped {
+            unswapped: ids.to_vec(),
+            ..Swapped::default()
+        }
+    }
+
+    #[test]
+    fn the_record_lists_each_unswapped_stand_in_once_and_stops_at_the_cap() {
+        let host = Host::parse_normalised("bound.test").unwrap();
+        let mut outcome = Outcome::default();
+        let ids: Vec<String> = (0..MAX_UNSWAPPED_STAND_INS + 5)
+            .map(|n| format!("stand-in:secret:S{n}"))
+            .collect();
+        outcome.record_stand_ins(&host, &unswapped(&ids[..3]));
+        outcome.record_stand_ins(&host, &unswapped(&ids[1..4]));
+        assert_eq!(outcome.unswapped_stand_ins, ids[..4]);
+        outcome.record_stand_ins(&host, &unswapped(&ids));
+        assert_eq!(outcome.unswapped_stand_ins, ids[..MAX_UNSWAPPED_STAND_INS]);
+    }
 }

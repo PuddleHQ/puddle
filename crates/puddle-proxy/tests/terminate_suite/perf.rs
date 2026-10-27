@@ -20,7 +20,7 @@
 //! ([`silence_logs`]), because formatting each HTTP/2 and yamux frame event roughly doubled the
 //! CPU of an HTTP/2 transfer and added about 90 KiB per idle HTTP/2 connection.
 #![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
-mod terminate_support;
+use crate::terminate_support;
 
 use std::future::Future;
 use std::sync::Arc;

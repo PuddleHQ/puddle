@@ -654,15 +654,13 @@ async fn the_last_sign_in_to_each_proxy_is_kept_without_its_secrets() {
     chain.connect(&request).await.unwrap();
     assert_eq!(chain.sign_ins()[0].scheme.as_deref(), Some("Basic"));
 
-    let wrong = self::chain(vec![via(&proxy)], basic("bob", &wrong));
-    wrong.connect(&request).await.unwrap_err();
-    let kept = wrong.sign_ins();
+    let wrong_chain = self::chain(vec![via(&proxy)], basic("bob", &wrong));
+    wrong_chain.connect(&request).await.unwrap_err();
+    let kept = wrong_chain.sign_ins();
     assert_eq!(kept[0].outcome, SignInOutcome::Failed);
     let shown = format!("{:?}", kept[0]);
-    assert!(
-        !shown.contains("pw-wrong") && !shown.contains("pw-right"),
-        "{shown}"
-    );
+    fixture::assert_absent("a kept sign-in", &shown, &wrong);
+    fixture::assert_absent("a kept sign-in", &shown, &right);
 
     let none = self::chain(vec![via(&proxy)], Arc::new(BasicAuth::new()));
     none.connect(&request).await.unwrap_err();

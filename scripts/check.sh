@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
-#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, silent-skips, secrets, clippy, clippy-windows, deny, advisories, notices, openapi, test, doc, coverage,
+#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, silent-skips, quality, secrets, clippy, clippy-windows, deny, advisories, notices, openapi, test, doc, coverage,
 #   coverage-ratchet, diff-coverage,
 #   ui, ui-licences, ui-audit, ui-e2e
 #   fast     = fmt typos spdx shellcheck hooks platform-literals standalone git-pins silent-skips   (pre-commit hook)
-#   all      = fast git-env secrets clippy clippy-windows deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage
+#   all      = fast quality git-env secrets clippy clippy-windows deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage
 #              (CI, the nightly run, by hand; coverage runs the tests, and must follow `ui`: the embedded UI is built there)
 #   pre-push = every gate of `all` except ui-e2e, the slowest one, and advisories and ui-audit, which depend on
 #              the day's advisory databases and not on the change (pre-push hook; CI still runs ui-e2e after the push)
@@ -136,7 +136,7 @@ run_gate() {
         scripts/pre-push-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
             scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh &&
             ci/fetch-msb-test.sh && ci/fetch-code-server-test.sh && ci/fetch-tauri-cli-test.sh && ci/check-runtime-layout-test.sh &&
-            ci/scope-test.sh && ci/apt-setup-test.sh && ci/advisories-issue-test.sh && ci/cache-drop-test.sh &&
+            ci/scope-test.sh && ci/apt-setup-test.sh && ci/advisories-issue-test.sh && ci/quality-issue-test.sh && ci/cache-drop-test.sh &&
             ci/should-run-test.sh && ci/cache-gc-test.sh && ci/test-vm-skip-policy.sh
         ;;
     git-env)
@@ -156,6 +156,15 @@ run_gate() {
         ;;
     standalone) scripts/check-standalone.sh --self-test && scripts/check-standalone.sh && scripts/check-product-name.sh --self-test && scripts/check-product-name.sh ;;
     git-pins) scripts/check-git-pins.sh --self-test && scripts/check-git-pins.sh ;;
+    # Every `unsafe`, lint suppression, `#[ignore]`, product `unwrap` and TODO must say why in place; a site
+    # without a reason fails. No baseline file: a new site with a reason is fine (docs/STANDARDS.md, "Quality").
+    quality)
+        python3 -I scripts/quality-gate.py --self-test || exit 1
+        python3 -I scripts/quality-gate.py --missing . || {
+            echo "quality: each site above needs its reason in place (scripts/quality-gate.py header lists the forms)" >&2
+            exit 1
+        }
+        ;;
     # A test that returns early because a prerequisite is missing passes without testing; this fails
     # the hidden forms (docs/STANDARDS.md, "Skipped tests").
     silent-skips) scripts/check-silent-skips.sh --self-test && scripts/check-silent-skips.sh ;;
@@ -317,7 +326,7 @@ run_gate() {
 
 # The gate sets, in run order. `pre-push` is derived from `all`, so a gate added to `all` is in it too.
 fast_gates="fmt typos spdx shellcheck hooks platform-literals standalone git-pins silent-skips"
-all_gates="$fast_gates git-env secrets clippy clippy-windows deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage"
+all_gates="$fast_gates quality git-env secrets clippy clippy-windows deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage"
 pre_push_gates=
 for g in $all_gates; do
     case $g in ui-e2e | advisories | ui-audit) ;; *) pre_push_gates="$pre_push_gates $g" ;; esac

@@ -186,6 +186,15 @@ the owner, then tagged `vX.Y.Z` on `main`.
   draft, with a task to remove any stopgap. Prefer a maintained crate (licence- and
   `cargo deny`-clean, light tree) over our own per-OS code. Linux and macOS are separate cases:
   `cfg(unix)` is not "Linux".
+- **Every risky site says why, in place** (gate `quality`, `scripts/quality-gate.py`, in `pre-push` and in the Rust and light CI
+  jobs). Each `unsafe` block or impl carries `// SAFETY:` (an `unsafe fn` a `# Safety` section); each `#[allow]` and
+  `#[expect]` a `reason = "…"`; each `#[ignore]` a reason string; each `unwrap` outside tests a comment and each `expect`
+  a message; each `shellcheck disable` a `# why`, each UI suppression a reason; each `TODO`, `HACK`, `FIXME` names its
+  owner (`TODO(name)`), an issue (`#123`) or a URL. A site without one fails the gate. There is no baseline and no count
+  to hold: adding a site with a good reason is fine. A scanner, not a parser: it reads the written reason's presence, not
+  its truth, so review still reads the reason. `scripts/quality-gate.py --list` prints every site. A daily workflow
+  (`quality.yml`, `ci/quality-issue.sh`) keeps one issue with the open code-scanning and Dependabot alerts and the sites
+  missing a reason, and what changed since the day before.
 - **Security-sensitive code** (proxy decisions, credential injection, address classification, API
   auth, pipe/socket permissions, anything parsing guest input): treat all guest input as hostile,
   fail closed (deny on error), and add a hostile-guest test (§8) with the change.

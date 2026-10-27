@@ -71,10 +71,10 @@ fast_pid=$!
 
 # shellcheck disable=SC2086 # $exclude is empty or one `--exclude <crate>` pair
 hook_env victim-tests "$cargo" llvm-cov nextest --workspace $exclude --all-features --locked --no-report \
-    -E 'binary(git_env) | binary(delete_check_sh) | binary(clear_locks_sh)' >"$tmp/tests.log" 2>&1 ||
+    -E 'binary(git_env) | (package(puddle-workspace) & test(/^(delete_check_sh|clear_locks_sh)::/))' >"$tmp/tests.log" 2>&1 ||
     { cat "$tmp/tests.log" >&2; echo "git-env-test: the git tests failed under the hook variables" >&2; exit 1; }
-# A renamed binary would match nothing and pass silently: every one of the three must have run.
-for bin in xtask::git_env puddle-workspace::delete_check_sh puddle-workspace::clear_locks_sh; do
+# A renamed binary or module would match nothing and pass silently: every one of the three must have run.
+for bin in 'xtask::git_env' 'puddle-workspace::integration delete_check_sh::' 'puddle-workspace::integration clear_locks_sh::'; do
     grep -q "PASS.*$bin" "$tmp/tests.log" || {
         cat "$tmp/tests.log" >&2
         echo "git-env-test: no test of $bin ran" >&2

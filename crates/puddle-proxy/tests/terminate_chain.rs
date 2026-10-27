@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use puddle_proxy::Upstream;
+use puddle_types::fixture;
 use puddle_upstream::{
     AuthError, AuthSession, AuthStep, BasicAuth, Behaviour, Chain, ChainConfig, Config,
     Credentials, Discovery, FakeOs, FakeProxy, Hop, ProxyAddr, ProxyAuth, ProxyConfig,
@@ -45,15 +46,16 @@ async fn a_terminated_connection_goes_through_a_basic_company_proxy_by_name() {
         Arc::new(|_| Reply::ok("via the company proxy")),
     )
     .await;
+    let proxy_password = fixture::password("proxy");
     let proxy = FakeProxy::start(Behaviour::Basic {
         user: "corp".into(),
-        password: "proxy-pw".into(),
+        password: proxy_password.clone(),
     })
     .await;
     proxy.resolve_name("bound.test", server.addr);
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
-        .via(through(&proxy, "corp", "proxy-pw"))
+        .via(through(&proxy, "corp", &proxy_password))
         .build();
     let mut guest = rig.guest().await;
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
@@ -95,7 +97,7 @@ async fn a_bad_certificate_behind_the_company_proxy_is_still_a_502_with_nothing_
     proxy.resolve_name("bound.test", server.addr);
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
-        .via(through(&proxy, "u", "p"))
+        .via(through(&proxy, "u", &fixture::password("unused")))
         .build();
     let mut guest = rig.guest().await;
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
@@ -116,7 +118,7 @@ async fn a_company_proxy_that_refuses_the_tunnel_has_its_refusal_passed_on_and_n
     let proxy = FakeProxy::start(Behaviour::Refuse(403)).await;
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
-        .via(through(&proxy, "u", "p"))
+        .via(through(&proxy, "u", &fixture::password("unused")))
         .build();
     let mut guest = rig.guest().await;
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
@@ -184,15 +186,16 @@ async fn http2_runs_end_to_end_inside_the_company_proxy_tunnel() {
     let pki = Pki::new();
     let script: Script = Arc::new(|_| reply(200, "h2 via the company proxy"));
     let server = H2Server::recording(&pki, "bound.test", script).await;
+    let proxy_password = fixture::password("proxy");
     let proxy = FakeProxy::start(Behaviour::Basic {
         user: "corp".into(),
-        password: "proxy-pw".into(),
+        password: proxy_password.clone(),
     })
     .await;
     proxy.resolve_name("bound.test", server.addr);
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
-        .via(through(&proxy, "corp", "proxy-pw"))
+        .via(through(&proxy, "corp", &proxy_password))
         .build();
     let mut guest = rig.guest().await;
     let mut client = guest.h2("bound.test:443", &[b"h2", b"http/1.1"]).await;
@@ -244,7 +247,7 @@ async fn an_h2_guest_over_an_http11_server_behind_a_company_proxy_uses_a_few_tun
     proxy.resolve_name("bound.test", server.addr);
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
-        .via(through(&proxy, "u", "p"))
+        .via(through(&proxy, "u", &fixture::password("unused")))
         .build();
     let mut guest = rig.guest().await;
     let client = guest.h2("bound.test:443", &[b"h2"]).await;

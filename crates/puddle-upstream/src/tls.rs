@@ -427,9 +427,12 @@ mod tests {
                 said.starts_with(&format!(
                     "invalid peer certificate: {code} (the certificate "
                 )),
-                "{said}"
+                "the reason for {code} has the wrong shape"
             );
-            assert!(!said.contains("verification time"), "{said}");
+            assert!(
+                !said.contains("verification time"),
+                "the reason for {code} names the verification time"
+            );
         }
         assert_eq!(
             certificate_reason(&C::BadEncoding),

@@ -50,8 +50,12 @@ pub const LOCAL: Ipv4Addr = Ipv4Addr::LOCALHOST;
 
 /// The Basic user of the lab's authenticating proxy.
 pub const BASIC_USER: &str = "alice";
-/// The Basic password: a lab constant, protecting nothing.
-pub const BASIC_PASSWORD: &str = "lab-only-pw-7Qx2";
+/// The Basic password of the lab proxy: random per test process, so the fixture holds no constant
+/// credential. The proxy's helper script and the clients in the same process use the same value.
+#[must_use]
+pub fn basic_password() -> String {
+    puddle_types::fixture::password("lab")
+}
 
 /// How long a fixture may take to accept connections before its start fails the test.
 const READY: Duration = Duration::from_secs(60);

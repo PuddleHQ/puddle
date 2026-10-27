@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use puddle_types::fixture;
 use puddle_upstream::{
     AuthError, AuthList, AuthSession, AuthStep, BasicAuth, Behaviour, Chain, ChainConfig,
     ChainError, Config, Credentials, Destination, Discovery, FakeOs, FakeProxy, Form, Hop,
@@ -151,14 +152,15 @@ async fn a_proxy_gets_nothing_when_there_is_no_name_and_no_checked_address() {
 
 #[tokio::test]
 async fn a_basic_407_is_answered_on_the_same_connection_then_sent_up_front() {
+    let secret = fixture::password("secret");
     let echo = start_echo().await;
     let proxy = FakeProxy::start(Behaviour::Basic {
         user: "alice".into(),
-        password: "s3cret".into(),
+        password: secret.clone(),
     })
     .await;
     proxy.resolve_name("a.test", echo.addr);
-    let chain = chain(vec![via(&proxy)], basic("alice", "s3cret"));
+    let chain = chain(vec![via(&proxy)], basic("alice", &secret));
     let dest = https("a.test");
     let request = Request::new(&dest, Form::Tunnel, &[]).name_ok(true);
 
@@ -186,12 +188,14 @@ async fn a_basic_407_is_answered_on_the_same_connection_then_sent_up_front() {
 
 #[tokio::test]
 async fn a_wrong_password_is_one_attempt_not_a_loop() {
+    let right = fixture::password("right");
+    let wrong = fixture::password("wrong");
     let proxy = FakeProxy::start(Behaviour::Basic {
         user: "alice".into(),
-        password: "right".into(),
+        password: right.clone(),
     })
     .await;
-    let chain = chain(vec![via(&proxy), Hop::Direct], basic("alice", "wrong"));
+    let chain = chain(vec![via(&proxy), Hop::Direct], basic("alice", &wrong));
     let dest = https("a.test");
     let echo = start_echo().await;
     let checked = [echo.addr];
@@ -214,9 +218,10 @@ async fn a_wrong_password_is_one_attempt_not_a_loop() {
 
 #[tokio::test]
 async fn a_proxy_that_wants_credentials_nobody_configured_is_reported_with_its_schemes() {
+    let secret = fixture::password("secret");
     let proxy = FakeProxy::start(Behaviour::Basic {
         user: "u".into(),
-        password: "p".into(),
+        password: secret.clone(),
     })
     .await;
     let chain = chain(vec![via(&proxy)], Arc::new(BasicAuth::new()));
@@ -303,8 +308,9 @@ async fn a_connection_based_scheme_that_loses_its_connection_ends_after_the_leg_
 
 #[tokio::test]
 async fn a_proxy_that_never_stops_asking_is_cut_off() {
+    let secret = fixture::password("secret");
     let proxy = FakeProxy::start(Behaviour::Always407).await;
-    let chain = chain(vec![via(&proxy)], basic("u", "p"));
+    let chain = chain(vec![via(&proxy)], basic("u", &secret));
     let dest = https("loop.test");
     let err = chain
         .connect(&Request::new(&dest, Form::Tunnel, &[]).name_ok(true))
@@ -455,12 +461,13 @@ async fn an_ipv6_address_is_sent_with_brackets() {
 
 #[tokio::test]
 async fn absolute_form_probes_authenticates_and_carries_basic_on_each_request() {
+    let secret = fixture::password("secret");
     let proxy = FakeProxy::start(Behaviour::Basic {
         user: "alice".into(),
-        password: "s3cret".into(),
+        password: secret.clone(),
     })
     .await;
-    let chain = chain(vec![via(&proxy)], basic("alice", "s3cret"));
+    let chain = chain(vec![via(&proxy)], basic("alice", &secret));
     let dest = http("plain.test");
     let mut connected = chain
         .connect(&Request::new(&dest, Form::Absolute, &[]).name_ok(true))
@@ -525,13 +532,14 @@ async fn absolute_form_ntlm_authenticates_the_connection_with_no_header_per_requ
 
 #[tokio::test]
 async fn the_auth_list_lets_basic_answer_when_the_first_member_does_not_speak_the_scheme() {
+    let secret = fixture::password("secret");
     let proxy = FakeProxy::start(Behaviour::Basic {
         user: "u".into(),
-        password: "p".into(),
+        password: secret.clone(),
     })
     .await;
     let list = AuthList::new().with(Arc::new(NtlmAuth)).with(Arc::new(
-        BasicAuth::new().with_default(Credentials::new("u", "p")),
+        BasicAuth::new().with_default(Credentials::new("u", &secret)),
     ));
     let chain = chain(vec![via(&proxy)], Arc::new(list));
     let echo = start_echo().await;
@@ -586,17 +594,18 @@ impl ProxyAuth for PreemptiveNegotiate {
 
 #[tokio::test]
 async fn a_preemptive_negotiate_meets_a_basic_only_proxy_and_falls_back_on_the_same_request() {
+    let secret = fixture::password("secret");
     let echo = start_echo().await;
     let proxy = FakeProxy::start(Behaviour::Basic {
         user: "u".into(),
-        password: "p".into(),
+        password: secret.clone(),
     })
     .await;
     proxy.resolve_name("basic.test", echo.addr);
     let list = AuthList::new()
         .with(Arc::new(PreemptiveNegotiate))
         .with(Arc::new(
-            BasicAuth::new().with_default(Credentials::new("u", "p")),
+            BasicAuth::new().with_default(Credentials::new("u", &secret)),
         ));
     let chain = chain(vec![via(&proxy)], Arc::new(list));
     let dest = https("basic.test");
@@ -620,17 +629,19 @@ async fn a_preemptive_negotiate_meets_a_basic_only_proxy_and_falls_back_on_the_s
 #[tokio::test]
 async fn the_last_sign_in_to_each_proxy_is_kept_without_its_secrets() {
     use puddle_upstream::SignInOutcome;
+    let right = fixture::password("right");
+    let wrong = fixture::password("wrong");
     let echo = start_echo().await;
     let proxy = FakeProxy::start(Behaviour::Basic {
         user: "bob".into(),
-        password: "pw-right".into(),
+        password: right.clone(),
     })
     .await;
     proxy.resolve_name("a.test", echo.addr);
     let dest = https("a.test");
     let request = Request::new(&dest, Form::Tunnel, &[]).name_ok(true);
 
-    let chain = chain(vec![via(&proxy)], basic("bob", "pw-right"));
+    let chain = chain(vec![via(&proxy)], basic("bob", &right));
     assert_eq!(chain.auth_methods(), ["basic"]);
     assert_eq!(chain.sign_ins().len(), 0);
     chain.connect(&request).await.unwrap();
@@ -643,7 +654,7 @@ async fn the_last_sign_in_to_each_proxy_is_kept_without_its_secrets() {
     chain.connect(&request).await.unwrap();
     assert_eq!(chain.sign_ins()[0].scheme.as_deref(), Some("Basic"));
 
-    let wrong = self::chain(vec![via(&proxy)], basic("bob", "pw-wrong"));
+    let wrong = self::chain(vec![via(&proxy)], basic("bob", &wrong));
     wrong.connect(&request).await.unwrap_err();
     let kept = wrong.sign_ins();
     assert_eq!(kept[0].outcome, SignInOutcome::Failed);
@@ -690,9 +701,11 @@ async fn an_open_proxy_is_recorded_as_needing_no_sign_in_and_a_dead_one_is_not_r
 
 #[tokio::test]
 async fn a_list_names_the_methods_of_its_members_once() {
+    let first = fixture::password("first");
+    let second = fixture::password("second");
     let list = AuthList::new()
-        .with(basic("u", "p"))
-        .with(basic("v", "q"))
+        .with(basic("u", &first))
+        .with(basic("v", &second))
         .with(Arc::new(puddle_upstream::NoAuth));
     assert_eq!(list.methods(), ["basic"]);
 }

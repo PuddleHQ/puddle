@@ -219,10 +219,14 @@ impl ProxyPasswords {
 #[cfg(test)]
 mod tests {
     use puddle_secrets::MemoryStore;
+    use puddle_types::fixture;
 
     use super::*;
 
-    const PASSWORD: &str = "hunter2-canary";
+    /// The password the tests plant and look for; random per run.
+    fn secret() -> String {
+        fixture::canary("proxy-password")
+    }
 
     fn proxy() -> ProxyAddr {
         ProxyAddr::new("Proxy.Corp", 8080)
@@ -236,7 +240,7 @@ mod tests {
     fn a_sign_in_survives_a_restart_and_answers_from_memory() {
         let vault = vault();
         let first = ProxyPasswords::new(vault.clone());
-        first.set(&proxy(), "corp\\alice", PASSWORD).unwrap();
+        first.set(&proxy(), "corp\\alice", &secret()).unwrap();
         assert_eq!(first.credentials(&proxy()).unwrap().user(), "corp\\alice");
 
         let second = ProxyPasswords::new(vault);
@@ -257,25 +261,31 @@ mod tests {
     fn nothing_but_the_credential_store_holds_the_password() {
         let vault = vault();
         let passwords = ProxyPasswords::new(vault.clone());
-        passwords.set(&proxy(), "alice", PASSWORD).unwrap();
+        passwords.set(&proxy(), "alice", &secret()).unwrap();
         for text in [
             format!("{passwords:?}"),
             format!("{:?}", passwords.proxies()),
         ] {
-            assert!(!text.contains(PASSWORD), "{text}");
+            fixture::assert_absent("a debug rendering", &text, &secret());
         }
         // Two entries, both under the prefix the clean-up keeps; the id does not spell the host.
         let ids = vault.ids();
-        assert_eq!(ids.len(), 2, "{ids:?}");
-        assert!(ids.iter().all(|id| id.starts_with(ID_PREFIX)), "{ids:?}");
-        assert!(ids.iter().all(|id| !id.contains("corp")), "{ids:?}");
+        assert_eq!(ids.len(), 2, "the store holds two entries");
+        assert!(
+            ids.iter().all(|id| id.starts_with(ID_PREFIX)),
+            "an entry id lacks the prefix the clean-up keeps"
+        );
+        assert!(
+            ids.iter().all(|id| !id.contains("corp")),
+            "an entry id spells the host"
+        );
     }
 
     #[test]
     fn removing_a_sign_in_leaves_nothing_in_the_store() {
         let vault = vault();
         let passwords = ProxyPasswords::new(vault.clone());
-        passwords.set(&proxy(), "alice", PASSWORD).unwrap();
+        passwords.set(&proxy(), "alice", &secret()).unwrap();
         passwords.remove(&proxy()).unwrap();
         passwords.remove(&proxy()).unwrap();
         assert!(passwords.credentials(&proxy()).is_none());
@@ -287,9 +297,15 @@ mod tests {
     fn setting_again_replaces_and_each_proxy_keeps_its_own() {
         let passwords = ProxyPasswords::new(vault());
         let other = ProxyAddr::new("other.corp", 3128);
-        passwords.set(&proxy(), "alice", "one").unwrap();
-        passwords.set(&other, "bob", "two").unwrap();
-        passwords.set(&proxy(), "alice", "three").unwrap();
+        passwords
+            .set(&proxy(), "alice", &fixture::password("one"))
+            .unwrap();
+        passwords
+            .set(&other, "bob", &fixture::password("two"))
+            .unwrap();
+        passwords
+            .set(&proxy(), "alice", &fixture::password("three"))
+            .unwrap();
         assert_eq!(
             passwords.proxies(),
             [(other, "bob".to_owned()), (proxy(), "alice".to_owned())]
@@ -304,31 +320,43 @@ mod tests {
         let passwords = ProxyPasswords::new(vault.clone());
         for user in ["", "a:b", "a\nb", "a\rb", &"u".repeat(257)] {
             assert_eq!(
-                passwords.set(&proxy(), user, "p"),
+                passwords.set(&proxy(), user, &fixture::password("p")),
                 Err(ProxyPasswordError::BadUser),
                 "{user:?}"
             );
         }
-        for password in ["", "a\nb", "a\rb"] {
+        let (line, carriage) = (
+            format!("{}\n{}", fixture::password("a"), fixture::password("b")),
+            format!("{}\r{}", fixture::password("a"), fixture::password("b")),
+        );
+        for bad in [String::new(), line, carriage] {
             assert_eq!(
-                passwords.set(&proxy(), "alice", password),
+                passwords.set(&proxy(), "alice", &bad),
                 Err(ProxyPasswordError::BadPassword),
-                "{password:?}"
+                "a password Basic cannot carry was accepted"
             );
         }
         assert_eq!(vault.ids(), Vec::<String>::new());
         // A password may hold a colon: Basic splits at the first one only.
-        passwords.set(&proxy(), "alice", "pa:ss").unwrap();
+        passwords
+            .set(
+                &proxy(),
+                "alice",
+                &format!("{}:x", fixture::password("colon")),
+            )
+            .unwrap();
     }
 
     #[test]
     fn a_store_that_fails_changes_nothing_in_memory() {
         let vault = vault();
         let passwords = ProxyPasswords::new(vault.clone());
-        passwords.set(&proxy(), "alice", "one").unwrap();
+        passwords
+            .set(&proxy(), "alice", &fixture::password("one"))
+            .unwrap();
         vault.break_it();
         assert_eq!(
-            passwords.set(&proxy(), "alice", "two"),
+            passwords.set(&proxy(), "alice", &fixture::password("two")),
             Err(ProxyPasswordError::Store)
         );
         assert_eq!(passwords.remove(&proxy()), Err(ProxyPasswordError::Store));
@@ -344,8 +372,12 @@ mod tests {
         let vault = vault();
         let passwords = ProxyPasswords::new(vault.clone());
         let other = ProxyAddr::new("other.corp", 3128);
-        passwords.set(&proxy(), "alice", "one").unwrap();
-        passwords.set(&other, "bob", "two").unwrap();
+        passwords
+            .set(&proxy(), "alice", &fixture::password("one"))
+            .unwrap();
+        passwords
+            .set(&other, "bob", &fixture::password("two"))
+            .unwrap();
         // A crash between the list and the entry, and an entry that is not a sign-in.
         vault
             .delete(&passwords.entry_id(&proxy()).unwrap())

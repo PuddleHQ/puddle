@@ -29,6 +29,7 @@ libc = { workspace = true }
 rustix = { workspace = true, features = ["net"] }
 
 [dev-dependencies]
+puddle-types = { workspace = true, features = ["testing"] }
 proptest = { workspace = true }
 rustix = { workspace = true }
 tempfile = { workspace = true }

@@ -16,7 +16,8 @@
 #   - no other entry of the group on develop was created since the snapshot (no save happened: an
 #     exact hit, a failed or cancelled save), so the remembered entry is the only one left.
 # It never fails the job: a failed call is a warning, and cache-gc.yml removes what is left.
-# Needs GH_TOKEN, GITHUB_REPOSITORY, GITHUB_REF and, to delete, `actions: write`. DRY_RUN=1 prints the
+# Needs GH_TOKEN, GITHUB_REPOSITORY, GITHUB_REF and, to delete, `actions: write`. The drop's outcome is also appended
+# to GITHUB_STEP_SUMMARY when that is set. DRY_RUN=1 prints the
 # delete instead of making it. CACHE_DROP_STATE is the file that carries the snapshot between the steps.
 set -uo pipefail
 
@@ -36,7 +37,11 @@ repo=${GITHUB_REPOSITORY:?GITHUB_REPOSITORY not set}
 ref=refs/heads/develop
 state=${CACHE_DROP_STATE:-${RUNNER_TEMP:-/tmp}/cache-drop-snapshot.json}
 
-say() { echo "cache-drop: $*"; }
+# The drop's outcome also goes to the job summary, so a measurement reads it there and not from the log.
+say() {
+    echo "cache-drop: $*"
+    if [ "$mode" = drop ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then echo "- cache-drop: $*" >>"$GITHUB_STEP_SUMMARY"; fi
+}
 warn() { echo "::warning::cache-drop: $*"; }
 
 # Prints the develop entries of the group (key = prefix + anything ending in two 8-digit hashes, the

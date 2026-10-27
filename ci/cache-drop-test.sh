@@ -170,6 +170,16 @@ run $D drop
 deleted 0 "other group in the state"
 said "not in the group" "other group in the state"
 
+# 7b. the drop's outcome lands in the job summary; the snapshot writes nothing there.
+list "$(entry 1 "$OLD" $D 2026-10-24T08:00:00Z 2026-10-26T10:00:00Z)"
+: >"$tmp/summary"
+run $D snapshot GITHUB_STEP_SUMMARY="$tmp/summary"
+[ ! -s "$tmp/summary" ] || fail "the snapshot wrote to the summary: $(cat "$tmp/summary")"
+run $D drop GITHUB_STEP_SUMMARY="$tmp/summary"
+grep -q '^- cache-drop: kept: ' "$tmp/summary" || fail "the drop outcome is not in the summary: $(cat "$tmp/summary")"
+run refs/pull/9/merge drop GITHUB_STEP_SUMMARY="$tmp/summary"
+[ "$(grep -c '^- cache-drop: ' "$tmp/summary")" = 2 ] || fail "a pull request drop left no summary line: $(cat "$tmp/summary")"
+
 # 8. the action's two entry points reach the script the way GitHub runs them (node, INPUT_PREFIX, the workspace).
 if command -v node >/dev/null 2>&1; then
     act=$here/../.github/actions/cache-drop

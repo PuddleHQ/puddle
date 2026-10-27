@@ -329,7 +329,11 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Prefixed<S> {
 mod tests {
     use std::time::Duration;
 
-    use tokio::io::AsyncReadExt;
+    use std::io;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+
+    use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 
     use super::*;
 
@@ -368,13 +372,13 @@ mod tests {
     /// A stream whose read fails, as one the guest reset does.
     struct Reset;
 
-    impl tokio::io::AsyncRead for Reset {
+    impl AsyncRead for Reset {
         fn poll_read(
-            self: std::pin::Pin<&mut Self>,
-            _: &mut std::task::Context<'_>,
-            _: &mut tokio::io::ReadBuf<'_>,
-        ) -> std::task::Poll<std::io::Result<()>> {
-            std::task::Poll::Ready(Err(std::io::ErrorKind::ConnectionReset.into()))
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            _: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            Poll::Ready(Err(io::ErrorKind::ConnectionReset.into()))
         }
     }
 
@@ -384,7 +388,7 @@ mod tests {
         let err = capture_first_record(&mut Reset, Vec::new(), wait, wait)
             .await
             .unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::ConnectionReset);
+        assert_eq!(err.kind(), io::ErrorKind::ConnectionReset);
     }
 
     #[tokio::test]

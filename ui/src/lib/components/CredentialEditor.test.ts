@@ -130,6 +130,23 @@ describe("accounts found on this computer", () => {
     });
   });
 
+  it("says Puddle will decrypt the host the credential covers, for a found account and a pasted token", async () => {
+    mount();
+    await fireEvent.click(await screen.findByLabelText(/tijs-work/));
+    expect(
+      screen.getByText(
+        /Puddle will decrypt connections to github.com \(port 443 only\)/,
+      ),
+    ).toBeTruthy();
+    await fireEvent.click(screen.getByLabelText("Paste a token"));
+    await type("Git host", "git.acme.example");
+    expect(
+      screen.getByText(
+        /Puddle will decrypt connections to git.acme.example \(port 443 only\)/,
+      ),
+    ).toBeTruthy();
+  });
+
   it("asks for an account first, and refuses one the identity already has", async () => {
     mount([credential({ source: ghSource("tijs-work") })] as never);
     await screen.findByLabelText(/tijs-work/);

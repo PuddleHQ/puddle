@@ -16,6 +16,12 @@ tmp=$(mktemp -d "${TMPDIR:-/tmp}/fetch-msb-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 mkdir "$tmp/ci" "$tmp/bin"
 cp "$here/fetch-msb.sh" "$tmp/ci/fetch-msb.sh"
+# On a hosted runner the source-build path installs libcap-ng through these helpers first; the test
+# must not touch apt or sudo, so the copies are no-ops (GITHUB_ACTIONS is set there, unset locally).
+for helper in apt-setup.sh apt-retry.sh; do
+    printf '#!/bin/sh\nexit 0\n' >"$tmp/ci/$helper"
+    chmod +x "$tmp/ci/$helper"
+done
 sum=$(printf 'x' | sha256sum | cut -d' ' -f1)
 {
     echo "v1.0.0-puddle.1 source-commit 0000000000000000000000000000000000000001"

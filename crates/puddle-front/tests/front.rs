@@ -648,3 +648,21 @@ async fn the_password_comes_from_the_workspaces_editor_and_only_while_it_runs() 
         .unwrap_err();
     assert!(err.0.contains("not running"), "{err}");
 }
+
+#[tokio::test]
+async fn the_front_and_its_targets_print_without_leaking_what_they_hold() {
+    let rig = rig().await;
+    rig.running.start("a", None, Flavour::CodeServer);
+    let shown = format!("{:?}", rig.front);
+    assert!(
+        shown.contains("Guests") && shown.contains("ServerHalves"),
+        "{shown}"
+    );
+    let target = format!("{:?}", rig.running.0.lock().unwrap().get("a").unwrap());
+    assert!(
+        target.contains("CodeServer") && !target.contains("sekrit"),
+        "{target}"
+    );
+    let a = WorkspaceName::new("a").unwrap();
+    assert_eq!(rig.front.windows().connected(&a), 0);
+}

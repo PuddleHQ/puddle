@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The daily quality report: one standing issue ("Code quality: open alerts and sites without a reason") with the open
+# code-scanning alerts, the open Dependabot alerts and the sites that lack a written reason, and what changed since
+# the day before (ci/quality-issue.sh; docs/STANDARDS.md, section 5). It never fails on a finding: the gate on pull
+# requests is `scripts/check.sh quality`; this report catches what reaches `develop` another way and what GitHub's
+# scanners find later. It also never runs on a pull request, so it is not a required check.
+#
+# Dependabot alerts are not readable with the workflow's own token. Set the repository secret QUALITY_ALERTS_TOKEN
+# (a fine-grained token with "Dependabot alerts: read" and "Code scanning alerts: read") to include them; without
+# it the report says that source is unavailable and keeps the last list.
+name: quality
+
+on:
+  schedule:
+    - cron: "40 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality
+  cancel-in-progress: false
+
+jobs:
+  report:
+    name: quality report
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      security-events: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: develop
+      - name: issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUALITY_ALERTS_TOKEN: ${{ secrets.QUALITY_ALERTS_TOKEN }}
+        run: ci/quality-issue.sh

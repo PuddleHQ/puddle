@@ -5,8 +5,7 @@
 # Clippy, tests and UI run on every trigger; the release build runs only on the nightly, on pull
 # requests to main and on manual runs from develop, so a pull request to develop skips it. The jobs
 # run side by side, so the run takes as long as the slowest one instead of the sum. Two cache entries
-# (debug builds, release build); only runs on develop save them. Clippy has none: its check builds
-# were no faster with one.
+# (debug builds, clippy's check builds); only runs on develop save them. The release build has none.
 # A pull request runs only the jobs its changed files can affect (ci/scope.sh, the `scope` job):
 # no Rust, fixture or UI path skips clippy and tests, no UI-relevant path skips the UI job. Every
 # other trigger, and any doubt, runs everything; the result job accepts a skip only when `scope`
@@ -99,6 +98,14 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: rustup toolchain install && rustc --version
+      # Its own entry: check builds (rmeta) of the dependencies, so a pull request compiles only
+      # the workspace. Only develop saves it; cache-gc.yml deletes the superseded one.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: steps.changed.outputs.run == 'true'
+        with:
+          shared-key: windows-clippy
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
       - name: clippy
         if: steps.changed.outputs.run == 'true'
         shell: bash
@@ -179,6 +186,13 @@ jobs:
         if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
         shell: bash
         run: cargo test --doc --workspace --all-features --locked --no-fail-fast
+      # The UI job's desktop shell smoke test builds `-p puddle-app`, whose dependency features
+      # differ from the workspace build above, so it compiled 130+ crates each run. Building it
+      # here puts them in the entry this job saves (only develop saves, so only develop pays).
+      - name: desktop shell dependencies (for the entry the UI job restores)
+        if: ${{ steps.changed.outputs.run == 'true' && github.ref == 'refs/heads/develop' }}
+        shell: bash
+        run: cargo build -p puddle-app --all-features --locked
       # Windows runs this one gate of the Linux job too: it proves ci/fetch-gitleaks.sh and the
       # gate work in Git Bash with the Windows release, where developers' pre-push hook runs.
       - name: secret scanning (gitleaks, Windows release)

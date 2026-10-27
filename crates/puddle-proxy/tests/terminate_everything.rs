@@ -358,3 +358,74 @@ async fn a_client_that_asks_for_another_name_is_passed_through_not_refused() {
         "pass_through:sni_mismatch"
     );
 }
+
+/// An address nothing listens on.
+fn closed_port() -> std::net::SocketAddr {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    listener.local_addr().unwrap()
+}
+
+#[tokio::test]
+async fn a_record_that_looks_like_a_hello_but_is_not_one_is_passed_through() {
+    let pki = Pki::new();
+    let server = FakeServer::plain(Arc::new(|_| Reply::ok("plain"))).await;
+    let rig = RigBuilder::new(&pki)
+        .name("odd.test", server.addr)
+        .allow(vec!["bound.test", "odd.test"])
+        .injector(adds_nothing())
+        .decrypting_all(true, &[])
+        .build();
+    let mut guest = rig.guest().await;
+    let (code, mut stream) = guest.connect_to("odd.test:443").await;
+    assert_eq!(code, 200);
+    // A handshake record that holds a ClientHello type with no body.
+    stream
+        .write_all(&[0x16, 3, 1, 0, 4, 1, 0, 0, 0])
+        .await
+        .unwrap();
+    drop(stream);
+    assert_eq!(
+        rig.events(1).await[0].reason.to_string(),
+        "pass_through:not_tls"
+    );
+}
+
+#[tokio::test]
+async fn a_pass_through_to_a_server_that_cannot_be_reached_just_ends_the_connection() {
+    let pki = Pki::new();
+    let rig = RigBuilder::new(&pki)
+        .name("dead.test", closed_port())
+        .allow(vec!["bound.test", "dead.test"])
+        .injector(adds_nothing())
+        .decrypting_all(true, &[])
+        .build();
+    let mut guest = rig.guest().await;
+    let (code, mut stream) = guest.connect_to("dead.test:443").await;
+    assert_eq!(code, 200);
+    stream.write_all(b"GET / HTTP/1.1\r\n\r\n").await.unwrap();
+    let mut rest = Vec::new();
+    // The tunnel is closed or reset, depending on the platform: both end it.
+    let _ = stream.read_to_end(&mut rest).await;
+    assert!(
+        rest.is_empty(),
+        "no HTTP answer on a tunnel that speaks something else"
+    );
+    let events = rig.events(1).await;
+    assert_eq!(events[0].reason.to_string(), "pass_through:not_tls");
+}
+
+#[tokio::test]
+async fn a_decrypted_host_that_cannot_be_reached_gets_an_error_the_tool_can_read() {
+    let pki = Pki::new();
+    let rig = RigBuilder::new(&pki)
+        .name("dead.test", closed_port())
+        .allow(vec!["bound.test", "dead.test"])
+        .injector(adds_nothing())
+        .decrypting_all(true, &[])
+        .build();
+    let mut guest = rig.guest().await;
+    let mut client = guest.tls("dead.test:443", None).await.unwrap();
+    let response = client.get("dead.test", "/").await;
+    assert_eq!(response.status, 502);
+    client.close().await;
+}

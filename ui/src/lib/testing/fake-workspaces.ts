@@ -146,6 +146,13 @@ export class FakeWorkspaces {
       store_readable: boolean;
     }
   > = {};
+  /** How each workspace decrypts hosts, by id; the default (off, no names) when unset. */
+  interception: Record<
+    string,
+    { decrypt_all: boolean; never_decrypt: string[] }
+  > = {};
+  /** The names no workspace decrypts. */
+  globalNeverDecrypt: string[] = [];
   /** The background problems the host lists. */
   problems: {
     key: string;
@@ -270,6 +277,14 @@ export class FakeWorkspaces {
               this.kept[String(id)] ?? { logins: [], store_readable: true },
             )
           : this.reply(404, undefined, "no such workspace");
+      case "/api/workspaces/{id}/interception": {
+        const found = this.find(id);
+        return found
+          ? this.reply(200, this.interceptionView(found))
+          : this.reply(404, undefined, "no such workspace");
+      }
+      case "/api/interception/never-decrypt":
+        return this.reply(200, { never_decrypt: this.globalNeverDecrypt });
       case "/api/problems":
         return this.reply(200, { problems: this.problems });
       case "/api/settings":
@@ -438,6 +453,19 @@ export class FakeWorkspaces {
     return this.reply(202, next);
   };
 
+  private interceptionView(w: Workspace) {
+    const own = this.interception[w.id] ?? {
+      decrypt_all: false,
+      never_decrypt: [],
+    };
+    return {
+      workspace: w.name,
+      decrypt_all: own.decrypt_all,
+      never_decrypt: own.never_decrypt,
+      global_never_decrypt: this.globalNeverDecrypt,
+    };
+  }
+
   PUT = async (
     path: string,
     init: {
@@ -450,6 +478,27 @@ export class FakeWorkspaces {
     if (this.down) throw new TypeError("down");
     const refused = this.refusal(`PUT ${path}`);
     if (refused) return refused;
+    if (path === "/api/interception/never-decrypt") {
+      const asked = init as unknown as { body: { never_decrypt: string[] } };
+      this.globalNeverDecrypt = [...asked.body.never_decrypt].sort();
+      return this.reply(200, { never_decrypt: this.globalNeverDecrypt });
+    }
+    if (path === "/api/workspaces/{id}/interception") {
+      const asked = init as unknown as {
+        params: { path: { id: string } };
+        body: { decrypt_all?: boolean; never_decrypt?: string[] };
+      };
+      const found = this.find(asked.params.path.id);
+      if (!found) return this.reply(404, undefined, "no such workspace");
+      const before = this.interceptionView(found);
+      this.interception[found.id] = {
+        decrypt_all: asked.body.decrypt_all ?? before.decrypt_all,
+        never_decrypt: asked.body.never_decrypt
+          ? [...asked.body.never_decrypt].sort()
+          : before.never_decrypt,
+      };
+      return this.reply(200, this.interceptionView(found));
+    }
     if (path === "/api/workspaces/{id}/start-folder") {
       const asked = init as unknown as {
         params: { path: { id: string } };

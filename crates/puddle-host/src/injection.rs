@@ -22,7 +22,8 @@ use std::time::Duration;
 use puddle_ca::{CaBuilder, CaCertificate, WorkspaceCa};
 use puddle_inject::{CredentialSource, GitInjector, StoreSettings};
 use puddle_proxy::{
-    Injector, StandInOrigin, StandIns, Termination, TerminationSet, TerminationSource, Terminations,
+    Injector, Interception, PassThrough, StandInOrigin, StandIns, Termination, TerminationSet,
+    TerminationSource, Terminations,
 };
 use puddle_secrets::{Fetch, SecretCache, SecretStore, SourceSpec, Sources};
 use puddle_store::{Store, WorkspaceGit};
@@ -93,15 +94,19 @@ struct Running {
     injector: Arc<dyn Injector>,
     stand_ins: Arc<StandIns>,
     logins: Logins,
+    /// The hosts this start's tools refused the certificate for; kept across changes to the
+    /// workspace's settings.
+    learned: Arc<PassThrough>,
 }
 
 impl Running {
     /// What the workspace's termination is made of, around `set`: the registry of its stand-ins
     /// (secrets and captured logins share it) and the reading of its login exchanges.
-    fn termination(&self, set: TerminationSet) -> Termination {
+    fn termination(&self, set: TerminationSet, interception: Interception) -> Termination {
         Termination::new(set, Arc::clone(&self.ca), Arc::clone(&self.injector))
             .with_stand_ins(Arc::clone(&self.stand_ins))
             .with_exchanges(Arc::new(self.logins.clone()))
+            .with_interception(interception)
     }
 }
 
@@ -275,10 +280,14 @@ impl Injection {
             injector,
             stand_ins,
             logins,
+            learned: Arc::new(PassThrough::new()),
         };
         self.terminations.insert(
             workspace.clone(),
-            now.termination(decrypted(&git, &now.stand_ins, &now.logins)),
+            now.termination(
+                decrypted(&git, &now.stand_ins, &now.logins),
+                self.interception(workspace, &now.learned)?,
+            ),
         );
         running.insert(workspace.clone(), now);
         drop(running);
@@ -366,10 +375,40 @@ impl Injection {
         };
         self.terminations.insert(
             workspace.clone(),
-            now.termination(decrypted(&git, &now.stand_ins, &now.logins)),
+            now.termination(
+                decrypted(&git, &now.stand_ins, &now.logins),
+                self.interception(workspace, &now.learned)?,
+            ),
         );
         drop(running);
         Ok(Some(git))
+    }
+
+    /// How `workspace` decrypts beyond its credential hosts, read from the store: its switch and
+    /// the never-decrypt names (its own and the global ones). A name that does not parse is left
+    /// out and logged; the settings API refuses such names, so this only meets old rows.
+    fn interception(
+        &self,
+        workspace: &WorkspaceName,
+        learned: &Arc<PassThrough>,
+    ) -> Result<Interception, String> {
+        let store = &self.inputs.store;
+        let own = store
+            .workspace_interception(workspace)
+            .map_err(|e| format!("cannot read what {workspace} decrypts: {e}"))?;
+        let global = store
+            .global_never_decrypt()
+            .map_err(|e| format!("cannot read the never-decrypt names: {e}"))?;
+        let mut never = TerminationSet::new();
+        for pattern in own.never_decrypt.iter().chain(&global) {
+            match TerminationSet::parse([pattern.as_str()]) {
+                Ok(one) => never.extend(&one),
+                Err(e) => tracing::warn!(%pattern, error = %e, "a never-decrypt name is not valid"),
+            }
+        }
+        Ok(Interception::new(Arc::clone(learned))
+            .decrypt_all(own.decrypt_all)
+            .never_decrypt(never))
     }
 
     /// Drops `workspace`'s CA and what it decrypts. Connections already open keep what they have;
@@ -676,6 +715,61 @@ mod tests {
             .certificate()
             .clone();
         assert_eq!(ca_before, ca_after);
+    }
+
+    #[tokio::test]
+    async fn the_switch_and_the_never_decrypt_names_apply_to_the_running_workspace_and_keep_what_was_learned()
+     {
+        let store = store();
+        let (injection, terminations) = injection(&store);
+        let ws = workspace("alpha");
+        let host = |h: &str| Host::parse_normalised(h).unwrap();
+        let mode = |t: &Terminations| {
+            let interception = t.termination(&ws).unwrap().interception().clone();
+            (
+                interception.is_decrypting_all(),
+                interception.skipped(&host("bank.example")),
+                interception.skipped(&host("global.example")),
+            )
+        };
+        store.set_decrypt_all(&ws, true).unwrap();
+        store
+            .set_never_decrypt(&ws, &["bank.example".to_owned()])
+            .unwrap();
+        store
+            .set_global_never_decrypt(&["global.example".to_owned()])
+            .unwrap();
+        injection.begin(&ws, false).await.unwrap();
+        assert_eq!(
+            mode(&terminations),
+            (true, Some("never_decrypt"), Some("never_decrypt")),
+            "read at the start"
+        );
+
+        let learned = Arc::clone(
+            terminations
+                .termination(&ws)
+                .unwrap()
+                .interception()
+                .learned(),
+        );
+        learned.learn(&host("pinned.example"));
+        store.set_decrypt_all(&ws, false).unwrap();
+        assert!(injection.resync(&ws).unwrap().is_some());
+        assert_eq!(mode(&terminations), (false, None, None), "switched off");
+        store.set_decrypt_all(&ws, true).unwrap();
+        store.set_never_decrypt(&ws, &[]).unwrap();
+        injection.resync(&ws).unwrap();
+        assert_eq!(mode(&terminations), (true, None, Some("never_decrypt")));
+        let after = terminations.termination(&ws).unwrap();
+        assert!(
+            after
+                .interception()
+                .learned()
+                .contains(&host("pinned.example")),
+            "a change to the settings does not forget what the tools refused"
+        );
+        assert!(Arc::ptr_eq(after.interception().learned(), &learned));
     }
 
     #[tokio::test]

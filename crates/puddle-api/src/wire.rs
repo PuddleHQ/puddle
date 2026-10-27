@@ -29,6 +29,7 @@ mod doctor;
 mod environment;
 mod first_run;
 mod identities;
+mod interception;
 mod logins;
 mod network_health;
 mod ports;
@@ -57,6 +58,7 @@ pub use identities::{
     IdentityView, NewWorkspaceIdentity, NewWorkspaceIdentityBasis, SwitchSource, TokenLeft,
     WorkspaceGitView, WorkspaceIdentitiesRequest, WorkspaceSwitchesRequest,
 };
+pub use interception::{GlobalNeverDecrypt, InterceptionRequest, InterceptionView};
 pub use logins::{KeptLoginList, KeptLoginView};
 pub use network_health::{
     DeadProxy, NetworkHealth, PacState, ProxyDetected, ProxyMode, ProxyProblem, ProxyProblemKind,

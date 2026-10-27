@@ -59,6 +59,8 @@ export class FakeSettings {
   /** The user's own app icon, as the PNG text the API would send; `null` until one is stored. */
   customIcon: string | null = null;
   consent: S["Consent"] = { state: "not_asked" };
+  /** The names no workspace decrypts. */
+  neverDecrypt: string[] = [];
   calls: string[] = [];
   bodies: unknown[] = [];
   down = false;
@@ -77,6 +79,7 @@ export class FakeSettings {
     this.ui = fresh.ui;
     this.customIcon = null;
     this.consent = fresh.consent;
+    this.neverDecrypt = [];
     this.calls = [];
     this.bodies = [];
     this.down = false;
@@ -167,6 +170,8 @@ export class FakeSettings {
         return this.reply(200, this.view());
       case "/api/consents":
         return this.reply(200, this.consents());
+      case "/api/interception/never-decrypt":
+        return this.reply(200, { never_decrypt: this.neverDecrypt });
       case "/api/app-icons":
         return this.reply(200, {
           built_in: (
@@ -189,6 +194,12 @@ export class FakeSettings {
     if (this.down) throw new TypeError("down");
     const refused = this.refusal(`PUT ${path}`);
     if (refused) return refused;
+    if (path === "/api/interception/never-decrypt") {
+      this.neverDecrypt = [
+        ...(init.body as S["GlobalNeverDecrypt"]).never_decrypt,
+      ].sort();
+      return this.reply(200, { never_decrypt: this.neverDecrypt });
+    }
     if (path === "/api/app-icons/custom") {
       if ((init.body as File).size === 0) {
         return this.reply(422, undefined, "invalid", "the file is empty");

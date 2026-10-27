@@ -41,6 +41,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
+#[path = "integration/lab/mod.rs"]
 mod lab;
 
 use lab::{REGISTRY, sha256};

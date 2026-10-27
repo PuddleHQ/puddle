@@ -6,6 +6,7 @@
 )]
 //! Its own test binary: the log capture is the process-wide default, which the other tests must not share.
 
+#[path = "integration/common/mod.rs"]
 mod common;
 
 use std::fmt::Write;

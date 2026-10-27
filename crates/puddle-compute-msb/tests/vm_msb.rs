@@ -346,7 +346,8 @@ async fn volume_used_mib(rt: &puddle_compute_msb::MsbRuntime, vol: &VolumeName) 
 /// The `used` of a volume tracks what the guest holds in it: the runtime reads the allocated size
 /// of the volume's disk image, so after the guest writes (and syncs) a known amount, the reading
 /// grows by that amount and sits a fixed offset above the guest's own `df` (the file system's used
-/// count; the offset is the journal and tables, [`OFFSET_MAX_MIB`] at most). The Windows leg reads the image with
+/// count; the offset is the journal and tables plus, on Linux, the zeros the runtime filled ahead of
+/// the guest's writes, [`OFFSET_MAX_MIB`] at most). The Windows leg reads the image with
 /// `GetCompressedFileSizeW`, the Linux leg with the block count.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_volume_used_matches_what_the_guest_holds() {
@@ -400,10 +401,20 @@ async fn vm_volume_used_matches_what_the_guest_holds() {
     }
 }
 
-/// How far above the guest's `df` the image's allocation may sit, in MiB: measured 65 MiB on a
-/// 1 GiB volume at every step on both Linux and Windows; the headroom covers a larger
-/// journal.
-const OFFSET_MAX_MIB: u64 = 128;
+/// How far above the guest's `df` the image's allocation may sit, in MiB: the file system's own
+/// structures plus the grow-ahead cap.
+const OFFSET_MAX_MIB: u64 = FS_STRUCTURES_MAX_MIB + GROW_AHEAD_CAP_MIB;
 
-/// How far the runtime's growth may be from the guest's growth, in MiB: measured 0 at 128 and 512.
+/// The file system's own structures on a 1 GiB volume, in MiB: measured 65 MiB at every step on
+/// both Linux and Windows without grow-ahead; the headroom covers a larger journal.
+const FS_STRUCTURES_MAX_MIB: u64 = 128;
+
+/// The most zeros the Linux runtime keeps filled ahead of the guest's writes in one image, in MiB
+/// (its grow-ahead cap). The first write into a 16 MiB chunk with holes fills the whole chunk, so
+/// the chunks the file system's structures touch read up to this much above them: measured 128 MiB
+/// above `df` at every step, against 65 MiB without grow-ahead. Windows does not fill ahead.
+const GROW_AHEAD_CAP_MIB: u64 = 256;
+
+/// How far the runtime's growth may be from the guest's growth, in MiB: measured 0 at 128 and 512
+/// without grow-ahead, 3 at both with it.
 const GROWTH_BOUND_MIB: u64 = 16;

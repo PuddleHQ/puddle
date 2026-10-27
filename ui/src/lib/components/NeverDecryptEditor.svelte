@@ -58,7 +58,7 @@
     bind:value={text}
     oninput={() => (saved = false)}></textarea>
   <div class="row">
-    <button type="submit" disabled={working || unchanged}>Save names</button>
+    <button type="submit" disabled={working || unchanged}>Keep names</button>
     <span aria-live="polite">
       {#if saved}<span class="saved">Saved.</span>{/if}
       {#if failure}<span class="error" role="alert">{failure}</span>{/if}
@@ -93,6 +93,9 @@
     display: flex;
     align-items: center;
     gap: var(--space-3);
+  }
+  button {
+    min-height: var(--control-size);
   }
   .saved {
     color: var(--color-success);

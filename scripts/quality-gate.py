@@ -11,7 +11,7 @@ Usage:
 A site needs its reason in place: `// SAFETY:` above an unsafe block or impl (`# Safety` doc or
 `SAFETY:` for an unsafe fn), `reason = "..."` on #[allow]/#[expect], `#[ignore = "..."]`, a comment
 on or above an `.unwrap()` outside tests, a non-empty `.expect("...")` message, `# why` after a
-shellcheck disable, ` -- why` after eslint-disable (text after @ts-expect-error / svelte-ignore),
+shellcheck disable (in `*.sh` and in the `run:` blocks of workflow YAML), ` -- why` after eslint-disable (text after @ts-expect-error / svelte-ignore),
 `reason` on a deny.toml advisory ignore and a reason column on a coverage exclusion. A TODO, HACK,
 FIXME or XXX must name where it is tracked: `TODO(owner)`, an issue number (`#123`) or a URL. Those
 gaps are the `noreason` rows (`scripts/check.sh quality` fails on any). There is no baseline file and
@@ -27,6 +27,10 @@ crates puddle-e2e and puddle-vm-tests), else `prod`. Rows: kind, context, file:l
 It is a lexer-free scanner (strings and comments are blanked by a small state machine), so it
 can miss or misplace a hit in macro-generated or very unusual code: a count is a safety net, the
 review still reads the code.
+
+Shellcheck cannot be seen in two places: a directive built at run time (`eval`, a variable) and a
+`# shellcheck disable` inside a heredoc or a quoted string that is not a script; a directive in a
+file type outside TEXT_EXT (a `.bash` script) is not scanned either.
 """
 import json
 import os
@@ -390,7 +394,8 @@ def scan(root):
                         add("noreason", uctx, f, i, m2.group(1) + ": no reason | " + line)
                 if re.search(r"\bas any\b|: any\b", line):
                     add("ui-any", "test" if is_test else "prod", f, i, line)
-        if f.endswith(".sh"):
+        # .sh files and the `run:` blocks of workflow YAML (a line match, so the block need not be parsed).
+        if f.endswith((".sh", ".yml", ".yaml")):
             for i, line in enumerate(lines):
                 if "shellcheck disable" in line:
                     add("shellcheck-disable", "any", f, i, line)
@@ -455,19 +460,43 @@ mod tests {
 '''
 
 
+SELF_TEST_YAML = r'''
+jobs:
+  a:
+    steps:
+      - run: |
+          # shellcheck disable=SC2086 # one word per browser
+          npx playwright install-deps $browsers
+          # a reason on the line above
+          # shellcheck disable=SC2086
+          npx playwright install $browsers
+          # shellcheck disable=SC2086
+          npx playwright install $browsers
+'''
+
+
 def self_test():
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         os.makedirs(os.path.join(d, "crates/x/src"))
         with open(os.path.join(d, "crates/x/src/lib.rs"), "w") as h:
             h.write(SELF_TEST)
+        os.makedirs(os.path.join(d, ".github/workflows"))
+        with open(os.path.join(d, ".github/workflows/ci.yml"), "w") as h:
+            h.write(SELF_TEST_YAML)
         rows = scan(d)
         got = counts(rows)
+        # The flagged directive is the bare one in the workflow, on its own line.
+        flagged = [r[2] for r in rows if r[0] == "noreason" and r[2].startswith(".github/")]
+        if flagged != [".github/workflows/ci.yml:11"]:
+            print("self-test FAIL workflow noreason rows", flagged)
+            return 1
     want = {
+        "shellcheck-disable.any": 3, "noreason.any": 2,
         "unsafe-block.prod": 3, "unwrap.prod": 1, "unwrap.test": 1,
         "allow-attr.prod": 1, "expect-attr.prod": 1,
         "test-no-assert.test": 1, "marker-todo.any": 1, "marker-fixme.any": 1, "marker-hack.any": 1,
-        "noreason.prod": 3, "noreason.any": 1,
+        "noreason.prod": 3,
     }
     bad = {k: (got.get(k), v) for k, v in want.items() if got.get(k) != v}
     extra = {k: v for k, v in got.items() if k not in want}

@@ -16,7 +16,7 @@
 // (the diff-coverage gate is what catches new uncovered lines), and a green ratchet says nothing
 // about how well the tests assert.
 import { readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { runCli } from "./cli.ts";
 
 export interface Totals {
   lines: number;
@@ -155,11 +155,4 @@ export function main(argv: string[]): number {
   return 0;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === import.meta.filename) {
-  try {
-    process.exitCode = main(process.argv.slice(2));
-  } catch (e) {
-    console.error(`coverage-ratchet: ${(e as Error).message}`);
-    process.exitCode = 2;
-  }
-}
+runCli(import.meta.filename, main, "coverage-ratchet");

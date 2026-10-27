@@ -285,6 +285,19 @@ describe("main", () => {
     expect(run(measured, lowered, ["--previous", previous]).code).toBe(0);
   });
 
+  it("refuses a baseline file without numeric lines and regions", () => {
+    const summary = write("summary.json", {
+      data: [{ totals: { lines: { percent: 93 }, regions: { percent: 91 } } }],
+    });
+    const file = write("baseline.json", { lines: "93" });
+    expect(() =>
+      main([
+        ...["--summary", summary, "--baseline", file],
+        ...["--floor-lines", "92", "--floor-regions", "90"],
+      ]),
+    ).toThrow("baseline needs numeric lines and regions");
+  });
+
   it("refuses a call without its arguments", () => {
     expect(() => main([])).toThrow(/usage/);
   });

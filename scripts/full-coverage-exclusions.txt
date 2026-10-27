@@ -1,0 +1,5 @@
+# Lines the full-coverage gate accepts although a coverage run measured them as never executed.
+# Same format as diff-coverage-exclusions.txt: path glob | text the line contains (or * for every such
+# line in the file) | reason. Only code no test can reach belongs here (a fallback arm of an enum another
+# crate marked non-exhaustive); a line that merely lacks a test gets the test. An entry that matches
+# nothing fails the gate, so this list never keeps a stale reason.

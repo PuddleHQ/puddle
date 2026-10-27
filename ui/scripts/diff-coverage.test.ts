@@ -26,6 +26,7 @@ import {
   parseExclusions,
   parseLcov,
   run,
+  runFromArgs,
   type Options,
 } from "./diff-coverage.ts";
 
@@ -56,6 +57,14 @@ describe("parseDiff", () => {
   });
 });
 
+describe("parseDiff details", () => {
+  it("skips a malformed hunk header and files whose diff header has no path", () => {
+    expect(
+      parseDiff("+++ b/a.rs\n@@ nonsense @@\n+x\n+++ /dev/null\n+y\n"),
+    ).toEqual([{ path: "a.rs", line: 0, text: "x" }]);
+  });
+});
+
 describe("parseLcov", () => {
   it("makes paths repository-relative and keeps the highest count of a repeated line", () => {
     const cov = parseLcov(
@@ -69,7 +78,29 @@ describe("parseLcov", () => {
   });
 });
 
+describe("parseLcov details", () => {
+  it("merges two records of one file, reads CRLF reports and skips malformed or orphan DA lines", () => {
+    const cov = parseLcov(
+      "DA:1,1\r\nSF:/repo/a.ts\r\nDA:1,0\r\nDA:x,1\r\nDA:2,y\r\nend_of_record\r\nDA:9,9\r\nSF:/repo/a.ts\r\nDA:3,4\r\nend_of_record\r\n",
+      "/repo",
+      "",
+    );
+    expect([...cov.keys()]).toEqual(["a.ts"]);
+    expect([...(cov.get("a.ts") ?? [])]).toEqual([
+      [1, 0],
+      [3, 4],
+    ]);
+  });
+});
+
 describe("exclusions file", () => {
+  it("refuses a line without any | and one without a closing |", () => {
+    expect(() => parseExclusions("a.rs")).toThrow(
+      'exclusions line 1: want "path glob | text in the line, or * | reason" (a reason is required)',
+    );
+    expect(() => parseExclusions("\n# c\na.rs | x")).toThrow(/line 3/);
+  });
+
   it("needs a reason on every entry", () => {
     expect(() => parseExclusions("a.rs | * |")).toThrow(/reason is required/);
     expect(() => parseExclusions("a.rs | *")).toThrow(/reason is required/);
@@ -169,6 +200,16 @@ describe("judge", () => {
     expect(r.covered).toBe(1);
     expect(r.uncovered.map((u) => u.line)).toEqual([4, 11]);
     expect(r.notMeasured).toEqual(["src/new.rs"]);
+  });
+
+  it("skips an added line that has no coverage data", () => {
+    const r = judge([{ path: "src/a.rs", line: 99, text: "// note" }], cov, []);
+    expect(r).toEqual({
+      uncovered: [],
+      covered: 0,
+      excluded: 0,
+      notMeasured: [],
+    });
   });
 
   it("accepts a listed exclusion by file and whole line text, and marks it used", () => {
@@ -393,12 +434,137 @@ describe("run on a real git repository", () => {
   });
 
   it("fails when the coverage report is missing", () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(run(opts(join(dir, "nope.info")), dir)).toBe(1);
+    expect(err.mock.calls).toEqual([
+      [`t: ${join(dir, "nope.info")} not found; run the coverage gate first`],
+    ]);
+  });
+
+  it("names a changed file the report does not know as not measured, and still exits 0", () => {
+    writeFileSync(
+      join(dir, "l.info"),
+      "SF:/elsewhere/b.rs\nDA:1,1\nend_of_record\n",
+    );
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(run(opts(join(dir, "l.info")), dir)).toBe(0);
+    expect(log.mock.calls).toEqual([
+      ["t: not in the coverage report (not measured): src/a.rs"],
+      ["t ok: 0 changed executable line(s) covered, 0 excluded, since HEAD"],
+    ]);
+  });
+
+  it("accepts a listed exclusion, reports one that matched nothing, and prints the whole failure for the rest", () => {
+    writeFileSync(
+      join(dir, "l.info"),
+      `SF:${dir}/src/a.rs\nDA:3,0\nDA:4,0\nend_of_record\n`,
+    );
+    writeFileSync(
+      join(dir, "ex.txt"),
+      "src/a.rs | 2; | reason\nsrc/zzz.rs | * | reason\n",
+    );
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const code = run(
+      { ...opts(join(dir, "l.info")), exclusions: join(dir, "ex.txt") },
+      dir,
+    );
+    expect(code).toBe(1);
+    expect(log.mock.calls).toEqual([
+      ['t: note: exclusion "src/zzz.rs | *" matched nothing in this diff'],
+    ]);
+    expect(err.mock.calls).toEqual([
+      ["t: 1 added or changed line(s) never ran in a test:"],
+      ["  src/a.rs:4: 3;"],
+      [
+        "  Cover them, or list them with a reason in the exclusion file (reviewed like code).",
+      ],
+    ]);
+  });
+
+  it("counts an excluded line in the success line", () => {
+    writeFileSync(
+      join(dir, "l.info"),
+      `SF:${dir}/src/a.rs\nDA:3,0\nDA:4,1\nend_of_record\n`,
+    );
+    writeFileSync(join(dir, "ex.txt"), "src/a.rs | 2; | reason\n");
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const code = run(
+      { ...opts(join(dir, "l.info")), exclusions: join(dir, "ex.txt") },
+      dir,
+    );
+    expect(code).toBe(0);
+    expect(log.mock.calls).toEqual([
+      ["t ok: 1 changed executable line(s) covered, 1 excluded, since HEAD"],
+    ]);
+  });
+
+  it("only looks at files under the prefix with a listed extension", () => {
+    writeFileSync(
+      join(dir, "l.info"),
+      `SF:${dir}/src/a.rs\nDA:3,0\nend_of_record\n`,
+    );
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    for (const change of [{ prefix: "other/" }, { exts: [".ts"] }]) {
+      log.mockClear();
+      expect(run({ ...opts(join(dir, "l.info")), ...change }, dir)).toBe(0);
+      expect(log.mock.calls).toEqual([
+        ["t ok: 0 changed executable line(s) covered, 0 excluded, since HEAD"],
+      ]);
+    }
+  });
+
+  it("runs in the current directory by default", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(run(opts(join(dir, "nope.info")))).toBe(1);
+  });
+});
+
+describe("runFromArgs", () => {
+  it("refuses a call without --base, --lcov and --exts, naming the usage", () => {
+    expect(() => runFromArgs(["--base", "HEAD", "--lcov", "x"])).toThrow(
+      /^usage: diff-coverage\.ts --base <rev> --lcov <file> --exts/,
+    );
+  });
+
+  it("labels its messages diff-coverage by default", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const code = runFromArgs([
+      ...["--base", "HEAD", "--lcov", "/nonexistent/l.info", "--exts", ".rs"],
+    ]);
+    vi.restoreAllMocks();
+    expect(code).toBe(1);
+    expect(err.mock.calls).toEqual([
+      [
+        "diff-coverage: /nonexistent/l.info not found; run the coverage gate first",
+      ],
+    ]);
+  });
+
+  it("reads the options from the command line and takes the label from --label", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const code = runFromArgs([
+      ...["--base", "HEAD", "--lcov", "/nonexistent/l.info", "--exts", ".rs"],
+      ...["--label", "mine", "--prefix", "ui/", "--exclusions", "/x"],
+    ]);
+    vi.restoreAllMocks();
+    expect(code).toBe(1);
+    expect(err.mock.calls).toEqual([
+      ["mine: /nonexistent/l.info not found; run the coverage gate first"],
+    ]);
   });
 });
 
 describe("cleanGitEnv", () => {
+  it("cleans the process environment when none is given", () => {
+    vi.stubEnv("GIT_DIR", "x");
+    vi.stubEnv("PUDDLE_KEEP", "1");
+    const env = cleanGitEnv();
+    vi.unstubAllEnvs();
+    expect(env["GIT_DIR"]).toBeUndefined();
+    expect(env["PUDDLE_KEEP"]).toBe("1");
+  });
+
   it("drops the variables a git hook exports and keeps the rest", () => {
     const env = cleanGitEnv({
       GIT_DIR: "x",

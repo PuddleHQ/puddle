@@ -281,18 +281,26 @@ mod tests {
             .to_string()
     }
 
-    fn reason(raw: &str) -> &'static str {
-        match normalise_host(raw) {
-            Err(NameError::Invalid { reason, .. }) => reason,
-            other => panic!("{raw:?}: expected Invalid, got {other:?}"),
-        }
+    /// The rule an `Invalid` refusal of `raw` names (the message without the echoed input).
+    fn reason(raw: &str) -> String {
+        let message = normalise_host(raw).unwrap_err().to_string();
+        let prefix = format!("invalid host {:?}: ", echo(raw));
+        message
+            .strip_prefix(&prefix)
+            .expect("an Invalid refusal that echoes the input")
+            .to_owned()
     }
 
-    fn decoded(raw: &str) -> Option<Ipv4Addr> {
-        match normalise_host(raw) {
-            Err(NameError::NonCanonicalIp { decoded, .. }) => decoded,
-            other => panic!("{raw:?}: expected NonCanonicalIp, got {other:?}"),
-        }
+    /// Asserts `raw` is refused as a non-canonical number that decodes to `decoded`.
+    fn assert_decodes_to(raw: &str, decoded: Option<Ipv4Addr>) {
+        assert_eq!(
+            normalise_host(raw).unwrap_err(),
+            NameError::NonCanonicalIp {
+                input: raw.to_owned(),
+                decoded,
+            },
+            "{raw}"
+        );
     }
 
     /// The normalisation table: input, normal form.
@@ -410,13 +418,13 @@ mod tests {
             "169.254.43518",
             "0xa9.0xfe.0xa9.0xfe",
         ] {
-            assert_eq!(decoded(raw), metadata, "{raw}");
+            assert_decodes_to(raw, metadata);
         }
         for raw in ["0x7f.1", "127.1", "0177.0.0.1", "0x7f000001", "127.0.1"] {
-            assert_eq!(decoded(raw), Some(Ipv4Addr::LOCALHOST), "{raw}");
+            assert_decodes_to(raw, Some(Ipv4Addr::LOCALHOST));
         }
-        assert_eq!(decoded("010.0.0.1"), Some(Ipv4Addr::new(8, 0, 0, 1)));
-        assert_eq!(decoded("0x"), Some(Ipv4Addr::UNSPECIFIED));
+        assert_decodes_to("010.0.0.1", Some(Ipv4Addr::new(8, 0, 0, 1)));
+        assert_decodes_to("0x", Some(Ipv4Addr::UNSPECIFIED));
         // Still refused when it decodes to nothing.
         for raw in [
             "1.2.3.4.5",
@@ -429,7 +437,7 @@ mod tests {
             "0xg.1",
             "a.0x1",
         ] {
-            assert_eq!(decoded(raw), None, "{raw}");
+            assert_decodes_to(raw, None);
         }
     }
 
@@ -452,11 +460,15 @@ mod tests {
     #[test]
     fn echoed_input_is_bounded() {
         let raw = format!("{}!", "x".repeat(200));
-        let NameError::Invalid { input, .. } = normalise_host(&raw).unwrap_err() else {
-            panic!("expected Invalid");
-        };
-        assert_eq!(input.chars().count(), MAX_ECHOED_CHARS + 1);
-        assert!(input.ends_with('…'));
+        let echoed = echo(&raw);
+        assert_eq!(echoed.chars().count(), MAX_ECHOED_CHARS + 1);
+        assert!(echoed.ends_with('…'));
+        assert!(
+            normalise_host(&raw)
+                .unwrap_err()
+                .to_string()
+                .starts_with(&format!("invalid host {echoed:?}: "))
+        );
     }
 
     #[test]

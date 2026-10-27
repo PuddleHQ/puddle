@@ -1,0 +1,5 @@
+# Crates whose every executable line must run in a test (docs/STANDARDS.md, "Coverage"): the pure logic,
+# with no operating-system, network or VM code in it. One repository-relative crate folder per line.
+# A crate goes here once it measures 100 %, and never leaves it; a line that can't run goes in
+# scripts/full-coverage-exclusions.txt with its reason.
+crates/puddle-netpolicy

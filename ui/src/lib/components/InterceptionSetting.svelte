@@ -50,9 +50,10 @@
           or login capture for. With this on it decrypts every HTTPS host, so
           rules can see methods and paths. A tool that doesn't trust Puddle's
           certificate fails once for that host, and Puddle then leaves the host
-          alone for 12 hours. Connections that aren't HTTPS, servers that ask
-          for a client certificate and servers whose certificate Puddle doesn't
-          accept go through untouched. It applies at once, no restart.
+          alone for 12 hours (the audit log shows it as pass_through:learned).
+          Connections that aren't HTTPS, servers that ask for a client
+          certificate and servers whose certificate Puddle doesn't accept go
+          through untouched. It applies at once, no restart.
         </p>
       </div>
       <input

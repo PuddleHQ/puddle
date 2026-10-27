@@ -28,7 +28,7 @@ use puddle_api::{
     FakeCredentials, FakeDoctor, FakeLauncher, FakeNetworkHealth, FakePorts, FakeWorkspaces, Found,
     FoundList, Launcher, Listing, MemorySettings, NetworkHealthService, Operation, PortsService,
     RemoteNote, RepoFindings, RepoService, RepositoryDraft, RunningApi, Services, SettingsRepo,
-    StartFolder, Unsaved, WorkspaceRecord, check_repositories,
+    ShellInitCheck, StartFolder, Unsaved, WorkspaceRecord, check_repositories,
 };
 use puddle_secrets::{
     AccountName, DiscoveredAccount, Discovery, HostName, Listing as FoundListing, OrgName,
@@ -52,14 +52,14 @@ pub mod scenario;
 
 pub use scenario::{CheckoutSeed, RemoteNoteSeed};
 pub use scenario::{
-    ConnectionSeed, CredentialsSeed, DecisionSeed, EffectSeed, GitRepoSeed, GitSeed, KeptLoginSeed,
-    ProblemSeed, RepoItemSeed, RepoListSeed, RepoNoteSeed, RepoProblemSeed, RepoSeed, RequestSeed,
-    RuleSeed, Scenario, SettingsSeed, StatusSeed, Step, UnsavedSeed, WorkspaceOperationSeed,
-    WorkspaceSeed,
+    ConnectionSeed, CredentialsSeed, DecisionSeed, EffectSeed, EnvKindSeed, EnvSeed, GitRepoSeed,
+    GitSeed, KeptLoginSeed, ProblemSeed, RepoItemSeed, RepoListSeed, RepoNoteSeed, RepoProblemSeed,
+    RepoSeed, RequestSeed, RuleSeed, Scenario, SettingsSeed, StatusSeed, Step, UnsavedSeed,
+    WorkspaceOperationSeed, WorkspaceSeed,
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
-const BUILT_IN: [(&str, &str); 11] = [
+const BUILT_IN: [(&str, &str); 12] = [
     (
         "default",
         include_str!("../../../../ui/e2e/fixtures/default.json"),
@@ -103,6 +103,10 @@ const BUILT_IN: [(&str, &str); 11] = [
     (
         "start-folder-missing",
         include_str!("../../../../ui/e2e/fixtures/start-folder-missing.json"),
+    ),
+    (
+        "environment",
+        include_str!("../../../../ui/e2e/fixtures/environment.json"),
     ),
 ];
 
@@ -504,10 +508,14 @@ impl State {
         for connection in &scenario.connections {
             self.connection(connection, start)?;
         }
+        for seed in &scenario.env {
+            self.env_seed(&puddle_store::EnvScope::Global, seed)?;
+        }
         let identities = self.identities(scenario)?;
         for workspace in &scenario.workspaces {
             self.workspace(workspace, start)?;
             self.workspace_git(workspace, &identities)?;
+            self.workspace_environment(workspace)?;
         }
         self.credentials_seed(&scenario.credentials)?;
         self.repos
@@ -658,6 +666,20 @@ impl State {
                 self.problems.raise(problem);
             }
             Step::ClearProblem { key } => self.problems.clear(key),
+            Step::Listening {
+                workspace: name,
+                ports,
+            } => {
+                let name = workspace(name)?;
+                self.ports.set_listening(&name, ports);
+                self.events
+                    .emit(Event::WorkspacePortsChanged { workspace: name });
+            }
+            Step::ShellInitCheck { refuses } => self.workspaces.set_shell_init_check(
+                refuses
+                    .clone()
+                    .map_or(ShellInitCheck::Passed, ShellInitCheck::Refused),
+            ),
             Step::Rule(rule) => self.add_rule(rule, now)?,
             Step::Connection(connection) => self.connection(connection, now)?,
             Step::HoldWorkspaces => self.workspaces.hold(),
@@ -793,6 +815,55 @@ impl State {
                 Ok((label, made.id))
             })
             .collect()
+    }
+
+    /// Makes one variable or secret of the scenario, through the same store calls the API uses. A
+    /// secret's value goes to the in-memory vault under a fixed id; it is never read back.
+    fn env_seed(&self, scope: &puddle_store::EnvScope, seed: &EnvSeed) -> Result<(), String> {
+        let at = |err: &dyn std::fmt::Display| format!("variable {:?}: {err}", seed.name);
+        let name = puddle_store::EnvName::new(&seed.name).map_err(|err| at(&err))?;
+        let draft = match seed.kind {
+            EnvKindSeed::Plain => {
+                puddle_store::EnvDraft::plain(&seed.value).map_err(|err| at(&err))?
+            }
+            EnvKindSeed::Secret => {
+                let id = puddle_secrets::StoredId::new(format!("env-seed-{}", seed.name))
+                    .map_err(|err| at(&err))?;
+                if !seed.value.is_empty() {
+                    puddle_secrets::SecretStore::set(
+                        self.secrets.as_ref(),
+                        &id,
+                        &puddle_secrets::Secret::new(seed.value.clone()),
+                    )
+                    .map_err(|err| at(&err))?;
+                }
+                let hosts = puddle_store::SecretHost::list(&seed.hosts).map_err(|err| at(&err))?;
+                puddle_store::EnvDraft::secret(id, hosts).map_err(|err| at(&err))?
+            }
+        };
+        self.store
+            .set_env(scope, &name, draft)
+            .map(|_| ())
+            .map_err(|err| at(&err))
+    }
+
+    /// A seeded workspace's own variables, shell init and listening ports.
+    fn workspace_environment(&self, seed: &WorkspaceSeed) -> Result<(), String> {
+        let name = workspace(&seed.name)?;
+        let at = |err: &dyn std::fmt::Display| format!("workspace {:?}: {err}", seed.name);
+        for entry in &seed.env {
+            self.env_seed(&puddle_store::EnvScope::Workspace(name.clone()), entry)?;
+        }
+        if let Some(text) = &seed.shell_init {
+            let text = puddle_store::ShellInitText::new(text).map_err(|err| at(&err))?;
+            self.store
+                .set_shell_init(&name, &text)
+                .map_err(|err| at(&err))?;
+        }
+        if !seed.listening_ports.is_empty() {
+            self.ports.set_listening(&name, &seed.listening_ports);
+        }
+        Ok(())
     }
 
     /// A seeded workspace's identities, table and switches.

@@ -163,6 +163,7 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
         ("first-run", 0, 0),
         ("unmanaged-checkouts", 0, 0),
         ("start-folder-missing", 0, 0),
+        ("environment", 0, 1),
     ];
     for (name, pending, rules_min) in counts {
         let run = start(name).await;
@@ -191,7 +192,8 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
             "repo-lists",
             "first-run",
             "unmanaged-checkouts",
-            "start-folder-missing"
+            "start-folder-missing",
+            "environment"
         ]
     );
 }
@@ -1349,4 +1351,129 @@ async fn repository_lists_can_be_held_released_and_replaced_by_steps() {
     let bad =
         step(json!({"do": "repo_lists", "lists": [{"identity": "Nobody", "host": "x"}]})).await;
     assert_eq!(bad.status, 422, "{}", bad.body);
+}
+
+#[tokio::test]
+async fn the_environment_scenario_seeds_variables_secrets_shell_init_and_listening_ports() {
+    let run = start("environment").await;
+
+    let global = run.get("/api/env").await.json();
+    let names: Vec<_> = global["variables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["EDITOR", "GHE_TOKEN"]);
+
+    let shop = run.get("/api/workspaces/web-shop/env").await.json();
+    let rows = shop["variables"].as_array().unwrap();
+    let secret = rows.iter().find(|v| v["name"] == "NPM_TOKEN").unwrap();
+    assert_eq!(secret["kind"], "secret");
+    assert_eq!(secret["value"], Value::Null);
+    assert_eq!(
+        secret["hosts"],
+        json!(["*.npmjs.org", "registry.npmjs.org"])
+    );
+    assert!(
+        !shop.to_string().contains("npm-seed-value"),
+        "a secret's value is never in a response: {shop}"
+    );
+    assert!(rows.iter().any(|v| v["scope"] == "global"), "{shop}");
+
+    let init = run.get("/api/workspaces/web-shop/shell-init").await.json();
+    assert_eq!(init["content"], "export PAGER=less\n");
+    let none = run.get("/api/workspaces/docs-site/shell-init").await.json();
+    assert_eq!(none["saved"], false);
+
+    let ports = run.get("/api/workspaces/web-shop/ports").await.json();
+    let listening: Vec<_> = ports["ports"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["guest_port"].as_u64().unwrap())
+        .collect();
+    assert_eq!(listening, [3000, 5432]);
+}
+
+#[tokio::test]
+async fn steps_change_what_listens_and_what_the_shell_init_check_says() {
+    let run = start("environment").await;
+    let step = |body: Value| {
+        let run = &run;
+        async move { run.control("POST", "/control/step", Some(&body)).await }
+    };
+    let mut events = run.events().await;
+    assert_eq!(
+        step(json!({"do": "listening", "workspace": "web-shop", "ports": [8080]}))
+            .await
+            .status,
+        204
+    );
+    let seen = read_until(&mut events, |text| text.contains("workspace_ports_changed")).await;
+    assert!(seen.contains("web-shop"), "{seen}");
+    let ports = run.get("/api/workspaces/web-shop/ports").await.json();
+    assert_eq!(ports["ports"].as_array().unwrap().len(), 1);
+    assert_eq!(ports["ports"][0]["guest_port"], 8080);
+
+    let put = |content: &str| {
+        let run = &run;
+        let body = json!({ "content": content });
+        async move {
+            run.api("PUT", "/api/workspaces/web-shop/shell-init", Some(&body))
+                .await
+        }
+    };
+    assert_eq!(put("echo hi").await.status, 200);
+    assert_eq!(
+        step(json!({"do": "shell_init_check", "refuses": "it printed: hi"}))
+            .await
+            .status,
+        204
+    );
+    let refused = put("echo hi").await;
+    assert_eq!(refused.status, 422, "{}", refused.body);
+    assert!(refused.body.contains("it printed: hi"), "{}", refused.body);
+    assert_eq!(step(json!({"do": "shell_init_check"})).await.status, 204);
+    assert_eq!(put("echo hi").await.status, 200);
+}
+
+#[tokio::test]
+async fn a_scenario_whose_variable_is_refused_fails_to_start_and_names_it() {
+    for (seed, word) in [
+        (json!({"name": "1BAD"}), "1BAD"),
+        (json!({"name": "PATH"}), "PATH"),
+        (
+            json!({"name": "TOKEN", "kind": "secret", "value": "v", "hosts": ["1.2.3.4"]}),
+            "TOKEN",
+        ),
+        (
+            json!({"name": "TOKEN", "kind": "secret", "hosts": []}),
+            "TOKEN",
+        ),
+    ] {
+        let scenario: Scenario = serde_json::from_value(json!({"env": [seed]})).unwrap();
+        let err = Fixture::start(FixtureOptions {
+            port: 0,
+            connection_file: None,
+            scenario,
+        })
+        .await
+        .err()
+        .unwrap();
+        assert!(err.contains(word), "{err}");
+    }
+    let shell: Scenario = serde_json::from_value(json!({"workspaces": [
+        {"name": "web", "shell_init": "a\u{0}b", "env": [{"name": "OK", "value": "1"}]}
+    ]}))
+    .unwrap();
+    let err = Fixture::start(FixtureOptions {
+        port: 0,
+        connection_file: None,
+        scenario: shell,
+    })
+    .await
+    .err()
+    .unwrap();
+    assert!(err.contains("web"), "{err}");
 }

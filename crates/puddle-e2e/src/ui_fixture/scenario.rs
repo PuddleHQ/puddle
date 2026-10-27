@@ -50,6 +50,9 @@ pub struct Scenario {
     /// Workspaces that exist at start, with the state they are in.
     #[serde(default)]
     pub workspaces: Vec<WorkspaceSeed>,
+    /// Environment variables and secrets every workspace gets, created in this order.
+    #[serde(default)]
+    pub env: Vec<EnvSeed>,
     /// Identities that exist at start, in your order (the first one made is the default).
     #[serde(default)]
     pub identities: Vec<IdentityRequest>,
@@ -188,6 +191,43 @@ pub struct WorkspaceSeed {
     /// How many more checkouts the guest holds than `checkouts` lists.
     #[serde(default)]
     pub checkouts_more: u64,
+    /// Its own environment variables and secrets, created in this order.
+    #[serde(default)]
+    pub env: Vec<EnvSeed>,
+    /// The shell init it has saved; none when left out.
+    #[serde(default)]
+    pub shell_init: Option<String>,
+    /// The ports something in it listens on.
+    #[serde(default)]
+    pub listening_ports: Vec<u16>,
+}
+
+/// An environment variable or a secret.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnvSeed {
+    /// The name.
+    pub name: String,
+    /// `plain` (the default) or `secret`.
+    #[serde(default)]
+    pub kind: EnvKindSeed,
+    /// A plain variable's value, or a secret's, which the fixture keeps in memory and never shows.
+    #[serde(default)]
+    pub value: String,
+    /// The hosts a secret's value may be sent to.
+    #[serde(default)]
+    pub hosts: Vec<String>,
+}
+
+/// What an [`EnvSeed`] is.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvKindSeed {
+    /// A variable the workspace sees.
+    #[default]
+    Plain,
+    /// A secret whose value stays outside the workspace.
+    Secret,
 }
 
 /// One checkout the guest holds.
@@ -645,6 +685,21 @@ pub enum Step {
     ClearProblem {
         /// The problem's key.
         key: String,
+    },
+    /// Sets the ports something in a workspace listens on, as a program starting or stopping
+    /// there would (the Ports tab reads the list again on `workspace_ports_changed`).
+    Listening {
+        /// The workspace's name.
+        workspace: String,
+        /// The ports that listen now.
+        ports: Vec<u16>,
+    },
+    /// Makes the throwaway-shell check of a shell init refuse with this text (what the script
+    /// printed), or pass again when it is left out. Only a running workspace is checked.
+    ShellInitCheck {
+        /// What the check says; passes when left out.
+        #[serde(default)]
+        refuses: Option<String>,
     },
     /// Creates a rule.
     Rule(RuleSeed),

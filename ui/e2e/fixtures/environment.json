@@ -1,0 +1,57 @@
+{
+  "name": "environment",
+  "env": [
+    { "name": "EDITOR", "value": "vim" },
+    {
+      "name": "GHE_TOKEN",
+      "kind": "secret",
+      "value": "ghe-global-value",
+      "hosts": ["git.acme.example"]
+    }
+  ],
+  "rules": [
+    {
+      "effect": "allow",
+      "pattern": "registry.npmjs.org",
+      "workspace": "docs-site",
+      "ago_ms": 172800000
+    }
+  ],
+  "workspaces": [
+    {
+      "name": "web-shop",
+      "repositories": [{ "url": "https://github.com/acme/web-shop.git" }],
+      "status": "running",
+      "ago_ms": 1209600000,
+      "disk_used_mib": 6144,
+      "env": [
+        { "name": "NODE_ENV", "value": "development" },
+        {
+          "name": "NPM_TOKEN",
+          "kind": "secret",
+          "value": "npm-seed-value",
+          "hosts": ["registry.npmjs.org", "*.npmjs.org"]
+        }
+      ],
+      "shell_init": "export PAGER=less\n",
+      "listening_ports": [3000, 5432]
+    },
+    {
+      "name": "docs-site",
+      "repositories": [{ "url": "https://github.com/acme/docs-site.git" }],
+      "status": "stopped",
+      "ago_ms": 604800000,
+      "disk_used_mib": 1536,
+      "env": [
+        { "name": "MODE", "value": "docs" },
+        { "name": "LOG_LEVEL", "value": "info" },
+        {
+          "name": "DOCS_TOKEN",
+          "kind": "secret",
+          "value": "docs-seed-value",
+          "hosts": ["api.docs.example"]
+        }
+      ]
+    }
+  ]
+}

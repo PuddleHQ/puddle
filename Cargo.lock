@@ -6215,6 +6215,7 @@ dependencies = [
  "puddle-compute",
  "puddle-compute-msb",
  "puddle-fd-limit",
+ "puddle-front",
  "puddle-inject",
  "puddle-ipc",
  "puddle-netpolicy",
@@ -6247,6 +6248,29 @@ dependencies = [
  "rustix",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "puddle-front"
+version = "0.0.0"
+dependencies = [
+ "base64 0.23.1",
+ "bytes",
+ "getrandom 0.4.3",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "puddle-agent-proto",
+ "puddle-fs",
+ "puddle-netpolicy",
+ "puddle-ports",
+ "puddle-types",
+ "sha2 0.11.1",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

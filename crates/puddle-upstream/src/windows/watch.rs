@@ -4,7 +4,7 @@
 //! which every Windows version supports and which catches group policy and user edits.
 
 use std::ffi::c_void;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::thread::JoinHandle;
 
 use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE, WAIT_OBJECT_0};
@@ -29,30 +29,37 @@ type Register = unsafe extern "system" fn(
 ) -> u32;
 type Unregister = unsafe extern "system" fn(*const c_void) -> u32;
 
-/// What the WinHTTP callback needs; leaked on purpose until the registration is removed.
-struct Context(ChangeCallback);
+/// What the WinHTTP callback needs. Never freed: WinHTTP's documentation gives no point after
+/// which it will not call back, so once registered the allocation stays for the life of the
+/// process (this box plus the callback's `Arc` memory, without its value). It holds a
+/// `Weak`, so a late callback finds the owner gone and does nothing, and the callback's own state
+/// is not kept alive by it (the `WinHttpWatch` holds the strong reference while registered).
+struct Context(Weak<dyn Fn() + Send + Sync>);
 
-/// WinHTTP's proxy change callback: runs the registered `ChangeCallback`.
+/// WinHTTP's proxy change callback: runs the registered `ChangeCallback` if its owner is alive.
 ///
 /// # Safety
 ///
-/// `context` must be the `Context` that `WinHttpWatch::register` registered and its drop has not
-/// freed yet. Only WinHTTP calls it.
+/// `context` must be a pointer from `Box::into_raw(Box<Context>)` that is never freed (as in
+/// `WinHttpWatch::register`). Only WinHTTP calls it.
 unsafe extern "system" fn proxy_changed(_flags: u64, context: *const c_void) {
-    // SAFETY: `context` is the `Context` registered in `WinHttpWatch::register`, alive until the
-    // registration is removed (and unregistration waits for running callbacks).
+    // SAFETY: `context` is the `Context` leaked in `WinHttpWatch::register`; nothing frees it, so
+    // it is alive whenever WinHTTP calls, even after the registration was dropped.
     let context = unsafe { &*context.cast::<Context>() };
-    (context.0)();
+    if let Some(on_change) = context.0.upgrade() {
+        on_change();
+    }
 }
 
 struct WinHttpWatch {
     registration: *mut c_void,
     unregister: Unregister,
-    context: *mut Context,
+    /// Keeps the callback alive while registered; released after the unregister call.
+    _on_change: ChangeCallback,
 }
 
-// SAFETY: the registration handle and context are only used to unregister and free, from the
-// thread that drops the guard; the callback side only reads the context.
+// SAFETY: the registration handle is only used to unregister, from the thread that drops the
+// guard; the callback side only reads the leaked context.
 unsafe impl Send for WinHttpWatch {}
 // SAFETY: see above; no shared mutation.
 unsafe impl Sync for WinHttpWatch {}
@@ -95,9 +102,9 @@ impl WinHttpWatch {
                 std::mem::transmute::<unsafe extern "system" fn() -> isize, Unregister>(unregister),
             )
         };
-        let context = Box::into_raw(Box::new(Context(Arc::clone(on_change))));
+        let context = Box::into_raw(Box::new(Context(Arc::downgrade(on_change))));
         let mut registration = std::ptr::null_mut();
-        // SAFETY: the callback matches the signature; `context` lives until unregistered.
+        // SAFETY: the callback matches the signature; `context` is never freed.
         let code = unsafe {
             register(
                 1,
@@ -107,7 +114,7 @@ impl WinHttpWatch {
             )
         };
         if code != 0 {
-            // SAFETY: registration failed, so nothing else holds the context.
+            // SAFETY: a failed registration returns no handle, so nothing can call back with the context.
             drop(unsafe { Box::from_raw(context) });
             return Err(format!(
                 "WinHTTP refused the proxy change registration (error {code})"
@@ -116,19 +123,18 @@ impl WinHttpWatch {
         Ok(Self {
             registration,
             unregister,
-            context,
+            _on_change: Arc::clone(on_change),
         })
     }
 }
 
 impl Drop for WinHttpWatch {
     fn drop(&mut self) {
-        // SAFETY: the registration is live; unregistering waits for running callbacks, after which
-        // nothing uses the context.
-        unsafe {
-            (self.unregister)(self.registration);
-            drop(Box::from_raw(self.context));
-        }
+        // SAFETY: the registration is live. The documentation of
+        // WinHttpUnregisterProxyChangeNotification says only that it returns "a status code": it
+        // does not promise that it waits for a running callback or that none starts afterwards.
+        // So the context is not freed here (see `Context`), and the code is not needed.
+        unsafe { (self.unregister)(self.registration) };
     }
 }
 
@@ -479,5 +485,60 @@ mod tests {
         let guard = assemble(Err("winhttp part failed".into()), Ok(registry), &on_problem);
         assert!(guard.is_some());
         assert_eq!(*seen.lock().unwrap(), ["winhttp part failed"]);
+    }
+
+    /// An unregister call that fails the way WinHTTP may (an error code).
+    unsafe extern "system" fn unregister_fails(_registration: *const c_void) -> u32 {
+        6 // ERROR_INVALID_HANDLE
+    }
+
+    /// An unregister call that succeeds.
+    unsafe extern "system" fn unregister_succeeds(_registration: *const c_void) -> u32 {
+        0
+    }
+
+    fn counting_callback() -> (ChangeCallback, Arc<std::sync::atomic::AtomicUsize>) {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = Arc::clone(&calls);
+        let on_change: ChangeCallback = Arc::new(move || {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        });
+        (on_change, calls)
+    }
+
+    #[test]
+    fn a_callback_after_the_watch_is_dropped_finds_a_live_context_and_does_nothing() {
+        for unregister in [unregister_succeeds, unregister_fails] {
+            let (on_change, calls) = counting_callback();
+            let context = Box::into_raw(Box::new(Context(Arc::downgrade(&on_change))));
+            let watch = WinHttpWatch {
+                registration: std::ptr::null_mut(),
+                unregister,
+                _on_change: Arc::clone(&on_change),
+            };
+            // SAFETY: a leaked `Context`, as `register` makes.
+            unsafe { proxy_changed(0, context.cast::<c_void>()) };
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+            drop(watch);
+            drop(on_change);
+            // The owner is gone, WinHTTP calls once more: the context must still be readable.
+            // SAFETY: the context is never freed.
+            unsafe { proxy_changed(0, context.cast::<c_void>()) };
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+            // SAFETY: reclaimed here only so the test does not leak; nothing calls it again.
+            drop(unsafe { Box::from_raw(context) });
+        }
+    }
+
+    #[test]
+    fn the_real_winhttp_registration_does_not_keep_the_callback_alive() {
+        let (on_change, calls) = counting_callback();
+        let watch = WinHttpWatch::register(&on_change)
+            .expect("WinHTTP proxy change notification exists on supported Windows");
+        assert_eq!(Arc::strong_count(&on_change), 2, "the watch keeps it alive");
+        drop(watch);
+        assert_eq!(Arc::strong_count(&on_change), 1, "and lets go once dropped");
+        drop(on_change);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 }

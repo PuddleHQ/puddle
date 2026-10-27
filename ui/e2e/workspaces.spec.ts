@@ -748,7 +748,7 @@ test.describe("the detail page", () => {
     ).toBeVisible();
   });
 
-  test("the later tabs are there and say they are not ready", async ({
+  test("the Environment, Shell init and Ports tabs open on their own content", async ({
     page,
     backend,
   }) => {
@@ -756,7 +756,7 @@ test.describe("the detail page", () => {
     for (const tab of ["Environment", "Shell init", "Ports"]) {
       await page.getByRole("link", { name: tab }).click();
       await expect(
-        page.getByText("This part of the workspace page is not available yet."),
+        page.getByRole("heading", { level: 2, name: tab }),
       ).toBeVisible();
       await expect(page.getByRole("link", { name: tab })).toHaveAttribute(
         "aria-current",

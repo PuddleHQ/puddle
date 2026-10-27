@@ -355,15 +355,22 @@ mod tests {
         let path = dir.path().join("pw");
         assert_eq!(existing_password(&path), None);
         let good = new_password().unwrap();
-        for bad in [
+        for (case, bad) in [
             "",
             "short",
             &"g".repeat(64),
             &format!("{good}\n"),
             &format!("{good}00"),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             std::fs::write(&path, bad).unwrap();
-            assert_eq!(existing_password(&path), None, "{bad:?}");
+            assert_eq!(
+                existing_password(&path),
+                None,
+                "a malformed password file (case {case}) was reused"
+            );
         }
         std::fs::write(&path, &good).unwrap();
         assert_eq!(existing_password(&path), Some(good));
@@ -373,9 +380,11 @@ mod tests {
     fn the_password_file_is_owner_only_and_replaced_whole() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("run/editor-password");
-        write_password(&path, "first").unwrap();
-        write_password(&path, "second").unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "second");
+        let first = puddle_types::fixture::password("first");
+        let second = puddle_types::fixture::password("second");
+        write_password(&path, &first).unwrap();
+        write_password(&path, &second).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), second);
         assert!(!dir.path().join("run/editor-password.partial").exists());
         #[cfg(unix)]
         {
@@ -396,7 +405,8 @@ mod tests {
             "HOME",
         ]
         .map(String::from);
-        let cmd = command(&server(), "s3cret", inherited);
+        let password = puddle_types::fixture::password("editor");
+        let cmd = command(&server(), &password, inherited);
         let envs: std::collections::BTreeMap<String, Option<String>> = cmd
             .as_std()
             .get_envs()
@@ -407,7 +417,7 @@ mod tests {
                 )
             })
             .collect();
-        assert_eq!(envs.get("PASSWORD"), Some(&Some("s3cret".to_owned())));
+        assert_eq!(envs.get("PASSWORD"), Some(&Some(password)));
         for gone in ["VSCODE_IPC_HOOK_CLI", "PUDDLE_AGENT_LISTEN", "PORT"] {
             assert_eq!(envs.get(gone), Some(&None), "{gone} is removed");
         }

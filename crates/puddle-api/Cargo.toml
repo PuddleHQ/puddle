@@ -48,6 +48,7 @@ utoipa-axum = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+puddle-types = { workspace = true, features = ["testing"] }
 proptest = { workspace = true }
 rcgen = { workspace = true }
 puddle-upstream = { workspace = true, features = ["testing"] }

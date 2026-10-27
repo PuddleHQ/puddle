@@ -97,8 +97,13 @@ async fn no_secret_reaches_logs_errors_or_debug_output() {
     let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
     assert!(
         logs.contains("reading a secret"),
-        "the capture works: {logs}"
+        "the log capture recorded nothing"
     );
-    assert!(!logs.contains(CANARY), "{logs}");
-    assert!(!shown.contains(CANARY), "{shown}");
+    let in_logs = logs.contains(CANARY);
+    let in_errors = shown.contains(CANARY);
+    assert!(!in_logs, "the captured logs hold the canary");
+    assert!(
+        !in_errors,
+        "an error's text or Debug output holds the canary"
+    );
 }

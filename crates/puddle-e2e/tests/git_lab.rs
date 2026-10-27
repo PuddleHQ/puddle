@@ -36,7 +36,7 @@ async fn git_clones_and_pushes_through_a_squid_that_asks_for_a_basic_sign_in() {
     };
     let auth = Arc::new(BasicAuth::new().with_default(Credentials::new(
         puddle_e2e::lab::BASIC_USER,
-        puddle_e2e::lab::BASIC_PASSWORD,
+        puddle_e2e::lab::basic_password(),
     )));
     let rig = GitRig::via(
         vec![Hop::Proxy(ProxyAddr::new("127.0.0.1", squid.port()))],
@@ -112,7 +112,7 @@ async fn a_wrong_basic_sign_in_stops_the_clone_before_anything_reaches_the_host(
     };
     let auth = Arc::new(BasicAuth::new().with_default(Credentials::new(
         puddle_e2e::lab::BASIC_USER,
-        "not-the-lab-password",
+        puddle_types::fixture::password("not-the-lab"),
     )));
     let rig = GitRig::via(
         vec![Hop::Proxy(ProxyAddr::new("127.0.0.1", squid.port()))],

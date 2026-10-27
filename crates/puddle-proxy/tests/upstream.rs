@@ -24,6 +24,7 @@ use puddle_ipc::IpcRoot;
 use puddle_netpolicy::PuddleEndpoints;
 use puddle_proxy::testing::{AnyAddress, CollectingConnectionLog, StaticPolicy, StaticResolver};
 use puddle_proxy::{Proxy, PullProxy, Route, Upstream};
+use puddle_types::fixture;
 use puddle_types::{ConnectionEvent, ConnectionOutcome, Host, NullSink, WorkspaceName};
 use puddle_upstream::{
     BasicAuth, Behaviour, Chain, ChainConfig, Config, Credentials, Discovery, FakeOs, FakeProxy,
@@ -258,14 +259,15 @@ async fn absolute_form_goes_through_the_company_proxy() {
 
 #[tokio::test]
 async fn a_407_from_the_company_proxy_is_answered_with_the_configured_credentials() {
+    let secret = fixture::canary("proxy");
     let server = echo().await;
     let proxy = FakeProxy::start(Behaviour::Basic {
         user: "alice".into(),
-        password: "CANARY-s3cret".into(),
+        password: secret.clone(),
     })
     .await;
     proxy.resolve_name("site.test", server.addr);
-    let (up, _) = upstream(vec![via(&proxy)], basic("alice", "CANARY-s3cret"));
+    let (up, _) = upstream(vec![via(&proxy)], basic("alice", &secret));
     let rig = Rig::new(StaticResolver::new().with("site.test", &[LOCAL]), up, None);
     rig.policy.allow(&host("site.test"));
     let mut guest = rig.guest().await;
@@ -582,7 +584,7 @@ async fn hostile_a_guest_cannot_supply_proxy_credentials_or_a_second_request() {
 async fn hostile_a_hostile_company_proxy_cannot_hang_or_loop_the_workspace_proxy() {
     for behaviour in [Behaviour::Garbage, Behaviour::Silent, Behaviour::Always407] {
         let proxy = FakeProxy::start(behaviour).await;
-        let (up, _) = upstream(vec![via(&proxy)], basic("u", "p"));
+        let (up, _) = upstream(vec![via(&proxy)], basic("u", &fixture::password("unused")));
         let rig = Rig::new(StaticResolver::new().with("site.test", &[LOCAL]), up, None);
         rig.policy.allow(&host("site.test"));
         let mut guest = rig.guest().await;
@@ -846,14 +848,15 @@ async fn pull_connect(rig: &PullRig, target: &str) -> (String, tokio::net::TcpSt
 
 #[tokio::test]
 async fn pulls_go_through_the_company_proxy_with_basic_auth_and_unknown_names_resolve_there() {
+    let secret = fixture::canary("proxy");
     let server = echo().await;
     let proxy = FakeProxy::start(Behaviour::Basic {
         user: "alice".into(),
-        password: "s3cret".into(),
+        password: secret.clone(),
     })
     .await;
     proxy.resolve_name("registry.corp.test", server.addr);
-    let (up, _) = upstream(vec![via(&proxy)], basic("alice", "s3cret"));
+    let (up, _) = upstream(vec![via(&proxy)], basic("alice", &secret));
     // The registry name is unknown to this host's resolver: only the company proxy has it.
     let rig = pull_rig(StaticResolver::new(), up);
     let target = format!("registry.corp.test:{}", server.addr.port());
@@ -872,7 +875,7 @@ async fn pulls_go_through_the_company_proxy_with_basic_auth_and_unknown_names_re
         events[0].upstream,
         Some(format!("PROXY {}", proxy.proxy_addr()))
     );
-    assert!(!format!("{events:?}").contains("s3cret"));
+    fixture::assert_absent("the connection events", &format!("{events:?}"), &secret);
     let seen = proxy.seen();
     assert_eq!(seen.len(), 2, "one 407, then the credential");
     assert_eq!(seen[1].target, target);
@@ -918,12 +921,13 @@ async fn pulls_fall_back_from_a_dead_proxy_to_direct_with_a_checked_address() {
 
 #[tokio::test]
 async fn plain_http_pulls_carry_the_proxy_credential_not_the_pull_token() {
+    let secret = fixture::canary("proxy");
     let proxy = FakeProxy::start(Behaviour::Basic {
         user: "alice".into(),
-        password: "s3cret".into(),
+        password: secret.clone(),
     })
     .await;
-    let (up, _) = upstream(vec![via(&proxy)], basic("alice", "s3cret"));
+    let (up, _) = upstream(vec![via(&proxy)], basic("alice", &secret));
     let rig = pull_rig(StaticResolver::new().with("mirror.test", &[LOCAL]), up);
     let (head, mut stream) = pull_support::send(
         rig.route.local_addr(),
@@ -947,5 +951,8 @@ async fn plain_http_pulls_carry_the_proxy_credential_not_the_pull_token() {
         .unwrap();
     let sent = get.proxy_authorization.unwrap();
     assert_ne!(sent, format!("Basic {}", rig.credentials));
-    assert_eq!(sent, format!("Basic {}", BASE64.encode("alice:s3cret")));
+    assert_eq!(
+        sent,
+        format!("Basic {}", BASE64.encode(format!("alice:{secret}")))
+    );
 }

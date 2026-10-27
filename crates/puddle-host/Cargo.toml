@@ -57,6 +57,7 @@ url = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+puddle-types = { workspace = true, features = ["testing"] }
 microsandbox = { workspace = true }
 puddle-e2e = { workspace = true }
 puddle-compute = { workspace = true, features = ["fake"] }

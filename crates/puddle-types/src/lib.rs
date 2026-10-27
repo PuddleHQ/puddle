@@ -25,6 +25,8 @@ mod connection;
 mod cpus;
 mod error;
 mod event;
+#[cfg(any(test, feature = "testing"))]
+pub mod fixture;
 mod guest;
 mod host;
 mod local;

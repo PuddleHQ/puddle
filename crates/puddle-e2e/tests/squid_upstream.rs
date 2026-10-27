@@ -15,7 +15,7 @@ mod rig;
 
 use std::sync::Arc;
 
-use puddle_e2e::lab::{BASIC_PASSWORD as PASSWORD, BASIC_USER as USER, Squid, SquidOptions};
+use puddle_e2e::lab::{BASIC_USER as USER, Squid, SquidOptions, basic_password};
 use puddle_upstream::{BasicAuth, Hop, ProxyAddr, ProxyAuth};
 use rig::{
     allow, basic, connection_records, dead_proxy, echo_roundtrip, echo_server, rig,
@@ -43,7 +43,7 @@ async fn a_tunnel_goes_through_basic_auth_squid_after_a_dead_pac_hop() {
             Hop::Proxy(squid_addr(&squid)),
             Hop::Direct,
         ],
-        basic(USER, PASSWORD),
+        basic(USER, &basic_password()),
     )
     .await;
     allow(&rig.store, "echo.corp.test");
@@ -97,7 +97,11 @@ async fn plain_http_goes_through_squid_with_the_basic_credential() {
     let Some(squid) = Squid::start(&SquidOptions::basic(&[origin_addr.port()])) else {
         return;
     };
-    let rig = rig(vec![Hop::Proxy(squid_addr(&squid))], basic(USER, PASSWORD)).await;
+    let rig = rig(
+        vec![Hop::Proxy(squid_addr(&squid))],
+        basic(USER, &basic_password()),
+    )
+    .await;
     allow(&rig.store, "web.corp.test");
     let (code, _, body) = status_and_body(
         rig.agent.local_addr(),
@@ -128,7 +132,7 @@ async fn a_wrong_or_missing_password_is_a_502_naming_upstream_auth_and_squid_nev
         return;
     };
     for auth in [
-        basic(USER, "not-the-password"),
+        basic(USER, &puddle_types::fixture::password("not-the")),
         Arc::new(BasicAuth::new()) as Arc<dyn ProxyAuth>,
     ] {
         let rig = rig(vec![Hop::Proxy(squid_addr(&squid)), Hop::Direct], auth).await;

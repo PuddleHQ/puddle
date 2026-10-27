@@ -28,6 +28,7 @@ use puddle_host::{
 use puddle_netpolicy::EndpointKind;
 use puddle_runtime::{RuntimeLayout, RuntimeVersion};
 use puddle_secrets::{MemoryStore, SecretStore as _};
+use puddle_types::fixture;
 use puddle_types::{
     Event, EventSink, GuestEnv, GuestPath, ImageRef, SandboxName, WorkspaceId, WorkspaceName,
 };
@@ -6118,14 +6119,15 @@ async fn host_behind_proxy_with(
 async fn a_sign_in_to_the_company_proxy_shows_in_the_served_network_health_report() {
     use puddle_upstream::{Behaviour, FakeProxy};
     let rig = Rig::new();
+    let right = fixture::password("right");
     // The proxy asks for Basic once, then answers the CONNECT with "no such host": nothing
     // leaves the test.
     let proxy = FakeProxy::start(Behaviour::Basic {
         user: "svc".into(),
-        password: "pw-right".into(),
+        password: right.clone(),
     })
     .await;
-    let host = host_behind_proxy(&rig, &proxy, "pw-right").await;
+    let host = host_behind_proxy(&rig, &proxy, &right).await;
     let api = api(&host);
 
     let before = api.get("/api/network-health").await.json();
@@ -6137,7 +6139,7 @@ async fn a_sign_in_to_the_company_proxy_shows_in_the_served_network_health_repor
 
     let reply = api.get("/api/network-health").await;
     assert_eq!(reply.status, 200, "{}", reply.body);
-    assert!(!reply.body.contains("pw-right"), "{}", reply.body);
+    fixture::assert_absent("the network-health reply", &reply.body, &right);
     let report = reply.json();
     assert!(
         report["sign_in"]["methods"]
@@ -6156,12 +6158,16 @@ async fn a_sign_in_to_the_company_proxy_shows_in_the_served_network_health_repor
     // came before is not asserted: a platform that can sign in without being asked (Windows
     // Negotiate) sends its own token first.
     let seen = proxy.seen();
+    let expected = format!("Basic {}", base64(format!("svc:{right}").as_bytes()));
     let signed_in = seen.iter().any(|request| {
         request.method == "CONNECT"
             && request.target == "api.github.com:443"
-            && request.proxy_authorization.as_deref() == Some("Basic c3ZjOnB3LXJpZ2h0")
+            && request.proxy_authorization.as_deref() == Some(expected.as_str())
     });
-    assert!(signed_in, "{seen:?}");
+    assert!(
+        signed_in,
+        "the proxy never saw the Basic sign-in on a CONNECT"
+    );
     host.shutdown().await;
 }
 
@@ -6169,12 +6175,13 @@ async fn a_sign_in_to_the_company_proxy_shows_in_the_served_network_health_repor
 async fn a_refused_sign_in_shows_as_failed_without_the_password() {
     use puddle_upstream::{Behaviour, FakeProxy};
     let rig = Rig::new();
+    let wrong = fixture::password("wrong");
     let proxy = FakeProxy::start(Behaviour::Basic {
         user: "svc".into(),
-        password: "pw-right".into(),
+        password: fixture::password("right"),
     })
     .await;
-    let host = host_behind_proxy(&rig, &proxy, "pw-wrong").await;
+    let host = host_behind_proxy(&rig, &proxy, &wrong).await;
     let api = api(&host);
 
     add_github_identity(&api, "ghp_unused_token").await;
@@ -6183,7 +6190,7 @@ async fn a_refused_sign_in_shows_as_failed_without_the_password() {
 
     let reply = api.get("/api/network-health").await;
     assert_eq!(reply.status, 200, "{}", reply.body);
-    assert!(!reply.body.contains("pw-wrong"), "{}", reply.body);
+    fixture::assert_absent("the network-health reply", &reply.body, &wrong);
     let report = reply.json();
     let attempts = report["sign_in"]["attempts"].as_array().unwrap();
     assert_eq!(attempts.len(), 1, "{report}");
@@ -6353,25 +6360,27 @@ async fn proxy_sign_ins_loaded(host: &Host<FakeRuntime>, count: usize) {
 async fn a_stored_proxy_sign_in_answers_the_proxy_and_is_there_after_a_restart() {
     use puddle_upstream::{Behaviour, FakeProxy};
     let rig = Rig::new();
+    let stored = fixture::password("stored");
     let proxy = FakeProxy::start(Behaviour::Basic {
         user: "svc".into(),
-        password: "pw-stored".into(),
+        password: stored.clone(),
     })
     .await;
     let host = host_behind_proxy_without_a_configured_password(&rig, &proxy).await;
     proxy_sign_ins_loaded(&host, 0).await;
     host.proxy_passwords()
-        .set(&proxy.proxy_addr(), "svc", "pw-stored")
+        .set(&proxy.proxy_addr(), "svc", &stored)
         .unwrap();
     let api = api(&host);
     add_github_identity(&api, "ghp_unused_token").await;
     let _ = api.get("/api/repos").await;
     let seen = proxy.seen();
+    let expected = format!("Basic {}", base64(format!("svc:{stored}").as_bytes()));
     assert!(
         seen.iter().any(|request| request.method == "CONNECT"
             && request.target == "api.github.com:443"
-            && request.proxy_authorization.as_deref() == Some("Basic c3ZjOnB3LXN0b3JlZA==")),
-        "{seen:?}"
+            && request.proxy_authorization.as_deref() == Some(expected.as_str())),
+        "the proxy never saw the stored sign-in on a CONNECT"
     );
     host.shutdown().await;
     drop(host);
@@ -6390,7 +6399,7 @@ async fn a_stored_proxy_sign_in_answers_the_proxy_and_is_there_after_a_restart()
         .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
         .map(|e| std::fs::read_to_string(e.path()).unwrap_or_default())
         .collect::<String>();
-    assert!(!settings.contains("pw-stored"), "{settings}");
+    fixture::assert_absent("the settings files", &settings, &stored);
     again.shutdown().await;
 }
 
@@ -6398,12 +6407,13 @@ async fn a_stored_proxy_sign_in_answers_the_proxy_and_is_there_after_a_restart()
 async fn a_proxy_that_turns_the_sign_in_down_is_one_event_and_a_failed_attempt() {
     use puddle_upstream::{Behaviour, FakeProxy};
     let rig = Rig::new();
+    let wrong = fixture::canary("wrong");
     let proxy = FakeProxy::start(Behaviour::Basic {
         user: "svc".into(),
-        password: "pw-right".into(),
+        password: fixture::password("right"),
     })
     .await;
-    let host = host_behind_proxy(&rig, &proxy, "pw-wrong-canary").await;
+    let host = host_behind_proxy(&rig, &proxy, &wrong).await;
     let mut events = host.events().subscribe();
     let api = api(&host);
     add_github_identity(&api, "ghp_unused_token").await;
@@ -6422,7 +6432,7 @@ async fn a_proxy_that_turns_the_sign_in_down_is_one_event_and_a_failed_attempt()
         [(proxy.proxy_addr().to_string(), Some("Basic".to_owned()))]
     );
     let report = api.get("/api/network-health").await;
-    assert!(!report.body.contains("pw-wrong-canary"), "{}", report.body);
+    fixture::assert_absent("the network-health reply", &report.body, &wrong);
     assert_eq!(report.json()["sign_in"]["attempts"][0]["result"], "failed");
     host.shutdown().await;
 }

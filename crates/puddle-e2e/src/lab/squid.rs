@@ -13,7 +13,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use super::{
-    BASIC_PASSWORD, BASIC_USER, LOCAL, Prefix, READY, StartCost, configured_or_skip, free_port,
+    BASIC_USER, LOCAL, Prefix, READY, StartCost, basic_password, configured_or_skip, free_port,
     on_free_port, read, require_file, stop, try_ready,
 };
 
@@ -25,7 +25,7 @@ pub struct SquidOptions {
     pub allowed_ports: Vec<u16>,
     /// Names only this proxy resolves (split DNS), each mapped to `127.0.0.1` in its hosts file.
     pub names: Vec<String>,
-    /// Whether Basic authentication (`BASIC_USER`, `BASIC_PASSWORD`) is required.
+    /// Whether Basic authentication (`BASIC_USER`, `basic_password()`) is required.
     pub basic_auth: bool,
     /// The port of another proxy on loopback that every tunnel goes through instead of going
     /// direct (a corporate proxy's own parent): it is how a lab Squid reaches a name that only
@@ -119,10 +119,11 @@ fn remove_shared_memory(name: &str) {
 /// sees that directory.
 fn write_config(dir: &Path, seen: &Path, options: &SquidOptions, port: u16) {
     let helper = dir.join("basic-helper.sh");
+    let password = basic_password();
     fs::write(
         &helper,
         format!(
-            "#!/bin/sh\nwhile read -r user pass; do\n  if [ \"$user\" = \"{BASIC_USER}\" ] && [ \"$pass\" = \"{BASIC_PASSWORD}\" ]; then echo OK; else echo ERR; fi\ndone\n"
+            "#!/bin/sh\nwhile read -r user pass; do\n  if [ \"$user\" = \"{BASIC_USER}\" ] && [ \"$pass\" = \"{password}\" ]; then echo OK; else echo ERR; fi\ndone\n"
         ),
     )
     .unwrap();

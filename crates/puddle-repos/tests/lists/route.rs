@@ -233,6 +233,11 @@ fn direct_chain() -> Arc<Chain> {
     )
 }
 
+/// The company proxy's password; random per run.
+fn proxy_password() -> String {
+    puddle_types::fixture::password("proxy")
+}
+
 fn through_proxy(proxy: &FakeProxy) -> Arc<Chain> {
     let os = FakeOs::new(ProxyConfig {
         pac_url: Some("http://pac.corp/p.pac".into()),
@@ -242,7 +247,7 @@ fn through_proxy(proxy: &FakeProxy) -> Arc<Chain> {
     os.set_pac(move |_| Ok(hops.clone()));
     Chain::with_config(
         Discovery::new(os, Config::default()),
-        Arc::new(BasicAuth::new().with_default(Credentials::new("corp", "proxy-pw"))),
+        Arc::new(BasicAuth::new().with_default(Credentials::new("corp", proxy_password()))),
         ChainConfig::default()
             .with_timeouts(Duration::from_millis(500), Duration::from_millis(400)),
     )
@@ -495,7 +500,7 @@ async fn a_company_proxy_that_asks_for_sign_in_is_signed_in_to_and_the_host_is_r
     let server = Server::start(&pki, Mode::Answer(Arc::new(|_| Reply::ok("[]")))).await;
     let proxy = FakeProxy::start(Behaviour::Basic {
         user: "corp".into(),
-        password: "proxy-pw".into(),
+        password: proxy_password(),
     })
     .await;
     proxy.resolve_name("api.git-host.test", server.addr);

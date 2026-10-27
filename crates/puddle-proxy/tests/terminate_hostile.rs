@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use puddle_proxy::ProxyConfig;
+use puddle_types::fixture;
 use puddle_types::{ConnectionDecision, ConnectionReason};
 use rustls::pki_types::ServerName;
 use std::fmt::Write as _;
@@ -815,7 +816,14 @@ async fn no_secret_reaches_a_log_or_the_guest() {
     assert!(!audit.contains(CANARY) && !audit.contains("header-secret"));
     let logs = captured_logs();
     assert!(!logs.is_empty(), "the capture works");
-    for secret in [CANARY, "header-secret", "query-secret", "guest-secret"] {
-        assert!(!logs.contains(secret), "{secret} reached a log");
+    for (which, secret) in [CANARY, "header-secret", "query-secret", "guest-secret"]
+        .into_iter()
+        .enumerate()
+    {
+        fixture::assert_absent(
+            &format!("the captured logs (secret {which})"),
+            &logs,
+            secret,
+        );
     }
 }

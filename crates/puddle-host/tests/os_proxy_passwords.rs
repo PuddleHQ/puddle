@@ -24,7 +24,9 @@ fn the_os_store_keeps_a_test_owned_proxy_sign_in() {
     let os = || -> Arc<dyn SecretStore> { Arc::new(ChunkedStore::new(KeyringStore::new())) };
     let proxy = ProxyAddr::new("selftest.invalid", 3128);
     let first = ProxyPasswords::with_prefix(os(), &prefix);
-    first.set(&proxy, "alice", "hunter2-canary").unwrap();
+    first
+        .set(&proxy, "alice", &puddle_types::fixture::canary("os-store"))
+        .unwrap();
     let second = ProxyPasswords::with_prefix(os(), &prefix);
     assert_eq!(second.load().unwrap(), 1);
     assert_eq!(second.credentials(&proxy).unwrap().user(), "alice");

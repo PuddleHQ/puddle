@@ -129,10 +129,13 @@ mod tests {
             let text = ca.pem();
             assert!(
                 text.starts_with("-----BEGIN CERTIFICATE-----\n"),
-                "{text:?}"
+                "a CA text does not start with the BEGIN line"
             );
-            assert!(text.ends_with("-----END CERTIFICATE-----\n"), "{text:?}");
-            assert!(!text.contains('\r'), "{text:?}");
+            assert!(
+                text.ends_with("-----END CERTIFICATE-----\n"),
+                "a CA text does not end with the END line and a line feed"
+            );
+            assert!(!text.contains('\r'), "a CA text holds a carriage return");
             assert_eq!(pem::parse(text).unwrap().contents(), ca.der().as_ref());
         }
         let files = bundle.guest_files();

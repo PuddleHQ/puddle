@@ -159,7 +159,9 @@ mod tests {
         let earlier = Arc::new(IndexedStore::new(Shared(disk.clone())));
         let passwords = crate::ProxyPasswords::new(earlier.clone());
         let proxy = puddle_upstream::ProxyAddr::new("proxy.corp", 8080);
-        passwords.set(&proxy, "alice", "pw").unwrap();
+        passwords
+            .set(&proxy, "alice", &puddle_types::fixture::password("vault"))
+            .unwrap();
         put(earlier.as_ref(), "tok-orphan");
         let later = Arc::new(IndexedStore::new(Shared(disk)));
         assert_eq!(

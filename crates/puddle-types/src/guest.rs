@@ -384,11 +384,14 @@ mod tests {
             .with_mode(0o600)
             .unwrap();
         let shown = format!("{secret:?}");
+        let leaked_text = shown.contains("CANARY");
+        let leaked_bytes = shown.contains("67, 65");
+        assert!(!leaked_text, "the Debug output spells the contents");
+        assert!(!leaked_bytes, "the Debug output lists the content bytes");
         assert!(
-            !shown.contains("CANARY") && !shown.contains("67, 65"),
-            "{shown}"
+            shown.contains("10 bytes"),
+            "the Debug output omits the size"
         );
-        assert!(shown.contains("10 bytes"), "{shown}");
         let public = GuestFile::new(p("/etc/puddle/cert"), b"PUBLIC".to_vec());
         assert!(format!("{public:?}").contains("80, 85, 66"));
     }

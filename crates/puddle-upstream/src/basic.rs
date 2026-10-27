@@ -227,6 +227,8 @@ impl ProxyAuth for AuthList {
 
 #[cfg(test)]
 mod tests {
+    use puddle_types::fixture::{self, password};
+
     use super::*;
 
     fn proxy(port: u16) -> ProxyAddr {
@@ -235,12 +237,15 @@ mod tests {
 
     #[test]
     fn basic_answers_a_basic_challenge_once() {
-        let auth = BasicAuth::new().with_default(Credentials::new("alice", "s3cret"));
+        let secret = password("alice");
+        let auth = BasicAuth::new().with_default(Credentials::new("alice", &secret));
         let mut session = auth.begin(&proxy(1), &["Basic"]).unwrap().unwrap();
-        // base64("alice:s3cret")
         assert_eq!(
             session.step(Some("Basic realm=\"x\"")).unwrap(),
-            AuthStep::Authorization("Basic YWxpY2U6czNjcmV0".into())
+            AuthStep::Authorization(format!(
+                "Basic {}",
+                BASE64.encode(format!("alice:{secret}"))
+            ))
         );
         assert!(matches!(
             session.step(Some("Basic realm=\"x\"")),
@@ -250,7 +255,7 @@ mod tests {
 
     #[test]
     fn basic_is_never_preemptive_and_needs_the_scheme_offered() {
-        let auth = BasicAuth::new().with_default(Credentials::new("u", "p"));
+        let auth = BasicAuth::new().with_default(Credentials::new("u", password("u")));
         assert!(auth.begin(&proxy(1), &[]).unwrap().is_none());
         assert!(
             auth.begin(&proxy(1), &["NTLM", "Negotiate"])
@@ -262,18 +267,25 @@ mod tests {
 
     #[test]
     fn a_proxy_without_credentials_gets_none_and_its_own_beats_the_default() {
-        let auth = BasicAuth::new().with_proxy(proxy(1), Credentials::new("a", "b"));
+        let (own_password, default_password) = (password("own"), password("default"));
+        let auth = BasicAuth::new().with_proxy(proxy(1), Credentials::new("a", &own_password));
         assert!(auth.begin(&proxy(2), &["Basic"]).unwrap().is_none());
-        let both = auth.with_default(Credentials::new("d", "d"));
+        let both = auth.with_default(Credentials::new("d", &default_password));
         let mut own = both.begin(&proxy(1), &["Basic"]).unwrap().unwrap();
         assert_eq!(
             own.step(None).unwrap(),
-            AuthStep::Authorization(format!("Basic {}", BASE64.encode("a:b")))
+            AuthStep::Authorization(format!(
+                "Basic {}",
+                BASE64.encode(format!("a:{own_password}"))
+            ))
         );
         let mut other = both.begin(&proxy(9), &["Basic"]).unwrap().unwrap();
         assert_eq!(
             other.step(None).unwrap(),
-            AuthStep::Authorization(format!("Basic {}", BASE64.encode("d:d")))
+            AuthStep::Authorization(format!(
+                "Basic {}",
+                BASE64.encode(format!("d:{default_password}"))
+            ))
         );
     }
 
@@ -288,13 +300,15 @@ mod tests {
 
     #[test]
     fn a_source_answers_per_proxy_between_the_hand_set_and_the_default() {
+        let (s1, s2, by_hand, default) =
+            (password("s1"), password("s2"), password("h"), password("d"));
         let source = Fixed(HashMap::from([
-            (proxy(1), Credentials::new("from-source", "s1")),
-            (proxy(2), Credentials::new("from-source", "s2")),
+            (proxy(1), Credentials::new("from-source", &s1)),
+            (proxy(2), Credentials::new("from-source", &s2)),
         ]));
         let auth = BasicAuth::new()
-            .with_proxy(proxy(1), Credentials::new("by-hand", "h"))
-            .with_default(Credentials::new("default", "d"))
+            .with_proxy(proxy(1), Credentials::new("by-hand", &by_hand))
+            .with_default(Credentials::new("default", &default))
             .with_source(Arc::new(source));
         assert_eq!(auth.methods(), ["basic"]);
         let header = |proxy: &ProxyAddr| {
@@ -302,9 +316,9 @@ mod tests {
             session.step(None).unwrap()
         };
         let basic = |text: &str| AuthStep::Authorization(format!("Basic {}", BASE64.encode(text)));
-        assert_eq!(header(&proxy(1)), basic("by-hand:h"));
-        assert_eq!(header(&proxy(2)), basic("from-source:s2"));
-        assert_eq!(header(&proxy(3)), basic("default:d"));
+        assert_eq!(header(&proxy(1)), basic(&format!("by-hand:{by_hand}")));
+        assert_eq!(header(&proxy(2)), basic(&format!("from-source:{s2}")));
+        assert_eq!(header(&proxy(3)), basic(&format!("default:{default}")));
         // A source alone still offers Basic, and gives nothing for a proxy it does not know.
         let alone = BasicAuth::new().with_source(Arc::new(Fixed(HashMap::new())));
         assert_eq!(alone.methods(), ["basic"]);
@@ -313,7 +327,8 @@ mod tests {
 
     #[test]
     fn debug_never_shows_the_password() {
-        let credentials = Credentials::new("user", "hunter2-canary");
+        let secret = fixture::canary("debug");
+        let credentials = Credentials::new("user", &secret);
         let auth = BasicAuth::new().with_default(credentials.clone());
         let session = auth.begin(&proxy(1), &["Basic"]).unwrap().unwrap();
         for text in [
@@ -321,10 +336,11 @@ mod tests {
             format!("{auth:?}"),
             format!("{session:?}"),
         ] {
-            assert!(!text.contains("hunter2-canary"), "{text}");
-            assert!(
-                !text.contains(&BASE64.encode("user:hunter2-canary")),
-                "{text}"
+            fixture::assert_absent("a debug rendering", &text, &secret);
+            fixture::assert_absent(
+                "a debug rendering (encoded)",
+                &text,
+                &BASE64.encode(format!("user:{secret}")),
             );
         }
     }
@@ -360,18 +376,19 @@ mod tests {
 
     #[test]
     fn the_list_uses_the_first_member_that_helps() {
-        let first = BasicAuth::new().with_proxy(proxy(1), Credentials::new("first", "1"));
-        let second = BasicAuth::new().with_default(Credentials::new("second", "2"));
+        let (one, two) = (password("1"), password("2"));
+        let first = BasicAuth::new().with_proxy(proxy(1), Credentials::new("first", &one));
+        let second = BasicAuth::new().with_default(Credentials::new("second", &two));
         let list = AuthList::new().with(Arc::new(first)).with(Arc::new(second));
         let mut a = list.begin(&proxy(1), &["Basic"]).unwrap().unwrap();
         assert_eq!(
             a.step(None).unwrap(),
-            AuthStep::Authorization(format!("Basic {}", BASE64.encode("first:1")))
+            AuthStep::Authorization(format!("Basic {}", BASE64.encode(format!("first:{one}"))))
         );
         let mut b = list.begin(&proxy(2), &["Basic"]).unwrap().unwrap();
         assert_eq!(
             b.step(None).unwrap(),
-            AuthStep::Authorization(format!("Basic {}", BASE64.encode("second:2")))
+            AuthStep::Authorization(format!("Basic {}", BASE64.encode(format!("second:{two}"))))
         );
         assert!(
             AuthList::new()

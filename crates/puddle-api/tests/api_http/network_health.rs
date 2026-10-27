@@ -11,6 +11,7 @@ use puddle_api::{
 };
 use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
 use puddle_store::{Clock, ManualClock};
+use puddle_types::fixture::{assert_absent, canary, password};
 use puddle_upstream::{
     BasicAuth, Behaviour, Chain, ChainConfig, Config, Credentials, Destination, Discovery, FakeOs,
     FakeProxy, Form, Hop, ManualProxy, Mode, ProxyConfig, ProxyProblem, ProxyRules, RejectedRoot,
@@ -84,27 +85,27 @@ fn root_snapshot() -> StoreSnapshot {
     snapshot
 }
 
-/// Every secret the setup below holds; none may reach the body.
-const SECRETS: [&str; 5] = ["hunter2", "topsecret", "pw-rule", "pw-wrong", "pw-right"];
-
 #[tokio::test]
 async fn the_real_report_shows_the_setup_and_never_a_secret() {
+    let (right, rule, wrong) = (password("right"), password("rule"), password("wrong"));
+    // Every secret the setup below holds; none may reach the body.
+    let secrets = ["hunter2", "topsecret", &right, &rule, &wrong];
     let proxy = FakeProxy::start(Behaviour::Basic {
         user: "svc".into(),
-        password: "pw-right".into(),
+        password: right.clone(),
     })
     .await;
     // A PAC address and static rules that carry credentials; a PAC that answers the fake proxy.
     let os = FakeOs::new(ProxyConfig {
         pac_url: Some("http://svc:hunter2@pac.corp/p.pac?key=topsecret#frag".into()),
-        rules: ProxyRules::parse("http://svc:pw-rule@static.corp:3128"),
+        rules: ProxyRules::parse(&format!("http://svc:{rule}@static.corp:3128")),
         auto_detect: true,
         ..ProxyConfig::default()
     });
     let hop = Hop::Proxy(proxy.proxy_addr());
     os.set_pac(move |_| Ok(vec![hop.clone(), Hop::Direct]));
     let discovery = Discovery::new(os, Config::default());
-    let auth = Arc::new(BasicAuth::new().with_default(Credentials::new("svc", "pw-wrong")));
+    let auth = Arc::new(BasicAuth::new().with_default(Credentials::new("svc", &wrong)));
     let chain = Chain::with_config(
         discovery.clone(),
         auth,
@@ -131,12 +132,8 @@ async fn the_real_report_shows_the_setup_and_never_a_secret() {
 
     let reply = api.get("/api/network-health").await;
     assert_eq!(reply.status, 200, "{}", reply.body);
-    for secret in SECRETS {
-        assert!(
-            !reply.body.contains(secret),
-            "{secret} leaked: {}",
-            reply.body
-        );
+    for secret in secrets {
+        assert_absent("the network-health reply", &reply.body, secret);
     }
     let body = reply.json();
     let proxy_part = &body["proxy"];
@@ -291,12 +288,13 @@ async fn sign_in_result(behaviour: Behaviour, auth: Arc<dyn puddle_upstream::Pro
 
 #[tokio::test]
 async fn every_way_a_sign_in_can_end_is_reported_as_itself() {
+    let (right, wrong) = (password("right"), password("wrong"));
     let signed_in = sign_in_result(
         Behaviour::Basic {
             user: "svc".into(),
-            password: "pw".into(),
+            password: right.clone(),
         },
-        Arc::new(BasicAuth::new().with_default(Credentials::new("svc", "pw"))),
+        Arc::new(BasicAuth::new().with_default(Credentials::new("svc", &right))),
     )
     .await;
     assert_eq!(signed_in, "signed_in");
@@ -305,16 +303,16 @@ async fn every_way_a_sign_in_can_end_is_reported_as_itself() {
     let failed = sign_in_result(
         Behaviour::Basic {
             user: "svc".into(),
-            password: "pw".into(),
+            password: right.clone(),
         },
-        Arc::new(BasicAuth::new().with_default(Credentials::new("svc", "wrong"))),
+        Arc::new(BasicAuth::new().with_default(Credentials::new("svc", &wrong))),
     )
     .await;
     assert_eq!(failed, "failed");
     let unsupported = sign_in_result(
         Behaviour::Basic {
             user: "svc".into(),
-            password: "pw".into(),
+            password: right.clone(),
         },
         Arc::new(BasicAuth::new()),
     )
@@ -441,9 +439,10 @@ async fn a_proxy_that_turns_the_sign_in_down_is_an_event_naming_the_proxy_and_th
     let hop = Hop::Proxy(proxy.proxy_addr());
     os.set_pac(move |_| Ok(vec![hop.clone()]));
     let discovery = Discovery::new(os, Config::default());
+    let wrong = canary("wrong");
     let chain = Chain::with_config(
         discovery.clone(),
-        Arc::new(BasicAuth::new().with_default(Credentials::new("svc", "wrong-canary"))),
+        Arc::new(BasicAuth::new().with_default(Credentials::new("svc", &wrong))),
         ChainConfig::default()
             .with_timeouts(Duration::from_millis(500), Duration::from_millis(400)),
     );
@@ -471,7 +470,7 @@ async fn a_proxy_that_turns_the_sign_in_down_is_an_event_naming_the_proxy_and_th
         })),
         "{seen:?}"
     );
-    assert!(!format!("{seen:?}").contains("wrong-canary"));
+    assert_absent("the event stream", &format!("{seen:?}"), &wrong);
 }
 
 #[tokio::test]

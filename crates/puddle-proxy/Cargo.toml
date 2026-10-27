@@ -48,6 +48,7 @@ testing = []
 fuzzing = []
 
 [dev-dependencies]
+puddle-types = { workspace = true, features = ["testing"] }
 base64 = { workspace = true }
 hickory-resolver = { workspace = true }
 futures-util = { workspace = true }

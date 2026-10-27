@@ -11,6 +11,8 @@ repository.workspace = true
 publish.workspace = true
 
 [features]
+# Test fixtures (`fixture`): runtime-random passwords and canaries for other crates' tests.
+testing = []
 # `utoipa::ToSchema` on the types the API puts on the wire (ADR 0004).
 openapi = ["dep:utoipa"]
 

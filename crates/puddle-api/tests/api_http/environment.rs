@@ -2,7 +2,7 @@
 //! Environment variables and secrets over real HTTP, against a real store: a secret's value goes
 //! to the credential store and never comes back.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use puddle_api::{ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, Services};
 use puddle_secrets::{MemoryStore, SecretStore, StoredId};
@@ -12,7 +12,13 @@ use serde_json::{Value, json};
 use crate::common::{Api, START_MS, raw, start};
 use crate::events::Stream;
 
-const CANARY: &str = "ghp_CANARY-real-value-0123456789";
+static CANARY_VALUE: LazyLock<String> =
+    LazyLock::new(|| format!("ghp_{}", puddle_types::fixture::canary("real-value")));
+
+/// The secret every test here plants; it differs on every run.
+fn canary() -> &'static str {
+    CANARY_VALUE.as_str()
+}
 const REPO: &str = "https://github.com/acme/api.git";
 
 async fn workspace(api: &Api, name: &str) {
@@ -145,7 +151,7 @@ async fn a_secret_is_kept_in_the_credential_store_and_its_value_never_comes_back
     let made = put(
         &api,
         "/api/workspaces/shop/env/NPM_TOKEN",
-        &secret(Some(CANARY), &["registry.npmjs.org", "*.example.com"]),
+        &secret(Some(canary()), &["registry.npmjs.org", "*.example.com"]),
     )
     .await;
     assert_eq!(made.status, 200, "{}", made.body);
@@ -159,13 +165,13 @@ async fn a_secret_is_kept_in_the_credential_store_and_its_value_never_comes_back
 
     // The value is in the credential store, once, and nowhere the API shows.
     let ids = api.secrets.ids();
-    assert_eq!(ids.len(), 1, "{ids:?}");
+    assert_eq!(ids.len(), 1, "the store holds one entry for the secret");
     let held = api
         .secrets
         .get(&StoredId::new(&ids[0]).unwrap())
         .unwrap()
         .unwrap();
-    assert_eq!(held.expose(), CANARY);
+    assert_eq!(held.expose(), canary());
 
     let mut everything = made.body.clone();
     for path in [
@@ -182,7 +188,7 @@ async fn a_secret_is_kept_in_the_credential_store_and_its_value_never_comes_back
         .await;
     everything.push_str(&stream.buf);
     everything.push_str(&puddle_api::openapi_json());
-    assert!(!everything.contains(CANARY), "the value is on the wire");
+    assert!(!everything.contains(canary()), "the value is on the wire");
     assert!(
         !everything.contains(&ids[0]),
         "the credential store's id is on the wire"
@@ -204,7 +210,7 @@ async fn a_secret_is_kept_in_the_credential_store_and_its_value_never_comes_back
             puddle_types::WorkspaceName::new("shop").unwrap(),
         ))
         .unwrap();
-    assert!(!format!("{entries:?}").contains(CANARY));
+    assert!(!format!("{entries:?}").contains(canary()));
 }
 
 #[tokio::test]
@@ -233,7 +239,7 @@ async fn the_value_is_not_in_the_database_file_either() {
     let addr = server.local_addr();
     let running = server.spawn();
 
-    let body = secret(Some(CANARY), &["api.example.com"]).to_string();
+    let body = secret(Some(canary()), &["api.example.com"]).to_string();
     let request = format!(
         "PUT /api/env/DB_PROBE HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         addr.port(),
@@ -252,8 +258,8 @@ async fn the_value_is_not_in_the_database_file_either() {
         bytes += content.len();
         assert!(
             !content
-                .windows(CANARY.len())
-                .any(|w| w == CANARY.as_bytes()),
+                .windows(canary().len())
+                .any(|w| w == canary().as_bytes()),
             "the value is in the database"
         );
     }
@@ -280,12 +286,12 @@ async fn a_secret_keeps_its_value_when_only_its_hosts_change_and_a_new_one_needs
     put(
         &api,
         "/api/env/T",
-        &secret(Some(CANARY), &["a.example.com"]),
+        &secret(Some(canary()), &["a.example.com"]),
     )
     .await;
     let id = api.secrets.ids().remove(0);
     let moved = put(&api, "/api/env/T", &secret(None, &["b.example.com"])).await;
-    assert_eq!(moved.status, 200, "{}", moved.body);
+    assert_eq!(moved.status, 200, "moving the hosts of a secret failed");
     assert_eq!(moved.json()["hosts"], json!(["b.example.com"]));
     assert_eq!(
         api.secrets.ids(),
@@ -297,7 +303,7 @@ async fn a_secret_keeps_its_value_when_only_its_hosts_change_and_a_new_one_needs
         .get(&StoredId::new(&id).unwrap())
         .unwrap()
         .unwrap();
-    assert_eq!(held.expose(), CANARY);
+    assert_eq!(held.expose(), canary());
 
     // A new value replaces it in place.
     put(
@@ -321,13 +327,13 @@ async fn removing_a_secret_or_turning_it_into_a_plain_variable_removes_its_value
     put(
         &api,
         "/api/env/A",
-        &secret(Some(CANARY), &["a.example.com"]),
+        &secret(Some(canary()), &["a.example.com"]),
     )
     .await;
     put(
         &api,
         "/api/env/B",
-        &secret(Some(CANARY), &["b.example.com"]),
+        &secret(Some(canary()), &["b.example.com"]),
     )
     .await;
     assert_eq!(api.secrets.ids().len(), 2);
@@ -343,7 +349,7 @@ async fn removing_a_secret_or_turning_it_into_a_plain_variable_removes_its_value
     put(
         &api,
         "/api/env/B",
-        &secret(Some(CANARY), &["b.example.com"]),
+        &secret(Some(canary()), &["b.example.com"]),
     )
     .await;
     assert_eq!(api.secrets.ids().len(), 1);
@@ -355,7 +361,7 @@ async fn a_credential_store_that_fails_changes_nothing_and_says_so() {
     put(
         &api,
         "/api/env/KEPT",
-        &secret(Some(CANARY), &["a.example.com"]),
+        &secret(Some(canary()), &["a.example.com"]),
     )
     .await;
     api.secrets.break_it();
@@ -363,7 +369,7 @@ async fn a_credential_store_that_fails_changes_nothing_and_says_so() {
     let refused = put(
         &api,
         "/api/env/NEW",
-        &secret(Some(CANARY), &["a.example.com"]),
+        &secret(Some(canary()), &["a.example.com"]),
     )
     .await;
     assert_eq!(refused.status, 503, "{}", refused.body);
@@ -411,7 +417,9 @@ async fn without_a_credential_store_a_secret_is_refused_and_plain_variables_stil
         async move { raw(addr, request.as_bytes()).await }
     };
     assert_eq!(
-        send(secret(Some(CANARY), &["a.example.com"])).await.status,
+        send(secret(Some(canary()), &["a.example.com"]))
+            .await
+            .status,
         503
     );
     assert_eq!(send(plain("x")).await.status, 200);
@@ -469,10 +477,10 @@ async fn what_is_refused_says_why_and_never_quotes_a_secret() {
         (vec!["https://api.example.com"], "not a host name"),
         (vec!["*.com"], "anyone can register"),
     ] {
-        let reply = put(&api, "/api/env/T", &secret(Some(CANARY), &hosts)).await;
+        let reply = put(&api, "/api/env/T", &secret(Some(canary()), &hosts)).await;
         let message = refused(&reply);
         assert!(message.contains(says), "{hosts:?}: {message}");
-        assert!(!message.contains(CANARY));
+        assert!(!message.contains(canary()));
     }
     assert!(
         api.secrets.ids().is_empty(),
@@ -543,15 +551,15 @@ async fn what_is_refused_says_why_and_never_quotes_a_secret() {
     assert_eq!(put(&api, "/api/env/A", &json!(["x"])).await.status, 422);
     // A malformed body that carries a secret does not quote it back.
     for body in [
-        json!({"kind": "secret", "value": CANARY, "hosts": ["a.example.com"], "extra": 1}),
-        json!({"kind": "secret", "value": CANARY}),
-        json!({"kind": "secret", "value": CANARY, "hosts": "a.example.com"}),
-        json!({"kind": "secret", "value": CANARY, "hosts": [CANARY]}),
+        json!({"kind": "secret", "value": canary(), "hosts": ["a.example.com"], "extra": 1}),
+        json!({"kind": "secret", "value": canary()}),
+        json!({"kind": "secret", "value": canary(), "hosts": "a.example.com"}),
+        json!({"kind": "secret", "value": canary(), "hosts": [canary()]}),
     ] {
         let reply = put(&api, "/api/env/A", &body).await;
         assert_eq!(reply.status, 422, "{}", reply.body);
         assert!(
-            !reply.body.contains("CANARY") || body["hosts"] == json!([CANARY]),
+            !reply.body.contains("CANARY") || body["hosts"] == json!([canary()]),
             "{}",
             reply.body
         );
@@ -579,10 +587,13 @@ async fn a_scope_holds_at_most_256_variables() {
     let secret_over = put(
         &api,
         "/api/env/A_SECRET",
-        &secret(Some(CANARY), &["a.example.com"]),
+        &secret(Some(canary()), &["a.example.com"]),
     )
     .await;
-    assert_eq!(secret_over.status, 422, "{}", secret_over.body);
+    assert_eq!(
+        secret_over.status, 422,
+        "a secret over the scope limit was not refused"
+    );
     assert_eq!(
         api.secrets.ids(),
         Vec::<String>::new(),
@@ -597,7 +608,7 @@ async fn a_secret_made_plain_removes_its_value_first_and_is_refused_while_the_cr
     put(
         &api,
         "/api/env/T",
-        &secret(Some(CANARY), &["a.example.com"]),
+        &secret(Some(canary()), &["a.example.com"]),
     )
     .await;
     api.secrets.break_it();

@@ -10,7 +10,7 @@ use std::path::Path;
 use windows_sys::Wdk::System::SystemInformation::{
     NtQuerySystemInformation, SystemCodeIntegrityInformation,
 };
-use windows_sys::Win32::Foundation::{FreeLibrary, GetLastError};
+use windows_sys::Win32::Foundation::{FreeLibrary, GetLastError, HANDLE};
 use windows_sys::Win32::Storage::FileSystem::{FILE_EXECUTE, FILE_READ_DATA, SYNCHRONIZE};
 use windows_sys::Win32::System::JobObjects::{
     IsProcessInJob, JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
@@ -184,33 +184,57 @@ pub(crate) fn job() -> Option<JobFacts> {
     if in_job == 0 {
         return None;
     }
+    Some(job_facts(std::ptr::null_mut()))
+}
+
+/// The byte length of the buffer `QueryInformationJobObject` is given for
+/// `JobObjectExtendedLimitInformation`: the size of the struct it fills, as that call's
+/// `cbJobObjectInformationLength` wants (it fails when the length does not match the class's
+/// struct).
+const JOB_LIMIT_INFO_LEN: u32 = {
+    let len = size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>();
+    assert!(
+        len <= u32::MAX as usize,
+        "the struct size must fit the u32 length argument"
+    );
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "the assert above proves the length fits"
+    )]
+    {
+        len as u32
+    }
+};
+
+/// The limits of `job`, or of this process's own (innermost) job when `job` is null.
+#[expect(unsafe_code, reason = "QueryInformationJobObject")]
+fn job_facts(job: HANDLE) -> JobFacts {
     // SAFETY: all-zero is a valid value of this plain-data struct.
     let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
-    // The struct is a few hundred bytes.
-    let size = u32::try_from(size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>()).unwrap_or(u32::MAX);
-    // SAFETY: a null job handle means this process's own (innermost) job; buffer and size match.
+    // SAFETY: per Microsoft Learn (QueryInformationJobObject), `hJob` is a job handle with
+    // JOB_OBJECT_QUERY access or null for the calling process's job; `info` is the struct that
+    // JobObjectExtendedLimitInformation documents, writable for exactly `JOB_LIMIT_INFO_LEN`
+    // bytes, which is its size; the optional return length may be null.
+    // https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-queryinformationjobobject
     let ok = unsafe {
         QueryInformationJobObject(
-            std::ptr::null_mut(),
+            job,
             JobObjectExtendedLimitInformation,
             (&raw mut info).cast(),
-            size,
+            JOB_LIMIT_INFO_LEN,
             std::ptr::null_mut(),
         )
     };
     if ok == 0 {
         // SAFETY: reads this thread's last error, set by QueryInformationJobObject just above.
-        return Some(JobFacts::query_failed(
-            "QueryInformationJobObject",
-            unsafe { GetLastError() },
-        ));
+        return JobFacts::query_failed("QueryInformationJobObject", unsafe { GetLastError() });
     }
     let flags = info.BasicLimitInformation.LimitFlags;
-    Some(JobFacts::Read {
+    JobFacts::Read {
         breakaway_allowed: flags
             & (JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK)
             != 0,
-    })
+    }
 }
 
 #[expect(unsafe_code, reason = "Service Control Manager queries")]
@@ -273,6 +297,8 @@ pub(crate) fn file_access(path: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::JobObjects::{CreateJobObjectW, SetInformationJobObject};
 
     #[test]
     fn probes_answer_without_admin_rights() {
@@ -281,6 +307,66 @@ mod tests {
         let _ci = code_integrity();
         let _job = job();
         assert!(global_secure_access().is_some());
+    }
+
+    #[test]
+    fn the_job_limit_length_is_the_struct_size() {
+        assert_eq!(
+            JOB_LIMIT_INFO_LEN as usize,
+            size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>()
+        );
+    }
+
+    /// A job made here with `limit_flags`, read back through `job_facts` as the probe reads it.
+    #[expect(unsafe_code, reason = "job object calls on a job the test owns")]
+    fn facts_of_a_new_job(limit_flags: u32) -> JobFacts {
+        // SAFETY: no security attributes, no name.
+        let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        assert!(!job.is_null(), "{}", io::Error::last_os_error());
+        // SAFETY: all-zero is a valid value of this plain-data struct.
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        info.BasicLimitInformation.LimitFlags = limit_flags;
+        // SAFETY: `job` is the open handle made above; `info` is the struct the class documents,
+        // with its size.
+        let set = unsafe {
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                (&raw const info).cast(),
+                JOB_LIMIT_INFO_LEN,
+            )
+        };
+        assert_ne!(set, 0, "{}", io::Error::last_os_error());
+        let facts = job_facts(job);
+        // SAFETY: closes the handle made above, once.
+        unsafe { CloseHandle(job) };
+        facts
+    }
+
+    #[test]
+    fn a_job_that_allows_breakaway_reads_back_as_such() {
+        assert_eq!(
+            facts_of_a_new_job(JOB_OBJECT_LIMIT_BREAKAWAY_OK),
+            JobFacts::Read {
+                breakaway_allowed: true
+            }
+        );
+        assert_eq!(
+            facts_of_a_new_job(JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK),
+            JobFacts::Read {
+                breakaway_allowed: true
+            }
+        );
+    }
+
+    #[test]
+    fn a_job_without_breakaway_reads_back_as_forbidding_it() {
+        assert_eq!(
+            facts_of_a_new_job(0),
+            JobFacts::Read {
+                breakaway_allowed: false
+            }
+        );
     }
 
     #[test]

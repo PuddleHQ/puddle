@@ -365,6 +365,28 @@ mod tests {
         result.unwrap()
     }
 
+    /// A stream whose read fails, as one the guest reset does.
+    struct Reset;
+
+    impl tokio::io::AsyncRead for Reset {
+        fn poll_read(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+            _: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Err(std::io::ErrorKind::ConnectionReset.into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_read_error_before_a_whole_record_is_an_error_not_a_pass_through() {
+        let wait = Duration::from_millis(200);
+        let err = capture_first_record(&mut Reset, Vec::new(), wait, wait)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::ConnectionReset);
+    }
+
     #[tokio::test]
     async fn a_client_hello_is_captured_whole_and_read_without_a_connection() {
         let hello = client_hello("free.test", &[b"h2", b"http/1.1"]);

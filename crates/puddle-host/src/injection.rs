@@ -718,6 +718,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_stored_never_decrypt_name_that_does_not_parse_is_skipped_and_the_others_still_apply()
+    {
+        let store = store();
+        let (injection, terminations) = injection(&store);
+        let ws = workspace("alpha");
+        store.set_decrypt_all(&ws, true).unwrap();
+        // The API refuses such a name; a row written by another version or by hand must not
+        // switch the workspace off.
+        store
+            .set_never_decrypt(&ws, &["not a host".to_owned(), "bank.example".to_owned()])
+            .unwrap();
+        injection.begin(&ws, false).await.unwrap();
+        let interception = terminations
+            .termination(&ws)
+            .unwrap()
+            .interception()
+            .clone();
+        let host = |h: &str| Host::parse_normalised(h).unwrap();
+        assert_eq!(
+            interception.skipped(&host("bank.example")),
+            Some("never_decrypt")
+        );
+        assert_eq!(interception.skipped(&host("other.example")), None);
+    }
+
+    #[tokio::test]
     async fn the_switch_and_the_never_decrypt_names_apply_to_the_running_workspace_and_keep_what_was_learned()
      {
         let store = store();

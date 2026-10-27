@@ -22,6 +22,7 @@ use puddle_agent::{Agent, Config};
 use puddle_agent_proto::editor::EditorServer;
 use puddle_agent_proto::forward::{GuestLink, OpenError};
 use puddle_agent_proto::host::{GuestStream, HostConfig, StreamHandler, serve_session};
+use puddle_front::Editor;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, UnixListener};
 
@@ -199,4 +200,24 @@ async fn a_forward_still_refuses_the_editor_port() {
         matches!(&err, OpenError::Refused(why) if why.contains("belongs to Puddle")),
         "{err}"
     );
+}
+
+#[tokio::test]
+async fn the_front_reaches_the_editor_through_the_link_and_hears_why_when_it_cannot() {
+    let port = echo().await;
+    let rig = rig("editor-front", Some((port, Some(PASSWORD)))).await;
+    let link = rig.link().await;
+    let mut stream = Editor::connect(&link).await.unwrap();
+    stream.write_all(b"ping").await.unwrap();
+    let mut back = [0_u8; 4];
+    stream.read_exact(&mut back).await.unwrap();
+    assert_eq!(&back, b"ping");
+    assert_eq!(Editor::password(&link).await.unwrap(), PASSWORD);
+
+    let none = self::rig("editor-front-none", None).await;
+    let link = none.link().await;
+    let connect = Editor::connect(&link).await.err().unwrap();
+    assert!(connect.0.contains("no editor server"), "{connect}");
+    let password = Editor::password(&link).await.unwrap_err();
+    assert!(password.0.contains("no editor server"), "{password}");
 }

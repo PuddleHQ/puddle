@@ -33,6 +33,7 @@ proptest = { workspace = true }
 rustix = { workspace = true }
 tempfile = { workspace = true }
 puddle-agent-proto = { workspace = true, features = ["testing"] }
+puddle-front = { workspace = true }
 puddle-guest-env = { workspace = true }
 puddle-ipc = { workspace = true }
 puddle-proxy = { workspace = true, features = ["testing"] }

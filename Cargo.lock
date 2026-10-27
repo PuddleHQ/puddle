@@ -5977,6 +5977,7 @@ dependencies = [
  "proptest",
  "puddle-agent-proto",
  "puddle-fd-limit",
+ "puddle-front",
  "puddle-guest-env",
  "puddle-ipc",
  "puddle-proxy",

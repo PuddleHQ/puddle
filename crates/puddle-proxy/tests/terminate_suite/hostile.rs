@@ -4,7 +4,7 @@
 //! certificate, an oversized or slow response, or a response that is more than it should be.
 //! In every case no credential may leave Puddle for the wrong place, and no other connection may
 //! notice.
-mod terminate_support;
+use crate::terminate_support;
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};

@@ -54,3 +54,8 @@ jobs:
       - name: build the test binaries
         shell: bash
         run: cargo test --workspace --all-features --locked --no-run
+      # What the UI job's desktop shell smoke test builds (`-p puddle-app` has other dependency
+      # features than the workspace build above); the UI job restores this entry.
+      - name: build the desktop shell dependencies
+        shell: bash
+        run: cargo build -p puddle-app --all-features --locked

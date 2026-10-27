@@ -331,8 +331,19 @@ async fn a_stream_reset_cleanly_short_of_its_content_length_never_ends_upstream_
     let (_response, mut body) = send.send_request(request, false).unwrap();
     body.send_data(Bytes::from_static(b"0123456789"), false)
         .unwrap();
-    // Ordering with no signal: the proxy has the ten bytes upstream before the reset arrives.
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // The reset must arrive after the ten bytes are upstream: the server's frame record shows them.
+    let mut arrived = false;
+    for _ in 0..100 {
+        let upstream = frames.lock().unwrap().clone();
+        arrived = upstream
+            .iter()
+            .any(|&(kind, _, stream, len)| kind == 0 && stream == 1 && len == 10);
+        if arrived {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(arrived, "the ten bytes never reached the server");
     body.send_reset(h2::Reason::NO_ERROR);
     let mut reset_seen = false;
     for _ in 0..50 {

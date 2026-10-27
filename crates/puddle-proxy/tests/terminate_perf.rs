@@ -336,6 +336,21 @@ mod h2_perf {
             .and_then(|v| v.trim().trim_end_matches("kB").trim().parse().ok())
             .unwrap()
     }
+
+    /// The resident memory once it stops moving: two readings 100 ms apart within 512 KiB of each
+    /// other (at most ten seconds of waiting, then the last reading).
+    pub(super) async fn settled_rss_kib() -> usize {
+        let mut last = rss_kib();
+        for _ in 0..100 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let now = rss_kib();
+            if now.abs_diff(last) <= 512 {
+                return now;
+            }
+            last = now;
+        }
+        last
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -445,7 +460,7 @@ async fn spliced_h2(
     reason = "a measurement for the person running it by hand"
 )]
 async fn idle_memory(kind: &str) {
-    use h2_perf::{bulk_h2_server, rss_kib};
+    use h2_perf::{bulk_h2_server, settled_rss_kib};
     const N: usize = 400;
     silence_logs();
     let pki = Pki::new();
@@ -490,9 +505,7 @@ async fn idle_memory(kind: &str) {
             }
         }
     }
-    // Settle window: closed connections have returned their memory before the first reading.
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    let before = rss_kib();
+    let before = settled_rss_kib().await;
     let mut held_h1 = Vec::new();
     let mut held_h2 = Vec::new();
     for _ in 0..N {
@@ -522,9 +535,7 @@ async fn idle_memory(kind: &str) {
             }
         }
     }
-    // Settle window: the held connections have reached their steady memory before the second reading.
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    let grown = rss_kib().saturating_sub(before);
+    let grown = settled_rss_kib().await.saturating_sub(before);
     eprintln!(
         "{kind}: {} KiB per idle connection ({N} connections, whole test process: proxy, guest and server)",
         grown / N

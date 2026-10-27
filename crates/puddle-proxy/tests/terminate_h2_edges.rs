@@ -142,8 +142,7 @@ async fn an_idle_http11_connection_the_network_dropped_is_replaced_for_the_next_
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     assert_eq!(client.get("bound.test", "/one").await.text(), "alive");
     relay.cut();
-    // Ordering with no signal: the proxy sees the cut upstream connection before the next request.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    rig.upstream_ended(1).await;
     assert_eq!(client.get("bound.test", "/two").await.text(), "alive");
     assert_eq!(server.accepted(), 2, "the dead connection was not reused");
 }

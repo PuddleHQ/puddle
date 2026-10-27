@@ -19,6 +19,7 @@ use tokio::task::{JoinHandle, JoinSet};
 use tokio_yamux::{Control, Session, StreamHandle};
 
 use crate::config::{Config, Target};
+use crate::editor_stream;
 use crate::forward::Forwards;
 use crate::host_streams::HostStreams;
 
@@ -76,6 +77,7 @@ impl Upstream {
                     .iter()
                     .map(|e| PathBuf::from(&e.server.dir))
                     .collect(),
+                config.editor.as_ref().map(editor_stream::EditorAccess::of),
             ),
         }
     }

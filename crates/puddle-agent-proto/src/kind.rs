@@ -14,6 +14,7 @@
 //! | `connect` | agent | reserved: a raw connection to a named destination (`puddle-agent connect`, the `ssh` `ProxyCommand`, goes through the agent's listener as a `CONNECT` for now: [`crate::ssh`]) |
 //! | `ssh-agent` | agent | reserved: filtered SSH agent / signing |
 //! | `host-control` v1 | host | served by the agent: one [`crate::host_control::HostMessage`] line, one reply line ([`crate::host_control`]) |
+//! | `editor` v1 | host | served by the agent: a connection to the editor server, or its password ([`crate::editor_stream`]) |
 //!
 //! The host closes a stream of a reserved or unknown kind, or an unsupported version, with a
 //! logged reason.
@@ -43,17 +44,20 @@ pub enum StreamKind {
     SshAgent,
     /// Reserved: host → guest messages on a host-opened stream.
     HostControl,
+    /// Opened by the host: a connection to the guest's editor server, or the server's password.
+    Editor,
 }
 
 impl StreamKind {
     /// Every registered kind.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Control,
         Self::Resolve,
         Self::Forward,
         Self::Connect,
         Self::SshAgent,
         Self::HostControl,
+        Self::Editor,
     ];
 
     /// The kind's name in the preamble.
@@ -66,6 +70,7 @@ impl StreamKind {
             Self::Connect => "connect",
             Self::SshAgent => "ssh-agent",
             Self::HostControl => "host-control",
+            Self::Editor => "editor",
         }
     }
 
@@ -85,6 +90,7 @@ impl StreamKind {
             Self::Connect => b"\0puddle-connect/1\n",
             Self::SshAgent => b"\0puddle-ssh-agent/1\n",
             Self::HostControl => b"\0puddle-host-control/1\n",
+            Self::Editor => b"\0puddle-editor/1\n",
         }
     }
 

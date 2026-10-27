@@ -145,6 +145,12 @@ async fn a_process_that_ignores_term_is_killed_after_the_grace() {
     let host = server.start("host", "--type=extensionHost", true);
     settled(&server).await;
     let host_id = host.id().unwrap();
+    // `settled` counts every test's `sleep`s (the process table is shared), so it can return before this
+    // server's stubborn child has started: wait for that child itself.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while server.stubborn().is_empty() && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     let before: Vec<i32> = server.stubborn().iter().map(|p| p.pid).collect();
     assert_eq!(
         before.len(),

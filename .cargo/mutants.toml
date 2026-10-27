@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# cargo-mutants settings (docs/STANDARDS.md, "Mutation testing"; run through scripts/mutants.sh).
+#
+# A surviving mutant is fixed with a better test, never by excluding the code. The one allowed
+# exclusion is a mutant no test can tell from the original (it changes timing or a log line, or the
+# result stays equal for every input). Each goes in `exclude_re` below with a comment that says why
+# it is equivalent; a reviewer reads that line like a lint suppression.
+#
+# The tests run through nextest's default profile (.config/nextest.toml), which leaves out the VM
+# tests: a mutant is judged by the same tests a pull request runs without a VM.
+test_tool = "nextest"
+
+# Test support that is compiled outside `cfg(test)` (feature-gated helpers) is no product code.
+exclude_globs = ["**/testing.rs", "**/testing/**", "**/tests/**", "**/benches/**"]
+
+# Equivalent mutants, each with its reason:
+exclude_re = []

@@ -1,0 +1,124 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Mutation testing (docs/STANDARDS.md, "Mutation testing"; scripts/mutants.sh, cargo-mutants): a mutant is a
+# small change to product code, and a test suite that still passes has not tested that code.
+#  - pull requests: the mutants on the lines the change adds or changes, in the crates of
+#    scripts/mutants-crates.txt. Not yet a required check (the ruleset lists four).
+#  - nightly 03:45 UTC: every mutant of every listed crate, one job per crate. A crate whose inputs hash like
+#    those of its last passing run is skipped (the cache key is in scripts/mutants.sh). On Sundays the cache is
+#    ignored and everything runs, so a stale skip is found within a week.
+name: mutants
+
+on:
+  pull_request:
+    paths:
+      - "crates/**"
+      - "scripts/mutants*"
+      - ".cargo/mutants.toml"
+      - ".github/workflows/mutants.yml"
+  schedule:
+    - cron: "45 3 * * *"
+  workflow_dispatch:
+    inputs:
+      uncached:
+        description: "Ignore the cache"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutants-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  diff:
+    name: mutants (changed lines)
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Rust toolchain
+        run: rustup toolchain install && rustc --version
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-nextest@0.9.146,cargo-mutants@27.1.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: mutants
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
+      - name: mutants on the changed lines
+        run: scripts/check.sh mutants
+        env:
+          DIFF_BASE: ${{ github.event.pull_request.base.sha }}
+      - name: survivors
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mutants-diff
+          path: target/mutants-out/diff/mutants.out/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  crates:
+    name: crate list
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: list
+        run: echo "matrix=$(scripts/mutants.sh --list | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+
+  sweep:
+    name: mutants (${{ matrix.crate }})
+    needs: crates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: ${{ fromJson(needs.crates.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Rust toolchain
+        run: rustup toolchain install && rustc --version
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-nextest@0.9.146,cargo-mutants@27.1.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: mutants
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
+      - name: cache key of the crate's inputs
+        id: key
+        run: echo "key=$(scripts/mutants.sh --key '${{ matrix.crate }}')" >> "$GITHUB_OUTPUT"
+      - name: result of the last passing run on these inputs
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .mutants-cache
+          key: mutants-${{ matrix.crate }}-${{ steps.key.outputs.key }}
+      - name: sweep
+        env:
+          UNCACHED_INPUT: ${{ inputs.uncached }}
+        run: |
+          uncached=
+          if [ "$UNCACHED_INPUT" = true ] || [ "$(date -u +%u)" = 7 ]; then uncached=--uncached; fi
+          scripts/mutants.sh sweep --crate '${{ matrix.crate }}' --cache .mutants-cache $uncached
+      - name: survivors
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mutants-${{ matrix.crate }}
+          path: target/mutants-out/${{ matrix.crate }}/mutants.out/
+          retention-days: 14
+          if-no-files-found: ignore

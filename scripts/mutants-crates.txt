@@ -1,0 +1,4 @@
+# The crates mutation testing covers (scripts/mutants.sh, docs/STANDARDS.md "Mutation testing"): one
+# per line, comments after '#'. A crate joins this list only when its sweep has no surviving mutant,
+# so the list grows as each crate's survivors are fixed with tests.
+puddle-netpolicy

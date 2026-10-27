@@ -3,7 +3,7 @@
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
 #   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, silent-skips, quality, secrets, clippy, clippy-windows, deny, advisories, notices, openapi, test, doc, coverage,
-#   coverage-ratchet, diff-coverage,
+#   coverage-ratchet, diff-coverage, mutants,
 #   ui, ui-licences, ui-audit, ui-e2e
 #   fast     = fmt typos spdx shellcheck hooks platform-literals standalone git-pins silent-skips   (pre-commit hook)
 #   all      = fast quality git-env secrets clippy clippy-windows deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage
@@ -321,6 +321,12 @@ run_gate() {
         # shellcheck disable=SC2086 # $ratchet is a list of flags, split on purpose
         node ui/scripts/coverage-ratchet.ts $ratchet
         diff_coverage "diff-coverage (rust)" "$target/lcov.info" .rs
+        ;;
+    mutants)
+        # Mutation testing of the lines this change adds or changes, in the crates of
+        # scripts/mutants-crates.txt (cargo-mutants, slow: not in a gate set; the `mutants` workflow runs it
+        # on pull requests and nightly). A surviving mutant needs a better test. docs/STANDARDS.md, "Mutation testing".
+        scripts/mutants.sh diff "$(diff_base)"
         ;;
     diff-coverage)
         # By hand, after `coverage` and `ui` ran: both reports against the base. Untracked new

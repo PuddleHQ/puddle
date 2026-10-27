@@ -2,12 +2,14 @@
 <script lang="ts">
   import { AlertDialog } from "bits-ui";
   import { losses, type DeleteCheck } from "#lib/workspaces/model.ts";
+  import { removedText, type Removed } from "#lib/workspaces/removed.ts";
   import "#lib/theme/controls.css";
 
   let {
     open = $bindable(false),
     name,
     check,
+    removes = null,
     working = false,
     error = null,
     onConfirm,
@@ -16,6 +18,8 @@
     open?: boolean;
     name: string;
     check: DeleteCheck;
+    /** What Puddle removes from its own records besides the disk; `null` when not counted. */
+    removes?: Removed | null;
     working?: boolean;
     error?: string | null;
     onConfirm: () => void;
@@ -26,6 +30,7 @@
   let understood = $state(false);
 
   const lines = $derived(losses(check));
+  const owned = $derived(removedText(removes));
   // A new check (the workspace changed) needs a new yes.
   $effect(() => {
     void check.fingerprint;
@@ -112,6 +117,13 @@
         </section>
       {/if}
 
+      {#if owned}
+        <p class="owned">
+          Puddle also removes what it keeps for {name}: {owned}. A secret's
+          value leaves this computer's credential store too.
+        </p>
+      {/if}
+
       <label class="confirm-check">
         <input type="checkbox" bind:checked={understood} />
         <span>
@@ -157,6 +169,7 @@
     overflow-y: auto;
   }
   :global(.delete-dialog .clean),
+  :global(.delete-dialog .owned),
   :global(.delete-dialog .muted) {
     margin: 0;
     color: var(--color-text-muted);

@@ -7,6 +7,9 @@
   import MicrosoftServerDialog from "#lib/components/MicrosoftServerDialog.svelte";
   import AppIconSettings from "#lib/components/AppIconSettings.svelte";
   import Toast from "#lib/components/Toast.svelte";
+  import EnvironmentTable from "#lib/components/EnvironmentTable.svelte";
+  import { EnvironmentStore } from "#lib/stores/environment.svelte.ts";
+  import { SECRET_NEVER_IN } from "#lib/environment/model.ts";
   import { api } from "#lib/api/client.ts";
   import { LOCAL_LABELS, type LocalCategory } from "#lib/decision/local.ts";
   import { CPU_COUNTS, CPUS_NOTE, cpuLabel } from "#lib/settings/cpus.ts";
@@ -71,6 +74,7 @@
     ["s-net", "Network"],
     ["s-vsc", "Browser VS Code"],
     ["s-git", "Git and credentials"],
+    ["s-env", "Environment"],
     ["s-priv", "Privacy"],
     ["s-about", "About"],
   ];
@@ -93,6 +97,9 @@
   let versionAsked = $state(false);
   let notices = $state<string | null>(null);
   let noticesFailed = $state(false);
+
+  const env = new EnvironmentStore();
+  onMount(() => env.start({ kind: "global" }));
 
   onMount(() => {
     void store.load(store.view !== null);
@@ -857,6 +864,16 @@
           enters a workspace.
         </p>
         <p><a href="/identities">Manage identities</a></p>
+      </section>
+
+      <section class="card" id="s-env" aria-labelledby="h-env">
+        <h2 id="h-env">Environment</h2>
+        <p>
+          Variables and secrets every workspace gets at its next start, unless
+          the workspace has its own of the same name. Changes here are saved at
+          once, not with the Save button above. {SECRET_NEVER_IN}
+        </p>
+        <EnvironmentTable store={env} label="Environment of every workspace" />
       </section>
 
       <section class="card" id="s-priv" aria-labelledby="h-priv">

@@ -284,6 +284,11 @@
       A request to an owner you name uses this credential; the rest of the host
       applies to every other owner.
     </p>
+    <p class="hint" id="{id}-decrypt-hint">
+      Puddle will decrypt connections to {coverHost} (port 443 only), so it can add
+      the credential to Git requests there. Puddle's own certificate stands in for
+      the host's inside the workspace.
+    </p>
   </div>
 
   {#if problem}

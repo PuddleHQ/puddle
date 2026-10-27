@@ -69,6 +69,7 @@
     bind:open={actions.deleteOpen}
     name={actions.deleting.workspace.display_name}
     check={actions.deleting.check}
+    removes={actions.deleting.removes}
     working={actions.deleting.working}
     error={actions.deleting.error}
     onConfirm={actions.confirmDelete}

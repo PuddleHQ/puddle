@@ -97,6 +97,7 @@ impl Front {
             windows: windows.clone(),
             port: addr.port(),
             stop,
+            sockets: Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS)),
         });
         let task = tokio::spawn(serve(listener, shared));
         Ok(Self {

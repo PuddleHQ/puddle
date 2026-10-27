@@ -2,8 +2,9 @@
 //! The server half of Microsoft's secret-storage key, one per workspace, kept in a file only the
 //! user can read.
 //!
-//! It lives on the host, not on the workspace volume: the guest can read the volume, and the half
-//! is the part of the key the guest has no business with. It outlives a rebuilt sandbox, as the
+//! It lives on the host, not on the workspace volume, so reading the guest's disk does not give it
+//! away. A hostile guest's own served page is same-origin with the front and can still ask for the
+//! key, so this protects stored secrets against the volume, not against a compromised editor page. It outlives a rebuilt sandbox, as the
 //! volume does, and goes with the workspace ([`ServerHalves::forget`]).
 
 use std::collections::HashMap;

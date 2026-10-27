@@ -30,7 +30,12 @@ pub(crate) struct Shared {
     pub(crate) windows: Windows,
     pub(crate) port: u16,
     pub(crate) stop: watch::Receiver<bool>,
+    /// One permit per upgraded socket: hyper stops counting a connection once it is upgraded.
+    pub(crate) sockets: Arc<tokio::sync::Semaphore>,
 }
+
+/// How long a server may take to answer with its first response head.
+const ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 type Body = BoxBody<Bytes, hyper::Error>;
 
@@ -241,6 +246,14 @@ async fn forward(
     mut request: Request<Incoming>,
 ) -> Response<Body> {
     let upgrade = is_upgrade(request.headers());
+    let socket = if upgrade {
+        match Arc::clone(&shared.sockets).try_acquire_owned() {
+            Ok(permit) => Some(permit),
+            Err(_) => return bad_gateway(workspace, "too many editor sockets are open"),
+        }
+    } else {
+        None
+    };
     let io = match target.editor.connect().await {
         Ok(io) => io,
         Err(why) => return bad_gateway(workspace, &why.0),
@@ -264,10 +277,12 @@ async fn forward(
     };
     let client_upgrade = upgrade.then(|| hyper::upgrade::on(&mut request));
     prepare_request(&mut request, upgrade, microsoft);
-    let mut response = match sender.send_request(request).await {
-        Ok(response) => response,
-        Err(err) => return bad_gateway(workspace, &format!("it did not answer ({err})")),
-    };
+    let mut response =
+        match tokio::time::timeout(ANSWER_TIMEOUT, sender.send_request(request)).await {
+            Ok(Ok(response)) => response,
+            Ok(Err(err)) => return bad_gateway(workspace, &format!("it did not answer ({err})")),
+            Err(_) => return bad_gateway(workspace, "it did not answer in time"),
+        };
 
     if upgrade && response.status() == StatusCode::SWITCHING_PROTOCOLS {
         if let Some(client_upgrade) = client_upgrade {
@@ -276,6 +291,7 @@ async fn forward(
             let mut stop = shared.stop.clone();
             tokio::spawn(async move {
                 let _open = open;
+                let _socket = socket;
                 let (Ok(client), Ok(server)) = tokio::join!(client_upgrade, server_upgrade) else {
                     return;
                 };

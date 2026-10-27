@@ -22,7 +22,7 @@
 )]
 
 use std::io;
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -73,7 +73,11 @@ async fn rig() -> Rig {
     let guard = NetPolicy::new(Arc::new(access)).with_endpoints(endpoints.clone());
     let proxy = Arc::new(
         Proxy::new(store, Arc::new(NullSink))
-            .with_resolver(Arc::new(StaticResolver::new()))
+            .with_resolver(Arc::new(
+                StaticResolver::new()
+                    .with("e2e-front.localhost", &[Ipv4Addr::LOCALHOST.into()])
+                    .with("other.localhost", &[Ipv4Addr::LOCALHOST.into()]),
+            ))
             .with_address_check(Arc::new(guard))
             .with_guest_watcher(Arc::new(ports.clone())),
     );
@@ -111,7 +115,7 @@ async fn rig() -> Rig {
     editor.dir = "/nonexistent/release".into();
     editor.port = editor_port;
     let agent = Agent::start(Config {
-        listen: SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), 0),
+        listen: SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0),
         target: Target::Unix(route.endpoint().path().to_path_buf()),
         oom: None,
         ports: None,
@@ -205,12 +209,16 @@ async fn from_outside(front: &Front, workspace: &WorkspaceName) -> String {
     String::from_utf8_lossy(&answer).into_owned()
 }
 
-fn spellings(port: u16) -> [String; 4] {
+fn spellings(port: u16) -> [String; 6] {
     [
         format!("127.0.0.1:{port}"),
         format!("localhost:{port}"),
         format!("[::ffff:127.0.0.1]:{port}"),
         format!("0.0.0.0:{port}"),
+        // The front's own names, as a guest would dial them: a guard that judged the name
+        // before resolving it would let these through.
+        format!("e2e-front.localhost:{port}"),
+        format!("other.localhost:{port}"),
     ]
 }
 

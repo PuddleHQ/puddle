@@ -2,7 +2,7 @@
 //! A client that sends its request, shuts down its write side and then reads a response bigger
 //! than one yamux stream window, through the proxy's spliced tunnel (a name no termination binds).
 #![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
-mod terminate_support;
+use crate::terminate_support;
 
 use std::time::Duration;
 

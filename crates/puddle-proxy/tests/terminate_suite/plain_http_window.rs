@@ -3,7 +3,7 @@
 //! nothing more from the guest once the request is in), arrives whole. The client keeps its
 //! sending side open, as curl and apt do.
 #![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
-mod terminate_support;
+use crate::terminate_support;
 
 use std::time::Duration;
 

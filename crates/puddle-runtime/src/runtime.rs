@@ -75,7 +75,7 @@ impl BundledRuntime {
         RuntimeEnv::plan(&self.layout, std::env::vars_os())
     }
 
-    /// A command that runs the bundled msb by absolute path with the pinned environment (for
+    /// A command that runs the bundled msb by absolute path with Puddle's environment (for
     /// `puddle doctor` and diagnostics; the SDK starts msb itself).
     #[must_use]
     pub fn command(&self) -> Command {

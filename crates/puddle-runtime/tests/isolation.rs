@@ -1,21 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! A user's own msb setup never leaks into Puddle: their `MSB_*` variables are dropped and an
-//! `msb` on `PATH` is never what runs. nextest runs each test in its own
+//! A user's own msb setup never leaks into the msb Puddle starts: their `MSB_*` variables are
+//! dropped and an `msb` on `PATH` is never what runs. nextest runs each test in its own
 //! process, so changing the process environment here is safe.
 #![expect(
     clippy::unwrap_used,
     reason = "fixture helpers run outside #[test] but only in tests"
 )]
 
+#[expect(
+    dead_code,
+    reason = "shared with bundled.rs, which uses the fake msb binary"
+)]
 mod support;
 
-use std::path::PathBuf;
-
-use puddle_runtime::{
-    BUILT_FOR, BundledRuntime, DEV_OVERRIDE_VAR, DevOverride, RuntimeEnv, RuntimeLayout,
-    RuntimeVersion,
-};
-use support::{TempDir, fake_msb};
+use puddle_runtime::{DEV_OVERRIDE_VAR, DevOverride, RuntimeEnv, RuntimeLayout};
+use support::TempDir;
 
 const USER_VARS: [(&str, &str); 7] = [
     ("MSB_PATH", "/user/bin/msb"),
@@ -36,53 +35,6 @@ fn set_env(name: &str, value: Option<&str>) {
             None => std::env::remove_var(name),
         }
     }
-}
-
-#[expect(unsafe_code, reason = "tests change the process environment")]
-fn apply(env: &RuntimeEnv) {
-    // SAFETY: as in `set_env`.
-    unsafe { env.apply_to_process() };
-}
-
-#[test]
-fn users_msb_variables_are_replaced_in_the_process() {
-    let dir = TempDir::new("proc");
-    let layout = RuntimeLayout::new(dir.path().join("runtime"), dir.path().join("home")).unwrap();
-    std::fs::create_dir_all(layout.runtime_dir()).unwrap();
-    std::fs::write(layout.msb_path(), fake_msb(Some(BUILT_FOR))).unwrap();
-    std::fs::write(layout.libkrunfw_path(), b"firmware").unwrap();
-    for (k, v) in USER_VARS {
-        set_env(k, Some(v));
-    }
-
-    let rt = BundledRuntime::open(
-        layout.clone(),
-        &RuntimeVersion::built_for(),
-        DevOverride::none(),
-    )
-    .unwrap();
-    apply(&rt.env());
-
-    let var = |k: &str| std::env::var_os(k).map(PathBuf::from);
-    assert_eq!(var("MSB_PATH"), Some(layout.msb_path()));
-    assert_eq!(var("MSB_HOME"), Some(layout.home().to_path_buf()));
-    assert_eq!(var("MSB_CONFIG_PATH"), Some(layout.config_path()));
-    for gone in [
-        "MSB_LIBKRUNFW_PATH",
-        "MSB_AGENTD_PATH",
-        "MSB_BACKEND",
-        "MSB_API_URL",
-    ] {
-        assert_eq!(std::env::var_os(gone), None, "{gone} survived");
-    }
-    // Idempotent: a second plan only replaces Puddle's own three.
-    let again = RuntimeEnv::plan(&layout, std::env::vars_os());
-    let removed: Vec<_> = again
-        .removed()
-        .iter()
-        .map(|n| n.to_str().unwrap())
-        .collect();
-    assert_eq!(removed, ["MSB_CONFIG_PATH", "MSB_HOME", "MSB_PATH"]);
 }
 
 #[test]

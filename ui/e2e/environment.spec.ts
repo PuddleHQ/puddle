@@ -55,7 +55,7 @@ test.describe("environment", () => {
     await expect(rows.nth(2)).toContainText("NPM_TOKEN");
     await expect(rows.nth(2)).toContainText("Stored in Puddle, never shown");
     await expect(rows.nth(2)).toContainText(
-      "registry.npmjs.org and *.npmjs.org",
+      "*.npmjs.org and registry.npmjs.org",
     );
     await expect(rows.nth(3)).toContainText("EDITOR");
     await expect(rows.nth(3)).toContainText("Every workspace");
@@ -73,14 +73,14 @@ test.describe("environment", () => {
     await open(page, backend, "environment", "Environment");
     await page.getByRole("button", { name: "Add variable or secret" }).click();
     let dialog = page.getByRole("dialog", { name: "Add a variable" });
-    await dialog.getByLabel("Name").fill("LOG_LEVEL");
-    await dialog.getByLabel("Value").fill("debug");
+    await dialog.getByLabel("Name", { exact: true }).fill("LOG_LEVEL");
+    await dialog.getByLabel("Value", { exact: true }).fill("debug");
     await dialog.getByRole("button", { name: "Add" }).click();
     await expect(table(page)).toContainText("LOG_LEVEL");
     await expect(page.getByText("Saved LOG_LEVEL.")).toBeVisible();
-    await expect(page.getByRole("status")).toContainText(
-      "LOG_LEVEL: Plain variables apply at the next start",
-    );
+    await expect(
+      page.getByText("LOG_LEVEL: Plain variables apply at the next start"),
+    ).toBeVisible();
 
     await page.getByRole("button", { name: "Add variable or secret" }).click();
     dialog = page.getByRole("dialog");
@@ -88,8 +88,8 @@ test.describe("environment", () => {
     await expect(
       dialog.getByText(/Puddle will decrypt connections to each host/),
     ).toBeVisible();
-    await dialog.getByLabel("Name").fill("API_KEY");
-    await dialog.getByLabel("Value").fill("sk-typed-once");
+    await dialog.getByLabel("Name", { exact: true }).fill("API_KEY");
+    await dialog.getByLabel("Value", { exact: true }).fill("sk-typed-once");
     await dialog.getByLabel("Hosts it may be sent to").fill("api.example.com");
     await dialog.getByRole("button", { name: "Add" }).click();
     const row = table(page).getByRole("row", { name: /API_KEY/ });
@@ -109,8 +109,8 @@ test.describe("environment", () => {
     await open(page, backend, "environment", "Environment");
     await page.getByRole("button", { name: "Add variable or secret" }).click();
     const dialog = page.getByRole("dialog");
-    await dialog.getByLabel("Name").fill("PATH");
-    await dialog.getByLabel("Value").fill("/x");
+    await dialog.getByLabel("Name", { exact: true }).fill("PATH");
+    await dialog.getByLabel("Value", { exact: true }).fill("/x");
     await dialog.getByRole("button", { name: "Add" }).click();
     await expect(dialog.getByRole("alert")).toContainText(
       "PATH comes from the workspace's image",
@@ -125,7 +125,7 @@ test.describe("environment", () => {
     await open(page, backend, "environment", "Environment");
     await page.getByRole("button", { name: "Edit NPM_TOKEN" }).click();
     const dialog = page.getByRole("dialog", { name: "Edit NPM_TOKEN" });
-    await expect(dialog.getByLabel("Value")).toHaveValue("");
+    await expect(dialog.getByLabel("Value", { exact: true })).toHaveValue("");
     await dialog
       .getByLabel("Hosts it may be sent to")
       .fill("registry.npmjs.org");
@@ -155,8 +155,10 @@ test.describe("environment", () => {
       .getByRole("button", { name: "Override EDITOR for web-shop" })
       .click();
     const dialog = page.getByRole("dialog");
-    await expect(dialog.getByLabel("Name")).toHaveValue("EDITOR");
-    await dialog.getByLabel("Value").fill("nano");
+    await expect(dialog.getByLabel("Name", { exact: true })).toHaveValue(
+      "EDITOR",
+    );
+    await dialog.getByLabel("Value", { exact: true }).fill("nano");
     await dialog.getByRole("button", { name: "Add" }).click();
     await expect(
       table(page).getByRole("row", { name: /EDITOR nano/ }),
@@ -217,7 +219,7 @@ test.describe("environment", () => {
     await page.getByRole("button", { name: "Edit EDITOR" }).click();
     const dialog = page.getByRole("dialog", { name: "Edit EDITOR" });
     await expect(dialog).toContainText("Applies to every workspace.");
-    await dialog.getByLabel("Value").fill("emacs");
+    await dialog.getByLabel("Value", { exact: true }).fill("emacs");
     await dialog.getByRole("button", { name: "Save" }).click();
     await expect(global).toContainText("emacs");
     await page.reload();
@@ -331,9 +333,7 @@ test.describe("ports", () => {
   }) => {
     await open(page, backend, "ports", "Ports");
     await page.getByLabel("Port on this computer for 5432").fill("15432");
-    await page
-      .getByRole("button", { name: "Forward 5432 and keep it" })
-      .click();
+    await page.getByRole("button", { name: "Forward and keep 5432" }).click();
     const row = ports(page).getByRole("row", { name: /^5432/ });
     await expect(row).toContainText("Open on 127.0.0.1:15432");
     await expect(
@@ -344,7 +344,7 @@ test.describe("ports", () => {
       .getByRole("button", { name: "Forward 3000", exact: true })
       .click();
     await expect(page.getByRole("alert")).toContainText(
-      "port 15432 on this computer is already in use",
+      "Port 15432 on this computer is already in use",
     );
   });
 

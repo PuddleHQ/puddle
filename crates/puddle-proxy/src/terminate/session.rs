@@ -15,19 +15,22 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader
 
 use super::body::{Abort, BodyReader, ChannelBody, pump};
 use super::exchange::{AnswerBody, Exchange, MAX_EXCHANGE_BODY, read_answer, swap_request_body};
-use super::guest::{ALPN_HTTP11, Prefixed, Proto, read_hello, server_config};
+use super::guest::{
+    ALPN_HTTP11, FirstBytes, Hello, Prefixed, Proto, capture_first_record, parse_hello, read_hello,
+    server_config,
+};
 use super::inject::{
     Forwarding, InjectContext, InjectRefusal, Injection, RequestView, Unauthorized, body_too_large,
 };
-use super::leg::{self, BoxError, Connected, H1Conn, UpBody};
+use super::leg::{self, BoxError, ConnectError, Connected, H1Conn, Made, UpBody};
 use super::request::{self, Parsed};
 use super::stand_in::Swapped;
 use super::streams::Activity;
-use super::{Termination, h2, response, ws};
+use super::{Mode, Termination, h2, response, ws};
 use crate::http::{self, HeadError};
 use crate::proxy::{ClientReader, Proxy, ProxyConfig, Refusal, refuse};
 use crate::target::Target;
-use crate::upstream::Admitted;
+use crate::upstream::{Admitted, connect_out};
 
 /// The upstream client's read buffer cap, which bounds a response head: heads up to this size are
 /// always accepted and heads over twice this size never are (the client library may read a
@@ -91,6 +94,12 @@ pub(crate) struct Outcome {
     pub(crate) certificate_unavailable: bool,
     /// The guest's client refused the certificate (it does not trust the workspace's CA).
     pub(crate) certificate_refused: bool,
+    /// The connection was passed through to the real server untouched instead of decrypted (a
+    /// host decrypted only because the workspace decrypts every host): the code says why.
+    pub(crate) passed_through: Option<&'static str>,
+    /// The client refused Puddle's certificate for a host decrypted only because the workspace
+    /// decrypts every host: it is passed through from now on.
+    pub(crate) learned: bool,
     /// The code of the first refusal the credential rules gave a request (`x-puddle-blocked`).
     pub(crate) refused: Option<&'static str>,
     /// The code of the limit that ended the connection or cut one of its streams or pipes
@@ -124,6 +133,8 @@ impl Outcome {
 pub(crate) struct Context {
     pub(crate) proxy: Arc<Proxy>,
     pub(crate) termination: Arc<Termination>,
+    /// Why this host is decrypted.
+    pub(crate) mode: Mode,
     pub(crate) tls: TlsClient,
     pub(crate) workspace: WorkspaceName,
     pub(crate) target: Target,
@@ -149,6 +160,14 @@ fn note_handshake_failure(
     } else if let Some(alert) = super::handshake::rejected_certificate(err) {
         outcome.certificate_refused = true;
         tracing::info!(workspace = %cx.workspace, host = %cx.target.host, alert, "the client in the workspace did not accept Puddle's certificate for this host");
+        if cx.mode == Mode::Everything {
+            outcome.learned = true;
+            cx.termination
+                .interception()
+                .learned()
+                .learn(&cx.target.host);
+            tracing::warn!(workspace = %cx.workspace, host = %cx.target.host, alert, "a tool in the workspace does not trust Puddle's certificate for this host; the host is passed through from now on (12 hours)");
+        }
     } else {
         tracing::debug!(host = %cx.target.host, error = %err, "guest TLS handshake failed");
     }
@@ -172,39 +191,40 @@ where
         return outcome;
     }
     let config = cx.proxy.config;
-    let hello = tokio::time::timeout(
-        config.tls_handshake_timeout,
-        read_hello(Prefixed::new(stream, early), &cx.target.host),
-    )
-    .await;
-    let (start, hello) = match hello {
-        Ok(Ok(read)) => read,
-        Ok(Err(err)) => {
-            tracing::debug!(host = %cx.target.host, error = %err, "guest TLS hello not read");
-            return outcome;
+    let (start, hello, first, deferred) = match cx.mode {
+        Mode::Bound => {
+            let hello = tokio::time::timeout(
+                config.tls_handshake_timeout,
+                read_hello(Prefixed::new(stream, early), &cx.target.host),
+            )
+            .await;
+            let (start, hello) = match hello {
+                Ok(Ok(read)) => read,
+                Ok(Err(err)) => {
+                    tracing::debug!(host = %cx.target.host, error = %err, "guest TLS hello not read");
+                    return outcome;
+                }
+                Err(_) => {
+                    tracing::debug!(host = %cx.target.host, "guest TLS hello timed out");
+                    return outcome;
+                }
+            };
+            if !hello.name_matches {
+                refuse_name(&cx, start).await;
+                outcome.sni_mismatch = true;
+                return outcome;
+            }
+            // Upstream first: what the real server speaks decides what the guest is offered.
+            let (first, deferred) = split_connect(
+                leg::connect(&cx, &hello.upstream_offer()).await,
+                &mut outcome,
+            );
+            (start, hello, first, deferred)
         }
-        Err(_) => {
-            tracing::debug!(host = %cx.target.host, "guest TLS hello timed out");
-            return outcome;
-        }
-    };
-    if !hello.name_matches {
-        refuse_name(&cx, start).await;
-        outcome.sni_mismatch = true;
-        return outcome;
-    }
-    // Upstream first: what the real server speaks decides what the guest is offered.
-    let (first, deferred) = match leg::connect(&cx, &hello.upstream_offer()).await {
-        Ok(made) => {
-            outcome.hop = made.hop;
-            outcome.resolved_ip = made.ip;
-            outcome.connect = Some(ConnectionOutcome::Connected);
-            (Some(made.conn), None)
-        }
-        Err(refusal) => {
-            outcome.connect = refusal.outcome;
-            (None, Some(refusal))
-        }
+        Mode::Everything => match everything_first(&cx, stream, early, &mut outcome).await {
+            Some(ready) => ready,
+            None => return outcome,
+        },
     };
     let guest_proto = match &first {
         Some(conn) => hello.guest_proto(conn.proto()),
@@ -256,6 +276,170 @@ where
             conn.serve().await;
             conn.outcome
         }
+    }
+}
+
+/// How long a host decrypted only because the workspace decrypts every host may stay silent
+/// before it is taken for a protocol where the server speaks first (SSH on port 443, say) and
+/// passed through. A TLS client sends its hello at once.
+const FIRST_BYTES_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// The guest's connection and the upstream connection, after the real server was tried: what the
+/// guest's handshake and requests are served from.
+type Ready<S> = (
+    tokio_rustls::StartHandshake<Prefixed<S>>,
+    Hello,
+    Option<Connected>,
+    Option<Refusal>,
+);
+
+/// Notes the first upstream connection in `outcome` and splits it into the connection, or the
+/// refusal the first request will get.
+fn split_connect(
+    made: Result<Made, Refusal>,
+    outcome: &mut Outcome,
+) -> (Option<Connected>, Option<Refusal>) {
+    match made {
+        Ok(made) => {
+            outcome.hop = made.hop;
+            outcome.resolved_ip = made.ip;
+            outcome.connect = Some(ConnectionOutcome::Connected);
+            (Some(made.conn), None)
+        }
+        Err(refusal) => {
+            outcome.connect = refusal.outcome;
+            (None, Some(refusal))
+        }
+    }
+}
+
+/// The start of a connection to a host decrypted only because the workspace decrypts every host:
+/// like a bound host's, except that whatever cannot be decrypted without breaking the tool is
+/// passed through to the real server untouched, with the bytes already read replayed. `None`: the
+/// connection was passed through (or ended) and there is nothing more to do.
+async fn everything_first<S>(
+    cx: &Context,
+    mut stream: S,
+    early: Vec<u8>,
+    outcome: &mut Outcome,
+) -> Option<Ready<S>>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let config = cx.proxy.config;
+    let first = capture_first_record(
+        &mut stream,
+        early,
+        FIRST_BYTES_WAIT,
+        config.tls_handshake_timeout,
+    )
+    .await;
+    let captured = match first {
+        Ok(FirstBytes::Tls(captured)) => captured,
+        Ok(FirstBytes::Other(read)) => {
+            pass_through(cx, stream, read, "not_tls", outcome).await;
+            return None;
+        }
+        Err(err) => {
+            tracing::debug!(host = %cx.target.host, error = %err, "guest connection failed before a TLS hello");
+            return None;
+        }
+    };
+    let Some(hello) = parse_hello(&captured, &cx.target.host) else {
+        pass_through(cx, stream, captured, "not_tls", outcome).await;
+        return None;
+    };
+    // No credential is at stake on this host, so a client that asks for another name (or hides
+    // it, as encrypted ClientHello does) is passed through rather than refused.
+    if !hello.name_matches {
+        pass_through(cx, stream, captured, "sni_mismatch", outcome).await;
+        return None;
+    }
+    let made = match leg::connect_noting(cx, &hello.upstream_offer()).await {
+        Ok(made) if made.wants_client_certificate => {
+            pass_through(cx, stream, captured, "server_client_certificate", outcome).await;
+            return None;
+        }
+        Ok(made) => Ok(made),
+        Err(ConnectError {
+            pass_through: Some(code),
+            ..
+        }) => {
+            pass_through(cx, stream, captured, code, outcome).await;
+            return None;
+        }
+        Err(err) => Err(err.refusal),
+    };
+    let (first, deferred) = split_connect(made, outcome);
+    let start = tokio::time::timeout(
+        config.tls_handshake_timeout,
+        tokio_rustls::LazyConfigAcceptor::new(
+            rustls::server::Acceptor::default(),
+            Prefixed::new(stream, captured),
+        ),
+    )
+    .await;
+    match start {
+        Ok(Ok(start)) => Some((start, hello, first, deferred)),
+        Ok(Err(err)) => {
+            tracing::debug!(host = %cx.target.host, error = %err, "guest TLS hello not read");
+            None
+        }
+        Err(_) => {
+            tracing::debug!(host = %cx.target.host, "guest TLS hello timed out");
+            None
+        }
+    }
+}
+
+/// Passes the guest's connection through to the real server untouched, as if the host were not
+/// decrypted: a fresh connection to the server, the bytes already read from the guest sent first,
+/// then both directions copied. `code` is why, for the audit.
+async fn pass_through<S>(
+    cx: &Context,
+    mut guest: S,
+    replay: Vec<u8>,
+    code: &'static str,
+    outcome: &mut Outcome,
+) where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    tracing::info!(workspace = %cx.workspace, host = %cx.target.host, code, "connection passed through undecrypted");
+    outcome.passed_through = Some(code);
+    let out = match connect_out(
+        cx.proxy.upstream(),
+        &cx.target,
+        true,
+        &cx.admitted,
+        cx.proxy.config.connect_timeout,
+    )
+    .await
+    {
+        Ok(out) => out,
+        Err(refusal) => {
+            // The guest was told the tunnel is open and speaks TLS (or something else) to
+            // us: there is no HTTP answer to give, the connection just ends.
+            outcome.connect = refusal.outcome;
+            return;
+        }
+    };
+    outcome.connect = Some(ConnectionOutcome::Connected);
+    outcome.resolved_ip = out.addr.map(|addr| addr.ip());
+    outcome.hop = out.hop;
+    let (mut server, mut watch) = (out.stream, out.watch);
+    if let Err(err) = server.write_all(&replay).await {
+        tracing::debug!(error = %err, "pass-through failed before the splice");
+        crate::proxy::abort(&server);
+        return;
+    }
+    match crate::proxy::splice_watched(&mut server, &mut guest, watch.as_mut()).await {
+        Some(Ok((up, down))) => tracing::debug!(
+            bytes_up = up + replay.len() as u64,
+            bytes_down = down,
+            "pass-through closed"
+        ),
+        Some(Err(err)) => tracing::debug!(error = %err, "pass-through aborted"),
+        None => crate::proxy::abort(&server),
     }
 }
 

@@ -104,7 +104,7 @@ impl fmt::Display for ConnectionOutcome {
 /// Why the proxy decided as it did (R-24). Serialised as a string: `rule`, `no_rule`, a
 /// [`BlockReason::code`] (`toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`,
 /// `local_address`, `settings_unreadable`), `policy_unavailable`, `puddle_request`, `sni_mismatch`, `guest_tls_rejected`, `certificate_unavailable`,
-/// `connection_limit`, `suppressed`, `merged`, `limit:<code>` (a limit ended the connection or cut a stream of it), `puddle_request_failed:<code>` or, for a request the credential rules refused on a decrypted connection, the
+/// `connection_limit`, `suppressed`, `merged`, `limit:<code>` (a limit ended the connection or cut a stream of it), `pass_through:<code>` (a host the workspace decrypts only because it decrypts every host was passed through untouched), `puddle_request_failed:<code>` or, for a request the credential rules refused on a decrypted connection, the
 /// refusal's code (`push_denied`, `pull_denied`, `credential_unavailable`, ...).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -146,6 +146,13 @@ pub enum ConnectionReason {
     /// block left open). The decision of the rule stands. The text is the limit's code, shown as
     /// `limit:<code>`. A connection records the first limit that fired.
     LimitEnded(&'static str),
+    /// A host the workspace decrypts only because it decrypts every host was passed through to
+    /// the real server untouched: it is on the never-decrypt list (`never_decrypt`), a tool did
+    /// not accept Puddle's certificate for it before (`learned`), the client did not start a
+    /// TLS handshake for the name (`not_tls`, `sni_mismatch`), or the server cannot be talked
+    /// to through Puddle's TLS (`server_client_certificate`, `server_certificate`, `server_tls`).
+    /// The decision of the rule stands. Shown as `pass_through:<code>`.
+    PassedThrough(&'static str),
     /// Puddle's own request (a repository listing) that could not be completed: the code says
     /// why (`unreachable`, `tls`, `timeout`, `too_large`, `protocol`, `bad_token`, or
     /// `host_refused` for a 401 or 403, `rate_limited` for a 429, `host_error` for any other error
@@ -169,6 +176,7 @@ impl fmt::Display for ConnectionReason {
             Self::Merged => f.write_str("merged"),
             Self::LimitEnded(code) => write!(f, "limit:{code}"),
             Self::Refused(code) => f.write_str(code),
+            Self::PassedThrough(code) => write!(f, "pass_through:{code}"),
             Self::PuddleRequestFailed(code) => write!(f, "puddle_request_failed:{code}"),
         }
     }
@@ -490,6 +498,10 @@ mod tests {
             (
                 ConnectionReason::LimitEnded("stream_idle"),
                 "limit:stream_idle",
+            ),
+            (
+                ConnectionReason::PassedThrough("learned"),
+                "pass_through:learned",
             ),
         ];
         for (reason, text) in reasons {

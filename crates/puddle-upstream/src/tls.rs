@@ -15,8 +15,9 @@
 
 use std::io;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use rustls::client::Resumption;
+use rustls::client::{ResolvesClientCert, Resumption};
 use rustls::pki_types::{CertificateDer, ServerName};
 use rustls::{CertificateError, ClientConfig, RootCertStore};
 use rustls_platform_verifier::Verifier;
@@ -224,9 +225,7 @@ impl TlsClient {
     where
         S: AsyncRead + AsyncWrite + Unpin,
     {
-        let Ok(name @ ServerName::DnsName(_)) = ServerName::try_from(server_name.to_owned()) else {
-            return Err(TlsConnectError::InvalidName(server_name.to_owned()));
-        };
+        let name = dns_name(server_name)?;
         let config = if alpn == [ALPN_HTTP11] {
             Arc::clone(&self.config)
         } else {
@@ -238,6 +237,60 @@ impl TlsClient {
             .connect(name, stream)
             .await
             .map_err(|err| TlsConnectError::from_io(&err))
+    }
+
+    /// As [`Self::connect_alpn`], and says whether the server asked for a client certificate
+    /// during the handshake. Puddle has none to give, so a server that asks (and most that ask
+    /// then refuse the connection, in TLS 1.3 only after the handshake looked finished) cannot be
+    /// talked to through Puddle's own TLS: the caller can pass the connection through instead.
+    ///
+    /// # Errors
+    /// [`TlsConnectError`]; the stream is dropped.
+    pub async fn connect_alpn_noting_client_auth<S>(
+        &self,
+        server_name: &str,
+        stream: S,
+        alpn: &[&[u8]],
+    ) -> Result<(TlsStream<S>, bool), TlsConnectError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
+        let name = dns_name(server_name)?;
+        let asked = Arc::new(AskedForCertificate::default());
+        let mut config = ClientConfig::clone(&self.config);
+        config.alpn_protocols = alpn.iter().map(|p| p.to_vec()).collect();
+        config.client_auth_cert_resolver = Arc::clone(&asked) as Arc<dyn ResolvesClientCert>;
+        let tls = TlsConnector::from(Arc::new(config))
+            .connect(name, stream)
+            .await
+            .map_err(|err| TlsConnectError::from_io(&err))?;
+        Ok((tls, asked.0.load(Ordering::Relaxed)))
+    }
+}
+
+fn dns_name(server_name: &str) -> Result<ServerName<'static>, TlsConnectError> {
+    match ServerName::try_from(server_name.to_owned()) {
+        Ok(name @ ServerName::DnsName(_)) => Ok(name),
+        _ => Err(TlsConnectError::InvalidName(server_name.to_owned())),
+    }
+}
+
+/// Offers no client certificate and remembers that the server asked for one.
+#[derive(Debug, Default)]
+struct AskedForCertificate(AtomicBool);
+
+impl ResolvesClientCert for AskedForCertificate {
+    fn resolve(
+        &self,
+        _root_hint_subjects: &[&[u8]],
+        _sigschemes: &[rustls::SignatureScheme],
+    ) -> Option<Arc<rustls::sign::CertifiedKey>> {
+        self.0.store(true, Ordering::Relaxed);
+        None
+    }
+
+    fn has_certs(&self) -> bool {
+        false
     }
 }
 
@@ -289,6 +342,12 @@ mod tests {
     /// A TLS server with a leaf for `name` (SAN `san`) from a fresh root, valid `years` around
     /// now; it answers every connection with `hello` and closes.
     async fn server(san: &str, years: (i64, i64)) -> Server {
+        server_asking(san, years, false).await
+    }
+
+    /// As [`server`]; with `ask_for_certificate` it also asks the client for a certificate (and
+    /// goes on without one, as a server with optional client authentication does).
+    async fn server_asking(san: &str, years: (i64, i64), ask_for_certificate: bool) -> Server {
         let ca_key = rcgen::KeyPair::generate().unwrap();
         let mut ca = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
         ca.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
@@ -302,14 +361,27 @@ mod tests {
         leaf.not_before = rcgen::date_time_ymd(i32::try_from(now + years.0).unwrap(), 1, 1);
         leaf.not_after = rcgen::date_time_ymd(i32::try_from(now + years.1).unwrap(), 1, 1);
         let cert = leaf.signed_by(&key, &issuer).unwrap();
-        let mut config = rustls::ServerConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()
-        .unwrap()
-        .with_no_client_auth()
-        .with_single_cert(vec![cert.der().clone()], PrivateKeyDer::from(key))
-        .unwrap();
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let builder = rustls::ServerConfig::builder_with_provider(Arc::clone(&provider))
+            .with_safe_default_protocol_versions()
+            .unwrap();
+        let builder = if ask_for_certificate {
+            let mut roots = RootCertStore::empty();
+            roots.add(ca_cert.der().clone()).unwrap();
+            let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
+                Arc::new(roots),
+                provider,
+            )
+            .allow_unauthenticated()
+            .build()
+            .unwrap();
+            builder.with_client_cert_verifier(verifier)
+        } else {
+            builder.with_no_client_auth()
+        };
+        let mut config = builder
+            .with_single_cert(vec![cert.der().clone()], PrivateKeyDer::from(key))
+            .unwrap();
         config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         let acceptor = TlsAcceptor::from(Arc::new(config));
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
@@ -375,6 +447,23 @@ mod tests {
                 }
                 None => assert!(tls.is_err()),
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_server_that_asks_for_a_client_certificate_is_told_apart_from_one_that_does_not() {
+        for (asks, name) in [(true, "asks.test"), (false, "plain.test")] {
+            let server = server_asking(name, (-1, 1), asks).await;
+            let client = TlsClient::new([server.root.clone()]).unwrap();
+            let tcp = tokio::net::TcpStream::connect(("127.0.0.1", server.port))
+                .await
+                .unwrap();
+            let (tls, asked) = client
+                .connect_alpn_noting_client_auth(name, tcp, &[b"http/1.1"])
+                .await
+                .unwrap();
+            assert_eq!(asked, asks, "{name}");
+            assert_eq!(tls.get_ref().1.alpn_protocol(), Some(&b"http/1.1"[..]));
         }
     }
 

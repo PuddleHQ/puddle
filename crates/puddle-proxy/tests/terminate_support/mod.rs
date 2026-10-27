@@ -23,8 +23,8 @@ use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{AnyAddress, CollectingConnectionLog, StaticPolicy};
 use puddle_proxy::{
     BoxFuture, InjectContext, InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector,
-    Proxy, ProxyConfig, RequestView, Resolver, Route, SecretValue, StandIns, Termination,
-    TerminationSet, Terminations,
+    Interception, Proxy, ProxyConfig, RequestView, Resolver, Route, SecretValue, StandIns,
+    Termination, TerminationSet, Terminations,
 };
 use puddle_types::{ConnectionEvent, DomainName, Host, NullSink, WorkspaceName};
 use puddle_upstream::TlsClient;
@@ -85,6 +85,17 @@ impl Pki {
     }
 
     pub(crate) fn server_config(&self, name: &str, flaw: Flaw) -> Arc<rustls::ServerConfig> {
+        self.server_config_with(name, flaw, false)
+    }
+
+    /// As [`Self::server_config`]; `ask_client` makes the server ask for a client certificate and
+    /// go on without one.
+    pub(crate) fn server_config_with(
+        &self,
+        name: &str,
+        flaw: Flaw,
+        ask_client: bool,
+    ) -> Arc<rustls::ServerConfig> {
         let sans = if flaw == Flaw::WrongName {
             "other.example".to_owned()
         } else {
@@ -114,10 +125,24 @@ impl Pki {
             Flaw::SelfSigned => params.self_signed(&key).unwrap(),
             _ => self.sign(&params, &key),
         };
-        let config = rustls::ServerConfig::builder_with_provider(provider())
+        let builder = rustls::ServerConfig::builder_with_provider(provider())
             .with_safe_default_protocol_versions()
-            .unwrap()
-            .with_no_client_auth()
+            .unwrap();
+        let builder = if ask_client {
+            let mut roots = rustls::RootCertStore::empty();
+            roots.add(self.root.clone()).unwrap();
+            let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
+                Arc::new(roots),
+                provider(),
+            )
+            .allow_unauthenticated()
+            .build()
+            .unwrap();
+            builder.with_client_cert_verifier(verifier)
+        } else {
+            builder.with_no_client_auth()
+        };
+        let config = builder
             .with_single_cert(vec![cert.der().clone()], PrivateKeyDer::from(key))
             .unwrap();
         Arc::new(config)
@@ -541,6 +566,8 @@ pub(crate) struct RigBuilder {
     pub(crate) stand_ins: (Arc<StandIns>, Arc<StandIns>),
     /// The token exchanges `box` reads.
     pub(crate) exchanges: Option<Arc<dyn puddle_proxy::ExchangeRewriter>>,
+    /// How `box` decrypts beyond its bound hosts (off by default).
+    pub(crate) interception: Interception,
 }
 
 impl RigBuilder {
@@ -555,7 +582,25 @@ impl RigBuilder {
             upstream: None,
             stand_ins: (Arc::new(StandIns::new()), Arc::new(StandIns::new())),
             exchanges: None,
+            interception: Interception::default(),
         }
+    }
+
+    /// Makes `box` decrypt every host (`all`) except the names of `never`.
+    pub(crate) fn decrypting_all(mut self, all: bool, never: &[&str]) -> Self {
+        self.interception = self
+            .interception
+            .decrypt_all(all)
+            .never_decrypt(TerminationSet::parse(never.iter().copied()).unwrap());
+        self
+    }
+
+    /// Keeps what `box`'s tools refused in `learned`.
+    pub(crate) fn learned(mut self, learned: Arc<puddle_proxy::PassThrough>) -> Self {
+        self.interception = Interception::new(learned)
+            .decrypt_all(self.interception.is_decrypting_all())
+            .never_decrypt(self.interception.never().clone());
+        self
     }
 
     /// Lets `box` have its token exchanges read by `exchanges`.
@@ -630,7 +675,8 @@ impl RigBuilder {
             Arc::clone(&ca),
             Arc::clone(&self.injector),
         )
-        .with_stand_ins(self.stand_ins.0);
+        .with_stand_ins(self.stand_ins.0)
+        .with_interception(self.interception.clone());
         if let Some(exchanges) = self.exchanges {
             termination = termination.with_exchanges(exchanges);
         }
@@ -673,6 +719,7 @@ impl RigBuilder {
             other_ca,
             terminations,
             injector: self.injector,
+            interception: self.interception,
             _roots: (root, other_root),
         }
     }
@@ -688,10 +735,30 @@ pub(crate) struct Rig {
     pub(crate) other_ca: Arc<WorkspaceCa>,
     terminations: Arc<Terminations>,
     injector: Arc<dyn Injector>,
+    interception: Interception,
     _roots: (IpcRoot, IpcRoot),
 }
 
 impl Rig {
+    /// Changes whether the running workspace `box` decrypts every host (and which names never),
+    /// keeping its CA, injector and what it learned: the next connection sees the change.
+    pub(crate) fn set_decrypting_all(&self, all: bool, never: &[&str]) {
+        self.terminations.insert(
+            workspace("box"),
+            Termination::new(
+                TerminationSet::parse(["bound.test"]).unwrap(),
+                Arc::clone(&self.ca),
+                Arc::clone(&self.injector),
+            )
+            .with_interception(
+                self.interception
+                    .clone()
+                    .decrypt_all(all)
+                    .never_decrypt(TerminationSet::parse(never.iter().copied()).unwrap()),
+            ),
+        );
+    }
+
     /// Changes the hosts the running workspace `box` decrypts, keeping its CA and injector (the
     /// guest's trust is unchanged): the next connection sees the new set.
     pub(crate) fn set_bound(&self, bound: &[&str]) {
@@ -1076,3 +1143,68 @@ pub(crate) async fn read_response<R: AsyncBufReadExt + Unpin>(
 }
 
 pub(crate) mod h2_rig;
+
+// ---------------------------------------------------------------------------------------------
+// A client that trusts any certificate, as a tool run with `curl -k` does.
+
+#[derive(Debug)]
+struct TrustAnything;
+
+impl rustls::client::danger::ServerCertVerifier for TrustAnything {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &provider().signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &provider().signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// A TLS client configuration that accepts any server certificate.
+pub(crate) fn trusting_anything() -> rustls::ClientConfig {
+    let mut config = rustls::ClientConfig::builder_with_provider(provider())
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(TrustAnything))
+        .with_no_client_auth();
+    config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    config
+}

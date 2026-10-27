@@ -1560,11 +1560,6 @@ export interface components {
              */
             pending_id: number | null;
             /**
-             * @description Whether a secret stand-in went to a host outside its hosts, unchanged. Records written
-             *     before it existed read as `false`.
-             */
-            placeholder_unbound: boolean;
-            /**
              * Format: int32
              * @description The requested port.
              */
@@ -1587,6 +1582,12 @@ export interface components {
             ts: number;
             /** @enum {string} */
             type: "connection";
+            /**
+             * @description The ids (`stand-in:<secret|login>:<name>`) of the secret stand-ins that went out
+             *     unchanged, to a host outside their hosts or in the path or query. Records written
+             *     before it existed read as empty.
+             */
+            unswapped_stand_ins: string[];
             /**
              * @description The company-proxy hop that carried it: `DIRECT` or `PROXY host:port`; `null` when no
              *     upstream route is configured.

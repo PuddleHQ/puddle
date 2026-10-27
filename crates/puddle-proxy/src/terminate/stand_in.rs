@@ -11,7 +11,8 @@
 //! (user secrets, captured logins) and consulted by every terminated request. The rules the swap
 //! follows:
 //!
-//! - **Where**: header values only. Never names, the request target, the query string or a body.
+//! - **Where**: header values only. Never names, the request target, the query string or a body;
+//!   a stand-in found in the target is reported, not swapped ([`StandIns::scan_target`]).
 //!   A value that starts with `Basic ` is decoded, swapped and encoded again, because git sends
 //!   `user:stand-in` base64-encoded. Headers an injector sets are never looked at.
 //! - **Which hosts**: the connection's host (the one the certificate, `Host`/`:authority` and the
@@ -242,8 +243,9 @@ fn stand_in_with(name: &str, random: &[u8; RANDOM_BYTES]) -> Result<String, Stan
 pub(crate) struct Swapped {
     /// The ids of the stand-ins that were replaced (each once).
     pub(crate) swapped: Vec<String>,
-    /// The ids of the stand-ins that were seen toward a host they are not for (each once).
-    pub(crate) unbound: Vec<String>,
+    /// The ids of the stand-ins that went out unchanged (each once): seen toward a host they are
+    /// not for, or in the request target.
+    pub(crate) unswapped: Vec<String>,
 }
 
 impl Swapped {
@@ -427,6 +429,28 @@ impl StandIns {
 }
 
 impl StandIns {
+    /// Finds the stand-ins in the request `target` (path and query), read as sent and with its
+    /// percent-escapes decoded. Nothing is swapped there: the stand-in goes out unchanged, so it
+    /// is reported whatever host the request is for. Only the registry's own stand-ins are found.
+    pub(crate) fn scan_target(&self, target: &str) -> Swapped {
+        let mut report = Swapped::default();
+        let guard = self.entries.read().unwrap_or_else(PoisonError::into_inner);
+        if guard.is_empty() {
+            return report;
+        }
+        let decoded = percent_decoded(target.as_bytes());
+        for entry in guard.iter() {
+            let found = entry.finder.find(target.as_bytes()).is_some()
+                || decoded
+                    .as_deref()
+                    .is_some_and(|decoded| entry.finder.find(decoded).is_some());
+            if found {
+                Swapped::note(&mut report.unswapped, entry.id());
+            }
+        }
+        report
+    }
+
     /// Swaps, in the token message `body`, the text of each of the top-level `fields` that is one
     /// of this registry's stand-ins and is for `host`, for the real value. This is the one place a
     /// body is swapped: only a named field and only an exact match, never a search of the body. A
@@ -454,11 +478,33 @@ impl StandIns {
                 changed |= body.set_text(field, found.real.expose());
                 Swapped::note(&mut report.swapped, found.id());
             } else {
-                Swapped::note(&mut report.unbound, found.id());
+                Swapped::note(&mut report.unswapped, found.id());
             }
         }
         (report, changed)
     }
+}
+
+/// `input` with its `%XX` escapes decoded, or `None` when it has none.
+fn percent_decoded(input: &[u8]) -> Option<Vec<u8>> {
+    input.contains(&b'%').then(|| {
+        let mut out = Vec::with_capacity(input.len());
+        let mut at = 0;
+        while let Some(&byte) = input.get(at) {
+            let escaped = (byte == b'%')
+                .then(|| input.get(at + 1..at + 3))
+                .flatten()
+                .and_then(|hex| u8::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok());
+            if let Some(decoded) = escaped {
+                out.push(decoded);
+                at += 3;
+            } else {
+                out.push(byte);
+                at += 1;
+            }
+        }
+        out
+    })
 }
 
 /// The new value of one header, or `None` when nothing in it was swapped.
@@ -527,7 +573,7 @@ fn swap_bytes(
             copied = end;
             Swapped::note(&mut report.swapped, entry.id());
         } else {
-            Swapped::note(&mut report.unbound, entry.id());
+            Swapped::note(&mut report.unswapped, entry.id());
         }
     }
     let mut out = out?;
@@ -623,7 +669,7 @@ mod tests {
         assert_eq!(headers["cookie"], format!("a=1; token={REAL_GH}; b=2"));
         assert_eq!(headers["user-agent"], "git/2.47");
         assert_eq!(report.swapped, ["stand-in:secret:GH_TOKEN"]);
-        assert_eq!(report.unbound, Vec::<String>::new());
+        assert_eq!(report.unswapped, Vec::<String>::new());
         assert!(headers["authorization"].is_sensitive());
         assert!(!headers["user-agent"].is_sensitive());
     }
@@ -675,7 +721,7 @@ mod tests {
         assert_eq!(headers["a"], "ghp_rotated");
         let (headers, report) = swap(&registry, &[("a", GH)], "github.com");
         assert_eq!(headers["a"], GH, "its old host no longer swaps it");
-        assert_eq!(report.unbound, ["stand-in:secret:GH_TOKEN"]);
+        assert_eq!(report.unswapped, ["stand-in:secret:GH_TOKEN"]);
         let (headers, _) = swap(&registry, &[("a", API)], "api.example.com");
         assert_eq!(headers["a"], API, "a removed stand-in is just text");
         let (headers, _) = swap(&registry, &[("a", LOGIN)], "login.example.com");
@@ -731,7 +777,7 @@ mod tests {
             headers["authorization"], GH,
             "the suffix itself is not below it"
         );
-        assert_eq!(report.unbound, ["stand-in:secret:GH_TOKEN"]);
+        assert_eq!(report.unswapped, ["stand-in:secret:GH_TOKEN"]);
     }
 
     #[test]
@@ -820,7 +866,7 @@ mod tests {
         );
         assert_eq!(headers["authorization"], format!("Bearer {API}"));
         assert_eq!(headers["x-gh"], REAL_GH, "the other one is still swapped");
-        assert_eq!(report.unbound, ["stand-in:secret:API_KEY"]);
+        assert_eq!(report.unswapped, ["stand-in:secret:API_KEY"]);
         assert_eq!(report.swapped, ["stand-in:secret:GH_TOKEN"]);
         assert!(!headers["authorization"].is_sensitive());
     }
@@ -873,7 +919,7 @@ mod tests {
         let sent = basic(&format!("u:{API}"));
         let (headers, report) = swap(&registry, &[("authorization", &sent)], "github.com");
         assert_eq!(headers["authorization"], sent.as_str());
-        assert_eq!(report.unbound, ["stand-in:secret:API_KEY"]);
+        assert_eq!(report.unswapped, ["stand-in:secret:API_KEY"]);
         assert_eq!(report.swapped, Vec::<String>::new());
         // One bound and one unbound inside the same value: the bound one is swapped, the other kept.
         let sent = basic(&format!("{GH}:{API}"));
@@ -882,7 +928,7 @@ mod tests {
             decoded(&headers["authorization"]),
             format!("{REAL_GH}:{API}")
         );
-        assert_eq!(report.unbound, ["stand-in:secret:API_KEY"]);
+        assert_eq!(report.unswapped, ["stand-in:secret:API_KEY"]);
     }
 
     #[test]
@@ -1168,7 +1214,7 @@ mod tests {
                     !has(|p| matches!(p, Piece::Bound))
                 );
                 prop_assert_eq!(
-                    report.unbound.is_empty(),
+                    report.unswapped.is_empty(),
                     !has(|p| matches!(p, Piece::Unbound))
                 );
             }
@@ -1249,7 +1295,7 @@ mod tests {
         let mut body = token_body("application/json", &json);
         let (report, changed) = registry.swap_fields(&mut body, &fields, &host("api.example.com"));
         assert!(!changed);
-        assert_eq!(report.unbound, ["stand-in:secret:GH_TOKEN"]);
+        assert_eq!(report.unswapped, ["stand-in:secret:GH_TOKEN"]);
         assert_eq!(report.swapped, Vec::<String>::new());
         // Nothing changed, so the caller sends the body it read, not this rendering.
         let unchanged: serde_json::Value = serde_json::from_slice(&body.render()).unwrap();
@@ -1299,5 +1345,32 @@ mod tests {
             *body.render(),
             format!("a=1&refresh_token={REAL_GH}").as_bytes()
         );
+    }
+
+    #[test]
+    fn a_target_is_scanned_as_sent_and_percent_decoded_and_only_known_stand_ins_are_named() {
+        let registry = registry();
+        let escaped = GH.replacen('-', "%2D", 1);
+        let report = registry.scan_target(&format!("/a/{API}?t={escaped}&u=puddle-secret-ZZZ-00"));
+        assert_eq!(
+            report.unswapped,
+            ["stand-in:secret:GH_TOKEN", "stand-in:secret:API_KEY"]
+        );
+        assert_eq!(report.swapped, Vec::<String>::new());
+        assert_eq!(
+            registry.scan_target("/plain?x=1%2").unswapped,
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            StandIns::new().scan_target(&format!("/{GH}")),
+            Swapped::default()
+        );
+    }
+
+    #[test]
+    fn percent_decoding_leaves_a_broken_escape_and_ignores_input_without_one() {
+        assert_eq!(percent_decoded(b"/plain"), None);
+        assert_eq!(percent_decoded(b"a%41%2g%"), Some(b"aA%2g%".to_vec()));
+        assert_eq!(percent_decoded(b"%ff"), Some(vec![0xff]));
     }
 }

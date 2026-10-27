@@ -79,10 +79,10 @@ pub struct ConnectionRecord {
     pub binding_id: Option<String>,
     /// Whether a credential was injected.
     pub injected: bool,
-    /// Whether a secret stand-in went to a host outside its hosts, unchanged. Absent in records
-    /// written before it existed.
+    /// The ids of the secret stand-ins that went out unchanged (wrong host, or in the path or
+    /// query). Absent in records written before it existed.
     #[serde(default)]
-    pub placeholder_unbound: bool,
+    pub unswapped_stand_ins: Vec<String>,
     /// HTTP method: plain-HTTP requests, tunnels that carry plain HTTP, terminated hosts.
     pub method: Option<String>,
     /// HTTP path without query string, where `method` is set.
@@ -118,7 +118,7 @@ impl ConnectionRecord {
             pending_id: event.pending_id.map(|id| id.0),
             binding_id: event.binding_id.clone(),
             injected: event.injected,
-            placeholder_unbound: event.placeholder_unbound,
+            unswapped_stand_ins: event.unswapped_stand_ins.clone(),
             method,
             path,
             path_truncated: false,
@@ -169,7 +169,7 @@ impl ConnectionRecord {
             pending_id: None,
             binding_id: None,
             injected: false,
-            placeholder_unbound: false,
+            unswapped_stand_ins: Vec::new(),
             method: None,
             path: None,
             path_truncated: false,
@@ -1031,9 +1031,10 @@ mod tests {
         );
     }
 
-    /// A line written before the flag existed reads as not flagged.
+    /// A line written before the list existed reads as no stand-in left unswapped, and a list
+    /// the event carried is kept in order.
     #[test]
-    fn a_connection_line_without_the_stand_in_flag_reads_as_not_flagged() {
+    fn a_connection_line_without_the_stand_in_list_reads_as_empty_and_a_list_is_kept() {
         let line = json!({"type": "connection", "ts": 9, "workspace_id": "sb-1",
             "origin": "workspace", "host": "example.com", "port": 443, "resolved_ip": null,
             "decision": "allow", "reason": "rule", "rule_id": 1, "pending_id": null,
@@ -1042,17 +1043,21 @@ mod tests {
         let record: AuditRecord = serde_json::from_value(line).unwrap();
         assert!(matches!(
             record,
-            AuditRecord::Connection(ConnectionRecord {
-                placeholder_unbound: false,
-                ..
-            })
+            AuditRecord::Connection(ConnectionRecord { unswapped_stand_ins, .. })
+                if unswapped_stand_ins.is_empty()
         ));
         let flagged = ConnectionRecord::from_event(1, &{
             let mut event = event();
-            event.placeholder_unbound = true;
+            event.unswapped_stand_ins = vec![
+                "stand-in:secret:A".to_owned(),
+                "stand-in:secret:B".to_owned(),
+            ];
             event
         });
-        assert!(flagged.placeholder_unbound);
+        assert_eq!(
+            flagged.unswapped_stand_ins,
+            ["stand-in:secret:A", "stand-in:secret:B"]
+        );
     }
 
     #[test]
@@ -1163,7 +1168,7 @@ mod tests {
             "pending_id",
             "binding_id",
             "injected",
-            "placeholder_unbound",
+            "unswapped_stand_ins",
             "method",
             "path",
             "path_truncated",

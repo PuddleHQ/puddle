@@ -904,11 +904,12 @@ pub enum AuditRecord {
         binding_id: Option<String>,
         /// Whether a credential was injected.
         injected: bool,
-        /// Whether a secret stand-in went to a host outside its hosts, unchanged. Records written
-        /// before it existed read as `false`.
+        /// The ids (`stand-in:<secret|login>:<name>`) of the secret stand-ins that went out
+        /// unchanged, to a host outside their hosts or in the path or query. Records written
+        /// before it existed read as empty.
         #[serde(default)]
         #[schema(required = true)]
-        placeholder_unbound: bool,
+        unswapped_stand_ins: Vec<String>,
         /// HTTP method, where the proxy saw the request in clear.
         #[schema(required = true)]
         method: Option<String>,
@@ -1090,7 +1091,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
             pending_id,
             binding_id,
             injected,
-            placeholder_unbound,
+            unswapped_stand_ins,
             method,
             path,
             path_truncated,
@@ -1114,7 +1115,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
             pending_id,
             binding_id,
             injected,
-            placeholder_unbound,
+            unswapped_stand_ins,
             method,
             path,
             path_truncated,
@@ -2891,7 +2892,7 @@ mod tests {
             "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
             "port": 443, "resolved_ip": "93.184.216.34", "upstream": "PROXY corp:3128",
             "decision": "allow", "outcome": "connected", "reason": "rule", "rule_id": 4, "rule_set": "user:2",
-            "pending_id": null, "binding_id": null, "injected": false, "placeholder_unbound": false,
+            "pending_id": null, "binding_id": null, "injected": false, "unswapped_stand_ins": [],
             "method": "GET", "path": "/",
             "path_truncated": false, "bytes_up": 1, "bytes_down": 2, "count": null
         });

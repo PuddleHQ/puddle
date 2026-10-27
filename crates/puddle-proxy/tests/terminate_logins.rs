@@ -346,7 +346,7 @@ async fn a_stand_in_goes_only_toward_its_own_hosts_and_the_refresh_token_only_to
         Some(format!("Bearer {access}").as_str())
     );
     let events = rig.events(1).await;
-    assert!(events[0].placeholder_unbound && !events[0].injected);
+    assert!(!events[0].unswapped_stand_ins.is_empty() && !events[0].injected);
 
     // The refresh token in the body of a request to another path of the token host: not an
     // exchange, so nothing is swapped and the service sees the stand-in (and refuses it).

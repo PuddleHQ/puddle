@@ -105,8 +105,13 @@ async fn a_stand_in_is_swapped_on_an_http2_request_to_an_http2_server() {
     );
     client.close().await;
     let event = &rig.events(1).await[0];
-    assert!(event.injected && !event.placeholder_unbound);
+    assert!(event.injected);
     assert_eq!(event.binding_id.as_deref(), Some("stand-in:secret:API_KEY"));
+    assert_eq!(
+        event.unswapped_stand_ins,
+        ["stand-in:secret:API_KEY"],
+        "the stand-in in the query string is named"
+    );
     assert!(!captured_logs().contains(REAL_KEY));
 }
 
@@ -187,7 +192,7 @@ async fn an_http2_stand_in_toward_another_decrypted_host_goes_out_unchanged_and_
     );
     assert!(home.recorded().is_empty());
     let event = &rig.events(1).await[0];
-    assert!(event.placeholder_unbound && !event.injected);
+    assert!(!event.unswapped_stand_ins.is_empty() && !event.injected);
     assert!(!captured_logs().contains(REAL_KEY));
 }
 
@@ -225,4 +230,28 @@ async fn an_http2_stand_in_is_swapped_alongside_an_injected_credential() {
     client.close().await;
     let event = &rig.events(1).await[0];
     assert_eq!(event.binding_id.as_deref(), Some("binding-1"));
+}
+
+#[tokio::test]
+async fn an_h2_stand_in_in_the_path_goes_out_unchanged_and_the_record_names_it() {
+    let pki = Pki::new();
+    let server = H2Server::recording(&pki, "bound.test", ok()).await;
+    let (stand_ins, stand_in) = registry(&["bound.test"]);
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .injector(pass_through())
+        .stand_ins(&stand_ins)
+        .build();
+    let mut guest = rig.guest().await;
+    let mut client = guest.h2("bound.test:443", &[b"h2", b"http/1.1"]).await;
+    let target = format!("/v1/{stand_in}/models");
+    let got = client
+        .request("GET", "bound.test", &target, &[], full(bytes::Bytes::new()))
+        .await;
+    assert_eq!(got.status, 200);
+    assert_eq!(server.recorded()[0].path, target);
+    client.close().await;
+    let event = &rig.events(1).await[0];
+    assert_eq!(event.unswapped_stand_ins, ["stand-in:secret:API_KEY"]);
+    assert!(!event.injected);
 }

@@ -380,7 +380,7 @@ async fn a_stand_in_in_the_named_field_is_swapped_for_the_real_value_toward_its_
         events[0].binding_id.as_deref(),
         Some("stand-in:login:test-refresh")
     );
-    assert!(!events[0].placeholder_unbound);
+    assert_eq!(events[0].unswapped_stand_ins, Vec::<String>::new());
     assert!(!captured_logs().contains(REAL_REFRESH));
 }
 
@@ -401,7 +401,10 @@ async fn hostile_hg32_a_stand_in_in_the_refresh_field_goes_out_unchanged_toward_
     client.close().await;
     assert_eq!(upstream.recorded()[0].body, json.as_bytes());
     let events = rig.events(1).await;
-    assert!(events[0].placeholder_unbound);
+    assert_eq!(
+        events[0].unswapped_stand_ins,
+        ["stand-in:login:test-refresh"]
+    );
     assert!(!events[0].injected);
 }
 

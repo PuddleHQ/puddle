@@ -84,9 +84,9 @@ files=$(git ls-files -- . ':!:Cargo.lock' ':!:**/package-lock.json' ':!:**/THIRD
 hits=$(
     # shellcheck disable=SC2086 # file names in this repo have no whitespace
     git grep -nI -E "$exact" -- $files || true
-    # shellcheck disable=SC2086
+    # shellcheck disable=SC2086 # $files is a newline-separated path list, split on purpose
     git grep -nIiE "$ids" -- $files || true
-    # shellcheck disable=SC2086
+    # shellcheck disable=SC2086 # $files is a newline-separated path list, split on purpose
     git grep -nIi -e laptop -- $files || true
 )
 

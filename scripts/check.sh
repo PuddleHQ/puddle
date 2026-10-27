@@ -262,13 +262,13 @@ run_gate() {
         (cd ui && PUDDLE_CARGO="$cargo" npx playwright test)
         ;;
     test)
-        # shellcheck disable=SC2086
+        # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         "$cargo" nextest run --workspace $skip_app --all-features --locked
         ;;
     doc)
-        # shellcheck disable=SC2086
+        # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         "$cargo" test --doc --workspace $skip_app --all-features --locked --no-fail-fast
-        # shellcheck disable=SC2086
+        # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         RUSTDOCFLAGS="-D warnings" "$cargo" doc --workspace $skip_app --no-deps --all-features --locked
         ;;
     coverage | coverage-ratchet)
@@ -277,7 +277,7 @@ run_gate() {
         # scripts/coverage-baseline.json when coverage went up (not in CI), for you to commit.
         ui_install
         target=${CARGO_TARGET_DIR:-target}
-        # shellcheck disable=SC2086
+        # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         scripts/coverage-run.sh "$cargo" --workspace $skip_app --all-features --locked \
             --profile "${NEXTEST_PROFILE:-default}"
         "$cargo" llvm-cov report --lcov --output-path "$target/lcov.info"
@@ -298,7 +298,7 @@ run_gate() {
             git show "$base:scripts/coverage-baseline.json" >"$target/coverage-baseline.previous.json"
             ratchet="$ratchet --previous $target/coverage-baseline.previous.json"
         fi
-        # shellcheck disable=SC2086
+        # shellcheck disable=SC2086 # $ratchet is a list of flags, split on purpose
         node ui/scripts/coverage-ratchet.ts $ratchet
         diff_coverage "diff-coverage (rust)" "$target/lcov.info" .rs
         ;;

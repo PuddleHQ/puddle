@@ -59,7 +59,7 @@ while [ "\$#" -gt 0 ]; do
         batch="\$batch \$1"
         shift
     done
-    # shellcheck disable=SC2086
+    # shellcheck disable=SC2086 # the batch is up to four profile paths, split on purpose
     "$profdata" merge \${LLVM_PROFDATA_FLAGS:-} -o "$tmp/batch-\$n.profdata" \$batch || exit 1
 done
 STUB

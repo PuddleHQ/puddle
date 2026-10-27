@@ -2,6 +2,7 @@
 import { execFileSync } from "node:child_process";
 import {
   mkdirSync,
+  readFileSync,
   mkdtempSync,
   realpathSync,
   rmSync,
@@ -79,9 +80,59 @@ describe("exclusions file", () => {
     );
     expect(e).toMatchObject({
       glob: "crates/**/win.rs",
-      needle: "*",
+      lines: "*",
+      max: 1,
       reason: "OS glue | tier W",
     });
+  });
+  it("reads a count, and several lines joined with a backslash n", () => {
+    const [e] = parseExclusions(
+      "a.rs | let value = load(path)?; | x3 | three copies, none reachable",
+    );
+    expect(e).toMatchObject({ max: 3, reason: "three copies, none reachable" });
+    const [f] = parseExclusions(
+      "a.rs | let value = load(path) \\n )?; | the error arm",
+    );
+    expect(f?.lines).toEqual(["let value = load(path)", ")?;"]);
+  });
+  it("reads a backslash n in the code as part of the line, and \\\\n as a line break after a backslash", () => {
+    const [e] = parseExclusions(
+      'a.rs | return Err(format!("exited early\\\\n{}", why())); | a string with a newline escape',
+    );
+    expect(e?.lines).toEqual([
+      'return Err(format!("exited early\\n{}", why()));',
+    ]);
+  });
+  it("accepts every entry of the committed file", () => {
+    const file = join(
+      import.meta.dirname,
+      "../../scripts/diff-coverage-exclusions.txt",
+    );
+    const entries = parseExclusions(readFileSync(file, "utf8"));
+    expect(entries.length).toBeGreaterThan(100);
+    // A whole-file `*` is a deliberate, reviewed choice; keep the list short.
+    expect(entries.filter((e) => e.lines === "*").length).toBeLessThan(15);
+  });
+  it.each([
+    ")?;",
+    "}",
+    "return;",
+    ".await",
+    "format!(",
+    "host_port,",
+    "Ok(())",
+  ])("refuses the one-token text %s", (text) => {
+    expect(() => parseExclusions(`a.rs | ${text} | reason`)).toThrow(
+      /too short to name one line/,
+    );
+  });
+  it("refuses a short text that only looks long once its lines are joined by a gap", () => {
+    expect(() => parseExclusions("a.rs | } \\n | reason")).toThrow(
+      /too short|empty line/,
+    );
+    expect(() => parseExclusions("a.rs | x \\n )?; | reason")).toThrow(
+      /too short/,
+    );
   });
 });
 
@@ -97,6 +148,17 @@ describe("judge", () => {
     ],
   ]);
   const added = parseDiff(diff);
+  // The file as it is on disk: lines 3, 4 and 11 are the added ones.
+  const file = [
+    "fn a() {",
+    "    start();",
+    "    let a = 1;",
+    "    let b = compute_the_value()?;",
+    ...Array.from({ length: 6 }, () => "    pad();"),
+    "    new_line_of_the_change();",
+    "}",
+  ];
+  const source = (path: string) => (path === "src/a.rs" ? file : undefined);
 
   it("fails an executable line that never ran, ignores lines with no data, and says so for unmeasured files", () => {
     const r = judge(
@@ -109,22 +171,126 @@ describe("judge", () => {
     expect(r.notMeasured).toEqual(["src/new.rs"]);
   });
 
-  it("accepts a listed exclusion by file and line text, and marks it used", () => {
+  it("accepts a listed exclusion by file and whole line text, and marks it used", () => {
     const ex = parseExclusions(
-      "src/*.rs | new | reason one\nsrc/a.rs | let b | reason two",
+      "src/*.rs | new_line_of_the_change(); | reason one\nsrc/a.rs | let b = compute_the_value()?; | reason two",
     );
-    const r = judge(added, cov, ex);
+    const r = judge(added, cov, ex, source);
     expect(r.uncovered).toEqual([]);
     expect(r.excluded).toBe(2);
     expect(ex.every((e) => e.used)).toBe(true);
   });
 
-  it("does not let an exclusion for another file or other text through", () => {
+  it("does not let a part of a line, another file or other text through", () => {
     const ex = parseExclusions(
-      "src/b.rs | * | other file\nsrc/a.rs | nothing here | other text",
+      [
+        "src/b.rs | * | other file",
+        "src/a.rs | nothing here at all, no line | other text",
+        // A part of line 4 and of line 11: the old matcher took these.
+        "src/a.rs | let b = compute_the_value() | a prefix",
+        "src/a.rs | new_line_of_the_chan | a part",
+      ].join("\n"),
     );
-    expect(judge(added, cov, ex).uncovered).toHaveLength(2);
+    expect(judge(added, cov, ex, source).uncovered).toHaveLength(2);
     expect(ex.some((e) => e.used)).toBe(false);
+  });
+
+  it("fails a new uncovered line of the same shape as an excused one", () => {
+    // `let b = compute_the_value()?;` is excused; a later change adds `let c = other_value()?;`.
+    const ex = parseExclusions(
+      "src/a.rs | let b = compute_the_value()?; | reason",
+    );
+    const later = [...file];
+    later[4] = "    let c = other_value()?;";
+    const r = judge(
+      [
+        {
+          path: "src/a.rs",
+          line: 4,
+          text: "    let b = compute_the_value()?;",
+        },
+        { path: "src/a.rs", line: 5, text: "    let c = other_value()?;" },
+      ],
+      new Map([
+        [
+          "src/a.rs",
+          new Map([
+            [4, 0],
+            [5, 0],
+          ]),
+        ],
+      ]),
+      ex,
+      () => later,
+    );
+    expect(r.excluded).toBe(1);
+    expect(r.uncovered.map((u) => u.line)).toEqual([5]);
+  });
+
+  it("stops excusing a text once the file holds more copies than the count allows", () => {
+    const twice = [...file, "    let b = compute_the_value()?;"];
+    const ex = parseExclusions(
+      "src/a.rs | let b = compute_the_value()?; | reason",
+    );
+    const notes: string[] = [];
+    const r = judge(added, cov, ex, () => twice, notes);
+    expect(r.uncovered.map((u) => u.line)).toEqual([4, 11]);
+    expect(notes[0]).toMatch(/allows 1 place\(s\) in a file, src\/a.rs has 2/);
+    const counted = parseExclusions(
+      "src/a.rs | let b = compute_the_value()?; | x2 | two copies, neither reachable",
+    );
+    expect(
+      judge(added, cov, counted, () => twice).uncovered.map((u) => u.line),
+    ).toEqual([11]);
+  });
+
+  it("pins a short closing line to the line above it", () => {
+    const f = [
+      "call_the_thing(",
+      "    with_an_argument",
+      ")?;",
+      "other(",
+      ")?;",
+    ];
+    const ex = parseExclusions(
+      "a.rs | call_the_thing( \\n with_an_argument \\n )?; | reason",
+    );
+    const c = new Map([
+      [
+        "a.rs",
+        new Map([
+          [3, 0],
+          [5, 0],
+        ]),
+      ],
+    ]);
+    const r = judge(
+      [
+        { path: "a.rs", line: 3, text: ")?;" },
+        { path: "a.rs", line: 5, text: ")?;" },
+      ],
+      c,
+      ex,
+      () => f,
+    );
+    expect(r.excluded).toBe(1);
+    expect(r.uncovered.map((u) => u.line)).toEqual([5]);
+  });
+
+  it("compares trimmed, so an indent change keeps an entry matching", () => {
+    const ex = parseExclusions("a.rs | let b = compute_the_value()?; | reason");
+    const r = judge(
+      [{ path: "a.rs", line: 1, text: "\t\tlet b = compute_the_value()?;" }],
+      new Map([["a.rs", new Map([[1, 0]])]]),
+      ex,
+      () => ["        let b = compute_the_value()?;"],
+    );
+    expect(r.excluded).toBe(1);
+  });
+
+  it("lets * excuse every uncovered line of a file", () => {
+    const ex = parseExclusions("src/a.rs | * | whole-file OS glue");
+    expect(judge(added, cov, ex, source).uncovered).toEqual([]);
   });
 });
 
@@ -185,6 +351,45 @@ describe("run on a real git repository", () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(run(opts(join(dir, "l.info")), dir)).toBe(1);
     expect(err.mock.calls.flat().join("\n")).toContain("src/a.rs:4: 3;");
+  });
+
+  it("reads the file on disk: an excused line passes, a new uncovered one of the same shape fails, a one-token entry is refused", () => {
+    const a = join(dir, "src/a.rs");
+    const before = readFileSync(a, "utf8");
+    try {
+      writeFileSync(
+        a,
+        "fn a() {\n    1;\n    excused_call(first_argument)?;\n    later_call(second_argument)?;\n}\n",
+      );
+      writeFileSync(
+        join(dir, "l.info"),
+        `SF:${dir}/src/a.rs\nDA:2,1\nDA:3,0\nDA:4,0\nend_of_record\n`,
+      );
+      const ex = join(dir, "ex.txt");
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      const withEx = () =>
+        run({ ...opts(join(dir, "l.info")), exclusions: ex }, dir);
+      writeFileSync(ex, "src/a.rs | )?; | one token\n");
+      expect(withEx).toThrow(/too short to name one line/);
+      writeFileSync(
+        ex,
+        "src/a.rs | excused_call(first_argument)?; | the one excused line\n",
+      );
+      expect(withEx()).toBe(1);
+      expect(err.mock.calls.flat().join("\n")).toContain(
+        "src/a.rs:4: later_call(second_argument)?;",
+      );
+      expect(err.mock.calls.flat().join("\n")).not.toContain("src/a.rs:3:");
+      writeFileSync(
+        ex,
+        "src/a.rs | excused_call(first_argument)?; | one\nsrc/a.rs | later_call(second_argument)?; | two\n",
+      );
+      expect(withEx()).toBe(0);
+      expect(log.mock.calls.flat().join("\n")).toContain("2 excluded");
+    } finally {
+      writeFileSync(a, before);
+    }
   });
 
   it("fails when the coverage report is missing", () => {

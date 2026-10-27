@@ -16,7 +16,7 @@ only writes to a stream (the proxy forwarding a plain-HTTP response, which reads
 guest after the request) stalled for good once the window was spent, at 16 MiB to 24 MiB of the
 download. The channel's waker now wakes the reader and the writer both, so a writer gets its window
 update whether or not anyone reads. Regression tests: `crates/puddle-agent-proto/tests/yamux_window.rs`
-`a_stream_that_is_only_written_sends_past_its_window`, `crates/puddle-proxy/tests/plain_http_window.rs`
+`a_stream_that_is_only_written_sends_past_its_window`, `crates/puddle-proxy/tests/terminate_suite/plain_http_window.rs`
 and the transparency suite's `a_large_plain_http_response_comes_down_with_no_stall`.
 
 **Second fix, why:** the session stopped reading its socket as soon as one stream's reader fell behind
@@ -41,7 +41,7 @@ took 30 s against 5 s up. Regression tests:
 **What is not here:** upstream's tests, benches and examples. The regression tests live in the
 product's own crates and move 40 MiB through a half-closed connection:
 
-- `crates/puddle-proxy/tests/tunnel_half_close.rs` (the proxy's spliced tunnel)
+- `crates/puddle-proxy/tests/terminate_suite/tunnel_half_close.rs` (the proxy's spliced tunnel)
 - `crates/puddle-agent/tests/relay.rs`: `a_client_that_half_closes_still_gets_a_download_larger_than_the_stream_window`
   and `a_server_that_half_closes_still_gets_an_upload_larger_than_the_stream_window` (the guest agent)
 

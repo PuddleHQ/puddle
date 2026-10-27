@@ -6,7 +6,7 @@
 //! Needs `python3` on the path; without it the test skips unless `PUDDLE_REQUIRE_TOOLS` is set
 //! (CI sets it).
 #![expect(clippy::print_stderr, reason = "a skipped test says so")]
-mod terminate_support;
+use crate::terminate_support;
 
 use std::process::Command;
 use std::sync::Arc;

@@ -3,7 +3,7 @@
 //! whole body first (within the limit the injector names), the injector decides on it, and the
 //! request goes upstream with the same body. Both HTTP versions. A refusal is recorded in the
 //! connection record with its code.
-mod terminate_support;
+use crate::terminate_support;
 
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;

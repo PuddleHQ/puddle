@@ -7,7 +7,7 @@
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
-mod terminate_support;
+use crate::terminate_support;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};

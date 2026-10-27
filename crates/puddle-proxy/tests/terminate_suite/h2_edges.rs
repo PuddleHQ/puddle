@@ -6,7 +6,7 @@
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
-mod terminate_support;
+use crate::terminate_support;
 
 use std::net::SocketAddr;
 use std::sync::Arc;

@@ -12,7 +12,7 @@ crates/xtask/src/inventory.rs	Third-party notices: puddle
 ci/scope.sh	NO_VM=" puddle
 ci/scope.sh	NO_UI=" puddle
 ci/check-runtime-layout.sh	for tree in msb puddle
-crates/puddle-proxy/tests/terminate_real_git.rs	remote: puddle:
+crates/puddle-proxy/tests/terminate_suite/real_git.rs	remote: puddle:
 crates/xtask/src/inventory.rs	licence entry in the puddle notices
 crates/xtask/tests/runtime.rs	licence entry in the puddle notices
 crates/puddle-agent/src/capture/rules.rs	table inet puddle

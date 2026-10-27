@@ -11,7 +11,7 @@ const page = readFileSync(
   "utf8",
 );
 const scripts = [
-  ...page.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi),
+  ...page.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script[^>]*>/gi),
 ].map((m) => m[1] ?? "");
 
 type Storage = { getItem: (key: string) => string | null };

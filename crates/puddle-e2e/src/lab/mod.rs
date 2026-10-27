@@ -135,8 +135,10 @@ fn parse_cpu_time(stat: &str) -> Option<Duration> {
     Some(Duration::from_millis((utime + stime) * 10))
 }
 
-/// A free loopback port. The port can be taken again before the caller binds it; the fixtures
-/// retry nothing, so a collision is a failed start, not a silent one.
+/// A free loopback port. Nothing owns it once this returns, so a program that takes its port
+/// by number (Squid reads it from its config file) may find it taken; start such a program
+/// through [`on_free_port`]. A program that can bind port 0 and report it (mitmproxy) should do
+/// that and never use this.
 #[must_use]
 pub fn free_port() -> u16 {
     std::net::TcpListener::bind((LOCAL, 0))
@@ -144,6 +146,50 @@ pub fn free_port() -> u16 {
         .local_addr()
         .unwrap()
         .port()
+}
+
+/// How many ports [`on_free_port`] tries before it gives up.
+const PORT_ATTEMPTS: u32 = 5;
+
+/// Whether a program's output says its bind failed because the port was taken (`EADDRINUSE`):
+/// mitmproxy `[Errno 98] ... address already in use`, Squid `(98) Address already in use`,
+/// Windows `WSAEADDRINUSE` / `only one usage of each socket address`.
+fn is_address_in_use(output: &str) -> bool {
+    let lower = output.to_ascii_lowercase();
+    [
+        "address already in use",
+        "wsaeaddrinuse",
+        "only one usage of each socket address",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+/// Starts a program that must be told its port in advance. `pick` gives a candidate port;
+/// `start` runs the program on it and returns its output when it fails. A failure whose output
+/// says the port was taken (another process bound it between the pick and the program's own
+/// bind: nothing can hold a port across an `exec` for a program that takes no inherited socket)
+/// is retried on a fresh port, up to [`PORT_ATTEMPTS`] times; any other failure panics at once.
+///
+/// # Panics
+/// On a failure that is not a taken port, or when every attempt finds the port taken.
+fn on_free_port<T>(
+    mut pick: impl FnMut() -> u16,
+    mut start: impl FnMut(u16) -> Result<T, String>,
+) -> T {
+    let mut last = String::new();
+    for attempt in 1..=PORT_ATTEMPTS {
+        let port = pick();
+        match start(port) {
+            Ok(started) => return started,
+            Err(output) if is_address_in_use(&output) => {
+                eprintln!("lab: port {port} was taken (attempt {attempt}), trying another");
+                last = output;
+            }
+            Err(output) => panic!("the fixture failed to start on port {port}\n{output}"),
+        }
+    }
+    panic!("the fixture found its port taken {PORT_ATTEMPTS} times\n{last}");
 }
 
 /// Whether a fixture whose program is not configured must fail its test (`required`, from its
@@ -175,25 +221,57 @@ fn require_file(bin: &std::ffi::OsStr, variable: &str) {
     );
 }
 
-/// Waits until `port` accepts connections, or panics with `diagnostics()`.
+/// Waits until `port` accepts connections. `Err` carries `diagnostics()` when `child` exits
+/// first or nothing accepts within `ready`. A child that exited counts even when something
+/// accepts on the port: that is another process (a collision), not the fixture.
+fn try_ready(
+    port: u16,
+    child: Option<&mut Child>,
+    ready: Duration,
+    diagnostics: impl Fn() -> String,
+) -> Result<(), String> {
+    let deadline = Instant::now() + ready;
+    let mut child = child;
+    while Instant::now() < deadline {
+        let exited = child.as_deref_mut().map(Child::try_wait);
+        if let Some(Ok(Some(status))) = exited {
+            return Err(format!(
+                "the fixture exited early ({status})\n{}",
+                diagnostics()
+            ));
+        }
+        if TcpStream::connect((LOCAL, port)).is_ok() {
+            // A child that dies right after something else answered is a collision too.
+            std::thread::sleep(Duration::from_millis(100));
+            if let Some(Ok(Some(status))) = child.as_deref_mut().map(Child::try_wait) {
+                return Err(format!(
+                    "the fixture exited early ({status})\n{}",
+                    diagnostics()
+                ));
+            }
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Err(format!(
+        "the fixture did not accept connections\n{}",
+        diagnostics()
+    ))
+}
+
+/// [`try_ready`] that fails the test.
+///
+/// # Panics
+/// When `try_ready` returns `Err`.
 fn wait_ready(
     port: u16,
     child: Option<&mut Child>,
     ready: Duration,
     diagnostics: impl Fn() -> String,
 ) {
-    let deadline = Instant::now() + ready;
-    let mut child = child;
-    while Instant::now() < deadline {
-        if TcpStream::connect((LOCAL, port)).is_ok() {
-            return;
-        }
-        if let Some(Ok(Some(status))) = child.as_deref_mut().map(Child::try_wait) {
-            panic!("the fixture exited early ({status})\n{}", diagnostics());
-        }
-        std::thread::sleep(Duration::from_millis(50));
+    if let Err(why) = try_ready(port, child, ready, diagnostics) {
+        panic!("{why}");
     }
-    panic!("the fixture did not accept connections\n{}", diagnostics());
 }
 
 /// A file's text, or empty when it is missing.
@@ -228,6 +306,75 @@ mod tests {
     #[should_panic(expected = "V=/no/such/program is not a file")]
     fn a_configured_path_that_is_no_file_fails() {
         require_file(std::ffi::OsStr::new("/no/such/program"), "V");
+    }
+
+    #[test]
+    fn the_output_of_a_taken_port_is_recognised() {
+        for output in [
+            "[Errno 98] error while attempting to bind on address ('127.0.0.1', 40177): address already in use",
+            "FATAL: Cannot open HTTP Port\n(98) Address already in use",
+            "WSAEADDRINUSE",
+        ] {
+            assert!(is_address_in_use(output), "{output}");
+        }
+        assert!(!is_address_in_use("permission denied"));
+    }
+
+    #[test]
+    fn a_port_taken_between_the_pick_and_the_bind_is_retried_on_another() {
+        // The neighbour that wins the race in CI: it binds the picked port before the program does.
+        let neighbour = std::net::TcpListener::bind((LOCAL, 0)).unwrap();
+        let taken = neighbour.local_addr().unwrap().port();
+        let mut picks = vec![taken]
+            .into_iter()
+            .chain(std::iter::repeat_with(free_port));
+        let mut tried = Vec::new();
+        let started = on_free_port(
+            || picks.next().unwrap(),
+            |port| {
+                tried.push(port);
+                // The program's own bind: what mitmproxy and Squid do after the exec.
+                match std::net::TcpListener::bind((LOCAL, port)) {
+                    Ok(listener) => Ok(listener),
+                    Err(e) => Err(format!("[Errno 98] {e}: address already in use")),
+                }
+            },
+        );
+        assert_eq!(tried.len(), 2, "{tried:?}");
+        assert_eq!(tried[0], taken);
+        assert_eq!(started.local_addr().unwrap().port(), tried[1]);
+        drop(neighbour);
+    }
+
+    #[test]
+    #[should_panic(expected = "the fixture found its port taken 5 times")]
+    fn a_port_that_stays_taken_fails_after_five_tries() {
+        on_free_port(free_port, |_| -> Result<(), String> {
+            Err("(98) Address already in use".into())
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "the fixture failed to start on port")]
+    fn a_failure_that_is_not_a_taken_port_is_not_retried() {
+        on_free_port(free_port, |_| -> Result<(), String> {
+            Err("bad config".into())
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "the fixture exited early")]
+    fn a_fixture_that_dies_while_another_process_answers_on_its_port_is_not_ready() {
+        // Another process holds the port, so connecting works; the fixture itself has exited.
+        let neighbour = std::net::TcpListener::bind((LOCAL, 0)).unwrap();
+        let port = neighbour.local_addr().unwrap().port();
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .arg("--list")
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        child.wait().unwrap();
+        wait_ready(port, Some(&mut child), Duration::from_secs(5), String::new);
     }
 
     #[test]

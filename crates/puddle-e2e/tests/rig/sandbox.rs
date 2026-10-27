@@ -8,6 +8,7 @@
 )]
 #![allow(dead_code, reason = "each test binary uses some of the pieces")]
 
+use std::fmt::Write as _;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -165,7 +166,33 @@ pub(crate) async fn tunnel(agent: SocketAddr, authority: &str) -> BufReader<TcpS
     try_tunnel(agent, authority).await.unwrap()
 }
 
-/// Like [`tunnel`], with the status line as the error, so a test can add its fixture's log.
+/// The status line, the `x-puddle-*` headers and the body of a refusal, so a failing test names
+/// the rule or block that refused (the status line alone cannot tell them apart).
+async fn refusal_text(reader: &mut BufReader<TcpStream>, status: String) -> String {
+    let mut text = status;
+    let mut length = 0_usize;
+    loop {
+        let mut h = String::new();
+        if !matches!(reader.read_line(&mut h).await, Ok(n) if n > 0) || h == "\r\n" {
+            break;
+        }
+        if let Some((name, value)) = h.split_once(':') {
+            if name.eq_ignore_ascii_case("content-length") {
+                length = value.trim().parse().unwrap_or(0);
+            }
+            if name.to_ascii_lowercase().starts_with("x-puddle-") {
+                text.push_str(&h);
+            }
+        }
+    }
+    let mut body = vec![0_u8; length.min(4096)];
+    if reader.read_exact(&mut body).await.is_ok() {
+        let _ = write!(text, "body: {}", String::from_utf8_lossy(&body));
+    }
+    text
+}
+
+/// Like [`tunnel`], with the refusal (status line, `x-puddle-*` headers, body) as the error, so a test can add its fixture's log.
 pub(crate) async fn try_tunnel(
     agent: SocketAddr,
     authority: &str,
@@ -178,7 +205,7 @@ pub(crate) async fn try_tunnel(
     let mut line = String::new();
     reader.read_line(&mut line).await.unwrap();
     if !line.starts_with("HTTP/1.1 200") {
-        return Err(line);
+        return Err(refusal_text(&mut reader, line).await);
     }
     loop {
         let mut h = String::new();

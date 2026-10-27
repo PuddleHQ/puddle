@@ -135,6 +135,25 @@ pub(crate) struct Made {
     pub(crate) conn: Connected,
     pub(crate) hop: Option<String>,
     pub(crate) ip: Option<std::net::IpAddr>,
+    /// The server asked for a client certificate, which Puddle does not have.
+    pub(crate) wants_client_certificate: bool,
+}
+
+/// Why the upstream connection was not made: the refusal for the guest, and, when the failure
+/// was in TLS with the server, the pass-through code that says why a host decrypted only because
+/// every host is decrypted may be passed through instead (see [`Mode`]).
+pub(crate) struct ConnectError {
+    pub(crate) refusal: Refusal,
+    pub(crate) pass_through: Option<&'static str>,
+}
+
+impl From<Refusal> for ConnectError {
+    fn from(refusal: Refusal) -> Self {
+        Self {
+            refusal,
+            pass_through: None,
+        }
+    }
 }
 
 /// Connects to the real server for `cx`'s target and verifies it, offering `alpn`. A certificate
@@ -143,6 +162,15 @@ pub(crate) struct Made {
 /// # Errors
 /// The refusal to give the guest.
 pub(crate) async fn connect(cx: &Context, alpn: &[&[u8]]) -> Result<Made, Refusal> {
+    connect_noting(cx, alpn).await.map_err(|err| err.refusal)
+}
+
+/// As [`connect`], saying what kind of failure it was and whether the server asked for a client
+/// certificate.
+///
+/// # Errors
+/// The refusal to give the guest, and whether the failure was one a pass-through avoids.
+pub(crate) async fn connect_noting(cx: &Context, alpn: &[&[u8]]) -> Result<Made, ConnectError> {
     let config = cx.proxy.config;
     let out = connect_out(
         cx.proxy.upstream(),
@@ -157,24 +185,38 @@ pub(crate) async fn connect(cx: &Context, alpn: &[&[u8]]) -> Result<Made, Refusa
     let name = cx.target.host.to_string();
     let tls = match tokio::time::timeout(
         config.tls_handshake_timeout,
-        cx.tls.connect_alpn(&name, out.stream, alpn),
+        cx.tls
+            .connect_alpn_noting_client_auth(&name, out.stream, alpn),
     )
     .await
     {
-        Ok(Ok(tls)) => tls,
-        Ok(Err(err)) => return Err(upstream_tls_refusal(&name, &err)),
+        Ok(Ok(made)) => made,
+        Ok(Err(err)) => {
+            let pass_through = match err {
+                puddle_upstream::TlsConnectError::Certificate(_) => Some("server_certificate"),
+                puddle_upstream::TlsConnectError::Handshake(_) => Some("server_tls"),
+                _ => None,
+            };
+            return Err(ConnectError {
+                refusal: upstream_tls_refusal(&name, &err),
+                pass_through,
+            });
+        }
         Err(_) => {
             return Err(Refusal::new(
                 "504 Gateway Timeout",
                 format!("the TLS handshake with {name} timed out"),
             )
             .header("x-puddle-blocked-by", "upstream-tls")
-            .failed(ConnectionOutcome::Timeout));
+            .failed(ConnectionOutcome::Timeout)
+            .into());
         }
     };
+    let (tls, wants_client_certificate) = tls;
     let proto = Proto::from_alpn(tls.get_ref().1.alpn_protocol());
     let io = TokioIo::new(tls);
-    let setup_failed = |err: hyper::Error| setup_refusal(&name, &super::session::short(&err));
+    let setup_failed =
+        |err: hyper::Error| ConnectError::from(setup_refusal(&name, &super::session::short(&err)));
     let conn = match proto {
         Proto::H1 => {
             let (sender, connection) = http1::Builder::new()
@@ -213,7 +255,12 @@ pub(crate) async fn connect(cx: &Context, alpn: &[&[u8]]) -> Result<Made, Refusa
             Connected::H2(H2Conn { sender })
         }
     };
-    Ok(Made { conn, hop, ip })
+    Ok(Made {
+        conn,
+        hop,
+        ip,
+        wants_client_certificate,
+    })
 }
 
 /// The HTTP/1.1 connections an HTTP/2 guest connection uses toward an HTTP/1.1 server: idle ones

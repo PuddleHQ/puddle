@@ -61,6 +61,7 @@ mod guest;
 mod h2;
 mod handshake;
 mod inject;
+mod intercept;
 mod leg;
 pub(crate) mod request;
 mod response;
@@ -83,6 +84,7 @@ pub use inject::{
     HeaderError, InjectContext, InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector,
     NoInjection, RequestView, SecretValue, Unauthorized,
 };
+pub use intercept::{Interception, LEARNED_CAP, LEARNED_TTL, PassThrough};
 pub(crate) use session::{Context, run};
 pub use set::{PatternError, TerminationSet};
 pub use stand_in::{StandIn, StandInError, StandInOrigin, StandIns, secret_stand_in};
@@ -103,6 +105,18 @@ pub struct Termination {
     injector: Arc<dyn Injector>,
     stand_ins: Arc<StandIns>,
     exchanges: Option<Arc<dyn ExchangeRewriter>>,
+    interception: Interception,
+}
+
+/// How a connection to a host is decrypted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Mode {
+    /// The host has a credential, secret or capture profile: it is always decrypted, and a
+    /// handshake or server that cannot be used fails like any other.
+    Bound,
+    /// The host is decrypted only because the workspace decrypts every host: whatever cannot be
+    /// decrypted without breaking the tool is passed through instead.
+    Everything,
 }
 
 impl Termination {
@@ -120,6 +134,34 @@ impl Termination {
             injector,
             stand_ins: Arc::new(StandIns::new()),
             exchanges: None,
+            interception: Interception::default(),
+        }
+    }
+
+    /// Sets how the workspace decrypts beyond its hosts with a credential (see [`Interception`]).
+    #[must_use]
+    pub fn with_interception(mut self, interception: Interception) -> Self {
+        self.interception = interception;
+        self
+    }
+
+    /// The workspace's switch, its never-decrypt list and the hosts learned so far.
+    #[must_use]
+    pub fn interception(&self) -> &Interception {
+        &self.interception
+    }
+
+    /// How a connection to `host` is decrypted, or `None` when it is passed through.
+    pub(crate) fn mode_for(&self, host: &puddle_types::Host) -> Option<Mode> {
+        if self.set.contains(host) {
+            Some(Mode::Bound)
+        } else if self.interception.decrypt_all
+            && matches!(host, puddle_types::Host::Name(_))
+            && self.interception.skipped(host).is_none()
+        {
+            Some(Mode::Everything)
+        } else {
+            None
         }
     }
 

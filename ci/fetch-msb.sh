@@ -9,16 +9,19 @@
 #   fork tag v<release>-puddle.N (TijsVK/microsandbox):
 #     Windows: the release's msb-windows-x86_64.exe and libkrunfw-windows-x86_64.dll, installed as
 #              msb.exe + libkrunfw.dll.
-#     Linux:   the fork releases no Linux msb, so msb is built from the tag's source (commit
-#              pinned) with the guest agent embedded: the release's own agentd-x86_64 when the tag has
-#              one pinned (the fork builds it from the same source as msb, and the host and guest
-#              must agree on their limits), else upstream's; libkrunfw from upstream's release
-#              v<release> (the fork keeps upstream's firmware), installed as libkrunfw.so.5 and as
-#              a copy under the versioned name msb looks for beside itself (libkrunfw.so.<version>,
-#              pinned in ci/msb-runtime.sha256). Needs cargo and libcap-ng-dev; takes ~10 min cold.
-#              MSB_BUILD_DIR (default <dest-dir>/../msb-build) holds the checkout,
-#              its target dir and the result msb-<commit>, which is reused when present (a CI
-#              cache keeps only that file).
+#     Linux:   the release's msb-linux-x86_64 and libkrunfw-linux-x86_64.so (the fork's release job
+#              builds msb from the tag with the release's own agentd embedded), installed as msb and as
+#              libkrunfw.so.5 plus a copy under the versioned name msb looks for beside itself
+#              (libkrunfw.so.<version>, pinned in ci/msb-runtime.sha256). A tag whose release has
+#              no Linux msb pinned (older releases, or an asset the release job failed to make) is
+#              built from the tag's source instead (commit pinned) with the guest agent embedded: the
+#              release's own agentd-x86_64 when the tag has one pinned (the fork builds it from the
+#              same source as msb, and the host and guest must agree on their limits), else
+#              upstream's; libkrunfw from upstream's release v<release> (the fork keeps upstream's
+#              firmware). That build needs cargo and libcap-ng-dev and takes ~10 min cold;
+#              MSB_BUILD_DIR (default <dest-dir>/../msb-build) holds the checkout, its target dir
+#              and the result msb-<commit>, which is reused when present (a CI cache keeps only that
+#              file).
 #   upstream tag v<release> (superradcompany/microsandbox): the release archive for this host.
 # Works in Linux sh and in Git Bash on Windows. Network failures are retried (infrastructure) and each retry is printed; a checksum mismatch never is.
 set -eu
@@ -39,6 +42,10 @@ pinned() {
         exit 1
     }
     echo "$want"
+}
+# has_pin <tag> <name>: whether the list pins that name for the tag (`pinned` exits when not).
+has_pin() {
+    awk -v t="$1" -v a="$2" '$1 == t && $2 == a { found = 1 } END { exit !found }' "$here/msb-runtime.sha256"
 }
 if [ "${1:-}" = --pinned ] && [ "$#" -eq 3 ]; then
     pinned "$2" "$3"
@@ -98,37 +105,52 @@ case "$tag/$os" in
     fetch "$fork_repo" "$tag" "libkrunfw-windows-$arch.dll" "$dest/libkrunfw.dll"
     ;;
 *-puddle.*/linux)
-    commit=$(pinned "$tag" source-commit)
-    fetch "$upstream_repo" "$release" "libkrunfw-linux-$arch.so" "$dest/libkrunfw.so.5"
-    build=${MSB_BUILD_DIR:-$dest/../msb-build}
-    built=$build/msb-$commit
-    if [ -x "$built" ]; then
-        echo "fetch-msb: reusing $built (built from $commit earlier)" >&2
+    if has_pin "$tag" "msb-linux-$arch"; then
+        # Prebuilt by the fork's release job; the firmware is the same file as upstream's.
+        fetch "$fork_repo" "$tag" "msb-linux-$arch" "$dest/msb"
+        chmod +x "$dest/msb"
+        fetch "$fork_repo" "$tag" "libkrunfw-linux-$arch.so" "$dest/libkrunfw.so.5"
     else
-        src=$build/microsandbox-$commit
-        [ -d "$src" ] || git clone --quiet --depth 1 --branch "$tag" "https://github.com/$fork_repo" "$src"
-        head=$(git -C "$src" rev-parse HEAD)
-        if [ "$head" != "$commit" ]; then
-            echo "fetch-msb: $fork_repo $tag in $src is $head, pinned $commit (the tag moved?)" >&2
-            exit 1
+        echo "fetch-msb: $tag has no Linux msb pinned, building it from source (about 10 minutes)" >&2
+        [ -z "${GITHUB_ACTIONS:-}" ] || echo "::warning::$tag has no Linux msb pinned in ci/msb-runtime.sha256: building msb from source (about 10 minutes); pin the release's msb-linux-$arch" >&2
+        commit=$(pinned "$tag" source-commit)
+        # The build links libcap-ng; a hosted runner has no header for it until installed.
+        if [ ! -e /usr/include/cap-ng.h ] && [ -n "${GITHUB_ACTIONS:-}" ]; then
+            "$here/apt-setup.sh"
+            "$here/apt-retry.sh" sudo apt-get update -q
+            "$here/apt-retry.sh" sudo apt-get install -y -q libcap-ng-dev
         fi
-        mkdir -p "$build/embed"
-        if awk -v t="$tag" -v a="agentd-$arch" '$1 == t && $2 == a { found = 1 } END { exit !found }' "$here/msb-runtime.sha256"; then
-            fetch "$fork_repo" "$tag" "agentd-$arch" "$build/embed/agentd"
+        fetch "$upstream_repo" "$release" "libkrunfw-linux-$arch.so" "$dest/libkrunfw.so.5"
+        build=${MSB_BUILD_DIR:-$dest/../msb-build}
+        built=$build/msb-$commit
+        if [ -x "$built" ]; then
+            echo "fetch-msb: reusing $built (built from $commit earlier)" >&2
         else
-            fetch "$upstream_repo" "$release" "agentd-$arch" "$build/embed/agentd"
+            src=$build/microsandbox-$commit
+            [ -d "$src" ] || git clone --quiet --depth 1 --branch "$tag" "https://github.com/$fork_repo" "$src"
+            head=$(git -C "$src" rev-parse HEAD)
+            if [ "$head" != "$commit" ]; then
+                echo "fetch-msb: $fork_repo $tag in $src is $head, pinned $commit (the tag moved?)" >&2
+                exit 1
+            fi
+            mkdir -p "$build/embed"
+            if has_pin "$tag" "agentd-$arch"; then
+                fetch "$fork_repo" "$tag" "agentd-$arch" "$build/embed/agentd"
+            else
+                fetch "$upstream_repo" "$release" "agentd-$arch" "$build/embed/agentd"
+            fi
+            toolchain=$(awk -F'"' '/^channel/ { print $2 }' "$here/../rust-toolchain.toml")
+            # Upstream's Linux steps (release-linux.yml "Build msb"), with the fork's own lock.
+            (
+                cd "$src"
+                MSB_EMBED_ARTIFACTS_DIR="$build/embed" CARGO_TARGET_DIR="$build/target" \
+                    cargo "+$toolchain" build --locked --release --no-default-features \
+                    --features embed-binaries,net,ssh -p microsandbox-cli
+            )
+            cp "$build/target/release/msb" "$built"
         fi
-        toolchain=$(awk -F'"' '/^channel/ { print $2 }' "$here/../rust-toolchain.toml")
-        # Upstream's Linux steps (release-linux.yml "Build msb"), with the fork's own lock.
-        (
-            cd "$src"
-            MSB_EMBED_ARTIFACTS_DIR="$build/embed" CARGO_TARGET_DIR="$build/target" \
-                cargo "+$toolchain" build --locked --release --no-default-features \
-                --features embed-binaries,net,ssh -p microsandbox-cli
-        )
-        cp "$build/target/release/msb" "$built"
+        cp "$built" "$dest/msb"
     fi
-    cp "$built" "$dest/msb"
     # msb loads the firmware from beside itself under the exact name it was built to look for
     # (libkrunfw.so.<LIBKRUNFW_VERSION>); the release asset is only SONAME-named. The version is
     # pinned with the commit, and checked against the source when this run has the checkout.

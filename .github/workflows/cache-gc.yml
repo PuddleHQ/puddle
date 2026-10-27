@@ -14,8 +14,10 @@
 #   cargo-xwin CRT and SDK (never deleted here)  a push (ci)                        0.13
 #   npm caches, Linux and Windows                a push; pull refs 2-day cleanup    0.34
 #   rust-cache `fuzz`                            a fuzz run (fuzz)                  0.17
-#   msb runtime binary                           a push (msb-cache)                 0.02
-#   total wanted                                                                    9.63 of 10
+#   total wanted                                                                    9.61 of 10
+#
+# The Linux msb is no cache entry: the VM jobs download the fork release's prebuilt one
+# (ci/fetch-msb.sh); a leftover `msb-linux-*` entry ages out (ci/cache-gc.sh drops orphans after 7 days).
 #
 # The nightly release build keeps no Rust cache: its 1.55 GiB entry was saved once a night, the
 # 2026-10-24 nightly found none, and while it existed the wanted set was 11.2 GiB, over the 10 GiB

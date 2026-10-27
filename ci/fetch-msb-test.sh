@@ -64,3 +64,51 @@ if grep -qF -f "$tmp/local" "$tmp/seen"; then
     exit 1
 fi
 echo "fetch-msb-test: ok (git clone saw no inherited GIT_* variables)"
+
+# A tag with a pinned Linux msb: download, verify, install; git must not run at all.
+msb_body='#!/bin/sh
+echo "msb 1.0.0-puddle.2"'
+msb_sum=$(printf '%s\n' "$msb_body" | sha256sum | cut -d' ' -f1)
+fw_sum=$(printf 'fw' | sha256sum | cut -d' ' -f1)
+{
+    echo "v1.0.0-puddle.2 msb-linux-x86_64 $msb_sum"
+    echo "v1.0.0-puddle.2 libkrunfw-linux-x86_64.so $fw_sum"
+    echo "v1.0.0-puddle.2 libkrunfw-linux-version 5.6.1"
+} >"$tmp/ci/msb-runtime.sha256"
+cat >"$tmp/bin/curl" <<'STUB'
+#!/bin/sh
+out= url=
+while [ "$#" -gt 0 ]; do
+    case "$1" in -o) out=$2 ;; http*) url=$1 ;; esac
+    shift
+done
+case "$url" in
+*/msb-linux-x86_64) printf '%s\n' "$MSB_BODY" >"$out" ;;
+*/libkrunfw-linux-x86_64.so) printf 'fw' >"$out" ;;
+*) exit 1 ;;
+esac
+STUB
+: >"$tmp/seen"
+export MSB_BODY="$msb_body"
+PATH="$tmp/bin:$PATH" "$tmp/ci/fetch-msb.sh" v1.0.0-puddle.2 "$tmp/prebuilt" >"$tmp/out2" 2>&1 || {
+    cat "$tmp/out2" >&2
+    echo "fetch-msb-test: the pinned Linux msb was not installed" >&2
+    exit 1
+}
+[ ! -s "$tmp/seen" ] || { echo "fetch-msb-test: a pinned Linux msb ran git" >&2; exit 1; }
+[ "$("$tmp/prebuilt/msb" --version)" = "msb 1.0.0-puddle.2" ] || { echo "fetch-msb-test: installed msb is not the download" >&2; exit 1; }
+[ "$(cat "$tmp/prebuilt/libkrunfw.so.5.6.1")" = fw ] && [ "$(cat "$tmp/prebuilt/libkrunfw.so.5")" = fw ] || {
+    echo "fetch-msb-test: firmware not installed under both names" >&2
+    exit 1
+}
+sed -i "s/ msb-linux-x86_64 .*/ msb-linux-x86_64 $(printf 'z' | sha256sum | cut -d' ' -f1)/" "$tmp/ci/msb-runtime.sha256"
+if PATH="$tmp/bin:$PATH" "$tmp/ci/fetch-msb.sh" v1.0.0-puddle.2 "$tmp/bad" >"$tmp/out3" 2>&1; then
+    echo "fetch-msb-test: a wrong checksum for the Linux msb was accepted" >&2
+    exit 1
+fi
+grep -q 'checksum mismatch for v1.0.0-puddle.2 msb-linux-x86_64' "$tmp/out3" || {
+    cat "$tmp/out3" >&2
+    echo "fetch-msb-test: no checksum mismatch message" >&2
+    exit 1
+}
+echo "fetch-msb-test: ok (a pinned Linux msb is downloaded and checked, no git)"

@@ -15,6 +15,8 @@ use crate::tools::{Cargo, Features, git_command, run};
 
 /// The fork's Windows msb asset (upstream's name, kept by the fork's release job).
 pub const MSB_ASSET: &str = "msb-windows-x86_64.exe";
+/// The fork's Linux msb asset, built by the same release run as the Windows one.
+pub const MSB_LINUX_ASSET: &str = "msb-linux-x86_64";
 /// Upstream's Windows firmware asset (the fork uses upstream's firmware).
 pub const LIBKRUNFW_ASSET: &str = "libkrunfw-windows-x86_64.dll";
 /// Upstream's Linux firmware asset: the same library the Linux runtime folder holds under its

@@ -238,12 +238,12 @@ mod tests {
                 .never_decrypt,
             ["*.a.example", "b.example"]
         );
-        assert!(
+        assert_eq!(
             store
                 .workspace_interception(&ws("b"))
                 .unwrap()
-                .never_decrypt
-                .is_empty()
+                .never_decrypt,
+            strings(&[])
         );
         assert_eq!(changes(&seen), 1);
         store
@@ -251,12 +251,12 @@ mod tests {
             .unwrap();
         assert_eq!(changes(&seen), 1, "the same names are not a change");
         store.set_never_decrypt(&ws("a"), &[]).unwrap();
-        assert!(
+        assert_eq!(
             store
                 .workspace_interception(&ws("a"))
                 .unwrap()
-                .never_decrypt
-                .is_empty()
+                .never_decrypt,
+            strings(&[])
         );
         assert_eq!(changes(&seen), 2);
     }
@@ -273,7 +273,7 @@ mod tests {
         assert_eq!(store.global_never_decrypt().unwrap(), ["bank.example"]);
         assert_eq!(changes(&seen) - before, 1);
         store.set_global_never_decrypt(&[]).unwrap();
-        assert!(store.global_never_decrypt().unwrap().is_empty());
+        assert_eq!(store.global_never_decrypt().unwrap(), strings(&[]));
     }
 
     #[test]

@@ -44,11 +44,6 @@ impl Machine {
 }
 
 impl Platform for Machine {
-    fn pin_environment(&self, _: &RuntimeLayout) -> Result<(), HostError> {
-        self.asked.lock().unwrap().push("pin_environment");
-        Ok(())
-    }
-
     fn check_runtime(&self, _: &RuntimeLayout, _: &RuntimeVersion) -> Result<(), HostError> {
         self.asked.lock().unwrap().push("check_runtime");
         Ok(())
@@ -149,10 +144,7 @@ fn the_window_opens_on_the_hosts_api_with_its_token_and_the_system_check_answers
     let options = options_in(dir.path());
     let machine = Machine::default();
     let backend = start(&options, &machine).unwrap();
-    assert_eq!(
-        machine.asked(),
-        ["pin_environment", "check_runtime", "corporate_roots"]
-    );
+    assert_eq!(machine.asked(), ["check_runtime", "corporate_roots"]);
     let app = app();
     shell::open(app.handle(), &options, backend).unwrap();
 

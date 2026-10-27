@@ -68,10 +68,6 @@ impl FakePlatform {
 }
 
 impl Platform for FakePlatform {
-    fn pin_environment(&self, _: &RuntimeLayout) -> Result<(), HostError> {
-        self.call("pin_environment")
-    }
-
     fn check_runtime(&self, _: &RuntimeLayout, expected: &RuntimeVersion) -> Result<(), HostError> {
         assert_eq!(expected, &RuntimeVersion::built_for());
         self.call("check_runtime")
@@ -633,12 +629,7 @@ async fn start_runs_the_steps_in_the_documented_order() {
     // The machine was asked in dependency order and the runtime opened last of those.
     assert_eq!(
         rig.calls(),
-        [
-            "pin_environment",
-            "check_runtime",
-            "corporate_roots",
-            "open_runtime"
-        ]
+        ["check_runtime", "corporate_roots", "open_runtime"]
     );
     // The runtime got the address of the pull proxy bound in the first step, loopback only,
     // and no roots (this machine has none).
@@ -650,7 +641,7 @@ async fn start_runs_the_steps_in_the_documented_order() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_refused_step_stops_the_start_before_the_runtime_is_touched() {
-    for refused in ["pin_environment", "check_runtime", "corporate_roots"] {
+    for refused in ["check_runtime", "corporate_roots"] {
         let rig = Rig::new();
         let mut platform = FakePlatform::new(&rig.log);
         platform.refuse = Some(refused);

@@ -34,10 +34,6 @@ pub(crate) struct HarnessPlatform {
 }
 
 impl Platform for HarnessPlatform {
-    fn pin_environment(&self, _: &RuntimeLayout) -> Result<(), HostError> {
-        Ok(())
-    }
-
     fn check_runtime(&self, _: &RuntimeLayout, _: &RuntimeVersion) -> Result<(), HostError> {
         Ok(())
     }

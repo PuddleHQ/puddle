@@ -69,14 +69,8 @@ tempfile = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "test-util", "time"] }
 tracing-subscriber = { workspace = true }
 
-# Changing the process environment is only sound before a second thread exists, which the
-# default test harness never allows, so these run as plain programs (child processes of this one).
-[[test]]
-name = "pin_environment"
-harness = false
-
 # The ssh client's `ProxyCommand` is this binary itself (`ssh-bridge <endpoint>`), and it answers the
-# test runner's `--list` as `pin_environment` does.
+# test runner's `--list` itself.
 [[test]]
 name = "vm_desktop_attach"
 harness = false

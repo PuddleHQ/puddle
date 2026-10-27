@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The environment that makes the msb SDK use Puddle's runtime and home, and nothing of the user's.
 //!
-//! The SDK reads its paths from the process environment, and a user's `MSB_PATH` beats the SDK's
-//! own `set_sdk_msb_path`. msb also reads `MSB_BACKEND`, `MSB_API_URL`,
-//! `MSB_PROFILE` and more, any of which could redirect Puddle. So the rule is simple: remove
-//! every `MSB_*` variable, then set exactly the three Puddle owns.
+//! The SDK takes Puddle's runtime and home as explicit arguments and ignores the environment
+//! (`puddle-compute-msb`, `LocalBackendBuilder::ignore_environment`), so this is only for the
+//! processes Puddle starts itself: msb reads `MSB_BACKEND`, `MSB_API_URL`, `MSB_PROFILE` and
+//! more, any of which could redirect Puddle. The rule is simple: remove every `MSB_*` variable the
+//! child would inherit, then set exactly the three Puddle owns.
 
 use std::ffi::{OsStr, OsString};
 use std::process::Command;
@@ -71,29 +72,6 @@ impl RuntimeEnv {
         }
         for (name, value) in &self.set {
             command.env(name, value);
-        }
-    }
-
-    /// Applies the plan to Puddle's own process, so the msb SDK (which reads the process
-    /// environment) uses the bundled runtime and private home.
-    ///
-    /// # Safety
-    ///
-    /// Changing the process environment is only sound while no other thread reads or writes it
-    /// ([`std::env::set_var`]). Call this first thing in `main`, before the tokio runtime or any
-    /// other thread starts.
-    #[expect(
-        unsafe_code,
-        reason = "the SDK only reads its paths from the process environment"
-    )]
-    pub unsafe fn apply_to_process(&self) {
-        for name in &self.remove {
-            // SAFETY: the caller guarantees no other thread touches the environment (see # Safety).
-            unsafe { std::env::remove_var(name) };
-        }
-        for (name, value) in &self.set {
-            // SAFETY: as above.
-            unsafe { std::env::set_var(name, value) };
         }
     }
 }

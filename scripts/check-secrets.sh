@@ -137,9 +137,9 @@ same() {
 # Built from pieces so this file never holds a token-shaped string itself.
 token="gh""p_R7qL2xVn9TzK4mWb8YcD3sFh6JgA0eUoPi5N"
 expect fail real-token src/app.rs "const T: &str = \"$token\";"
-expect pass listed-canary crates/puddle-proxy/tests/route.rs '    .request("GET http://web.test/a?token=CANARY-route-1 HTTP/1.1")'
+expect pass listed-canary crates/puddle-proxy/tests/integration/route.rs '    .request("GET http://web.test/a?token=CANARY-route-1 HTTP/1.1")'
 expect pass listed-docker-auth crates/puddle-boot/tests/vm_boot.rs 'json!({"registry.example.test": {"auth": "dXNlcjpwdWRkbGU="}});'
-expect fail token-in-listed-file crates/puddle-proxy/tests/route.rs "let t = \"$token\";"
+expect fail token-in-listed-file crates/puddle-proxy/tests/integration/route.rs "let t = \"$token\";"
 expect fail canary-outside-listed-paths src/lib.rs '    password: "CANARY-s3cret".into(),'
 
 # Scope. A repo whose base (origin/develop) is clean, with a dirty commit on a side branch.

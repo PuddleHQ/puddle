@@ -37,6 +37,7 @@ pub mod config;
 pub mod connect;
 pub mod control;
 pub mod editor;
+pub mod editor_stream;
 pub mod entrypoint;
 pub mod exthost;
 pub mod forward;

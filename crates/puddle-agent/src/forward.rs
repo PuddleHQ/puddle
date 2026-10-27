@@ -109,7 +109,7 @@ impl Forwards {
 }
 
 /// Writes `answer`; `false` when the stream is gone. A refusal ends the stream cleanly.
-async fn answer(stream: &mut StreamHandle, answer: &Answer) -> bool {
+pub(crate) async fn answer(stream: &mut StreamHandle, answer: &Answer) -> bool {
     if stream.write_all(&answer.to_line()).await.is_err() || stream.flush().await.is_err() {
         return false;
     }
@@ -120,7 +120,7 @@ async fn answer(stream: &mut StreamHandle, answer: &Answer) -> bool {
 }
 
 /// What the user is told when the connect failed with `failure`.
-fn failure_text(failure: io::ErrorKind, port: u16) -> String {
+pub(crate) fn failure_text(failure: io::ErrorKind, port: u16) -> String {
     if failure == io::ErrorKind::ConnectionRefused {
         format!("nothing in the workspace listens on port {port}")
     } else {
@@ -129,7 +129,7 @@ fn failure_text(failure: io::ErrorKind, port: u16) -> String {
 }
 
 /// Connects to `port` on the guest's loopback, IPv4 then IPv6; the reason is for the user.
-async fn connect(port: u16) -> Result<TcpStream, String> {
+pub(crate) async fn connect(port: u16) -> Result<TcpStream, String> {
     let v4 = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let v6 = SocketAddr::from((Ipv6Addr::LOCALHOST, port));
     // What went wrong, preferring a failure other than "refused": one family refusing is the
@@ -170,7 +170,7 @@ mod tests {
         opened.write_all(first).await.unwrap();
         let serving = tokio::spawn(async move {
             let inbound = agent.next().await.unwrap().unwrap();
-            let streams = HostStreams::new(forwards, Vec::new());
+            let streams = HostStreams::new(forwards, Vec::new(), None);
             let task = tokio::spawn(async move { streams.serve(inbound).await });
             while agent.next().await.is_some() {}
             task.await.unwrap();

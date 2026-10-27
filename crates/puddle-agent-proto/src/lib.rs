@@ -10,6 +10,7 @@
 //! | a [`kind`] preamble `\0puddle-control/1\n` | the **control stream**: newline-delimited JSON [`AgentMessage`]s, guest → host only | [`host::serve_session`] turns them into [`puddle_types::Event`]s |
 //! | a [`kind`] preamble `\0puddle-resolve/1\n` | one name lookup for the guest's stub DNS ([`resolve`]) | [`host::StreamHandler::resolve`] |
 //! | a [`kind`] preamble `\0puddle-forward/1\n`, opened by the **host** | one connection to a port on the guest's loopback ([`forward`]) | [`host::StreamHandler::guest_link`] hands out the way to open it |
+//! | a [`kind`] preamble `\0puddle-editor/1\n`, opened by the **host** | one connection to the guest's editor server, or its password ([`editor_stream`]) | [`host::StreamHandler::guest_link`] hands out the way to open it |
 //! | another [`kind`] preamble (`connect`, `ssh-agent`: reserved) or an unknown one | — | closed with a logged reason |
 //! | anything else (an HTTP request line) | one proxied guest connection: `CONNECT host:port` or an absolute-form request | handed to the caller's [`host::StreamHandler`] (the proxy) |
 //!
@@ -31,6 +32,7 @@
 
 pub mod control;
 pub mod editor;
+pub mod editor_stream;
 pub mod forward;
 pub mod host;
 pub mod host_control;

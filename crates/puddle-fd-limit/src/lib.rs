@@ -206,6 +206,7 @@ mod tests {
             .with_ansi(false)
             .finish();
         tracing::subscriber::with_default(subscriber, || limit.log(needed));
+        std::io::Write::flush(&mut capture.clone()).unwrap();
         let bytes = capture.0.lock().unwrap().clone();
         String::from_utf8(bytes).unwrap()
     }

@@ -227,6 +227,9 @@ pub struct Proxy {
     pub(crate) sink: Arc<dyn EventSink>,
     reports: Option<Arc<dyn AgentReports>>,
     pub(crate) config: ProxyConfig,
+    /// How many upstream connections have ended; tests wait on it (feature `testing`).
+    #[cfg(feature = "testing")]
+    pub(crate) upstream_ended: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl std::fmt::Debug for Proxy {
@@ -258,7 +261,18 @@ impl Proxy {
             sink,
             reports: None,
             config: ProxyConfig::default(),
+            #[cfg(feature = "testing")]
+            upstream_ended: Arc::default(),
         }
+    }
+
+    /// How many connections to real servers have ended so far (feature `testing`): a test that
+    /// cut one waits for this to rise instead of sleeping until the proxy has noticed.
+    #[cfg(feature = "testing")]
+    #[must_use]
+    pub fn upstream_connections_ended(&self) -> u64 {
+        self.upstream_ended
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Passes the guest agents' reports (an entrypoint exit, stub DNS trouble) to `reports`, each

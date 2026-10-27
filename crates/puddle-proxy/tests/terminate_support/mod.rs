@@ -664,6 +664,7 @@ impl RigBuilder {
         let other_root = IpcRoot::new().unwrap();
         let other_route = proxy.serve_route(other_root.listen().unwrap(), workspace("other"));
         Rig {
+            proxy,
             policy,
             log,
             route,
@@ -678,6 +679,7 @@ impl RigBuilder {
 }
 
 pub(crate) struct Rig {
+    proxy: Arc<Proxy>,
     pub(crate) policy: Arc<StaticPolicy>,
     pub(crate) log: Arc<CollectingConnectionLog>,
     pub(crate) route: Route,
@@ -722,6 +724,19 @@ impl Rig {
 
     pub(crate) async fn other_guest(&self) -> Guest {
         Guest::connect(&self.other_route, Arc::clone(&self.other_ca)).await
+    }
+
+    /// Waits until the proxy has seen `count` of its connections to real servers end, so a test
+    /// that cut one knows the next request finds the connection gone.
+    pub(crate) async fn upstream_ended(&self, count: u64) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while self.proxy.upstream_connections_ended() < count {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the proxy never saw {count} upstream connection(s) end"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
     }
 
     pub(crate) async fn events(&self, count: usize) -> Vec<ConnectionEvent> {

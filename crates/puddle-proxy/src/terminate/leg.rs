@@ -183,10 +183,14 @@ pub(crate) async fn connect(cx: &Context, alpn: &[&[u8]]) -> Result<Made, Refusa
                 .handshake::<_, UpBody>(io)
                 .await
                 .map_err(setup_failed)?;
+            #[cfg(feature = "testing")]
+            let ended = Arc::clone(&cx.proxy.upstream_ended);
             let driver = tokio::spawn(async move {
                 if let Err(err) = connection.with_upgrades().await {
                     tracing::debug!(error = %err, "upstream connection ended");
                 }
+                #[cfg(feature = "testing")]
+                ended.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             });
             Connected::H1(H1Conn {
                 sender,
@@ -205,10 +209,14 @@ pub(crate) async fn connect(cx: &Context, alpn: &[&[u8]]) -> Result<Made, Refusa
                 .handshake::<_, UpBody>(io)
                 .await
                 .map_err(setup_failed)?;
+            #[cfg(feature = "testing")]
+            let ended = Arc::clone(&cx.proxy.upstream_ended);
             tokio::spawn(async move {
                 if let Err(err) = connection.await {
                     tracing::debug!(error = %err, "upstream HTTP/2 connection ended");
                 }
+                #[cfg(feature = "testing")]
+                ended.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             });
             Connected::H2(H2Conn { sender })
         }

@@ -26,6 +26,7 @@
 # Coverage (docs/STANDARDS.md, "Coverage"): the floors live here, the ratchet baseline in
 # scripts/coverage-baseline.json; raise them, never lower them without the owner's OK. The ratchet
 # lets a total measure up to 0.05 points below its baseline (run-to-run wobble); the floors are exact.
+# The crates in scripts/full-coverage-crates.txt must keep every line covered (gate `coverage`).
 # A change's added lines must also be covered (gates `coverage` for Rust, `ui` for the UI,
 # `diff-coverage` by hand); DIFF_BASE names the commit to measure from (CI sets it to the PR or push
 # base), else the merge base with origin/develop.
@@ -76,6 +77,16 @@ diff_base() {
     elif git rev-parse --verify -q origin/develop >/dev/null; then
         git merge-base HEAD origin/develop
     fi
+}
+
+# Sets COVERAGE_BASELINE_LOWER_OK for the ratchets: $1 is the diff base; 1 only when a commit of the
+# change carries the owner's trailer (see the Coverage note above).
+lower_ok() {
+    COVERAGE_BASELINE_LOWER_OK=0
+    if [ -n "$1" ] && git log "$1..HEAD" --format=%B | grep -q '^Owner-OK: coverage-baseline$'; then
+        COVERAGE_BASELINE_LOWER_OK=1
+    fi
+    export COVERAGE_BASELINE_LOWER_OK
 }
 
 # Runs the diff-coverage script for one language: $1 label, $2 lcov file, $3 extensions, then
@@ -321,17 +332,16 @@ run_gate() {
         base=$(diff_base)
         # Lowering the committed baseline needs the owner's OK, recorded as this trailer in a commit
         # message of the change; the environment can't grant it.
-        COVERAGE_BASELINE_LOWER_OK=0
-        if [ -n "$base" ] && git log "$base..HEAD" --format=%B | grep -q '^Owner-OK: coverage-baseline$'; then
-            COVERAGE_BASELINE_LOWER_OK=1
-        fi
-        export COVERAGE_BASELINE_LOWER_OK
+        lower_ok "$base"
         if [ -n "$base" ] && git cat-file -e "$base:scripts/coverage-baseline.json" 2>/dev/null; then
             git show "$base:scripts/coverage-baseline.json" >"$target/coverage-baseline.previous.json"
             ratchet="$ratchet --previous $target/coverage-baseline.previous.json"
         fi
         # shellcheck disable=SC2086 # $ratchet is a list of flags, split on purpose
         node ui/scripts/coverage-ratchet.ts $ratchet
+        # The pure-logic crates stay at 100 % of their lines (the workspace totals can't see one slip).
+        node ui/scripts/full-coverage.ts --lcov "$target/lcov.info" \
+            --crates scripts/full-coverage-crates.txt --exclusions scripts/full-coverage-exclusions.txt
         diff_coverage "diff-coverage (rust)" "$target/lcov.info" .rs
         ;;
     mutants)

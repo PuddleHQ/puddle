@@ -545,4 +545,16 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn classify_recognises_the_endpoints_of_a_registry_it_was_given() {
+        let registry = PuddleEndpoints::new();
+        let _api = registry.register(sa("127.0.0.1:7071"), EndpointKind::Api);
+        let g = NetPolicy::new(Arc::new(LocalAccess::NONE)).with_endpoints(registry);
+        assert_eq!(
+            g.classify(sa("127.0.0.1:7071")),
+            AddressClass::PuddleEndpoint(EndpointKind::Api)
+        );
+        assert_eq!(g.endpoints().list().len(), 1);
+    }
 }

@@ -112,8 +112,9 @@ Two findings from the rerun put requirements on Puddle rather than on the choice
 
 - **Caches on the root disk are not trimmed yet.** The cause is the overlay root, and the runtime
   fork now keeps the root disk's ext4 reachable at `/.msb/rootfs/upperfs` (512 MiB written and deleted:
-  the image went 577 MiB back to 65 MiB after `fstrim` of that path). Puddle does not call it yet: that
-  needs a fork release and a pin bump. Until then npm, NuGet and similar caches in `~` and build
+  the image went 577 MiB back to 65 MiB after `fstrim` of that path). Puddle's trim of every mounted
+  filesystem (`fstrim -a`) should reach it once the pinned runtime carries the fix (a fork release and
+  a pin bump); not yet checked end to end. Until then npm, NuGet and similar caches in `~` and build
   output outside the workspace live in the sandbox's `upper.ext4`, which grew to 5.4 GB in one
   session and can only be reclaimed by recreating the sandbox. Options (undecided): redirect caches
   onto the workspace volume or a second owned disk, or offer "recreate sandbox" as the reclaim path
@@ -132,7 +133,7 @@ Two findings from the rerun put requirements on Puddle rather than on the choice
 |---|---|
 | **virtiofs bind mount of a Windows folder** (default `strict`, `relaxed`, `off`) | Broken by #1638 (renames, git, dotnet build) and 20–26× slower than NTFS regardless; no inotify for host edits; case-insensitive by default; junctions break directories. A writable bind may come back later as an opt-in for read-mostly content, re-measured after #1638 |
 | **Owned disk** (`--mount-owned …:kind=disk`) | Same speed, but dies with the sandbox: a rebuild (image bump, config change) loses unpushed work. Right for disposable data such as `/var/lib/docker` |
-| **Workspace on the layered rootfs** | Same speed, but dies with the sandbox, ties the work to the image, and can't be trimmed |
+| **Workspace on the layered rootfs** | Same speed, but dies with the sandbox, ties the work to the image, and `fstrim /` is refused (overlay) |
 | **Owned or named *directory* volume** | virtiofs, the same backend as the bind mount; expected to be as slow (not measured) |
 | **Dev Drive / ReFS, or `--mount-disk` of a VHDX on one** | Not tested: creating a Dev Drive needs admin, which the reference workstation and probably most managed machines lack. Would only change how fast the disk image sits on the host, not the decision |
 | **WSL2 ext4 shared into the VM** | Puts WSL in the path, which Puddle avoids |

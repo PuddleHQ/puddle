@@ -148,9 +148,11 @@ pub fn free_port() -> u16 {
         .port()
 }
 
+#[cfg(unix)]
 /// How many ports [`on_free_port`] tries before it gives up.
 const PORT_ATTEMPTS: u32 = 5;
 
+#[cfg(unix)]
 /// Whether a program's output says its bind failed because the port was taken (`EADDRINUSE`):
 /// mitmproxy `[Errno 98] ... address already in use`, Squid `(98) Address already in use`,
 /// Windows `WSAEADDRINUSE` / `only one usage of each socket address`.
@@ -165,6 +167,7 @@ fn is_address_in_use(output: &str) -> bool {
     .any(|needle| lower.contains(needle))
 }
 
+#[cfg(unix)]
 /// Starts a program that must be told its port in advance. `pick` gives a candidate port;
 /// `start` runs the program on it and returns its output when it fails. A failure whose output
 /// says the port was taken (another process bound it between the pick and the program's own
@@ -308,6 +311,7 @@ mod tests {
         require_file(std::ffi::OsStr::new("/no/such/program"), "V");
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_output_of_a_taken_port_is_recognised() {
         for output in [
@@ -320,6 +324,7 @@ mod tests {
         assert!(!is_address_in_use("permission denied"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_port_taken_between_the_pick_and_the_bind_is_retried_on_another() {
         // The neighbour that wins the race in CI: it binds the picked port before the program does.
@@ -346,6 +351,7 @@ mod tests {
         drop(neighbour);
     }
 
+    #[cfg(unix)]
     #[test]
     #[should_panic(expected = "the fixture found its port taken 5 times")]
     fn a_port_that_stays_taken_fails_after_five_tries() {
@@ -354,6 +360,7 @@ mod tests {
         });
     }
 
+    #[cfg(unix)]
     #[test]
     #[should_panic(expected = "the fixture failed to start on port")]
     fn a_failure_that_is_not_a_taken_port_is_not_retried() {

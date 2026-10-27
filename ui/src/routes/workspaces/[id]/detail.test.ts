@@ -120,6 +120,8 @@ function reset() {
   api.overrides = {};
   api.unknown = {};
   api.kept = {};
+  api.interception = {};
+  api.globalNeverDecrypt = [];
   api.refuse.clear();
   rules.rules = [];
   rules.calls = [];
@@ -849,6 +851,62 @@ describe("the settings tab", () => {
     await vi.waitFor(() =>
       expect(api.overrides["demo"]?.capture_logins).toBeNull(),
     );
+  });
+
+  it("turns decrypting every host on and off at once and saves the never-decrypt names", async () => {
+    await open();
+    const box = (await screen.findByRole("switch", {
+      name: "Decrypt every host",
+    })) as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    await fireEvent.click(box);
+    await screen.findByText("Puddle now decrypts every host.");
+    expect(api.interception["demo"]?.decrypt_all).toBe(true);
+    const names = screen.getByRole("textbox", {
+      name: "Never decrypt in this workspace",
+    });
+    await fireEvent.input(names, {
+      target: { value: "Bank.example\n*.corp.test" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Save names" }));
+    await screen.findByText("Saved.");
+    expect(api.interception["demo"]?.never_decrypt).toEqual([
+      "*.corp.test",
+      "bank.example",
+    ]);
+    await fireEvent.click(box);
+    await screen.findByText("Puddle decrypts only hosts with a credential.");
+    expect(api.interception["demo"]?.decrypt_all).toBe(false);
+  });
+
+  it("names the global never-decrypt list read-only, and puts the switch back when the save is refused", async () => {
+    api.globalNeverDecrypt = ["bank.example"];
+    await open();
+    const box = (await screen.findByRole("switch", {
+      name: "Decrypt every host",
+    })) as HTMLInputElement;
+    expect(
+      screen.getByText(/Never decrypted in any workspace/),
+    ).toHaveTextContent("bank.example");
+    api.refuse.set("PUT /api/workspaces/{id}/interception", {
+      status: 500,
+      message: "disk full",
+    });
+    await fireEvent.click(box);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Disk full.");
+    expect(box.checked).toBe(false);
+  });
+
+  it("says when the decrypt setting can't be read", async () => {
+    api.refuse.set("GET /api/workspaces/{id}/interception", {
+      status: 500,
+      message: "store broken",
+    });
+    await open();
+    expect(await screen.findByText("Store broken.")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("switch", { name: "Decrypt every host" }),
+    ).toBeNull();
   });
 
   it("doesn't mention a restart for login capture when the workspace isn't running, and puts the choice back when the save is refused", async () => {

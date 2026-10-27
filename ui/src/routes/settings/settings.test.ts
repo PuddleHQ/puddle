@@ -612,6 +612,40 @@ describe("workspace defaults and the network", () => {
     expect(api.layer.clipboard_read).toBe("deny");
   });
 
+  it("shows the names no workspace decrypts and saves a new list", async () => {
+    api.neverDecrypt = ["bank.example"];
+    await open();
+    const box = (await screen.findByRole("textbox", {
+      name: "Never decrypt, in any workspace",
+    })) as HTMLTextAreaElement;
+    expect(box.value).toBe("bank.example");
+    await fireEvent.input(box, {
+      target: { value: "bank.example\n*.corp.test" },
+    });
+    await fireEvent.click(
+      within(box.closest("form") as HTMLElement).getByRole("button", {
+        name: "Save names",
+      }),
+    );
+    await screen.findByText("Saved.");
+    expect(api.neverDecrypt).toEqual(["*.corp.test", "bank.example"]);
+  });
+
+  it("says the never-decrypt list can't be read, and shows no editor", async () => {
+    api.refuse.set("GET /api/interception/never-decrypt", {
+      status: 500,
+      error: "internal",
+      message: "store broken",
+    });
+    await open();
+    expect(await screen.findByText("Store broken.")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", {
+        name: "Never decrypt, in any workspace",
+      }),
+    ).toBeNull();
+  });
+
   it("turns the global direct SSH default on only after the trust text, then saves it with the rest", async () => {
     await open();
     const box = screen.getByLabelText("Allow direct SSH for new workspaces");

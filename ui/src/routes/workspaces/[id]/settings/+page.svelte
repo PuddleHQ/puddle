@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import InterceptionSetting from "#lib/components/InterceptionSetting.svelte";
   import KeptLoginsList from "#lib/components/KeptLoginsList.svelte";
   import StartFolderSetting from "#lib/components/StartFolderSetting.svelte";
   import UnknownFields from "#lib/components/UnknownFields.svelte";
@@ -353,6 +354,8 @@
         reload={() => void kept.load(workspace.id)}
       />
     </section>
+
+    <InterceptionSetting id={workspace.id} />
 
     <section class="card" aria-labelledby="clip-h">
       <h2 id="clip-h">Clipboard</h2>

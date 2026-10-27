@@ -355,6 +355,46 @@ the owner, then tagged `vX.Y.Z` on `main`.
   (`--ignore-filename-regex`) only for generated code, listed in `scripts/check.sh` with a comment;
   exclusions from the diff gate are the file above.
 
+### Mutation testing
+
+Line coverage says a test ran a line; a mutation run says a test would notice if the line were wrong.
+`cargo-mutants` makes one small change at a time to product code (a `<` turned into `<=`, a function body
+replaced by its default, a `&&` turned into `||`) and runs the crate's tests; a mutant the tests still pass is
+**missed**, and a missed mutant is a missing test.
+
+- **Which code.** The crates in `scripts/mutants-crates.txt`: the core logic whose wrong answer is a security or
+  data bug (types, rules engine and store model, network policy, proxy, credential injection). A crate joins the
+  list when its full sweep has no missed mutant, so the list only grows. The UI's `lib/**` joins through
+  StrykerJS in the same way.
+- **Per change.** `scripts/check.sh mutants` (CI: the `mutants` workflow, pull requests) mutates only the lines the
+  change adds or changes in the listed crates (`cargo mutants --in-diff`), so its cost follows the size of the change.
+  Any missed mutant or timeout fails it.
+- **Nightly.** The `mutants` workflow sweeps every mutant of every listed crate, one job per crate; a failure uploads
+  `mutants.out/` (the missed list with the diff of each). `scripts/mutants.sh sweep --crate <name>` does the same
+  by hand, which is also how a crate is triaged before it joins the list.
+- **A missed mutant is fixed with a test**: read the mutant's diff (`mutants.out/diff/`), write the test that fails
+  on it, and run the change again. Never mark the code as skipped.
+  The one exception is an **equivalent mutant**, one no test can tell from the original (the result is the same
+  for every input, or only timing changes). Those go in `.cargo/mutants.toml` as an `exclude_re` entry with a comment
+  that says why it is equivalent, and are reviewed like a lint suppression. A mutant that only a test of a
+  logging line or a timing could catch is not equivalent: assert the line or the timing.
+- **Test selection and the cache.** Mutants run through nextest's default profile (no VM tests), in a copy
+  of the tree each, `MUTANTS_JOBS` at a time. The nightly sweep skips a crate whose inputs hash like the last
+  passing run's: the committed trees of the crate and of every workspace crate it depends on (normal, build and
+  dev), `Cargo.lock`, the toolchain pin, the mutants and nextest settings, `scripts/mutants.sh` and the cargo-mutants
+  version (`scripts/mutants.sh --key <crate>`). Only a passing run is recorded, so the cache cannot hide a missed mutant,
+  and any change under a dependency re-runs everything above it. On Sundays the nightly ignores the cache and runs
+  everything, and says `MISMATCH` when a crate that has a cache entry fails.
+- **No shared target directory.** `scripts/mutants.sh` unsets `CARGO_TARGET_DIR`: cargo-mutants tests several mutants
+  at once, each in its own copy of the tree, and cargo names a workspace member's artifacts from its path inside
+  the workspace, so copies sharing a target directory overwrite each other's builds. Measured on `puddle-netpolicy`:
+  the same tree gave a different set of survivors on each of three runs (and 16 instead of 29 unviable mutants)
+  until each copy built into its own directory.
+- **What it can't see.** A mutant in code no test reaches is missed, which is the point; code only a VM test or
+  the Windows job reaches is judged by the Linux tests only, so a crate with such paths lists them as missed until
+  a unit test covers them. Product code compiled only for tests (`testing.rs`, `tests/`) is not mutated. The run
+  tells nothing about code outside the listed crates.
+
 ## 10. CI
 
 **Gate sets.** `scripts/check.sh` runs named sets of gates; `scripts/check.sh --list <set>` prints one without running it.
@@ -391,6 +431,7 @@ before pushing a change that touches the UI's behaviour, routes or accessibility
 |---|---|---|---|
 | `ci.yml` | push to `develop`/`main`, every PR, every merge queue run, nightly (the two advisories jobs only), manual (a newer push to a PR or `develop` cancels the run in flight; `main` never) | `ubuntu-24.04` | all of `scripts/check.sh all` (the `pre-push` set plus `ui-e2e`, `advisories` and `ui-audit`) in parallel jobs (Rust and repository gates; UI gates; RustSec advisories; npm advisories) plus `linux (all gates)`, the one result that needs them; every gate runs even if an earlier one fails |
 | `windows.yml` | every PR to `develop` and `main` (a newer push to the PR cancels the run in flight), every merge queue run, nightly 02:30 UTC (skipped if it already has a green nightly, manual or merge queue run on that commit; the tests and the release build count only nightly and manual runs), manual | `windows-2025` | four parallel jobs (clippy; nextest, doc tests, secret scan; UI gates, e2e on Edge and the desktop shell smoke test; release build, MSVC: only on the nightly, on PRs to `main` and on manual runs from `develop`, so PRs to `develop` skip it) plus `windows-msvc (build, clippy, tests)`, the one result that needs them all. The nightly retries each failed test once and lists the flaky ones in the job summary, without failing |
+| `mutants.yml` | every PR that touches `crates/`, the mutants settings or scripts (a newer push cancels the run in flight; not a required check yet), nightly 03:45 UTC, manual | `ubuntu-24.04` | `scripts/check.sh mutants` on a PR (the mutants on the changed lines of the crates in `scripts/mutants-crates.txt`); the nightly sweep, one job per listed crate, uncached on Sundays |
 | `windows-cache.yml` | push to `develop` that changes a `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml` or `.cargo/config.toml`, manual | `windows-2025` | builds the test binaries once (no tests) so the pull requests' `windows.yml` runs restore a current `windows` Rust cache entry instead of an older one; only a run on `develop` saves it |
 | `vm-linux.yml` | every PR to `develop` (a newer push to the PR cancels the run in flight), every merge queue run, manual on any branch (`gh workflow run vm-linux.yml --ref <branch>`), nightly 03:00 UTC on `develop` (skipped if it already has a green nightly, manual or merge queue run on that commit) | `ubuntu-24.04` (KVM) | VM tests, tier K: the test binaries are built once (`cargo nextest archive`) and run in 3 hash partitions on 3 runners; `vm-linux (KVM, msb microVMs)` is the one result. No KVM ⇒ warning, infrastructure skip (on a PR or a merge queue run: failure) |
 | `vm-windows.yml` | every PR to `develop` (a newer push to the PR cancels the run in flight), every merge queue run, manual on any branch, nightly 03:15 UTC on `develop` (skipped if it already has a green nightly, manual or merge queue run on that commit) | `windows-2025` (WHP) | VM tests, tier W: built once and run in 5 hash partitions on 5 runners; `vm-windows (WHP, msb microVMs)` is the one result. No WHP ⇒ warning, infrastructure skip (on a PR or a merge queue run: failure) |

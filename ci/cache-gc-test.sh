@@ -25,6 +25,8 @@ cat >"$tmp/caches.tsv" <<EOF
 6	refs/heads/develop	v0-rust-linux-89abcdef-01234567	$now	$now
 7	refs/heads/develop	cargo-xwin-0.23.1-x86_64	$older	$older
 8	refs/heads/gh-readonly-queue-lookalike	node-cache-Linux-x64-npm-4	$now	$now
+9	refs/heads/develop	notices-ok-1111111111111111111111111111111111111111111111111111111111111111	$older	$now
+10	refs/heads/develop	notices-ok-2222222222222222222222222222222222222222222222222222222222222222	$now	$now
 EOF
 mkdir "$tmp/bin"
 cat >"$tmp/bin/gh" <<'GH'
@@ -51,7 +53,8 @@ fi
 got=$(sort -n "$tmp/deleted" | tr '\n' ' ')
 # 1, 2: queue refs, fresh; 4: a stale pull request entry; 5: a superseded develop rust entry.
 # 8: a fresh entry on a branch whose name only starts like the queue prefix stays.
-[ "$got" = "1 2 4 5 " ] || bad "deleted '$got', want '1 2 4 5 '"
+# 9: a superseded notices stamp on develop (10, the newest, stays).
+[ "$got" = "1 2 4 5 9 " ] || bad "deleted '$got', want '1 2 4 5 9 '"
 
 : >"$tmp/deleted"
 PATH="$tmp/bin:$PATH" GITHUB_REPOSITORY=o/r FAKE_CACHES="$tmp/caches.tsv" FAKE_DELETED="$tmp/deleted" DRY_RUN=1 \

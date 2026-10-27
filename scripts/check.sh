@@ -17,7 +17,7 @@
 # its `==> <gate>` line when it finishes; a failure in any stream fails the run (first failure in run order,
 # its exit status). PUDDLE_CHECK_SERIAL=1 runs them one by one, as before. A gate set that fits one stream
 # runs inline and prints live. The `notices` gate is skipped when its inputs are byte for byte those of a
-# passing run (CHECK_NO_SKIP=1 runs it anyway).
+# passing run (CHECK_NO_SKIP=1 runs it anyway); CI keeps that stamp in a cache entry (CHECK_STAMP_DIR, --stamp-key).
 # The ui gates need Node 24 (the UI's package-lock.json pins every npm package). ui-e2e also needs
 # the Playwright browsers: `cd ui && npx playwright install --with-deps chromium webkit`.
 # Set CARGO to run every Cargo command through a wrapper, e.g. CARGO=mbx for the shared build
@@ -101,6 +101,12 @@ ui_build() {
         ui_built=1
         [ -z "${run_tmp:-}" ] || : >"$run_tmp/ui-built"
     fi
+}
+
+# Where a passing gate leaves its stamp. CI sets CHECK_STAMP_DIR outside target/: rust-cache deletes the
+# files of every target subfolder when it saves, so a stamp kept there never reaches the next run.
+stamp_dir() {
+    printf '%s\n' "${CHECK_STAMP_DIR:-${CARGO_TARGET_DIR:-target}/check-stamps}"
 }
 
 # A hash of everything the notices verdict depends on (see the gate). Tracked and untracked files
@@ -210,7 +216,7 @@ run_gate() {
         # The verdict is a function of the dependency manifests and lock, the cargo-about config, the
         # xtask that judges them and the cargo-about version, so a run that passed on the same bytes
         # is not repeated. Stamp: a hash in the target dir, written only by a pass.
-        stamp="${CARGO_TARGET_DIR:-target}/check-stamps/notices"
+        stamp="$(stamp_dir)/notices"
         key=$(notices_inputs_hash)
         if [ -z "${CHECK_NO_SKIP:-}" ] && [ "$(cat "$stamp" 2>/dev/null)" = "$key" ]; then
             echo "notices: skipped, its inputs are byte for byte those of the last passing run ($key); CHECK_NO_SKIP=1 runs it anyway"
@@ -350,6 +356,17 @@ if [ "${1:-}" = --list ]; then
     }
     shift
     for arg in "$@"; do gates_of "$arg"; done
+    exit 0
+fi
+
+# `--stamp-key notices` prints the stamp a passing notices gate writes for the current inputs, so CI can keep
+# the stamp in a cache entry named by it (a hit means the gate passed on these bytes).
+if [ "${1:-}" = --stamp-key ]; then
+    [ "${2:-}" = notices ] && [ "$#" -eq 2 ] || {
+        echo "usage: scripts/check.sh --stamp-key notices" >&2
+        exit 2
+    }
+    notices_inputs_hash
     exit 0
 fi
 

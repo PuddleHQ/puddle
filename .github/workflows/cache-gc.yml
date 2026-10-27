@@ -14,6 +14,7 @@
 #   cargo-xwin CRT and SDK (never deleted here)  a push (ci)                        0.13
 #   npm caches, Linux and Windows                a push; pull refs 2-day cleanup    0.34
 #   rust-cache `fuzz`                            a fuzz run (fuzz)                  0.17
+#   licence notices stamp (one per input hash)   a push that ran the gate (ci)        0.00
 #   total wanted                                                                    9.61 of 10
 #
 # The Linux msb is no cache entry: the VM jobs download the fork release's prebuilt one

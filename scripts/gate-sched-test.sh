@@ -171,4 +171,22 @@ STUB_OFFLINE_RC=1 STUB_ONLINE_RC=1 notices >/dev/null && fail "notices: a failed
 before=$(calls)
 out=$(STUB_OFFLINE_RC=1 notices) || fail "notices: the online fallback did not pass: $out"
 [ "$(calls)" = $((before + 2)) ] || fail "notices: the offline failure did not fall back to the online run"
+# The stamp CI keeps in a cache entry: `--stamp-key notices` prints what a pass writes, CHECK_STAMP_DIR moves the
+# file out of target/, and a stamp restored from an entry skips the gate.
+echo "# stamp dir" >>"$n/Cargo.lock"
+key=$(cd "$n" && PATH="$n/bin:$PATH" sh scripts/check.sh --stamp-key notices) || fail "stamp-key: the key was not printed"
+[ -n "$key" ] || fail "stamp-key: empty key"
+before=$(calls)
+(cd "$n" && CHECK_STAMP_DIR="$n/stamps" CARGO="$n/bin/cargo" CARGO_TARGET_DIR="$n/target2" PATH="$n/bin:$PATH" sh scripts/check.sh notices >/dev/null 2>&1) ||
+    fail "stamp-dir: the run with CHECK_STAMP_DIR failed"
+[ "$(calls)" = $((before + 1)) ] || fail "stamp-dir: a stamp elsewhere skipped the first run"
+[ "$(cat "$n/stamps/notices")" = "$key" ] || fail "stamp-key: the stamp is not the printed key"
+[ ! -e "$n/target2/check-stamps" ] || fail "stamp-dir: a stamp was written under target/ despite CHECK_STAMP_DIR"
+out=$(cd "$n" && CHECK_STAMP_DIR="$n/stamps" CARGO="$n/bin/cargo" CARGO_TARGET_DIR="$n/target2" PATH="$n/bin:$PATH" sh scripts/check.sh notices 2>&1) ||
+    fail "stamp-dir: the restored-stamp run failed: $out"
+printf '%s\n' "$out" | grep -q 'notices: skipped' || fail "stamp-dir: a stamp restored from a cache entry did not skip the gate"
+[ "$(calls)" = $((before + 1)) ] || fail "stamp-dir: the skipped run called cargo"
+echo "# stamp dir 2" >>"$n/Cargo.lock"
+[ "$(cd "$n" && PATH="$n/bin:$PATH" sh scripts/check.sh --stamp-key notices)" != "$key" ] || fail "stamp-key: a changed Cargo.lock kept the key"
+(cd "$n" && sh scripts/check.sh --stamp-key clippy >/dev/null 2>&1) && fail "stamp-key: an unknown gate was accepted"
 echo "gate-sched-test: ok"

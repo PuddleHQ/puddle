@@ -56,6 +56,21 @@ async fn a_workspace_decrypts_only_its_credential_hosts_until_the_switch_is_turn
     let body: Value = only_names.json();
     assert_eq!(body["decrypt_all"], true, "an absent field stays as it is");
     assert_eq!(body["never_decrypt"], json!([]));
+
+    let only_switch = api
+        .send(
+            "PUT",
+            "/api/workspaces/shop/interception",
+            Some(&json!({"decrypt_all": false})),
+        )
+        .await;
+    let body: Value = only_switch.json();
+    assert_eq!(body["decrypt_all"], false);
+    assert_eq!(
+        body["never_decrypt"],
+        json!([]),
+        "the names stay as they are"
+    );
 }
 
 #[tokio::test]

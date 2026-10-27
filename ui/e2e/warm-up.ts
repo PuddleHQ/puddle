@@ -6,8 +6,8 @@
 // two tests of a run took 5 to 8.5 s in 8 of 8 runs, against about 1 s for the rest, and once the
 // first page took over 30 s. Without this, the first test of each worker pays for it and fails with
 // "Test timeout exceeded while setting up page" though nothing it checks is wrong. Here the start
-// has limits of its own (a stalled start is tried again, a start that stalls every time fails by
-// naming itself), and the tests keep their 30 s for what they check.
+// has limits of its own (a start that stalls fails by naming itself and the phase that stalled),
+// and the tests keep their 30 s for what they check.
 //
 // The line this logs splits the time by phase. On a cold Windows runner the close phase is often
 // 15 to 18 s while the first page takes 2 to 4 s: Edge's `identity_helper.exe` starts as the
@@ -15,10 +15,9 @@
 // browser's output pipes) wait for it. That is Edge's own first-run cost and not a stall of the
 // first page; do not count it as one.
 //
-// The retry is a stopgap for one 30 s first-page stall that has not been reproduced since (in 99
-// cold starts on fresh runners the first page took 1.2 to 11.8 s, 20 of them with every core
-// busy). Remove the retry, and keep the limits, once the logged first-page phase has stayed under
-// 15 s in 100 consecutive Windows UI runs with no "try 2" line.
+// There is no retry: in 124 consecutive Windows UI runs (2026-10-24 to 10-27, temp folder on D:)
+// the first page took under 15 s every time. Before that, 6 of 257 runs stalled 23 s or more.
+// A stall now fails the run with the phase that took the time; add a retry back only if it recurs.
 import {
   chromium,
   firefox,
@@ -26,11 +25,10 @@ import {
   type FullConfig,
   type FullProject,
 } from "@playwright/test";
-import { firstStart, PhaseTimer } from "../tools/first-start.ts";
+import { PhaseTimer } from "../tools/first-start.ts";
 
-/** How long one try at the first page may take, and how many tries there are; the tests' own limit stays what it is. */
+/** How long each phase of the start may take; the tests' own limit stays what it is. */
 export const WARM_UP_TIMEOUT_MS = 45_000;
-export const WARM_UP_TRIES = 3;
 
 const engines = { chromium, firefox, webkit } as const;
 
@@ -76,7 +74,7 @@ async function openOnce(project: FullProject): Promise<string> {
         page.goto("/", { timeout: WARM_UP_TIMEOUT_MS }),
       );
     } finally {
-      // A stalled browser may not close either; the next try must still come.
+      // A stalled browser may not close either; the run must still end with the reason.
       await phases
         .run("close", () =>
           within(WARM_UP_TIMEOUT_MS, browser.close(), "closing it"),
@@ -95,14 +93,16 @@ async function openOnce(project: FullProject): Promise<string> {
 export default async function warmUp(config: FullConfig): Promise<void> {
   for (const project of config.projects) {
     const started = Date.now();
-    const phases = await firstStart({
-      what: `the ${project.name} browser`,
-      tries: WARM_UP_TRIES,
-      attempt: () => openOnce(project),
-      log: (line) => {
-        console.warn(`warm-up: ${line}`);
-      },
-    });
+    let phases: string;
+    try {
+      phases = await openOnce(project);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `the ${project.name} browser did not open the app: ${reason}`,
+        { cause: error },
+      );
+    }
     console.warn(
       `warm-up: ${project.name} opened the app in ${Date.now() - started} ms (${phases})`,
     );

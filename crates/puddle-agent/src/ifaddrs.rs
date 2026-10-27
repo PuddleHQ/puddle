@@ -66,12 +66,10 @@ mod tests {
             // SAFETY: `cursor` is a node of the live list.
             let e = unsafe { &*cursor };
             cursor = e.ifa_next;
-            if e.ifa_addr.is_null() {
-                continue;
-            }
-            // SAFETY: a non-null `ifa_addr` has a readable family field.
-            let family = unsafe { (*e.ifa_addr).sa_family };
-            if libc::c_int::from(family) != libc::AF_INET {
+            // SAFETY: the family field is only read when `ifa_addr` is non-null, so it is readable.
+            let is_ipv4 = !e.ifa_addr.is_null()
+                && libc::c_int::from(unsafe { (*e.ifa_addr).sa_family }) == libc::AF_INET;
+            if !is_ipv4 {
                 continue;
             }
             // SAFETY: AF_INET addresses are `sockaddr_in`; `ifa_name` is NUL-terminated.

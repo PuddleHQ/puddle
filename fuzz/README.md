@@ -11,7 +11,7 @@ cargo-fuzz targets for what a guest's first bytes reach before any rule is asked
 | `agent_preamble` | the first line of an agent stream |
 
 The checks live in `puddle_proxy::fuzzing` (behind the `fuzzing` feature), so the stable test run
-replays the same code: `crates/puddle-proxy/tests/fuzz_corpus.rs` runs every file under
+replays the same code: `crates/puddle-proxy/tests/integration/fuzz_corpus.rs` runs every file under
 `corpus/<target>/`.
 
 ```sh

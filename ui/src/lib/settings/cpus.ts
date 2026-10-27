@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The guest CPU count the settings accept. The API does not publish the limits, so they are
-// written here; `crates/puddle-e2e/tests/ui_cpu_limits.rs` fails when they differ from the host's.
+// written here; `crates/puddle-e2e/tests/integration/ui_cpu_limits.rs` fails when they differ from the host's.
 
 export const CPUS_MIN = 1;
 export const CPUS_MAX = 32;

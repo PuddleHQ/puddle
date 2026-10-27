@@ -233,6 +233,7 @@ mod tests {
             .finish();
         let _guard = tracing::subscriber::set_default(subscriber);
         run.await;
+        std::io::Write::flush(&mut capture.clone()).unwrap();
         let bytes = capture.0.lock().unwrap().clone();
         String::from_utf8(bytes).unwrap()
     }

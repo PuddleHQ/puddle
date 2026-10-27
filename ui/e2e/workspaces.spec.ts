@@ -1214,6 +1214,33 @@ test.describe("the settings tab", () => {
     await expect(page.getByText("Login capture saved.")).toBeVisible();
   });
 
+  test("decrypting every host is off by default; the switch and the never-decrypt names are kept", async ({
+    page,
+    backend,
+  }) => {
+    await openDetail(page, backend, "web-shop", "settings");
+    const decrypt = page.getByRole("switch", { name: "Decrypt every host" });
+    await expect(decrypt).not.toBeChecked();
+    await decrypt.check();
+    await expect(
+      page.getByText("Puddle now decrypts every host."),
+    ).toBeVisible();
+    const names = page.getByLabel("Never decrypt in this workspace");
+    await names.fill("Bank.example\n*.corp.test");
+    await page.getByRole("button", { name: "Save names" }).click();
+    await expect(page.getByText("Saved.")).toBeVisible();
+    await page.reload();
+    await expect(
+      page.getByRole("switch", { name: "Decrypt every host" }),
+    ).toBeChecked();
+    await expect(
+      page.getByLabel("Never decrypt in this workspace"),
+    ).toHaveValue("*.corp.test\nbank.example");
+    await names.fill("10.0.0.1");
+    await page.getByRole("button", { name: "Save names" }).click();
+    await expect(page.getByRole("alert")).toContainText("10.0.0.1");
+  });
+
   test("a refused save says why and puts the choice back", async ({
     page,
     backend,

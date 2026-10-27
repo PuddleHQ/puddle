@@ -346,7 +346,11 @@ the owner, then tagged `vX.Y.Z` on `main`.
   the push's previous head (`DIFF_BASE`). Tool: `ui/scripts/diff-coverage.ts` (own code, no dependency;
   tests beside it).
   A line that legitimately can't run in CI goes in `scripts/diff-coverage-exclusions.txt`:
-  `path glob | text in the line, or * | reason`, one reason per entry, reviewed like code.
+  `path glob | whole line, or * | [xN |] reason`, one reason per entry, reviewed like code. The text is the
+  whole line, compared trimmed, never a part of one; under 20 characters is refused (a bare `)?;` or `}` is
+  pinned to its statement by writing the line above first, joined with `\n`); a backslash escapes the next character (`\|` for a bar of the code, `\\` for a backslash).
+  The file may hold at most N matches of the text (`xN`, default 1), so a copy added later stops being excused.
+  `*` excuses a whole file and is for code another OS or a VM runs.
   What it can't see: lines with no coverage data (comments, declarations, code compiled out of the Linux
   run such as `cfg(windows)` lines), files absent from the report (listed as "not measured", never
   failed), branch or region detail inside a covered line, and whether a covered line is asserted.

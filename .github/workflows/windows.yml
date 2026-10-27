@@ -35,7 +35,7 @@ permissions:
 
 # Superseded runs on a PR or task branch stop; develop's (the nightly, a dispatch) run to the end, each in its own group so none is dropped as a pending run.
 concurrency:
-  group: windows-${{ github.ref == 'refs/heads/develop' && github.run_id || github.ref }}
+  group: windows-${{ github.run_id }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/develop' }}
 
 env:
@@ -103,9 +103,9 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: steps.changed.outputs.run == 'true'
         with:
-          shared-key: windows-clippy
+          shared-key: windows-clippy-t544
           cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/develop' }}
+          save-if: ${{ github.ref != 'refs/heads/develop' }}
       - name: clippy
         if: steps.changed.outputs.run == 'true'
         shell: bash
@@ -140,9 +140,9 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: steps.changed.outputs.run == 'true'
         with:
-          shared-key: windows
+          shared-key: windows-t544
           cache-on-failure: true # a red test must not forfeit the build
-          save-if: ${{ github.ref == 'refs/heads/develop' }}
+          save-if: ${{ github.ref != 'refs/heads/develop' }}
       - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         if: steps.changed.outputs.run == 'true'
         with:
@@ -190,7 +190,7 @@ jobs:
       # differ from the workspace build above, so it compiled 130+ crates each run. Building it
       # here puts them in the entry this job saves (only develop saves, so only develop pays).
       - name: desktop shell dependencies (for the entry the UI job restores)
-        if: ${{ steps.changed.outputs.run == 'true' && github.ref == 'refs/heads/develop' }}
+        if: ${{ steps.changed.outputs.run == 'true' && github.ref != 'refs/heads/develop' }}
         shell: bash
         run: cargo build -p puddle-app --all-features --locked
       # Windows runs this one gate of the Linux job too: it proves ci/fetch-gitleaks.sh and the
@@ -237,7 +237,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: steps.changed.outputs.run == 'true'
         with:
-          shared-key: windows # saved by the tests job
+          shared-key: windows-t544 # saved by the tests job
           save-if: false
       - name: Node for the UI
         if: steps.changed.outputs.run == 'true'

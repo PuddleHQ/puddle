@@ -161,5 +161,8 @@ describe("GlobalNeverDecrypt", () => {
       message: "Too many names.",
     });
     expect(store.names).toEqual(["bank.example"]);
+    api.refuse = null;
+    api.down = true;
+    expect((await store.save(["x.io"])).ok).toBe(false);
   });
 });

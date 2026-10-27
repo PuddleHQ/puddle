@@ -573,7 +573,7 @@ and in `ci.yml` (Linux); every one but `ui-e2e` is also in the `pre-push` set; `
   test). A new API service gets its fake and a scenario field in `Fixture::build_state`; a new event needs
   nothing (an `Event` in JSON is a step). The `history` step writes N connection records over a week
   (the activity screen's long-log test).
-- **Coverage** (`ui/vite.config.ts`): the thresholds are `ui/coverage-baseline.json` (§9), `src/lib/**` 100 % of lines, functions and statements; `src/lib/api/**` (client,
+- **Coverage** (`ui/vite.config.ts`): lines ≥ 85 %, branches ≥ 80 % overall; `src/lib/api/**` (client,
   event stream), `src/lib/decision/**` (the four-outcome model), `src/lib/rules/**` (filter, sort, expiry),
   `src/lib/audit/**` (filters, the address, how a record reads, the drawn window) and `src/lib/workspaces/**` (what each state allows, form checks, settings choices) and `src/lib/settings/**` (consent wording, global settings choices) and `src/lib/network/**` (the network report in words, with a fix per problem) and `src/lib/notify/**` (notice list, event watcher) and `src/lib/identities/**` (how a source and its coverage read, the checks a form makes, clone addresses) ≥ 95 % lines, ≥ 90 % branches.
   Thresholds only go up.

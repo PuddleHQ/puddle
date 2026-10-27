@@ -14,12 +14,15 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { runCli } from "./cli.ts";
 import {
+  endsAt,
   git,
   globToRegExp,
+  occurrences,
   parseExclusions,
   parseLcov,
   type Coverage,
   type Exclusion,
+  type Source,
 } from "./diff-coverage.ts";
 
 export interface Missed {
@@ -38,6 +41,8 @@ export interface Verdict {
   /** Executable lines seen, and how many an exclusion accepted. */
   executable: number;
   excluded: number;
+  /** Exclusions that name a line more often than they allow, so excuse nothing there. */
+  notes?: string[];
 }
 
 /** Parses the crate list: one folder per line, `#` comments and blank lines skipped. */
@@ -48,12 +53,12 @@ export function parseCrates(text: string): string[] {
     .filter((l) => l !== "" && !l.startsWith("#"));
 }
 
-/** `source(path, line)` returns the text of one source line, for matching exclusions. */
+/** `source(path)` gives a file's lines, which an exclusion is matched against (the same rule as the diff gate). */
 export function judge(
   coverage: Coverage,
   crates: string[],
   exclusions: Exclusion[],
-  source: (path: string, line: number) => string,
+  source: Source,
 ): Verdict {
   const verdict: Verdict = {
     missed: [],
@@ -61,6 +66,7 @@ export function judge(
     stale: [],
     executable: 0,
     excluded: 0,
+    notes: [],
   };
   for (const crate of crates) {
     const files = [...coverage.keys()].filter((p) =>
@@ -72,12 +78,21 @@ export function judge(
       for (const [line, hits] of [...lines].sort((a, b) => a[0] - b[0])) {
         verdict.executable += 1;
         if (hits > 0) continue;
-        const text = source(path, line);
-        const hit = exclusions.find(
-          (e) =>
-            globToRegExp(e.glob).test(path) &&
-            (e.needle === "*" || text.includes(e.needle)),
-        );
+        const file = source(path) ?? [];
+        const text = file[line - 1] ?? "";
+        const hit = exclusions.find((e) => {
+          if (!globToRegExp(e.glob).test(path)) return false;
+          if (e.lines === "*") return true;
+          if (!endsAt(file, line, e.lines)) return false;
+          const n = occurrences(file, e.lines);
+          if (n > e.max) {
+            verdict.notes?.push(
+              `exclusion "${e.glob} | ${e.needle}" allows ${e.max} place(s) in a file, ${path} has ${n}: it excuses nothing there until the count is checked and raised`,
+            );
+            return false;
+          }
+          return true;
+        });
         if (hit) {
           hit.used = true;
           verdict.excluded += 1;
@@ -105,7 +120,8 @@ export function report(v: Verdict): { code: number; lines: string[] } {
     lines.push(
       `full-coverage: exclusion "${e.glob} | ${e.needle}" matches no unrun line; remove it`,
     );
-  if (lines.length > 0) return { code: 1, lines };
+  if (lines.length > 0)
+    return { code: 1, lines: [...lines, ...(v.notes ?? [])] };
   return {
     code: 0,
     lines: [
@@ -129,10 +145,10 @@ export function main(argv: string[], cwd: string = process.cwd()): number {
   }
   const root = git(["rev-parse", "--show-toplevel"], cwd).trim();
   const cache = new Map<string, string[]>();
-  const source = (path: string, line: number) => {
+  const source: Source = (path) => {
     if (!cache.has(path))
       cache.set(path, readFileSync(resolve(root, path), "utf8").split("\n"));
-    return (cache.get(path) as string[])[line - 1] ?? "";
+    return cache.get(path);
   };
   const { code, lines } = report(
     judge(

@@ -22,6 +22,7 @@ import {
   cleanGitEnv,
   parseExclusions,
   type Coverage,
+  type Source,
 } from "./diff-coverage.ts";
 import { judge, main, parseCrates, report } from "./full-coverage.ts";
 
@@ -32,7 +33,8 @@ const cov = (files: Record<string, Record<number, number>>): Coverage =>
       new Map(Object.entries(lines).map(([n, h]) => [Number(n), h])),
     ]),
   );
-const text = (path: string, line: number) => `${path} line ${line}`;
+const text: Source = (path) =>
+  Array.from({ length: 20 }, (_, i) => `${path} line ${i + 1}`);
 
 describe("parseCrates", () => {
   it("reads one folder per line and skips comments, blanks and trailing slashes", () => {
@@ -101,12 +103,12 @@ describe("judge", () => {
     expect(v.absent).toEqual(["crates/typo"]);
   });
 
-  it("accepts a line an exclusion names by text, and by `*` for the whole file, and reports an exclusion that matched nothing", () => {
+  it("accepts a line an exclusion names whole, and by `*` for the whole file, and reports an exclusion that matched nothing", () => {
     const ex = parseExclusions(
       [
-        "crates/a/src/x.rs | unreachable | fallback arm",
+        "crates/a/src/x.rs | unreachable_fallback_arm!() | fallback arm",
         "crates/a/**/y.rs | * | whole file",
-        "crates/a/src/x.rs | gone | stale",
+        "crates/a/src/x.rs | a line that is gone now | stale",
       ].join("\n"),
     );
     const v = judge(
@@ -116,13 +118,36 @@ describe("judge", () => {
       }),
       ["crates/a"],
       ex,
-      (_p, line) => (line === 1 ? "unreachable!()" : "other"),
+      () => ["  unreachable_fallback_arm!()  ", "other"],
     );
     expect(v.excluded).toBe(2);
     expect(v.missed).toEqual([
       { path: "crates/a/src/x.rs", line: 2, text: "other" },
     ]);
-    expect(v.stale.map((e) => e.needle)).toEqual(["gone"]);
+    expect(v.stale.map((e) => e.needle)).toEqual(["a line that is gone now"]);
+  });
+
+  it("does not excuse part of a line, and not a line that shows up more often than the entry allows", () => {
+    const ex = parseExclusions(
+      "crates/a/src/x.rs | unreachable_fallback_arm!() | fallback arm",
+    );
+    const same = ["unreachable_fallback_arm!()", "unreachable_fallback_arm!()"];
+    const v = judge(
+      cov({ "crates/a/src/x.rs": { 1: 0, 2: 0 } }),
+      ["crates/a"],
+      ex,
+      () => same,
+    );
+    expect(v.excluded).toBe(0);
+    expect(v.missed.map((m) => m.line)).toEqual([1, 2]);
+    expect(v.notes).toHaveLength(2);
+    const part = judge(
+      cov({ "crates/a/src/x.rs": { 1: 0 } }),
+      ["crates/a"],
+      ex,
+      () => ["unreachable_fallback_arm!() // more"],
+    );
+    expect(part.excluded).toBe(0);
   });
 });
 
@@ -140,7 +165,9 @@ describe("report", () => {
     const r = report({
       missed: [{ path: "crates/a/src/x.rs", line: 3, text: "  let x = 1;" }],
       absent: ["crates/typo"],
-      stale: parseExclusions("crates/a/src/x.rs | gone | why"),
+      stale: parseExclusions(
+        "crates/a/src/x.rs | a line that is gone now | why",
+      ),
       executable: 1,
       excluded: 0,
     });
@@ -149,7 +176,7 @@ describe("report", () => {
       "full-coverage: crates/typo has no entry in the coverage report",
       "full-coverage: 1 line(s) never ran in a test:",
       "  crates/a/src/x.rs:3: let x = 1;",
-      'full-coverage: exclusion "crates/a/src/x.rs | gone" matches no unrun line; remove it',
+      'full-coverage: exclusion "crates/a/src/x.rs | a line that is gone now" matches no unrun line; remove it',
     ]);
   });
 });

@@ -291,6 +291,16 @@ fn stop(child: &mut Child) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Tests that hold a port, or rely on one being closed, run one at a time: a test that
+    /// binds port 0 can be handed the port another test just closed.
+    static PORTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn ports() -> std::sync::MutexGuard<'static, ()> {
+        PORTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
     use std::process::Command;
 
     #[test]
@@ -372,6 +382,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "the fixture exited early")]
     fn a_fixture_that_dies_while_another_process_answers_on_its_port_is_not_ready() {
+        let _ports = ports();
         // Another process holds the port, so connecting works; the fixture itself has exited.
         let neighbour = std::net::TcpListener::bind((LOCAL, 0)).unwrap();
         let port = neighbour.local_addr().unwrap().port();
@@ -388,6 +399,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "the fixture exited early")]
     fn a_fixture_that_dies_just_after_the_port_answers_is_not_ready() {
+        let _ports = ports();
         let neighbour = std::net::TcpListener::bind((LOCAL, 0)).unwrap();
         let port = neighbour.local_addr().unwrap().port();
         let mut child = Command::new("sleep").arg("0.08").spawn().unwrap();
@@ -396,6 +408,7 @@ mod tests {
 
     #[test]
     fn a_listening_port_is_ready() {
+        let _ports = ports();
         let listener = std::net::TcpListener::bind((LOCAL, 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         wait_ready(port, None, Duration::from_secs(5), || unreachable!());
@@ -404,6 +417,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "the fixture did not accept connections\nlog text")]
     fn a_port_nobody_listens_on_times_out_with_the_diagnostics() {
+        let _ports = ports();
         let port = free_port();
         wait_ready(port, None, Duration::from_millis(100), || "log text".into());
     }
@@ -411,6 +425,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "the fixture exited early")]
     fn a_fixture_that_exits_is_reported_at_once() {
+        let _ports = ports();
         let port = free_port();
         let mut child = Command::new(std::env::current_exe().unwrap())
             .arg("--list")

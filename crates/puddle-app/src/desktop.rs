@@ -187,11 +187,14 @@ impl Buttons {
     }
 
     /// The window was minimized: hide it too when Settings say minimizing goes to the tray.
-    fn on_minimize<R: Runtime>(&self, window: &WebviewWindow<R>) {
+    /// Returns whether it was hidden.
+    fn on_minimize<R: Runtime>(&self, window: &WebviewWindow<R>) -> bool {
         let prefs = prefs_or_default(self.settings.as_ref());
-        if tray::minimize_action(&prefs, self.tray) == MinimizeAction::HideToTray {
+        let hide = tray::minimize_action(&prefs, self.tray) == MinimizeAction::HideToTray;
+        if hide {
             let _ = window.hide();
         }
+        hide
     }
 }
 
@@ -829,14 +832,20 @@ mod behaviour_tests {
     }
 
     #[test]
-    fn minimizing_only_reads_the_settings_to_hide_in_the_tray() {
+    fn minimizing_hides_the_window_only_when_settings_send_it_to_the_tray() {
         let rig = rig(TrayState::Shown);
         let buttons = buttons(&rig, TrayState::Shown);
-        buttons.on_minimize(&rig.window);
+        assert!(!buttons.on_minimize(&rig.window), "minimize_to_tray is off");
         save(&rig, &json!({"minimize_to_tray": true}));
-        buttons.on_minimize(&rig.window);
-        // The test window cannot tell whether it is hidden; the matrix itself is tested in `tray`,
-        // and the real window by the Windows smoke test.
+        assert!(buttons.on_minimize(&rig.window), "minimize_to_tray is on");
+    }
+
+    #[test]
+    fn without_a_tray_minimizing_never_hides_the_window() {
+        let rig = rig(TrayState::Missing);
+        let buttons = buttons(&rig, TrayState::Missing);
+        save(&rig, &json!({"minimize_to_tray": true}));
+        assert!(!buttons.on_minimize(&rig.window));
     }
 
     /// A loop over `hub`'s events with the rig's recorder as outputs, started as the app starts it.

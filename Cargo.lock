@@ -6246,6 +6246,7 @@ version = "0.0.0"
 dependencies = [
  "rustix",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

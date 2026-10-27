@@ -662,13 +662,28 @@ mod tests {
         );
     }
 
+    #[derive(Default)]
+    struct Recorder(std::sync::Mutex<Vec<ConnectionEvent>>);
+
+    impl ConnectionLog for Recorder {
+        fn record(&self, event: &ConnectionEvent) {
+            self.0.lock().unwrap().push(event.clone());
+        }
+    }
+
     #[test]
-    fn logs_take_events() {
-        let log = std::sync::Arc::new(NullConnectionLog);
-        log.record(&ConnectionEvent::new(
+    fn a_shared_log_hands_every_event_on_to_the_log_it_wraps() {
+        let recorder = std::sync::Arc::new(Recorder::default());
+        let shared: std::sync::Arc<dyn ConnectionLog> = recorder.clone();
+        let event = ConnectionEvent::new(
             &request(),
-            ConnectionDecision::Allow,
-            ConnectionReason::Rule,
-        ));
+            ConnectionDecision::Deny,
+            ConnectionReason::NoRule,
+        );
+        shared.record(&event);
+        std::sync::Arc::clone(&recorder).record(&event);
+        let seen = recorder.0.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0], event);
     }
 }

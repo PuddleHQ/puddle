@@ -306,10 +306,38 @@ jobs:
       - name: cargo-deny (bans, licences, sources; advisories run in their own job)
         if: ${{ !cancelled() }}
         run: scripts/check.sh deny
+      # The notices verdict is a function of the manifests, the lockfile, cargo-about's config and version and xtask
+      # (`notices_inputs_hash` in scripts/check.sh). A develop run that passes saves a stamp in a cache entry named by
+      # that hash; a run on the same inputs restores it and the gate skips (about 90 s of a warm job). A pull request
+      # and a queue run only restore, so a stamp always comes from a gate that passed on develop. The gate compares the
+      # stamp with its own hash, so an entry that does not match its name only costs the run. The stamp lives outside
+      # target/ (CHECK_STAMP_DIR): rust-cache deletes the files of a target subfolder when it saves.
+      - name: licence notices stamp (key from the gate's own inputs hash)
+        id: notices-key
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: echo "key=notices-ok-$(scripts/check.sh --stamp-key notices)" >> "$GITHUB_OUTPUT"
+      - name: licence notices stamp (restore)
+        id: notices-stamp
+        if: ${{ !cancelled() && steps.notices-key.outputs.key != '' }}
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/check-stamps
+          key: ${{ steps.notices-key.outputs.key }}
       - name: licence notices (cargo-about)
         id: notices
         if: ${{ !cancelled() && needs.scope.outputs.light != 'true' }}
+        env:
+          CHECK_STAMP_DIR: ${{ runner.temp }}/check-stamps
         run: scripts/check.sh notices
+      - name: licence notices stamp (save, develop only)
+        if: ${{ github.ref == 'refs/heads/develop' && steps.notices.outcome == 'success' && steps.notices-key.outputs.key != '' && steps.notices-stamp.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/check-stamps
+          key: ${{ steps.notices-key.outputs.key }}
       - name: API contract (openapi.json and schema.d.ts are current)
         if: ${{ !cancelled() }}
         run: scripts/check.sh openapi

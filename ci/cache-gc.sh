@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Keeps the repo's Actions caches under GitHub's 10 GB cap, so the 137 MB cargo-xwin entry (a miss
 # costs a 14-minute MSVC CRT download) is never evicted. Deletes, newest kept:
-#   - on develop/main, all but the newest entry of each rust-cache / msb build / node group (an old
+#   - on develop/main, all but the newest entry of each rust-cache / msb build / node / notices-stamp group (an old
 #     Cargo.lock hash leaves a 1-3 GB entry behind that nothing restores any more);
 #   - on develop/main, an entry of those groups unused for a week (a group whose key was renamed
 #     leaves its last entry behind, and the newest-of-group rule keeps it for ever);
@@ -32,6 +32,7 @@ gh api --paginate "repos/$repo/actions/caches?per_page=100" --jq '.actions_cache
                  elif (.key | startswith("msb-linux-")) then "msb-linux"
                  elif (.key | startswith("node-cache-")) then "node-cache"
                  elif (.key | startswith("playwright-")) then "playwright"
+                 elif (.key | startswith("notices-ok-")) then "notices-ok"
                  else null end;
       def trunk: .ref == "refs/heads/develop" or .ref == "refs/heads/main";
       ( [ .[] | select(trunk and (group != null)) | . + {g: group} ]

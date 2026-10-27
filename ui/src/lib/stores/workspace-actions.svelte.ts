@@ -9,6 +9,7 @@ import {
   type WorkspaceStore,
 } from "./workspaces.svelte.ts";
 import { toasts as defaultToasts, type ToastQueue } from "./toasts.svelte.ts";
+import { readRemoved, type Removed } from "#lib/workspaces/removed.ts";
 import {
   operationLabel,
   type DeleteCheck,
@@ -18,6 +19,8 @@ import {
 export interface DeleteState {
   workspace: Workspace;
   check: DeleteCheck;
+  /** What Puddle removes from its own records besides the disk; `null` when it could not be counted. */
+  removes: Removed | null;
   /** A delete request is in flight. */
   working: boolean;
   /** Why the last delete request failed, when it did (a changed workspace shows the new list). */
@@ -82,9 +85,16 @@ export class WorkspaceActions {
   readonly #store: Store;
   readonly #toasts: Toasts;
 
-  constructor(store: Store = defaultStore, toasts: Toasts = defaultToasts) {
+  readonly #removed: (name: string) => Promise<Removed | null>;
+
+  constructor(
+    store: Store = defaultStore,
+    toasts: Toasts = defaultToasts,
+    removed: (name: string) => Promise<Removed | null> = readRemoved,
+  ) {
     this.#store = store;
     this.#toasts = toasts;
+    this.#removed = removed;
   }
 
   #fail(message: string): void {
@@ -228,6 +238,7 @@ export class WorkspaceActions {
     this.deleting = {
       workspace: w,
       check: result.value,
+      removes: await this.#removed(w.name),
       working: false,
       error: null,
     };
@@ -259,6 +270,7 @@ export class WorkspaceActions {
         this.deleting = {
           ...state,
           check: again.value,
+          removes: await this.#removed(state.workspace.name),
           working: false,
           error: result.message,
         };

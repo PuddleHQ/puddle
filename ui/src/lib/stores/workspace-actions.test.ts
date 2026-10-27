@@ -17,6 +17,7 @@ let api: FakeWorkspaces;
 let store: WorkspaceStore;
 let toasts: ToastQueue;
 let actions: WorkspaceActions;
+let removed: { variables: number; secrets: number; rules: number } | null;
 
 beforeEach(async () => {
   api = new FakeWorkspaces();
@@ -28,7 +29,8 @@ beforeEach(async () => {
   store = new WorkspaceStore({ api: api as never });
   await store.refresh();
   toasts = new ToastQueue();
-  actions = new WorkspaceActions(store, toasts);
+  removed = { variables: 2, secrets: 1, rules: 3 };
+  actions = new WorkspaceActions(store, toasts, async () => removed);
 });
 
 const messages = () => toasts.items.map((t) => t.message);
@@ -284,6 +286,31 @@ describe("deleting", () => {
     expect(actions.checking).toBeNull();
     expect(actions.deleteOpen).toBe(true);
     expect(actions.deleting?.check.fingerprint).toBe("fp-dirty");
+  });
+
+  it("counts what Puddle itself removes beside the disk, and again for a new list", async () => {
+    api.check = cleanCheck("down");
+    await actions.askDelete(w("down"));
+    expect(actions.deleting?.removes).toEqual({
+      variables: 2,
+      secrets: 1,
+      rules: 3,
+    });
+    removed = { variables: 0, secrets: 0, rules: 4 };
+    api.check = dirtyCheck("down");
+    api.refuse.set("DELETE /api/workspaces/{id}", {
+      status: 409,
+      message: "changed",
+    });
+    await actions.confirmDelete();
+    expect(actions.deleting?.removes).toEqual({
+      variables: 0,
+      secrets: 0,
+      rules: 4,
+    });
+    removed = null;
+    await actions.askDelete(w("down"));
+    expect(actions.deleting?.removes).toBeNull();
   });
 
   it("says so when the check can't be read", async () => {

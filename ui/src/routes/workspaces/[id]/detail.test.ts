@@ -89,9 +89,6 @@ import DetailLayout from "./+layout.svelte";
 import Overview from "./+page.svelte";
 import Network from "./network/+page.svelte";
 import Settings from "./settings/+page.svelte";
-import Environment from "./environment/+page.svelte";
-import ShellInit from "./shell-init/+page.svelte";
-import Ports from "./ports/+page.svelte";
 
 const { inbox, api, workspace, request, rules, rule } = h;
 
@@ -1054,19 +1051,5 @@ describe("the settings tab", () => {
     await load();
     const { container } = render(Settings);
     expect(container.textContent?.trim()).toBe("");
-  });
-});
-
-describe("the tabs that come later", () => {
-  it.each([
-    ["Environment", Environment],
-    ["Shell init", ShellInit],
-    ["Ports", Ports],
-  ])("%s says it is not available yet", (name, component) => {
-    render(component);
-    expect(screen.getByRole("heading", { level: 2, name })).toBeInTheDocument();
-    expect(
-      screen.getByText("This part of the workspace page is not available yet."),
-    ).toBeInTheDocument();
   });
 });

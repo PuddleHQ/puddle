@@ -488,11 +488,19 @@ mod tests {
     }
 
     /// An unregister call that fails the way WinHTTP may (an error code).
+    ///
+    /// # Safety
+    ///
+    /// Any `registration` is fine: this fake never reads or dereferences it.
     unsafe extern "system" fn unregister_fails(_registration: *const c_void) -> u32 {
         6 // ERROR_INVALID_HANDLE
     }
 
     /// An unregister call that succeeds.
+    ///
+    /// # Safety
+    ///
+    /// Any `registration` is fine: this fake never reads or dereferences it.
     unsafe extern "system" fn unregister_succeeds(_registration: *const c_void) -> u32 {
         0
     }

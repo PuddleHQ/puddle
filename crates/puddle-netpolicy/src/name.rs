@@ -462,10 +462,8 @@ mod tests {
     #[test]
     fn input_of_exactly_the_echo_limit_is_echoed_whole() {
         let raw = format!("{} ", "x".repeat(MAX_ECHOED_CHARS - 1));
-        let NameError::Invalid { input, .. } = normalise_host(&raw).unwrap_err() else {
-            panic!("expected Invalid");
-        };
-        assert_eq!(input, raw);
+        let err = normalise_host(&raw).unwrap_err();
+        assert!(matches!(&err, NameError::Invalid { input, .. } if *input == raw));
     }
 
     #[test]

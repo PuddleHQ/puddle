@@ -240,6 +240,18 @@ async fn each_workspace_name_reaches_its_own_editor_and_only_its_own() {
 }
 
 #[tokio::test]
+async fn a_connect_request_is_refused_and_reaches_nothing() {
+    let rig = rig().await;
+    let a = Server::start("alpha").await;
+    rig.running.start("a", Some(a.addr), Flavour::CodeServer);
+    let h = host(&rig, "a");
+    let request = format!("CONNECT {h} HTTP/1.1\r\nHost: {h}\r\nConnection: close\r\n\r\n");
+    let answer = ask(&rig.front, &request).await;
+    assert_eq!(answer.status, 405);
+    assert_eq!(a.seen.connections.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn a_name_that_is_not_a_running_workspace_gets_a_404_and_reaches_nothing() {
     let rig = rig().await;
     let a = Server::start("alpha").await;

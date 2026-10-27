@@ -396,6 +396,8 @@ mod tests {
         let long_name = vec!["a".repeat(63); 4].join(".");
         assert!(reason(&long_name).contains("253"));
         assert!(reason(&"a".repeat(MAX_RAW_HOST_LEN + 1)).contains("too long"));
+        // The limit itself is still a length the name rules judge, not "too long".
+        assert!(!reason(&"a".repeat(MAX_RAW_HOST_LEN)).contains("too long"));
     }
 
     #[test]
@@ -455,6 +457,15 @@ mod tests {
         };
         assert_eq!(input.chars().count(), MAX_ECHOED_CHARS + 1);
         assert!(input.ends_with('…'));
+    }
+
+    #[test]
+    fn input_of_exactly_the_echo_limit_is_echoed_whole() {
+        let raw = format!("{} ", "x".repeat(MAX_ECHOED_CHARS - 1));
+        let NameError::Invalid { input, .. } = normalise_host(&raw).unwrap_err() else {
+            panic!("expected Invalid");
+        };
+        assert_eq!(input, raw);
     }
 
     #[test]

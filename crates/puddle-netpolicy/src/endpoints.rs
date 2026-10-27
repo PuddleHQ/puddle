@@ -59,10 +59,13 @@ pub struct OwnAddresses;
 
 impl HostAddrs for OwnAddresses {
     fn is_own(&self, ip: IpAddr) -> bool {
-        ip.is_loopback()
-            || ip.is_unspecified()
-            || bind_means_own(UdpSocket::bind((ip, 0)).map(drop))
+        is_own_with(ip, |ip| UdpSocket::bind((ip, 0)).map(drop))
     }
+}
+
+/// [`OwnAddresses::is_own`] with the bind attempt passed in, so a test can make it fail.
+fn is_own_with(ip: IpAddr, bind: impl FnOnce(IpAddr) -> io::Result<()>) -> bool {
+    ip.is_loopback() || ip.is_unspecified() || bind_means_own(bind(ip))
 }
 
 /// Only `AddrNotAvailable` says the host does not own the address. Any other failure (out of
@@ -271,6 +274,16 @@ mod tests {
         }
         // TEST-NET-1 is never configured on a CI runner.
         assert!(!OwnAddresses.is_own("192.0.2.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn loopback_and_unspecified_are_own_without_asking_the_host_to_bind() {
+        let not_available = |_: IpAddr| Err(io::Error::from(io::ErrorKind::AddrNotAvailable));
+        for ip in ["127.0.0.1", "0.0.0.0", "::1", "::"] {
+            assert!(is_own_with(ip.parse().unwrap(), not_available), "{ip}");
+        }
+        assert!(!is_own_with("192.0.2.1".parse().unwrap(), not_available));
+        assert!(is_own_with("192.0.2.1".parse().unwrap(), |_| Ok(())));
     }
 
     #[test]

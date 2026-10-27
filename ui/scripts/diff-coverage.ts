@@ -20,6 +20,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
+import { runCli } from "./cli.ts";
 
 /** Execution counts per line, per repository-relative path. */
 export type Coverage = Map<string, Map<number, number>>;
@@ -112,7 +113,7 @@ export function parseExclusions(text: string): Exclusion[] {
   return out;
 }
 
-function globToRegExp(glob: string): RegExp {
+export function globToRegExp(glob: string): RegExp {
   let re = "";
   for (let i = 0; i < glob.length; i += 1) {
     const c = glob[i] as string;
@@ -184,7 +185,7 @@ export function cleanGitEnv(
   return out;
 }
 
-function git(args: string[], cwd: string): string {
+export function git(args: string[], cwd: string): string {
   return execFileSync("git", args, {
     env: cleanGitEnv(),
     cwd,
@@ -286,11 +287,9 @@ export function run(opts: Options, cwd: string = process.cwd()): number {
   return 0;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === import.meta.filename) {
-  try {
-    process.exitCode = run(parseArgs(process.argv.slice(2)));
-  } catch (e) {
-    console.error(`diff-coverage: ${(e as Error).message}`);
-    process.exitCode = 2;
-  }
+/** The gate as the command line calls it: the arguments in, the exit code out. */
+export function runFromArgs(argv: string[]): number {
+  return run(parseArgs(argv));
 }
+
+runCli(import.meta.filename, runFromArgs, "diff-coverage");

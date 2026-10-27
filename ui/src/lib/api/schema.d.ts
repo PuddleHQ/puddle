@@ -464,6 +464,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/interception/never-decrypt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The names no workspace decrypts. */
+        get: operations["get_global_never_decrypt"];
+        /**
+         * Replaces the names no workspace decrypts. Running workspaces that decrypt every host apply it
+         *     at once.
+         */
+        put: operations["put_global_never_decrypt"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/network-health": {
         parameters: {
             query?: never;
@@ -1047,6 +1068,31 @@ export interface paths {
         post?: never;
         /** Takes an identity off the workspace. */
         delete: operations["detach_identity"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/interception": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How a workspace decrypts hosts: the switch and the never-decrypt names (its own and the
+         *     global ones).
+         */
+        get: operations["get_interception"];
+        /**
+         * Changes the switch and/or the workspace's never-decrypt names. A running workspace applies it
+         *     at once: the next connection to a host is decrypted or passed through accordingly. A host with
+         *     a credential, secret or login capture is always decrypted, whatever the list says.
+         */
+        put: operations["put_interception"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2659,6 +2705,11 @@ export interface components {
             /** @description "Only push to listed repos". */
             only_push_listed?: boolean | null;
         };
+        /** @description The names no workspace decrypts. */
+        GlobalNeverDecrypt: {
+            /** @description The names, as for a workspace; sorted. On saving, replaces the whole list. At most 500. */
+            never_decrypt: string[];
+        };
         /** @description New global settings. Replaces every value listed here; unknown stored fields are kept. */
         GlobalSettingsRequest: {
             /** @description Preferences for Puddle's window. */
@@ -2790,6 +2841,33 @@ export interface components {
             registrable_domain: string;
             /** @description Open requests, most recent first. */
             requests: components["schemas"]["PendingRequest"][];
+        };
+        /** @description A change to a workspace's interception. A field that is absent stays as it is. */
+        InterceptionRequest: {
+            /** @description Turns decrypting every host on or off. It applies to the running workspace at once. */
+            decrypt_all?: boolean | null;
+            /**
+             * @description Replaces the workspace's never-decrypt names. Each is a host name or `*.` followed by a
+             *     domain with at least two labels; no IP addresses. At most 500.
+             */
+            never_decrypt?: string[] | null;
+        };
+        /** @description How a workspace decrypts hosts beyond the ones it has a credential for. */
+        InterceptionView: {
+            /**
+             * @description Whether Puddle decrypts every host on port 443, not only the hosts with a credential,
+             *     secret or login capture. Off unless turned on.
+             */
+            decrypt_all: boolean;
+            /** @description The names no workspace decrypts, sorted. Changed through the global route. */
+            global_never_decrypt: string[];
+            /**
+             * @description The names this workspace never decrypts while the switch is on (`example.com`,
+             *     `*.example.com`), sorted.
+             */
+            never_decrypt: string[];
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
         };
         /** @description The logins kept for a workspace. No token, stand-in or account detail is in it. */
         KeptLoginList: {
@@ -6259,6 +6337,131 @@ export interface operations {
             };
         };
     };
+    get_global_never_decrypt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the global never-decrypt names */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalNeverDecrypt"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_global_never_decrypt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GlobalNeverDecrypt"];
+            };
+        };
+        responses: {
+            /** @description saved; the list now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalNeverDecrypt"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description a name is not a host name, is an IP address or is too wide, or there are too many */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
     network_health: {
         parameters: {
             query?: never;
@@ -9263,6 +9466,155 @@ export interface operations {
             };
             /** @description Host is not the API's own address */
             421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_interception: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the workspace's interception settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InterceptionView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_interception: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InterceptionRequest"];
+            };
+        };
+        responses: {
+            /** @description saved; the settings now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InterceptionView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description a name is not a host name, is an IP address or is too wide, or there are too many */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

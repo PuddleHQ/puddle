@@ -174,7 +174,8 @@ impl Interception {
 
     /// Why `host`, not bound to a credential, is not decrypted although the switch is on: the
     /// audit code. `None` when it is decrypted (or the switch is off).
-    pub(crate) fn skipped(&self, host: &Host) -> Option<&'static str> {
+    #[must_use]
+    pub fn skipped(&self, host: &Host) -> Option<&'static str> {
         if !self.decrypt_all || !matches!(host, Host::Name(_)) {
             return None;
         }

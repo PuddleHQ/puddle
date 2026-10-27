@@ -175,7 +175,7 @@ describe("forwarding", () => {
       { target: { value: "13000" } },
     );
     await fireEvent.click(
-      within(row).getByRole("button", { name: "Forward 3000 and keep it" }),
+      within(row).getByRole("button", { name: "Forward and keep 3000" }),
     );
     await waitFor(async () =>
       expect(await rowOf(3000)).toHaveTextContent("Open on 127.0.0.1:13000"),

@@ -191,7 +191,7 @@
                       type="button"
                       class="btn"
                       disabled={busy || !store.running}
-                      aria-label="Forward {row.guest_port} and keep it"
+                      aria-label="Forward and keep {row.guest_port}"
                       onclick={() => onForward(row, true)}
                       >Forward and keep</button
                     >

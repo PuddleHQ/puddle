@@ -64,6 +64,12 @@ slow-timeout = { period = "120s", terminate-after = 5 }
 filter = "test(/(^|::)vm_radar_/)"
 slow-timeout = { period = "600s", terminate-after = 6 }
 
+# The soak (`vm_soak_*`: a session idle for 15 minutes, then it must answer) is longer than any other
+# VM test by design; the nightly and dispatch runs of the VM workflows run it, pull requests skip it.
+[[profile.vm.overrides]]
+filter = "test(/(^|::)vm_soak_/)"
+slow-timeout = { period = "600s", terminate-after = 3 }
+
 # The transparency suite moves a gibibyte each way and lets a reader take a minute: a slow runner
 # must not turn "finishes in 30 s" into a kill (a gibibyte each way took 250 s on four busy CPUs).
 [[profile.default.overrides]]

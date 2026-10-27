@@ -42,7 +42,7 @@ env:
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
   # Crates with VM tests: the harness smoke, the msb adapter (contract suite, HG-01/02, memory),
   # the boot hook, the workspace lifecycle, shutdown and reconcile, the whole host.
-  VM_CRATES: -p puddle-vm-tests -p puddle-compute-msb -p puddle-boot -p puddle-workspace -p puddle-lifecycle -p puddle-host
+  VM_CRATES: -p puddle-vm-tests -p puddle-compute-msb -p puddle-boot -p puddle-workspace -p puddle-lifecycle -p puddle-host --package=puddle
   # msb's sandbox runtimes log at debug, and the harness keeps each removed sandbox's logs beside
   # the run home, so a boot that fails keeps its VMM trace and kernel.log in the artefact.
   PUDDLE_VM_MSB_LOG_LEVEL: debug
@@ -133,7 +133,7 @@ jobs:
     if: needs.build.outputs.run == 'true'
     runs-on: windows-2025
     # ~67 VM tests in all, each partition a fifth of them; every test has its own 12-minute cap.
-    timeout-minutes: 40
+    timeout-minutes: ${{ contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name) && 60 || 40 }}
     strategy:
       fail-fast: false
       matrix:
@@ -191,13 +191,15 @@ jobs:
           # cargo-nextest is called directly: through `cargo` it would make rustup install the
           # pinned toolchain here, which an archive run never needs.
           mkdir -p "$RUNNER_TEMP/vmx"
-          # Real-machine tests (vm_machine_*) run in ci/windows-e2e.ps1, and the real-tool radar (vm_radar_*) in full-test.yml, not here.
+          # Real-machine tests (vm_machine_*) run in ci/windows-e2e.ps1, and the real-tool radar (vm_radar_*) in full-test.yml, not here. The soak (vm_soak_*, a 15-minute idle SSH session) runs on the nightly and on a dispatch only.
+          FILTER='not (test(/(^|::)vm_machine_/) | test(/(^|::)vm_radar_/) | test(/(^|::)vm_soak_/))'
+          case "$GITHUB_EVENT_NAME" in schedule | workflow_dispatch) FILTER='not (test(/(^|::)vm_machine_/) | test(/(^|::)vm_radar_/))' ;; esac
           PUDDLE_VM_PREFIX="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             cargo-nextest nextest run --profile vm \
             --archive-file "$(cygpath -m "$RUNNER_TEMP")/bundle/vm-tests.tar.zst" \
             --extract-to "$(cygpath -m "$RUNNER_TEMP")/vmx" --workspace-remap . \
             --partition hash:${{ matrix.partition }}/5 \
-            -E 'not (test(/(^|::)vm_machine_/) | test(/(^|::)vm_radar_/))'
+            -E "$FILTER"
       - name: upload test results and msb logs
         if: ${{ !cancelled() && steps.whp.outputs.ok == 'true' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

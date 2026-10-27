@@ -37,7 +37,7 @@ Two findings from the rerun put requirements on Puddle rather than on the choice
   passed `git fsck --full`.
 - **Disk images never shrink on delete.** The volume held 8.8 GB allocated after `rm -rf` of
   everything; `fstrim` in the guest brought it to 104 MB. msb mounts volumes without `discard`. The
-  layered root disk can't be trimmed at all (`discard not supported`), and held 5.4 GB.
+  layered root disk refused `fstrim /` (`discard not supported`), and held 5.4 GB.
 
 ## Decision
 
@@ -103,13 +103,17 @@ Two findings from the rerun put requirements on Puddle rather than on the choice
 - **Disk use:** sparse images grow with use and shrink only on trim (7). Each image's 64 MiB ext4
   journal is the exception: the runtime writes it when it makes the image (it halves the host's
   journal commits for a guest's first writes), and a trim never returns it. Each sandbox's root disk
-  grows too and can't be trimmed.
+  grows too; `fstrim /` never works (the root is an overlay, which does not forward the trim), but the
+  runtime's fork can expose the root disk's own ext4 at `/.msb/rootfs/upperfs`, which `fstrim` accepts.
 - **Crash safety:** filesystem-level consistency after a VMM crash is measured; host power loss is
   not (it depends on msb turning a guest flush into `FlushFileBuffers`).
 
 ## Open risks
 
-- **Caches on the root disk can't be trimmed.** npm, NuGet and similar caches in `~` and build
+- **Caches on the root disk are not trimmed yet.** The cause is the overlay root, and the runtime
+  fork now keeps the root disk's ext4 reachable at `/.msb/rootfs/upperfs` (512 MiB written and deleted:
+  the image went 577 MiB back to 65 MiB after `fstrim` of that path). Puddle does not call it yet: that
+  needs a fork release and a pin bump. Until then npm, NuGet and similar caches in `~` and build
   output outside the workspace live in the sandbox's `upper.ext4`, which grew to 5.4 GB in one
   session and can only be reclaimed by recreating the sandbox. Options (undecided): redirect caches
   onto the workspace volume or a second owned disk, or offer "recreate sandbox" as the reclaim path

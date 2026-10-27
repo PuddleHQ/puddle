@@ -384,6 +384,16 @@ mod tests {
         wait_ready(port, Some(&mut child), Duration::from_secs(5), String::new);
     }
 
+    #[cfg(unix)]
+    #[test]
+    #[should_panic(expected = "the fixture exited early")]
+    fn a_fixture_that_dies_just_after_the_port_answers_is_not_ready() {
+        let neighbour = std::net::TcpListener::bind((LOCAL, 0)).unwrap();
+        let port = neighbour.local_addr().unwrap().port();
+        let mut child = Command::new("sleep").arg("0.08").spawn().unwrap();
+        wait_ready(port, Some(&mut child), Duration::from_secs(5), String::new);
+    }
+
     #[test]
     fn a_listening_port_is_ready() {
         let listener = std::net::TcpListener::bind((LOCAL, 0)).unwrap();

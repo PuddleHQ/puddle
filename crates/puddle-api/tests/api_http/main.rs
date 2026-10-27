@@ -20,6 +20,7 @@ pub(crate) mod events;
 mod first_run;
 mod guard;
 mod identities;
+mod interception;
 mod logins;
 mod network_health;
 mod ports;

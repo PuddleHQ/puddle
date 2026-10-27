@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.20.0"
+    "version": "0.21.0"
   },
   "paths": {
     "/api/app-icons": {
@@ -2520,6 +2520,146 @@
           },
           "421": {
             "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/interception/never-decrypt": {
+      "get": {
+        "tags": [
+          "interception"
+        ],
+        "summary": "The names no workspace decrypts.",
+        "operationId": "get_global_never_decrypt",
+        "responses": {
+          "200": {
+            "description": "the global never-decrypt names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalNeverDecrypt"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "interception"
+        ],
+        "summary": "Replaces the names no workspace decrypts. Running workspaces that decrypt every host apply it\nat once.",
+        "operationId": "put_global_never_decrypt",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GlobalNeverDecrypt"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "saved; the list now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalNeverDecrypt"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "a name is not a host name, is an IP address or is too wide, or there are too many",
             "content": {
               "application/json": {
                 "schema": {
@@ -6199,6 +6339,188 @@
           },
           "421": {
             "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/interception": {
+      "get": {
+        "tags": [
+          "interception"
+        ],
+        "summary": "How a workspace decrypts hosts: the switch and the never-decrypt names (its own and the\nglobal ones).",
+        "operationId": "get_interception",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the workspace's interception settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterceptionView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "interception"
+        ],
+        "summary": "Changes the switch and/or the workspace's never-decrypt names. A running workspace applies it\nat once: the next connection to a host is decrypted or passed through accordingly. A host with\na credential, secret or login capture is always decrypted, whatever the list says.",
+        "operationId": "put_interception",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InterceptionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "saved; the settings now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterceptionView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "a name is not a host name, is an IP address or is too wide, or there are too many",
             "content": {
               "application/json": {
                 "schema": {
@@ -11136,6 +11458,22 @@
           }
         }
       },
+      "GlobalNeverDecrypt": {
+        "type": "object",
+        "description": "The names no workspace decrypts.",
+        "required": [
+          "never_decrypt"
+        ],
+        "properties": {
+          "never_decrypt": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The names, as for a workspace; sorted. On saving, replaces the whole list. At most 500."
+          }
+        }
+      },
       "GlobalSettingsRequest": {
         "type": "object",
         "description": "New global settings. Replaces every value listed here; unknown stored fields are kept.",
@@ -11445,6 +11783,63 @@
               "$ref": "#/components/schemas/PendingRequest"
             },
             "description": "Open requests, most recent first."
+          }
+        }
+      },
+      "InterceptionRequest": {
+        "type": "object",
+        "description": "A change to a workspace's interception. A field that is absent stays as it is.",
+        "properties": {
+          "decrypt_all": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Turns decrypting every host on or off. It applies to the running workspace at once."
+          },
+          "never_decrypt": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Replaces the workspace's never-decrypt names. Each is a host name or `*.` followed by a\ndomain with at least two labels; no IP addresses. At most 500."
+          }
+        }
+      },
+      "InterceptionView": {
+        "type": "object",
+        "description": "How a workspace decrypts hosts beyond the ones it has a credential for.",
+        "required": [
+          "workspace",
+          "decrypt_all",
+          "never_decrypt",
+          "global_never_decrypt"
+        ],
+        "properties": {
+          "decrypt_all": {
+            "type": "boolean",
+            "description": "Whether Puddle decrypts every host on port 443, not only the hosts with a credential,\nsecret or login capture. Off unless turned on."
+          },
+          "global_never_decrypt": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The names no workspace decrypts, sorted. Changed through the global route."
+          },
+          "never_decrypt": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The names this workspace never decrypts while the switch is on (`example.com`,\n`*.example.com`), sorted."
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceName",
+            "description": "The workspace."
           }
         }
       },
@@ -14554,6 +14949,10 @@
     {
       "name": "environment",
       "description": "Environment variables and secrets, global and per workspace; a secret's value is write-only"
+    },
+    {
+      "name": "interception",
+      "description": "Decrypting every host: a workspace's switch and the names that are never decrypted"
     },
     {
       "name": "shell-init",

@@ -28,6 +28,7 @@ mod environment;
 mod events;
 mod first_run;
 mod identities;
+mod interception;
 mod logins;
 mod meta;
 mod network_health;
@@ -191,6 +192,14 @@ fn environment_router() -> OpenApiRouter<AppState> {
             shell_init::get_shell_init,
             shell_init::put_shell_init,
             shell_init::delete_shell_init
+        ))
+        .routes(routes!(
+            interception::get_interception,
+            interception::put_interception
+        ))
+        .routes(routes!(
+            interception::get_global_never_decrypt,
+            interception::put_global_never_decrypt
         ))
         .routes(routes!(logins::list_logins))
         .routes(routes!(logins::forget_login))

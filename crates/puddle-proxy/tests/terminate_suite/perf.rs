@@ -6,7 +6,7 @@
 //! workflow runs them; by hand:
 //!
 //! ```text
-//! cargo nextest run --release -p puddle-proxy --test terminate_perf --run-ignored only --no-capture
+//! cargo nextest run --release -p puddle-proxy --test terminate_suite -E "test(/^perf::/)" --run-ignored only --no-capture
 //! ```
 //!
 //! Each test prints what it measured and then asserts a ceiling. The goal (decrypting costs at most

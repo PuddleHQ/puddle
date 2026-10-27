@@ -9,10 +9,10 @@ use rusqlite::Connection;
 use crate::error::StoreError;
 
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 9;
+pub const SCHEMA_VERSION: u32 = 10;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -355,6 +355,24 @@ CREATE TABLE pinned_ports (
     guest_port   INTEGER NOT NULL CHECK (guest_port BETWEEN 1 AND 65535),
     host_port    INTEGER NOT NULL CHECK (host_port BETWEEN 1 AND 65535),
     PRIMARY KEY (workspace_id, guest_port)
+) STRICT;
+";
+
+const V10: &str = r"
+-- Decrypting every host: a per-workspace switch (off unless a row says on) and the names that are
+-- never decrypted while it is on, for one workspace or for every workspace. Rows go with the
+-- workspace; the global list stays.
+CREATE TABLE workspace_interception (
+    workspace_id TEXT    NOT NULL PRIMARY KEY,
+    decrypt_all  INTEGER NOT NULL CHECK (decrypt_all IN (0, 1))
+) STRICT;
+CREATE TABLE never_decrypt (
+    workspace_id TEXT NOT NULL,
+    pattern      TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, pattern)
+) STRICT;
+CREATE TABLE never_decrypt_global (
+    pattern TEXT NOT NULL PRIMARY KEY
 ) STRICT;
 ";
 

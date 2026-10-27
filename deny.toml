@@ -34,21 +34,21 @@ ignore = [
     # (0391), not seekable, dictionaries, `try_clone`, multithreaded contexts, `train_from_buffer`,
     # `OutBuffer::around_pos`, `InBuffer::pos` or `CParameter` (0395 to 0402, 0404 to 0406). 0403
     # needs a corrupt legacy frame written through `zstd::stream::write::Decoder`; the fork reads
-    # through the read-side decoder, and a decode error aborts the boot. The input is never guest or
+    # through the read-side decoder, and a decode error is ignored by `let _ =` but leaves a truncated kernel that `load_elf64_kernel` then rejects, so the boot fails. The input is never guest or
     # network data. Remove with the fork's bump to zstd 0.14.3; review by 2027-01-06.
-    { id = "RUSTSEC-2026-0391", reason = "zstd 0.13.3 reused-context leak; fork decodes the host's kernel file with a fresh decoder" },
-    { id = "RUSTSEC-2026-0395", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
-    { id = "RUSTSEC-2026-0396", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
-    { id = "RUSTSEC-2026-0397", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
-    { id = "RUSTSEC-2026-0398", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
-    { id = "RUSTSEC-2026-0399", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
-    { id = "RUSTSEC-2026-0400", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
-    { id = "RUSTSEC-2026-0401", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
-    { id = "RUSTSEC-2026-0402", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
-    { id = "RUSTSEC-2026-0403", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
-    { id = "RUSTSEC-2026-0404", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
-    { id = "RUSTSEC-2026-0405", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
-    { id = "RUSTSEC-2026-0406", reason = "zstd-safe 7.3.0; API not called by the fork's one copy_decode of the host kernel file" },
+    { id = "RUSTSEC-2026-0391", reason = "zstd 0.13.3 reused-context leak (raw::Decoder::with_context and Encoder::with_context); fork decodes the host's kernel file with one fresh Decoder::new; removal: when the msb fork moves to zstd 0.14" },
+    { id = "RUSTSEC-2026-0395", reason = "zstd-safe 7.3.0, CCtx::set_parameter with CParameter::StableInBuffer (use-after-free); the fork never builds a CCtx, it only decompresses; removal: when the msb fork moves to zstd 0.14" },
+    { id = "RUSTSEC-2026-0396", reason = "zstd-safe 7.3.0, seekable::Seekable and SeekTable (NULL seek table); the fork has no seekable code, and nothing enables the seekable feature; removal: when the msb fork moves to zstd 0.14" },
+    { id = "RUSTSEC-2026-0397", reason = "zstd-safe 7.3.0, OutBuffer::around_pos (uninitialized memory); zstd 0.13.3's decoder only calls OutBuffer::around on a fixed slice; removal: when the msb fork moves to zstd 0.14" },
+    { id = "RUSTSEC-2026-0398", reason = "zstd-safe 7.3.0, seekable::Seekable::decompress and AdvancedSeekable::decompress (Vec length past capacity); no seekable code in the fork; removal: when the msb fork moves to zstd 0.14" },
+    { id = "RUSTSEC-2026-0399", reason = "zstd-safe 7.3.0, CCtx::init_using_cdict and DCtx::init_using_ddict (dictionary use-after-free); the fork never loads a dictionary, Decoder::new passes an empty one; removal: when the msb fork moves to zstd 0.14" },
+    { id = "RUSTSEC-2026-0400", reason = "zstd-safe 7.3.0, DCtx::decompress, decompress_using_dict and decompress_using_ddict on a context with an open stream; the fork only streams, through one fresh Decoder, and never makes a one-shot call; removal: when the msb fork moves to zstd 0.14" },
+    { id = "RUSTSEC-2026-0401", reason = "zstd-safe 7.3.0, zstd_safe::train_from_buffer (dictionary training, overflow); the fork never trains a dictionary; removal: when the msb fork moves to zstd 0.14" },
+    { id = "RUSTSEC-2026-0402", reason = "zstd-safe 7.3.0, CCtx::try_clone on a multithreaded context; the fork has no compression context and never clones one; removal: when the msb fork moves to zstd 0.14" },
+    { id = "RUSTSEC-2026-0403", reason = "zstd-safe 7.3.0, DCtx::decompress_stream on a corrupt legacy frame leaks stale heap through zstd::stream::write::Decoder; the fork uses the read-side Decoder (copy_decode), which the advisory names as unaffected, on a host-supplied kernel file; removal: when the msb fork moves to zstd 0.14" },
+    { id = "RUSTSEC-2026-0404", reason = "zstd-safe 7.3.0, DCtx::try_clone (double free); the fork never clones a decompression context; removal: when the msb fork moves to zstd 0.14" },
+    { id = "RUSTSEC-2026-0405", reason = "zstd-safe 7.3.0, seekable::SeekableCStream::compress_stream with an out-of-range InBuffer::pos; the fork has no seekable or compression code; removal: when the msb fork moves to zstd 0.14" },
+    { id = "RUSTSEC-2026-0406", reason = "zstd-safe 7.3.0, CCtx::load_dictionary, ref_cdict, ref_prefix, disable_dictionary, reset and set_parameter with NbWorkers; the fork has no compression context and never enables zstdmt workers; removal: when the msb fork moves to zstd 0.14" },
     # zbus_names, zvariant and zvariant_derive are unmaintained as standalone crates (merged into
     # zbus 6). They are only the Linux Secret Service client: keyring 4.2 ->
     # zbus-secret-service-keyring-store 1.0.1 -> secret-service 5.2.0 -> zbus 5.19. The newest

@@ -229,6 +229,7 @@ async fn streams_over_the_limit_are_refused_and_the_server_never_sees_more_than_
             Box::pin(async move {
                 let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
                 peak.fetch_max(now, Ordering::SeqCst);
+                // A handler that holds its stream open so the concurrent streams are counted.
                 tokio::time::sleep(Duration::from_secs(3)).await;
                 in_flight.fetch_sub(1, Ordering::SeqCst);
                 reply(200, "slow")
@@ -330,6 +331,7 @@ async fn a_stream_reset_cleanly_short_of_its_content_length_never_ends_upstream_
     let (_response, mut body) = send.send_request(request, false).unwrap();
     body.send_data(Bytes::from_static(b"0123456789"), false)
         .unwrap();
+    // Ordering with no signal: the proxy has the ten bytes upstream before the reset arrives.
     tokio::time::sleep(Duration::from_millis(300)).await;
     body.send_reset(h2::Reason::NO_ERROR);
     let mut reset_seen = false;
@@ -486,6 +488,7 @@ async fn a_stream_the_guest_resets_is_cancelled_upstream() {
                 }
                 let _guard = OnDrop(cancelled);
                 started.store(true, Ordering::SeqCst);
+                // A handler that never answers within the test.
                 tokio::time::sleep(Duration::from_secs(60)).await;
                 reply(200, "late")
             })
@@ -532,6 +535,7 @@ async fn a_stream_that_is_idle_by_design_is_not_cut_by_the_body_stall_timeout() 
                 if n == 2 {
                     return None;
                 }
+                // Frames further apart than the 1 s body-stall timeout: an idle-by-design stream is not cut.
                 tokio::time::sleep(Duration::from_millis(2500)).await;
                 Some((
                     Ok::<_, terminate_support::h2_rig::BoxError>(http_body::Frame::data(

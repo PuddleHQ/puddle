@@ -238,6 +238,7 @@ mod tests {
         fs::write(&path, b"x").unwrap();
         let keeper = delete_pending(&path);
         let closer = std::thread::spawn(move || {
+            // Ordering with no signal: the pending delete completes while the tighten step retries.
             std::thread::sleep(std::time::Duration::from_millis(100));
             drop(keeper);
         });

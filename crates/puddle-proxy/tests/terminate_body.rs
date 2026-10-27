@@ -408,6 +408,7 @@ async fn over_http2_a_stream_cut_short_or_longer_than_it_said_never_reaches_the_
     body.send_data(Bytes::from_static(b"0123456789"), false)
         .unwrap();
     body.send_reset(h2::Reason::CANCEL);
+    // Ordering with no signal: the proxy handles the reset before the next request starts.
     tokio::time::sleep(Duration::from_millis(200)).await;
     // A request that ends with trailers: the injector gets the data, the trailers are dropped.
     let (response, mut body) = send.send_request(post(Some("2")), false).unwrap();

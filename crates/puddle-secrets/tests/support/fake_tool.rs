@@ -79,6 +79,7 @@ fn main() {
     eprint!("{stderr}");
     let _ = std::io::stderr().flush();
     if sleep_ms > 0 {
+        // A tool that outlives the window under test.
         std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
     }
     if echo {

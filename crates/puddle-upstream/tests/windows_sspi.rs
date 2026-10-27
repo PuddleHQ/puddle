@@ -430,6 +430,7 @@ fn ntlm_takes_three_legs_on_one_connection() {
     assert_eq!(outcome.status, 200, "{outcome:?}");
     assert_eq!(outcome.legs, 2, "Type 1 and Type 3: {outcome:?}");
     assert_signed_in_as_this_user(&proxy, 1);
+    // Absence window: no further request arrives on the connection after the three legs.
     thread::sleep(std::time::Duration::from_millis(200));
     let seen = proxy.observed.lock().unwrap();
     assert_eq!(seen.requests, vec![3], "bare request, Type 1, Type 3");

@@ -873,6 +873,7 @@ async fn over_http2_an_answer_that_breaks_off_is_a_failed_request() {
             .body(
                 Breaks {
                     first: Some(Bytes::from_static(b"{\"a\"")),
+                    // A pause in the body between its two frames.
                     delay: Box::pin(tokio::time::sleep(Duration::from_millis(150))),
                 }
                 .boxed_unsync(),

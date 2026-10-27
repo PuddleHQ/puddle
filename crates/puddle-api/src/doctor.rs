@@ -245,6 +245,7 @@ mod tests {
         let doctor = Arc::new(HostDoctor::new(Arc::new(move |boot| {
             let now = r.fetch_add(1, Ordering::SeqCst) + 1;
             m.fetch_max(now, Ordering::SeqCst);
+            // Simulated slow probe: keeps several in flight so the peak concurrency shows.
             std::thread::sleep(Duration::from_millis(40));
             r.fetch_sub(1, Ordering::SeqCst);
             canned(boot)

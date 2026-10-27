@@ -586,6 +586,7 @@ for port in range(20000, 20300):
         pass
 "#;
     ok("python3", &["-c", spray]).await;
+    // Absence window: gives a late report of the datagram spray time to arrive before the count is capped.
     tokio::time::sleep(Duration::from_secs(2)).await;
     let spray_reports = w
         .seen
@@ -819,6 +820,7 @@ async fn capture_leaves_dockers_own_tables_alone_whichever_starts_first() {
         ],
     )
     .await;
+    // Absence window: a change to another table is not tampering, however long the watcher looks.
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert!(
         seen.tampered.lock().unwrap().is_empty(),
@@ -843,6 +845,7 @@ async fn capture_leaves_dockers_own_tables_alone_whichever_starts_first() {
         ],
     )
     .await;
+    // Absence window: a change to another table is not tampering, however long the watcher looks.
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert!(
         seen.tampered.lock().unwrap().is_empty(),
@@ -882,6 +885,7 @@ async fn with_capture_off_nothing_is_installed_and_nothing_listens() {
     config.capture = None;
     config.dns = None;
     let agent = Agent::start(config).await.unwrap();
+    // Absence window: long enough for startup to have opened a listener, had capture been on.
     tokio::time::sleep(Duration::from_millis(700)).await;
     assert_eq!(agent.capture_addr(), None);
     assert!(

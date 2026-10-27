@@ -196,7 +196,9 @@ the owner, then tagged `vX.Y.Z` on `main`.
 - **Every risky site says why, in place** (gate `quality`, `scripts/quality-gate.py`, in `pre-push` and in the Rust and light CI
   jobs). Each `unsafe` block or impl carries `// SAFETY:` (an `unsafe fn` a `# Safety` section); each `#[allow]` and
   `#[expect]` a `reason = "…"`; each `#[ignore]` a reason string; each `unwrap` outside tests a comment and each `expect`
-  a message; each `shellcheck disable` a `# why`, each UI suppression a reason; each `TODO`, `HACK`, `FIXME` names its
+  a message; each fixed sleep in a test (outside a polling loop and a `start_paused` test) a comment saying whether it
+  is an absence window, simulated latency or an ordering with no signal to wait on; each `shellcheck disable` a
+  `# why`, each UI suppression a reason; each `TODO`, `HACK`, `FIXME` names its
   owner (`TODO(name)`), an issue (`#123`) or a URL. A site without one fails the gate. There is no baseline and no count
   to hold: adding a site with a good reason is fine. A scanner, not a parser: it reads the written reason's presence, not
   its truth, so review still reads the reason. `scripts/quality-gate.py --list` prints every site. A daily workflow

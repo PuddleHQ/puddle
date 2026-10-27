@@ -34,3 +34,4 @@ Thumbs.db
 # Agent scratch
 .scratch/
 .claude/worktrees/
+__pycache__/

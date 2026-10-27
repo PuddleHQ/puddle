@@ -703,6 +703,7 @@ impl Resolver for Delayed {
         Box::pin(async move {
             let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
             self.peak.fetch_max(now, Ordering::SeqCst);
+            // Simulated slow lookup: lookups overlap so the peak shows.
             tokio::time::sleep(self.delay).await;
             self.running.fetch_sub(1, Ordering::SeqCst);
             Ok(vec![std::net::SocketAddr::new(ip("93.184.215.14"), port)])

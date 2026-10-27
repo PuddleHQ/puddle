@@ -272,6 +272,7 @@ mod tests {
                 .is_none()
         );
         let slow: Arc<dyn GuestCertSource> = Arc::new(Scripted(|| {
+            // Simulated slow source, longer than the timeout under test.
             std::thread::sleep(Duration::from_millis(400));
             Some(some_cert())
         }));

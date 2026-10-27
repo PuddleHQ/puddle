@@ -142,6 +142,7 @@ async fn an_idle_http11_connection_the_network_dropped_is_replaced_for_the_next_
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     assert_eq!(client.get("bound.test", "/one").await.text(), "alive");
     relay.cut();
+    // Ordering with no signal: the proxy sees the cut upstream connection before the next request.
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(client.get("bound.test", "/two").await.text(), "alive");
     assert_eq!(server.accepted(), 2, "the dead connection was not reused");
@@ -239,6 +240,7 @@ async fn a_server_that_does_not_answer_is_a_504_and_the_connection_goes_on() {
     let handler: terminate_support::h2_rig::Handler = Arc::new(|request, _| {
         Box::pin(async move {
             if request.uri().path() == "/slow" {
+                // A handler that never answers within the test.
                 tokio::time::sleep(Duration::from_secs(60)).await;
             }
             reply(200, "quick")

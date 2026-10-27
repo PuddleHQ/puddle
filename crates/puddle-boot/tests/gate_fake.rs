@@ -63,6 +63,7 @@ impl FakeHook {
                 assert_eq!(r.user.as_deref(), Some("root"));
                 assert!(r.stdin.starts_with(PLAN_HEADER.as_bytes()));
                 counter.fetch_add(1, Ordering::SeqCst);
+                // Simulated slow command: the gate runs it for `delay`.
                 std::thread::sleep(delay);
                 Some(ExecOutput::new(code, "puddle-boot: ready\n", stderr))
             },

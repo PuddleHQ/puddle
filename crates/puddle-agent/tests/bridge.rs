@@ -256,6 +256,7 @@ async fn a_bridge_listener_is_off_when_the_config_says_so() {
     let kernel = Arc::new(FakeBridge::default());
     let rig = common::rig_with("off", |_| None, |c| c.bridge = None, kernel.clone()).await;
     kernel.set(7);
+    // Absence window: ten poll intervals pass and still no bridge listener starts.
     tokio::time::sleep(POLL * 10).await;
     assert_eq!(rig.agent.bridge_addr(), None);
 }
@@ -279,6 +280,7 @@ async fn a_wildcard_proxy_listener_already_covers_the_bridge() {
     )
     .await;
     kernel.set(7);
+    // Absence window: ten poll intervals pass and still no bridge listener starts.
     tokio::time::sleep(POLL * 10).await;
     assert_eq!(rig.agent.bridge_addr(), None);
 }

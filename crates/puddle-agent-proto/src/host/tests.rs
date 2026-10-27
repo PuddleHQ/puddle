@@ -38,6 +38,7 @@ impl StreamHandler for Echo {
 
     async fn resolve(&self, query: ResolveQuery) -> ResolveAnswer {
         if query.name == "slow.example" {
+            // A resolver that never answers within the test: the caller's own timeout ends the wait.
             tokio::time::sleep(Duration::from_secs(60)).await;
         }
         ResolveAnswer::NoSuchName {

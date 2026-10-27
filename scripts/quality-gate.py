@@ -12,7 +12,8 @@ A site needs its reason in place: `// SAFETY:` above an unsafe block or impl (`#
 `SAFETY:` for an unsafe fn), `reason = "..."` on #[allow]/#[expect], `#[ignore = "..."]`, a comment
 on or above an `.unwrap()` outside tests, a non-empty `.expect("...")` message, `# why` after a
 shellcheck disable, ` -- why` after eslint-disable (text after @ts-expect-error / svelte-ignore),
-`reason` on a deny.toml advisory ignore and a reason column on a coverage exclusion. A TODO, HACK,
+`reason` on a deny.toml advisory ignore, a reason column on a coverage exclusion, and a comment on or
+within three lines above a fixed sleep in a test (not in a polling loop, not in a `start_paused` test); it checks that a comment is there, not what it says. A TODO, HACK,
 FIXME or XXX must name where it is tracked: `TODO(owner)`, an issue number (`#123`) or a URL. Those
 gaps are the `noreason` rows (`scripts/check.sh quality` fails on any). There is no baseline file and
 no count to hold: a new site with a good reason is fine, a site without one fails.
@@ -140,13 +141,20 @@ def in_loop(code, i):
     a polling helper's closure; a sleep outside one is a fixed wait."""
     me = indent(code[i])
     floor = me
-    for k in range(i - 1, max(-1, i - 40), -1):
+    cond_end = False  # the line at `floor` ends a multi-line `while` condition: `}) {` or a lone `{`
+    for k in range(i - 1, max(-1, i - 80), -1):
         t = code[k].strip()
-        if not t:
+        if not t or re.fullmatch(r'"[,;)\s]*', t):  # a blank, or the end of a multi-line string
             continue
         ind = indent(code[k])
+        if cond_end and ind == floor:
+            if re.match(r"(?:'\w+:\s*)?(loop\b|while\b|for\b)", t):
+                return True
+            if re.match(r"(pub(\([^)]*\))?\s+)?(async\s+)?fn\b", t):
+                return False  # `) {` closed a multi-line signature, not a condition
         if ind < floor:
             floor = ind
+            cond_end = t == "{" or (t.startswith((")", "}")) and t.endswith("{") and not t.startswith("} else"))
             if re.match(r"(?:'\w+:\s*)?(loop\b|while\b|for\b)", t) or re.search(r"=\s*loop\s*\{|\.retry|poll|until|wait_for|eventually", t):
                 return True
             if re.match(r"(pub(\([^)]*\))?\s+)?(async\s+)?fn\b", t):
@@ -259,6 +267,7 @@ def scan(root):
             return False
 
         # Test function bodies for vacuous-test and sleep checks.
+        paused = set()  # lines of `start_paused` tests: their sleeps run on virtual time
         i = 0
         while i < len(code):
             if TEST_ATTR.search(code[i]) and "#[test_case" not in code[i]:
@@ -267,6 +276,8 @@ def scan(root):
                     s += 1
                 if s < len(code):
                     e, _ = item_end(code, s)
+                    if any("start_paused" in code[k] for k in range(i, s)):
+                        paused.update(range(s, e + 1))
                     body = "\n".join(code[s:e + 1])
                     name = re.search(r"fn\s+(\w+)", code[s])
                     should_panic = any("should_panic" in code[k] for k in range(i, s))
@@ -352,10 +363,11 @@ def scan(root):
                 add("os-cfg", c, f, i, raw[i])
             if re.search(r"\b(?:std::)?thread::sleep\b|\btokio::time::sleep\b|\btime::sleep\(|\bsleep\(\s*Duration", line):
                 add("sleep", c, f, i, raw[i])
-                if c == "test" and not in_loop(code, i):
+                if c == "test" and i not in paused and not in_loop(code, i):
                     add("sleep-fixed", c, f, i, raw[i])
                     if not any(com[k].strip() for k in range(max(0, i - 3), i + 1)):
                         add("sleep-fixed-uncommented", c, f, i, raw[i])
+                        add("noreason", c, f, i, "fixed sleep in a test: no comment saying why (an absence window, simulated latency, or an ordering that has no signal) | " + raw[i])
 
     # Markers in every text file (comments and strings alike, so docs inside scripts count).
     for f, lines in texts.items():
@@ -451,6 +463,39 @@ mod tests {
     fn t() { let _ = 1; }
     #[test]
     fn u() { assert!(true); x.unwrap(); }
+    #[tokio::test]
+    async fn bare_sleep() {
+        a().await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        assert!(true);
+    }
+    #[tokio::test]
+    async fn explained_sleep() {
+        // Absence window: nothing may arrive.
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        assert!(true);
+    }
+    #[tokio::test(start_paused = true)]
+    async fn virtual_sleep() {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        assert!(true);
+    }
+    #[tokio::test]
+    async fn multi_line_signature(
+        x: u8,
+    ) {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        assert!(true);
+    }
+    #[tokio::test]
+    async fn polled_sleep() {
+        while !ids.iter().all(|p| {
+            seen(p)
+        }) {
+            assert!(now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
 }
 '''
 
@@ -468,6 +513,7 @@ def self_test():
         "allow-attr.prod": 1, "expect-attr.prod": 1,
         "test-no-assert.test": 1, "marker-todo.any": 1, "marker-fixme.any": 1, "marker-hack.any": 1,
         "noreason.prod": 3, "noreason.any": 1,
+        "sleep.test": 5, "sleep-fixed.test": 3, "sleep-fixed-uncommented.test": 2, "noreason.test": 2,
     }
     bad = {k: (got.get(k), v) for k, v in want.items() if got.get(k) != v}
     extra = {k: v for k, v in got.items() if k not in want}

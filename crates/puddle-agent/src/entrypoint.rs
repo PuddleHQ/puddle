@@ -125,7 +125,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn each_exit_of_this_boot_is_sent_once() {
         let dir = tempfile::tempdir().unwrap();
         let (exit_file, boot) = (dir.path().join("exit"), dir.path().join("boot_id"));
@@ -177,7 +177,7 @@ mod tests {
             .unwrap();
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn an_exit_that_finds_the_queue_full_is_sent_at_a_later_tick() {
         let dir = tempfile::tempdir().unwrap();
         let (exit_file, boot) = (dir.path().join("exit"), dir.path().join("boot_id"));

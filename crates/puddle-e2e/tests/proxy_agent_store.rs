@@ -694,6 +694,7 @@ async fn refused_udp_is_audited_with_its_own_reason_and_never_pending() {
         control.flush().await.unwrap();
     }
     let records = wait_for_records(&rig.store, 2).await;
+    // Absence window: a late third connection record would still arrive after the two awaited.
     tokio::time::sleep(Duration::from_millis(200)).await;
     let records = if connection_records(&rig.store).len() > records.len() {
         connection_records(&rig.store)

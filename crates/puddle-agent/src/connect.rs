@@ -640,6 +640,7 @@ mod tests {
             (exit, stderr)
         });
         client.write_all(b"hello").await.unwrap();
+        // Ordering with no signal: lets the bridge take "hello" as the first bytes before the later upload arrives.
         tokio::time::sleep(Duration::from_millis(150)).await;
         client.write_all(b" later").await.unwrap();
         client.shutdown().await.unwrap();
@@ -694,6 +695,7 @@ mod tests {
             .await;
             (exit, stderr)
         });
+        // Absence window: stdin stays silent past the first-bytes time (300 ms), so no banner is announced.
         tokio::time::sleep(Duration::from_millis(500)).await;
         keep.write_all(b"EHLO x\r\n").await.unwrap();
         keep.shutdown().await.unwrap();

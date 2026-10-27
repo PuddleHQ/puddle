@@ -490,6 +490,7 @@ async fn idle_memory(kind: &str) {
             }
         }
     }
+    // Settle window: closed connections have returned their memory before the first reading.
     tokio::time::sleep(Duration::from_millis(500)).await;
     let before = rss_kib();
     let mut held_h1 = Vec::new();
@@ -521,6 +522,7 @@ async fn idle_memory(kind: &str) {
             }
         }
     }
+    // Settle window: the held connections have reached their steady memory before the second reading.
     tokio::time::sleep(Duration::from_millis(500)).await;
     let grown = rss_kib().saturating_sub(before);
     eprintln!(

@@ -946,6 +946,7 @@ mod tests {
         fn get(&self, id: &StoredId) -> Result<Option<Secret>, puddle_secrets::StoreError> {
             if !id.to_string().starts_with("login-") {
                 self.asked.lock().unwrap().push(id.to_string());
+                // Simulated slow store: every lookup takes `delay`.
                 std::thread::sleep(self.delay);
             }
             self.inner.get(id)
@@ -1209,6 +1210,7 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+        // Absence window: no second sign-in notice follows the first.
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert_eq!(
             *events.0.lock().unwrap(),

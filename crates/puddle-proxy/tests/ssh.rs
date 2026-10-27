@@ -512,6 +512,7 @@ impl Resolver for SlowResolver {
         _port: u16,
     ) -> BoxFuture<'a, std::io::Result<Vec<SocketAddr>>> {
         Box::pin(async move {
+            // Simulated slow resolver.
             tokio::time::sleep(Duration::from_millis(300)).await;
             Ok(vec![self.0])
         })

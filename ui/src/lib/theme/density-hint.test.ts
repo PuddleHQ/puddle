@@ -10,9 +10,9 @@ const page = readFileSync(
   join(import.meta.dirname, "..", "..", "app.html"),
   "utf8",
 );
-const scripts = [...page.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map(
-  (m) => m[1] ?? "",
-);
+const scripts = [
+  ...page.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi),
+].map((m) => m[1] ?? "");
 
 type Storage = { getItem: (key: string) => string | null };
 

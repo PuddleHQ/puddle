@@ -39,7 +39,19 @@ unset CARGO
 # The coverage gates never use the wrapper: a shared cache restores instrumented objects built in another
 # checkout, so from the second checkout on the report counts that checkout's files too and the ratchet
 # fails (about 3 points of lines too low with mbx 1.22). Plain cargo is right in every checkout.
+# With mbx's Cargo shim active (`mbx setup`), `cargo` on PATH is the shim, so look the real Cargo up
+# past the shim's directory and mise's command-wrappers directory, where the shim is installed.
 plain_cargo=cargo
+ifs_saved=$IFS
+IFS=:
+for dir in $PATH; do
+    [ -n "$dir" ] && [ -x "$dir/cargo" ] || continue
+    [ ! -e "$dir/mbx-target" ] || continue
+    case $dir in */command-wrappers/bin) continue ;; esac
+    plain_cargo=$dir/cargo
+    break
+done
+IFS=$ifs_saved
 
 cd "$(dirname "$0")/.."
 

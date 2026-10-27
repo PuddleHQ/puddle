@@ -18,7 +18,7 @@ useDefault = true
 [[allowlists]]
 description = "CANARY-* test values in crate integration tests"
 condition = "AND"
-paths = ['''^crates/[^/]+/tests/[^/]+\.rs$''', '''^scripts/check-secrets\.sh$''']
+paths = ['''^crates/[^/]+/tests/.+\.rs$''', '''^scripts/check-secrets\.sh$''']
 regexTarget = "match"
 regexes = ['''(?i)(password|token|secret)\W{0,4}CANARY-[A-Za-z0-9-]+''']
 

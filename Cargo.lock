@@ -5949,13 +5949,16 @@ checksum = "33cb294fe86a74cbcf50d4445b37da762029549ebeea341421c7c70370f86cac"
 name = "puddle"
 version = "0.0.0"
 dependencies = [
+ "puddle-boot",
  "puddle-compute",
+ "puddle-compute-msb",
  "puddle-doctor",
  "puddle-host",
  "puddle-ipc",
  "puddle-lifecycle",
  "puddle-ssh",
  "puddle-types",
+ "puddle-vm-tests",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",

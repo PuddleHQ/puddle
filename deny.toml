@@ -27,7 +27,7 @@ ignore = [
     # runs at runtime. Review at each tauri bump, by 2027-01-06.
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained; build-time dependency of tauri's gtk-rs 0.18 on Linux" },
     # zstd 0.13.3 and zstd-safe 7.3.0, held by the libkrun fork's `msb_krun_vmm` 0.1.41 (fork tag
-    # msb_krun-v0.1.41-puddle.4); the 0.14 copy is fixed in Cargo.lock. The fork's only zstd call is
+    # msb_krun-v0.1.41-puddle.5); the 0.14 copy is fixed in Cargo.lock. The fork's only zstd call is
     # `zstd::stream::copy_decode` (src/vmm/src/builder.rs:2488, x86_64 non-Windows): it decompresses
     # the guest kernel file that the host itself passes in, through `Decoder::new` (a fresh
     # context), and nothing else names zstd. So no advisory API is reached: not `with_context`

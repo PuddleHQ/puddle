@@ -2,7 +2,7 @@
 //! PAC and WPAD evaluation by Windows' own engine (`WinHttpGetProxyForUrlEx`): out of process,
 //! cancellable, and it returns the whole list including `DIRECT` and failover entries.
 
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
 use std::ffi::c_void;
@@ -59,12 +59,27 @@ impl Slot {
     }
 }
 
-/// WinHTTP's status callback for one PAC resolution: fills the request's `Slot`.
+/// What the WinHTTP callback gets as its context. Never freed: WinHTTP can call back after
+/// `WinHttpCloseHandle` returns, until a `HANDLE_CLOSING` status that this code does not ask for,
+/// so once handed over the box stays for the life of the process (one small allocation per
+/// resolution, plus the slot's memory without its value). It holds a `Weak`, so a late callback
+/// finds the resolution gone and does nothing.
+struct Context(Weak<Slot>);
+
+impl Context {
+    /// Leaks a context for `slot` and returns the address to give WinHTTP.
+    fn leak(slot: &Arc<Slot>) -> usize {
+        Box::into_raw(Box::new(Self(Arc::downgrade(slot)))) as usize
+    }
+}
+
+/// WinHTTP's status callback for one PAC resolution: fills the request's `Slot` if it is still
+/// waiting for the answer.
 ///
 /// # Safety
 ///
-/// `context` must be the `Slot` pointer `resolve_once` registered, still alive, and `info` must
-/// be what WinHTTP documents for `status`. Only WinHTTP calls it.
+/// `context` must be an address from `Context::leak` (never freed, so valid for the whole
+/// process), and `info` must be what WinHTTP documents for `status`. Only WinHTTP calls it.
 unsafe extern "system" fn callback(
     _handle: *mut c_void,
     context: usize,
@@ -72,9 +87,12 @@ unsafe extern "system" fn callback(
     info: *mut c_void,
     _len: u32,
 ) {
-    // SAFETY: `context` is the pointer `resolve_once` passed in `Arc::into_raw`; the caller never
-    // frees that reference while a callback may still run (see the timeout path there).
-    let slot = unsafe { &*(context as *const Slot) };
+    // SAFETY: `context` is the leaked `Context` from `resolve_once`; nothing frees it, so it is
+    // alive whenever WinHTTP calls, even after the resolver handle was closed.
+    let context = unsafe { &*(context as *const Context) };
+    let Some(slot) = context.0.upgrade() else {
+        return;
+    };
     match status {
         WINHTTP_CALLBACK_STATUS_GETPROXYFORURL_COMPLETE => slot.finish(Ok(())),
         WINHTTP_CALLBACK_STATUS_REQUEST_ERROR if !info.is_null() => {
@@ -149,7 +167,7 @@ fn resolve_once(query: &PacQuery, auto_logon: bool) -> Result<Vec<Hop>, PacError
     let resolver = Handle(raw_resolver);
 
     let slot = Arc::new(Slot::default());
-    let context = Arc::into_raw(Arc::clone(&slot)) as usize;
+    let context = Context::leak(&slot);
     // SAFETY: `callback` matches WINHTTP_STATUS_CALLBACK; flags name only the two statuses it handles.
     unsafe {
         WinHttpSetStatusCallback(
@@ -192,14 +210,10 @@ fn resolve_once(query: &PacQuery, auto_logon: bool) -> Result<Vec<Hop>, PacError
     };
     let Some(outcome) = outcome else {
         // Timed out: closing the resolver cancels the request. A callback may still arrive after
-        // that, and it dereferences `context`, so the raw reference is deliberately leaked
-        // (one small allocation) rather than freed.
+        // that; the leaked `Context` (see there) makes it a no-op.
         drop(resolver);
         return Err(PacError::Timeout);
     };
-    // SAFETY: the only callback that can use `context` has run (or the call completed inline), so
-    // the reference passed to WinHTTP is ours to release.
-    unsafe { drop(Arc::from_raw(context as *const Slot)) };
     if let Err(code) = outcome {
         return Err(if code == ERROR_WINHTTP_OPERATION_CANCELLED {
             PacError::Timeout
@@ -236,4 +250,63 @@ fn collect(resolver: &Handle) -> Result<Vec<Hop>, PacError> {
     // SAFETY: `result` was filled by WinHttpGetProxyResult and is freed once.
     unsafe { WinHttpFreeProxyResult(&raw mut result) };
     Ok(hops)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn call(context: usize, status: u32, info: *mut c_void) {
+        // SAFETY: `context` comes from `Context::leak`; `info` is null or a live
+        // `WINHTTP_ASYNC_RESULT` for the request-error status, as the callback expects.
+        unsafe { callback(std::ptr::null_mut(), context, status, info, 0) };
+    }
+
+    #[test]
+    fn a_callback_fills_the_slot_of_a_resolution_that_is_waiting() {
+        let slot = Arc::new(Slot::default());
+        let context = Context::leak(&slot);
+        call(
+            context,
+            WINHTTP_CALLBACK_STATUS_GETPROXYFORURL_COMPLETE,
+            std::ptr::null_mut(),
+        );
+        assert_eq!(slot.wait(Duration::from_secs(1)), Some(Ok(())));
+
+        let mut failure = WINHTTP_ASYNC_RESULT {
+            dwResult: 0,
+            dwError: 12002,
+        };
+        call(
+            context,
+            WINHTTP_CALLBACK_STATUS_REQUEST_ERROR,
+            (&raw mut failure).cast(),
+        );
+        assert_eq!(slot.wait(Duration::from_secs(1)), Some(Err(12002)));
+    }
+
+    #[test]
+    fn a_callback_after_the_resolution_ended_finds_a_live_context_and_does_nothing() {
+        let slot = Arc::new(Slot::default());
+        let context = Context::leak(&slot);
+        drop(slot); // the resolution timed out or finished and left
+        // WinHTTP may still call, also with an error status; the context must be readable.
+        let mut failure = WINHTTP_ASYNC_RESULT {
+            dwResult: 0,
+            dwError: 12017,
+        };
+        call(
+            context,
+            WINHTTP_CALLBACK_STATUS_REQUEST_ERROR,
+            (&raw mut failure).cast(),
+        );
+        call(
+            context,
+            WINHTTP_CALLBACK_STATUS_GETPROXYFORURL_COMPLETE,
+            std::ptr::null_mut(),
+        );
+        // SAFETY: reclaimed only so the test does not leak; nothing calls it again.
+        let context = unsafe { Box::from_raw(context as *mut Context) };
+        assert!(context.0.upgrade().is_none());
+    }
 }

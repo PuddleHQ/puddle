@@ -15,6 +15,7 @@
 use std::ffi::c_void;
 use std::fmt::Write as _;
 use std::io;
+use std::marker::PhantomData;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::Path;
 use std::process::Command;
@@ -224,14 +225,15 @@ pub fn assert_owner_only_dacl(object: &impl AsRawHandle, mask: u32) {
     // ACE_HEADER. Only the header is read until the type says how long the ACE is.
     let header = unsafe { &*ace.cast::<ACE_HEADER>() };
     assert_eq!(u32::from(header.AceType), ACCESS_ALLOWED_ACE_TYPE);
+    let ace = ace.cast::<ACCESS_ALLOWED_ACE>();
     // SAFETY: the type check above makes this an ACCESS_ALLOWED_ACE.
-    let ace = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
-    assert_eq!(ace.Mask, mask);
+    assert_eq!(unsafe { (*ace).Mask }, mask);
 
     let token = process_token(TOKEN_QUERY).unwrap();
     let user = TokenUserBuf::read(&token).unwrap();
-    // SAFETY: both are valid SIDs; the ACE's SID starts at SidStart.
-    let same = unsafe { EqualSid((&raw const ace.SidStart).cast_mut().cast(), user.sid()) };
+    // SAFETY: both are valid SIDs. The ACE's SID starts at `SidStart` and extends past the
+    // struct, so the pointer keeps `GetAce`'s provenance instead of going through a reference.
+    let same = unsafe { EqualSid((&raw const (*ace).SidStart).cast_mut().cast(), user.sid()) };
     assert_ne!(same, 0, "the ACE is not for the current user");
 }
 
@@ -264,22 +266,26 @@ pub fn logon_local_user(name: &str, password: &str) -> io::Result<OwnedHandle> {
     Ok(unsafe { OwnedHandle::from_raw_handle(raw) })
 }
 
-/// Ends this thread's impersonation when dropped, also while a panic unwinds.
-struct Impersonation;
+/// Ends this thread's impersonation when dropped, also while a panic unwinds. Not `Send`: the
+/// impersonation belongs to the thread that started it.
+struct Impersonation(PhantomData<*const ()>);
 
 impl Impersonation {
     fn start(token: &OwnedHandle) -> io::Result<Self> {
-        // SAFETY: the token is a valid impersonation token; `Drop` undoes this on the same thread.
+        // SAFETY: the token is a valid impersonation token; `Drop` undoes this on the same thread
+        // (the guard is not `Send`).
         if unsafe { ImpersonateLoggedOnUser(token.as_raw_handle()) } == 0 {
             return Err(io::Error::last_os_error());
         }
-        Ok(Self)
+        Ok(Self(PhantomData))
     }
 }
 
 impl Drop for Impersonation {
     fn drop(&mut self) {
-        // SAFETY: ends this thread's impersonation; nothing else can fail here.
+        // SAFETY: no arguments. `RevertToSelf` can fail (its page advises ending the process then);
+        // this is a test helper, and `run_as` ends this thread right after, which takes the
+        // impersonation with it.
         unsafe { RevertToSelf() };
     }
 }

@@ -80,8 +80,10 @@ impl RuntimeEnv {
     /// # Safety
     ///
     /// Changing the process environment is only sound while no other thread reads or writes it
-    /// ([`std::env::set_var`]). Call this first thing in `main`, before the tokio runtime or any
-    /// other thread starts.
+    /// ([`std::env::set_var`]). That includes C code in this process (`getenv`): on Windows the
+    /// standard library's own environment functions are always safe, but a C library reads its
+    /// own copy that they do not update. Call this first thing in `main`, before the tokio runtime
+    /// or any other thread starts.
     #[expect(
         unsafe_code,
         reason = "the SDK only reads its paths from the process environment"

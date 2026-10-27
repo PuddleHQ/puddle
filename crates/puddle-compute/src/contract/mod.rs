@@ -404,12 +404,12 @@ pub const SMOKE_CHECKS: [SmokeCheck; 57] = [
     case("env.create_env_in_exec", "create_env_reaches_exec"),
     elsewhere(
         "net.proxy_allowed_github",
-        "puddle-e2e/tests/proxy_agent_store.rs",
+        "puddle-e2e/tests/integration/proxy_agent_store.rs",
         "allowed host reachable through the route",
     ),
     elsewhere(
         "net.proxy_denied_example",
-        "puddle-e2e/tests/proxy_agent_store.rs",
+        "puddle-e2e/tests/integration/proxy_agent_store.rs",
         "denied host gets 403 through the route",
     ),
     elsewhere(

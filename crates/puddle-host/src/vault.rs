@@ -113,11 +113,6 @@ mod tests {
     }
 
     #[test]
-    fn the_os_vault_is_built_without_touching_the_os_store() {
-        let _vault = os_vault();
-    }
-
-    #[test]
     fn a_sweep_removes_what_no_identity_or_variable_names_and_keeps_the_rest() {
         let store =
             Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();

@@ -183,15 +183,53 @@ mod tests {
         assert!(none.allows(u64::MAX));
     }
 
+    /// What `limit.log(needed)` wrote while it ran, one line per event with its level.
+    fn logged(limit: &OpenFileLimit, needed: u64) -> String {
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone, Default)]
+        struct Capture(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Capture {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let capture = Capture::default();
+        let writer = capture.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, || limit.log(needed));
+        let bytes = capture.0.lock().unwrap().clone();
+        String::from_utf8(bytes).unwrap()
+    }
+
     #[test]
-    fn log_covers_both_a_roomy_and_a_short_limit() {
+    fn a_roomy_limit_is_logged_as_info_and_a_short_one_as_a_warning_with_the_fix() {
         let limit = OpenFileLimit {
             before: Some(1024),
             soft: Some(4096),
             hard: Some(4096),
         };
-        limit.log(4096);
-        limit.log(8192);
+        let roomy = logged(&limit, 4096);
+        assert!(roomy.contains("INFO"), "{roomy}");
+        assert!(
+            roomy.contains("limit=open files: soft 4096 (was 1024), hard 4096"),
+            "{roomy}"
+        );
+        assert!(!roomy.contains("WARN"), "{roomy}");
+
+        let short = logged(&limit, 8192);
+        assert!(short.contains("WARN"), "{short}");
+        assert!(short.contains("needed=8192"), "{short}");
+        assert!(short.contains("ulimit -Hn"), "{short}");
+        assert!(!short.contains("INFO"), "{short}");
     }
 
     #[test]

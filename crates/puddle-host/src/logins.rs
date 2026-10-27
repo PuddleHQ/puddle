@@ -211,13 +211,46 @@ mod tests {
         assert!(events.0.lock().unwrap().is_empty());
     }
 
+    /// The log lines written while `run` polled on this thread.
+    async fn logged<F: Future<Output = ()>>(run: F) -> String {
+        #[derive(Clone, Default)]
+        struct Capture(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Capture {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let capture = Capture::default();
+        let writer = capture.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        run.await;
+        let bytes = capture.0.lock().unwrap().clone();
+        String::from_utf8(bytes).unwrap()
+    }
+
     #[tokio::test]
-    async fn deleting_a_workspace_with_a_credential_store_that_refuses_is_only_logged() {
+    async fn deleting_a_workspace_logs_the_tokens_a_refusing_credential_store_kept_and_is_quiet_otherwise()
+     {
         let store = Arc::new(MemoryStore::new());
         let keeper = LoginKeeper::new(store.clone(), Arc::new(Events::default()));
-        keeper.delete_workspace(&workspace("alpha")).await;
+        let quiet = logged(keeper.delete_workspace(&workspace("alpha"))).await;
+        assert_eq!(quiet, "");
+
         store.break_it();
-        keeper.delete_workspace(&workspace("alpha")).await;
+        let warned = logged(keeper.delete_workspace(&workspace("alpha"))).await;
+        assert!(warned.contains("WARN"), "{warned}");
+        assert!(warned.contains("workspace=alpha"), "{warned}");
+        assert!(warned.contains("could not be removed"), "{warned}");
+        assert!(!warned.contains("failed=0"), "{warned}");
     }
 
     #[test]

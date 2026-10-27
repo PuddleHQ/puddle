@@ -100,6 +100,11 @@ impl Drop for Job {
 
 /// The console control handler: forwards every event to [`super::front::on_console_event`].
 /// Windows runs it on a thread of its own.
+///
+/// # Safety
+///
+/// No precondition: it reads no pointer. It is `unsafe` only to match `PHANDLER_ROUTINE`, and
+/// Windows is its only caller.
 unsafe extern "system" fn handler(ctrl_type: u32) -> BOOL {
     BOOL::from(super::front::on_console_event(ctrl_type))
 }

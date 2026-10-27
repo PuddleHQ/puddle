@@ -11,7 +11,6 @@
 )]
 #![expect(
     unsafe_code,
-    clippy::undocumented_unsafe_blocks,
     reason = "one registry write through the Win32 call, see `set_in_process`"
 )]
 
@@ -382,6 +381,8 @@ fn set_in_process(name: &str, data: &str) {
     let subkey = wide(KEY.strip_prefix(r"HKCU\").unwrap());
     let (name, data) = (wide(name), wide(data));
     let mut key = std::ptr::null_mut();
+    // SAFETY: `subkey`, `name` and `data` are NUL-terminated UTF-16 buffers that outlive the
+    // calls, `bytes` is `data`'s length in bytes, and `key` is closed once after the write.
     unsafe {
         assert_eq!(
             RegOpenKeyExW(

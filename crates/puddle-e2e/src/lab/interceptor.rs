@@ -4,13 +4,12 @@
 //! unless `PUDDLE_REQUIRE_MITMPROXY=1`, which makes a missing mitmproxy a failure (CI sets it).
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use super::{
-    LOCAL, Prefix, READY, StartCost, configured_or_skip, free_port, read, require_file, stop,
-    wait_ready,
+    LOCAL, Prefix, READY, StartCost, configured_or_skip, read, require_file, stop, wait_ready,
 };
 
 /// The test root of one interceptor: made before the proxy starts and handed to it, so a test
@@ -79,6 +78,31 @@ fn borrowed(names: &[(String, Option<u16>)]) -> Vec<(&str, Option<u16>)> {
     names.iter().map(|(n, p)| (n.as_str(), *p)).collect()
 }
 
+/// The port in mitmproxy's `HTTP(S) proxy listening at 127.0.0.1:39551.` log line.
+fn listening_port(log: &str) -> Option<u16> {
+    let rest = log.split("proxy listening at ").nth(1)?;
+    let line = rest.lines().next()?.trim_end_matches('.');
+    line.rsplit(':').next()?.parse().ok()
+}
+
+/// Waits until `child` has logged the port it bound, and returns it.
+///
+/// # Panics
+/// When the child exits first or logs nothing within [`READY`].
+fn wait_listening(child: &mut Child, log_path: &Path) -> u16 {
+    let deadline = Instant::now() + READY;
+    while Instant::now() < deadline {
+        if let Some(port) = listening_port(&read(log_path)) {
+            return port;
+        }
+        if let Ok(Some(status)) = child.try_wait() {
+            panic!("mitmproxy exited early ({status})\n{}", read(log_path));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("mitmproxy did not log its port\n{}", read(log_path));
+}
+
 /// A running `mitmdump`; stopped on drop.
 struct Mitm {
     child: Child,
@@ -118,13 +142,13 @@ impl Mitm {
             )
             .unwrap();
         }
-        let port = free_port();
         let mut command = Command::new(bin);
         command
             // The log is read while the proxy runs; Python buffers a redirected stdout.
             .env("PYTHONUNBUFFERED", "1")
-            .args(["--listen-host", &LOCAL.to_string(), "--listen-port"])
-            .arg(port.to_string())
+            // Port 0: mitmproxy binds the port itself and logs the one it got, so no other
+            // process can take it between a pick and the bind.
+            .args(["--listen-host", &LOCAL.to_string(), "--listen-port", "0"])
             .arg("--set")
             .arg(format!("confdir={}", confdir.display()))
             .args(["--set", "flow_detail=1", "--set", "termlog_verbosity=info"])
@@ -145,6 +169,7 @@ impl Mitm {
             .spawn()
             .unwrap();
         let log_path = dir.path().join("mitm.log");
+        let port = wait_listening(&mut child, &log_path);
         wait_ready(port, Some(&mut child), READY, || read(&log_path));
         let started = StartCost::measure(&prefix, begun, Some(&child));
         Some(Self {
@@ -358,6 +383,25 @@ mod tests {
                 .pem()
                 .starts_with("-----BEGIN CERTIFICATE-----")
         );
+    }
+
+    #[test]
+    fn the_port_mitmproxy_bound_is_read_from_its_log() {
+        let log = "[11:29:01.892] HTTP(S) proxy listening at 127.0.0.1:39551.\n[11:29:02] more";
+        assert_eq!(listening_port(log), Some(39551));
+        assert_eq!(listening_port("[11:29:01.892] loading addons"), None);
+        assert_eq!(listening_port("proxy listening at nowhere."), None);
+    }
+
+    #[test]
+    fn an_interceptor_binds_its_own_port_and_nobody_else_can_take_it() {
+        let Some(interceptor) = Interceptor::start(&[]) else {
+            return;
+        };
+        let port = interceptor.port();
+        assert_ne!(port, 0);
+        let taken = std::net::TcpListener::bind((LOCAL, port)).unwrap_err();
+        assert_eq!(taken.kind(), std::io::ErrorKind::AddrInUse);
     }
 
     #[test]

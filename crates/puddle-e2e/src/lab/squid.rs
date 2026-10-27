@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use super::{
     BASIC_PASSWORD, BASIC_USER, LOCAL, Prefix, READY, StartCost, configured_or_skip, free_port,
-    read, require_file, stop, wait_ready,
+    on_free_port, read, require_file, stop, try_ready,
 };
 
 /// What a lab Squid is set up to do.
@@ -204,6 +204,20 @@ impl Squid {
             "set PUDDLE_SQUID_BIN or PUDDLE_SQUID_DOCKER to run against Squid",
         )
         .then_some(())?;
+        // Squid reads its port from its config file and takes no inherited socket, so the port
+        // cannot be held across the start; a collision retries on a fresh port.
+        Some(on_free_port(free_port, |port| {
+            Self::launch(bin.as_deref(), image.as_deref(), options, port)
+        }))
+    }
+
+    /// One start attempt on `port`. `Err` is Squid's own log when it did not come up.
+    fn launch(
+        bin: Option<&std::ffi::OsStr>,
+        image: Option<&str>,
+        options: &SquidOptions,
+        port: u16,
+    ) -> Result<Self, String> {
         let begun = Instant::now();
         let prefix = Prefix::new("squid");
         let dir = tempfile::Builder::new()
@@ -217,14 +231,13 @@ impl Squid {
         } else {
             dir.path().to_path_buf()
         };
-        let port = free_port();
         write_config(dir.path(), &seen, options, port);
         let stop = if let Some(image) = image {
             let name = format!("{}-{port}", prefix.as_str());
             let status = Command::new("docker")
                 .args(["run", "-d", "--name", &name, "--network", "host", "-v"])
                 .arg(format!("{}:/lab", dir.path().display()))
-                .args([&image, "-f", "/lab/squid.conf", "-NYC"])
+                .args([image, "-f", "/lab/squid.conf", "-NYC"])
                 .stdout(Stdio::null())
                 .status()
                 .unwrap();
@@ -232,7 +245,7 @@ impl Squid {
             Stop::Container(name)
         } else {
             let bin = bin.unwrap();
-            require_file(&bin, "PUDDLE_SQUID_BIN");
+            require_file(bin, "PUDDLE_SQUID_BIN");
             let log = fs::File::create(dir.path().join("squid.stderr")).unwrap();
             let name = instance_name(port);
             remove_shared_memory(&name);
@@ -246,6 +259,7 @@ impl Squid {
                 .unwrap();
             Stop::Process(child)
         };
+        // A failed attempt drops `squid`, which stops it and removes its directory.
         let mut squid = Self {
             port,
             prefix,
@@ -253,28 +267,55 @@ impl Squid {
             stop,
             started: StartCost::default(),
         };
-        squid.wait();
+        squid.wait()?;
         let process = match &squid.stop {
             Stop::Process(child) => Some(child),
             Stop::Container(_) => None,
         };
         squid.started = StartCost::measure(&squid.prefix, begun, process);
-        Some(squid)
+        Ok(squid)
     }
 
-    fn wait(&mut self) {
+    fn wait(&mut self) -> Result<(), String> {
         let dir = self.dir.path().to_path_buf();
+        let container = match &self.stop {
+            Stop::Container(name) => Some(name.clone()),
+            Stop::Process(_) => None,
+        };
         let child = match &mut self.stop {
             Stop::Process(child) => Some(child),
             Stop::Container(_) => None,
         };
-        wait_ready(self.port, child, READY, || {
+        let diagnostics = || {
+            let container_log = container.as_ref().map_or_else(String::new, |name| {
+                let out = Command::new("docker").args(["logs", name]).output();
+                out.map(|o| {
+                    format!(
+                        "docker logs:\n{}{}",
+                        String::from_utf8_lossy(&o.stdout),
+                        String::from_utf8_lossy(&o.stderr)
+                    )
+                })
+                .unwrap_or_default()
+            });
             format!(
-                "squid.stderr:\n{}\ncache.log:\n{}",
+                "squid.stderr:\n{}\ncache.log:\n{}\n{container_log}",
                 read(&dir.join("squid.stderr")),
                 read(&dir.join("cache.log"))
             )
-        });
+        };
+        try_ready(self.port, child, READY, diagnostics)?;
+        if let Some(name) = &container {
+            // Something else may answer on a taken port while the container's Squid has exited.
+            let running = Command::new("docker")
+                .args(["inspect", "-f", "{{.State.Running}}", name])
+                .output()
+                .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "true");
+            if !running {
+                return Err(format!("the fixture exited early\n{}", diagnostics()));
+            }
+        }
+        Ok(())
     }
 
     /// The port Squid listens on (`127.0.0.1`).
@@ -379,6 +420,7 @@ mod tests {
         let mut squid = stand_in(&mut Command::new("false"));
         fs::write(squid.dir.path().join("squid.stderr"), "boom").unwrap();
         fs::write(squid.dir.path().join("cache.log"), "cache says hi").unwrap();
-        squid.wait();
+        let why = squid.wait().unwrap_err();
+        panic!("{why}");
     }
 }

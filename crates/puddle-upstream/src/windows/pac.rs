@@ -59,6 +59,12 @@ impl Slot {
     }
 }
 
+/// WinHTTP's status callback for one PAC resolution: fills the request's `Slot`.
+///
+/// # Safety
+///
+/// `context` must be the `Slot` pointer `resolve_once` registered, still alive, and `info` must
+/// be what WinHTTP documents for `status`. Only WinHTTP calls it.
 unsafe extern "system" fn callback(
     _handle: *mut c_void,
     context: usize,

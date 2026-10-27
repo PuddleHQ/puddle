@@ -32,6 +32,12 @@ type Unregister = unsafe extern "system" fn(*const c_void) -> u32;
 /// What the WinHTTP callback needs; leaked on purpose until the registration is removed.
 struct Context(ChangeCallback);
 
+/// WinHTTP's proxy change callback: runs the registered `ChangeCallback`.
+///
+/// # Safety
+///
+/// `context` must be the `Context` that `WinHttpWatch::register` registered and its drop has not
+/// freed yet. Only WinHTTP calls it.
 unsafe extern "system" fn proxy_changed(_flags: u64, context: *const c_void) {
     // SAFETY: `context` is the `Context` registered in `WinHttpWatch::register`, alive until the
     // registration is removed (and unregistration waits for running callbacks).

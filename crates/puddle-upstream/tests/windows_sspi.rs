@@ -11,7 +11,6 @@
     unsafe_code,
     clippy::unwrap_used,
     clippy::indexing_slicing,
-    clippy::undocumented_unsafe_blocks,
     clippy::print_stderr,
     reason = "a test fake of the SSPI server side; a panic is how a test helper fails"
 )]
@@ -57,6 +56,8 @@ impl ServerContext {
         };
         let mut expiry = 0i64;
         let _guard = SERVER_LOCK.lock().unwrap();
+        // SAFETY: `name` is a NUL-terminated package name that outlives the call; the optional
+        // inputs are null, and `credential` and `expiry` are valid out-pointers.
         let status = unsafe {
             AcquireCredentialsHandleW(
                 ptr::null(),
@@ -107,6 +108,9 @@ impl ServerContext {
         let (mut attributes, mut expiry) = (0u32, 0i64);
         let context: *mut SecHandle = &raw mut self.context;
         let _guard = SERVER_LOCK.lock().unwrap();
+        // SAFETY: the credential was acquired in `new`; `context` is passed as input only after a
+        // first call filled it; `input_desc` points at `input`, which borrows `token` for the call;
+        // the output descriptor and the out-pointers are valid locals.
         let status = unsafe {
             AcceptSecurityContext(
                 &raw const self.credential,
@@ -123,10 +127,12 @@ impl ServerContext {
         let reply = if output.pvBuffer.is_null() {
             Vec::new()
         } else {
+            // SAFETY: with ASC_REQ_ALLOCATE_MEMORY, SSPI allocated `cbBuffer` bytes at `pvBuffer`.
             let bytes = unsafe {
                 std::slice::from_raw_parts(output.pvBuffer.cast::<u8>(), output.cbBuffer as usize)
             }
             .to_vec();
+            // SAFETY: SSPI allocated this buffer, it is freed once, and `bytes` is a copy.
             unsafe { FreeContextBuffer(output.pvBuffer) };
             bytes
         };
@@ -140,6 +146,8 @@ impl ServerContext {
         let mut names = SecPkgContext_NamesW {
             sUserName: ptr::null_mut(),
         };
+        // SAFETY: the context is complete (SEC_E_OK above); `names` is the struct that
+        // SECPKG_ATTR_NAMES fills.
         let query = unsafe {
             QueryContextAttributesW(
                 &raw const self.context,
@@ -149,12 +157,16 @@ impl ServerContext {
         };
         assert_eq!(query, SEC_E_OK, "the authenticated user name");
         let mut length = 0;
+        // SAFETY: the query succeeded, so `sUserName` is a NUL-terminated UTF-16 string; the loop
+        // stops at the terminator.
         while unsafe { *names.sUserName.add(length) } != 0 {
             length += 1;
         }
+        // SAFETY: the loop above counted `length` units before the terminator.
         let user = String::from_utf16_lossy(unsafe {
             std::slice::from_raw_parts(names.sUserName, length)
         });
+        // SAFETY: SSPI allocated the name, it is freed once, and `user` is a copy.
         unsafe { FreeContextBuffer(names.sUserName.cast()) };
         Ok((reply, Some(user)))
     }
@@ -162,6 +174,8 @@ impl ServerContext {
 
 impl Drop for ServerContext {
     fn drop(&mut self) {
+        // SAFETY: both handles came from SSPI in `new` and `accept` (the context only once
+        // `started`), and each is released once, here.
         unsafe {
             if self.started {
                 DeleteSecurityContext(&raw const self.context);

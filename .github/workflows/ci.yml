@@ -533,7 +533,7 @@ jobs:
           # shellcheck disable=SC2086 # one word per browser
           ../ci/apt-retry.sh npx playwright install-deps $browsers
           if [ "${{ steps.browsers.outputs.cache-hit }}" != true ]; then
-            # shellcheck disable=SC2086
+            # shellcheck disable=SC2086 # one word per browser
             npx playwright install $browsers
           fi
       - name: Save the Playwright browsers

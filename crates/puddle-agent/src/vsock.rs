@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! `AF_VSOCK` connect with a raised socket buffer (Linux guest only). The only `unsafe` in the
-//! agent: std and tokio have no vsock sockets, and the buffer must be set before `connect`.
+//! agent: std, tokio and tokio-vsock have no vsock sockets, and the buffer must be set before `connect`.
 //!
 //! **Why the buffer:** since Linux 6.12.68 (the CVE-2026-23086 fix) a guest sends at most
 //! min(peer `buf_alloc`, own `buf_alloc`) unacknowledged bytes, and its own `buf_alloc` defaults to

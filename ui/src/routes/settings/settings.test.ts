@@ -624,7 +624,7 @@ describe("workspace defaults and the network", () => {
     });
     await fireEvent.click(
       within(box.closest("form") as HTMLElement).getByRole("button", {
-        name: "Save names",
+        name: "Keep names",
       }),
     );
     await screen.findByText("Saved.");

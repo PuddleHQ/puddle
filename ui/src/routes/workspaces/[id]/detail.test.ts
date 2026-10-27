@@ -868,7 +868,7 @@ describe("the settings tab", () => {
     await fireEvent.input(names, {
       target: { value: "Bank.example\n*.corp.test" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Save names" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Keep names" }));
     await screen.findByText("Saved.");
     expect(api.interception["demo"]?.never_decrypt).toEqual([
       "*.corp.test",

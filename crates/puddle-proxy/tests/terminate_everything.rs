@@ -360,9 +360,8 @@ async fn a_client_that_asks_for_another_name_is_passed_through_not_refused() {
 }
 
 /// An address nothing listens on.
-fn closed_port() -> std::net::SocketAddr {
-    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-    listener.local_addr().unwrap()
+fn closed_port() -> std::io::Result<std::net::SocketAddr> {
+    std::net::TcpListener::bind(("127.0.0.1", 0))?.local_addr()
 }
 
 #[tokio::test]
@@ -394,7 +393,7 @@ async fn a_record_that_looks_like_a_hello_but_is_not_one_is_passed_through() {
 async fn a_pass_through_to_a_server_that_cannot_be_reached_just_ends_the_connection() {
     let pki = Pki::new();
     let rig = RigBuilder::new(&pki)
-        .name("dead.test", closed_port())
+        .name("dead.test", closed_port().unwrap())
         .allow(vec!["bound.test", "dead.test"])
         .injector(adds_nothing())
         .decrypting_all(true, &[])
@@ -418,7 +417,7 @@ async fn a_pass_through_to_a_server_that_cannot_be_reached_just_ends_the_connect
 async fn a_decrypted_host_that_cannot_be_reached_gets_an_error_the_tool_can_read() {
     let pki = Pki::new();
     let rig = RigBuilder::new(&pki)
-        .name("dead.test", closed_port())
+        .name("dead.test", closed_port().unwrap())
         .allow(vec!["bound.test", "dead.test"])
         .injector(adds_nothing())
         .decrypting_all(true, &[])

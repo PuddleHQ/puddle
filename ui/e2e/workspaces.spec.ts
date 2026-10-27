@@ -1227,7 +1227,7 @@ test.describe("the settings tab", () => {
     ).toBeVisible();
     const names = page.getByLabel("Never decrypt in this workspace");
     await names.fill("Bank.example\n*.corp.test");
-    await page.getByRole("button", { name: "Save names" }).click();
+    await page.getByRole("button", { name: "Keep names" }).click();
     await expect(page.getByText("Saved.")).toBeVisible();
     await page.reload();
     await expect(
@@ -1237,7 +1237,7 @@ test.describe("the settings tab", () => {
       page.getByLabel("Never decrypt in this workspace"),
     ).toHaveValue("*.corp.test\nbank.example");
     await names.fill("10.0.0.1");
-    await page.getByRole("button", { name: "Save names" }).click();
+    await page.getByRole("button", { name: "Keep names" }).click();
     await expect(page.getByRole("alert")).toContainText("10.0.0.1");
   });
 

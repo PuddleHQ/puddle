@@ -94,7 +94,11 @@ where
 {
     let start =
         tokio_rustls::LazyConfigAcceptor::new(rustls::server::Acceptor::default(), stream).await?;
-    let hello = start.client_hello();
+    let hello = hello_of(&start.client_hello(), host);
+    Ok((start, hello))
+}
+
+fn hello_of(hello: &ClientHello<'_>, host: &Host) -> Hello {
     let name_matches = name_is(hello.server_name(), &host.to_string());
     let (mut offers_h2, mut offers_h1, mut any) = (false, false, false);
     for proto in hello.alpn().into_iter().flatten() {
@@ -102,14 +106,95 @@ where
         offers_h2 |= proto == ALPN_H2;
         offers_h1 |= proto == ALPN_HTTP11;
     }
-    Ok((
-        start,
-        Hello {
-            name_matches,
-            offers_h2,
-            offers_h1: offers_h1 || !any,
-        },
-    ))
+    Hello {
+        name_matches,
+        offers_h2,
+        offers_h1: offers_h1 || !any,
+    }
+}
+
+/// What a guest's connection starts with.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum FirstBytes {
+    /// One complete TLS record that begins a handshake, as the bytes were read.
+    Tls(Vec<u8>),
+    /// Anything else (not TLS, a record cut short, nothing at all within the wait), as read, so
+    /// that a pass-through can send it on.
+    Other(Vec<u8>),
+}
+
+/// The size of a TLS record header: type, version, length.
+const RECORD_HEADER: usize = 5;
+
+/// Reads the first TLS record of `stream` after `early` (bytes already read), without
+/// answering it: the bytes stay available, so that the connection can still be passed through
+/// to the real server untouched when it is not something Puddle can decrypt.
+///
+/// `first` bounds the wait for the first byte (a protocol where the server speaks first sends
+/// nothing, and must not wait for a handshake timeout); `rest` bounds the wait for the others.
+///
+/// # Errors
+/// The stream failed with an error other than ending.
+pub(crate) async fn capture_first_record<S>(
+    stream: &mut S,
+    early: Vec<u8>,
+    first: std::time::Duration,
+    rest: std::time::Duration,
+) -> io::Result<FirstBytes>
+where
+    S: AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt as _;
+    let mut buf = early;
+    let mut want = RECORD_HEADER;
+    let mut patience = first;
+    loop {
+        if buf.len() >= want {
+            if want == RECORD_HEADER {
+                let [kind, major, _, hi, lo, ..] = buf.as_slice() else {
+                    return Ok(FirstBytes::Other(buf));
+                };
+                let (kind, major) = (*kind, *major);
+                let len = usize::from(u16::from_be_bytes([*hi, *lo]));
+                // Handshake record, SSL 3 or TLS, at most the 16 KiB a record may hold.
+                if kind != 0x16 || major != 3 || len == 0 || len > MAX_RECORD {
+                    return Ok(FirstBytes::Other(buf));
+                }
+                want = RECORD_HEADER + len;
+                continue;
+            }
+            // A ClientHello is handshake type 1.
+            return Ok(if buf.get(RECORD_HEADER) == Some(&1) {
+                FirstBytes::Tls(buf)
+            } else {
+                FirstBytes::Other(buf)
+            });
+        }
+        let mut chunk = [0u8; 4096];
+        match tokio::time::timeout(patience, stream.read(&mut chunk)).await {
+            Ok(Ok(0)) | Err(_) => return Ok(FirstBytes::Other(buf)),
+            Ok(Ok(n)) => buf.extend_from_slice(chunk.get(..n).unwrap_or_default()),
+            Ok(Err(err)) => return Err(err),
+        }
+        patience = rest;
+    }
+}
+
+/// The most a TLS record holds (RFC 8446 §5.1).
+const MAX_RECORD: usize = 16 * 1024;
+
+/// What the `ClientHello` in `captured` says, read without a connection. `None` when `captured`
+/// is not a whole `ClientHello` (a hello that spans records, which no common client sends).
+pub(crate) fn parse_hello(captured: &[u8], host: &Host) -> Option<Hello> {
+    let mut acceptor = rustls::server::Acceptor::default();
+    let mut rest = captured;
+    while !rest.is_empty() {
+        acceptor.read_tls(&mut rest).ok()?;
+        if let Some(accepted) = acceptor.accept().ok()? {
+            return Some(hello_of(&accepted.client_hello(), host));
+        }
+    }
+    None
 }
 
 /// Whether a `ClientHello`'s name is `host`.
@@ -242,9 +327,104 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Prefixed<S> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use tokio::io::AsyncReadExt;
 
     use super::*;
+
+    /// A real `ClientHello` for `name` with `alpn`, as a TLS client sends it.
+    fn client_hello(name: &str, alpn: &[&[u8]]) -> Vec<u8> {
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add_parsable_certificates(Vec::new());
+        let mut config = rustls::ClientConfig::builder_with_provider(provider())
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        config.alpn_protocols = alpn.iter().map(|p| p.to_vec()).collect();
+        let mut conn = rustls::ClientConnection::new(
+            Arc::new(config),
+            rustls::pki_types::ServerName::try_from(name.to_owned()).unwrap(),
+        )
+        .unwrap();
+        let mut out = Vec::new();
+        conn.write_tls(&mut out).unwrap();
+        out
+    }
+
+    async fn capture(bytes: Vec<u8>, early: &[u8]) -> FirstBytes {
+        let (mut a, b) = tokio::io::duplex(64 * 1024);
+        tokio::io::AsyncWriteExt::write_all(&mut a, &bytes)
+            .await
+            .unwrap();
+        let mut reader = b;
+        let wait = Duration::from_millis(200);
+        let result = capture_first_record(&mut reader, early.to_vec(), wait, wait).await;
+        drop(a);
+        result.unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_client_hello_is_captured_whole_and_read_without_a_connection() {
+        let hello = client_hello("free.test", &[b"h2", b"http/1.1"]);
+        assert_eq!(
+            capture(hello.clone(), &[]).await,
+            FirstBytes::Tls(hello.clone())
+        );
+        let host = Host::parse_normalised("free.test").unwrap();
+        let read = parse_hello(&hello, &host).unwrap();
+        assert!(read.name_matches && read.offers_h2 && read.offers_h1);
+        let other = Host::parse_normalised("other.test").unwrap();
+        assert!(!parse_hello(&hello, &other).unwrap().name_matches);
+        let h2_only = client_hello("free.test", &[b"h2"]);
+        let read = parse_hello(&h2_only, &host).unwrap();
+        assert!(read.offers_h2 && !read.offers_h1);
+    }
+
+    #[tokio::test]
+    async fn bytes_read_before_the_capture_count_as_the_start_of_the_record() {
+        let hello = client_hello("free.test", &[]);
+        let (early, rest) = hello.split_at(3);
+        assert_eq!(
+            capture(rest.to_vec(), early).await,
+            FirstBytes::Tls(hello.clone())
+        );
+        assert_eq!(capture(Vec::new(), &hello).await, FirstBytes::Tls(hello));
+    }
+
+    #[tokio::test]
+    async fn anything_that_is_not_one_whole_client_hello_is_other_and_keeps_its_bytes() {
+        let hello = client_hello("free.test", &[]);
+        let cases: Vec<Vec<u8>> = vec![
+            b"GET / HTTP/1.1
+
+"
+            .to_vec(),
+            b"SSH".to_vec(),
+            Vec::new(),
+            // A handshake record that is not a ClientHello.
+            vec![0x16, 3, 3, 0, 4, 2, 0, 0, 0],
+            // Application data, a zero-length record, a record over 16 KiB.
+            vec![0x17, 3, 3, 0, 1, 0],
+            vec![0x16, 3, 3, 0, 0],
+            vec![0x16, 3, 3, 0x7f, 0xff],
+            // A record cut short.
+            hello[..hello.len() - 1].to_vec(),
+        ];
+        for bytes in cases {
+            assert_eq!(capture(bytes.clone(), &[]).await, FirstBytes::Other(bytes));
+        }
+    }
+
+    #[test]
+    fn bytes_that_are_not_a_whole_client_hello_give_no_hello() {
+        let host = Host::parse_normalised("free.test").unwrap();
+        let hello = client_hello("free.test", &[]);
+        assert!(parse_hello(&hello[..hello.len() - 1], &host).is_none());
+        assert!(parse_hello(b"GET / HTTP/1.1\r\n\r\n", &host).is_none());
+        assert!(parse_hello(&[], &host).is_none());
+    }
 
     #[tokio::test]
     async fn the_prefix_is_read_before_the_stream() {

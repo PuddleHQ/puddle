@@ -378,16 +378,32 @@ impl Proxy {
     fn terminating(
         &self,
         request: &EgressRequest,
-    ) -> Option<(Arc<terminate::Termination>, &puddle_upstream::TlsClient)> {
+    ) -> Option<(
+        Arc<terminate::Termination>,
+        terminate::Mode,
+        &puddle_upstream::TlsClient,
+    )> {
         let terminations = self.terminations.as_ref()?;
         if request.port != terminate::request::HTTPS_PORT {
             return None;
         }
         let termination = terminations.source.termination(&request.workspace)?;
-        termination
-            .set()
-            .contains(&request.host)
-            .then_some((termination, &terminations.tls))
+        let mode = termination.mode_for(&request.host)?;
+        Some((termination, mode, &terminations.tls))
+    }
+
+    /// Why a host that the workspace would decrypt (it decrypts every host) is passed through
+    /// instead: on its never-decrypt list, or one its tools did not accept the certificate for.
+    fn skipped(&self, request: &EgressRequest) -> Option<&'static str> {
+        let terminations = self.terminations.as_ref()?;
+        if request.port != terminate::request::HTTPS_PORT {
+            return None;
+        }
+        let termination = terminations.source.termination(&request.workspace)?;
+        if termination.set().contains(&request.host) {
+            return None;
+        }
+        termination.interception().skipped(&request.host)
     }
 
     pub(crate) fn addresses(&self) -> &dyn AddressCheck {
@@ -730,11 +746,12 @@ async fn relay(
     // A bound host is terminated: the guest's TLS handshake comes first, so a client that asks
     // for the wrong name never causes a connection to the real server.
     if path.is_none()
-        && let Some((termination, tls)) = proxy.terminating(request)
+        && let Some((termination, mode, tls)) = proxy.terminating(request)
     {
         let cx = Arc::new(terminate::Context {
             proxy: Arc::clone(proxy),
             termination,
+            mode,
             tls: tls.clone(),
             workspace: request.workspace.clone(),
             target: target.clone(),
@@ -765,6 +782,8 @@ async fn relay(
         } else if let Some(code) = done.refused {
             event.decision = ConnectionDecision::Blocked;
             event.reason = ConnectionReason::Refused(code);
+        } else if let Some(code) = done.passed_through {
+            event.reason = ConnectionReason::PassedThrough(code);
         }
         return event;
     }
@@ -787,6 +806,11 @@ async fn relay(
     event.outcome = Some(ConnectionOutcome::Connected);
     event.resolved_ip = out.addr.map(|addr| addr.ip());
     event.upstream = out.hop;
+    if path.is_none()
+        && let Some(code) = proxy.skipped(request)
+    {
+        event.reason = ConnectionReason::PassedThrough(code);
+    }
     match path {
         None => {
             let end = tunnel(reader, out.stream, Some(request), out.watch).await;
@@ -1361,17 +1385,7 @@ pub(crate) async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(
     // A tunnel can outlive the network it was made on. When the route to its destination changes
     // so that the hop it uses is no longer on it, both ends are reset (the same ending as any
     // failed tunnel), and the guest's client reconnects over the new route.
-    let spliced = async {
-        let mut spliced = std::pin::pin!(splice(&mut server, &mut guest));
-        match watch.as_mut() {
-            Some(watch) => tokio::select! {
-                result = &mut spliced => Some(result),
-                () = watch.changed() => None,
-            },
-            None => Some(spliced.await),
-        }
-    }
-    .await;
+    let spliced = splice_watched(&mut server, &mut guest, watch.as_mut()).await;
     let Some(spliced) = spliced else {
         abort(&server);
         return TunnelEnd {
@@ -1406,6 +1420,26 @@ pub(crate) async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(
     TunnelEnd {
         http: guest.inner().request_line(),
         ssh: false,
+    }
+}
+
+/// [`splice`] until either side ends, or until `watch` says the route to the destination
+/// changed (`None`: both ends are to be reset by the caller).
+pub(crate) async fn splice_watched<S>(
+    server: &mut TcpStream,
+    guest: &mut S,
+    watch: Option<&mut RouteWatch>,
+) -> Option<io::Result<(u64, u64)>>
+where
+    S: AsyncRead + AsyncWrite + Unpin + ?Sized,
+{
+    let mut spliced = std::pin::pin!(splice(server, guest));
+    match watch {
+        Some(watch) => tokio::select! {
+            result = &mut spliced => Some(result),
+            () = watch.changed() => None,
+        },
+        None => Some(spliced.await),
     }
 }
 
@@ -1488,7 +1522,7 @@ where
 }
 
 /// Makes dropping `server` send a reset instead of a clean close.
-fn abort(server: &TcpStream) {
+pub(crate) fn abort(server: &TcpStream) {
     if let Err(err) = server.set_zero_linger() {
         tracing::debug!(error = %err, "zero linger");
     }

@@ -83,8 +83,9 @@ pub use route::Route;
 pub use terminate::{
     AnswerHead, AnswerRewriter, BodyFormat, DEFAULT_TERMINATED_HOSTS, Exchange, ExchangeRewriter,
     HeaderError, InjectContext, InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector,
-    MAX_EXCHANGE_BODY, NoInjection, PatternError, RequestView, SecretValue, StandIn, StandInError,
-    StandInOrigin, StandIns, Termination, TerminationSet, TerminationSource, Terminations,
-    TokenBody, TokenBodyError, Unauthorized, secret_stand_in,
+    Interception, LEARNED_CAP, LEARNED_TTL, MAX_EXCHANGE_BODY, NoInjection, PassThrough,
+    PatternError, RequestView, SecretValue, StandIn, StandInError, StandInOrigin, StandIns,
+    Termination, TerminationSet, TerminationSource, Terminations, TokenBody, TokenBodyError,
+    Unauthorized, secret_stand_in,
 };
 pub use upstream::Upstream;

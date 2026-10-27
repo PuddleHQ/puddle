@@ -363,7 +363,10 @@ def scan(root):
         if vendor or f == "scripts/quality-gate.py":
             continue
         for i, line in enumerate(lines):
-            m = re.search(r"\b(TODO|HACK|FIXME|XXX)\b", line)
+            # A marker is the first word of a comment or is followed by `:` or `(`; prose that mentions TODO is not one.
+            m = re.search(r"(?://+|#+|/\*+|<!--|^\s*\*)\s*(TODO|HACK|FIXME|XXX)\b|\b(TODO|HACK|FIXME|XXX)[:(]", line)
+            if m:
+                m = re.search(r"(TODO|HACK|FIXME|XXX)", m.group(0))
             if m and not re.search(r"`(TODO|HACK|FIXME|XXX)`|TODO\.md|todo!", line):
                 add("marker-" + m.group(1).lower(), "any", f, i, line)
                 if not re.search(r"\b(?:TODO|HACK|FIXME|XXX)\(\s*[\w@./-]+\s*\)|#\d+|https?://", line):
@@ -434,6 +437,7 @@ fn a() {
     let v = foo.unwrap(); // TODO later
     // FIXME(ana): tracked
     // HACK see #12
+    // prose that mentions TODO in passing
     let p = r"C:\";
     unsafe { z() };
 }

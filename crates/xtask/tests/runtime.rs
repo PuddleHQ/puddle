@@ -14,7 +14,8 @@ use object::{Architecture, BinaryFormat, Endianness, SectionKind};
 use puddle_runtime::{HostOs, RuntimeFiles};
 use xtask::checksums::sha256_file;
 use xtask::source::{
-    CHECKSUMS_ASSET, Commit, Firmware, ForkFacts, LIBKRUNFW_ASSET, LIBKRUNFW_LINUX_ASSET, MSB_ASSET,
+    CHECKSUMS_ASSET, Commit, Firmware, ForkFacts, LIBKRUNFW_ASSET, LIBKRUNFW_LINUX_ASSET,
+    MSB_ASSET, MSB_LINUX_ASSET,
 };
 
 const VERSION: &str = "0.7.7-puddle.3";
@@ -82,9 +83,15 @@ fn fixture(dir: &Path, embedded: &str) -> PathBuf {
     }
     let msb = src.join("fork").join(MSB_ASSET);
     std::fs::write(&msb, fake_msb(embedded)).unwrap();
+    let msb_linux = src.join("fork").join(MSB_LINUX_ASSET);
+    std::fs::write(&msb_linux, fake_msb_in(BinaryFormat::Elf, embedded)).unwrap();
     std::fs::write(
         src.join("fork").join(CHECKSUMS_ASSET),
-        format!("{}  {MSB_ASSET}\n", sha256_file(&msb).unwrap()),
+        format!(
+            "{}  {MSB_ASSET}\n{}  {MSB_LINUX_ASSET}\n",
+            sha256_file(&msb).unwrap(),
+            sha256_file(&msb_linux).unwrap()
+        ),
     )
     .unwrap();
     let fw = src.join("upstream").join(LIBKRUNFW_ASSET);
@@ -161,6 +168,16 @@ fn run_linux(src: &Path, out: &Path) -> xtask::Result<String> {
             "--pins",
             src.join("pins.sha256").to_str().unwrap(),
         ],
+    )
+}
+
+/// Linux with no `--msb`: the msb is the fixture release's `msb-linux-x86_64`.
+fn run_linux_download(src: &Path, out: &Path) -> xtask::Result<String> {
+    let pins = src.join("pins.sha256");
+    run_with(
+        src,
+        out,
+        &["--os", "linux", "--pins", pins.to_str().unwrap()],
     )
 }
 
@@ -474,18 +491,46 @@ fn a_linux_folder_needs_the_msb_it_is_given() {
     let dir = TempDir::new("nomsb");
     let src = fixture(&dir.0, VERSION);
     let out = dir.0.join("runtime");
-    let pins = src.join("pins.sha256");
-    let no_msb = ["--os", "linux", "--pins", pins.to_str().unwrap()];
-    let err = run_with(&src, &out, &no_msb).unwrap_err().to_string();
-    assert!(
-        err.contains("ci/fetch-msb.sh") && err.contains("--msb"),
-        "{err}"
-    );
-
     std::fs::remove_file(src.join("msb-linux")).unwrap();
     let err = run_linux(&src, &out).unwrap_err().to_string();
     assert!(err.contains("msb-linux"), "{err}");
     assert!(!out.exists());
+}
+
+#[test]
+fn a_linux_folder_downloads_the_releases_msb_and_verifies_it() {
+    let dir = TempDir::new("linuxdownload");
+    let src = fixture(&dir.0, VERSION);
+    let out = dir.0.join("runtime");
+    run_linux_download(&src, &out).unwrap();
+    assert_eq!(names(&out), linux_files(FW_VERSION));
+    assert_eq!(
+        std::fs::read(out.join(LINUX.msb)).unwrap(),
+        std::fs::read(src.join("fork").join(MSB_LINUX_ASSET)).unwrap()
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(out.join(LINUX.msb))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o111, 0o111, "msb is not executable: {mode:o}");
+    }
+
+    // A release without the asset, or with different bytes than its checksum list, stops it.
+    std::fs::write(src.join("fork").join(MSB_LINUX_ASSET), b"tampered").unwrap();
+    let out = dir.0.join("tampered");
+    let err = run_linux_download(&src, &out).unwrap_err().to_string();
+    assert!(
+        err.contains(&format!("checksum mismatch for {MSB_LINUX_ASSET}")),
+        "{err}"
+    );
+    std::fs::remove_file(src.join("fork").join(MSB_LINUX_ASSET)).unwrap();
+    let out = dir.0.join("missing");
+    let err = run_linux_download(&src, &out).unwrap_err().to_string();
+    assert!(err.contains(MSB_LINUX_ASSET), "{err}");
+    assert!(!out.exists() && !dir.0.join("missing.partial").exists());
 }
 
 #[test]

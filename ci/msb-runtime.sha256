@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # What ci/fetch-msb.sh may install, by release tag: `<tag> <release asset> <sha256>`, or
-# `<tag> source-commit <sha1>` for a fork tag whose Linux msb is built from source, and
+# `<tag> source-commit <sha1>` (what a Linux msb is built from when the tag has no `msb-linux-x86_64`
+# line: the fork's releases carry one since v0.7.8-puddle.6, with `libkrunfw-linux-x86_64.so`), and
 # `<tag> libkrunfw-linux-version <x.y.z>`: the firmware version that msb looks for beside itself
 # (`LIBKRUNFW_VERSION` in its `crates/utils/lib/lib.rs`). fetch-msb.sh
 # refuses anything not listed here. Values copied from each release's checksums.sha256 and checked
@@ -18,6 +19,8 @@ v0.7.8-puddle.6 libkrunfw-windows-x86_64.dll 375f4455feae83e66a7b7a2c1509796eab1
 v0.7.8-puddle.6 agentd-x86_64 2fbbe3a8f99ace5d5cc3fd9b97292c02930109cefef5c9cb23b2bbbcf8d5f0c9
 v0.7.8-puddle.6 source-commit 34a91c305ad2e6a62d3e09453ddb8a1ddc442726
 v0.7.8-puddle.6 libkrunfw-linux-version 5.6.1
+v0.7.8-puddle.6 msb-linux-x86_64 4f3404b76d1bcf17bb3af7c0b3087fda36c1274595c3a10a64c9d43b422b7e98
+v0.7.8-puddle.6 libkrunfw-linux-x86_64.so ce0a915daa6aff403e9a388e161671fbac9b85b0c200a99d7a9fdf0e1c03d668
 v0.7.8-puddle.5 msb-windows-x86_64.exe bbd6343b2eeaf8fa618e27534abc9803fbb035159889b7288c54ffbf243ece5c
 v0.7.8-puddle.5 libkrunfw-windows-x86_64.dll 375f4455feae83e66a7b7a2c1509796eab1d5b2e802da4b474a2e092869b543c
 v0.7.8-puddle.5 agentd-x86_64 db6ab978b93933c02e001a60fc688adbce491aaf040595142e6bd78b8c39b5b6

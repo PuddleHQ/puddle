@@ -51,8 +51,9 @@ commands:
   runtime   assemble the bundled runtime folder
             --out <dir>            output folder (default: <target>/runtime); must not have content
             --os <windows|linux>   OS the folder is for (default: this one)
-            --msb <file>           Linux only: the msb to ship, built from the fork tag
-                                   (ci/fetch-msb.sh builds it); the fork releases no Linux msb
+            --msb <file>           Linux only: ship this msb instead of the release's
+                                   msb-linux-x86_64 (for a tag whose release has none:
+                                   ci/fetch-msb.sh builds one from the tag's source)
             --pins <file>          runtime pin list (default: ci/msb-runtime.sha256), where the Linux
                                    firmware version comes from
             --tag <tag>            fork tag (default: v<BUILT_FOR>, the version this Puddle runs)
@@ -341,7 +342,7 @@ fn runtime(opts: &Options) -> Result<String> {
 }
 
 /// The runtime folder the options ask for: this OS's unless `--os` says otherwise; Linux needs
-/// `--msb` and the firmware version pinned for `tag`.
+/// the firmware version pinned for `tag`.
 fn runtime_target(opts: &Options, tag: &str) -> Result<assemble::Target> {
     let os = match opts.value("--os") {
         Some(name) => HostOs::from_target_os(name),
@@ -357,19 +358,13 @@ fn runtime_target(opts: &Options, tag: &str) -> Result<assemble::Target> {
             Ok(assemble::Target::Windows)
         }
         Some(HostOs::Linux) => {
-            let msb = opts.value("--msb").ok_or_else(|| {
-                XtaskError::Usage(
-                    "the fork releases no Linux msb: build one with ci/fetch-msb.sh and pass it with --msb"
-                        .into(),
-                )
-            })?;
             let pins_path = opts
                 .value("--pins")
                 .map_or_else(|| workspace_root().join(pin::PIN_FILE), PathBuf::from);
             let pins = std::fs::read_to_string(&pins_path)
                 .map_err(|e| XtaskError::io(format!("reading {}", pins_path.display()), e))?;
             Ok(assemble::Target::Linux {
-                msb: PathBuf::from(msb),
+                msb: opts.value("--msb").map(PathBuf::from),
                 libkrunfw_version: pin::libkrunfw_linux_version(&pins, tag)?,
             })
         }
@@ -404,10 +399,6 @@ mod tests {
             (vec!["runtime", "--bogus"], "unknown argument --bogus"),
             (vec!["notices", "--tag", "x"], "unknown argument --tag"),
             (
-                vec!["runtime", "--os", "linux", "--tag", "v0.7.7-puddle.1"],
-                "the fork releases no Linux msb",
-            ),
-            (
                 vec!["runtime", "--tag", "v0.7.7", "--from", "/nonexistent"],
                 "pass --upstream-tag",
             ),
@@ -425,7 +416,8 @@ mod tests {
 
     #[test]
     fn the_runtime_folder_is_for_this_os_unless_told_otherwise() {
-        // No `--os`: on Linux the folder needs an msb to ship; Windows goes on to read the parts.
+        // No `--os`: Linux first needs the firmware version pinned for the tag (a Parse error
+        // for this unpinned one); Windows goes straight on to read the parts (an Io error).
         let err = run(args(&[
             "runtime",
             "--tag",
@@ -435,7 +427,7 @@ mod tests {
         ]))
         .unwrap_err();
         assert_eq!(
-            matches!(err, XtaskError::Usage(_)),
+            matches!(err, XtaskError::Parse { .. }),
             HostOs::current() == HostOs::Linux,
             "{err}"
         );

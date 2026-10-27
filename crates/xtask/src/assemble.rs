@@ -25,7 +25,8 @@ use crate::error::{Result, XtaskError};
 use crate::inventory::Inventory;
 use crate::notice;
 use crate::source::{
-    CHECKSUMS_ASSET, LIBKRUNFW_ASSET, LIBKRUNFW_LINUX_ASSET, MSB_ASSET, Origin, ReleaseSource,
+    CHECKSUMS_ASSET, LIBKRUNFW_ASSET, LIBKRUNFW_LINUX_ASSET, MSB_ASSET, MSB_LINUX_ASSET, Origin,
+    ReleaseSource,
 };
 
 /// The licence texts shipped with every runtime.
@@ -40,11 +41,11 @@ pub const LICENCE_TEXTS: [(&str, &str); 3] = [
 pub enum Target {
     /// Windows: the fork's `msb.exe` and upstream's firmware, both downloaded.
     Windows,
-    /// Linux: the fork releases no msb, so `msb` is a binary built from the fork's tag (by
-    /// `ci/fetch-msb.sh`); the firmware is downloaded.
+    /// Linux: the fork's `msb-linux-x86_64` and upstream's firmware, both downloaded.
     Linux {
-        /// The msb binary to ship.
-        msb: PathBuf,
+        /// An msb to ship instead of the release's, for a tag whose release has no Linux msb
+        /// (built by `ci/fetch-msb.sh`); `None` downloads the release's.
+        msb: Option<PathBuf>,
         /// The firmware version msb looks for beside itself, from the runtime pin
         /// ([`crate::pin::libkrunfw_linux_version`]).
         libkrunfw_version: String,
@@ -239,7 +240,14 @@ fn build(
             &downloads.join("fork"),
             &format!("{} {} {CHECKSUMS_ASSET}", facts.fork_repo, facts.tag),
         )?,
-        Target::Linux { msb, .. } => (msb.clone(), sha256_file(msb)?),
+        Target::Linux { msb: Some(msb), .. } => (msb.clone(), sha256_file(msb)?),
+        Target::Linux { msb: None, .. } => fetch_verified(
+            source,
+            Origin::Fork,
+            MSB_LINUX_ASSET,
+            &downloads.join("fork"),
+            &format!("{} {} {CHECKSUMS_ASSET}", facts.fork_repo, facts.tag),
+        )?,
     };
     let found = puddle_runtime::read_embedded_version(&msb)
         .map_err(|reason| XtaskError::parse(msb.display().to_string(), reason))?;
@@ -335,7 +343,7 @@ mod tests {
 
     fn linux(version: &str) -> Target {
         Target::Linux {
-            msb: PathBuf::from("msb"),
+            msb: None,
             libkrunfw_version: version.to_owned(),
         }
     }

@@ -111,30 +111,16 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         with:
           tool: cargo-nextest@0.9.146
-      # The runtime is built from source on a cache miss (about 10 minutes). Doing that here, once,
-      # saves the msb entry for the three test jobs, which start after this job ends.
-      - name: msb build cache
-        id: msb-cache
-        if: steps.changed.outputs.run == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/msb-build/msb-*
-          key: msb-linux-${{ hashFiles('ci/msb-runtime.sha256', 'ci/fetch-msb.sh', 'rust-toolchain.toml') }}
-      - name: msb runtime (fork tag; build on a cache miss, to fill the cache)
-        if: steps.changed.outputs.run == 'true' && steps.msb-cache.outputs.cache-hit != 'true'
-        run: |
-          ci/apt-setup.sh
-          ci/apt-retry.sh sudo apt-get update -q
-          ci/apt-retry.sh sudo apt-get install -y -q libcap-ng-dev
-          MSB_BUILD_DIR="$RUNNER_TEMP/msb-build" ci/fetch-msb.sh "$RUNNER_TEMP/msb"
+      # The runtime is the fork release's prebuilt Linux msb, downloaded and checked against
+      # ci/msb-runtime.sha256 (a few seconds). Only a tag with no Linux msb pinned is built from
+      # source (about 10 minutes, with a warning annotation).
       # The runtime folder the Linux packages will ship (msb, both firmware names, runtime.json),
       # built by `cargo xtask runtime --msb` from this msb. The test jobs run on the msb folder, not
-      # on it; this only keeps the layout honest (ci/check-runtime-layout.sh). On a cache hit the
-      # step above did not run, so fetch-msb.sh runs here and reuses the cached binary.
+      # on it; this only keeps the layout honest (ci/check-runtime-layout.sh).
       - name: runtime folder layout (cargo xtask runtime --msb)
         if: steps.changed.outputs.run == 'true'
         run: |
-          [ -x "$RUNNER_TEMP/msb/msb" ] || MSB_BUILD_DIR="$RUNNER_TEMP/msb-build" ci/fetch-msb.sh "$RUNNER_TEMP/msb"
+          ci/fetch-msb.sh "$RUNNER_TEMP/msb"
           ci/check-runtime-layout.sh "$RUNNER_TEMP/msb" "$RUNNER_TEMP/runtime-layout"
       - name: guest agent (static musl build)
         if: steps.changed.outputs.run == 'true'
@@ -187,22 +173,12 @@ jobs:
         if: steps.kvm.outputs.ok == 'true'
         with:
           tool: cargo-nextest@0.9.146
-      # The runtime is the SDK's fork tag (ci/msb-tag.sh, from Cargo.lock). The fork releases no
-      # Linux msb, so fetch-msb.sh builds it from the tag's pinned commit; the cache keeps only the
-      # resulting binary, keyed on the pins and the script (the build job fills it).
-      - name: msb build cache
-        if: steps.kvm.outputs.ok == 'true'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/msb-build/msb-*
-          key: msb-linux-${{ hashFiles('ci/msb-runtime.sha256', 'ci/fetch-msb.sh', 'rust-toolchain.toml') }}
-      - name: msb runtime (fork tag; download, verify, build)
+      # The runtime is the SDK's fork tag (ci/msb-tag.sh, from Cargo.lock): the release's Linux msb,
+      # downloaded and checked against ci/msb-runtime.sha256.
+      - name: msb runtime (fork tag; download, verify)
         if: steps.kvm.outputs.ok == 'true'
         run: |
-          ci/apt-setup.sh
-          ci/apt-retry.sh sudo apt-get update -q
-          ci/apt-retry.sh sudo apt-get install -y -q libcap-ng-dev
-          MSB_BUILD_DIR="$RUNNER_TEMP/msb-build" ci/fetch-msb.sh "$RUNNER_TEMP/msb"
+          ci/fetch-msb.sh "$RUNNER_TEMP/msb"
           echo "PUDDLE_VM_RUNTIME_DIR=$RUNNER_TEMP/msb" >> "$GITHUB_ENV"
           echo "PUDDLE_VM_ROOT=$RUNNER_TEMP/pvm" >> "$GITHUB_ENV"
       # The browser editor's server, mounted read-only into the guests that the host tests start.

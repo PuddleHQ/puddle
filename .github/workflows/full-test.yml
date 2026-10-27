@@ -54,17 +54,9 @@ jobs:
       - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: cargo-nextest@0.9.146
-      - name: msb build cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/msb-build/msb-*
-          key: msb-linux-${{ hashFiles('ci/msb-runtime.sha256', 'ci/fetch-msb.sh', 'rust-toolchain.toml') }}
-      - name: msb runtime (fork tag; download, verify, build)
+      - name: msb runtime (fork tag; download, verify)
         run: |
-          ci/apt-setup.sh
-          ci/apt-retry.sh sudo apt-get update -q
-          ci/apt-retry.sh sudo apt-get install -y -q libcap-ng-dev
-          MSB_BUILD_DIR="$RUNNER_TEMP/msb-build" ci/fetch-msb.sh "$RUNNER_TEMP/msb"
+          ci/fetch-msb.sh "$RUNNER_TEMP/msb"
           echo "PUDDLE_VM_RUNTIME_DIR=$RUNNER_TEMP/msb" >> "$GITHUB_ENV"
           echo "PUDDLE_VM_ROOT=$RUNNER_TEMP/pvm" >> "$GITHUB_ENV"
       - name: code-server (pinned release; download, verify)

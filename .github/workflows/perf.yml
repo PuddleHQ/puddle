@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Nightly performance bars: the six `#[ignore]`d tests in crates/puddle-proxy/tests/terminate_perf.rs
+# Nightly performance bars: the six `#[ignore]`d tests in crates/puddle-proxy/tests/terminate_suite/perf.rs
 # (terminating next to splicing, HTTP/2 next to HTTP/1.1, resident memory of an idle connection),
 # built in release mode, because a debug build says nothing about throughput or memory. Each test
 # prints what it measured and asserts a ceiling set well above a workstation's number (see the
@@ -40,5 +40,5 @@ jobs:
           tool: cargo-nextest@0.9.146
       # Each test in its own process (nextest), one at a time: the memory tests read the whole process's
       # resident size, and the throughput tests want the machine to themselves.
-      - name: terminate_perf, ignored tests only
-        run: cargo nextest run --release -p puddle-proxy --test terminate_perf --run-ignored only --no-capture --test-threads 1
+      - name: terminate_suite perf::, ignored tests only
+        run: cargo nextest run --release -p puddle-proxy --test terminate_suite -E "test(/^perf::/)" --run-ignored only --no-capture --test-threads 1

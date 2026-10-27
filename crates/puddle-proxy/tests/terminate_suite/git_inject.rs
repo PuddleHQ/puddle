@@ -6,8 +6,8 @@
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
-mod git_support;
-mod terminate_support;
+use crate::git_support;
+use crate::terminate_support;
 
 use bytes::Bytes;
 use git_support::{GitRig, H2GitRig, Host, PERSONAL, REAL_SECRET, WORK, denied, token_basic};

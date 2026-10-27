@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Tests of HTTP/2 on terminated connections: protocol agreement with the real server, requests
 //! decided and injected like HTTP/1.1, translation to an HTTP/1.1 server, trailers.
-mod terminate_support;
+use crate::terminate_support;
 
 use std::sync::Arc;
 

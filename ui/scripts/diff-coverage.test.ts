@@ -96,7 +96,7 @@ describe("parseLcov details", () => {
 describe("exclusions file", () => {
   it("refuses a line without any | and one without a closing |", () => {
     expect(() => parseExclusions("a.rs")).toThrow(
-      'exclusions line 1: want "path glob | text in the line, or * | reason" (a reason is required)',
+      'exclusions line 1: want "path glob | whole line, or * | [xN |] reason" (a reason is required)',
     );
     expect(() => parseExclusions("\n# c\na.rs | x")).toThrow(/line 3/);
   });
@@ -357,7 +357,7 @@ describe("run on a real git repository", () => {
     g("commit", "-q", "-m", "base");
     writeFileSync(
       join(dir, "src/a.rs"),
-      "fn a() {\n    1;\n    2;\n    3;\n}\n",
+      "fn a() {\n    1;\n    let two = compute_two();\n    let three = compute_three();\n}\n",
     );
   });
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -391,7 +391,9 @@ describe("run on a real git repository", () => {
     );
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(run(opts(join(dir, "l.info")), dir)).toBe(1);
-    expect(err.mock.calls.flat().join("\n")).toContain("src/a.rs:4: 3;");
+    expect(err.mock.calls.flat().join("\n")).toContain(
+      "src/a.rs:4: let three = compute_three();",
+    );
   });
 
   it("reads the file on disk: an excused line passes, a new uncovered one of the same shape fails, a one-token entry is refused", () => {
@@ -461,7 +463,7 @@ describe("run on a real git repository", () => {
     );
     writeFileSync(
       join(dir, "ex.txt"),
-      "src/a.rs | 2; | reason\nsrc/zzz.rs | * | reason\n",
+      "src/a.rs | let two = compute_two(); | reason\nsrc/zzz.rs | * | reason\n",
     );
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -475,7 +477,7 @@ describe("run on a real git repository", () => {
     ]);
     expect(err.mock.calls).toEqual([
       ["t: 1 added or changed line(s) never ran in a test:"],
-      ["  src/a.rs:4: 3;"],
+      ["  src/a.rs:4: let three = compute_three();"],
       [
         "  Cover them, or list them with a reason in the exclusion file (reviewed like code).",
       ],
@@ -487,7 +489,10 @@ describe("run on a real git repository", () => {
       join(dir, "l.info"),
       `SF:${dir}/src/a.rs\nDA:3,0\nDA:4,1\nend_of_record\n`,
     );
-    writeFileSync(join(dir, "ex.txt"), "src/a.rs | 2; | reason\n");
+    writeFileSync(
+      join(dir, "ex.txt"),
+      "src/a.rs | let two = compute_two(); | reason\n",
+    );
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const code = run(
       { ...opts(join(dir, "l.info")), exclusions: join(dir, "ex.txt") },

@@ -207,14 +207,14 @@ export interface Report {
 }
 
 /** Whether `lines` end at 1-based line `at` of `file`, compared trimmed. */
-function endsAt(file: string[], at: number, lines: string[]): boolean {
+export function endsAt(file: string[], at: number, lines: string[]): boolean {
   const start = at - lines.length;
   if (start < 0) return false;
   return lines.every((l, k) => (file[start + k] ?? "").trim() === l);
 }
 
 /** How many places in `file` the entry's lines end at. */
-function occurrences(file: string[], lines: string[]): number {
+export function occurrences(file: string[], lines: string[]): number {
   let n = 0;
   for (let at = lines.length; at <= file.length; at += 1) {
     if (endsAt(file, at, lines)) n += 1;

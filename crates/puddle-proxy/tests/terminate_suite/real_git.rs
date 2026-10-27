@@ -12,8 +12,8 @@
     clippy::unwrap_used,
     reason = "a skipped test says so; helpers outside #[test] functions fail the test by panicking"
 )]
-mod git_support;
-mod terminate_support;
+use crate::git_support;
+use crate::terminate_support;
 
 use std::path::Path;
 use std::process::Stdio;

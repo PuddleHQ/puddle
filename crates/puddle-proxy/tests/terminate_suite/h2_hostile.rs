@@ -2,7 +2,7 @@
 //! A hostile guest on an HTTP/2 terminated connection: floods, resets, smuggling by translation,
 //! malformed headers. Each test says what must not happen at the real server, and that the
 //! connection (or stream) ends instead of the proxy giving way.
-mod terminate_support;
+use crate::terminate_support;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

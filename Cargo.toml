@@ -46,6 +46,7 @@ puddle-inject = { path = "crates/puddle-inject" }
 puddle-repos = { path = "crates/puddle-repos" }
 puddle-logins = { path = "crates/puddle-logins" }
 puddle-ports = { path = "crates/puddle-ports" }
+puddle-front = { path = "crates/puddle-front" }
 puddle-appicon = { path = "crates/puddle-appicon" }
 
 # External

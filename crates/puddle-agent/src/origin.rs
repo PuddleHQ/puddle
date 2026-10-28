@@ -18,24 +18,20 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 /// decrypting a container's connection would make its tools fail.
 #[must_use]
 pub fn from_container(peer: SocketAddr) -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        use crate::bridge::Interfaces;
-        match crate::ifaddrs::Getifaddrs.ipv4() {
-            Ok(all) => {
-                let own: Vec<Ipv4Addr> = all.into_iter().map(|i| i.addr).collect();
-                is_foreign(peer, &own)
-            }
-            Err(err) => {
-                tracing::debug!(error = %err, "listing the guest's addresses failed; connections count as containers'");
-                peer.is_ipv4() && !peer.ip().is_loopback()
-            }
+    from_container_by(peer, &crate::ifaddrs::Getifaddrs)
+}
+
+/// [`from_container`] with the interface listing given.
+fn from_container_by(peer: SocketAddr, interfaces: &impl crate::bridge::Interfaces) -> bool {
+    match interfaces.ipv4() {
+        Ok(all) => {
+            let own: Vec<Ipv4Addr> = all.into_iter().map(|i| i.addr).collect();
+            is_foreign(peer, &own)
         }
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = peer;
-        false
+        Err(err) => {
+            tracing::debug!(error = %err, "listing the guest's addresses failed; connections count as containers'");
+            peer.is_ipv4() && !peer.ip().is_loopback()
+        }
     }
 }
 
@@ -64,9 +60,53 @@ mod tests {
         assert!(!is_foreign(peer("[::1]:41000"), &own));
     }
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn a_connection_from_loopback_is_not_a_containers_with_the_real_interface_list() {
-        assert!(!from_container("127.0.0.1:40000".parse().unwrap()));
+    mod listing {
+        use std::io;
+
+        use super::*;
+        use crate::bridge::{IfAddr, Interfaces};
+
+        struct Fake(Vec<IfAddr>);
+
+        impl Interfaces for Fake {
+            fn ipv4(&self) -> io::Result<Vec<IfAddr>> {
+                Ok(self.0.clone())
+            }
+        }
+
+        struct Broken;
+
+        impl Interfaces for Broken {
+            fn ipv4(&self) -> io::Result<Vec<IfAddr>> {
+                Err(io::Error::other("netlink says no"))
+            }
+        }
+
+        fn peer(s: &str) -> SocketAddr {
+            s.parse().unwrap()
+        }
+
+        #[test]
+        fn the_listing_decides_which_sources_are_the_guests_own() {
+            let own = Fake(vec![IfAddr {
+                name: "eth0".into(),
+                index: 2,
+                addr: Ipv4Addr::new(10, 0, 2, 15),
+            }]);
+            assert!(!from_container_by(peer("10.0.2.15:40000"), &own));
+            assert!(from_container_by(peer("172.17.0.2:40000"), &own));
+        }
+
+        #[test]
+        fn a_listing_that_fails_marks_every_ipv4_client_but_loopback() {
+            assert!(from_container_by(peer("172.17.0.2:40000"), &Broken));
+            assert!(!from_container_by(peer("127.0.0.1:40000"), &Broken));
+            assert!(!from_container_by(peer("[2001:db8::1]:40000"), &Broken));
+        }
+
+        #[test]
+        fn the_real_listing_does_not_count_loopback_as_a_container() {
+            assert!(!from_container(peer("127.0.0.1:40000")));
+        }
     }
 }

@@ -82,6 +82,9 @@ static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 
 /// WinHTTP's proxy change callback: runs the callback registered under `context`'s id, if it is
 /// still registered. Only WinHTTP calls it.
+///
+/// # Safety
+/// `context` is only read as a number, never dereferenced, so any value is sound.
 unsafe extern "system" fn proxy_changed(_flags: u64, context: *const c_void) {
     CALLBACKS.fire(context as usize);
 }

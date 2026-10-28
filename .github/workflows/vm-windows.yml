@@ -133,6 +133,11 @@ jobs:
     if: needs.build.outputs.run == 'true'
     runs-on: windows-2025
     # ~67 VM tests in all, each partition a fifth of them; every test has its own 12-minute cap.
+    # Three limits, each inside the next, so a hang ends in a named failure with its log uploaded
+    # instead of the job's timeout (a cancelled job skips the steps that would keep the evidence):
+    # nextest's deadline for the whole run (VM_TEST_DEADLINE), the test step's own limit as the
+    # backstop if nextest cannot end, then this job limit. Change them together: the steps before
+    # the tests (under a minute) plus the step limit must leave the steps after it a few minutes.
     timeout-minutes: ${{ contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name) && 60 || 40 }}
     strategy:
       fail-fast: false
@@ -183,6 +188,9 @@ jobs:
       - name: VM tests (tier W, partition ${{ matrix.partition }} of 5)
         if: steps.whp.outputs.ok == 'true'
         shell: bash
+        timeout-minutes: ${{ contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name) && 52 || 32 }}
+        env:
+          VM_TEST_DEADLINE: ${{ contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name) && '48m' || '28m' }}
         run: |
           export PUDDLE_AGENT_BIN
           # The hostile-guest second-user tests fail, not skip, when the runner won't make an account.
@@ -194,20 +202,55 @@ jobs:
           # Real-machine tests (vm_machine_*) run in ci/windows-e2e.ps1, and the real-tool radar (vm_radar_*) in full-test.yml, not here. The soak (vm_soak_*, a 15-minute idle SSH session) runs on the nightly and on a dispatch only.
           FILTER='not (test(/(^|::)vm_machine_/) | test(/(^|::)vm_radar_/) | test(/(^|::)vm_soak_/))'
           case "$GITHUB_EVENT_NAME" in schedule | workflow_dispatch) FILTER='not (test(/(^|::)vm_machine_/) | test(/(^|::)vm_radar_/))' ;; esac
+          # At the deadline nextest stops the test still running, names it and writes junit.xml.
+          # The other users of the vm profile (the radar, the real-machine run) need longer, so the
+          # deadline comes from this job, as a tool config below the repository's.
+          printf '[profile.vm]\nglobal-timeout = "%s"\n' "$VM_TEST_DEADLINE" > "$RUNNER_TEMP/vm-deadline.toml"
+          # nextest writes to a file that the upload keeps (the job log is lost when the job is
+          # cancelled), and tail shows it here as it grows, until nextest exits. The file exists before
+          # tail opens it, and a tail failure never ends the step early: nextest would go on running
+          # under the steps that follow.
+          log="$RUNNER_TEMP/vm-tests.log"
+          : > "$log"
           PUDDLE_VM_PREFIX="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             cargo-nextest nextest run --profile vm \
+            --tool-config-file "vm-deadline:$(cygpath -m "$RUNNER_TEMP")/vm-deadline.toml" \
             --archive-file "$(cygpath -m "$RUNNER_TEMP")/bundle/vm-tests.tar.zst" \
             --extract-to "$(cygpath -m "$RUNNER_TEMP")/vmx" --workspace-remap . \
             --partition hash:${{ matrix.partition }}/5 \
-            -E "$FILTER"
+            -E "$FILTER" > "$log" 2>&1 &
+          nextest=$!
+          tail -n +1 -f --pid="$nextest" "$log" || true
+          wait "$nextest"
+      - name: memory and processes after a failed or stopped run
+        if: ${{ (failure() || cancelled()) && steps.whp.outputs.ok == 'true' }}
+        # Best effort: a starved runner must not cost the upload after it.
+        timeout-minutes: 3
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          # What was still running (a VM process that outlived its test, a stuck test) and how much
+          # memory was left; printed here and kept with the results. Command lines only for the
+          # run's own programs (test binaries, msb), which carry no secrets.
+          $os = Get-CimInstance Win32_OperatingSystem
+          $ours = { param($p) $p.ExecutablePath -and $p.ExecutablePath.StartsWith($env:RUNNER_TEMP, [StringComparison]::OrdinalIgnoreCase) }
+          $report = @(
+            "memory: {0:N0} MiB free of {1:N0} MiB" -f ($os.FreePhysicalMemory / 1KB), ($os.TotalVisibleMemorySize / 1KB)
+            Get-CimInstance Win32_Process | Sort-Object WorkingSetSize -Descending | Select-Object -First 40 ProcessId, ParentProcessId,
+              @{ n = 'MiB'; e = { [int]($_.WorkingSetSize / 1MB) } }, CreationDate,
+              @{ n = 'Command'; e = { if (& $ours $_) { $_.CommandLine } else { $_.Name } } } | Format-Table -AutoSize -Wrap | Out-String -Width 400
+          )
+          $report | Tee-Object -FilePath "$env:RUNNER_TEMP\vm-processes.txt"
       - name: upload test results and msb logs
-        if: ${{ !cancelled() && steps.whp.outputs.ok == 'true' }}
+        if: ${{ always() && steps.whp.outputs.ok == 'true' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vm-windows-results-${{ matrix.partition }}
           path: |
             ${{ runner.temp }}/vmx/target/nextest/vm/junit.xml
             target/nextest/vm/junit.xml
+            ${{ runner.temp }}/vm-tests.log
+            ${{ runner.temp }}/vm-processes.txt
             ${{ runner.temp }}/pvm/**/logs/**
           retention-days: 14
           if-no-files-found: ignore

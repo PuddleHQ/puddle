@@ -202,34 +202,15 @@ mod tests {
 
     #[tokio::test]
     async fn a_write_that_fails_is_an_error_not_a_hang() {
-        struct Closed;
-        impl AsyncWrite for Closed {
-            fn poll_write(
-                self: std::pin::Pin<&mut Self>,
-                _: &mut std::task::Context<'_>,
-                _: &[u8],
-            ) -> std::task::Poll<io::Result<usize>> {
-                std::task::Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()))
-            }
-            fn poll_flush(
-                self: std::pin::Pin<&mut Self>,
-                _: &mut std::task::Context<'_>,
-            ) -> std::task::Poll<io::Result<()>> {
-                std::task::Poll::Ready(Ok(()))
-            }
-            fn poll_shutdown(
-                self: std::pin::Pin<&mut Self>,
-                _: &mut std::task::Context<'_>,
-            ) -> std::task::Poll<io::Result<()>> {
-                std::task::Poll::Ready(Ok(()))
-            }
-        }
+        // The host's end of the stream is gone: its writes fail.
+        let (mut up, gone) = tokio::io::duplex(8);
+        drop(gone);
         let (mut client, mut guest) = tokio::io::duplex(64);
         guest
             .write_all(b"CONNECT a.example:443 HTTP/1.1\r\n")
             .await
             .unwrap();
-        assert!(send_marked(&mut client, &mut Closed).await.is_err());
+        assert!(send_marked(&mut client, &mut up).await.is_err());
     }
 
     #[test]

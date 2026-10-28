@@ -24,6 +24,7 @@ mod perf;
 mod plain_http_window;
 mod real_git;
 mod real_logins;
+mod request_rules;
 mod stand_ins;
 mod stand_ins_h2;
 mod tools;

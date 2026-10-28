@@ -23,7 +23,7 @@ const MAX_NAMES: usize = 500;
 
 /// A never-decrypt name in its stored form: lower case, no trailing dot, `*.` kept. The same
 /// rules as the proxy's pattern set, so every stored name is one the proxy accepts.
-fn pattern(raw: &str) -> Result<String, ApiError> {
+pub(super) fn pattern(raw: &str) -> Result<String, ApiError> {
     let (wild, name) = raw
         .trim()
         .strip_prefix("*.")

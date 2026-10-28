@@ -53,6 +53,8 @@ export const TYPES: readonly { value: AuditType; label: string }[] = [
   { value: "rule_updated", label: "Rule changed" },
   { value: "rule_deleted", label: "Rule deleted" },
   { value: "rule_expired", label: "Rule expired" },
+  { value: "request_rule_created", label: "Method and path rule added" },
+  { value: "request_rule_deleted", label: "Method and path rule deleted" },
   { value: "rule_set_created", label: "Rule set added" },
   { value: "rule_set_updated", label: "Rule set renamed" },
   { value: "rule_set_deleted", label: "Rule set deleted" },
@@ -177,6 +179,9 @@ const REASONS: Record<string, string> = {
   suppressed: "more records came in one second than Puddle writes",
   merged:
     "Puddle merged the oldest records written while requests waited, to keep the log small (their hosts are not kept)",
+  request_rule: "a rule on method and path",
+  request_rule_port:
+    "the host has rules on method and path, which Puddle can only apply to HTTPS on port 443 and plain HTTP",
   puddle_endpoint: "Puddle's own address",
   ssh_unsupported: "SSH is not supported",
   udp_unsupported: "UDP is not supported",
@@ -264,6 +269,16 @@ function endpoint(host: string | null, port: number | null): string | null {
   return port === null ? host : `${host}:${port}`;
 }
 
+function requestRuleLabel(rule: Schemas["AuditRequestRule"]): string {
+  const where =
+    rule.scope === "global"
+      ? "every workspace"
+      : `workspace ${rule.workspace_id ?? "?"}`;
+  const methods =
+    rule.methods.length === 0 ? "any method" : rule.methods.join(", ");
+  return `refuse ${methods} ${rule.path} for ${where}`;
+}
+
 function ruleLabel(rule: Schemas["AuditRule"]): string {
   if (rule.scope === "set")
     return `${rule.effect} in rule set ${rule.set_id ?? "?"}`;
@@ -333,7 +348,9 @@ function connectionDetail(
   const note = NOTES[record.reason];
   const set = setLabel(record.rule_set);
   if (set !== null) parts.push(set);
-  if (record.rule_id !== null) parts.push(`rule ${record.rule_id}`);
+  if (record.request_rule !== null) {
+    parts.push(`method and path rule ${record.request_rule}`);
+  } else if (record.rule_id !== null) parts.push(`rule ${record.rule_id}`);
   else if (set === null && note === undefined) parts.push(`because ${reason}`);
   if (note !== undefined) parts.push(note);
   if (record.count !== null) {
@@ -448,6 +465,21 @@ export function describe(record: AuditRecord): RowView {
         workspace: record.rule.workspace_id,
         type,
         destination: record.rule.pattern,
+        outcome: null,
+        detail,
+      };
+    }
+    case "request_rule_created":
+    case "request_rule_deleted": {
+      const detail =
+        record.type === "request_rule_deleted"
+          ? `${requestRuleLabel(record.rule)}, by ${record.actor}, ${record.reason}`
+          : `${requestRuleLabel(record.rule)}, by ${record.rule.created_by}`;
+      return {
+        ts: record.ts,
+        workspace: record.rule.workspace_id,
+        type,
+        destination: record.rule.host,
         outcome: null,
         detail,
       };

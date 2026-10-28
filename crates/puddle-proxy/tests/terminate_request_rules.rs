@@ -2,6 +2,10 @@
 //! Rules on method and path: what a refused request looks like, that every spelling of a path
 //! meets its rule on HTTP/1.1, HTTP/2 and plain HTTP, that a host with a rule is always decrypted
 //! and that nothing of a refused request's query reaches the audit.
+#![expect(
+    clippy::unwrap_used,
+    reason = "a helper outside #[test] fails the test by panicking"
+)]
 mod terminate_support;
 
 use std::sync::Arc;
@@ -10,7 +14,7 @@ use puddle_proxy::{RequestRule, RequestRules};
 use puddle_types::{ConnectionDecision, Methods, PathPattern, RuleId};
 use terminate_support::h2_rig::{H2Server, Script, full, reply};
 use terminate_support::{
-    CANARY, Client, FakeServer, Flaw, Guest, Pki, Reply, RigBuilder, TestInjector, host,
+    CANARY, Client, FakeServer, Flaw, Pki, Reply, RigBuilder, TestInjector, host,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -511,6 +515,3 @@ async fn the_lowest_numbered_rule_that_refuses_is_the_one_named() {
     assert_eq!(status, 403);
     assert_eq!(events[0].request_rule, Some(RuleId(3)));
 }
-
-#[allow(dead_code)]
-fn unused(_: &mut Guest) {}

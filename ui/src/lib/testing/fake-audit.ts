@@ -25,6 +25,7 @@ export function connection(
       outcome: null,
       reason: "rule",
       rule_id: 1,
+      request_rule: null,
       rule_set: null,
       pending_id: null,
       binding_id: null,
@@ -46,7 +47,9 @@ export function connection(
 function hostOf(record: AuditRecord): string {
   if (record.type === "connection") return record.host ?? "";
   if ("pending" in record) return record.pending.host;
-  if ("rule" in record) return record.rule.pattern;
+  if ("rule" in record) {
+    return "pattern" in record.rule ? record.rule.pattern : record.rule.host;
+  }
   return "";
 }
 

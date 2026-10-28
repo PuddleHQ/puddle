@@ -21,6 +21,11 @@
 //! instead, after downloading it ([`crate::microsoft`]); the restart rules, the password file (there
 //! the server's connection token) and the port are the same.
 //!
+//! Microsoft's server is also kept up to date ([`Control`]): the agent looks for a newer build at
+//! start and daily, downloads and verifies it beside the running one, and starts it only when the
+//! host says no window is connected ([`Control::switch`]). The previous build is kept until the new
+//! one has accepted a connection; a new build that exits first is dropped for it.
+//!
 //! The server runs without the `VSCODE_*` variables of the agent's environment: with
 //! `VSCODE_IPC_HOOK_CLI` set, code-server hands its command line to the editor that variable
 //! names instead of serving.
@@ -29,10 +34,13 @@ use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use futures_util::FutureExt as _;
 use puddle_agent_proto::editor::{EditorServer, ServerKind};
 use tokio::process::Command;
+use tokio::sync::{Mutex, Notify};
 
 use crate::microsoft::{self, Downloader, Fetch};
 
@@ -49,6 +57,89 @@ const HEALTHY: Duration = Duration::from_secs(30);
 const PORT_POLL: Duration = Duration::from_secs(2);
 /// The longest wait between two starts.
 const MAX_WAIT: Duration = Duration::from_secs(30);
+
+/// How long a server is given to accept its first connection before it counts as not started.
+const STARTUP: Duration = Duration::from_secs(120);
+/// How long a server gets to end after `TERM` before it is killed.
+const STOP_GRACE: Duration = Duration::from_secs(10);
+
+/// When the agent looks for a newer build of Microsoft's server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UpdateTimes {
+    /// The wait before the first look, so a server that is starting is not slowed by it.
+    pub first: Duration,
+    /// The wait between two looks that worked.
+    pub every: Duration,
+    /// The wait before looking again after a look that failed (no network, a refused download).
+    pub retry: Duration,
+}
+
+impl Default for UpdateTimes {
+    fn default() -> Self {
+        Self {
+            first: Duration::from_secs(60),
+            every: Duration::from_hours(24),
+            retry: Duration::from_mins(15),
+        }
+    }
+}
+
+/// What the host's messages and the update schedule share with the running server: the builds
+/// folder, the lock that keeps downloads and clean-ups apart, and the request to restart.
+#[derive(Debug)]
+pub struct Control {
+    builds: PathBuf,
+    /// Held by an install, a staging download and a clean-up: a clean-up during a download would
+    /// remove the download's folders.
+    work: Mutex<()>,
+    restart: Notify,
+    times: UpdateTimes,
+    /// Whether this server updates at all (Microsoft's, with the user's setting on).
+    updates: bool,
+}
+
+impl Control {
+    /// The control of the server `server` runs.
+    #[must_use]
+    pub fn new(server: &EditorServer) -> Arc<Self> {
+        Self::with_times(server, UpdateTimes::default())
+    }
+
+    /// [`Control::new`] with other waits (tests).
+    #[must_use]
+    pub fn with_times(server: &EditorServer, times: UpdateTimes) -> Arc<Self> {
+        Arc::new(Self {
+            builds: PathBuf::from(&server.dir),
+            work: Mutex::new(()),
+            restart: Notify::new(),
+            times,
+            updates: matches!(
+                server.kind,
+                ServerKind::Microsoft {
+                    auto_update: true,
+                    ..
+                }
+            ),
+        })
+    }
+
+    /// Runs the staged build, if there is one, by restarting the server: the host calls this when
+    /// no window is connected. Returns the commit now current, `None` when nothing was staged.
+    ///
+    /// # Errors
+    ///
+    /// When the switch could not be recorded; the old build keeps running.
+    pub fn switch(&self) -> io::Result<Option<String>> {
+        if !self.updates {
+            return Ok(None);
+        }
+        let switched = microsoft::switch_to_staged(&self.builds)?;
+        if switched.is_some() {
+            self.restart.notify_one();
+        }
+        Ok(switched)
+    }
+}
 
 /// Bytes of randomness in the password (hex: twice as many characters).
 const PASSWORD_BYTES: usize = 32;
@@ -198,7 +289,11 @@ fn command(
 
 /// What the agent starts for `config`: code-server from the mounted release, or Microsoft's
 /// server from the build on the volume (fetched first when there is none).
-async fn launch(config: &EditorConfig, fetch: &impl Fetch) -> Result<Launch, String> {
+async fn launch(
+    config: &EditorConfig,
+    fetch: &impl Fetch,
+    control: &Control,
+) -> Result<Launch, String> {
     let server = &config.server;
     match server.kind {
         ServerKind::CodeServer => Ok(Launch {
@@ -206,13 +301,19 @@ async fn launch(config: &EditorConfig, fetch: &impl Fetch) -> Result<Launch, Str
             args: arguments(server),
             password_env: true,
         }),
-        ServerKind::Microsoft { telemetry } => {
+        ServerKind::Microsoft { telemetry, .. } => {
             microsoft::prepare(server).map_err(|e| e.to_string())?;
             let platform =
                 microsoft::platform(std::env::consts::ARCH).map_err(|e| e.to_string())?;
-            let build = microsoft::ensure_build(fetch, platform, Path::new(&server.dir))
-                .await
-                .map_err(|e| e.to_string())?;
+            let build = if let Some(build) = microsoft::current_build(&control.builds) {
+                build
+            } else {
+                // Not while an update download runs: it may be fetching this very build.
+                let _work = control.work.lock().await;
+                microsoft::ensure_build(fetch, platform, &control.builds)
+                    .await
+                    .map_err(|e| e.to_string())?
+            };
             Ok(Launch {
                 program: build.join(microsoft::PROGRAM),
                 args: microsoft::arguments(
@@ -244,12 +345,59 @@ fn prepare(server: &EditorServer) -> io::Result<()> {
 }
 
 /// Runs the server and starts it again whenever it exits; never returns.
-pub async fn run(config: EditorConfig) {
-    run_with(config, Downloader::system()).await;
+pub async fn run(config: EditorConfig, control: Arc<Control>) {
+    run_controlled(config, Downloader::system(), control).await;
 }
 
-/// [`run`], with `fetch` for what Microsoft's server needs from the network.
+/// [`run`], with `fetch` for what Microsoft's server needs from the network and a control of its
+/// own.
 pub async fn run_with(config: EditorConfig, fetch: impl Fetch) {
+    let control = Control::new(&config.server);
+    run_controlled(config, fetch, control).await;
+}
+
+/// [`run_with`], with the `control` the host's messages reach.
+pub async fn run_controlled(config: EditorConfig, fetch: impl Fetch, control: Arc<Control>) {
+    let fetch = Arc::new(fetch);
+    let updating = control
+        .updates
+        .then(|| tokio::spawn(update_loop(Arc::clone(&control), Arc::clone(&fetch))));
+    serve_forever(&config, &*fetch, &control).await;
+    if let Some(updating) = updating {
+        updating.abort();
+    }
+}
+
+/// Looks for a newer build now and then, and stages what it finds. Never returns.
+async fn update_loop(control: Arc<Control>, fetch: Arc<impl Fetch>) {
+    let Ok(platform) = microsoft::platform(std::env::consts::ARCH) else {
+        return;
+    };
+    tokio::time::sleep(control.times.first).await;
+    loop {
+        let looked = {
+            let _work = control.work.lock().await;
+            microsoft::stage_update(&*fetch, platform, &control.builds).await
+        };
+        let wait = match looked {
+            Ok(microsoft::Update::UpToDate) => {
+                tracing::debug!("the editor server is the newest build");
+                control.times.every
+            }
+            Ok(microsoft::Update::Staged(commit)) => {
+                tracing::info!(%commit, "a newer editor server build is ready for the next quiet moment");
+                control.times.every
+            }
+            Err(err) => {
+                tracing::warn!(%err, "could not look for a newer editor server build");
+                control.times.retry
+            }
+        };
+        tokio::time::sleep(wait).await;
+    }
+}
+
+async fn serve_forever(config: &EditorConfig, fetch: &impl Fetch, control: &Arc<Control>) {
     let server = &config.server;
     if server.kind == ServerKind::CodeServer {
         let program = Path::new(&server.dir).join("bin/code-server");
@@ -262,10 +410,10 @@ pub async fn run_with(config: EditorConfig, fetch: impl Fetch) {
     }
     let mut quick = 0_u32;
     loop {
-        let launched = launch(&config, &fetch).await;
+        let launched = launch(config, fetch, control).await;
         let started = Instant::now();
         match launched {
-            Ok(launch) => match start_once(&config, &launch).await {
+            Ok(launch) => match start_once(config, &launch, control).await {
                 Ok(status) => tracing::warn!(%status, "the editor server exited"),
                 Err(err) => tracing::error!(error = %err, "the editor server could not run"),
             },
@@ -289,6 +437,52 @@ pub async fn run_with(config: EditorConfig, fetch: impl Fetch) {
             "starting the editor server again"
         );
         tokio::time::sleep(wait).await;
+    }
+}
+
+/// Waits for the server on `port` to accept a connection (it is then a build worth keeping) and
+/// records that. Gives up after [`STARTUP`].
+async fn confirm_when_listening(control: Arc<Control>, port: u16) {
+    let deadline = Instant::now() + STARTUP;
+    while Instant::now() < deadline {
+        if port_taken(port).await {
+            let _work = control.work.lock().await;
+            if let Err(err) = microsoft::confirm(&control.builds) {
+                tracing::warn!(%err, "could not record that the editor server build started");
+            }
+            return;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+/// After a server exited: a build that exited before it ever accepted a connection is dropped
+/// for the build it replaced.
+async fn settle_trial(control: &Control) {
+    let _work = control.work.lock().await;
+    match microsoft::roll_back(&control.builds) {
+        Ok(true) => tracing::error!(
+            "the new editor server build exited before it started; running the previous one again"
+        ),
+        Ok(false) => {}
+        Err(err) => tracing::warn!(%err, "could not go back to the previous editor server build"),
+    }
+}
+
+/// Ends `child` with `TERM` (so the server ends what it started), `KILL` after [`STOP_GRACE`].
+async fn stop(child: &mut tokio::process::Child) -> io::Result<std::process::ExitStatus> {
+    #[cfg(target_os = "linux")]
+    if let Some(pid) = child.id().and_then(|p| i32::try_from(p).ok()) {
+        use nix::sys::signal::{Signal, kill};
+        use nix::unistd::Pid;
+        // Gone already is as good as ended.
+        let _ = kill(Pid::from_raw(pid), Signal::SIGTERM);
+    }
+    if let Ok(status) = tokio::time::timeout(STOP_GRACE, child.wait()).await {
+        status
+    } else {
+        child.start_kill()?;
+        child.wait().await
     }
 }
 
@@ -320,6 +514,7 @@ where
 async fn start_once(
     config: &EditorConfig,
     launch: &Launch,
+    control: &Arc<Control>,
 ) -> io::Result<std::process::ExitStatus> {
     if config.server.kind == ServerKind::CodeServer {
         prepare(&config.server)?;
@@ -333,13 +528,42 @@ async fn start_once(
         password
     };
     let inherited = std::env::vars_os().filter_map(|(k, _)| k.into_string().ok());
+    // A restart asked for while no server ran is answered by this start already (it reads the
+    // current build), so a request left over is not one for the server about to run.
+    let _ = control.restart.notified().now_or_never();
     let mut child = command(launch, &password, inherited).spawn()?;
     tracing::info!(
         port = config.server.port,
         grace_secs = config.server.grace_secs,
         "the editor server started"
     );
-    child.wait().await
+    let microsoft = matches!(config.server.kind, ServerKind::Microsoft { .. });
+    // Whether this server runs a build that has not run before and has one to fall back to.
+    let on_trial = microsoft && microsoft::on_trial(&control.builds);
+    let confirming = microsoft.then(|| {
+        tokio::spawn(confirm_when_listening(
+            Arc::clone(control),
+            config.server.port,
+        ))
+    });
+    let mut replaced = false;
+    let status = tokio::select! {
+        status = child.wait() => status,
+        () = control.restart.notified() => {
+            tracing::info!("stopping the editor server to run its newer build");
+            replaced = true;
+            stop(&mut child).await
+        }
+    };
+    if let Some(confirming) = confirming {
+        confirming.abort();
+    }
+    // A build that ended on its own before it accepted a connection is not worth keeping; one
+    // that was stopped to make room for the next is not a failure.
+    if on_trial && !replaced {
+        settle_trial(control).await;
+    }
+    status
 }
 
 #[cfg(test)]

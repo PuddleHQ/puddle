@@ -255,11 +255,15 @@ impl BootKit {
             ServerKind::CodeServer => {
                 EditorServer::new(format!("{data}/{EDITOR_DATA_DIR}"), mount, grace_secs)
             }
-            ServerKind::Microsoft { telemetry } => EditorServer::microsoft(
+            ServerKind::Microsoft {
+                telemetry,
+                auto_update,
+            } => EditorServer::microsoft(
                 format!("{data}/{MICROSOFT_DATA_DIR}"),
                 mount,
                 grace_secs,
                 telemetry,
+                auto_update,
             ),
         };
         server.workspace_file = crate::editor_file::workspace_file_path(layout.mount(), id)
@@ -305,7 +309,46 @@ fn install_code_server(release: &Path, dir: &Path) -> std::io::Result<PathBuf> {
     link_or_copy_tree(release, &partial, &|from, to| std::fs::hard_link(from, to))?;
     std::fs::write(partial.join(INSTALLED_MARKER), &manifest)?;
     std::fs::rename(&partial, &target)?;
+    prune_old_releases(dir, &target);
     Ok(target)
+}
+
+/// How many releases besides the newest stay in the guest share: a sandbox that is still running
+/// from before an update mounts the one before.
+const KEPT_OLD_RELEASES: usize = 1;
+
+/// Removes the `code-server-<version>` folders below `dir` except `keep` and the newest
+/// [`KEPT_OLD_RELEASES`] others (by the time they were installed). Failing to remove one only
+/// leaves it for the next install.
+fn prune_old_releases(dir: &Path, keep: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut old: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("code-server-"))
+        .map(|e| e.path())
+        .filter(|p| p != keep)
+        .map(|p| {
+            // Folders that never completed (no marker) count as oldest, so they go first.
+            let installed = std::fs::metadata(p.join(INSTALLED_MARKER))
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            (installed, p)
+        })
+        .collect();
+    old.sort();
+    let drop_count = old.len().saturating_sub(KEPT_OLD_RELEASES);
+    for (_, path) in old.into_iter().take(drop_count) {
+        let gone = if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        if let Err(err) = gone {
+            tracing::warn!(path = %path.display(), %err, "an old code-server release could not be removed");
+        }
+    }
 }
 
 /// Written last: a folder with it is complete.
@@ -368,6 +411,36 @@ mod tests {
             share.join("code-server-4.2.0")
         );
         assert!(target.is_dir());
+    }
+
+    #[test]
+    fn older_releases_go_except_the_one_before_the_newest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let share = tmp.path().join("share");
+        std::fs::create_dir(&share).unwrap();
+        let mut installed = Vec::new();
+        for (n, version) in ["4.1.0", "4.2.0", "4.3.0", "4.4.0"].into_iter().enumerate() {
+            let release = release(tmp.path(), version);
+            installed.push(install_code_server(&release, &share).unwrap());
+            // Installed one after the other, as releases are: the marker's time orders them.
+            let marker = installed[n].join(INSTALLED_MARKER);
+            let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1000 * (n as u64 + 1));
+            std::fs::File::options()
+                .write(true)
+                .open(&marker)
+                .unwrap()
+                .set_modified(at)
+                .unwrap();
+        }
+        // A fifth install drops everything older than the release before it, and only releases.
+        std::fs::write(share.join("puddle-agent"), "agent").unwrap();
+        std::fs::create_dir(share.join("code-server-9.9.9.partial")).unwrap();
+        let fifth = install_code_server(&release(tmp.path(), "4.5.0"), &share).unwrap();
+        assert!(fifth.is_dir());
+        assert!(installed.iter().take(3).all(|old| !old.exists()));
+        assert!(!share.join("code-server-9.9.9.partial").exists());
+        assert!(installed[3].is_dir(), "the release before the newest stays");
+        assert!(share.join("puddle-agent").is_file());
     }
 
     #[test]

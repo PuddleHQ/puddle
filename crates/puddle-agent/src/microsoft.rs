@@ -19,7 +19,13 @@
 //! trust store and proxy variables apply to both, which is what makes the download pass through
 //! Puddle's proxy.
 //!
-//! A build that is already unpacked is used as it is; looking for a newer one is the update step.
+//! A build that is already unpacked is used as it is. Looking for a newer one is the update step
+//! ([`stage_update`]): the new build is downloaded and verified into its own folder beside the
+//! running one, which it never touches, and only *named* as staged. [`switch_to_staged`] makes it
+//! the one to start (the caller restarts the server then, when no window is connected); the
+//! previous build stays until the new one has accepted a connection once ([`confirm`]), and a new
+//! build that exits before that is dropped for the previous one ([`roll_back`]). The server's
+//! settings, extensions and secrets are in the data folder, not in a build, so they carry over.
 
 use std::ffi::{OsStr, OsString};
 use std::future::Future;
@@ -41,6 +47,14 @@ pub const UPDATE_SERVICE: &str = "https://update.code.visualstudio.com";
 const MARKER: &str = ".puddle-installed";
 /// The file in the builds folder that names the build to start.
 const CURRENT: &str = "current";
+/// Names the build that ran before the current one and is kept until the current one is confirmed.
+const PREVIOUS: &str = "previous";
+/// Names the newest build that has accepted a connection.
+const CONFIRMED: &str = "confirmed";
+/// Names a downloaded, verified build that is waiting for a moment to switch to it.
+const STAGED: &str = "staged";
+/// Names a build that exited before it ever accepted a connection: it is not staged again.
+const REJECTED: &str = "rejected";
 /// The server's program, below a build's folder.
 pub const PROGRAM: &str = "bin/code-server";
 /// Longest answer of the update service that is read (the real ones are a few hundred bytes).
@@ -324,16 +338,23 @@ impl Fetch for Downloader {
     }
 }
 
+/// The commit `<builds>/<name>` holds, when it holds one.
+fn pointer(builds: &Path, name: &str) -> Option<String> {
+    let text = std::fs::read_to_string(builds.join(name)).ok()?;
+    let text = text.trim();
+    is_commit(text).then(|| text.to_owned())
+}
+
+/// The folder of build `commit` when it is complete.
+fn complete(builds: &Path, commit: &str) -> Option<PathBuf> {
+    let dir = builds.join(commit);
+    (dir.join(MARKER).is_file() && dir.join(PROGRAM).is_file()).then_some(dir)
+}
+
 /// The folder of the build `<builds>/current` names, when it is a complete build.
 #[must_use]
 pub fn current_build(builds: &Path) -> Option<PathBuf> {
-    let name = std::fs::read_to_string(builds.join(CURRENT)).ok()?;
-    let name = name.trim();
-    if !is_commit(name) {
-        return None;
-    }
-    let dir = builds.join(name);
-    (dir.join(MARKER).is_file() && dir.join(PROGRAM).is_file()).then_some(dir)
+    complete(builds, &pointer(builds, CURRENT)?)
 }
 
 /// The build to start: the one already on the volume, else the newest from Microsoft, put there.
@@ -352,6 +373,14 @@ pub async fn ensure_build(
     }
 }
 
+async fn resolve_latest(fetch: &impl Fetch, platform: &str) -> Result<Latest, InstallError> {
+    let answer = fetch
+        .text(&latest_url(platform))
+        .await
+        .map_err(|e| InstallError::Resolve(e.to_string()))?;
+    parse_latest(&answer)
+}
+
 /// Puts the newest build on the volume (unless it is there) and makes it the current one.
 ///
 /// # Errors
@@ -363,13 +392,22 @@ pub async fn install_latest(
     builds: &Path,
 ) -> Result<PathBuf, InstallError> {
     std::fs::create_dir_all(builds)?;
-    let answer = fetch
-        .text(&latest_url(platform))
-        .await
-        .map_err(|e| InstallError::Resolve(e.to_string()))?;
-    let latest = parse_latest(&answer)?;
+    let latest = resolve_latest(fetch, platform).await?;
+    let dir = download_build(fetch, platform, builds, &latest).await?;
+    write_pointer(builds, CURRENT, &latest.commit)?;
+    Ok(dir)
+}
+
+/// Downloads, verifies and unpacks `latest` into its folder below `builds`, unless the folder is
+/// already a complete build. Touches no pointer.
+async fn download_build(
+    fetch: &impl Fetch,
+    platform: &str,
+    builds: &Path,
+    latest: &Latest,
+) -> Result<PathBuf, InstallError> {
     let dir = builds.join(&latest.commit);
-    if !(dir.join(MARKER).is_file() && dir.join(PROGRAM).is_file()) {
+    if complete(builds, &latest.commit).is_none() {
         let answer = fetch
             .text(&versions_url(&latest.product_version, platform))
             .await
@@ -396,8 +434,145 @@ pub async fn install_latest(
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::rename(&staging, &dir)?;
     }
-    write_current(builds, &latest.commit)?;
     Ok(dir)
+}
+
+/// What looking for a newer build found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Update {
+    /// Microsoft's newest build is the one in use, or one that failed to start here before.
+    UpToDate,
+    /// A newer build is downloaded, verified and named as staged; it runs after
+    /// [`switch_to_staged`] and a restart.
+    Staged(String),
+}
+
+/// Asks Microsoft for the newest build. A newer one than the current is downloaded and verified
+/// into its own folder, then named as staged; the running build's folder is not touched. Without
+/// a current build there is nothing to update ([`ensure_build`] installs the first one).
+///
+/// # Errors
+///
+/// [`InstallError`]; a failed or refused download leaves nothing staged and the builds as they were.
+pub async fn stage_update(
+    fetch: &impl Fetch,
+    platform: &str,
+    builds: &Path,
+) -> Result<Update, InstallError> {
+    let current = pointer(builds, CURRENT);
+    let latest = resolve_latest(fetch, platform).await?;
+    let skip = current.as_deref() == Some(latest.commit.as_str())
+        || pointer(builds, REJECTED).as_deref() == Some(latest.commit.as_str());
+    if skip {
+        return Ok(Update::UpToDate);
+    }
+    std::fs::create_dir_all(builds)?;
+    download_build(fetch, platform, builds, &latest).await?;
+    write_pointer(builds, STAGED, &latest.commit)?;
+    Ok(Update::Staged(latest.commit))
+}
+
+/// Makes the staged build the one to start and keeps the one in use as `previous` until the new
+/// one is confirmed. Returns the new commit, `None` when nothing is staged (a staged name whose
+/// build is not complete is dropped). The server is not touched: the caller restarts it.
+///
+/// # Errors
+///
+/// When a pointer cannot be written; the old build then stays current.
+pub fn switch_to_staged(builds: &Path) -> io::Result<Option<String>> {
+    let Some(staged) = pointer(builds, STAGED) else {
+        return Ok(None);
+    };
+    let _ = std::fs::remove_file(builds.join(STAGED));
+    if complete(builds, &staged).is_none() {
+        return Ok(None);
+    }
+    match pointer(builds, CURRENT) {
+        Some(current) if current == staged => return Ok(None),
+        Some(current) if complete(builds, &current).is_some() => {
+            write_pointer(builds, PREVIOUS, &current)?;
+        }
+        _ => {}
+    }
+    write_pointer(builds, CURRENT, &staged)?;
+    Ok(Some(staged))
+}
+
+/// Whether the current build has not yet run and the one it replaced is still there.
+#[must_use]
+pub fn on_trial(builds: &Path) -> bool {
+    let current = pointer(builds, CURRENT);
+    current.is_some()
+        && current != pointer(builds, CONFIRMED)
+        && pointer(builds, PREVIOUS).is_some_and(|p| complete(builds, &p).is_some())
+}
+
+/// The current build has accepted a connection: it is the one to keep. The previous build and
+/// everything else in the folder that is not a build in use goes, so the caller must not run this
+/// while a download is going on (it would remove the download's folders).
+///
+/// # Errors
+///
+/// When the pointer cannot be written.
+pub fn confirm(builds: &Path) -> io::Result<()> {
+    let Some(current) = pointer(builds, CURRENT) else {
+        return Ok(());
+    };
+    write_pointer(builds, CONFIRMED, &current)?;
+    let _ = std::fs::remove_file(builds.join(PREVIOUS));
+    prune(builds);
+    Ok(())
+}
+
+/// The current build exited before it ever accepted a connection: the previous one is current
+/// again and the failed one is never staged again. `false` when there was no previous build. Like
+/// [`confirm`], not to be run during a download.
+///
+/// # Errors
+///
+/// When a pointer cannot be written.
+pub fn roll_back(builds: &Path) -> io::Result<bool> {
+    if !on_trial(builds) {
+        return Ok(false);
+    }
+    let (Some(failed), Some(previous)) = (pointer(builds, CURRENT), pointer(builds, PREVIOUS))
+    else {
+        return Ok(false);
+    };
+    write_pointer(builds, REJECTED, &failed)?;
+    write_pointer(builds, CURRENT, &previous)?;
+    let _ = std::fs::remove_file(builds.join(PREVIOUS));
+    prune(builds);
+    Ok(true)
+}
+
+/// Deletes the build folders (and leftovers of dead downloads) that no pointer names. Anything
+/// that is not named like one of those is left alone.
+fn prune(builds: &Path) {
+    let keep: Vec<String> = [CURRENT, PREVIOUS, STAGED]
+        .into_iter()
+        .filter_map(|name| pointer(builds, name))
+        .collect();
+    let Ok(entries) = std::fs::read_dir(builds) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let ours = is_commit(name) || name.ends_with(".partial");
+        if !ours || keep.iter().any(|k| k == name) {
+            continue;
+        }
+        let path = entry.path();
+        let gone = if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        if let Err(err) = gone {
+            tracing::warn!(path = %path.display(), %err, "an old editor server build could not be removed");
+        }
+    }
 }
 
 async fn fetch_and_unpack(
@@ -431,11 +606,11 @@ async fn fetch_and_unpack(
     .map_err(|e| io::Error::other(format!("the unpack task stopped: {e}")))?
 }
 
-/// `current`, replaced whole.
-fn write_current(builds: &Path, commit: &str) -> io::Result<()> {
-    let partial = builds.join(format!("{CURRENT}.partial"));
+/// The pointer file `name`, replaced whole.
+fn write_pointer(builds: &Path, name: &str, commit: &str) -> io::Result<()> {
+    let partial = builds.join(format!("{name}.partial"));
     std::fs::write(&partial, commit)?;
-    std::fs::rename(&partial, builds.join(CURRENT))
+    std::fs::rename(&partial, builds.join(name))
 }
 
 fn sha256_of(path: &Path) -> io::Result<String> {
@@ -680,7 +855,7 @@ mod tests {
 
     #[test]
     fn the_command_line_carries_the_terms_the_token_file_and_the_telemetry_choice() {
-        let server = EditorServer::microsoft("/w/.puddle/vscode-server", "/w", 120, false);
+        let server = EditorServer::microsoft("/w/.puddle/vscode-server", "/w", 120, false, true);
         let token = Path::new("/run/puddle/editor-password");
         let args = |telemetry: bool, target: &str| -> Vec<String> {
             arguments(&server, telemetry, token, OsStr::new(target))

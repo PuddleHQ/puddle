@@ -70,6 +70,23 @@ async fn rig() -> Rig {
         std::fs::write(&file, script).unwrap();
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
+    let mut server = EditorServer::new(
+        dir.path().join("data").to_string_lossy(),
+        dir.path().join("work").to_string_lossy(),
+        120,
+    );
+    server.dir = release.to_string_lossy().into_owned();
+    let (host, agent) = start_agent(&dir, server).await;
+    Rig {
+        host,
+        release,
+        agent,
+        _dir: dir,
+    }
+}
+
+/// An agent that runs the editor `server` and a host session it dials.
+async fn start_agent(dir: &tempfile::TempDir, mut server: EditorServer) -> (Host, Agent) {
     let socket = dir.path().join("route.sock");
     let host = Host::default();
     let listener = UnixListener::bind(&socket).unwrap();
@@ -91,12 +108,6 @@ async fn rig() -> Rig {
             });
         }
     });
-    let mut server = EditorServer::new(
-        dir.path().join("data").to_string_lossy(),
-        dir.path().join("work").to_string_lossy(),
-        120,
-    );
-    server.dir = release.to_string_lossy().into_owned();
     server.port = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
@@ -114,12 +125,7 @@ async fn rig() -> Rig {
         ..Config::default()
     };
     let agent = Agent::start(config).await.unwrap();
-    Rig {
-        host,
-        release,
-        agent,
-        _dir: dir,
-    }
+    (host, agent)
 }
 
 impl Rig {
@@ -229,6 +235,80 @@ async fn a_message_to_an_agent_that_is_gone_is_an_error_not_a_hang() {
     )
     .await;
     assert!(matches!(sent, Ok(Err(_))), "{sent:?}");
+}
+
+#[tokio::test]
+async fn the_hosts_message_to_switch_builds_is_a_no_op_for_a_server_that_does_not_update() {
+    let rig = rig().await;
+    let link = rig.link().await;
+    let reply = link.send(&HostMessage::SwitchEditorBuild).await.unwrap();
+    assert_eq!(reply, HostReply::EditorBuild { switched: false });
+}
+
+const COMMIT_1: &str = "1111111111111111111111111111111111111111";
+const COMMIT_2: &str = "2222222222222222222222222222222222222222";
+
+/// A build of Microsoft's server that logs its name and waits to be ended.
+fn build(builds: &std::path::Path, commit: &str, name: &str, log: &std::path::Path) {
+    let program = builds.join(commit).join("bin/code-server");
+    std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+    std::fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\necho {name} >>{}\nexec sleep 600\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(builds.join(commit).join(".puddle-installed"), "").unwrap();
+}
+
+#[tokio::test]
+async fn the_hosts_message_runs_the_staged_build_and_a_second_message_has_nothing_left_to_do() {
+    let dir = tempfile::tempdir().unwrap();
+    let builds = dir.path().join("data/servers");
+    let log = dir.path().join("log");
+    build(&builds, COMMIT_1, "first", &log);
+    build(&builds, COMMIT_2, "second", &log);
+    std::fs::write(builds.join("current"), COMMIT_1).unwrap();
+    let mut server = EditorServer::microsoft(
+        dir.path().join("data").to_string_lossy(),
+        dir.path().join("work").to_string_lossy(),
+        120,
+        false,
+        true,
+    );
+    server.dir = builds.to_string_lossy().into_owned();
+    let (host, _agent) = start_agent(&dir, server).await;
+    let link = loop {
+        if let Some(link) = host.0.lock().unwrap().clone() {
+            break link;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    let logged = || std::fs::read_to_string(&log).unwrap_or_default();
+    let until = |what: &'static str, want: &'static str| {
+        let logged = &logged;
+        async move {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while logged() != want {
+                assert!(Instant::now() < deadline, "{what}: log is {:?}", logged());
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
+    };
+    until("the first build to start", "first\n").await;
+    // Nothing staged: the server runs on.
+    let none = link.send(&HostMessage::SwitchEditorBuild).await.unwrap();
+    assert_eq!(none, HostReply::EditorBuild { switched: false });
+    // Staged (as the agent's update step leaves it): the message runs it.
+    std::fs::write(builds.join("staged"), COMMIT_2).unwrap();
+    let switched = link.send(&HostMessage::SwitchEditorBuild).await.unwrap();
+    assert_eq!(switched, HostReply::EditorBuild { switched: true });
+    until("the staged build to start", "first\nsecond\n").await;
+    let again = link.send(&HostMessage::SwitchEditorBuild).await.unwrap();
+    assert_eq!(again, HostReply::EditorBuild { switched: false });
 }
 
 /// Ends a process of the test and everything below it (the scripts leave `sleep`s behind).

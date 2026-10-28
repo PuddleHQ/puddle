@@ -19,10 +19,10 @@ use std::time::{Duration, Instant};
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use puddle_agent::editor::{self, EditorConfig};
+use puddle_agent::editor::{self, Control, EditorConfig, UpdateTimes};
 use puddle_agent::microsoft::{
-    Downloader, Fetch, InstallError, current_build, download_url, ensure_build, install_latest,
-    latest_url, versions_url,
+    Downloader, Fetch, InstallError, Update, confirm, current_build, download_url, ensure_build,
+    install_latest, latest_url, on_trial, roll_back, stage_update, switch_to_staged, versions_url,
 };
 use puddle_agent_proto::editor::EditorServer;
 use sha2::{Digest as _, Sha256};
@@ -40,9 +40,28 @@ while [ -e "OUT/$n.pid" ]; do n=$((n + 1)); done
 printf '%s\n' "$@" >"OUT/$n.args"
 printf '%s' "$PASSWORD" >"OUT/$n.password"
 cat "$(printf '%s\n' "$@" | sed -n '/^--connection-token-file$/{n;p;}')" >"OUT/$n.token"
+echo BUILD >"OUT/$n.build"
 echo $$ >"OUT/$n.pid"
-exec sleep 600
+RUN
 "#;
+
+/// The recording server of the build named `tag`, writing into `out`; `crash` makes it exit at
+/// once instead of waiting to be killed.
+fn server_script(out: &str, tag: &str, crash: bool) -> String {
+    FAKE_SERVER
+        .replace("BUILD", tag)
+        .replace("RUN", if crash { "exit 3" } else { "exec sleep 600" })
+        .replace("OUT", out)
+}
+
+/// A tarball holding that server as `bin/code-server`.
+fn server_tarball(out: &Path, tag: &str, crash: bool) -> Vec<u8> {
+    tarball(&[(
+        &format!("{TOP}/bin/code-server"),
+        0o755,
+        &server_script(&out.to_string_lossy(), tag, crash),
+    )])
+}
 
 /// A gzipped tarball with the given entries `(path, mode, content)`.
 fn tarball(entries: &[(&str, u32, &str)]) -> Vec<u8> {
@@ -80,22 +99,23 @@ fn sha(bytes: &[u8]) -> String {
 }
 
 /// The update service's answers, as Microsoft sends them.
-fn latest_answer(commit: &str) -> String {
+fn latest_answer(commit: &str, release: &str) -> String {
     format!(
-        r#"{{"name":"{RELEASE}","version":"{commit}","productVersion":"{RELEASE}","timestamp":1792690529437}}"#
+        r#"{{"name":"{release}","version":"{commit}","productVersion":"{release}","timestamp":1792690529437}}"#
     )
 }
 
-fn versions_answer(commit: &str, hash: &str) -> String {
+fn versions_answer(commit: &str, release: &str, hash: &str) -> String {
     format!(
-        r#"{{"url":"https://vscode.download.prss.microsoft.com/dbazure/download/stable/{commit}/vscode-server-linux-x64-web.tar.gz","name":"{RELEASE}","version":"{commit}","productVersion":"{RELEASE}","hash":"{commit}","timestamp":1792690529437,"sha256hash":"{hash}","supportsFastUpdate":true}}"#
+        r#"{{"url":"https://vscode.download.prss.microsoft.com/dbazure/download/stable/{commit}/vscode-server-linux-x64-web.tar.gz","name":"{release}","version":"{commit}","productVersion":"{release}","hash":"{commit}","timestamp":1792690529437,"sha256hash":"{hash}","supportsFastUpdate":true}}"#
     )
 }
 
 /// A fake update service: answers by URL and counts what it was asked.
 struct Service {
-    answers: BTreeMap<String, String>,
-    tarball: Vec<u8>,
+    answers: Mutex<BTreeMap<String, String>>,
+    /// The tarball behind each download URL.
+    tarballs: Mutex<BTreeMap<String, Vec<u8>>>,
     texts: AtomicUsize,
     downloads: AtomicUsize,
     /// The first this many requests of any kind fail, like a guest with no network yet.
@@ -108,15 +128,15 @@ impl Service {
     /// unless a test says otherwise).
     fn new(tarball: Vec<u8>, published: &str) -> Self {
         let answers = BTreeMap::from([
-            (latest_url(PLATFORM), latest_answer(COMMIT)),
+            (latest_url(PLATFORM), latest_answer(COMMIT, RELEASE)),
             (
                 versions_url(RELEASE, PLATFORM),
-                versions_answer(COMMIT, published),
+                versions_answer(COMMIT, RELEASE, published),
             ),
         ]);
         Self {
-            answers,
-            tarball,
+            answers: Mutex::new(answers),
+            tarballs: Mutex::new(BTreeMap::from([(download_url(COMMIT, PLATFORM), tarball)])),
             texts: AtomicUsize::new(0),
             downloads: AtomicUsize::new(0),
             failing: AtomicUsize::new(0),
@@ -127,6 +147,25 @@ impl Service {
     fn honest(tarball: Vec<u8>) -> Self {
         let hash = sha(&tarball);
         Self::new(tarball, &hash)
+    }
+
+    /// Makes `tarball` the newest build, published honestly as `commit` of `release`.
+    fn publish(&self, commit: &str, release: &str, tarball: Vec<u8>) {
+        self.publish_as(commit, release, &sha(&tarball), tarball);
+    }
+
+    /// [`Service::publish`] with a published hash that need not be the tarball's.
+    fn publish_as(&self, commit: &str, release: &str, hash: &str, tarball: Vec<u8>) {
+        let mut answers = self.answers.lock().unwrap();
+        answers.insert(latest_url(PLATFORM), latest_answer(commit, release));
+        answers.insert(
+            versions_url(release, PLATFORM),
+            versions_answer(commit, release, hash),
+        );
+        self.tarballs
+            .lock()
+            .unwrap()
+            .insert(download_url(commit, PLATFORM), tarball);
     }
 
     fn requests(&self) -> usize {
@@ -150,6 +189,8 @@ impl Fetch for &'static Service {
         self.texts.fetch_add(1, Ordering::SeqCst);
         self.check_up()?;
         self.answers
+            .lock()
+            .unwrap()
             .get(url)
             .cloned()
             .ok_or_else(|| io::Error::other(format!("404 {url}")))
@@ -160,10 +201,11 @@ impl Fetch for &'static Service {
         self.asked.lock().unwrap().push(url.to_owned());
         self.downloads.fetch_add(1, Ordering::SeqCst);
         self.check_up()?;
-        if url != download_url(COMMIT, PLATFORM) {
-            return Err(io::Error::other(format!("404 {url}")));
-        }
-        std::fs::write(dest, &self.tarball)
+        let tarballs = self.tarballs.lock().unwrap();
+        let tarball = tarballs
+            .get(url)
+            .ok_or_else(|| io::Error::other(format!("404 {url}")))?;
+        std::fs::write(dest, tarball)
     }
 }
 
@@ -179,7 +221,7 @@ fn good_tarball() -> Vec<u8> {
         (
             &format!("{TOP}/bin/code-server"),
             0o755,
-            &FAKE_SERVER.replace("OUT", "@OUT@"),
+            &server_script("@OUT@", "x", false),
         ),
         (&format!("{TOP}/product.json"), 0o644, "{}"),
     ])
@@ -340,15 +382,17 @@ async fn an_answer_about_another_build_or_without_a_usable_hash_is_refused() {
     for (what, versions) in [
         (
             "another build",
-            versions_answer(&"0".repeat(40), &sha(b"x")),
+            versions_answer(&"0".repeat(40), RELEASE, &sha(b"x")),
         ),
-        ("a short hash", versions_answer(COMMIT, "abc")),
+        ("a short hash", versions_answer(COMMIT, RELEASE, "abc")),
         ("not json", "<html>".to_owned()),
     ] {
         let dir = tempfile::tempdir().unwrap();
-        let mut service = Service::honest(good_tarball());
+        let service = Service::honest(good_tarball());
         service
             .answers
+            .lock()
+            .unwrap()
             .insert(versions_url(RELEASE, PLATFORM), versions);
         let service = leak(service);
         let err = install_latest(&service, PLATFORM, &builds(&dir))
@@ -363,10 +407,12 @@ async fn an_answer_about_another_build_or_without_a_usable_hash_is_refused() {
     }
     // A latest answer whose commit is not a commit never becomes a path.
     let dir = tempfile::tempdir().unwrap();
-    let mut service = Service::honest(good_tarball());
+    let service = Service::honest(good_tarball());
     service
         .answers
-        .insert(latest_url(PLATFORM), latest_answer("../../etc"));
+        .lock()
+        .unwrap()
+        .insert(latest_url(PLATFORM), latest_answer("../../etc", RELEASE));
     let service = leak(service);
     let err = install_latest(&service, PLATFORM, &builds(&dir))
         .await
@@ -533,6 +579,10 @@ fn free_port() -> u16 {
 }
 
 fn fixture(telemetry: bool) -> Fixture {
+    fixture_updating(telemetry, true)
+}
+
+fn fixture_updating(telemetry: bool, auto_update: bool) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("out");
     std::fs::create_dir(&out).unwrap();
@@ -541,6 +591,7 @@ fn fixture(telemetry: bool) -> Fixture {
         dir.path().join("work").to_string_lossy(),
         120,
         telemetry,
+        auto_update,
     );
     server.port = free_port();
     let config = EditorConfig {
@@ -556,12 +607,7 @@ fn fixture(telemetry: bool) -> Fixture {
 
 /// The service whose server records into `out`.
 fn recording_service(out: &Path) -> &'static Service {
-    let tar = tarball(&[(
-        &format!("{TOP}/bin/code-server"),
-        0o755,
-        &FAKE_SERVER.replace("OUT", &out.to_string_lossy()),
-    )]);
-    leak(Service::honest(tar))
+    leak(Service::honest(server_tarball(out, COMMIT, false)))
 }
 
 async fn until(what: &str, mut ready: impl FnMut() -> bool) {
@@ -661,4 +707,340 @@ async fn no_network_is_retried_and_the_server_starts_once_the_update_service_ans
     // Two failed attempts, then the three requests of a good one.
     assert_eq!(service.requests(), 2 + 3);
     task.abort();
+}
+
+// Updates.
+
+const NEWER: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const NEWER_RELEASE: &str = "1.144.0";
+
+/// Looks every 100 ms, so a test waits for what it needs instead of for a day.
+fn quick() -> UpdateTimes {
+    let step = Duration::from_millis(100);
+    UpdateTimes {
+        first: step,
+        every: step,
+        retry: step,
+    }
+}
+
+fn alive(pid: &str) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", pid.trim()])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap()
+        .success()
+}
+
+/// Stands in for the server accepting connections: the agent counts a build as started once its
+/// port answers. Bound after the fake server started, dropped before the next one is expected.
+fn accepting(port: u16) -> std::net::TcpListener {
+    std::net::TcpListener::bind(("127.0.0.1", port)).unwrap()
+}
+
+fn pointer(builds: &Path, name: &str) -> Option<String> {
+    std::fs::read_to_string(builds.join(name)).ok()
+}
+
+struct Running {
+    f: Fixture,
+    service: &'static Service,
+    control: std::sync::Arc<Control>,
+    builds: PathBuf,
+    task: tokio::task::JoinHandle<()>,
+}
+
+/// Starts the agent's editor with the first build, a server that waits.
+async fn running(f: Fixture, first_server_crashes: bool) -> Running {
+    let service = leak(Service::honest(server_tarball(
+        &f.out,
+        COMMIT,
+        first_server_crashes,
+    )));
+    let control = Control::with_times(&f.config.server, quick());
+    let builds = PathBuf::from(&f.config.server.dir);
+    let task = tokio::spawn(editor::run_controlled(
+        f.config.clone(),
+        service,
+        control.clone(),
+    ));
+    until("the first start", || f.out.join("1.pid").exists()).await;
+    Running {
+        f,
+        service,
+        control,
+        builds,
+        task,
+    }
+}
+
+impl Running {
+    /// The first build has started and accepted a connection; returns what stands in for it.
+    async fn confirmed(&self) -> std::net::TcpListener {
+        let listener = accepting(self.f.config.server.port);
+        until("the first build to be confirmed", || {
+            pointer(&self.builds, "confirmed").as_deref() == Some(COMMIT)
+        })
+        .await;
+        listener
+    }
+
+    fn publish_newer(&self, crashes: bool) {
+        self.service.publish(
+            NEWER,
+            NEWER_RELEASE,
+            server_tarball(&self.f.out, NEWER, crashes),
+        );
+    }
+
+    /// Ends the task; the dropped child takes the fake server with it.
+    fn end(self) {
+        self.task.abort();
+    }
+}
+
+#[tokio::test]
+async fn a_newer_build_is_staged_beside_the_running_one_and_runs_only_after_the_switch() {
+    let r = running(fixture(false), false).await;
+    let listener = r.confirmed().await;
+    let first_pid = read(&r.f.out, "1.pid");
+    r.publish_newer(false);
+    until("the newer build to be staged", || {
+        pointer(&r.builds, "staged").as_deref() == Some(NEWER)
+    })
+    .await;
+    // Beside, not instead: the running build, its pointer and its process are untouched.
+    assert_eq!(
+        pointer(&r.builds, "current").as_deref(),
+        Some(COMMIT),
+        "staging must not change what runs"
+    );
+    assert!(alive(&first_pid) && !r.f.out.join("2.pid").exists());
+    assert!(r.builds.join(NEWER).join("bin/code-server").is_file());
+    assert!(r.builds.join(COMMIT).is_dir());
+
+    // The switch: the old server is ended, the new build is the one that starts.
+    assert_eq!(r.control.switch().unwrap().as_deref(), Some(NEWER));
+    drop(listener);
+    until("the newer build to start", || {
+        r.f.out.join("2.pid").exists()
+    })
+    .await;
+    assert_eq!(read(&r.f.out, "2.build").trim(), NEWER);
+    assert!(!alive(&first_pid), "the old server was ended");
+    // Until the new build has accepted a connection, the old one is kept.
+    assert_eq!(pointer(&r.builds, "previous").as_deref(), Some(COMMIT));
+    assert!(r.builds.join(COMMIT).is_dir());
+    assert!(pointer(&r.builds, "staged").is_none());
+    // The same token: a window that was signed in need not sign in again.
+    assert_eq!(read(&r.f.out, "2.token"), read(&r.f.out, "1.token"));
+
+    let _listener = accepting(r.f.config.server.port);
+    until("the previous build to be removed", || {
+        !r.builds.join(COMMIT).exists()
+    })
+    .await;
+    assert_eq!(names(&r.builds), [NEWER, "confirmed", "current"]);
+    assert_eq!(pointer(&r.builds, "confirmed").as_deref(), Some(NEWER));
+    // Nothing more was asked of Microsoft than what looking for updates needs.
+    assert_eq!(r.service.downloads.load(Ordering::SeqCst), 2);
+    r.end();
+}
+
+#[tokio::test]
+async fn a_new_build_that_exits_before_it_started_is_dropped_for_the_previous_one() {
+    let r = running(fixture(false), false).await;
+    let listener = r.confirmed().await;
+    r.publish_newer(true);
+    until("the newer build to be staged", || {
+        pointer(&r.builds, "staged").is_some()
+    })
+    .await;
+    assert!(r.control.switch().unwrap().is_some());
+    drop(listener);
+    // The newer build starts, exits at once, and the first build is started again.
+    until("the first build to run again", || {
+        r.f.out.join("3.pid").exists()
+    })
+    .await;
+    assert_eq!(read(&r.f.out, "2.build").trim(), NEWER);
+    assert_eq!(read(&r.f.out, "3.build").trim(), COMMIT);
+    assert_eq!(pointer(&r.builds, "current").as_deref(), Some(COMMIT));
+    assert_eq!(pointer(&r.builds, "rejected").as_deref(), Some(NEWER));
+    assert_eq!(
+        names(&r.builds),
+        ["confirmed", "current", COMMIT, "rejected"]
+    );
+    // The failed build is not fetched or staged again while it is still the newest.
+    let downloads = r.service.downloads.load(Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert_eq!(r.service.downloads.load(Ordering::SeqCst), downloads);
+    assert!(pointer(&r.builds, "staged").is_none());
+    r.end();
+}
+
+#[tokio::test]
+async fn nothing_is_looked_for_or_switched_with_automatic_updates_off() {
+    let r = running(fixture_updating(false, false), false).await;
+    r.publish_newer(false);
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    // Only the first install's three requests: no look, no download.
+    assert_eq!(r.service.requests(), 3);
+    assert!(pointer(&r.builds, "staged").is_none());
+    // A build left staged by an earlier run (the setting was on then) is not run either.
+    std::fs::write(r.builds.join("staged"), NEWER).unwrap();
+    assert_eq!(r.control.switch().unwrap(), None);
+    assert!(!r.f.out.join("2.pid").exists());
+    r.end();
+}
+
+#[tokio::test]
+async fn a_failed_look_is_retried_and_the_build_is_staged_when_the_service_answers() {
+    let r = running(fixture(false), false).await;
+    let _listener = r.confirmed().await;
+    r.service.failing.store(3, Ordering::SeqCst);
+    r.publish_newer(false);
+    until("the newer build to be staged after failures", || {
+        pointer(&r.builds, "staged").as_deref() == Some(NEWER)
+    })
+    .await;
+    // The running server never noticed.
+    assert_eq!(pointer(&r.builds, "current").as_deref(), Some(COMMIT));
+    assert!(!r.f.out.join("2.pid").exists());
+    r.end();
+}
+
+#[tokio::test]
+async fn a_switch_with_nothing_staged_leaves_the_server_running() {
+    let r = running(fixture(false), false).await;
+    let _listener = r.confirmed().await;
+    assert_eq!(r.control.switch().unwrap(), None);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!r.f.out.join("2.pid").exists());
+    assert!(alive(&read(&r.f.out, "1.pid")));
+    r.end();
+}
+
+/// A builds folder with the first build installed and current.
+async fn installed(dir: &tempfile::TempDir) -> (PathBuf, &'static Service) {
+    let service = leak(Service::honest(good_tarball()));
+    ensure_build(&service, PLATFORM, &builds(dir))
+        .await
+        .unwrap();
+    (builds(dir), service)
+}
+
+#[tokio::test]
+async fn looking_for_updates_downloads_only_a_build_that_is_neither_current_nor_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let (builds, service) = installed(&dir).await;
+    let before = service.downloads.load(Ordering::SeqCst);
+    // The newest is the current one: one question, no download.
+    assert_eq!(
+        stage_update(&service, PLATFORM, &builds).await.unwrap(),
+        Update::UpToDate
+    );
+    assert_eq!(service.downloads.load(Ordering::SeqCst), before);
+    // A newer one is downloaded, named as staged and is not yet current.
+    service.publish(NEWER, NEWER_RELEASE, good_tarball());
+    assert_eq!(
+        stage_update(&service, PLATFORM, &builds).await.unwrap(),
+        Update::Staged(NEWER.to_owned())
+    );
+    assert_eq!(current_build(&builds), Some(builds.join(COMMIT)));
+    assert_eq!(names(&builds), [NEWER, "current", COMMIT, "staged"]);
+    // Asking again finds the build complete and downloads nothing more.
+    let downloads = service.downloads.load(Ordering::SeqCst);
+    stage_update(&service, PLATFORM, &builds).await.unwrap();
+    assert_eq!(service.downloads.load(Ordering::SeqCst), downloads);
+    // A build that failed to start here is not staged again.
+    std::fs::remove_file(builds.join("staged")).unwrap();
+    std::fs::write(builds.join("rejected"), NEWER).unwrap();
+    assert_eq!(
+        stage_update(&service, PLATFORM, &builds).await.unwrap(),
+        Update::UpToDate
+    );
+}
+
+#[tokio::test]
+async fn a_download_that_is_not_the_published_file_stages_nothing_and_touches_no_build() {
+    let dir = tempfile::tempdir().unwrap();
+    let (builds, service) = installed(&dir).await;
+    service.publish_as(
+        NEWER,
+        NEWER_RELEASE,
+        &sha(b"something else"),
+        good_tarball(),
+    );
+    let err = stage_update(&service, PLATFORM, &builds).await.unwrap_err();
+    assert!(matches!(err, InstallError::Checksum { .. }), "{err}");
+    assert_eq!(names(&builds), ["current", COMMIT]);
+    assert_eq!(switch_to_staged(&builds).unwrap(), None);
+    assert_eq!(current_build(&builds), Some(builds.join(COMMIT)));
+}
+
+#[tokio::test]
+async fn a_staged_name_without_a_complete_build_is_dropped_not_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let (builds, _service) = installed(&dir).await;
+    std::fs::write(builds.join("staged"), NEWER).unwrap();
+    assert_eq!(switch_to_staged(&builds).unwrap(), None);
+    assert!(!builds.join("staged").exists());
+    // A folder with no marker is a half-made build, not a complete one.
+    std::fs::create_dir_all(builds.join(NEWER).join("bin")).unwrap();
+    std::fs::write(builds.join(NEWER).join("bin/code-server"), "x").unwrap();
+    std::fs::write(builds.join("staged"), NEWER).unwrap();
+    assert_eq!(switch_to_staged(&builds).unwrap(), None);
+    // The build that is current stays current, and nothing is on trial.
+    assert_eq!(current_build(&builds), Some(builds.join(COMMIT)));
+    assert!(!on_trial(&builds));
+}
+
+#[tokio::test]
+async fn the_first_build_has_nothing_to_go_back_to_and_a_confirmed_build_is_never_rolled_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let (builds, service) = installed(&dir).await;
+    // The first install: no previous build, so no trial and no rollback.
+    assert!(!on_trial(&builds));
+    assert!(!roll_back(&builds).unwrap());
+    confirm(&builds).unwrap();
+    service.publish(NEWER, NEWER_RELEASE, good_tarball());
+    stage_update(&service, PLATFORM, &builds).await.unwrap();
+    assert_eq!(switch_to_staged(&builds).unwrap().as_deref(), Some(NEWER));
+    assert!(on_trial(&builds));
+    // Confirmed: the trial is over and the old build is gone.
+    confirm(&builds).unwrap();
+    assert!(!on_trial(&builds));
+    assert!(!roll_back(&builds).unwrap());
+    assert_eq!(names(&builds), [NEWER, "confirmed", "current"]);
+    // With nothing current at all, confirming is a no-op.
+    let empty = dir.path().join("empty");
+    std::fs::create_dir(&empty).unwrap();
+    confirm(&empty).unwrap();
+    assert_eq!(names(&empty), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn a_clean_up_leaves_files_it_does_not_know_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let (builds, _service) = installed(&dir).await;
+    std::fs::write(builds.join("notes.txt"), "mine").unwrap();
+    std::fs::write(
+        builds.join(format!("{NEWER}.tar.gz.partial")),
+        "dead download",
+    )
+    .unwrap();
+    std::fs::create_dir(builds.join("somebody-elses-folder")).unwrap();
+    confirm(&builds).unwrap();
+    assert_eq!(
+        names(&builds),
+        [
+            "confirmed",
+            "current",
+            COMMIT,
+            "notes.txt",
+            "somebody-elses-folder"
+        ]
+    );
 }

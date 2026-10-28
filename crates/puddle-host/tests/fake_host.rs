@@ -904,6 +904,36 @@ async fn ending_the_extension_hosts_of_a_workspace_that_has_no_agent_says_it_is_
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn switching_an_editor_build_needs_no_connected_window_and_a_running_agent() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let name = WorkspaceName::new("builds").unwrap();
+    // A window on the server: refused before anything is asked of the guest, even for a
+    // workspace that does not exist.
+    let refused = host.workspaces().switch_editor_build(&name, 2).await;
+    assert!(
+        matches!(
+            refused,
+            Err(puddle_host::SwitchEditorBuildError::WindowsConnected(2))
+        ),
+        "{refused:?}"
+    );
+    // No window, but no agent either (unknown, then known with a fake guest that runs none).
+    let not_running = |result: Result<bool, puddle_host::SwitchEditorBuildError>| {
+        assert!(
+            matches!(result, Err(puddle_host::SwitchEditorBuildError::NotRunning)),
+            "{result:?}"
+        );
+    };
+    not_running(host.workspaces().switch_editor_build(&name, 0).await);
+    create(&api, &mut events, "builds").await;
+    not_running(host.workspaces().switch_editor_build(&name, 0).await);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_api_and_the_pull_proxy_are_each_registered_once_in_the_one_registry() {
     let rig = Rig::new();
     let host = rig.start().await;
@@ -4473,12 +4503,11 @@ async fn editor_env_of_a_new_workspace(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn microsofts_server_runs_after_consent_with_its_own_folder_and_the_telemetry_choice() {
-    for telemetry in [false, true] {
+    for (telemetry, auto_update) in [(false, true), (true, false)] {
         let rig = Rig::new();
-        write_global_settings(
-            &rig,
-            &microsoft_chosen(puddle_settings::MICROSOFT_TERMS_VERSION, telemetry),
-        );
+        let mut doc = microsoft_chosen(puddle_settings::MICROSOFT_TERMS_VERSION, telemetry);
+        doc["vscode_server"]["auto_update"] = json!(auto_update);
+        write_global_settings(&rig, &doc);
         // No code-server bundled: Microsoft's is downloaded by the guest, not shipped.
         let seen = editor_env_of_a_new_workspace(&rig, rig.config()).await;
         let get = |name: &str| seen.get(name).map(String::as_str);
@@ -4486,6 +4515,10 @@ async fn microsofts_server_runs_after_consent_with_its_own_folder_and_the_teleme
         assert_eq!(
             get("PUDDLE_AGENT_EDITOR_TELEMETRY"),
             Some(if telemetry { "1" } else { "0" })
+        );
+        assert_eq!(
+            get("PUDDLE_AGENT_EDITOR_AUTO_UPDATE"),
+            Some(if auto_update { "1" } else { "0" })
         );
         assert_eq!(
             get("PUDDLE_AGENT_EDITOR_DIR"),

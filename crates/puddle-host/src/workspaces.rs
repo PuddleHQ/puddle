@@ -243,6 +243,20 @@ pub enum EndExtensionHostsError {
     Agent(OpenError),
 }
 
+/// Why [`HostWorkspaces::switch_editor_build`] did not run a newer build.
+#[derive(Debug, thiserror::Error)]
+pub enum SwitchEditorBuildError {
+    /// A window is connected to the editor server: restarting it would cut the user off.
+    #[error("{0} editor window(s) are connected")]
+    WindowsConnected(usize),
+    /// The workspace is stopped, or its agent has not connected yet.
+    #[error("the workspace is not running")]
+    NotRunning,
+    /// The agent could not be reached or did not answer.
+    #[error("the workspace's agent could not switch the editor server build: {0}")]
+    Agent(OpenError),
+}
+
 /// The workspaces service. Cheap to clone; clones share state.
 pub struct HostWorkspaces<R: Runtime + Clone> {
     inner: Arc<Inner<R>>,
@@ -592,6 +606,37 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         link.send(&HostMessage::EndExtensionHosts)
             .await
             .map_err(EndExtensionHostsError::Agent)
+    }
+
+    /// Restarts `workspace`'s editor server on a newer build the agent has downloaded and checked,
+    /// if there is one, and says whether it did. `connected_windows` is the front's count of
+    /// windows connected to that server (the front counts them): a server with a
+    /// window on it is never restarted, so the caller asks again at its next quiet moment (the
+    /// agent keeps the staged build until then). Only Microsoft's server updates, and only with
+    /// the user's automatic-update setting on; for anything else the answer is `false`.
+    ///
+    /// # Errors
+    ///
+    /// [`SwitchEditorBuildError`]: a window is connected, the workspace has no connected agent,
+    /// or the agent did not answer.
+    pub async fn switch_editor_build(
+        &self,
+        workspace: &WorkspaceName,
+        connected_windows: usize,
+    ) -> Result<bool, SwitchEditorBuildError> {
+        if connected_windows > 0 {
+            return Err(SwitchEditorBuildError::WindowsConnected(connected_windows));
+        }
+        let link = self
+            .inner
+            .ports
+            .guest_link(workspace)
+            .ok_or(SwitchEditorBuildError::NotRunning)?;
+        let reply = link
+            .send(&HostMessage::SwitchEditorBuild)
+            .await
+            .map_err(SwitchEditorBuildError::Agent)?;
+        Ok(matches!(reply, HostReply::EditorBuild { switched: true }))
     }
 
     /// The SSH endpoint of a running workspace's sandbox.
@@ -1772,6 +1817,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             Ok(global) => match global.editor_server() {
                 ServerChoice::Microsoft => ServerKind::Microsoft {
                     telemetry: global.vscode_server.telemetry(),
+                    auto_update: global.vscode_server.auto_update(),
                 },
                 ServerChoice::CodeServer => {
                     if global.vscode_server.server() == ServerChoice::Microsoft {

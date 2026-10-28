@@ -586,7 +586,7 @@ impl Store {
             workspace = %decided.row.workspace,
             host = %decided.row.host,
             rule = %decided.rule.id,
-            effect = decided.rule.effect.as_str(),
+            effect = %decided.rule.effect.as_str(),
             "pending request decided"
         );
         Ok(decided)

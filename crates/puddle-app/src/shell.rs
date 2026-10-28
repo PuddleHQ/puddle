@@ -49,13 +49,20 @@ impl SandboxProbe {
     /// The probe the environment asks for: `PUDDLE_APP_SANDBOX_PROBE` is the page and
     /// `PUDDLE_APP_SANDBOX_DEBUG_PORT` its debug port.
     fn from_env() -> Option<Self> {
+        Self::parse(
+            std::env::var("PUDDLE_APP_SANDBOX_PROBE").ok().as_deref(),
+            std::env::var("PUDDLE_APP_SANDBOX_DEBUG_PORT")
+                .ok()
+                .as_deref(),
+        )
+    }
+
+    /// The probe for these two values; none unless both are there and valid.
+    fn parse(url: Option<&str>, debug_port: Option<&str>) -> Option<Self> {
         Some(Self {
             workspace: WorkspaceName::new("probe").ok()?,
-            url: Url::parse(&std::env::var("PUDDLE_APP_SANDBOX_PROBE").ok()?).ok()?,
-            debug_port: std::env::var("PUDDLE_APP_SANDBOX_DEBUG_PORT")
-                .ok()?
-                .parse()
-                .ok()?,
+            url: Url::parse(url?).ok()?,
+            debug_port: debug_port?.parse().ok()?,
         })
     }
 }
@@ -216,14 +223,10 @@ pub fn open<R: Runtime>(
     Ok(())
 }
 
-/// Opens the smoke test's workspace window. Its links are logged instead of opened, so a test run
-/// starts no browser.
-fn open_probe<R: Runtime>(
-    app: &AppHandle<R>,
-    probe: &SandboxProbe,
-    data: &std::path::Path,
-) -> Result<(), ShellError> {
-    let hooks = Hooks {
+/// What the smoke test's window asks of the shell: its links are logged, so a test run starts no
+/// browser.
+fn probe_hooks() -> Hooks {
+    Hooks {
         open_external: Arc::new(
             |url| tracing::info!(%url, "sandbox window: opened in the browser"),
         ),
@@ -231,8 +234,17 @@ fn open_probe<R: Runtime>(
         last_closed: Arc::new(|workspace| {
             tracing::info!(%workspace, "sandbox window: last window closed");
         }),
-    };
-    let windows = SandboxWindows::new(hooks);
+    }
+}
+
+/// Opens the smoke test's workspace window. Its links are logged instead of opened, so a test run
+/// starts no browser.
+fn open_probe<R: Runtime>(
+    app: &AppHandle<R>,
+    probe: &SandboxProbe,
+    data: &std::path::Path,
+) -> Result<(), ShellError> {
+    let windows = SandboxWindows::new(probe_hooks());
     let mut origin = probe.url.clone();
     origin.set_path("/");
     origin.set_query(None);
@@ -416,9 +428,25 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_probe_comes_from_the_environment_only_when_both_values_are_there() {
-        // Only the parsing is shown: the process environment is shared between tests.
+    fn the_probe_needs_a_page_and_a_debug_port() {
+        let page = Some("http://probe.localhost:4900/attack.html");
+        let probe = SandboxProbe::parse(page, Some("9444")).unwrap();
+        assert_eq!((probe.url.path(), probe.debug_port), ("/attack.html", 9444));
+        assert_eq!(SandboxProbe::parse(None, Some("9444")), None);
+        assert_eq!(SandboxProbe::parse(page, None), None);
+        assert_eq!(SandboxProbe::parse(Some("not a url"), Some("9444")), None);
+        assert_eq!(SandboxProbe::parse(page, Some("high")), None);
+        // The environment is shared between tests: only a run with neither value set shows this.
         assert!(SandboxProbe::from_env().is_none());
+    }
+
+    #[test]
+    fn the_probe_window_logs_its_links_and_asks_nothing_of_the_browser() {
+        let hooks = probe_hooks();
+        let url = Url::parse("https://example.org/x").unwrap();
+        (hooks.open_external)(&url);
+        (hooks.refused)(&url);
+        (hooks.last_closed)(&WorkspaceName::new("probe").unwrap());
     }
 
     #[test]
@@ -475,6 +503,24 @@ mod fixture_tests {
         assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err());
         // The hook can run again (a second Exit event, or no backend at all).
         assert_eq!(stop(app.handle()), None);
+    }
+
+    #[test]
+    fn a_probe_in_the_options_opens_its_workspace_window_beside_the_main_one() {
+        let app = app();
+        let dir = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: Some(dir.path().to_owned()),
+            sandbox_probe: SandboxProbe::parse(
+                Some("http://probe.localhost:4900/attack.html"),
+                Some("9444"),
+            ),
+            ..fixture_options()
+        };
+        start(app.handle(), &options, Source::Fixture).unwrap();
+        assert!(app.get_webview_window("vs-probe").is_some());
+        assert!(app.get_webview_window(MAIN_LABEL).is_some());
+        assert!(stop(app.handle()).is_some());
     }
 
     #[test]

@@ -158,48 +158,41 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let seen = Arc::new(Mutex::new(Seen::default()));
         let sink = seen.clone();
+        // One login per test, so one connection.
         tokio::spawn(async move {
-            loop {
-                let (stream, _) = listener.accept().await.unwrap();
+            let (stream, _) = listener.accept().await.unwrap();
+            let service = service_fn(move |request: Request<hyper::body::Incoming>| {
                 let sink = sink.clone();
-                tokio::spawn(async move {
-                    let service = service_fn(move |request: Request<hyper::body::Incoming>| {
-                        let sink = sink.clone();
-                        async move {
-                            let (parts, body) = request.into_parts();
-                            let body = body.collect().await.unwrap().to_bytes();
-                            let body = String::from_utf8(body.to_vec()).unwrap();
-                            *sink.lock().unwrap() = Seen {
-                                host: parts.headers[HOST].to_str().unwrap().to_owned(),
-                                path: parts.uri.path().to_owned(),
-                                method: parts.method.to_string(),
-                                body: body.clone(),
-                            };
-                            let mut answer = Response::builder();
-                            let wanted = url::form_urlencoded::Serializer::new(String::new())
-                                .append_pair("password", accepts)
-                                .finish();
-                            if body == wanted {
-                                answer = answer
-                                    .status(302)
-                                    .header(SET_COOKIE, "other=1; Path=/")
-                                    .header(
-                                        SET_COOKIE,
-                                        "code-server-session=abc123; Path=/; HttpOnly",
-                                    );
-                            } else {
-                                answer = answer.status(200);
-                            }
-                            Ok::<_, std::convert::Infallible>(
-                                answer.body(Full::new(Bytes::from_static(b"page"))).unwrap(),
-                            )
-                        }
-                    });
-                    let _ = hyper::server::conn::http1::Builder::new()
-                        .serve_connection(TokioIo::new(stream), service)
-                        .await;
-                });
-            }
+                async move {
+                    let (parts, body) = request.into_parts();
+                    let body = body.collect().await.unwrap().to_bytes();
+                    let body = String::from_utf8(body.to_vec()).unwrap();
+                    *sink.lock().unwrap() = Seen {
+                        host: parts.headers[HOST].to_str().unwrap().to_owned(),
+                        path: parts.uri.path().to_owned(),
+                        method: parts.method.to_string(),
+                        body: body.clone(),
+                    };
+                    let wanted = url::form_urlencoded::Serializer::new(String::new())
+                        .append_pair("password", accepts)
+                        .finish();
+                    let mut answer = Response::builder();
+                    if body == wanted {
+                        answer = answer
+                            .status(302)
+                            .header(SET_COOKIE, "other=1; Path=/")
+                            .header(SET_COOKIE, "code-server-session=abc123; Path=/; HttpOnly");
+                    } else {
+                        answer = answer.status(200);
+                    }
+                    Ok::<_, std::convert::Infallible>(
+                        answer.body(Full::new(Bytes::from_static(b"page"))).unwrap(),
+                    )
+                }
+            });
+            let _ = hyper::server::conn::http1::Builder::new()
+                .serve_connection(TokioIo::new(stream), service)
+                .await;
         });
         (addr, seen)
     }

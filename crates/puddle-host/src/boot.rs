@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use puddle_agent_proto::editor::EditorServer;
+use puddle_agent_proto::editor::{EditorServer, ServerKind};
 use puddle_api::StartFolder;
 use puddle_boot::{
     BootHook, BootPlan, GitIdentity, with_boot_mounts, with_code_server_mount, write_assets,
@@ -37,6 +37,10 @@ const ASSET_DIR: &str = "puddle";
 /// The folder below a workspace's `.puddle` that holds the editor server's user data and
 /// extensions.
 const EDITOR_DATA_DIR: &str = "code-server";
+
+/// The same for Microsoft's server, which keeps its own data, its extensions and its downloaded
+/// builds there (never mixed with code-server's).
+const MICROSOFT_DATA_DIR: &str = "vscode-server";
 
 /// Folder below the guest-share root with one folder per workspace for its shell init.
 const SHELL_INIT_DIR: &str = "shell-init";
@@ -202,7 +206,7 @@ impl BootKit {
         for rule in &guest.authors.rules {
             builder = builder.git_author_rule(rule.clone());
         }
-        if let (Some(editor), Some(_)) = (guest.editor, &self.code_server) {
+        if let Some(editor) = guest.editor {
             for (name, value) in editor.env() {
                 builder = builder.agent_env(name, value);
             }
@@ -231,24 +235,33 @@ impl BootKit {
         }
     }
 
-    /// How the browser editor's server runs in workspace `id`: its data on the volume, the volume
-    /// as the folder it opens, or the multi-root file once an attach wrote one. `None` when this
-    /// host bundles no code-server.
+    /// How the browser editor's server `kind` runs in workspace `id`: its data on the volume, the
+    /// volume as the folder it opens, or the multi-root file once an attach wrote one. `None` for
+    /// code-server when this host bundles none; Microsoft's server needs nothing bundled (the
+    /// guest downloads it).
     pub(crate) fn editor(
         &self,
         id: &WorkspaceId,
         grace_secs: u32,
+        kind: ServerKind,
     ) -> Result<Option<EditorServer>, String> {
-        if self.code_server.is_none() {
+        if self.code_server.is_none() && kind == ServerKind::CodeServer {
             return Ok(None);
         }
         let layout = Layout::new(id).map_err(|e| e.to_string())?;
         let data = layout.puddle_dir().map_err(|e| e.to_string())?;
-        let mut server = EditorServer::new(
-            format!("{data}/{EDITOR_DATA_DIR}"),
-            layout.mount().to_string(),
-            grace_secs,
-        );
+        let mount = layout.mount().to_string();
+        let mut server = match kind {
+            ServerKind::CodeServer => {
+                EditorServer::new(format!("{data}/{EDITOR_DATA_DIR}"), mount, grace_secs)
+            }
+            ServerKind::Microsoft { telemetry } => EditorServer::microsoft(
+                format!("{data}/{MICROSOFT_DATA_DIR}"),
+                mount,
+                grace_secs,
+                telemetry,
+            ),
+        };
         server.workspace_file = crate::editor_file::workspace_file_path(layout.mount(), id)
             .map(|file| file.as_str().to_owned());
         Ok(Some(server))

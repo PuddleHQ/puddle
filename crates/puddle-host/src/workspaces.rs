@@ -26,7 +26,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
-use puddle_agent_proto::editor::EditorServer;
+use puddle_agent_proto::editor::{EditorServer, ServerKind};
 use puddle_agent_proto::forward::OpenError;
 use puddle_agent_proto::host_control::{HostMessage, HostReply};
 use puddle_api::{
@@ -41,7 +41,7 @@ use puddle_compute::{ComputeError, DiskSize, ExecRequest, ImageConfig, Runtime, 
 use puddle_lifecycle::Lifecycle;
 use puddle_ports::Ports;
 use puddle_proxy::Route;
-use puddle_settings::{ReconnectionGrace, WorkspaceSettings, resolve};
+use puddle_settings::{ReconnectionGrace, ServerChoice, WorkspaceSettings, resolve};
 use puddle_ssh::SshEndpoint;
 use puddle_store::Clock;
 use puddle_types::{
@@ -902,7 +902,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     ) -> Result<(puddle_boot::BootPlan, GuestEnv, GuestState), String> {
         let inner = &self.inner;
         let capture = crate::logins::capture_enabled(inner.settings.as_ref(), name);
-        let editor = inner.kit.editor(id, self.reconnection_grace(name))?;
+        let editor = inner
+            .kit
+            .editor(id, self.reconnection_grace(name), self.editor_kind())?;
         let began = inner.injection.begin(name, capture).await?;
         let wanted = authors(&began.git);
         self.report_git_settings(name, &began.git, &wanted);
@@ -1741,6 +1743,31 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             path: path.as_str().to_owned(),
             is_workspace_file,
         })
+    }
+
+    /// Which server the browser editor runs at this start: Microsoft's only when the user chose
+    /// it and the recorded consent covers today's terms; anything else, settings that cannot be
+    /// read included, is the bundled code-server (a consent is never assumed).
+    fn editor_kind(&self) -> ServerKind {
+        match crate::settings_read::global(self.inner.settings.as_ref()) {
+            Ok(global) => match global.editor_server() {
+                ServerChoice::Microsoft => ServerKind::Microsoft {
+                    telemetry: global.vscode_server.telemetry(),
+                },
+                ServerChoice::CodeServer => {
+                    if global.vscode_server.server() == ServerChoice::Microsoft {
+                        tracing::warn!(
+                            "the editor runs code-server: Microsoft's server is chosen but the consent no longer covers its terms"
+                        );
+                    }
+                    ServerKind::CodeServer
+                }
+            },
+            Err(reason) => {
+                tracing::warn!(%reason, "the editor runs code-server: the settings cannot be read");
+                ServerKind::CodeServer
+            }
+        }
     }
 
     /// The browser editor's reconnection grace for `name`, in seconds: the settings' value, the

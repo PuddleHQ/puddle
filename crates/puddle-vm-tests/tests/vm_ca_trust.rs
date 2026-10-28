@@ -300,7 +300,7 @@ async fn deno_run(env: &VmEnv) -> Result<(), HarnessError> {
         let run = "export HOME=/root; deno run -A /tmp/fetch.ts 2>&1";
         let (code, out) = sh(&sandbox, "deno before", run.to_owned()).await?;
         assert_ne!(code, 0, "Deno trusted the CA before the boot files: {out}");
-        eprintln!("deno before:\n{out}");
+        assert!(out.contains("invalid peer certificate: UnknownIssuer"), "{out}");
 
         apply(&sandbox, script).await?;
         let with_env = format!(". /etc/profile.d/01-puddle-env.sh; {run}");
@@ -319,7 +319,7 @@ async fn deno_run(env: &VmEnv) -> Result<(), HarnessError> {
         let bare = "env -i HOME=/root PATH=\"$PATH\" deno run -A /tmp/fetch.ts 2>&1";
         let (code, out) = sh(&sandbox, "deno bare", bare.to_owned()).await?;
         assert_ne!(code, 0, "Deno trusted the CA with no variable set: {out}");
-        eprintln!("deno bare:\n{out}");
+        assert!(out.contains("invalid peer certificate: UnknownIssuer"), "{out}");
         finish(&sandbox).await
     }))
     .await
@@ -352,8 +352,7 @@ exit $rc"
         };
         let (code, out) = sh(&sandbox, "pip before", serve("true")).await?;
         assert_ne!(code, 0, "pip trusted the CA before the boot files: {out}");
-        assert!(!out.contains("server did not start"), "{out}");
-        eprintln!("pip before:\n{out}");
+        assert!(out.contains("CERTIFICATE_VERIFY_FAILED"), "{out}");
 
         apply(&sandbox, script).await?;
         let (code, out) = sh(
@@ -385,8 +384,7 @@ exit $rc"
         )
         .await?;
         assert_ne!(code, 0, "pip trusted the CA with no variable set: {out}");
-        assert!(!out.contains("server did not start"), "{out}");
-        eprintln!("pip bare:\n{out}");
+        assert!(out.contains("CERTIFICATE_VERIFY_FAILED"), "{out}");
         finish(&sandbox).await
     }))
     .await

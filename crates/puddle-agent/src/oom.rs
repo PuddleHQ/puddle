@@ -137,15 +137,17 @@ impl Correlator {
 /// Watches both sources and sends one [`AgentMessage::OomKill`] per kill into `out`. Returns
 /// when `out` closes, or at once if neither source can be read.
 pub async fn watch(sources: OomSources, out: mpsc::Sender<AgentMessage>) {
-    watch_observed(sources, out, || {}).await;
+    watch_observed(sources, out, |_| {}, || {}).await;
 }
 
-/// [`watch`], calling `polled` after the baseline counter reading and after each later reading.
-/// Tests wait on it instead of a fixed time for the watch to have seen a change they made.
+/// [`watch`], calling `polled` with the latest counter value after the baseline reading and after
+/// each later one, and `queued` from the reader thread after each log kill it queued. Tests wait
+/// on them instead of a fixed time for the watch to have seen a change they made.
 async fn watch_observed(
     sources: OomSources,
     out: mpsc::Sender<AgentMessage>,
-    mut polled: impl FnMut(),
+    mut polled: impl FnMut(Option<u64>),
+    queued: impl Fn() + Send + 'static,
 ) {
     let (kill_tx, mut kills) = mpsc::channel(KILL_QUEUE);
     let log_ok = match open_log(&sources.kmsg) {
@@ -153,7 +155,7 @@ async fn watch_observed(
             let poll = sources.poll;
             match std::thread::Builder::new()
                 .name("puddle-agent-kmsg".into())
-                .spawn(move || read_log(file, poll, &kill_tx))
+                .spawn(move || read_log(file, poll, &kill_tx, queued))
             {
                 Ok(_) => true,
                 Err(err) => {
@@ -176,7 +178,7 @@ async fn watch_observed(
             return;
         }
     }
-    polled();
+    polled(count);
     let mut correlator = Correlator::new(sources.grace);
     let mut tick = tokio::time::interval(sources.poll);
     tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -202,8 +204,11 @@ async fn watch_observed(
                     }
                     count = Some(seen);
                 }
-                polled();
-                for _ in 0..correlator.due(now) {
+                polled(count);
+                // The read can outlast the grace period while a line arrives. A queued line is
+                // served first, on the next turn, before anything is reported as unnamed.
+                let due = if kills.is_empty() { correlator.due(now) } else { 0 };
+                for _ in 0..due {
                     if !send(&out, AgentMessage::oom_kill(None, None)) {
                         return;
                     }
@@ -254,7 +259,7 @@ fn open_log(path: &Path) -> io::Result<File> {
 /// Blocking reader (own thread): one record per line, kills go to `out`. On `/dev/kmsg` a read
 /// blocks until a record arrives; on a plain file (tests) end of file is polled every `poll`.
 /// Ends when `out` closes or the log fails.
-fn read_log(file: File, poll: Duration, out: &mpsc::Sender<Kill>) {
+fn read_log(file: File, poll: Duration, out: &mpsc::Sender<Kill>, queued: impl Fn()) {
     let mut reader = BufReader::with_capacity(16 * 1024, file);
     let mut record = Vec::with_capacity(1024);
     loop {
@@ -268,7 +273,7 @@ fn read_log(file: File, poll: Duration, out: &mpsc::Sender<Kill>) {
             }
             Ok(_) => {
                 if let Some(kill) = parse_kmsg_record(&String::from_utf8_lossy(&record))
-                    && out.blocking_send(kill).is_err()
+                    && out.blocking_send(kill).map(|()| queued()).is_err()
                 {
                     return;
                 }

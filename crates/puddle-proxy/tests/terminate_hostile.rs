@@ -405,7 +405,7 @@ async fn a_request_puddle_refuses_on_its_own_is_recorded_blocked_with_a_reason()
     let server = upstream(&pki, ok_handler()).await;
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
-        .config(quick())
+        .config(&quick())
         .build();
     let big = format!(
         "GET /x HTTP/1.1\r\nHost: bound.test\r\nX-Big: {}\r\n\r\n",
@@ -451,7 +451,7 @@ async fn hostile_hg16_an_oversized_head_and_a_stalled_one_are_cut_off() {
     let server = upstream(&pki, ok_handler()).await;
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
-        .config(quick())
+        .config(&quick())
         .build();
     let mut guest = rig.guest().await;
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
@@ -480,7 +480,7 @@ async fn hostile_hg16_a_guest_that_stops_sending_a_body_does_not_hold_the_upstre
     let server = upstream(&pki, ok_handler()).await;
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
-        .config(quick())
+        .config(&quick())
         .build();
     let mut guest = rig.guest().await;
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
@@ -700,7 +700,7 @@ async fn hostile_hg29_a_slow_upstream_hits_its_limits_without_slowing_anyone_els
     .await;
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
-        .config(quick())
+        .config(&quick())
         .build();
     let mut guest = rig.guest().await;
     let mut silent = guest.tls("bound.test:443", None).await.unwrap();

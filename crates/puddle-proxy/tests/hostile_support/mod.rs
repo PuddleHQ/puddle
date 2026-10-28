@@ -106,16 +106,16 @@ pub(crate) struct Rig {
 }
 
 pub(crate) async fn rig() -> Rig {
-    rig_with(ProxyConfig::default()).await
+    rig_with(&ProxyConfig::default()).await
 }
 
 /// As [`rig`], with `config` for the proxy.
-pub(crate) async fn rig_with(config: ProxyConfig) -> Rig {
+pub(crate) async fn rig_with(config: &ProxyConfig) -> Rig {
     rig_logged(config, Arc::new(NullConnectionLog)).await
 }
 
 /// As [`rig_with`], with `log` as the proxy's connection log.
-pub(crate) async fn rig_logged(config: ProxyConfig, log: Arc<dyn ConnectionLog>) -> Rig {
+pub(crate) async fn rig_logged(config: &ProxyConfig, log: Arc<dyn ConnectionLog>) -> Rig {
     let policy = Arc::new(StaticPolicy::new());
     policy.allow(&Host::parse_normalised("127.0.0.1").unwrap());
     let proxy = Arc::new(
@@ -123,7 +123,7 @@ pub(crate) async fn rig_logged(config: ProxyConfig, log: Arc<dyn ConnectionLog>)
             .with_resolver(Arc::new(StaticResolver::new()))
             .with_address_check(Arc::new(AnyAddress))
             .with_connection_log(log)
-            .with_config(config),
+            .with_config(*config),
     );
     let root = IpcRoot::new().unwrap();
     let attacked = proxy.serve_route(

@@ -594,7 +594,7 @@ impl Resolver for Stuck {
 }
 
 fn stuck_rig(
-    config: ProxyConfig,
+    config: &ProxyConfig,
     upstream: Option<Upstream>,
 ) -> (Arc<StaticPolicy>, Arc<Stuck>, WorkspaceHandler) {
     let policy = Arc::new(StaticPolicy::new());
@@ -602,7 +602,7 @@ fn stuck_rig(
     let mut proxy = Proxy::new(policy.clone(), Arc::new(NullSink))
         .with_resolver(stuck.clone())
         .with_address_check(Arc::new(AnyAddress))
-        .with_config(config);
+        .with_config(*config);
     if let Some(upstream) = upstream {
         proxy = proxy.with_upstream(upstream);
     }
@@ -672,14 +672,14 @@ async fn a_lookup_that_failed_is_left_to_the_company_proxy_when_one_is_in_the_ro
 #[tokio::test(start_paused = true)]
 async fn a_lookup_that_times_out_is_unavailable_or_left_to_the_company_proxy() {
     let config = ProxyConfig::default().with_lookup_limits(Duration::from_secs(1), 32);
-    let (policy, _, handler) = stuck_rig(config, None);
+    let (policy, _, handler) = stuck_rig(&config, None);
     policy.allow(&host("slow.example"));
     assert_eq!(
         handler.resolve_name(a("slow.example")).await,
         ResolveAnswer::Unavailable
     );
 
-    let (policy, _, handler) = stuck_rig(config, Some(company_proxy(true)));
+    let (policy, _, handler) = stuck_rig(&config, Some(company_proxy(true)));
     policy.allow(&host("slow.example"));
     assert_eq!(
         handler.resolve_name(a("slow.example")).await,
@@ -744,7 +744,7 @@ async fn lookups_over_the_per_workspace_cap_wait_for_a_free_slot_and_are_all_ser
 #[tokio::test(start_paused = true)]
 async fn a_lookup_that_waits_a_whole_lookup_time_for_a_slot_is_unavailable() {
     let config = ProxyConfig::default().with_lookup_limits(Duration::from_secs(5), 1);
-    let (policy, stuck, handler) = stuck_rig(config, None);
+    let (policy, stuck, handler) = stuck_rig(&config, None);
     for name in ["a.example", "b.example", "c.example"] {
         policy.allow(&host(name));
     }

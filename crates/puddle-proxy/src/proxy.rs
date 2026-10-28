@@ -61,8 +61,14 @@ pub struct ProxyConfig {
     pub max_sessions_per_route: usize,
     /// Per-session limits of the agent protocol.
     pub session: HostConfig,
-    /// How long a TLS handshake may take, on either side of a terminated connection.
+    /// How long the proxy's own TLS handshake with a bound host may take.
     pub tls_handshake_timeout: Duration,
+    /// How long each step of the guest's TLS handshake with the proxy may take: its hello after
+    /// the `CONNECT` answer, then the rest of the handshake. The proxy plays the server here, so the guest gets what common
+    /// servers give a client by default (nginx's `ssl_handshake_timeout`, Python's asyncio: 60 s):
+    /// a client stalled for longer than the upstream budget, by a busy disk or a paused machine,
+    /// still connects instead of finding its connection cut.
+    pub guest_handshake_timeout: Duration,
     /// How long a terminated connection may sit idle between two requests before it is closed.
     pub keepalive_timeout: Duration,
     /// How long a bound host may take to answer once the whole request is sent. Over it: `504`.
@@ -102,6 +108,7 @@ impl Default for ProxyConfig {
             max_sessions_per_route: 128,
             session: HostConfig::default(),
             tls_handshake_timeout: Duration::from_secs(10),
+            guest_handshake_timeout: Duration::from_secs(60),
             keepalive_timeout: Duration::from_secs(60),
             upstream_head_timeout: Duration::from_secs(300),
             body_idle_timeout: Duration::from_secs(120),
@@ -175,8 +182,8 @@ impl ProxyConfig {
         self
     }
 
-    /// The default limits with other timeouts for terminated connections: TLS handshake, idle
-    /// between requests, wait for an upstream answer, stall inside a body.
+    /// The default limits with other timeouts for terminated connections: TLS handshake (both
+    /// sides), idle between requests, wait for an upstream answer, stall inside a body.
     #[must_use]
     pub fn with_terminate_timeouts(
         mut self,
@@ -186,9 +193,17 @@ impl ProxyConfig {
         body_idle: Duration,
     ) -> Self {
         self.tls_handshake_timeout = handshake;
+        self.guest_handshake_timeout = handshake;
         self.keepalive_timeout = keepalive;
         self.upstream_head_timeout = upstream_head;
         self.body_idle_timeout = body_idle;
+        self
+    }
+
+    /// The default limits with another budget for the guest's TLS handshake only.
+    #[must_use]
+    pub fn with_guest_handshake_timeout(mut self, timeout: Duration) -> Self {
+        self.guest_handshake_timeout = timeout;
         self
     }
 

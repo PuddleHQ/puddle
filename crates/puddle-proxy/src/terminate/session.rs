@@ -52,7 +52,7 @@ where
         let (refuse_config, _) =
             server_config(cx.termination.ca(), &cx.target.host, &[ALPN_HTTP11]).ok()?;
         tokio::time::timeout(
-            cx.proxy.config.tls_handshake_timeout,
+            cx.proxy.config.guest_handshake_timeout,
             start.into_stream(refuse_config),
         )
         .await
@@ -194,7 +194,7 @@ where
     let (start, hello, first, deferred) = match cx.mode {
         Mode::Bound => {
             let hello = tokio::time::timeout(
-                config.tls_handshake_timeout,
+                config.guest_handshake_timeout,
                 read_hello(Prefixed::new(stream, early), &cx.target.host),
             )
             .await;
@@ -241,7 +241,7 @@ where
         return outcome; // the CA cannot sign for a name it was checked to permit
     };
     let tls = match tokio::time::timeout(
-        config.tls_handshake_timeout,
+        config.guest_handshake_timeout,
         start.into_stream(server_config),
     )
     .await
@@ -331,7 +331,7 @@ where
         &mut stream,
         early,
         FIRST_BYTES_WAIT,
-        config.tls_handshake_timeout,
+        config.guest_handshake_timeout,
     )
     .await;
     let captured = match first {
@@ -372,7 +372,7 @@ where
     };
     let (first, deferred) = split_connect(made, outcome);
     let start = tokio::time::timeout(
-        config.tls_handshake_timeout,
+        config.guest_handshake_timeout,
         tokio_rustls::LazyConfigAcceptor::new(
             rustls::server::Acceptor::default(),
             Prefixed::new(stream, captured),
@@ -804,7 +804,7 @@ where
         &mut self,
         response: ::http::Response<AnswerBody>,
         parsed: &Parsed,
-        config: ProxyConfig,
+        config: &ProxyConfig,
     ) -> io::Result<response::Written> {
         tokio::select! {
             written = response::write(
@@ -950,7 +950,7 @@ where
             &mut self.reader,
             request,
             (framing, tx, abort),
-            config,
+            &config,
         )
         .await;
         let body_complete = matches!(pumped, Some(Ok(())));
@@ -971,7 +971,7 @@ where
             Ok(response) => response,
             Err(flow) => return flow,
         };
-        let written = self.write_response(response, parsed, config).await;
+        let written = self.write_response(response, parsed, &config).await;
         match written {
             Ok(response::Written::KeepOpen) if body_complete || !has_body => Flow::Continue,
             Ok(_) => {
@@ -1036,7 +1036,7 @@ async fn send_and_pump<R>(
     reader: &mut R,
     request: ::http::Request<UpBody>,
     (body, tx, abort): (http::Body, tokio::sync::mpsc::Sender<Bytes>, Abort),
-    config: ProxyConfig,
+    config: &ProxyConfig,
 ) -> (
     Option<Result<::http::Response<hyper::body::Incoming>, hyper::Error>>,
     Option<io::Result<()>>,

@@ -315,7 +315,7 @@ async fn a_body_that_does_not_arrive_is_a_408_and_nothing_goes_upstream() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .injector(peek.clone())
-        .config(quick())
+        .config(&quick())
         .build();
     let mut guest = rig.guest().await;
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
@@ -340,7 +340,7 @@ async fn over_http2_a_body_that_does_not_arrive_is_a_408_and_nothing_goes_upstre
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .injector(peek.clone())
-        .config(quick())
+        .config(&quick())
         .build();
     let mut guest = rig.guest().await;
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;

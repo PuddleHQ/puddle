@@ -3,12 +3,24 @@
 //!
 //! The msb SDK takes its paths from the process environment, and Puddle removes the user's own
 //! `MSB_*` variables so none of them redirect it. Setting variables while another thread reads
-//! them is undefined behaviour on Unix, so this refuses to run once another thread exists.
-//! Windows' environment calls are thread-safe, so no check is made there.
+//! them is undefined behaviour on Unix, and a C reader (`getenv`) in another thread is not
+//! protected on Windows either. The host therefore calls [`mark_threads_started`] before its
+//! runtime starts, and [`apply`] refuses after that on every OS. Linux also counts the threads.
+
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use puddle_runtime::RuntimeEnv;
 
 use crate::HostError;
+
+/// Set once the host starts its async runtime; never cleared.
+static THREADS_STARTED: AtomicBool = AtomicBool::new(false);
+
+/// Records that this process has started, or is about to start, threads of its own, so the
+/// environment can no longer be changed.
+pub(crate) fn mark_threads_started() {
+    THREADS_STARTED.store(true, Ordering::SeqCst);
+}
 
 /// How many threads this process runs, where the OS tells us cheaply.
 #[cfg(target_os = "linux")]
@@ -27,20 +39,18 @@ fn thread_count() -> Option<usize> {
 ///
 /// # Errors
 ///
-/// [`HostError::EnvironmentTooLate`] when the process already has more than one thread.
+/// [`HostError::EnvironmentTooLate`] after [`mark_threads_started`], or on Linux
+/// when the process already has more than one thread.
 #[expect(
     unsafe_code,
-    reason = "changing the process environment; guarded by the single-thread check"
+    reason = "changing the process environment; guarded by the threads-started flag and the thread count"
 )]
 pub(crate) fn apply(plan: &RuntimeEnv) -> Result<(), HostError> {
-    if !environment_may_change(thread_count()) {
+    if THREADS_STARTED.load(Ordering::SeqCst) || !environment_may_change(thread_count()) {
         return Err(HostError::EnvironmentTooLate);
     }
-    // SAFETY: on Linux the check above saw a single thread. On Windows Rust's environment
-    // functions are thread-safe, but a C reader in this process (its own copy of the environment)
-    // is not covered by that. There is no thread count to check on Windows, so that the
-    // call runs before the runtime and other threads start is the caller's contract. macOS is
-    // unsupported.
+    // SAFETY: the flag is clear on every OS, so the host has not started its runtime, and on Linux
+    // the process has a single thread. `prepare` runs before the caller starts any thread of its own.
     unsafe { plan.apply_to_process() };
     Ok(())
 }
@@ -56,7 +66,10 @@ fn environment_may_change(threads: Option<usize>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::environment_may_change;
+    use puddle_runtime::{RuntimeEnv, RuntimeLayout};
+
+    use super::{apply, environment_may_change, mark_threads_started};
+    use crate::HostError;
 
     #[test]
     fn one_thread_may_change_the_environment() {
@@ -72,5 +85,15 @@ mod tests {
     #[test]
     fn an_unknown_thread_count_is_refused_only_on_linux() {
         assert_eq!(environment_may_change(None), !cfg!(target_os = "linux"));
+    }
+
+    #[test]
+    fn apply_refuses_once_threads_have_started() {
+        let root = std::env::temp_dir().join("puddle-process-env-test");
+        let layout =
+            RuntimeLayout::new(root.join("runtime"), root.join("home")).expect("absolute folders");
+        let plan = RuntimeEnv::plan(&layout, std::iter::empty::<(std::ffi::OsString, _)>());
+        mark_threads_started();
+        assert!(matches!(apply(&plan), Err(HostError::EnvironmentTooLate)));
     }
 }

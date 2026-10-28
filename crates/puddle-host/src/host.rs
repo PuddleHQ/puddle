@@ -442,6 +442,8 @@ impl<R: Runtime + Clone> Host<R> {
     where
         F: RuntimeFactory<Runtime = R>,
     {
+        // The environment is final from here on: refuse any later change to it.
+        crate::process_env::mark_threads_started();
         let Prepared {
             lock,
             config,

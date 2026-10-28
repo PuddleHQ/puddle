@@ -12,7 +12,7 @@
 //!   variable).
 //! - `denoland/deno:debian`: `fetch` works through `DENO_CERT` (Deno keeps its own roots).
 //! - `python:3.13-slim`: `pip download` from an index at that URL works through `PIP_CERT`,
-//!   and fails without it although the other variables are set.
+//!   and reads the variable (an empty bundle in it fails the same fetch).
 //!
 //! Each tool fails before the files are applied (the negative control), so a pass is the trust
 //! and not a trusting image. The wire peer is the fixture server, not the proxy process: the
@@ -202,7 +202,7 @@ fn install(trust: &GuestTrust) -> (Vec<(String, Vec<u8>)>, String) {
     script.push_str(
         "mkdir -p /etc/profile.d && cp /tmp/catrust-env /etc/profile.d/01-puddle-env.sh\n",
     );
-    script.push_str("update-ca-certificates >/dev/null\n");
+    script.push_str("if command -v update-ca-certificates >/dev/null 2>&1; then update-ca-certificates >/dev/null; fi\n");
     for step in trust.boot_steps() {
         writeln!(script, "echo \"step {step}: $(sh {step})\"").unwrap();
     }
@@ -355,14 +355,15 @@ exit $rc"
         assert_eq!(code, 0, "pip refused the certificate with PIP_CERT: {out}");
         assert!(out.contains("Successfully downloaded puddletest"), "{out}");
 
-        // PIP_CERT is what does it: pip ignores the other variables.
+        // pip reads PIP_CERT (the variable, not only the system store the image's own
+        // `update-ca-certificates` filled): an empty bundle in it makes the same fetch fail.
         let (code, out) = sh(
             &sandbox,
-            "pip without PIP_CERT",
-            serve(". /etc/profile.d/01-puddle-env.sh; unset PIP_CERT"),
+            "pip with an empty PIP_CERT",
+            serve(". /etc/profile.d/01-puddle-env.sh; : >/tmp/empty.pem; export PIP_CERT=/tmp/empty.pem"),
         )
         .await?;
-        assert_ne!(code, 0, "pip trusted the CA without PIP_CERT: {out}");
+        assert_ne!(code, 0, "pip ignored PIP_CERT: {out}");
         finish(&sandbox).await
     }))
     .await

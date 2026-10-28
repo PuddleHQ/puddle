@@ -5289,6 +5289,70 @@ async fn a_guest_that_cannot_take_new_authors_keeps_the_old_ones_and_the_next_ch
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn settings_that_go_unreadable_while_a_rewrite_waits_are_a_problem_the_next_change_ends() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let booted = rig.guest.boots();
+    let ada = make_identity(&api, "Ada", "github.com", &[]).await;
+    let bob = make_identity(&api, "Bob", "gitlab.com", &[]).await;
+
+    // Ada's rewrite holds the guest in its boot hook, so Bob's change reads what it decrypts and
+    // then waits for the rewrite to end.
+    let (release, hold) = std::sync::mpsc::channel::<()>();
+    let hold = Mutex::new(hold);
+    *rig.guest.during_boot.lock().unwrap() = Some(Box::new(move || {
+        wait_for(&hold.lock().unwrap());
+    }));
+    attach(&api, "acme", ada).await;
+    rig.guest.boots_reach(booted + 1).await;
+    attach(&api, "acme", bob).await;
+    eventually("gitlab.com decrypted", || {
+        decrypts(&host, "acme", "gitlab.com")
+    })
+    .await;
+
+    // The settings go bad before Bob's rewrite can read them.
+    damage_database(&rig, &UNREADABLE_GIT_ROW.replace("{}", "acme"));
+    release.send(()).unwrap();
+    eventually("the failed rewrite is a problem", || {
+        has_problem(&host, "git-authors:acme")
+    })
+    .await;
+    let problem = problem_of(&host, "git-authors:acme");
+    assert_eq!(
+        problem.title,
+        "Puddle could not update the commit authors in acme"
+    );
+    assert!(
+        problem.detail.contains("cannot read acme's Git settings")
+            && problem
+                .detail
+                .contains("the next change to its identities tries again"),
+        "{}",
+        problem.detail
+    );
+
+    // Once the settings read again, the next change writes both authors and ends the problem.
+    damage_database(
+        &rig,
+        "DELETE FROM workspace_repos WHERE repo = 'not a repo'",
+    );
+    host.events().emit(Event::WorkspaceGitChanged {
+        workspace: name("acme"),
+    });
+    eventually("the retry takes the problem away", || {
+        !has_problem(&host, "git-authors:acme")
+    })
+    .await;
+    let files = rig.guest.plan_files(rig.guest.boots() - 1);
+    assert!(pem_of(&files, "/etc/puddle/git-author-1.gitconfig").contains("Bob"));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_git_too_old_for_the_author_rules_is_a_problem_until_it_is_updated() {
     let rig = Rig::new();
     let host = rig.start().await;

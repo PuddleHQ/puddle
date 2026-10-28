@@ -1053,9 +1053,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 None => return, // not up yet
             }
         };
-        // An error was told to the user by `decrypt_changed` for this same change.
-        let Ok(git) = inner.injection.git(name) else {
-            return;
+        // The caller's own read of the settings worked, so this one failing is news: say so.
+        let git = match inner.injection.git(name) {
+            Ok(git) => git,
+            Err(reason) => {
+                Self::raise_author_sync(&inner.problems, name, &reason);
+                return;
+            }
         };
         let wanted = authors(&git);
         self.report_git_settings(name, &git, &wanted);
@@ -1076,18 +1080,23 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     state.authors = wanted;
                 }
             }
-            Err(reason) => GitProblem::AuthorSync.settle(
-                &inner.problems,
-                name,
-                Some((
-                    format!("Puddle could not update the commit authors in {name}"),
-                    format!(
-                        "{reason}. The workspace keeps the authors it had; the next change to its \
-                         identities tries again."
-                    ),
-                )),
-            ),
+            Err(reason) => Self::raise_author_sync(&inner.problems, name, &reason),
         }
+    }
+
+    /// Tells the user the commit authors in `name` could not be updated and why.
+    fn raise_author_sync(problems: &Problems, name: &WorkspaceName, reason: &str) {
+        GitProblem::AuthorSync.settle(
+            problems,
+            name,
+            Some((
+                format!("Puddle could not update the commit authors in {name}"),
+                format!(
+                    "{reason}. The workspace keeps the authors it had; the next change to its \
+                     identities tries again."
+                ),
+            )),
+        );
     }
 
     /// Looks in the guest for the start folder (storage ST-55). A missing one never fails anything:

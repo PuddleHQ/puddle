@@ -33,11 +33,16 @@ expect() {
 }
 
 touch "$tmp/pass/aaa.pass"
+# The notice names the variable that skips the gates, on stderr, only when the gates run.
+printf '%s\n' "refs/heads/x aaa refs/heads/x $zero" | (cd "$tmp/repo" && env -u PUDDLE_GATE_PASS_DIR sh ./hook 2>"$tmp/err")
+grep -q 'PUDDLE_GATE_PASS_DIR' "$tmp/err" || { echo "pre-push-test: the hook does not name PUDDLE_GATE_PASS_DIR when it runs the gates" >&2; exit 1; }
 one="refs/heads/x aaa refs/heads/x $zero"
 two="$one
 refs/heads/y bbb refs/heads/y $zero"
 expect "no pass dir" ran "" "$one"
 expect "marker present" skipped "$tmp/pass" "$one"
+printf "%s\n" "refs/heads/x aaa refs/heads/x $zero" | (cd "$tmp/repo" && PUDDLE_GATE_PASS_DIR=$tmp/pass sh ./hook 2>"$tmp/err")
+! grep -q "no pass marker" "$tmp/err" || { echo "pre-push-test: the notice shows although a marker covered the push" >&2; exit 1; }
 expect "marker for one of two commits" ran "$tmp/pass" "$two"
 expect "marker for another commit" ran "$tmp/pass" "refs/heads/z ccc refs/heads/z $zero"
 expect "deletion only" ran "$tmp/pass" "(delete) $zero refs/heads/x aaa"

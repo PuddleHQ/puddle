@@ -22,6 +22,9 @@ if [ -n "${PUDDLE_GATE_PASS_DIR:-}" ]; then
         exit 0
     fi
 fi
+# No marker covered the push, so the gates run here, which takes minutes. Say how to skip that.
+echo "pre-push: no pass marker for the pushed commit, running the pre-push gates here." >&2
+echo "pre-push: to skip them after a build host passed this commit, set PUDDLE_GATE_PASS_DIR to the directory holding <commit sha>.pass." >&2
 top=$(git rev-parse --show-toplevel)
 # git exports GIT_DIR and friends to hooks; left set, every git command a gate or a test runs
 # would act on this repository whatever its working directory (`git init --bare` in a temp dir

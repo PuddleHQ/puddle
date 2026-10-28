@@ -1712,7 +1712,9 @@ fn wait_for(hold: &std::sync::mpsc::Receiver<()>) {
     });
 }
 
-/// Waits until the background listing after a start has run.
+/// Waits until the background listing after a start has run. It is the boot's last background
+/// command, and the fake counts a command before it answers, so a fault armed after this returns
+/// can only meet the test's own commands.
 async fn after_boot_listing(rig: &Rig) {
     for _ in 0..500 {
         if !rig.guest.listings.lock().unwrap().is_empty() {
@@ -1920,8 +1922,6 @@ async fn a_clone_the_runtime_cannot_run_fails_the_operation_and_keeps_the_entry(
     let mut events = api.events().await;
     create(&api, &mut events, "adds").await;
     after_boot_listing(&rig).await;
-    // Settle window: the boot's background work is over before the fault is armed. Nothing observable marks it.
-    tokio::time::sleep(Duration::from_millis(50)).await;
     // The add looks for the folder first; the next command is the clone.
     rig.runtime.inject(
         Op::Exec,
@@ -7569,8 +7569,6 @@ async fn quiet_workspace(rig: &Rig, name: &'static str) -> (Host<FakeRuntime>, A
     let mut events = api.events().await;
     create(&api, &mut events, name).await;
     after_boot_listing(rig).await;
-    // Settle window: the boot's background work is over, so the test sees a quiet guest. Nothing observable marks it.
-    tokio::time::sleep(Duration::from_millis(100)).await;
     (host, api)
 }
 

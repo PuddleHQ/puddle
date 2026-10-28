@@ -335,11 +335,14 @@ the owner, then tagged `vX.Y.Z` on `main`.
   the trailer above, so repeated wobble can't wear it down. A drop of more than 0.05 points still fails;
   a smaller one passes (and is logged), and the diff gate (below) is what holds the lines a change adds.
   The owner accepted this allowance on 2026-10-08.
-- **Raising the baseline is automatic.** A local `scripts/check.sh coverage` (the pre-push set runs it)
-  rewrites the baseline when coverage rose; commit the changed file with your change. CI never writes it,
-  it only compares and tells you when the baseline is behind. If two branches raise it, take the higher
-  value when merging. The ratchet reads two totals: a drop in one crate hidden by a gain elsewhere passes
-  it, which is what the diff gate is for.
+- **Raising the baseline is nightly, in its own pull request.** A pull request does not raise the baseline, and a local
+  `scripts/check.sh coverage` leaves the file alone in CI and rewrites it only on your machine (do not commit that). The
+  `coverage-baseline` workflow reads the coverage the CI gate measured on develop's tip, and when it is above the baseline it
+  opens or updates one pull request, `build: raise the coverage baseline`, that goes through the merge queue like any other
+  (`ci/raise-coverage-baseline.sh`, self-test `ci/raise-coverage-baseline-test.sh`). So two pull requests never conflict on the
+  file, and a raise comes from a CI measurement, never from a local run (a local run measures more than CI and would fail the
+  ratchet there). The ratchet reads two totals: a drop in one crate hidden by a gain elsewhere passes it, which is what the diff
+  gate is for.
 - **Diff coverage: every line a change adds or changes must be executed by a test.** Rust lines are checked
   against the llvm-cov lcov report (gate `coverage`), TypeScript and Svelte lines against vitest's lcov
   report (gate `ui`); `scripts/check.sh diff-coverage` re-runs both on existing reports. The change is the
@@ -499,7 +502,7 @@ names report on the queue's commit too. Two repository variables switch the rest
 
 The VM no-hypervisor policy fails a merge queue run like a PR, and `verdict --nightly-skips` accepts a skip only on a
 scheduled run. Self-tests: `ci/scope-test.sh` (light mode and merge queue cases, a verdict matrix over every event and
-variable, the workflow wiring), `ci/should-run-test.sh`, `ci/cache-gc-test.sh`, `ci/test-vm-skip-policy.sh`, all in the
+variable, the workflow wiring), `ci/should-run-test.sh`, `ci/cache-gc-test.sh`, `ci/raise-coverage-baseline-test.sh`, `ci/test-vm-skip-policy.sh`, all in the
 `hooks` gate.
 Actions are pinned to commit SHAs and must be GitHub-owned or on the repo's allow-list (selected
 actions, SHA pinning required; an unpinned `uses:` ends as a `startup_failure` with no jobs).

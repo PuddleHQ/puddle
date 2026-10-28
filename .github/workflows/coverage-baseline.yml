@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The nightly coverage baseline raise (ci/raise-coverage-baseline.sh): when the coverage the `ci` workflow measured on develop's tip is
+# above scripts/coverage-baseline.json, ONE pull request, `build: raise the coverage baseline`, raises it and goes through the
+# merge queue like any other. Pull requests carry no raise of their own, so two of them never conflict on that file. It reads the
+# measurement the ci coverage gate uploaded; it builds and tests nothing.
+#
+# A pull request that this workflow opens or updates with the default GITHUB_TOKEN does not start the required checks (a GitHub
+# rule against workflow loops), and the default token may not open one at all while the repository setting "Allow GitHub Actions to
+# create and approve pull requests" is off. Set the repository secret COVERAGE_BASELINE_TOKEN (a fine-grained token on this
+# repository with Contents, Pull requests: read and write and Actions: read) and the pull request is opened by that identity, so its
+# checks run. Without it the job measures, pushes the branch ci/raise-coverage-baseline and tells the summary how to open the
+# pull request by hand (the same pattern as QUALITY_ALERTS_TOKEN in quality.yml).
+name: coverage-baseline
+
+on:
+  schedule:
+    - cron: "20 6 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only report what would be raised; push nothing, open nothing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coverage-baseline
+  cancel-in-progress: false
+
+jobs:
+  raise:
+    name: raise the coverage baseline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: develop
+          fetch-depth: 20 # the script walks back over documentation-only commits
+          token: ${{ secrets.COVERAGE_BASELINE_TOKEN || github.token }}
+      - name: Node for the ratchet script
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: raise the baseline
+        env:
+          GH_TOKEN: ${{ secrets.COVERAGE_BASELINE_TOKEN || github.token }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '1' || '' }}
+        run: ci/raise-coverage-baseline.sh

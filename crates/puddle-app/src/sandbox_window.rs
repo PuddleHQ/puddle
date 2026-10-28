@@ -36,7 +36,8 @@ use tauri::webview::{
     NewWindowFeatures, NewWindowResponse, PermissionKind, PermissionResponse, cookie::Cookie,
 };
 use tauri::{
-    AppHandle, Manager, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
+    AppHandle, Manager, Runtime, Webview, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    WindowEvent,
 };
 use url::Url;
 
@@ -338,7 +339,7 @@ impl SandboxWindows {
         let target = Arc::new(target.clone());
         // With a cookie to set, the window starts blank and goes to the editor once it has it.
         let start = if target.cookie.is_some() {
-            "about:blank".parse().map_err(tauri::Error::InvalidUrl)?
+            blank(&target.origin)
         } else {
             target.origin.clone()
         };
@@ -398,7 +399,7 @@ impl SandboxWindows {
                 hooks.open_external.clone(),
                 hooks.refused.clone(),
             ))
-            .on_permission_request(move |_, kind| permission_response(&settings, &kind));
+            .on_permission_request(permission_handler(settings));
         builder = match features {
             // A further window shares the opener's webview environment (and with it the data
             // folder); a second folder for it would not be allowed.
@@ -413,7 +414,7 @@ impl SandboxWindows {
         let _ = target.debug_port;
         let (this, app_for_popups, popup_target) = (self.clone(), app.clone(), Arc::clone(target));
         let builder = builder.on_new_window(move |url, features| {
-            this.new_window(&app_for_popups, &popup_target, &url, features)
+            this.new_window(&app_for_popups, &popup_target, &url, Some(features))
         });
         self.opened(&target.workspace);
         let window = match builder.build() {
@@ -423,44 +424,48 @@ impl SandboxWindows {
                 return Err(err);
             }
         };
-        let (this, workspace) = (self.clone(), target.workspace.clone());
-        window.on_window_event(move |event| {
-            if matches!(event, WindowEvent::Destroyed) {
-                this.closed(&workspace);
-            }
-        });
+        window.on_window_event(self.on_event(target.workspace.clone()));
         #[cfg(windows)]
         accelerators::turn_off(&window);
         Ok(window)
     }
 
-    /// The answer to a page's request for a new window.
+    /// What a window of `workspace` does with its events: the end of the window is counted.
+    fn on_event(&self, workspace: WorkspaceName) -> impl Fn(&WindowEvent) + Send + 'static {
+        let this = self.clone();
+        move |event| {
+            if matches!(event, WindowEvent::Destroyed) {
+                this.closed(&workspace);
+            }
+        }
+    }
+
+    /// The answer to a page's request for a new window. `features` are the opener's, which the
+    /// new window shares the webview environment through; only a test has none.
     fn new_window<R: Runtime>(
         &self,
         app: &AppHandle<R>,
         target: &Arc<Target>,
         url: &Url,
-        features: NewWindowFeatures,
+        features: Option<NewWindowFeatures>,
     ) -> NewWindowResponse<R> {
         let hooks = &self.inner.hooks;
         match classify_new_window(&OriginPolicy::new(&target.origin, None), url) {
             NewWindow::Create => {
                 let n = self.inner.popups.fetch_add(1, Ordering::Relaxed);
-                let start = WebviewUrl::External(
-                    "about:blank"
-                        .parse()
-                        .unwrap_or_else(|_| target.origin.clone()),
-                );
+                let start = WebviewUrl::External(blank(&target.origin));
                 match self.build(
                     app,
                     target,
                     &popup_label(&target.workspace, n),
                     start,
-                    Some(features),
+                    features,
                 ) {
                     Ok(window) => NewWindowResponse::Create { window },
                     Err(err) => {
                         tracing::warn!(%err, "a new editor window could not be built");
+                        // The user clicked New Window: say that nothing opened.
+                        (hooks.refused)(url);
                         NewWindowResponse::Deny
                     }
                 }
@@ -477,9 +482,23 @@ impl SandboxWindows {
     }
 }
 
+/// The blank page a window starts on before it has anything to show. `fallback` is only there
+/// because parsing returns a `Result`.
+fn blank(fallback: &Url) -> Url {
+    Url::parse("about:blank").unwrap_or(fallback.clone())
+}
+
+/// The permission callback of a window with `settings`.
+fn permission_handler<R: Runtime>(
+    settings: WindowSettings,
+) -> impl Fn(Webview<R>, PermissionKind) -> PermissionResponse + Send + Sync + 'static {
+    move |_, kind| permission_response(&settings, &kind)
+}
+
 /// The cookie to set in the window: the editor's session, for the editor's host name only.
 fn session_cookie(target: &Target, cookie: &SessionCookie) -> Cookie<'static> {
     Cookie::build((cookie.name().to_owned(), cookie.value().to_owned()))
+        // No leading dot: WebView2 then makes a cookie for this host only, not its subdomains.
         .domain(format!("{}.localhost", target.workspace))
         .path("/")
         .http_only(true)
@@ -824,6 +843,155 @@ mod tests {
         // The mock window system never acts on a close request, so only that it is asked shows here.
         windows.close(&app, &a.workspace);
         windows.close(&app, &workspace("nothing-open"));
+    }
+
+    fn mock_target(name: &str, data: &Path) -> Arc<Target> {
+        Arc::new(target(name, data, None))
+    }
+
+    #[test]
+    fn a_new_window_request_creates_a_guarded_window_or_goes_to_the_browser_or_is_dropped() {
+        let app = tauri::test::mock_app();
+        let data = tempfile::tempdir().unwrap();
+        let (open_external, opened) = recorder();
+        let (refused, refusals) = recorder();
+        let windows = SandboxWindows::new(Hooks {
+            open_external,
+            refused,
+            last_closed: Arc::new(|_| {}),
+        });
+        let t = mock_target("demo", data.path());
+        let ask = |url: &str| windows.new_window(app.handle(), &t, &Url::parse(url).unwrap(), None);
+        // VS Code's "New Window": a window of its own label, counted with the first.
+        assert!(matches!(
+            ask("http://demo.localhost:4800/?folder=/work"),
+            NewWindowResponse::Create { .. }
+        ));
+        assert!(app.get_webview_window("vs-demo:0").is_some());
+        assert!(matches!(
+            ask("http://demo.localhost:4800/"),
+            NewWindowResponse::Create { .. }
+        ));
+        assert!(app.get_webview_window("vs-demo:1").is_some());
+        assert_eq!(windows.open_count(&t.workspace), 2);
+        // Anything else never becomes a window, and never `Allow`.
+        assert!(matches!(
+            ask("https://example.org/a"),
+            NewWindowResponse::Deny
+        ));
+        assert!(matches!(
+            ask("http://demo.localhost:4800/proxy/5173/"),
+            NewWindowResponse::Deny
+        ));
+        assert!(matches!(
+            ask("mailto:a@example.org"),
+            NewWindowResponse::Deny
+        ));
+        assert_eq!(
+            *opened.lock().unwrap(),
+            [
+                "https://example.org/a",
+                "http://demo.localhost:4800/proxy/5173/"
+            ]
+        );
+        assert_eq!(*refusals.lock().unwrap(), ["mailto:a@example.org"]);
+        assert_eq!(app.webview_windows().len(), 2);
+    }
+
+    #[test]
+    fn a_new_window_that_cannot_be_built_says_so_and_is_not_counted() {
+        let app = tauri::test::mock_app();
+        let data = tempfile::tempdir().unwrap();
+        let (open_external, _) = recorder();
+        let (refused, refusals) = recorder();
+        let windows = SandboxWindows::new(Hooks {
+            open_external,
+            refused,
+            last_closed: Arc::new(|_| {}),
+        });
+        let t = mock_target("demo", data.path());
+        // The label it would take is already in use.
+        windows
+            .build(
+                app.handle(),
+                &t,
+                "vs-demo:0",
+                WebviewUrl::External(t.origin.clone()),
+                None,
+            )
+            .unwrap();
+        assert_eq!(windows.open_count(&t.workspace), 1);
+        let url = Url::parse("http://demo.localhost:4800/").unwrap();
+        let answer = windows.new_window(app.handle(), &t, &url, None);
+        assert!(matches!(answer, NewWindowResponse::Deny));
+        assert_eq!(*refusals.lock().unwrap(), [url.to_string()]);
+        assert_eq!(windows.open_count(&t.workspace), 1);
+    }
+
+    #[test]
+    fn a_window_s_end_is_counted_and_nothing_else_is() {
+        let Fixture { windows, ended } = fixture();
+        let w = workspace("demo");
+        windows.opened(&w);
+        let on_event = windows.on_event(w.clone());
+        on_event(&WindowEvent::Focused(true));
+        assert_eq!(windows.open_count(&w), 1);
+        on_event(&WindowEvent::Destroyed);
+        assert_eq!(windows.open_count(&w), 0);
+        assert_eq!(*ended.lock().unwrap(), ["demo"]);
+    }
+
+    #[test]
+    fn a_window_asks_the_settings_for_its_permissions() {
+        let app = tauri::test::mock_app();
+        let data = tempfile::tempdir().unwrap();
+        let Fixture { windows, .. } = fixture();
+        let t = target("demo", data.path(), None);
+        let window = windows.open(&app, &t).unwrap();
+        let allow = permission_handler::<tauri::test::MockRuntime>(WindowSettings {
+            zoom_hotkeys: true,
+            clipboard_read: ClipboardRead::Allow,
+        });
+        assert_eq!(
+            allow(window.as_ref().clone(), PermissionKind::ClipboardRead),
+            PermissionResponse::Allow
+        );
+        assert_eq!(
+            allow(window.as_ref().clone(), PermissionKind::Geolocation),
+            PermissionResponse::Default
+        );
+    }
+
+    #[test]
+    fn a_window_that_cannot_be_built_is_not_left_counted() {
+        let app = tauri::test::mock_app();
+        let data = tempfile::tempdir().unwrap();
+        let Fixture { windows, .. } = fixture();
+        let t = mock_target("demo", data.path());
+        let start = || WebviewUrl::External(t.origin.clone());
+        windows
+            .build(app.handle(), &t, "vs-demo", start(), None)
+            .unwrap();
+        assert!(
+            windows
+                .build(app.handle(), &t, "vs-demo", start(), None)
+                .is_err()
+        );
+        assert_eq!(windows.open_count(&t.workspace), 1);
+    }
+
+    #[test]
+    fn a_data_folder_that_cannot_be_made_stops_the_open() {
+        let app = tauri::test::mock_app();
+        let data = tempfile::tempdir().unwrap();
+        let Fixture { windows, .. } = fixture();
+        let mut t = target("demo", data.path(), None);
+        // A file where the folder should be.
+        std::fs::write(&t.data_folder, b"x").unwrap();
+        t.data_folder = t.data_folder.join("inside");
+        assert!(windows.open(&app, &t).is_err());
+        assert_eq!(app.webview_windows().len(), 0);
+        assert_eq!(windows.open_count(&t.workspace), 0);
     }
 
     /// A one-answer-per-connection editor that counts the logins it got.

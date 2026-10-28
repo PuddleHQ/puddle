@@ -30,16 +30,40 @@ const WAIT: Duration = Duration::from_secs(10);
 
 /// The kernel's view of the bridge: 0 = no bridge, anything else = the interface's index.
 #[derive(Default)]
-struct FakeBridge(AtomicU32);
+struct FakeBridge(AtomicU32, AtomicU32);
 
 impl FakeBridge {
     fn set(&self, index: u32) {
         self.0.store(index, Ordering::SeqCst);
     }
+
+    /// How many times the watcher has asked the kernel so far.
+    fn polls(&self) -> u32 {
+        self.1.load(Ordering::SeqCst)
+    }
+
+    /// Lets twenty poll intervals pass on a paused clock, so the window costs no real time, and
+    /// returns how often the watcher asked the kernel meanwhile: a window that passed without
+    /// polls proves nothing. The clock runs again afterwards, for the real sockets the rest of
+    /// the test uses.
+    async fn polls_in_a_window(&self) -> u32 {
+        let before = self.polls();
+        tokio::time::pause();
+        tokio::time::sleep(POLL * 20).await;
+        tokio::time::resume();
+        self.polls() - before
+    }
+
+    /// A window in which the watcher must have polled (about once per interval).
+    async fn let_polls_pass(&self) {
+        let asked = self.polls_in_a_window().await;
+        assert!(asked >= 10, "only {asked} polls in twenty poll intervals");
+    }
 }
 
 impl Probe for FakeBridge {
     fn find(&self, addr: Ipv4Addr) -> Option<u32> {
+        self.1.fetch_add(1, Ordering::SeqCst);
         assert_eq!(
             addr, BRIDGE_IP,
             "the watcher asks about the configured address"
@@ -120,7 +144,7 @@ async fn echo_through(proxy: SocketAddr, target: SocketAddr, payload: &[u8]) {
 async fn nothing_listens_on_the_bridge_address_before_the_bridge_exists() {
     let s = setup("nobridge", 0).await;
     // Several polls with no bridge.
-    tokio::time::sleep(POLL * 10).await;
+    s.kernel.let_polls_pass().await;
     assert_eq!(s.rig.agent.bridge_addr(), None);
     assert_eq!(s.rig.agent.bridge_state().borrow().binds, 0);
 }
@@ -212,7 +236,7 @@ async fn a_busy_bridge_port_is_retried_until_it_is_free() {
     let echo = echo_server().await;
     let mut state = s.rig.agent.bridge_state();
     s.kernel.set(7);
-    tokio::time::sleep(POLL * 10).await;
+    s.kernel.let_polls_pass().await;
     assert_eq!(s.rig.agent.bridge_addr(), None, "bound over a busy port");
 
     drop(held);
@@ -256,8 +280,9 @@ async fn a_bridge_listener_is_off_when_the_config_says_so() {
     let kernel = Arc::new(FakeBridge::default());
     let rig = common::rig_with("off", |_| None, |c| c.bridge = None, kernel.clone()).await;
     kernel.set(7);
-    // Absence window: ten poll intervals pass and still no bridge listener starts.
-    tokio::time::sleep(POLL * 10).await;
+    // Absence window on a paused clock: no watcher runs, so nothing asks the kernel and no
+    // bridge listener starts.
+    assert_eq!(kernel.polls_in_a_window().await, 0);
     assert_eq!(rig.agent.bridge_addr(), None);
 }
 
@@ -280,7 +305,8 @@ async fn a_wildcard_proxy_listener_already_covers_the_bridge() {
     )
     .await;
     kernel.set(7);
-    // Absence window: ten poll intervals pass and still no bridge listener starts.
-    tokio::time::sleep(POLL * 10).await;
+    // Absence window on a paused clock: no watcher runs, so nothing asks the kernel and no
+    // bridge listener starts.
+    assert_eq!(kernel.polls_in_a_window().await, 0);
     assert_eq!(rig.agent.bridge_addr(), None);
 }

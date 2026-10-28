@@ -862,10 +862,15 @@ async fn binding_waits_for_an_address_that_is_taken_and_then_serves() {
     let (stub, _, _) = answers_with(stand_in());
     assert!(DnsServer::bind(stub.clone(), listen).await.is_err());
     let task = tokio::spawn(bind_when_ready(stub, listen));
-    // Absence window: the retry interval is 1 s, so the bind has been tried again and still waits.
-    tokio::time::sleep(Duration::from_millis(1200)).await;
+    // Absence window on a paused clock: five retry intervals pass, so the bind has been tried
+    // again and still waits. The clock runs again for the real sockets below.
+    tokio::time::pause();
+    tokio::time::sleep(Duration::from_millis(5200)).await;
     assert!(!task.is_finished());
     drop((udp, tcp));
+    // One more retry interval (virtual): the next try finds the address free.
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    tokio::time::resume();
     let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     // The server needs both UDP and TCP on `listen`: once it is up, a query is answered.
     let mut answered = false;

@@ -104,11 +104,14 @@ async fn an_open_sign_in_ends_with_its_window_and_can_be_started_again() {
     signin.begin(&gh_spec()).await.unwrap();
     assert_eq!(Fakes::log(&gh).matches("ARGS ").count(), 1);
 
-    // The tool's output is real IO, so the clock is paused only for the window itself: a paused
-    // clock jumps to the next timer as soon as the runtime waits on a real read, which here is
-    // the end of the window.
+    // The task that times the window starts when the test first yields, and its deadline is
+    // taken from the clock as it is then: let it start before the clock is paused and moved.
+    tokio::task::yield_now().await;
+    // The tool's output is real IO, so the clock is paused only for the window itself, and moved
+    // by hand: a sleep on a paused clock waits for the runtime to look idle, which it did not do
+    // on Windows (the test hung).
     tokio::time::pause();
-    tokio::time::sleep(Duration::from_secs(301)).await;
+    tokio::time::advance(Duration::from_secs(301)).await;
     tokio::time::resume();
     // Killing the tool and clearing the entry takes a little real time.
     ask_until_it_starts_again(&signin, &gh_spec(), &gh, 2).await;

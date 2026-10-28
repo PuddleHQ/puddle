@@ -82,11 +82,6 @@ function smallTargets(page: Page, within = "body"): Promise<string[]> {
         const box = el.getBoundingClientRect();
         // Not drawn: a closed region, or the skip link's one-pixel clip.
         if (box.width <= 1 || box.height <= 1) continue;
-        if (
-          el instanceof HTMLInputElement &&
-          (el.type === "checkbox" || el.type === "radio")
-        ) {
-        }
         if (el.tagName === "A" && style.display === "inline") {
           const text = [...(el.parentElement?.childNodes ?? [])].some(
             (n) => n !== el && n.nodeType === 3 && (n.textContent ?? "").trim(),

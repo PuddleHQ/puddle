@@ -1241,6 +1241,35 @@ test.describe("the settings tab", () => {
     await expect(page.getByRole("alert")).toContainText("10.0.0.1");
   });
 
+  test("a host a tool refused Puddle's certificate for is announced, listed and decrypted again", async ({
+    page,
+    backend,
+  }) => {
+    await openDetail(page, backend, "web-shop", "settings");
+    const notice = page.getByRole("region", { name: "Notices" });
+    // The event stream may connect after the page loaded, so ask again until it is heard.
+    await expect(async () => {
+      await backend.control.step({
+        do: "learned",
+        workspace: "web-shop",
+        host: "pinned.example",
+        expires_in_secs: 600,
+      });
+      await expect(notice).toContainText(
+        "Puddle stopped decrypting pinned.example: its client refused Puddle's certificate.",
+        { timeout: 500 },
+      );
+    }).toPass();
+    const group = page.getByRole("group", {
+      name: "Left alone after a tool refused Puddle's certificate",
+    });
+    await expect(group).toContainText("pinned.example");
+    await expect(group).toContainText("in 10 minutes");
+    await notice.getByRole("button", { name: "Decrypt again" }).click();
+    await expect(group).toContainText("None.");
+    await expect(notice).not.toContainText("pinned.example");
+  });
+
   test("a refused save says why and puts the choice back", async ({
     page,
     backend,

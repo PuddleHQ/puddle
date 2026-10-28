@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import LearnedHostsList from "#lib/components/LearnedHostsList.svelte";
   import NeverDecryptEditor from "#lib/components/NeverDecryptEditor.svelte";
   import { WorkspaceInterception } from "#lib/stores/interception.svelte.ts";
   import "#lib/theme/controls.css";
@@ -82,6 +83,7 @@
         {store.globalNames.join(", ")}
       </p>
     {/if}
+    <LearnedHostsList {id} />
   {/if}
 </section>
 

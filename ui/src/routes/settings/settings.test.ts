@@ -631,6 +631,49 @@ describe("workspace defaults and the network", () => {
     expect(api.neverDecrypt).toEqual(["*.corp.test", "bank.example"]);
   });
 
+  it("shows the limits for hosts left alone and saves new ones in the units the API keeps", async () => {
+    await open();
+    const minutes = (await screen.findByLabelText(
+      "Leave a host alone for (minutes)",
+    )) as HTMLInputElement;
+    const hosts = screen.getByLabelText(
+      "Hosts remembered per workspace",
+    ) as HTMLInputElement;
+    expect([minutes.value, hosts.value]).toEqual(["720", "1024"]);
+    await fireEvent.input(minutes, { target: { value: "90" } });
+    await fireEvent.input(hosts, { target: { value: "64" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Keep limits" }));
+    await screen.findByText("Saved.");
+    expect(api.learnedLimits).toEqual({ ttl_secs: 5400, cap: 64 });
+  });
+
+  it("says why the limits were refused, and when they can't be read", async () => {
+    await open();
+    await screen.findByLabelText("Leave a host alone for (minutes)");
+    api.refuse.set("PUT /api/interception/learned-limits", {
+      status: 422,
+      error: "invalid",
+      message: "the size must be 1 to 10000 hosts",
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Keep limits" }));
+    expect(
+      await screen.findByText("The size must be 1 to 10000 hosts."),
+    ).toBeInTheDocument();
+  });
+
+  it("says the limits can't be read, and shows no boxes", async () => {
+    api.refuse.set("GET /api/interception/learned-limits", {
+      status: 500,
+      error: "internal",
+      message: "limits broken",
+    });
+    await open();
+    expect(await screen.findByText("Limits broken.")).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Hosts remembered per workspace"),
+    ).toBeNull();
+  });
+
   it("says the never-decrypt list can't be read, and shows no editor", async () => {
     api.refuse.set("GET /api/interception/never-decrypt", {
       status: 500,

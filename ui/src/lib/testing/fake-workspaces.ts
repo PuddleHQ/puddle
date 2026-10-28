@@ -153,6 +153,8 @@ export class FakeWorkspaces {
   > = {};
   /** The names no workspace decrypts. */
   globalNeverDecrypt: string[] = [];
+  /** The hosts each workspace's tools refused Puddle's certificate for, by workspace id. */
+  learned: Record<string, { host: string; expires_in_secs: number }[]> = {};
   /** The background problems the host lists. */
   problems: {
     key: string;
@@ -281,6 +283,12 @@ export class FakeWorkspaces {
         const found = this.find(id);
         return found
           ? this.reply(200, this.interceptionView(found))
+          : this.reply(404, undefined, "no such workspace");
+      }
+      case "/api/workspaces/{id}/interception/learned": {
+        const found = this.find(id);
+        return found
+          ? this.reply(200, { hosts: this.learned[found.id] ?? [] })
           : this.reply(404, undefined, "no such workspace");
       }
       case "/api/interception/never-decrypt":
@@ -428,6 +436,18 @@ export class FakeWorkspaces {
     if (refused) return refused;
     const found = this.find(init.params.path.id);
     if (!found) return this.reply(404, undefined, "no such workspace");
+    if (path === "/api/workspaces/{id}/interception/learned/{host}") {
+      const gone = (init.params.path as { host?: string }).host;
+      const had = this.learned[found.id] ?? [];
+      this.learned[found.id] = had.filter((l) => l.host !== gone);
+      return had.some((l) => l.host === gone)
+        ? { data: undefined, response: { status: 204, ok: true } }
+        : this.reply(404, undefined, "not on the list");
+    }
+    if (path === "/api/workspaces/{id}/interception/learned") {
+      this.learned[found.id] = [];
+      return { data: undefined, response: { status: 204, ok: true } };
+    }
     if (path === "/api/workspaces/{id}/logins/{service}") {
       const gone = (init.params.path as { service?: string }).service;
       const kept = this.kept[found.id];

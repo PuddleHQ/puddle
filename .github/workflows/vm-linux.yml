@@ -265,7 +265,7 @@ jobs:
             ps -eo pid=,ppid=,rss=,etimes=,comm= --sort=-rss | head -40 | while read -r pid ppid rss age name; do
               exe=$(readlink "/proc/$pid/exe" 2>/dev/null || true)
               case "$exe" in
-                "$RUNNER_TEMP"/*) cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null) ;;
+                "$RUNNER_TEMP"/vmx/* | "$RUNNER_TEMP"/msb/*) cmd=$({ tr '\0' ' ' < "/proc/$pid/cmdline"; } 2>/dev/null || true) ;;
                 *) cmd="$name" ;;
               esac
               printf 'pid %s ppid %s rss %s MiB age %s s: %s\n' "$pid" "$ppid" "$((rss / 1024))" "$age" "$cmd"

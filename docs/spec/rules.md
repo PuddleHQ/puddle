@@ -173,12 +173,13 @@ readable as JSONL (one record per line).
 - **R-24 Record types** in `puddle-store`: `connection` (written by the proxy: `workspace_id`, `host`, `port`,
   `resolved_ip`, `decision` (`allow`, `deny`, `pending`, `blocked`), `outcome` (how reaching the destination went after an allow: `connected`, `upstream_refused`, `connect_failed`, `timeout`; `null` where nothing was attempted and in older records), `reason` (`rule`, `no_rule`,
   `toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`, `local_address`, `settings_unreadable`,
-  `policy_unavailable`, `sni_mismatch`, `guest_tls_rejected`, `certificate_unavailable`, `limit:<code>`, `connection_limit`, `suppressed`, `merged`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `pending_id`, `binding_id`, `injected`, `unswapped_stand_ins` (the ids of the secret stand-ins that
+  `policy_unavailable`, `request_rule` (R-54), `sni_mismatch`, `guest_tls_rejected`, `certificate_unavailable`, `limit:<code>`, `connection_limit`, `suppressed`, `merged`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `request_rule` (the rule on method and path that refused the request, R-54), `pending_id`, `binding_id`, `injected`, `unswapped_stand_ins` (the ids of the secret stand-ins that
   went out unchanged: to a host outside their hosts, or in the path or query),
   `method` and `path` on terminated hosts, plain-HTTP requests and `CONNECT` tunnels that carry
   plain HTTP/1.x only, `bytes_up`, `bytes_down`), `pending_created`, `pending_decided`, `pending_expired` (only when a workspace is deleted),
   `rule_created`, `rule_updated`, `rule_deleted`,
-  `rule_expired` (with the full rule), `audit_trimmed` (`deleted_records`, `oldest_ts_kept`), and
+  `rule_expired` (with the full rule), `request_rule_created`, `request_rule_deleted` (R-49, the rule on method and path with
+  its host, methods and path, and for a deletion why and by whom), `audit_trimmed` (`deleted_records`, `oldest_ts_kept`), and
   the rule set records of R-43. Records written by earlier versions still read: `pending_suppressed`
   (`workspace_id`, `count`) and `pending_expired` with reason `stale`; nothing writes them any more.
   On a decrypted host whose client refuses Puddle's certificate (it does not
@@ -390,9 +391,61 @@ the API. *Added 2026-10-08.*
   row closed by one records the set in `rule_set`. A refusal by a set's deny carries
   `x-puddle-rule-set` next to `x-puddle-rule`.
 
-## 8. Out of scope here
+## 8. Rules on method and path
+
+A rule on a host decides whether a workspace may reach it. A rule on method and path narrows that
+for a host the workspace reaches anyway: "this host, but never `DELETE` on `/repos/**`". It only
+ever refuses, so no rule of this kind can open anything and there is no precedence to settle.
+
+- **R-49 A rule on method and path** names a host (`example.com` or `*.example.com`, the grammar of
+  the never-decrypt names), the methods it covers (none named: every method) and a path pattern
+  (R-51). It applies to every workspace or to one. It is made and deleted over the API and has
+  its own numbering, apart from the rules of R-1: `rule_id` never names one. A scope holds at
+  most 500. A change reaches every running workspace at once (the `request_rules_changed` event),
+  with no restart, and applies from the next connection: a connection already open keeps judging
+  its requests by the rules it began with. The records are `request_rule_created` and
+  `request_rule_deleted`
+  (R-24); deleting a workspace deletes its rules, one record each, and keeps the global ones.
+- **R-50 Where it is checked.** On every request Puddle can read: each request of a decrypted
+  HTTP/1.1 connection (a keep-alive connection is judged request by request) and each stream of
+  an HTTP/2 connection, and plain-HTTP requests. A host with a rule is decrypted whatever the
+  decrypt-every-host switch, the never-decrypt names and the learned list say, because a request
+  that cannot be read cannot be judged. A tunnel to another port of such a host is refused with
+  the reason `request_rule_port`, since its requests would never be seen. The check comes before
+  anything is sent to the server and before a credential is added.
+- **R-51 A path pattern** starts with `/` and is made of segments: a name, `*` (exactly one
+  segment) or, last, `**` (any number of further segments, none included). `/gists` is that path
+  alone, `/gists/**` is `/gists` and everything below it, `/**` is every path. `*` or `**` as part
+  of a segment (`/a*`), a `**` that is not last, a query string or fragment, more than 32
+  segments and more than 512 bytes are refused when the rule is made. The path of a request is
+  compared in a canonical form that errs towards matching more, because a rule only refuses: the
+  query is cut and never read; `%XX` and `%uXXXX` are decoded up to four times; `\` counts as `/`;
+  empty and `.` segments go and `..` removes the segment before it; `;parameters` of a segment
+  go; trailing dots and spaces of a segment go; a NUL ends the path; case is ignored. A pattern is
+  written in the same form, so `/Gists/` and `/%67ists` are one pattern. Two paths that differ only
+  in such spellings are one path here even where a server would tell them apart: that costs a
+  request a refusal, never a bypass.
+- **R-52 A method** is matched ignoring case. A request is also judged as every method it asks
+  to be read as: an `X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override` header and a
+  `_method` key in the query string. A rule on `DELETE` therefore refuses a `POST` that asks to be
+  a `DELETE`. Methods are HTTP tokens, at most 16 per rule.
+- **R-53 The refusal** is a `403` whose body says in words that a rule refuses requests like this
+  one and names the rule, with `x-puddle-decision: deny` and `x-puddle-request-rule: <id>`. It
+  does not repeat the path or the query, so nothing of them lands in a line the tool prints.
+- **R-54 Audit.** A refused request is the connection's `connection` record with `decision: deny`,
+  `reason: request_rule`, `request_rule` (the rule's id, `null` in every other record), and the
+  `method` and `path` of the refused request (R-25 holds: no query, no header value). A connection
+  that carries several requests has one record: the first refused request is the one it names,
+  and a connection no rule refused names its first request as before. A refused tunnel is
+  `decision: blocked`, `reason: request_rule_port`.
+- **R-55 No rule of this kind is ever made by Puddle.** Automated help may only allow (R-36), so
+  rule sets, System managed and the AI judge never create one; every rule on method and path
+  was made by the user over the API (a screen for them is not built yet) and shows in the audit with who made it.
+
+## 9. Out of scope here
 
 The AI judge (no field or placeholder until its flow is designed), subscribed lists (a rule set
-fetched from a URL), path rules (after v1), port rules, and the "Dangerous settings" unblock of
+fetched from a URL), rules on method and path that allow, or that match on headers or a body,
+port rules, and the "Dangerous settings" unblock of
 Puddle's endpoints (later). Address classification, name normalisation and the 403 body belong to
 the proxy and `puddle-netpolicy`; the API and CLI shape of R-15 to `puddle-api` and `puddle`.

@@ -451,7 +451,7 @@ impl Injection {
             match RequestRule::new(RuleId(row.id), &row.host, row.methods, row.path) {
                 Ok(rule) => rules.push(rule),
                 Err(e) => {
-                    tracing::warn!(id = row.id, host = %row.host, error = %e, "a rule on method and path is not valid")
+                    tracing::warn!(id = row.id, host = %row.host, error = %e, "a rule on method and path is not valid");
                 }
             }
         }

@@ -12,8 +12,8 @@
 //!   variable).
 //! - `denoland/deno:debian`: `fetch` works through `DENO_CERT` (Deno keeps its own roots).
 //! - `python:3.9-slim`: `pip download` from an index at that URL works through `PIP_CERT`
-//!   (this pip keeps its own bundle; newer ones also read the system store), and without
-//!   it or with an empty bundle in it the same fetch fails.
+//!   and reads the variable (an empty bundle in it fails the same fetch). The other variables
+//!   and the system store also carry pip, so the test cannot show that `PIP_CERT` is needed.
 //!
 //! Each tool fails before the files are applied (the negative control), so a pass is the trust
 //! and not a trusting image. The wire peer is the fixture server, not the proxy process: the
@@ -361,13 +361,6 @@ exit $rc"
         assert_eq!(code, 0, "pip refused the certificate with PIP_CERT: {out}");
         assert!(out.contains("Successfully downloaded puddletest"), "{out}");
 
-        let (code, out) = sh(
-            &sandbox,
-            "pip without PIP_CERT",
-            serve(". /etc/profile.d/01-puddle-env.sh; unset PIP_CERT"),
-        )
-        .await?;
-        assert_ne!(code, 0, "pip trusted the CA without PIP_CERT: {out}");
         // pip reads PIP_CERT (the variable, not only the system store the image's own
         // `update-ca-certificates` filled): an empty bundle in it makes the same fetch fail.
         let (code, out) = sh(

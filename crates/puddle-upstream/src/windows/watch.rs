@@ -53,7 +53,15 @@ impl Callbacks {
     }
 
     fn remove(&self, id: usize) {
-        self.entries().retain(|(entry, _)| *entry != id);
+        // Dropped after the lock is released: dropping a callback may itself touch the table.
+        let removed = {
+            let mut entries = self.entries();
+            entries
+                .iter()
+                .position(|(entry, _)| *entry == id)
+                .map(|at| entries.swap_remove(at))
+        };
+        drop(removed);
     }
 
     fn fire(&self, id: usize) {
@@ -167,8 +175,7 @@ impl Drop for WinHttpWatch {
     fn drop(&mut self) {
         // SAFETY: the registration is live. The status code is not needed.
         unsafe { (self.unregister)(self.registration) };
-        // After the unregister call, so the entry is the last thing to go; a callback still in
-        // flight keeps its own `Arc` clone.
+        // A callback still in flight keeps its own `Arc` clone; a later one finds no entry.
         CALLBACKS.remove(self.id);
     }
 }
@@ -570,6 +577,28 @@ mod tests {
             unsafe { proxy_changed(0, id as *const c_void) };
             assert_eq!(calls.load(Ordering::SeqCst), 1);
         }
+    }
+
+    #[test]
+    fn removing_a_callback_that_removes_another_entry_when_dropped_does_not_deadlock() {
+        struct RemovesOnDrop(&'static Callbacks, usize);
+        impl Drop for RemovesOnDrop {
+            fn drop(&mut self) {
+                self.0.remove(self.1);
+            }
+        }
+        let callbacks: &'static Callbacks = Box::leak(Box::new(Callbacks::new()));
+        let (other, _) = counting_callback();
+        callbacks.add(2, other);
+        let owner = RemovesOnDrop(callbacks, 2);
+        callbacks.add(
+            1,
+            Arc::new(move || {
+                let _keep = &owner;
+            }),
+        );
+        callbacks.remove(1);
+        assert!(callbacks.entries().is_empty());
     }
 
     #[test]

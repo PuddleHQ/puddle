@@ -632,11 +632,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .ports
             .guest_link(workspace)
             .ok_or(SwitchEditorBuildError::NotRunning)?;
-        let reply = link
+        let agent_reply = link
             .send(&HostMessage::SwitchEditorBuild)
             .await
             .map_err(SwitchEditorBuildError::Agent)?;
-        Ok(matches!(reply, HostReply::EditorBuild { switched: true }))
+        Ok(agent_reply == HostReply::EditorBuild { switched: true })
     }
 
     /// The SSH endpoint of a running workspace's sandbox.

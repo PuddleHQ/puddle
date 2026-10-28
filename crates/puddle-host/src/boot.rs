@@ -321,10 +321,9 @@ const KEPT_OLD_RELEASES: usize = 1;
 /// [`KEPT_OLD_RELEASES`] others (by the time they were installed). Failing to remove one only
 /// leaves it for the next install.
 fn prune_old_releases(dir: &Path, keep: &Path) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    let mut old: Vec<(std::time::SystemTime, PathBuf)> = entries
+    let mut old: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
         .flatten()
         .filter(|e| e.file_name().to_string_lossy().starts_with("code-server-"))
         .map(|e| e.path())
@@ -441,6 +440,43 @@ mod tests {
         assert!(!share.join("code-server-9.9.9.partial").exists());
         assert!(installed[3].is_dir(), "the release before the newest stays");
         assert!(share.join("puddle-agent").is_file());
+    }
+
+    #[test]
+    fn cleaning_up_a_missing_folder_does_nothing_and_a_stray_file_is_removed() {
+        let tmp = tempfile::tempdir().unwrap();
+        prune_old_releases(&tmp.path().join("missing"), &tmp.path().join("keep"));
+        std::fs::write(
+            tmp.path().join("code-server-1.0.0"),
+            "a file, not a release",
+        )
+        .unwrap();
+        std::fs::create_dir(tmp.path().join("code-server-2.0.0")).unwrap();
+        prune_old_releases(tmp.path(), &tmp.path().join("code-server-3.0.0"));
+        // The folder without a marker counts as oldest and goes; one old release is kept.
+        let left: Vec<_> = std::fs::read_dir(tmp.path()).unwrap().flatten().collect();
+        assert_eq!(left.len(), 1, "{left:?}");
+    }
+
+    #[test]
+    fn a_release_that_cannot_be_removed_is_left_and_the_others_still_go() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let tmp = tempfile::tempdir().unwrap();
+        let stuck = tmp.path().join("code-server-1.0.0");
+        std::fs::create_dir_all(stuck.join("inner")).unwrap();
+        std::fs::write(stuck.join("inner/file"), "x").unwrap();
+        std::fs::set_permissions(stuck.join("inner"), std::fs::Permissions::from_mode(0o555))
+            .unwrap();
+        // Root removes it anyway; the test is for a user the folder's mode binds.
+        let binds = std::fs::write(stuck.join("inner/probe"), "").is_err();
+        for name in ["code-server-2.0.0", "code-server-3.0.0"] {
+            std::fs::create_dir(tmp.path().join(name)).unwrap();
+        }
+        prune_old_releases(tmp.path(), &tmp.path().join("code-server-3.0.0"));
+        std::fs::set_permissions(stuck.join("inner"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        assert!(!binds || stuck.join("inner/file").is_file());
+        assert!(tmp.path().join("code-server-3.0.0").is_dir());
     }
 
     #[test]

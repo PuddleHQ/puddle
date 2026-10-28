@@ -45,6 +45,23 @@ async fn wait_for(log: &Path, needle: &str) -> String {
     Fakes::log(log)
 }
 
+/// Asks again until the sign-in for `spec` has ended (an open one answers without starting a
+/// tool), which is when a tool has been started once more; fails after 20 s of real time.
+async fn ask_until_it_starts_again(signin: &SignIns, spec: &SourceSpec, log: &Path, starts: usize) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let _ = signin.begin(spec).await;
+        if Fakes::log(log).matches("ARGS ").count() >= starts {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the sign-in never closed"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
 #[tokio::test]
 async fn gh_sign_in_hands_back_the_code_and_address_and_runs_nothing_else() {
     let fakes = Fakes::new();
@@ -92,11 +109,9 @@ async fn an_open_sign_in_ends_with_its_window_and_can_be_started_again() {
     // the end of the window.
     tokio::time::pause();
     tokio::time::sleep(Duration::from_secs(301)).await;
-    for _ in 0..20 {
-        tokio::task::yield_now().await;
-    }
     tokio::time::resume();
-    signin.begin(&gh_spec()).await.unwrap();
+    // Killing the tool and clearing the entry takes a little real time.
+    ask_until_it_starts_again(&signin, &gh_spec(), &gh, 2).await;
     assert_eq!(Fakes::log(&gh).matches("ARGS ").count(), 2);
 }
 
@@ -214,11 +229,13 @@ async fn git_sign_in_does_not_keep_an_answer_for_another_target_and_says_so() {
     );
     // The sign-in stays open until its task has ended, and the task would run any `credential
     // approve` before then: asking again returns the old answer until it has, and starts again after.
-    let mut asks = 0;
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
     while signin.begin(&git_spec()).await.is_ok() {
-        asks += 1;
-        assert!(asks < 2000, "the sign-in never closed");
-        tokio::task::yield_now().await;
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the sign-in never closed"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
     }
     let log = Fakes::log(&git);
     assert_eq!(log.matches("credential fill").count(), 2, "{log}");

@@ -51,10 +51,10 @@ impl RequestRule {
         })
     }
 
-    fn refuses(&self, host: &Host, methods: &[&str], path: &CanonicalPath) -> bool {
+    fn refuses(&self, host: &Host, methods: &[&str], paths: &[CanonicalPath]) -> bool {
         self.hosts.contains(host)
             && self.methods.matches_any(methods.iter().copied())
-            && self.path.matches(path)
+            && paths.iter().any(|path| self.path.matches(path))
     }
 }
 
@@ -105,7 +105,18 @@ impl RequestRules {
         if !self.covers(host) {
             return None;
         }
-        let path = CanonicalPath::new(target_path(request.target()));
+        let target = request.target();
+        let mut paths = vec![CanonicalPath::new(target_path(target))];
+        if target.contains('#') {
+            // A server that does not treat `#` as the start of a fragment keeps it in the path,
+            // and `/public#/../admin` is then `/admin`: the path is also judged with the `#`
+            // read as an ordinary character.
+            let literal = target
+                .find('?')
+                .map_or(target, |query| target.get(..query).unwrap_or_default())
+                .replace('#', "%23");
+            paths.push(CanonicalPath::new(target_path(&literal)));
+        }
         let mut methods: Vec<&str> = vec![request.method()];
         for name in METHOD_OVERRIDES {
             for value in request.header_values(name) {
@@ -123,7 +134,7 @@ impl RequestRules {
         methods.extend(asked.iter().map(String::as_str));
         self.rules
             .iter()
-            .find(|rule| rule.refuses(host, &methods, &path))
+            .find(|rule| rule.refuses(host, &methods, &paths))
             .map(|rule| rule.id)
     }
 }
@@ -270,6 +281,32 @@ mod tests {
         let other = headers("x-http-method-override: PATCH");
         let view = RequestView::new("POST", "/x", &other);
         assert_eq!(rules.refusing(&host, &view), None);
+    }
+
+    #[test]
+    fn a_hash_is_judged_both_as_a_fragment_and_as_part_of_the_path() {
+        let rules = RequestRules::new(vec![rule(1, "a.example.com", &[], "/admin/**")]);
+        for target in [
+            "/admin#top",
+            "/admin/x#top",
+            "/public#/../admin",
+            "/public%23/../admin?q=1",
+        ] {
+            assert_eq!(
+                refusing(&rules, "a.example.com", "GET", target),
+                Some(1),
+                "{target}"
+            );
+        }
+        assert_eq!(
+            refusing(&rules, "a.example.com", "GET", "/public#/admin"),
+            None
+        );
+        assert_eq!(
+            refusing(&rules, "a.example.com", "GET", "/public?x=#/../admin"),
+            None,
+            "the query ends the path before the `#`"
+        );
     }
 
     #[test]

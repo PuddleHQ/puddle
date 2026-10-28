@@ -22,6 +22,8 @@ tokio = { workspace = true, features = ["rt", "time", "sync", "macros"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
+# `hooks` lets tests make single statements fail, to run the error paths.
+rusqlite = { workspace = true, features = ["hooks"] }
 proptest = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt", "time", "sync", "macros", "test-util"] }

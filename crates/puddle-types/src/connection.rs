@@ -444,6 +444,25 @@ mod tests {
             "upstream_refused"
         );
         assert_eq!(ConnectionOutcome::Timeout.to_string(), "timeout");
+        assert_eq!(ConnectionOutcome::Connected.to_string(), "connected");
+        assert_eq!(
+            ConnectionOutcome::ConnectFailed.to_string(),
+            "connect_failed"
+        );
+    }
+
+    #[test]
+    fn an_origin_prints_as_its_wire_name() {
+        assert_eq!(ConnectionOrigin::Workspace.as_str(), "workspace");
+        assert_eq!(ConnectionOrigin::Puddle.to_string(), "puddle");
+    }
+
+    #[test]
+    fn a_failed_puddle_request_reason_carries_its_code() {
+        assert_eq!(
+            ConnectionReason::PuddleRequestFailed("bad_gateway").to_string(),
+            "puddle_request_failed:bad_gateway"
+        );
     }
 
     use super::*;
@@ -697,5 +716,18 @@ mod tests {
         let seen = recorder.0.lock().unwrap();
         assert_eq!(seen.len(), 2);
         assert_eq!(seen[0], event);
+    }
+
+    #[test]
+    fn the_null_log_takes_events_through_a_shared_handle_and_leaves_them_alone() {
+        let log: std::sync::Arc<dyn ConnectionLog> = std::sync::Arc::new(NullConnectionLog);
+        let event = ConnectionEvent::new(
+            &request(),
+            ConnectionDecision::Deny,
+            ConnectionReason::NoRule,
+        );
+        let before = event.clone();
+        log.record(&event);
+        assert_eq!(event, before);
     }
 }

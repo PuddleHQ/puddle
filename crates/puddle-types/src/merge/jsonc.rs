@@ -140,6 +140,13 @@ mod tests {
     }
 
     #[test]
+    fn an_unterminated_string_runs_to_the_end_and_the_parser_refuses_it() {
+        let b = blank("{\"a\": \"open").unwrap();
+        assert_eq!(b.view, "{\"a\": \"open");
+        assert!(serde_json::from_str::<serde_json::Value>(&b.view).is_err());
+    }
+
+    #[test]
     fn comments_become_spaces_and_the_length_is_unchanged() {
         let t = "{ // one\n  \"a\": 1, /* two\nlines */ \"b\": 2 }";
         let b = blank(t).unwrap();

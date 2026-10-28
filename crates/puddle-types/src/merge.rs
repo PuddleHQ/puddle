@@ -263,11 +263,12 @@ impl MergeSpec {
     /// The file as Puddle writes it when none exists.
     #[must_use]
     pub fn fresh(&self) -> Vec<u8> {
-        match self.apply(None, &[]) {
-            Ok(Merged::Write(bytes)) => bytes,
-            // `new` checked every value, so applying to an empty file can't be refused.
-            Ok(Merged::Unchanged) | Err(_) => Vec::new(),
-        }
+        use Merged::Write;
+        // `new` checked every value, so applying to an empty file always writes.
+        let written = self.apply(None, &[]).ok();
+        written
+            .and_then(|m| if let Write(b) = m { Some(b) } else { None })
+            .unwrap_or_default()
     }
 
     /// Applies the spec to `existing` (`None`: no file, or an empty one): removes the keys in

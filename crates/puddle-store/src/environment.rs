@@ -574,6 +574,17 @@ mod tests {
     }
 
     #[test]
+    fn a_host_list_is_checked_sorted_and_shown_as_stored() {
+        let listed =
+            SecretHost::list(&["b.example.com", "A.example.com", "b.example.com"]).unwrap();
+        let shown: Vec<String> = listed.iter().map(ToString::to_string).collect();
+        assert_eq!(shown, ["a.example.com", "b.example.com"]);
+        let refused = SecretHost::list(&["a.example.com", "10.0.0.1"]).unwrap_err();
+        assert!(refused.to_string().contains("host name"), "{refused}");
+        assert!(SecretHost::list::<&str>(&[]).is_err());
+    }
+
+    #[test]
     fn a_plain_value_is_any_text_without_a_nul_up_to_the_limit() {
         assert!(EnvDraft::plain("").is_ok());
         assert!(EnvDraft::plain("a b\n'c' $d").is_ok());

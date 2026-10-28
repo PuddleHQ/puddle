@@ -133,4 +133,20 @@ mod tests {
         sweeper.shutdown().await;
         assert_eq!(store.rules().len(), 0, "the rule was removed in the end");
     }
+
+    #[tokio::test]
+    async fn a_sweeper_whose_task_was_cancelled_says_so_when_shut_down() {
+        let store = store_with_an_expired_rule();
+        let logs = crate::test_support::Logs::capture();
+        let sweeper = Sweeper::spawn(store, Duration::from_secs(60));
+        sweeper.task.abort();
+        sweeper.shutdown().await;
+        let lines = logs.lines();
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0].starts_with("WARN sweeper ended abnormally err=")
+                && lines[0].ends_with("was cancelled"),
+            "{lines:?}"
+        );
+    }
 }

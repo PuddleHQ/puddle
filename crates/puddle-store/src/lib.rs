@@ -21,6 +21,8 @@ mod schema;
 mod shell_init;
 mod store;
 mod sweeper;
+#[cfg(test)]
+mod test_support;
 mod workspace_git;
 
 pub use audit::{

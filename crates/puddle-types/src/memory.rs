@@ -98,6 +98,11 @@ mod tests {
     }
 
     #[test]
+    fn the_default_is_eight_gib() {
+        assert_eq!(MemoryMib::default().get(), 8192);
+    }
+
+    #[test]
     fn display_and_conversions() {
         assert_eq!(MemoryMib::DEFAULT.to_string(), "8192 MiB");
         assert_eq!(u32::from(MemoryMib::MIN), 256);

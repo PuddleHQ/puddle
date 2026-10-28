@@ -834,6 +834,29 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_more_specific_set_deny_beats_a_less_specific_rule_of_the_user() {
+        let own = rule(1, None, "example.com", Effect::Allow);
+        let mut deny = rule(2, None, "x.y.example.com", Effect::Deny);
+        deny.scope = Scope::Set(1);
+        let index = RuleIndex::new(vec![own, deny], Vec::new(), Switches::default());
+        let expected = Decision::SetDeny {
+            set: RuleSetId::User(1),
+            rule_id: RuleId(2),
+            pattern: PatternKind::Exact,
+        };
+        let args = (&sb("a"), &host("x.y.example.com"), 0, SuffixAllows::Count);
+        let (workspace, h, now, mode) = args;
+        assert_eq!(
+            index.decide(workspace, h, now, mode).map(Hit::decision),
+            Some(expected)
+        );
+        assert_eq!(
+            reference_p3(&index, workspace, h, now, mode),
+            Some(expected)
+        );
+    }
+
     fn arb_scope() -> impl Strategy<Value = Scope> {
         prop_oneof![
             Just(Scope::Global),

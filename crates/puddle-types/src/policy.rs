@@ -406,6 +406,41 @@ mod tests {
     }
 
     #[test]
+    fn rule_sets_display_as_their_stored_names() {
+        assert_eq!(RuleSetId::System.to_string(), "system");
+        assert_eq!(RuleSetId::BuiltIn("npm").to_string(), "builtin:npm");
+        assert_eq!(RuleSetId::User(12).to_string(), "user:12");
+    }
+
+    struct AlwaysBlocked;
+
+    impl Policy for AlwaysBlocked {
+        fn decide(&self, _: &EgressRequest, _: SuffixAllows) -> Result<Decision, PolicyError> {
+            Ok(Decision::Blocked {
+                reason: BlockReason::LocalAddress,
+            })
+        }
+    }
+
+    #[test]
+    fn a_policy_without_ip_rules_finds_no_rule_on_lookup() {
+        let request = EgressRequest::new(
+            WorkspaceName::new("box").unwrap(),
+            Host::parse_normalised("example.com").unwrap(),
+            443,
+        );
+        for suffix in [SuffixAllows::Count, SuffixAllows::Ignore] {
+            assert_eq!(
+                AlwaysBlocked.decide(&request, suffix),
+                Ok(Decision::Blocked {
+                    reason: BlockReason::LocalAddress
+                })
+            );
+            assert_eq!(AlwaysBlocked.lookup(&request, suffix), Ok(None));
+        }
+    }
+
+    #[test]
     fn ids_and_errors_display() {
         assert_eq!(RuleId(7).to_string(), "7");
         assert_eq!(PendingId(8).to_string(), "8");

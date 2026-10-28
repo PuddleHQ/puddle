@@ -455,6 +455,11 @@ mod tests {
     use proptest::prelude::*;
     use puddle_secrets::{AccountName, StoredId, TokenScope};
 
+    #[test]
+    fn an_identity_id_shows_as_its_number() {
+        assert_eq!(IdentityId(42).to_string(), "42");
+    }
+
     const HOSTS: [&str; 2] = ["github.com", "dev.azure.com"];
     const OWNERS: [&str; 4] = ["acme", "acme-labs", "me", "other"];
 

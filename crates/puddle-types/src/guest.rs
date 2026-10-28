@@ -397,6 +397,23 @@ mod tests {
     }
 
     #[test]
+    fn a_plain_file_replaces_and_a_merged_file_starts_from_the_specs_fresh_text() {
+        use crate::{MergeEntry, MergeFormat};
+        let plain = GuestFile::new(p("/etc/a"), b"x".to_vec());
+        assert!(matches!(plain.apply(), ApplyKind::Replace));
+        let spec = MergeSpec::new(
+            MergeFormat::Json,
+            vec![MergeEntry::json(&["a"], &serde_json::json!(1))],
+        )
+        .unwrap();
+        let merged = GuestFile::merged(p("/root/.docker/config.json"), spec.clone());
+        assert_eq!(merged.path(), &p("/root/.docker/config.json"));
+        assert_eq!(merged.contents(), b"{\n\t\"a\": 1\n}\n");
+        assert_eq!(merged.mode(), GuestFile::DEFAULT_MODE);
+        assert!(matches!(merged.apply(), ApplyKind::Merge(s) if *s == spec));
+    }
+
+    #[test]
     fn guest_path_accepts_normalised_absolute_paths() {
         for ok in [
             "/",

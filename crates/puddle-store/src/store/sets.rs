@@ -595,16 +595,15 @@ impl Store {
             return Err(StoreError::SystemActor);
         }
         let closed = self.change(|tx, now, fx| {
-            match set {
-                RuleSetId::System => return Err(StoreError::NotSwitchable),
-                RuleSetId::User(id) => {
-                    require_user_set(tx, id)?;
-                }
-                RuleSetId::BuiltIn(slug) => {
-                    catalogue::built_in(slug)
-                        .ok_or_else(|| StoreError::UnknownRuleSet(set.to_string()))?;
-                }
-                _ => return Err(StoreError::UnknownRuleSet(set.to_string())),
+            if set == RuleSetId::System {
+                return Err(StoreError::NotSwitchable);
+            }
+            if let RuleSetId::User(id) = set {
+                require_user_set(tx, id)?;
+            }
+            // Built-in slugs this Puddle doesn't ship, and sets of a kind added later, don't parse.
+            if parse_rule_set(&set.to_string()) != Some(set) {
+                return Err(StoreError::UnknownRuleSet(set.to_string()));
             }
             let key = set.to_string();
             let name = workspace.map(WorkspaceName::as_str);

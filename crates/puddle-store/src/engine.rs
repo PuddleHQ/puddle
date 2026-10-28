@@ -581,6 +581,36 @@ mod tests {
     }
 
     #[test]
+    fn the_plain_precedence_lets_a_more_specific_set_block_beat_your_rule() {
+        // The property test reaches this arm of the reference only by chance, so pin it: the
+        // reference and the index must both pick the set's exact block over your suffix allow.
+        let index = RuleIndex::new(
+            vec![
+                rule(1, None, ".example.com", Effect::Allow),
+                in_set(2, 7, "ads.example.com", Effect::Deny),
+            ],
+            Vec::new(),
+            Switches::default(),
+        );
+        let (name, h) = (sb("a"), host("ads.example.com"));
+        let expected = Some(Decision::SetDeny {
+            set: RuleSetId::User(7),
+            rule_id: RuleId(2),
+            pattern: PatternKind::Exact,
+        });
+        assert_eq!(
+            reference_p3(&index, &name, &h, 5, SuffixAllows::Count),
+            expected
+        );
+        assert_eq!(
+            index
+                .decide(&name, &h, 5, SuffixAllows::Count)
+                .map(Hit::decision),
+            expected
+        );
+    }
+
+    #[test]
     fn r39_between_sets_most_specific_then_deny_wins() {
         let index = RuleIndex::new(
             vec![

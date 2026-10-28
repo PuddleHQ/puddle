@@ -536,10 +536,9 @@ pub fn confirm(builds: &Path, commit: &str) -> io::Result<()> {
 ///
 /// When a pointer cannot be written.
 pub fn roll_back(builds: &Path, failed: &str) -> io::Result<bool> {
-    if !on_trial(builds) || pointer(builds, CURRENT).as_deref() != Some(failed) {
-        return Ok(false);
-    }
-    let Some(previous) = pointer(builds, PREVIOUS) else {
+    let previous = pointer(builds, PREVIOUS)
+        .filter(|_| on_trial(builds) && pointer(builds, CURRENT).as_deref() == Some(failed));
+    let Some(previous) = previous else {
         return Ok(false);
     };
     write_pointer(builds, REJECTED, failed)?;
@@ -556,10 +555,7 @@ fn prune(builds: &Path) {
         .into_iter()
         .filter_map(|name| pointer(builds, name))
         .collect();
-    let Ok(entries) = std::fs::read_dir(builds) else {
-        return;
-    };
-    for entry in entries.flatten() {
+    for entry in std::fs::read_dir(builds).into_iter().flatten().flatten() {
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
         let ours = is_commit(name) || name.ends_with(".partial");

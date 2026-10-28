@@ -50,7 +50,7 @@ async fn gh_sign_in_hands_back_the_code_and_address_and_runs_nothing_else() {
     let fakes = Fakes::new();
     let gh = fakes.install(
         "gh",
-        &format!("[auth login]\nstderr={GH_PROMPT}sleep_ms=3000\n"),
+        &format!("[auth login]\nstderr={GH_PROMPT}\nsleep_ms=3000\n"),
     );
     let signin = SignIns::new(ToolPaths::new(Some(gh.clone()), None));
     let start = signin.begin(&gh_spec()).await.unwrap();
@@ -78,13 +78,24 @@ async fn an_open_sign_in_ends_with_its_window_and_can_be_started_again() {
     let fakes = Fakes::new();
     let gh = fakes.install(
         "gh",
-        &format!("[auth login]\nstderr={GH_PROMPT}sleep_ms=5000\n"),
+        &format!("[auth login]\nstderr={GH_PROMPT}\nsleep_ms=5000\n"),
     );
-    let signin = SignIns::new(ToolPaths::new(Some(gh.clone()), None))
-        .with_window(Duration::from_millis(300));
+    let signin =
+        SignIns::new(ToolPaths::new(Some(gh.clone()), None)).with_window(Duration::from_secs(300));
     signin.begin(&gh_spec()).await.unwrap();
-    // Three times the 300 ms window, so the first sign-in has ended.
-    tokio::time::sleep(Duration::from_millis(900)).await;
+    // Inside the window a second click starts nothing.
+    signin.begin(&gh_spec()).await.unwrap();
+    assert_eq!(Fakes::log(&gh).matches("ARGS ").count(), 1);
+
+    // The tool's output is real IO, so the clock is paused only for the window itself: a paused
+    // clock jumps to the next timer as soon as the runtime waits on a real read, which here is
+    // the end of the window.
+    tokio::time::pause();
+    tokio::time::sleep(Duration::from_secs(301)).await;
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    tokio::time::resume();
     signin.begin(&gh_spec()).await.unwrap();
     assert_eq!(Fakes::log(&gh).matches("ARGS ").count(), 2);
 }
@@ -201,14 +212,17 @@ async fn git_sign_in_does_not_keep_an_answer_for_another_target_and_says_so() {
             "the helper answered for another host or path".into()
         )
     );
-    // Absence window: a late `credential approve` would show in the log by now.
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // The sign-in stays open until its task has ended, and the task would run any `credential
+    // approve` before then: asking again returns the old answer until it has, and starts again after.
+    let mut asks = 0;
+    while signin.begin(&git_spec()).await.is_ok() {
+        asks += 1;
+        assert!(asks < 2000, "the sign-in never closed");
+        tokio::task::yield_now().await;
+    }
     let log = Fakes::log(&git);
-    assert!(log.contains("credential fill"), "{log}");
+    assert_eq!(log.matches("credential fill").count(), 2, "{log}");
     assert!(!log.contains("credential approve"), "{log}");
-    // Nothing is left open: asking again starts again.
-    signin.begin(&git_spec()).await.unwrap_err();
-    assert_eq!(Fakes::log(&git).matches("credential fill").count(), 2);
 }
 
 #[tokio::test]

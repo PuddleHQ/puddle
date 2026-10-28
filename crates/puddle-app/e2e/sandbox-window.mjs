@@ -41,13 +41,15 @@ const server = createServer((_req, res) => {
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const sitePort = server.address().port;
 const origin = `http://probe.localhost:${sitePort}`;
+const probePage = `${origin}/attack.html`;
+const onPage = (t) => t.url.startsWith(probePage);
 
 const scratch = mkdtempSync(join(tmpdir(), "puddle-sandbox-window-"));
 const env = {
   ...process.env,
   PUDDLE_APP_FIXTURE: "1",
   PUDDLE_APP_DATA_DIR: join(scratch, "data"),
-  PUDDLE_APP_SANDBOX_PROBE: `${origin}/attack.html`,
+  PUDDLE_APP_SANDBOX_PROBE: probePage,
   PUDDLE_APP_SANDBOX_DEBUG_PORT: String(cdpPort),
 };
 const app = spawn(exe, [], { stdio: ["ignore", "inherit", "pipe"], env });
@@ -66,15 +68,17 @@ async function targets() {
   return list.filter((t) => t.type === "page" && t.url.startsWith(origin));
 }
 
-async function waitForTargets(count) {
+// The workspace pages once `done(pages)` holds. A window is listed from its first navigation on,
+// so a window that is still on its way to a page shows up at the address it started from.
+async function waitForTargets(what, done) {
   let seen = [];
   for (let i = 0; i < 150; i++) {
     if (appExited) throw new Error("puddle-app exited early");
     seen = await targets().catch(() => []);
-    if (seen.length >= count) return seen;
+    if (done(seen)) return seen;
     await sleep(400);
   }
-  throw new Error(`expected ${count} workspace page(s), saw ${JSON.stringify(seen.map((t) => t.url))}`);
+  throw new Error(`expected ${what}, saw ${JSON.stringify(seen.map((t) => t.url))}`);
 }
 
 function connect(url) {
@@ -133,8 +137,10 @@ async function waitForLog(pattern, ms = 15_000) {
 
 let main;
 try {
-  const [first] = await waitForTargets(1);
-  check("the shell opened a window on the workspace origin", first.url.startsWith(`${origin}/attack.html`), first.url);
+  // The shell opens the window on the workspace's origin and then sends it to the page.
+  const opened = await waitForTargets("the workspace window on its page", (pages) => pages.some(onPage));
+  const first = opened.find(onPage);
+  check("the shell opened one window, on the workspace page", opened.length === 1, JSON.stringify(opened.map((t) => t.url)));
   check("the window got a data folder of its own", existsSync(join(scratch, "data", "webview", "probe")));
   await attack(first, "workspace window");
 
@@ -142,7 +148,7 @@ try {
   // A navigation to another site is cancelled and handed to the default browser.
   await main.evaluate(`setTimeout(() => { location.href = "https://example.org/navigated"; }, 0); true`);
   check("a navigation to another site is opened in the browser", await waitForLog(/opened in the browser.*example\.org\/navigated/));
-  check("and the window stays on the workspace page", (await targets()).some((t) => t.url.startsWith(`${origin}/attack.html`)));
+  check("and the window stays on the workspace page", (await targets()).some(onPage));
   // window.open: another site, and the guest's port proxy, both go to the browser and open no window.
   await main.evaluate(`window.open("https://example.org/popup"); true`, true);
   check("window.open to another site is opened in the browser", await waitForLog(/opened in the browser.*example\.org\/popup/));
@@ -152,10 +158,11 @@ try {
   check("neither opened a window", (await targets()).length === 1, JSON.stringify((await targets()).map((t) => t.url)));
   // The editor's "New Window": a second window of the same kind.
   await main.evaluate(`window.open("/attack.html?popup=1"); true`, true);
-  const both = await waitForTargets(2);
-  const popup = both.find((t) => t.url.includes("popup=1"));
-  check("the editor's New Window opens a second workspace window", !!popup, JSON.stringify(both.map((t) => t.url)));
-  if (popup) await attack(popup, "second window");
+  const isPopup = (t) => t.url.startsWith(`${probePage}?popup=1`);
+  const both = await waitForTargets("a second workspace window", (pages) => pages.some(isPopup));
+  const popup = both.find(isPopup);
+  check("the editor's New Window opens a second workspace window", both.length === 2, JSON.stringify(both.map((t) => t.url)));
+  await attack(popup, "second window");
 } catch (err) {
   check("the sandbox window test ran to the end", false, String(err?.stack ?? err));
 } finally {

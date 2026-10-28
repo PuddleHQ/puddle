@@ -387,7 +387,7 @@ CREATE TABLE learned_limits (
 ";
 
 const V12: &str = r"
--- Rules on the method and path of a request (R-46): they only ever refuse. A global rule applies
+-- Rules on the method and path of a request (R-49): they only ever refuse. A global rule applies
 -- to every workspace, a workspace rule to its own; rows of a workspace go with it. `methods` is
 -- the upper-case names separated by commas (empty: every method); `path` is a canonical path
 -- pattern.

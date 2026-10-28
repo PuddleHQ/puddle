@@ -11,6 +11,7 @@ mod corporate_lab;
 mod corporate_lab_windows;
 mod corporate_reroute;
 mod forward_unreachable;
+mod front_unreachable;
 mod git_inject;
 mod git_lab;
 mod hostile_flood_names;

@@ -71,6 +71,27 @@ beforeEach(() => {
   api = new Stub();
 });
 
+/** A GET whose answers the test releases in the order it chooses. */
+function heldGets() {
+  const waiting: Array<{
+    ok: (r: unknown) => void;
+    fail: (e: unknown) => void;
+  }> = [];
+  const held = {
+    GET: () =>
+      new Promise((ok, fail) => {
+        waiting.push({ ok, fail });
+      }),
+  };
+  return { held, waiting };
+}
+
+const answer = (data: unknown) => ({
+  data,
+  error: undefined,
+  response: { status: 200 },
+});
+
 describe("WorkspaceInterception", () => {
   it("reads the switch and both lists", async () => {
     const store = new WorkspaceInterception(api as never);
@@ -135,6 +156,33 @@ describe("WorkspaceInterception", () => {
       message: "Puddle's service isn't answering.",
     });
   });
+
+  it("ignores a slow load that a newer one has overtaken", async () => {
+    const { held, waiting } = heldGets();
+    const store = new WorkspaceInterception(held as never);
+    const stale = store.load("ws-1");
+    const fresh = store.load("ws-2");
+    waiting[1]!.ok(answer({ ...new Stub().view, never_decrypt: ["new.io"] }));
+    await fresh;
+    waiting[0]!.ok(answer({ ...new Stub().view, never_decrypt: ["old.io"] }));
+    await stale;
+    expect(store.names).toEqual(["new.io"]);
+    expect(store.status).toBe("ready");
+  });
+
+  it("ignores a slow load that fails after a newer one has answered", async () => {
+    const { held, waiting } = heldGets();
+    const store = new WorkspaceInterception(held as never);
+    const stale = store.load("ws-1");
+    const fresh = store.load("ws-2");
+    waiting[1]!.ok(answer({ ...new Stub().view, never_decrypt: ["new.io"] }));
+    await fresh;
+    waiting[0]!.fail(new TypeError("fetch failed"));
+    await stale;
+    expect(store.names).toEqual(["new.io"]);
+    expect(store.status).toBe("ready");
+    expect(store.reason).toBeNull();
+  });
 });
 
 describe("GlobalNeverDecrypt", () => {
@@ -164,5 +212,32 @@ describe("GlobalNeverDecrypt", () => {
     api.refuse = null;
     api.down = true;
     expect((await store.save(["x.io"])).ok).toBe(false);
+  });
+
+  it("ignores a slow load that a newer one has overtaken", async () => {
+    const { held, waiting } = heldGets();
+    const store = new GlobalNeverDecrypt(held as never);
+    const stale = store.load();
+    const fresh = store.load();
+    waiting[1]!.ok(answer({ never_decrypt: ["new.io"] }));
+    await fresh;
+    waiting[0]!.ok(answer({ never_decrypt: ["old.io"] }));
+    await stale;
+    expect(store.names).toEqual(["new.io"]);
+    expect(store.status).toBe("ready");
+  });
+
+  it("ignores a slow load that fails after a newer one has answered", async () => {
+    const { held, waiting } = heldGets();
+    const store = new GlobalNeverDecrypt(held as never);
+    const stale = store.load();
+    const fresh = store.load();
+    waiting[1]!.ok(answer({ never_decrypt: ["new.io"] }));
+    await fresh;
+    waiting[0]!.fail(new TypeError("fetch failed"));
+    await stale;
+    expect(store.names).toEqual(["new.io"]);
+    expect(store.status).toBe("ready");
+    expect(store.reason).toBeNull();
   });
 });

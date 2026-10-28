@@ -673,6 +673,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/request-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The rules on method and path: all of them, or the ones that apply to one workspace (the
+         *     global ones and its own).
+         */
+        get: operations["list_request_rules"];
+        put?: never;
+        /**
+         * Makes a rule that refuses the named methods of the named paths on a host. The host is
+         *     decrypted from now on whatever the workspace's other settings say, so the rule can read its
+         *     requests; a tunnel to another port of the host is refused.
+         */
+        post: operations["create_request_rule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/request-rules/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Deletes a rule on method and path. */
+        delete: operations["delete_request_rule"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/rule-sets": {
         parameters: {
             query?: never;
@@ -1683,6 +1725,13 @@ export interface components {
             port: number | null;
             /** @description Why: `rule`, `no_rule`, or a block reason. */
             reason: string;
+            /**
+             * Format: int64
+             * @description The rule on method and path that refused the request, when `reason` is
+             *     `request_rule`; `method` and `path` are that request's. Numbered apart from `rule_id`.
+             *     Records written before it existed read as `null`.
+             */
+            request_rule: number | null;
             /** @description The address connected to. */
             resolved_ip: string | null;
             /**
@@ -1808,6 +1857,30 @@ export interface components {
             /** @enum {string} */
             type: "rule_expired";
         } | {
+            /** @description The rule. */
+            rule: components["schemas"]["AuditRequestRule"];
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            ts: number;
+            /** @enum {string} */
+            type: "request_rule_created";
+        } | {
+            /** @description Who deleted it. */
+            actor: string;
+            /** @description Why. */
+            reason: components["schemas"]["RuleDeleteReason"];
+            /** @description The rule as it was. */
+            rule: components["schemas"]["AuditRequestRule"];
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            ts: number;
+            /** @enum {string} */
+            type: "request_rule_deleted";
+        } | {
             /** @description Who made it. */
             actor: string;
             /** @description The set. */
@@ -1908,6 +1981,31 @@ export interface components {
             /** @enum {string} */
             type: "audit_trimmed";
         };
+        /** @description A rule on method and path, as an audit record shows it. */
+        AuditRequestRule: {
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            created_at: number;
+            /** @description `cli`, `ui` or `api`. */
+            created_by: string;
+            /** @description The host pattern: `example.com` or `*.example.com`. */
+            host: string;
+            /**
+             * Format: int64
+             * @description Row id, numbered apart from the rules on hosts.
+             */
+            id: number;
+            /** @description The methods it names, upper case; empty for every method. */
+            methods: string[];
+            /** @description The path pattern, in canonical form. */
+            path: string;
+            /** @description `global` or `workspace`. */
+            scope: string;
+            /** @description The workspace, for a workspace rule. */
+            workspace_id: string | null;
+        };
         /** @description A rule as an audit record shows it. */
         AuditRule: {
             /**
@@ -1971,7 +2069,7 @@ export interface components {
          * @description The record types, for the `type` filter.
          * @enum {string}
          */
-        AuditType: "connection" | "pending_created" | "pending_decided" | "pending_expired" | "pending_suppressed" | "rule_created" | "rule_updated" | "rule_deleted" | "rule_expired" | "rule_set_created" | "rule_set_updated" | "rule_set_deleted" | "rule_set_switched" | "rule_set_changed" | "system_managed_changed" | "audit_trimmed";
+        AuditType: "connection" | "pending_created" | "pending_decided" | "pending_expired" | "pending_suppressed" | "rule_created" | "rule_updated" | "rule_deleted" | "rule_expired" | "request_rule_created" | "request_rule_deleted" | "rule_set_created" | "rule_set_updated" | "rule_set_deleted" | "rule_set_switched" | "rule_set_changed" | "system_managed_changed" | "audit_trimmed";
         /** @description One built-in icon, drawn for the Settings screen to preview. */
         BuiltInIcon: {
             /** @description The choice that selects it. */
@@ -2510,6 +2608,9 @@ export interface components {
         } | {
             /** @enum {string} */
             type: "rules_changed";
+        } | {
+            /** @enum {string} */
+            type: "request_rules_changed";
         } | {
             /** @enum {string} */
             type: "identities_changed";
@@ -3092,6 +3193,23 @@ export interface components {
              */
             url: string;
         };
+        /** @description A rule on method and path to make. */
+        NewRequestRuleRequest: {
+            /** @description A host name or `*.` followed by a domain with at least two labels; no IP address. */
+            host: string;
+            /**
+             * @description HTTP methods (letters and digits, case does not matter); left out or empty for every
+             *     method. At most 16.
+             */
+            methods?: string[];
+            /**
+             * @description The path: `/` followed by segments, where `*` is one whole segment and a closing `/**` is
+             *     everything below. No query string. It is compared after percent-decoding, with `.` and
+             *     `..` resolved and case ignored.
+             */
+            path: string;
+            workspace: components["schemas"]["WorkspaceName"] | null;
+        };
         /** @description A rule to create directly (not from a pending request). */
         NewRuleRequest: {
             /** @description Allow or deny. */
@@ -3596,6 +3714,39 @@ export interface components {
          * @enum {string}
          */
         RepoVisibility: "public" | "private" | "internal" | "unknown";
+        /**
+         * @description A rule on method and path. It only refuses: the requests it names to a host Puddle decrypts
+         *     are answered with a 403 and never leave the computer. The host is always decrypted for it.
+         */
+        RequestRule: {
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            created_at: number;
+            /** @description `cli`, `ui` or `api`. */
+            created_by: string;
+            /** @description The host pattern: `example.com` or `*.example.com`. */
+            host: string;
+            /**
+             * Format: int64
+             * @description Row id, never reused. Numbered apart from the rules on hosts.
+             */
+            id: number;
+            /** @description The methods it names, upper case; empty for every method. */
+            methods: string[];
+            /**
+             * @description The path pattern in canonical form: `/a/b`, with `*` for one segment and a closing `/**`
+             *     for everything below.
+             */
+            path: string;
+            workspace: components["schemas"]["WorkspaceName"] | null;
+        };
+        /** @description Rules on method and path. */
+        RequestRuleList: {
+            /** @description In id order. */
+            rules: components["schemas"]["RequestRule"][];
+        };
         /** @description An effective on/off value and where it came from. */
         ResolvedBool: {
             /** @description Where it came from. */
@@ -7300,6 +7451,211 @@ export interface operations {
             };
             /** @description not available in this build */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_request_rules: {
+        parameters: {
+            query?: {
+                /** @description only the rules that apply to this workspace */
+                workspace?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the rules, in id order */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestRuleList"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description not a workspace name */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    create_request_rule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewRequestRuleRequest"];
+            };
+        };
+        responses: {
+            /** @description the new rule */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestRule"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description invalid host, method or path, or more than 500 rules in the scope */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_request_rule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description rule id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the deleted rule */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestRule"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such rule */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

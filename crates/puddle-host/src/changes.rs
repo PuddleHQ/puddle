@@ -26,6 +26,10 @@ pub(crate) trait Changes: Clone + Send + Sync + 'static {
     /// Looks at every running workspace's Git settings again, after events were missed.
     fn all_git_changed(&self) -> impl Future<Output = ()> + Send;
 
+    /// Reads the rules on method and path again for every running workspace, after one changed.
+    /// Quick, like [`Changes::decrypt_changed`]: the next request sees the new rules.
+    fn all_request_rules_changed(&self);
+
     /// Brings a running workspace's stand-ins and the hosts they need decrypted up to date with its
     /// environment, which can take as long as the credential store needs to answer.
     fn environment_changed(&self, workspace: WorkspaceName) -> impl Future<Output = ()> + Send;
@@ -40,7 +44,7 @@ pub(crate) trait Changes: Clone + Send + Sync + 'static {
     fn all_shell_inits_changed(&self) -> impl Future<Output = ()> + Send;
 }
 
-/// Applies each [`Event::WorkspaceGitChanged`], [`Event::WorkspaceEnvChanged`],
+/// Applies each [`Event::WorkspaceGitChanged`], [`Event::RequestRulesChanged`], [`Event::WorkspaceEnvChanged`],
 /// [`Event::WorkspaceShellInitChanged`] and [`Event::GlobalEnvChanged`] of `events` to `service`
 /// until the task is aborted. A Git change's
 /// decrypt set follows in the order the changes arrive; the guest rewrites and the reads of the
@@ -78,6 +82,7 @@ pub(crate) fn follow<G: Changes>(mut events: Receiver<Event>, service: G) -> Joi
                             service.all_environments_changed().await;
                         });
                     }
+                    Ok(Event::RequestRulesChanged {}) => service.all_request_rules_changed(),
                     Ok(_) => {}
                     Err(RecvError::Lagged(_)) => {
                         service.all_git_changed().await;
@@ -135,6 +140,13 @@ mod tests {
             self.calls.lock().unwrap().push("all".to_owned());
         }
 
+        fn all_request_rules_changed(&self) {
+            self.calls
+                .lock()
+                .unwrap()
+                .push("all request rules".to_owned());
+        }
+
         async fn environment_changed(&self, workspace: WorkspaceName) {
             self.calls.lock().unwrap().push(format!("env {workspace}"));
         }
@@ -187,6 +199,16 @@ mod tests {
             calls_after(&fake, 3).await,
             ["decrypt alpha", "decrypt beta", "rewrite alpha"]
         );
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn a_change_to_the_request_rules_reaches_every_running_workspace() {
+        let hub = EventHub::default();
+        let fake = Fake::default();
+        let task = follow(hub.subscribe(), fake.clone());
+        hub.emit(Event::RequestRulesChanged {});
+        assert_eq!(calls_after(&fake, 1).await, ["all request rules"]);
         task.abort();
     }
 

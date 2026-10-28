@@ -464,6 +464,61 @@ describe("a record as a row", () => {
       } as unknown as AuditRecord).detail,
     ).toBe("allow for workspace ?, by ui, user");
   });
+  it("shows a refusal by a rule on method and path with its rule", () => {
+    expect(
+      row(
+        connection(4, {
+          decision: "deny",
+          reason: "request_rule",
+          rule_id: null,
+          request_rule: 7,
+          method: "DELETE",
+          path: "/repos/a/b",
+        }).record,
+      ),
+    ).toMatchObject({
+      outcome: { label: "Denied", tone: "deny" },
+      detail: "DELETE /repos/a/b · method and path rule 7",
+    });
+    expect(
+      row(
+        connection(5, {
+          decision: "blocked",
+          reason: "request_rule_port",
+          rule_id: null,
+        }).record,
+      ).detail,
+    ).toContain("because the host has rules on method and path");
+  });
+  it("shows the records of rules on method and path", () => {
+    const rule = {
+      id: 7,
+      scope: "workspace",
+      workspace_id: "shop",
+      host: "api.example.com",
+      methods: ["DELETE", "PUT"],
+      path: "/repos/**",
+      created_at: 1,
+      created_by: "api",
+    };
+    expect(
+      row({ type: "request_rule_created", ts: 1, rule } as AuditRecord),
+    ).toMatchObject({
+      workspace: "shop",
+      destination: "api.example.com",
+      outcome: null,
+      detail: "refuse DELETE, PUT /repos/** for workspace shop, by api",
+    });
+    expect(
+      row({
+        type: "request_rule_deleted",
+        ts: 2,
+        rule: { ...rule, scope: "global", workspace_id: null, methods: [] },
+        reason: "user",
+        actor: "ui",
+      } as AuditRecord).detail,
+    ).toBe("refuse any method /repos/** for every workspace, by ui, user");
+  });
   it("shows the two records that belong to no host", () => {
     expect(
       row({

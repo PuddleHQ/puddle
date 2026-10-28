@@ -9,10 +9,10 @@ use rusqlite::Connection;
 use crate::error::StoreError;
 
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 11;
+pub const SCHEMA_VERSION: u32 = 12;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -384,6 +384,25 @@ CREATE TABLE learned_limits (
     ttl_secs INTEGER NOT NULL CHECK (ttl_secs > 0),
     cap      INTEGER NOT NULL CHECK (cap > 0)
 ) STRICT;
+";
+
+const V12: &str = r"
+-- Rules on the method and path of a request (R-46): they only ever refuse. A global rule applies
+-- to every workspace, a workspace rule to its own; rows of a workspace go with it. `methods` is
+-- the upper-case names separated by commas (empty: every method); `path` is a canonical path
+-- pattern.
+CREATE TABLE request_rules (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope        TEXT    NOT NULL CHECK (scope IN ('global', 'workspace')),
+    workspace_id TEXT,
+    host         TEXT    NOT NULL,
+    methods      TEXT    NOT NULL,
+    path         TEXT    NOT NULL,
+    created_at   INTEGER NOT NULL,
+    created_by   TEXT    NOT NULL CHECK (created_by IN ('cli', 'ui', 'api')),
+    CHECK ((scope = 'workspace') = (workspace_id IS NOT NULL))
+) STRICT;
+CREATE INDEX request_rules_workspace ON request_rules (workspace_id);
 ";
 
 /// Brings `conn` to [`SCHEMA_VERSION`] and returns the version it started at.

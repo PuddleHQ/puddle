@@ -24,6 +24,7 @@ use super::inject::{
 };
 use super::leg::{self, BoxError, ConnectError, Connected, H1Conn, Made, UpBody};
 use super::request::{self, Parsed};
+use super::request_rules::{self, Refused};
 use super::stand_in::Swapped;
 use super::streams::Activity;
 use super::{Mode, Termination, h2, response, ws};
@@ -74,6 +75,8 @@ pub(crate) const MAX_UNSWAPPED_STAND_INS: usize = 16;
 pub(crate) struct Outcome {
     /// The first request's method and path (no query).
     pub(crate) http: Option<HttpRequestLine>,
+    /// The first request a rule on method and path refused.
+    pub(crate) refused_by_rule: Option<Refused>,
     /// Whether any request had a credential injected.
     pub(crate) injected: bool,
     /// The binding that supplied it.
@@ -563,6 +566,9 @@ where
             self.outcome.http = Some(HttpRequestLine::new(parsed.method.as_str(), &parsed.target));
         }
         tracing::debug!(host = %self.cx.target.host, method = %parsed.method, path = %puddle_types::request_path(&parsed.target), "terminated request");
+        if let Some(flow) = self.refuse_by_rule(&parsed, &head).await {
+            return flow;
+        }
         if let Err(refusal) = self.ensure_upstream().await {
             return self.refuse(&refusal).await;
         }
@@ -597,6 +603,21 @@ where
             exchange.as_mut(),
         )
         .await
+    }
+
+    /// Refuses the request when a rule on method and path names it, before anything is sent
+    /// upstream. `None`: no rule does.
+    async fn refuse_by_rule(&mut self, parsed: &Parsed, head: &http::Head) -> Option<Flow> {
+        let host = &self.cx.target.host;
+        let view = RequestView::new(&parsed.method, &parsed.target, &head.headers);
+        let rule = self.cx.termination.request_rules().refusing(host, &view)?;
+        tracing::info!(%host, %rule, "request refused by a rule on method and path");
+        self.outcome.refused_by_rule.get_or_insert_with(|| Refused {
+            rule,
+            line: HttpRequestLine::new(&parsed.method, &parsed.target),
+        });
+        let refusal = request_rules::refusal(rule, &parsed.method, host);
+        Some(self.refuse(&refusal).await)
     }
 
     /// Asks the injector about the request, after reading the body it wants to see (if any):

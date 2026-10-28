@@ -429,6 +429,7 @@ fn connection(ts: u64, workspace: &str, host: &str, decision: ConnectionDecision
         reason: "rule".into(),
         rule_id: None,
         rule_set: None,
+        request_rule: None,
         pending_id: None,
         binding_id: None,
         injected: false,

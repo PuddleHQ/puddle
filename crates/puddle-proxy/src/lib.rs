@@ -84,8 +84,8 @@ pub use terminate::{
     AnswerHead, AnswerRewriter, BodyFormat, DEFAULT_TERMINATED_HOSTS, Exchange, ExchangeRewriter,
     HeaderError, InjectContext, InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector,
     Interception, LEARNED_CAP, LEARNED_TTL, MAX_EXCHANGE_BODY, NoInjection, PassThrough,
-    PatternError, RequestView, SecretValue, StandIn, StandInError, StandInOrigin, StandIns,
-    Termination, TerminationSet, TerminationSource, Terminations, TokenBody, TokenBodyError,
-    Unauthorized, secret_stand_in,
+    PatternError, RequestRule, RequestRules, RequestView, SecretValue, StandIn, StandInError,
+    StandInOrigin, StandIns, Termination, TerminationSet, TerminationSource, Terminations,
+    TokenBody, TokenBodyError, Unauthorized, secret_stand_in,
 };
 pub use upstream::Upstream;

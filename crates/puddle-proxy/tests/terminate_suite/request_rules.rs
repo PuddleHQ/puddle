@@ -9,9 +9,11 @@
 use crate::terminate_support;
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use puddle_proxy::{RequestRule, RequestRules};
+use puddle_proxy::{PassThrough, RequestRule, RequestRules};
 use puddle_types::{ConnectionDecision, Methods, PathPattern, RuleId};
+use rustls::pki_types::ServerName;
 use terminate_support::h2_rig::{H2Server, Script, full, reply};
 use terminate_support::{
     CANARY, Client, FakeServer, Flaw, Pki, Reply, RigBuilder, TestInjector, host,
@@ -547,4 +549,48 @@ async fn the_lowest_numbered_rule_that_refuses_is_the_one_named() {
     .await;
     assert_eq!(status, 403);
     assert_eq!(events[0].request_rule, Some(RuleId(3)));
+}
+
+#[tokio::test]
+async fn a_certificate_alert_on_a_host_with_a_rule_never_teaches_the_host_as_pass_through() {
+    let pki = Pki::new();
+    let server = api(&pki).await;
+    let learned = Arc::new(PassThrough::with_limits(Duration::from_secs(3600), 8));
+    let rig = RigBuilder::new(&pki)
+        .name("api.test", server.addr)
+        .allow(vec!["api.test"])
+        .injector(TestInjector::new(|_| {
+            puddle_proxy::InjectDecision::PassThrough
+        }))
+        .decrypting_all(true, &[])
+        .learned(Arc::clone(&learned))
+        .request_rules(rules(vec![rule(1, "api.test", &["DELETE"], "/**")]))
+        .build();
+
+    // A tool whose roots do not hold the workspace CA refuses the certificate.
+    let mut guest = rig.guest().await;
+    let (port, _bridge) = guest.bridge("api.test:443").await;
+    let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let config = terminate_support::Guest::client_config(std::slice::from_ref(&pki.root), &[]);
+    let refused = tokio_rustls::TlsConnector::from(Arc::new(config))
+        .connect(ServerName::try_from("api.test").unwrap(), tcp)
+        .await;
+    assert!(refused.is_err());
+    assert_eq!(
+        rig.events(1).await[0].reason.to_string(),
+        "guest_tls_rejected"
+    );
+    assert!(!learned.contains(&host("api.test")));
+    assert!(learned.list().is_empty(), "nothing is remembered");
+
+    // The next connection is still decrypted and judged, not passed through.
+    let mut client = guest.tls("api.test:443", None).await.unwrap();
+    let refused = send(&mut client, "DELETE", "/x", "").await;
+    assert_eq!(refused.status, 403);
+    client.close().await;
+    let events = rig.events(2).await;
+    assert_eq!(events[1].reason.to_string(), "request_rule");
+    assert!(learned.list().is_empty());
 }

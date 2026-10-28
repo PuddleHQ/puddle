@@ -2383,6 +2383,23 @@ impl ConsentRequest {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn every_reason_a_rule_was_deleted_reaches_the_wire() {
+        for (from, to) in [
+            (store::RuleDeleteReason::User, RuleDeleteReason::User),
+            (
+                store::RuleDeleteReason::WorkspaceDeleted,
+                RuleDeleteReason::WorkspaceDeleted,
+            ),
+            (
+                store::RuleDeleteReason::SetDeleted,
+                RuleDeleteReason::SetDeleted,
+            ),
+        ] {
+            assert_eq!(RuleDeleteReason::from(from), to);
+        }
+    }
+
+    #[test]
     fn every_connection_outcome_reaches_the_wire_under_its_own_name() {
         use puddle_types::ConnectionOutcome as T;
         for (from, to, name) in [

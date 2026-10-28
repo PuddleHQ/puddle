@@ -26,7 +26,8 @@
 //! * The tray, the close and minimize buttons, the badge and the operating-system notifications
 //!   run in Rust ([`desktop`]), driven by [`backend::Backend::events`] and the settings; the page
 //!   calls no Tauri API for any of them. A panic writes a crash file ([`crash`]), nothing is sent.
-#![forbid(unsafe_code)]
+// Not `forbid` on Windows: `sandbox_window::accelerators` makes one WebView2 COM call.
+#![cfg_attr(not(windows), forbid(unsafe_code))]
 
 pub mod backend;
 pub mod badge;
@@ -38,6 +39,7 @@ pub mod icon;
 pub mod links;
 pub mod navigation;
 pub mod notify;
+pub mod sandbox_window;
 pub mod shell;
 pub mod tray;
 pub mod window;

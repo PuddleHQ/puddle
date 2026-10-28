@@ -1,0 +1,63 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Stands in for a hostile page served by a workspace's editor: everything here is what script
+     from the guest could run in a workspace window. sandbox-window.mjs calls __attackRun(). -->
+<html><head><meta charset="utf-8"><title>attack</title></head>
+<body>
+<script>
+const message = (e) => (e && e.message) || (typeof e === "string" ? e : JSON.stringify(e));
+const within = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej("TIMEOUT"), ms))]);
+
+// Every attempt returns {name, succeeded, detail}; the test wants succeeded=false for all.
+window.__attackRun = async function () {
+  const out = [];
+  const T = window.__TAURI_INTERNALS__;
+  out.push({ name: "bridge", succeeded: false, detail: String(!!(T && T.invoke)) });
+  const commands = [
+    ["ping", {}],
+    ["plugin:app|version", {}],
+    ["plugin:opener|open_url", { url: "https://example.org/attack" }],
+    ["plugin:window|set_title", { label: "main", value: "pwned" }],
+    ["plugin:webview|create_webview_window", { options: { label: "evil", url: "index.html" } }],
+    ["plugin:event|emit", { event: "attack", payload: 1 }],
+    ["plugin:path|resolve_directory", { directory: 11 }],
+    ["plugin:notification|notify", { options: { title: "attack" } }],
+  ];
+  let stolenKey = null;
+  const realFetch = window.fetch;
+  window.fetch = function (input, init) {
+    try {
+      const key = new Headers((init && init.headers) || {}).get("Tauri-Invoke-Key");
+      if (key) stolenKey = key;
+    } catch (e) { /* not a request the bridge made */ }
+    return realFetch.apply(this, arguments);
+  };
+  if (T && T.invoke) {
+    for (const [cmd, args] of commands) {
+      try {
+        const value = await within(T.invoke(cmd, args), 4000);
+        out.push({ name: "invoke " + cmd, succeeded: true, detail: JSON.stringify(value) });
+      } catch (e) {
+        out.push({ name: "invoke " + cmd, succeeded: false, detail: message(e) });
+      }
+    }
+  }
+  window.fetch = realFetch;
+  // The webview's own endpoint with the key the page just read off the bridge's own request.
+  for (const endpoint of ["http://ipc.localhost/ping", "http://ipc.localhost/plugin%3Aapp%7Cversion"]) {
+    try {
+      const r = await within(realFetch(endpoint, {
+        method: "POST", body: "{}",
+        headers: { "Content-Type": "application/json", "Tauri-Callback": "1", "Tauri-Error": "2", "Tauri-Invoke-Key": stolenKey || "x" },
+      }), 4000);
+      const text = (await r.text()).slice(0, 120);
+      out.push({ name: "raw " + endpoint, succeeded: r.ok && /pong|\d+\.\d+/.test(text), detail: r.status + " " + text });
+    } catch (e) {
+      out.push({ name: "raw " + endpoint, succeeded: false, detail: message(e) });
+    }
+  }
+  return out;
+};
+</script>
+<p>attack page</p>
+</body></html>

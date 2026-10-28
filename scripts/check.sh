@@ -268,12 +268,14 @@ run_gate() {
         ;;
     ui)
         # format, lint, types (Svelte's a11y warnings fail), unit and component tests with the
-        # coverage thresholds in ui/vite.config.ts, then the production build.
+        # coverage thresholds in ui/vite.config.ts, then the production build and its size budget.
         ui_install
         (cd ui && npm run format:check && npm run lint && npm run check && npm test)
         # vitest's lcov paths are relative to ui/; the exclusion file's paths are repository-relative.
         diff_coverage "diff-coverage (ui)" ui/coverage/lcov.info .ts,.svelte --prefix ui/
         ui_build
+        # What the first page load fetches stays under the gzip budget (ui/scripts/bundle-budget.ts).
+        (cd ui && node scripts/bundle-budget.ts)
         ;;
     ui-licences)
         # Every npm package in the bundle is on the licence allowlist and in the UI notices.

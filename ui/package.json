@@ -24,6 +24,7 @@
     "format:check": "prettier --check .",
     "test": "vitest run --coverage",
     "e2e": "playwright test",
+    "budget": "node scripts/bundle-budget.ts",
     "licences": "node scripts/licences.ts",
     "audit:prod": "node scripts/audit.ts"
   },

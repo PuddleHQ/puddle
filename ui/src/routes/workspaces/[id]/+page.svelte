@@ -173,7 +173,11 @@
     <section class="card" aria-labelledby="network-h">
       <h2 id="network-h">Network</h2>
       <p>{networkSummary}</p>
-      <p><a href={tabHref(workspace.id, "network")}>Open the network tab</a></p>
+      <p>
+        <a class="link-block" href={tabHref(workspace.id, "network")}
+          >Open the network tab</a
+        >
+      </p>
     </section>
 
     <section class="card danger" aria-labelledby="danger-h">

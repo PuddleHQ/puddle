@@ -151,6 +151,13 @@
     border-radius: var(--radius-pill);
     color: var(--color-text);
   }
+  /* The link to a workspace's waiting requests is a control: 24 px tall at least (WCAG 2.5.8). */
+  a.flag {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.5rem;
+    box-sizing: border-box;
+  }
   .flag.warn {
     border-color: var(--color-warning);
   }

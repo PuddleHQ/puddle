@@ -106,6 +106,13 @@
     margin-top: 0.15rem;
     animation: spin 1.2s linear infinite;
   }
+  /* The spinner is a loop, so shortening its duration would make it flicker: it stops instead. The
+     text beside it says what is running. */
+  @media (prefers-reduced-motion: reduce) {
+    :global(.spin) {
+      animation: none;
+    }
+  }
   @keyframes spin {
     to {
       transform: rotate(360deg);

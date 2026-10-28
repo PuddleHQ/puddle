@@ -16,15 +16,6 @@ export const STATUS_LABEL: Record<DoctorStatus, string> = {
   skipped: "Not checked",
 };
 
-/** The glyph in front of a check. Never the only signal: the label is always in the text. */
-export const STATUS_MARK: Record<DoctorStatus, string> = {
-  ok: "✓",
-  info: "i",
-  warn: "!",
-  fail: "✕",
-  skipped: "–",
-};
-
 export const failures = (report: DoctorReport): DoctorCheck[] =>
   report.checks.filter((check) => check.status === "fail");
 

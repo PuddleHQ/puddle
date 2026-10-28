@@ -6,7 +6,6 @@ import {
   isBlocked,
   reportText,
   STATUS_LABEL,
-  STATUS_MARK,
   took,
   verdict,
   warnings,
@@ -65,7 +64,6 @@ describe("system check model", () => {
   it("words every status in text, not only by symbol", () => {
     for (const status of Object.keys(STATUS_LABEL) as DoctorCheck["status"][]) {
       expect(STATUS_LABEL[status]).not.toBe("");
-      expect(STATUS_MARK[status]).not.toBe("");
     }
     expect(new Set(Object.values(STATUS_LABEL)).size).toBe(5);
   });

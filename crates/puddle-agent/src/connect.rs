@@ -30,6 +30,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::pin::Pin;
 use std::time::Duration;
 
+use puddle_agent_proto::origin::{CONTAINER, ORIGIN_HEADER};
 use puddle_agent_proto::ssh::{BANNER_MIN, PROTOCOL_HEADER, SSH, is_banner};
 use tokio::io::{
     AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
@@ -381,13 +382,16 @@ pub(crate) async fn peek<I: AsyncRead + Unpin>(stdin: &mut I, limit: Duration) -
     seen
 }
 
-/// A `CONNECT` for `authority` with the client's `first` bytes right behind it, and the header that
+/// A `CONNECT` for `authority` with the client's `first` bytes right behind it, the header that
 /// says "SSH" when they are an SSH identification line, so the proxy decides before it asks about
-/// the destination.
-pub(crate) fn connect_request(authority: &str, first: &[u8]) -> Vec<u8> {
+/// the destination, and the one that says the client is in a container when `from_container`.
+pub(crate) fn connect_request(authority: &str, first: &[u8], from_container: bool) -> Vec<u8> {
     let mut head = format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n");
     if is_banner(first) {
         let _ = write!(head, "{PROTOCOL_HEADER}: {SSH}\r\n");
+    }
+    if from_container {
+        let _ = write!(head, "{ORIGIN_HEADER}: {CONTAINER}\r\n");
     }
     head.push_str("\r\n");
     let mut out = head.into_bytes();
@@ -397,7 +401,7 @@ pub(crate) fn connect_request(authority: &str, first: &[u8]) -> Vec<u8> {
 
 /// Sends the `CONNECT` (with the client's first bytes right behind it) and reads the answer.
 async fn open(settings: &Settings, request: &Request, first: &[u8]) -> io::Result<Opened> {
-    let out = connect_request(&request.authority(), first);
+    let out = connect_request(&request.authority(), first, false);
     let mut reader = BufReader::new(TcpStream::connect(settings.proxy).await?);
     reader.get_mut().write_all(&out).await?;
     let (status, body) = tokio::time::timeout(settings.answer, read_answer(&mut reader))
@@ -473,6 +477,22 @@ mod tests {
 
     fn request(host: &str, port: u16) -> Request {
         Request::parse(&[host, &port.to_string()]).unwrap()
+    }
+
+    #[test]
+    fn a_connect_from_a_container_carries_the_origin_header_and_one_from_the_guest_does_not() {
+        let plain =
+            String::from_utf8(connect_request("a.example:443", b"\x16\x03", false)).unwrap();
+        assert_eq!(
+            plain,
+            "CONNECT a.example:443 HTTP/1.1\r\nHost: a.example:443\r\n\r\n\x16\x03"
+        );
+        let marked =
+            String::from_utf8(connect_request("a.example:443", b"\x16\x03", true)).unwrap();
+        assert_eq!(
+            marked,
+            "CONNECT a.example:443 HTTP/1.1\r\nHost: a.example:443\r\nx-puddle-origin: container\r\n\r\n\x16\x03"
+        );
     }
 
     #[test]

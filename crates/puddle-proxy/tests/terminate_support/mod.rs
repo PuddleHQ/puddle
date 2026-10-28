@@ -8,6 +8,7 @@
 )]
 #![allow(dead_code, reason = "each test binary uses a different subset")]
 
+use puddle_agent_proto::origin::{CONTAINER, ORIGIN_HEADER};
 use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -817,6 +818,7 @@ pub(crate) struct Guest {
     pub(crate) control: Control,
     driver: JoinHandle<()>,
     ca: Arc<WorkspaceCa>,
+    in_container: bool,
 }
 
 impl Drop for Guest {
@@ -835,7 +837,14 @@ impl Guest {
             control,
             driver,
             ca,
+            in_container: false,
         }
+    }
+
+    /// A client the agent marks as being in a container: its `CONNECT`s carry the origin header.
+    pub(crate) fn in_container(mut self) -> Self {
+        self.in_container = true;
+        self
     }
 
     /// A TLS client config trusting `roots` only.
@@ -859,9 +868,15 @@ impl Guest {
     /// Opens a `CONNECT authority` tunnel; the status line and the tunnel's stream.
     pub(crate) async fn connect_to(&mut self, authority: &str) -> (u16, BufReader<StreamHandle>) {
         let mut stream = self.control.open_stream().await.unwrap();
+        let origin = if self.in_container {
+            format!("{ORIGIN_HEADER}: {CONTAINER}\r\n")
+        } else {
+            String::new()
+        };
         stream
             .write_all(
-                format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n\r\n").as_bytes(),
+                format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n{origin}\r\n")
+                    .as_bytes(),
             )
             .await
             .unwrap();

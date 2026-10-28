@@ -1358,8 +1358,11 @@ mod termination {
     #[test]
     fn only_a_bound_name_on_443_for_a_workspace_with_a_termination_is_terminated() {
         let proxy = terminating_proxy();
-        let terminated =
-            |h: &str, port: u16| proxy.terminating(&at(h, port, workspace())).is_some();
+        let terminated = |h: &str, port: u16| {
+            proxy
+                .terminating(&at(h, port, workspace()), false)
+                .is_some()
+        };
         for (h, port) in [
             ("github.com", 443),
             ("dev.visualstudio.com", 443),
@@ -1387,12 +1390,16 @@ mod termination {
             assert!(!terminated(h, port), "{h}:{port}");
         }
         let other = WorkspaceName::new("other").unwrap();
-        assert!(proxy.terminating(&at("github.com", 443, other)).is_none());
+        assert!(
+            proxy
+                .terminating(&at("github.com", 443, other), false)
+                .is_none()
+        );
     }
 
     #[test]
     fn a_proxy_without_a_termination_never_terminates() {
         let plain = proxy(Arc::new(StaticPolicy::new()), StaticResolver::new());
-        assert!(plain.terminating(&request("github.com")).is_none());
+        assert!(plain.terminating(&request("github.com"), false).is_none());
     }
 }

@@ -378,6 +378,7 @@ impl Proxy {
     fn terminating(
         &self,
         request: &EgressRequest,
+        from_container: bool,
     ) -> Option<(
         Arc<terminate::Termination>,
         terminate::Mode,
@@ -388,22 +389,19 @@ impl Proxy {
             return None;
         }
         let termination = terminations.source.termination(&request.workspace)?;
-        let mode = termination.mode_for(&request.host)?;
+        let mode = termination.mode_for(&request.host, from_container)?;
         Some((termination, mode, &terminations.tls))
     }
 
     /// Why a host that the workspace would decrypt (it decrypts every host) is passed through
     /// instead: on its never-decrypt list, or one its tools did not accept the certificate for.
-    fn skipped(&self, request: &EgressRequest) -> Option<&'static str> {
+    fn skipped(&self, request: &EgressRequest, from_container: bool) -> Option<&'static str> {
         let terminations = self.terminations.as_ref()?;
         if request.port != terminate::request::HTTPS_PORT {
             return None;
         }
         let termination = terminations.source.termination(&request.workspace)?;
-        if termination.set().contains(&request.host) {
-            return None;
-        }
-        termination.interception().skipped(&request.host)
+        termination.skipped(&request.host, from_container)
     }
 
     pub(crate) fn addresses(&self) -> &dyn AddressCheck {
@@ -719,6 +717,28 @@ async fn refuse_over_limit(handler: &WorkspaceHandler, mut reader: GuestReader) 
     }
 }
 
+/// The decision and reason a decrypted connection's end puts on its audit record.
+fn apply_reason(event: &mut ConnectionEvent, done: &terminate::Outcome) {
+    if done.sni_mismatch {
+        event.decision = ConnectionDecision::Blocked;
+        event.reason = ConnectionReason::SniMismatch;
+    } else if done.certificate_unavailable {
+        // Puddle's own failure, not the client's: the rule's decision stands.
+        event.reason = ConnectionReason::CertificateUnavailable;
+    } else if done.certificate_refused {
+        // Puddle blocked nothing: the rule's decision stands and the tool refused.
+        event.reason = ConnectionReason::GuestTlsRejected;
+    } else if let Some(code) = done.ended {
+        // Puddle blocked nothing at the start: the rule's decision stands, a limit cut it short.
+        event.reason = ConnectionReason::LimitEnded(code);
+    } else if let Some(code) = done.refused {
+        event.decision = ConnectionDecision::Blocked;
+        event.reason = ConnectionReason::Refused(code);
+    } else if let Some(code) = done.passed_through {
+        event.reason = ConnectionReason::PassedThrough(code);
+    }
+}
+
 /// Decides, connects and relays one request whose destination is known; returns what the audit
 /// records about it (bytes are filled in by the caller once the stream is gone).
 async fn relay(
@@ -731,10 +751,11 @@ async fn relay(
     body: Body,
 ) -> ConnectionEvent {
     let proxy = &handler.proxy;
+    let from_container = ssh::from_container(head);
     let (admitted, mut event) = admit(proxy, request).await;
-    if let Some(path) = &path {
-        event.http = Some(HttpRequestLine::new(head.method.as_str(), path));
-    }
+    event.http = path
+        .as_ref()
+        .map(|p| HttpRequestLine::new(head.method.as_str(), p));
     let admitted = match admitted {
         Ok(admitted) => admitted,
         Err(refusal) => {
@@ -746,7 +767,7 @@ async fn relay(
     // A bound host is terminated: the guest's TLS handshake comes first, so a client that asks
     // for the wrong name never causes a connection to the real server.
     if path.is_none()
-        && let Some((termination, mode, tls)) = proxy.terminating(request)
+        && let Some((termination, mode, tls)) = proxy.terminating(request, from_container)
     {
         let cx = Arc::new(terminate::Context {
             proxy: Arc::clone(proxy),
@@ -760,6 +781,7 @@ async fn relay(
             streams: Arc::clone(&handler.h2_streams),
         });
         let done = terminate::run(cx, reader).await;
+        apply_reason(&mut event, &done);
         event.http = done.http;
         event.resolved_ip = done.resolved_ip;
         event.upstream = done.hop;
@@ -767,24 +789,6 @@ async fn relay(
         event.injected = done.injected;
         event.binding_id = done.binding_id;
         event.unswapped_stand_ins = done.unswapped_stand_ins;
-        if done.sni_mismatch {
-            event.decision = ConnectionDecision::Blocked;
-            event.reason = ConnectionReason::SniMismatch;
-        } else if done.certificate_unavailable {
-            // Puddle's own failure, not the client's: the rule's decision stands.
-            event.reason = ConnectionReason::CertificateUnavailable;
-        } else if done.certificate_refused {
-            // Puddle blocked nothing: the rule's decision stands and the tool refused.
-            event.reason = ConnectionReason::GuestTlsRejected;
-        } else if let Some(code) = done.ended {
-            // Puddle blocked nothing at the start: the rule's decision stands, a limit cut it short.
-            event.reason = ConnectionReason::LimitEnded(code);
-        } else if let Some(code) = done.refused {
-            event.decision = ConnectionDecision::Blocked;
-            event.reason = ConnectionReason::Refused(code);
-        } else if let Some(code) = done.passed_through {
-            event.reason = ConnectionReason::PassedThrough(code);
-        }
         return event;
     }
     let out = match connect_out(
@@ -806,8 +810,9 @@ async fn relay(
     event.outcome = Some(ConnectionOutcome::Connected);
     event.resolved_ip = out.addr.map(|addr| addr.ip());
     event.upstream = out.hop;
-    if path.is_none()
-        && let Some(code) = proxy.skipped(request)
+    if let Some(code) = proxy
+        .skipped(request, from_container)
+        .filter(|_| path.is_none())
     {
         event.reason = ConnectionReason::PassedThrough(code);
     }

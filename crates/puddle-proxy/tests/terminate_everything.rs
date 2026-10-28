@@ -128,6 +128,81 @@ async fn a_host_with_a_credential_is_decrypted_even_when_the_never_decrypt_list_
 }
 
 #[tokio::test]
+async fn a_client_in_a_container_is_passed_through_and_a_client_of_the_guest_is_still_decrypted() {
+    let pki = Pki::new();
+    let server = free_server(&pki, "free.test").await;
+    let injector = adds_nothing();
+    let rig = RigBuilder::new(&pki)
+        .name("free.test", server.addr)
+        .allow(vec!["bound.test", "free.test"])
+        .injector(injector.clone())
+        .decrypting_all(true, &[])
+        .build();
+    // The container's tools trust the server's own root and nothing of Puddle's.
+    let mut container = rig.guest().await.in_container();
+    let mut client = container
+        .tls_trusting("free.test:443", std::slice::from_ref(&pki.root))
+        .await
+        .unwrap();
+    assert_eq!(client.get("free.test", "/").await.text(), "hello");
+    client.close().await;
+    assert_eq!(
+        injector.calls(),
+        0,
+        "nothing of a container's was decrypted"
+    );
+    let events = rig.events(1).await;
+    assert_eq!(events[0].reason.to_string(), "pass_through:container");
+    assert_eq!(events[0].decision, ConnectionDecision::Allow);
+
+    // The same host from a process of the guest, which trusts Puddle's CA, is decrypted.
+    let mut guest = rig.guest().await;
+    let mut client = guest.tls("free.test:443", None).await.unwrap();
+    assert_eq!(client.get("free.test", "/").await.status, 200);
+    client.close().await;
+    assert_eq!(injector.calls(), 1);
+}
+
+#[tokio::test]
+async fn a_host_with_a_credential_is_decrypted_for_a_client_in_a_container_too() {
+    let pki = Pki::new();
+    let server = free_server(&pki, "bound.test").await;
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .decrypting_all(true, &[])
+        .build();
+    // Its credential must be added, so Puddle's certificate is what the client gets.
+    let mut container = rig.guest().await.in_container();
+    let mut client = container.tls("bound.test:443", None).await.unwrap();
+    assert_eq!(client.get("bound.test", "/").await.status, 200);
+    assert!(
+        server.recorded()[0].header("authorization").is_some(),
+        "the credential was added"
+    );
+    client.close().await;
+    assert_eq!(rig.events(1).await[0].reason.to_string(), "rule");
+}
+
+#[tokio::test]
+async fn a_container_with_the_switch_off_changes_nothing() {
+    let pki = Pki::new();
+    let server = free_server(&pki, "free.test").await;
+    let rig = RigBuilder::new(&pki)
+        .name("free.test", server.addr)
+        .allow(vec!["bound.test", "free.test"])
+        .build();
+    let mut container = rig.guest().await.in_container();
+    let mut client = container
+        .tls_trusting("free.test:443", std::slice::from_ref(&pki.root))
+        .await
+        .unwrap();
+    assert_eq!(client.get("free.test", "/").await.text(), "hello");
+    client.close().await;
+    // Passed through because nothing decrypts it, not because of the container.
+    assert_eq!(rig.events(1).await[0].reason.to_string(), "rule");
+}
+
+#[tokio::test]
 async fn the_switch_applies_to_the_next_connection_without_a_restart() {
     let pki = Pki::new();
     let server = free_server(&pki, "free.test").await;

@@ -85,7 +85,7 @@ pub use inject::{
     NoInjection, RequestView, SecretValue, Unauthorized,
 };
 pub use intercept::{Interception, LEARNED_CAP, LEARNED_TTL, PassThrough};
-pub(crate) use session::{Context, run};
+pub(crate) use session::{Context, Outcome, run};
 pub use set::{PatternError, TerminationSet};
 pub use stand_in::{StandIn, StandInError, StandInOrigin, StandIns, secret_stand_in};
 pub use token_body::{BodyFormat, TokenBody, TokenBodyError};
@@ -152,17 +152,41 @@ impl Termination {
     }
 
     /// How a connection to `host` is decrypted, or `None` when it is passed through.
-    pub(crate) fn mode_for(&self, host: &puddle_types::Host) -> Option<Mode> {
+    /// `from_container`: the agent says the client is in a container (see
+    /// [`puddle_agent_proto::origin`]).
+    pub(crate) fn mode_for(&self, host: &puddle_types::Host, from_container: bool) -> Option<Mode> {
         if self.set.contains(host) {
             Some(Mode::Bound)
         } else if self.interception.decrypt_all
             && matches!(host, puddle_types::Host::Name(_))
-            && self.interception.skipped(host).is_none()
+            && self.skipped(host, from_container).is_none()
         {
             Some(Mode::Everything)
         } else {
             None
         }
+    }
+
+    /// Why `host`, which the workspace would decrypt only because it decrypts every host, is
+    /// passed through instead (the audit code): a container's client (it has none of the
+    /// workspace's trust settings), the never-decrypt list, or a host its tools did not accept the
+    /// certificate for. `None` for a host with a credential, which is always decrypted so the
+    /// credential can be added, and for a host that is decrypted.
+    pub(crate) fn skipped(
+        &self,
+        host: &puddle_types::Host,
+        from_container: bool,
+    ) -> Option<&'static str> {
+        if self.set.contains(host) {
+            return None;
+        }
+        if from_container
+            && self.interception.decrypt_all
+            && matches!(host, puddle_types::Host::Name(_))
+        {
+            return Some("container");
+        }
+        self.interception.skipped(host)
     }
 
     /// Swaps the workspace's `stand_ins` for their real values on terminated requests (see

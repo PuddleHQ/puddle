@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Rules on the method and path of a request (`docs/spec/rules.md` R-46..R-52).
+//! Rules on the method and path of a request (`docs/spec/rules.md` R-49..R-55).
 //!
 //! A request rule names a host pattern, the methods it covers (none: every method) and a path
 //! pattern, and it only ever refuses. It is checked on every request the proxy can read: the

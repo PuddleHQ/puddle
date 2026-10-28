@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! What a rule on method and path compares: a canonical form of the request path, a path
-//! pattern, and a set of methods (`docs/spec/rules.md` R-46..R-52).
+//! pattern, and a set of methods (`docs/spec/rules.md` R-49..R-55).
 //!
 //! A request rule only ever denies, so the canonical form errs towards matching more: it
 //! decodes, folds and collapses every spelling that some server treats as the same path, and

@@ -119,7 +119,7 @@ pub enum ConnectionReason {
     PolicyUnavailable,
     /// Puddle's own request, which no rule decides (an image pull that passed the address guard).
     PuddleRequest,
-    /// A rule on method and path refused a request on a decrypted connection (R-46); the
+    /// A rule on method and path refused a request on a decrypted connection (R-49); the
     /// record's `request_rule` names it and `method` and `path` the request.
     RequestRule,
     /// A terminated TLS connection's client asked for a name other than the one it
@@ -276,7 +276,7 @@ pub struct ConnectionEvent {
     /// The rule set whose entry decided, if one did (R-24).
     pub rule_set: Option<RuleSetId>,
     /// The rule on method and path that refused a request of the connection, if one did (R-24,
-    /// R-46). Its own numbering, apart from [`Self::rule_id`].
+    /// R-49). Its own numbering, apart from [`Self::rule_id`].
     pub request_rule: Option<RuleId>,
     /// The pending row, when pending.
     pub pending_id: Option<PendingId>,

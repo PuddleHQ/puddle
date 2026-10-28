@@ -12,7 +12,7 @@
 //!   variable).
 //! - `denoland/deno:debian`: `fetch` works through `DENO_CERT` (Deno keeps its own roots).
 //! - `python:3.9-slim`: `pip download` from an index at that URL works through `PIP_CERT`
-//!   and reads the variable (an empty bundle in it fails the same fetch). The other variables
+//!   and reads the variable (a missing file in it fails the same fetch). The other variables
 //!   and the system store also carry pip, so the test cannot show that `PIP_CERT` is needed.
 //!
 //! Each tool fails before the files are applied (the negative control), so a pass is the trust
@@ -362,11 +362,11 @@ exit $rc"
         assert!(out.contains("Successfully downloaded puddletest"), "{out}");
 
         // pip reads PIP_CERT (the variable, not only the system store the image's own
-        // `update-ca-certificates` filled): an empty bundle in it makes the same fetch fail.
+        // `update-ca-certificates` filled): a missing file in it makes the same fetch fail.
         let (code, out) = sh(
             &sandbox,
-            "pip with an empty PIP_CERT",
-            serve(". /etc/profile.d/01-puddle-env.sh; : >/tmp/empty.pem; export PIP_CERT=/tmp/empty.pem"),
+            "pip with a missing PIP_CERT file",
+            serve(". /etc/profile.d/01-puddle-env.sh; export PIP_CERT=/nonexistent/bundle.pem"),
         )
         .await?;
         assert_ne!(code, 0, "pip ignored PIP_CERT: {out}");

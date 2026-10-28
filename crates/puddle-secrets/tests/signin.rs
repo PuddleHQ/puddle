@@ -95,7 +95,7 @@ async fn an_open_sign_in_ends_with_its_window_and_can_be_started_again() {
     let fakes = Fakes::new();
     let gh = fakes.install(
         "gh",
-        &format!("[auth login]\nstderr={GH_PROMPT}\nsleep_ms=5000\n"),
+        &format!("[auth login]\nstderr={GH_PROMPT}\nsleep_ms=600000\n"),
     );
     let signin =
         SignIns::new(ToolPaths::new(Some(gh.clone()), None)).with_window(Duration::from_secs(300));

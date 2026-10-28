@@ -145,6 +145,11 @@ jobs:
     if: needs.build.outputs.run == 'true'
     runs-on: ubuntu-24.04
     # ~67 VM tests in all, each partition a third of them; every test has its own 12-minute cap.
+    # Three limits, each inside the next, so a hang ends in a named failure with its log uploaded
+    # instead of the job's timeout (a cancelled job skips the steps that would keep the evidence):
+    # nextest's deadline for the whole run (VM_TEST_DEADLINE), the test step's own limit as the
+    # backstop if nextest cannot end, then this job limit. Change them together: the steps before
+    # the tests (under a minute) plus the step limit must leave the steps after it a few minutes.
     timeout-minutes: ${{ contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name) && 60 || 40 }}
     strategy:
       fail-fast: false
@@ -195,8 +200,10 @@ jobs:
           path: ${{ runner.temp }}/bundle
       - name: VM tests (tier K, partition ${{ matrix.partition }} of 3)
         if: steps.kvm.outputs.ok == 'true'
+        timeout-minutes: ${{ contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name) && 52 || 32 }}
         env:
           RUNS: ${{ inputs.parallel_runs || '1' }}
+          VM_TEST_DEADLINE: ${{ contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name) && '48m' || '28m' }}
         run: |
           chmod +x "$RUNNER_TEMP/bundle/puddle-agent"
           export PUDDLE_AGENT_BIN="$RUNNER_TEMP/bundle/puddle-agent"
@@ -208,15 +215,29 @@ jobs:
           base="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           FILTER='not (test(/(^|::)vm_machine_/) | test(/(^|::)vm_radar_/) | test(/(^|::)vm_soak_/))'
           case "$GITHUB_EVENT_NAME" in schedule | workflow_dispatch) FILTER='not (test(/(^|::)vm_machine_/) | test(/(^|::)vm_radar_/))' ;; esac
+          # At the deadline nextest stops the test still running, names it and writes junit.xml.
+          # The other users of the vm profile (the radar, the real-machine run) need longer, so the
+          # deadline comes from this job, as a tool config below the repository's.
+          printf '[profile.vm]\nglobal-timeout = "%s"\n' "$VM_TEST_DEADLINE" > "$RUNNER_TEMP/vm-deadline.toml"
           nextest() {
             PUDDLE_VM_PREFIX="$1" cargo-nextest nextest run --profile vm \
+              --tool-config-file "vm-deadline:$RUNNER_TEMP/vm-deadline.toml" \
               --archive-file "$RUNNER_TEMP/bundle/vm-tests.tar.zst" \
               --extract-to "$RUNNER_TEMP/vmx" --extract-overwrite --workspace-remap . \
               --partition hash:${{ matrix.partition }}/3 \
               -E "$FILTER"
           }
           if [ "$RUNS" = "1" ]; then
-            nextest "$base"
+            # nextest writes to a file that the upload keeps (the job log is lost when the job is
+            # cancelled), and tail shows it here as it grows, until nextest exits. The file exists
+            # before tail opens it, and a tail failure never ends the step early: nextest would go
+            # on running under the steps that follow.
+            log="$RUNNER_TEMP/vm-tests.log"
+            : > "$log"
+            nextest "$base" > "$log" 2>&1 &
+            run=$!
+            tail -n +1 -f --pid="$run" "$log" || true
+            wait "$run"
             exit
           fi
           pids=""
@@ -230,14 +251,37 @@ jobs:
             echo "::group::run $i ($base-$i)"; cat "$RUNNER_TEMP/run-$i.log"; echo "::endgroup::"
           done
           exit "$rc"
+      - name: memory and processes after a failed or stopped run
+        if: ${{ (failure() || cancelled()) && steps.kvm.outputs.ok == 'true' }}
+        # Best effort: a starved runner must not cost the upload after it.
+        timeout-minutes: 3
+        continue-on-error: true
+        run: |
+          # What was still running (a VM process that outlived its test, a stuck test) and how much
+          # memory was left; printed here and kept with the results. Command lines only for the
+          # run's own programs (test binaries, msb), which carry no secrets.
+          {
+            free -m
+            ps -eo pid=,ppid=,rss=,etimes=,comm= --sort=-rss | head -40 | while read -r pid ppid rss age name; do
+              exe=$(readlink "/proc/$pid/exe" 2>/dev/null || true)
+              case "$exe" in
+                "$RUNNER_TEMP"/*) cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null) ;;
+                *) cmd="$name" ;;
+              esac
+              printf 'pid %s ppid %s rss %s MiB age %s s: %s\n' "$pid" "$ppid" "$((rss / 1024))" "$age" "$cmd"
+            done
+          } 2>&1 | tee "$RUNNER_TEMP/vm-processes.txt"
       - name: upload test results and msb logs
-        if: ${{ !cancelled() && steps.kvm.outputs.ok == 'true' }}
+        if: ${{ always() && steps.kvm.outputs.ok == 'true' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vm-linux-results-${{ matrix.partition }}
           path: |
             ${{ runner.temp }}/vmx/target/nextest/vm/junit.xml
             target/nextest/vm/junit.xml
+            ${{ runner.temp }}/vm-tests.log
+            ${{ runner.temp }}/run-*.log
+            ${{ runner.temp }}/vm-processes.txt
             ${{ runner.temp }}/pvm/**/logs/**
           retention-days: 14
           if-no-files-found: ignore

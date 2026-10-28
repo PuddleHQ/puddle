@@ -507,39 +507,42 @@ pub fn on_trial(builds: &Path) -> bool {
         && pointer(builds, PREVIOUS).is_some_and(|p| complete(builds, &p).is_some())
 }
 
-/// The current build has accepted a connection: it is the one to keep. The previous build and
+/// The build `commit` has accepted a connection: it is the one to keep. The previous build and
 /// everything else in the folder that is not a build in use goes, so the caller must not run this
-/// while a download is going on (it would remove the download's folders).
+/// while a download is going on (it would remove the download's folders) nor while a switch is
+/// being made. Does nothing when `commit` is no longer the current build (a switch came first):
+/// a build that never ran is never recorded as one that did.
 ///
 /// # Errors
 ///
 /// When the pointer cannot be written.
-pub fn confirm(builds: &Path) -> io::Result<()> {
-    let Some(current) = pointer(builds, CURRENT) else {
+pub fn confirm(builds: &Path, commit: &str) -> io::Result<()> {
+    let current = pointer(builds, CURRENT);
+    if current.as_deref() != Some(commit) {
         return Ok(());
-    };
-    write_pointer(builds, CONFIRMED, &current)?;
+    }
+    write_pointer(builds, CONFIRMED, commit)?;
     let _ = std::fs::remove_file(builds.join(PREVIOUS));
     prune(builds);
     Ok(())
 }
 
-/// The current build exited before it ever accepted a connection: the previous one is current
-/// again and the failed one is never staged again. `false` when there was no previous build. Like
-/// [`confirm`], not to be run during a download.
+/// The build `failed` exited before it ever accepted a connection: the previous one is current
+/// again and the failed one is never staged again. `false` when `failed` is not the current build
+/// on trial any more, or there was no previous build. Like [`confirm`], not to be run during a
+/// download nor while a switch is being made.
 ///
 /// # Errors
 ///
 /// When a pointer cannot be written.
-pub fn roll_back(builds: &Path) -> io::Result<bool> {
-    if !on_trial(builds) {
+pub fn roll_back(builds: &Path, failed: &str) -> io::Result<bool> {
+    if !on_trial(builds) || pointer(builds, CURRENT).as_deref() != Some(failed) {
         return Ok(false);
     }
-    let (Some(failed), Some(previous)) = (pointer(builds, CURRENT), pointer(builds, PREVIOUS))
-    else {
+    let Some(previous) = pointer(builds, PREVIOUS) else {
         return Ok(false);
     };
-    write_pointer(builds, REJECTED, &failed)?;
+    write_pointer(builds, REJECTED, failed)?;
     write_pointer(builds, CURRENT, &previous)?;
     let _ = std::fs::remove_file(builds.join(PREVIOUS));
     prune(builds);

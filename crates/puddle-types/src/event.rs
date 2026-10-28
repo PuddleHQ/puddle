@@ -1028,6 +1028,7 @@ mod tests {
                 "pending_updated",
                 "pending_closed",
                 "rules_changed",
+                "request_rules_changed",
                 "identities_changed",
                 "repo_lists_changed",
                 "workspace_git_changed",

@@ -656,6 +656,9 @@ async fn an_agreed_websocket_over_http11_that_goes_silent_is_closed_and_recorded
             break;
         }
     }
+    // The traffic and silence windows run on a paused clock; setup and the audit read stay real (the policy
+    // and the audit log run on the blocking pool, which a paused clock does not wait for).
+    tokio::time::pause();
     // Traffic keeps it open past the limit...
     for _ in 0..3 {
         tokio::time::sleep(Duration::from_millis(600)).await;
@@ -675,6 +678,7 @@ async fn an_agreed_websocket_over_http11_that_goes_silent_is_closed_and_recorded
     )
     .await;
     assert!(read.is_ok(), "the silent WebSocket was never closed");
+    tokio::time::resume();
     let events = rig.events(1).await;
     assert_eq!(
         reasons(&events),

@@ -581,12 +581,14 @@ impl Store {
                 also_closed,
             })
         })?;
+        // Bound first: a call inside the macro is expanded twice (the log fallback copy never runs under a subscriber).
+        let effect = decided.rule.effect.as_str();
         tracing::info!(
             pending = %id,
             workspace = %decided.row.workspace,
             host = %decided.row.host,
             rule = %decided.rule.id,
-            effect = %decided.rule.effect.as_str(),
+            effect,
             "pending request decided"
         );
         Ok(decided)

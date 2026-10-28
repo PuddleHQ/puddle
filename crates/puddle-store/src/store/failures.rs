@@ -245,7 +245,7 @@ fn a_decision_is_logged_with_its_effect() {
     assert_eq!(
         logs.lines(),
         [format!(
-            "INFO pending request decided pending={id} workspace=box host=x.example rule={} effect=allow",
+            "INFO pending request decided pending={id} workspace=box host=x.example rule={} effect=\"allow\"",
             decided.rule.id
         )]
     );

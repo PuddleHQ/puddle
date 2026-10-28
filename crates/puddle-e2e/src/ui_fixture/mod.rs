@@ -25,10 +25,11 @@ use std::time::Duration;
 use puddle_api::wire::{FoundAccount, FoundVia};
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, ConnectionInfo, CredentialService, DoctorService, EventHub,
-    FakeCredentials, FakeDoctor, FakeLauncher, FakeNetworkHealth, FakePorts, FakeWorkspaces, Found,
-    FoundList, Launcher, Listing, MemorySettings, NetworkHealthService, Operation, PortsService,
-    RemoteNote, RepoFindings, RepoService, RepositoryDraft, RunningApi, Services, SettingsRepo,
-    ShellInitCheck, StartFolder, Unsaved, WorkspaceRecord, check_repositories,
+    FakeCredentials, FakeDoctor, FakeLauncher, FakeLearned, FakeNetworkHealth, FakePorts,
+    FakeWorkspaces, Found, FoundList, Launcher, LearnedService, Listing, MemorySettings,
+    NetworkHealthService, Operation, PortsService, RemoteNote, RepoFindings, RepoService,
+    RepositoryDraft, RunningApi, Services, SettingsRepo, ShellInitCheck, StartFolder, Unsaved,
+    WorkspaceRecord, check_repositories,
 };
 use puddle_secrets::{
     AccountName, DiscoveredAccount, Discovery, HostName, Listing as FoundListing, OrgName,
@@ -172,6 +173,8 @@ struct State {
     problems: Arc<Problems>,
     /// Every workspace's ports: nothing listens until a test or scenario says so.
     ports: Arc<FakePorts>,
+    /// Every workspace's learned pass-through hosts: none until a step says so.
+    learned: Arc<FakeLearned>,
     api: Option<RunningApi>,
 }
 
@@ -242,6 +245,7 @@ impl Fixture {
             doctor,
             problems,
             ports: Arc::new(FakePorts::new()),
+            learned: Arc::new(FakeLearned::new()),
             api: None,
         };
         state.seed(scenario)?;
@@ -267,7 +271,8 @@ impl Fixture {
             .with_repos(state.repos.clone() as Arc<dyn RepoService>)
             .with_doctor(state.doctor.clone() as Arc<dyn DoctorService>)
             .with_problems(state.problems.clone())
-            .with_ports(state.ports.clone() as Arc<dyn PortsService>);
+            .with_ports(state.ports.clone() as Arc<dyn PortsService>)
+            .with_learned(state.learned.clone() as Arc<dyn LearnedService>);
             match ApiServer::bind(
                 ApiConfig::with_port(self.port.load(Ordering::SeqCst)),
                 self.token.clone(),
@@ -674,6 +679,19 @@ impl State {
                 self.ports.set_listening(&name, ports);
                 self.events
                     .emit(Event::WorkspacePortsChanged { workspace: name });
+            }
+            Step::Learned {
+                workspace: name,
+                host,
+                expires_in_secs,
+            } => {
+                let name = workspace(name)?;
+                self.learned
+                    .learn(&name, host, expires_in_secs.unwrap_or(12 * 3600));
+                self.events.emit(Event::PassThroughLearned {
+                    workspace: name,
+                    host: host.clone(),
+                });
             }
             Step::ShellInitCheck { refuses } => self.workspaces.set_shell_init_check(
                 refuses

@@ -40,7 +40,9 @@ mod ports;
 mod sets;
 mod shell_init;
 
-pub use interception::WorkspaceInterception;
+pub use interception::{
+    DEFAULT_LEARNED_CAP, DEFAULT_LEARNED_TTL_SECS, LearnedLimits, WorkspaceInterception,
+};
 pub use ports::PinnedPort;
 pub use sets::{RuleSetEntryInfo, RuleSetInfo, SystemHost, SystemPlan, parse_rule_set};
 

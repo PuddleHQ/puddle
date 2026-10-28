@@ -9,10 +9,10 @@ use rusqlite::Connection;
 use crate::error::StoreError;
 
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 10;
+pub const SCHEMA_VERSION: u32 = 11;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -373,6 +373,16 @@ CREATE TABLE never_decrypt (
 ) STRICT;
 CREATE TABLE never_decrypt_global (
     pattern TEXT NOT NULL PRIMARY KEY
+) STRICT;
+";
+
+const V11: &str = r"
+-- How long Puddle leaves a host alone after a tool refused its certificate, and how many such
+-- hosts a workspace remembers. One row for every workspace; no row means the built-in values.
+CREATE TABLE learned_limits (
+    id       INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
+    ttl_secs INTEGER NOT NULL CHECK (ttl_secs > 0),
+    cap      INTEGER NOT NULL CHECK (cap > 0)
 ) STRICT;
 ";
 

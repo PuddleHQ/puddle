@@ -38,6 +38,7 @@ mod files;
 mod git_hosts;
 mod host;
 mod injection;
+mod learned;
 mod logins;
 mod paths;
 mod platform;

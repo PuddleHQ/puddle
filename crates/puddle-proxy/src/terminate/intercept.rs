@@ -27,14 +27,30 @@ pub const LEARNED_TTL: Duration = Duration::from_hours(12);
 /// Most hosts remembered at once: Palo Alto's figure. Past it the oldest entry makes room.
 pub const LEARNED_CAP: usize = 1024;
 
+/// Called with a host the first time it is remembered (or again after it expired).
+type Observer = Box<dyn Fn(&Host) + Send + Sync>;
+
 /// Hosts a workspace's tools refused Puddle's certificate for, remembered for a while so that
 /// those hosts are passed through. One per workspace; shared by every [`Termination`](super::Termination)
 /// made for it, so a change to the workspace's settings does not forget what was learned.
-#[derive(Debug)]
 pub struct PassThrough {
+    inner: Mutex<Inner>,
+    observer: Option<Observer>,
+}
+
+#[derive(Debug)]
+struct Inner {
     ttl: Duration,
     cap: usize,
-    seen: Mutex<HashMap<String, Instant>>,
+    seen: HashMap<String, Instant>,
+}
+
+impl std::fmt::Debug for PassThrough {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PassThrough")
+            .field("inner", &self.inner)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for PassThrough {
@@ -54,51 +70,120 @@ impl PassThrough {
     #[must_use]
     pub fn with_limits(ttl: Duration, cap: usize) -> Self {
         Self {
-            ttl,
-            cap: cap.max(1),
-            seen: Mutex::new(HashMap::new()),
+            inner: Mutex::new(Inner {
+                ttl,
+                cap: cap.max(1),
+                seen: HashMap::new(),
+            }),
+            observer: None,
         }
+    }
+
+    /// Calls `observer` with each host that is newly remembered, so the owner can tell the user.
+    /// It runs after the list's lock is released and must not block.
+    #[must_use]
+    pub fn observed(mut self, observer: impl Fn(&Host) + Send + Sync + 'static) -> Self {
+        self.observer = Some(Box::new(observer));
+        self
+    }
+
+    fn inner(&self) -> std::sync::MutexGuard<'_, Inner> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Changes how long a host is kept and how many are kept. A list now over `cap` drops its
+    /// oldest hosts; a shorter time applies to the hosts already in it.
+    pub fn set_limits(&self, ttl: Duration, cap: usize) {
+        let mut inner = self.inner();
+        inner.ttl = ttl;
+        inner.cap = cap.max(1);
+        let now = Instant::now();
+        inner.seen.retain(|_, at| now.duration_since(*at) < ttl);
+        while inner.seen.len() > inner.cap {
+            let Some(oldest) = inner
+                .seen
+                .iter()
+                .min_by_key(|(_, at)| **at)
+                .map(|(name, _)| name.clone())
+            else {
+                break;
+            };
+            inner.seen.remove(&oldest);
+        }
+    }
+
+    /// How long a host is kept.
+    #[must_use]
+    pub fn ttl(&self) -> Duration {
+        self.inner().ttl
+    }
+
+    /// How many hosts are kept at most.
+    #[must_use]
+    pub fn cap(&self) -> usize {
+        self.inner().cap
     }
 
     /// Remembers `host`, or renews it. Returns whether it was not already remembered.
     pub fn learn(&self, host: &Host) -> bool {
         let now = Instant::now();
-        let mut seen = self.seen.lock().unwrap_or_else(PoisonError::into_inner);
-        seen.retain(|_, at| now.duration_since(*at) < self.ttl);
-        let key = host.to_string();
-        if !seen.contains_key(&key)
-            && seen.len() >= self.cap
-            && let Some(oldest) = seen
-                .iter()
-                .min_by_key(|(_, at)| **at)
-                .map(|(name, _)| name.clone())
-        {
-            seen.remove(&oldest);
+        let fresh = {
+            let mut inner = self.inner();
+            let ttl = inner.ttl;
+            inner.seen.retain(|_, at| now.duration_since(*at) < ttl);
+            let key = host.to_string();
+            if !inner.seen.contains_key(&key)
+                && inner.seen.len() >= inner.cap
+                && let Some(oldest) = inner
+                    .seen
+                    .iter()
+                    .min_by_key(|(_, at)| **at)
+                    .map(|(name, _)| name.clone())
+            {
+                inner.seen.remove(&oldest);
+            }
+            inner.seen.insert(key, now).is_none()
+        };
+        if fresh && let Some(observer) = &self.observer {
+            observer(host);
         }
-        seen.insert(key, now).is_none()
+        fresh
     }
 
     /// Whether `host` is remembered and not yet expired.
     #[must_use]
     pub fn contains(&self, host: &Host) -> bool {
-        let seen = self.seen.lock().unwrap_or_else(PoisonError::into_inner);
-        seen.get(&host.to_string())
-            .is_some_and(|at| at.elapsed() < self.ttl)
+        let inner = self.inner();
+        inner
+            .seen
+            .get(&host.to_string())
+            .is_some_and(|at| at.elapsed() < inner.ttl)
     }
 
-    /// Forgets `host`: it is decrypted again from the next connection.
-    pub fn forget(&self, host: &Host) {
-        self.seen
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(&host.to_string());
+    /// Forgets `host`: it is decrypted again from the next connection. Returns whether it was
+    /// remembered and not yet expired.
+    pub fn forget(&self, host: &Host) -> bool {
+        let mut inner = self.inner();
+        let ttl = inner.ttl;
+        inner
+            .seen
+            .remove(&host.to_string())
+            .is_some_and(|at| at.elapsed() < ttl)
+    }
+
+    /// Forgets every host. Returns how many were remembered and not yet expired.
+    pub fn clear(&self) -> usize {
+        let mut inner = self.inner();
+        let ttl = inner.ttl;
+        let live = inner.seen.values().filter(|at| at.elapsed() < ttl).count();
+        inner.seen.clear();
+        live
     }
 
     /// Makes `host` look `by` older than it is (tests of the expiry, without waiting for it).
     #[cfg(test)]
     fn age(&self, host: &Host, by: Duration) {
-        let mut seen = self.seen.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(at) = seen.get_mut(&host.to_string()) {
+        if let Some(at) = self.inner().seen.get_mut(&host.to_string()) {
             *at = at.checked_sub(by).unwrap_or(*at);
         }
     }
@@ -106,11 +191,13 @@ impl PassThrough {
     /// The remembered hosts with the time each has left, soonest to expire first.
     #[must_use]
     pub fn list(&self) -> Vec<(String, Duration)> {
-        let seen = self.seen.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut out: Vec<(String, Duration)> = seen
+        let inner = self.inner();
+        let mut out: Vec<(String, Duration)> = inner
+            .seen
             .iter()
             .filter_map(|(name, at)| {
-                self.ttl
+                inner
+                    .ttl
                     .checked_sub(at.elapsed())
                     .filter(|left| !left.is_zero())
                     .map(|left| (name.clone(), left))
@@ -234,11 +321,65 @@ mod tests {
     }
 
     #[test]
+    fn forgetting_says_whether_the_host_was_remembered_and_clearing_counts_the_live_ones() {
+        let list = PassThrough::with_limits(Duration::from_secs(60), 8);
+        list.learn(&host("a.example"));
+        list.learn(&host("b.example"));
+        list.learn(&host("c.example"));
+        list.age(&host("c.example"), Duration::from_secs(61));
+        assert!(list.forget(&host("a.example")));
+        assert!(!list.forget(&host("a.example")), "already gone");
+        assert!(
+            !list.forget(&host("c.example")),
+            "expired is not remembered"
+        );
+        assert_eq!(list.clear(), 1, "only b.example was still live");
+        assert_eq!(list.list(), []);
+        assert_eq!(list.clear(), 0);
+    }
+
+    #[test]
+    fn new_limits_apply_to_the_hosts_already_remembered() {
+        let list = PassThrough::with_limits(Duration::from_secs(3600), 8);
+        for (name, age) in [("a", 30), ("b", 20), ("c", 10)] {
+            let h = host(&format!("{name}.example"));
+            list.learn(&h);
+            list.age(&h, Duration::from_secs(age));
+        }
+        list.set_limits(Duration::from_secs(3600), 2);
+        assert!(!list.contains(&host("a.example")), "the oldest made room");
+        assert_eq!(list.list().len(), 2);
+        list.set_limits(Duration::from_secs(15), 0);
+        assert_eq!(list.cap(), 1, "a cap of zero is one");
+        assert_eq!(list.ttl(), Duration::from_secs(15));
+        assert_eq!(
+            list.list()
+                .iter()
+                .map(|(n, _)| n.as_str())
+                .collect::<Vec<_>>(),
+            ["c.example"],
+            "a shorter time expired b at once"
+        );
+    }
+
+    #[test]
+    fn the_observer_hears_each_new_host_once() {
+        let heard = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&heard);
+        let list = PassThrough::new().observed(move |h| sink.lock().unwrap().push(h.to_string()));
+        list.learn(&host("a.example"));
+        list.learn(&host("a.example"));
+        list.learn(&host("b.example"));
+        assert_eq!(*heard.lock().unwrap(), ["a.example", "b.example"]);
+        assert!(format!("{list:?}").contains("PassThrough"));
+    }
+
+    #[test]
     fn the_defaults_are_twelve_hours_and_a_thousand_hosts() {
         let list = PassThrough::new();
-        assert_eq!(list.ttl, Duration::from_hours(12));
-        assert_eq!(list.cap, 1024);
-        assert_eq!(PassThrough::with_limits(Duration::ZERO, 0).cap, 1);
+        assert_eq!(list.ttl(), Duration::from_hours(12));
+        assert_eq!(list.cap(), 1024);
+        assert_eq!(PassThrough::with_limits(Duration::ZERO, 0).cap(), 1);
     }
 
     #[test]

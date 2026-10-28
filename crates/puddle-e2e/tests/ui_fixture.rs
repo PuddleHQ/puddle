@@ -1416,6 +1416,34 @@ async fn steps_change_what_listens_and_what_the_shell_init_check_says() {
     assert_eq!(ports["ports"].as_array().unwrap().len(), 1);
     assert_eq!(ports["ports"][0]["guest_port"], 8080);
 
+    assert_eq!(
+        step(json!({"do": "learned", "workspace": "web-shop", "host": "pinned.example", "expires_in_secs": 90}))
+            .await
+            .status,
+        204
+    );
+    let seen = read_until(&mut events, |text| text.contains("pass_through_learned")).await;
+    assert!(seen.contains("pinned.example"), "{seen}");
+    let learned = run
+        .get("/api/workspaces/web-shop/interception/learned")
+        .await
+        .json();
+    assert_eq!(
+        learned,
+        json!({"hosts": [{"host": "pinned.example", "expires_in_secs": 90}]})
+    );
+    assert_eq!(
+        step(json!({"do": "learned", "workspace": "web-shop", "host": "other.example"}))
+            .await
+            .status,
+        204
+    );
+    let learned = run
+        .get("/api/workspaces/web-shop/interception/learned")
+        .await
+        .json();
+    assert_eq!(learned["hosts"][1]["expires_in_secs"], 43_200, "{learned}");
+
     let put = |content: &str| {
         let run = &run;
         let body = json!({ "content": content });

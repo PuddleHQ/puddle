@@ -14,7 +14,8 @@
 //! | another [`kind`] preamble (`connect`, `ssh-agent`: reserved) or an unknown one | — | closed with a logged reason |
 //! | anything else (an HTTP request line) | one proxied guest connection: `CONNECT host:port` or an absolute-form request | handed to the caller's [`host::StreamHandler`] (the proxy) |
 //!
-//! [`ssh`] recognises an SSH client by its identification line, which the proxy refuses.
+//! [`ssh`] recognises an SSH client by its identification line, which the proxy refuses. [`origin`]
+//! marks a connection from a container, which the proxy does not decrypt.
 //!
 //! Both sides use [`yamux::client_config`] / [`yamux::server_config`], and both splice a guest
 //! connection with [`relay::splice`], which passes an abort on as a TCP reset instead of a clean
@@ -37,6 +38,7 @@ pub mod forward;
 pub mod host;
 pub mod host_control;
 pub mod kind;
+pub mod origin;
 pub mod relay;
 pub mod resolve;
 pub mod ssh;

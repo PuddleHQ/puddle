@@ -1,17 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The proxy listener inside the guest: every accepted connection becomes one yamux stream to
 //! the host, spliced so an abort stays an abort. The agent doesn't parse the request;
-//! the host proxy does.
+//! the host proxy does, except for one thing: a request from a container (see
+//! [`origin`]) gets [`ORIGIN_HEADER`] after its first line, so the proxy does not decrypt it.
 
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use puddle_agent_proto::origin::{CONTAINER, ORIGIN_HEADER};
 use puddle_agent_proto::relay::splice;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio::task::JoinSet;
 
+use crate::origin;
 use crate::upstream::Upstream;
 
 /// Pause after a failed accept (e.g. out of file descriptors) so the loop doesn't spin.
@@ -22,6 +26,13 @@ const ACCEPT_PAUSE: Duration = Duration::from_millis(50);
 /// thousands at once, and tokio's own default of 128 overflows: the dropped handshakes come back
 /// as retransmits seconds later or, rarely, as a reset.
 pub const LISTEN_BACKLOG: u32 = 4096;
+
+/// How long a container's client gets to send its request line before the connection goes up
+/// unmarked.
+const REQUEST_LINE_WAIT: Duration = Duration::from_secs(10);
+
+/// The longest request line looked for.
+const REQUEST_LINE_MAX: usize = 16 * 1024;
 
 /// Binds `addr` like [`TcpListener::bind`], but with [`LISTEN_BACKLOG`] instead of tokio's 128.
 ///
@@ -59,6 +70,39 @@ pub async fn serve(listener: TcpListener, upstream: Arc<Upstream>) {
     }
 }
 
+/// What a container's client sent first: up to and including its request line, plus whatever came
+/// in the same reads. Ends early (with what there is) on a closed connection, a pause over
+/// [`REQUEST_LINE_WAIT`] or a line over [`REQUEST_LINE_MAX`].
+async fn request_start(client: &mut TcpStream) -> Vec<u8> {
+    let mut seen = Vec::new();
+    let mut chunk = [0u8; 1024];
+    let deadline = tokio::time::Instant::now() + REQUEST_LINE_WAIT;
+    while !seen.contains(&b'\n') && seen.len() < REQUEST_LINE_MAX {
+        match tokio::time::timeout_at(deadline, client.read(&mut chunk)).await {
+            Ok(Ok(n)) if n > 0 => seen.extend_from_slice(chunk.get(..n).unwrap_or_default()),
+            _ => break,
+        }
+    }
+    seen
+}
+
+/// `first` with the origin header after its request line. A first line that is not an HTTP/1
+/// request line (the proxy would refuse it anyway) is returned as it is.
+fn mark_request(first: &[u8]) -> Vec<u8> {
+    let Some(end) = first.iter().position(|b| *b == b'\n') else {
+        return first.to_vec();
+    };
+    let (line, rest) = first.split_at(end + 1);
+    let text = line.trim_ascii_end();
+    if !(text.ends_with(b" HTTP/1.1") || text.ends_with(b" HTTP/1.0")) {
+        return first.to_vec();
+    }
+    let mut out = line.to_vec();
+    out.extend_from_slice(format!("{ORIGIN_HEADER}: {CONTAINER}\r\n").as_bytes());
+    out.extend_from_slice(rest);
+    out
+}
+
 async fn connection(mut client: TcpStream, upstream: Arc<Upstream>) {
     let mut stream = match upstream.open().await {
         Ok(stream) => stream,
@@ -69,8 +113,48 @@ async fn connection(mut client: TcpStream, upstream: Arc<Upstream>) {
             return;
         }
     };
+    if client.peer_addr().is_ok_and(origin::from_container) {
+        let first = request_start(&mut client).await;
+        if let Err(err) = stream.write_all(&mark_request(&first)).await {
+            tracing::debug!(error = %err, "writing a container's request failed");
+            return;
+        }
+    }
     if let Err(err) = splice(&mut client, &mut stream).await {
         // The stream is dropped without a shutdown below, which resets it on the host side.
         tracing::debug!(error = %err, "guest connection ended with an error");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_request_line_gets_the_origin_header_right_after_it() {
+        let marked = mark_request(
+            b"CONNECT registry.example:443 HTTP/1.1\r\nHost: registry.example:443\r\n\r\n",
+        );
+        assert_eq!(
+            marked,
+            b"CONNECT registry.example:443 HTTP/1.1\r\nx-puddle-origin: container\r\nHost: registry.example:443\r\n\r\n"
+        );
+        let plain = mark_request(b"GET http://a.example/ HTTP/1.0\r\n\r\n");
+        assert!(
+            plain.starts_with(b"GET http://a.example/ HTTP/1.0\r\nx-puddle-origin: container\r\n")
+        );
+    }
+
+    #[test]
+    fn anything_that_is_not_an_http_1_request_line_goes_up_as_it_is() {
+        for first in [
+            &b""[..],
+            b"CONNECT a.example:443 HTTP/1.1",
+            b"\x16\x03\x01\x02\x00\n",
+            b"SSH-2.0-OpenSSH_9.6\r\n",
+            b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n",
+        ] {
+            assert_eq!(mark_request(first), first);
+        }
     }
 }

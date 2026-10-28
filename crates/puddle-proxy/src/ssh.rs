@@ -21,6 +21,7 @@ use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use puddle_agent_proto::origin::{CONTAINER, ORIGIN_HEADER};
 use puddle_agent_proto::ssh::{PROTOCOL_HEADER, SSH, is_banner};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
@@ -31,6 +32,13 @@ pub(crate) fn announced(head: &Head) -> bool {
     head.headers
         .iter()
         .any(|h| header_name(h) == PROTOCOL_HEADER && header_value(h).eq_ignore_ascii_case(SSH))
+}
+
+/// Whether the request says its client is in a container (see [`puddle_agent_proto::origin`]).
+pub(crate) fn from_container(head: &Head) -> bool {
+    head.headers
+        .iter()
+        .any(|h| header_name(h) == ORIGIN_HEADER && header_value(h).eq_ignore_ascii_case(CONTAINER))
 }
 
 /// Whether the bytes the client sent with the request head are an SSH identification line.
@@ -134,6 +142,25 @@ mod tests {
             uri: "github.com:22".into(),
             version: "HTTP/1.1".into(),
             headers: headers.iter().map(|h| (*h).to_owned()).collect(),
+        }
+    }
+
+    #[test]
+    fn only_the_origin_header_with_the_value_container_marks_a_container() {
+        assert!(from_container(&head(&["x-puddle-origin: container"])));
+        assert!(from_container(&head(&[
+            "Host: a",
+            "X-Puddle-Origin:  Container "
+        ])));
+        for headers in [
+            &[][..],
+            &["x-puddle-origin: guest"],
+            &["x-puddle-origin: "],
+            &["x-puddle-origin-extra: container"],
+            &["x-puddle-protocol: container"],
+            &["host: x-puddle-origin: container"],
+        ] {
+            assert!(!from_container(&head(headers)), "{headers:?}");
         }
     }
 

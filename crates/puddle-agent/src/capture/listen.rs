@@ -8,6 +8,11 @@
 //! those bytes right behind it so the proxy can tell SSH before it decides. The proxy's answer
 //! decides what the client sees: `200` and the tunnel, or a reset.
 //!
+//! A connection from a container (its source address is not one of the guest's own: the rules
+//! redirect forwarded traffic too) is marked with the origin header (`puddle_agent_proto::origin`), so the proxy passes it through
+//! undecrypted: the client has none of the workspace's CA settings (see
+//! [`crate::origin`]).
+//!
 //! A refused SSH client (libssh2, Go: clients that never read `ssh_config`) is told why before it
 //! is closed: the proxy's text goes out as lines ahead of the identification string, which a server
 //! may send (RFC 4253 section 4.2), and the client shows what its library shows of them.
@@ -24,6 +29,7 @@ use tokio::task::JoinSet;
 
 use super::table::{StandIns, in_range};
 use crate::connect::{connect_request, peek, read_answer};
+use crate::origin;
 use crate::upstream::Upstream;
 
 /// How long a client gets to send its first bytes before the connection goes up without them.
@@ -124,6 +130,7 @@ async fn connection(mut client: TcpStream, table: StandIns, upstream: Arc<Upstre
         reset(&client);
         return;
     };
+    let marked = client.peer_addr().is_ok_and(origin::from_container);
     let first = peek(&mut client, FIRST_BYTES).await;
     let mut stream = match upstream.open().await {
         Ok(stream) => stream,
@@ -133,7 +140,8 @@ async fn connection(mut client: TcpStream, table: StandIns, upstream: Arc<Upstre
             return;
         }
     };
-    if let Err(err) = stream_write(&mut stream, &connect_request(&authority, &first)).await {
+    if let Err(err) = stream_write(&mut stream, &connect_request(&authority, &first, marked)).await
+    {
         tracing::debug!(error = %err, "writing the CONNECT failed");
         reset(&client);
         return;

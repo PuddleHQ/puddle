@@ -137,6 +137,16 @@ impl Correlator {
 /// Watches both sources and sends one [`AgentMessage::OomKill`] per kill into `out`. Returns
 /// when `out` closes, or at once if neither source can be read.
 pub async fn watch(sources: OomSources, out: mpsc::Sender<AgentMessage>) {
+    watch_observed(sources, out, || {}).await;
+}
+
+/// [`watch`], calling `polled` after the baseline counter reading and after each later reading.
+/// Tests wait on it instead of a fixed time for the watch to have seen a change they made.
+async fn watch_observed(
+    sources: OomSources,
+    out: mpsc::Sender<AgentMessage>,
+    mut polled: impl FnMut(),
+) {
     let (kill_tx, mut kills) = mpsc::channel(KILL_QUEUE);
     let log_ok = match open_log(&sources.kmsg) {
         Ok(file) => {
@@ -166,6 +176,7 @@ pub async fn watch(sources: OomSources, out: mpsc::Sender<AgentMessage>) {
             return;
         }
     }
+    polled();
     let mut correlator = Correlator::new(sources.grace);
     let mut tick = tokio::time::interval(sources.poll);
     tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -191,6 +202,7 @@ pub async fn watch(sources: OomSources, out: mpsc::Sender<AgentMessage>) {
                     }
                     count = Some(seen);
                 }
+                polled();
                 for _ in 0..correlator.due(now) {
                     if !send(&out, AgentMessage::oom_kill(None, None)) {
                         return;

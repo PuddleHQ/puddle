@@ -110,7 +110,6 @@ run clean
 grep -q -e '--no-report' "$tmp/clean.out" || fail "the tests step did not skip the report"
 ! grep -q 'coverage profile dropped' "$tmp/clean.out" || fail "warning without a cut file"
 
-# The failing case of a CI run: nine good files, so the last batch of four holds the cut file alone.
 # Property tests run from a fixed seed under coverage (a random one makes a 100 % gate fail by chance), and the
 # caller can pick another.
 grep -q 'PROPTEST_RNG_SEED=[0-9][0-9]*)' "$tmp/clean.out" || fail "the tests step did not fix the proptest seed: $(cat "$tmp/clean.out")"
@@ -122,6 +121,7 @@ run unseeded
 [ "$(sed -n 's/.*PROPTEST_RNG_SEED=\([0-9]*\)).*/\1/p' "$tmp/clean.out" | head -n 1)" = "$(sed -n 's/.*PROPTEST_RNG_SEED=\([0-9]*\)).*/\1/p' "$tmp/unseeded.out" | head -n 1)" ] ||
     fail "the default seed changes between runs"
 
+# The failing case of a CI run: nine good files, so the last batch of four holds the cut file alone.
 scenario cut 8 1
 run cut
 [ "$(rc cut)" = 0 ] || fail "a batch of only a cut file failed the run: $(cat "$tmp/cut.out")"

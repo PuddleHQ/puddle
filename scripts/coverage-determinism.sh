@@ -39,7 +39,8 @@ if [ "${1:-}" = "--self-test" ]; then
     executed "$tmp/two" "crates/a crates/b" >"$tmp/s2"
     diff "$tmp/s1" "$tmp/s2" >/dev/null && { echo "self-test: a line that runs in one report only was not seen" >&2; exit 1; }
     # Hit counts alone (3 against 9) must not count as a difference.
-    executed "$tmp/two" "crates/a" | grep -q 'x.rs:1$' || { echo "self-test: lost a covered line" >&2; exit 1; }
+    printf 'SF:/r/crates/a/src/x.rs\nDA:1,9\nDA:2,0\nend_of_record\n' >"$tmp/counts"
+    [ "$(executed "$tmp/one" "crates/a")" = "$(executed "$tmp/counts" "crates/a")" ] || { echo "self-test: a changed hit count counted as a different line set" >&2; exit 1; }
     echo "coverage-determinism: self-test ok"
     exit 0
 fi
@@ -47,6 +48,7 @@ fi
 [ "$#" -ge 1 ] || { echo "usage: coverage-determinism.sh <cargo> | --self-test" >&2; exit 2; }
 cargo=$1
 runs=${COVERAGE_DETERMINISM_RUNS:-2}
+[ "$runs" -ge 2 ] 2>/dev/null || { echo "coverage-determinism: COVERAGE_DETERMINISM_RUNS must be a number from 2 up (a single run compares nothing)" >&2; exit 2; }
 target=${CARGO_TARGET_DIR:-target}
 dirs=$(crate_dirs | tr '\n' ' ')
 pkgs=""

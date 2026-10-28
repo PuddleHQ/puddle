@@ -271,7 +271,7 @@
         >Add identity</button
       >
       {#if identities.identities.length === 0}
-        <a href="/identities">Make an identity</a>
+        <a class="link-block" href="/identities">Make an identity</a>
       {/if}
     </form>
     {#if identityProblem}

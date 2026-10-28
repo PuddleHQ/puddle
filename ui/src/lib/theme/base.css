@@ -55,6 +55,19 @@ select {
   height: var(--control-size);
 }
 
+/* A checkbox or radio is a 24 px target (WCAG 2.5.8): the native 13 px box is too small to hit, and
+   some sit apart from their text. */
+input[type="checkbox"],
+input[type="radio"] {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+summary {
+  box-sizing: border-box;
+  min-height: 1.5rem;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -890,7 +890,7 @@
           requests, are kept as identities. The secret of a credential never
           enters a workspace.
         </p>
-        <p><a href="/identities">Manage identities</a></p>
+        <p><a class="link-block" href="/identities">Manage identities</a></p>
       </section>
 
       <section class="card" id="s-env" aria-labelledby="h-env">

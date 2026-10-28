@@ -89,3 +89,10 @@
 .confirm-detail {
   color: var(--color-text-muted);
 }
+
+/* A link that stands on its own line (not inside a sentence) is a 24 px target (WCAG 2.5.8). */
+.link-block {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.5rem;
+}

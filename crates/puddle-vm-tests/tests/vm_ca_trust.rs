@@ -266,7 +266,7 @@ async fn java_run(env: &VmEnv) -> Result<(), HarnessError> {
         let run = "cd /tmp && java Fetch.java 2>&1";
         let (code, out) = sh(&sandbox, "java before", run.to_owned()).await?;
         assert_ne!(code, 0, "Java trusted the CA before the boot files: {out}");
-        assert!(out.contains("PKIX") || out.contains("certificate"), "{out}");
+        assert!(out.contains("PKIX path building failed"), "{out}");
 
         let steps = apply(&sandbox, script.clone()).await?;
         assert!(
@@ -282,7 +282,10 @@ async fn java_run(env: &VmEnv) -> Result<(), HarnessError> {
 
         // A second boot finds the store as it left it.
         let steps = apply(&sandbox, script).await?;
-        assert!(steps.contains("unchanged"), "{steps}");
+        assert!(
+            steps.contains("java-trust: ") && steps.contains(" unchanged"),
+            "{steps}"
+        );
         finish(&sandbox).await
     }))
     .await
@@ -297,6 +300,7 @@ async fn deno_run(env: &VmEnv) -> Result<(), HarnessError> {
         let run = "export HOME=/root; deno run -A /tmp/fetch.ts 2>&1";
         let (code, out) = sh(&sandbox, "deno before", run.to_owned()).await?;
         assert_ne!(code, 0, "Deno trusted the CA before the boot files: {out}");
+        eprintln!("deno before:\n{out}");
 
         apply(&sandbox, script).await?;
         let with_env = format!(". /etc/profile.d/01-puddle-env.sh; {run}");
@@ -307,8 +311,7 @@ async fn deno_run(env: &VmEnv) -> Result<(), HarnessError> {
         );
         assert!(out.lines().any(|l| l == "deno: puddle-ok"), "{out}");
 
-        // DENO_CERT alone does it, and without it Deno fails: no other variable, and the image
-        // has no system store the boot files filled.
+        // DENO_CERT alone does it; without it Deno has only its bundled roots and fails.
         let alone = "env -i HOME=/root PATH=\"$PATH\" DENO_CERT=/etc/puddle/extra-cas.pem deno run -A /tmp/fetch.ts 2>&1";
         let (code, out) = sh(&sandbox, "deno with DENO_CERT only", alone.to_owned()).await?;
         assert_eq!(code, 0, "DENO_CERT alone was not enough: {out}");
@@ -316,6 +319,7 @@ async fn deno_run(env: &VmEnv) -> Result<(), HarnessError> {
         let bare = "env -i HOME=/root PATH=\"$PATH\" deno run -A /tmp/fetch.ts 2>&1";
         let (code, out) = sh(&sandbox, "deno bare", bare.to_owned()).await?;
         assert_ne!(code, 0, "Deno trusted the CA with no variable set: {out}");
+        eprintln!("deno bare:\n{out}");
         finish(&sandbox).await
     }))
     .await
@@ -348,7 +352,8 @@ exit $rc"
         };
         let (code, out) = sh(&sandbox, "pip before", serve("true")).await?;
         assert_ne!(code, 0, "pip trusted the CA before the boot files: {out}");
-        assert!(!out.contains("puddletest-1.0-py3-none-any.whl\nSuccessfully"), "{out}");
+        assert!(!out.contains("server did not start"), "{out}");
+        eprintln!("pip before:\n{out}");
 
         apply(&sandbox, script).await?;
         let (code, out) = sh(
@@ -380,6 +385,8 @@ exit $rc"
         )
         .await?;
         assert_ne!(code, 0, "pip trusted the CA with no variable set: {out}");
+        assert!(!out.contains("server did not start"), "{out}");
+        eprintln!("pip bare:\n{out}");
         finish(&sandbox).await
     }))
     .await

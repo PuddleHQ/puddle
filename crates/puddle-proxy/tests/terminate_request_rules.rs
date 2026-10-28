@@ -356,6 +356,39 @@ async fn a_host_with_a_rule_is_decrypted_whatever_the_switch_and_the_never_decry
 }
 
 #[tokio::test]
+async fn a_host_with_a_rule_is_decrypted_and_judged_for_a_client_in_a_container_too() {
+    let pki = Pki::new();
+    let server = api(&pki).await;
+    let rig = RigBuilder::new(&pki)
+        .name("api.test", server.addr)
+        .allow(vec!["api.test"])
+        .injector(TestInjector::new(|_| {
+            puddle_proxy::InjectDecision::PassThrough
+        }))
+        .decrypting_all(true, &[])
+        .request_rules(rules(vec![rule(4, "api.test", &["POST"], "/gists")]))
+        .build();
+    // A container's client is passed through on other hosts; this one gets the workspace's
+    // certificate because its requests must be read.
+    let mut container = rig.guest().await.in_container();
+    let mut client = container.tls("api.test:443", None).await.unwrap();
+    assert_eq!(send(&mut client, "POST", "/gists", "").await.status, 403);
+    client.close().await;
+    assert!(server.recorded().is_empty(), "nothing went upstream");
+    let events = rig.events(1).await;
+    assert_eq!(events[0].decision, ConnectionDecision::Deny);
+    assert_eq!(events[0].reason.to_string(), "request_rule");
+    assert_eq!(events[0].request_rule, Some(RuleId(4)));
+    // The mark does not open a tunnel to another port of the host either.
+    let (status, _) = container.connect_to("api.test:8443").await;
+    assert_eq!(status, 403);
+    assert_eq!(
+        rig.events(2).await[1].reason.to_string(),
+        "request_rule_port"
+    );
+}
+
+#[tokio::test]
 async fn a_tunnel_to_another_port_of_a_covered_host_is_refused_because_its_requests_cannot_be_read()
 {
     let pki = Pki::new();

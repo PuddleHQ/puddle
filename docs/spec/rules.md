@@ -409,8 +409,9 @@ ever refuses, so no rule of this kind can open anything and there is no preceden
 - **R-50 Where it is checked.** On every request Puddle can read: each request of a decrypted
   HTTP/1.1 connection (a keep-alive connection is judged request by request) and each stream of
   an HTTP/2 connection, and plain-HTTP requests. A host with a rule is decrypted whatever the
-  decrypt-every-host switch, the never-decrypt names and the learned list say, because a request
-  that cannot be read cannot be judged. A tunnel to another port of such a host is refused with
+  decrypt-every-host switch, the never-decrypt names and the learned list say, and for a client
+  the guest agent marks as being in a container too, because a request that cannot be read
+  cannot be judged. A tunnel to another port of such a host is refused with
   the reason `request_rule_port`, since its requests would never be seen. The check comes before
   anything is sent to the server and before a credential is added.
 - **R-51 A path pattern** starts with `/` and is made of segments: a name, `*` (exactly one

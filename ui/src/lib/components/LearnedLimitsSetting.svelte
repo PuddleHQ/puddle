@@ -77,7 +77,9 @@
       />
     </div>
     <div class="row">
-      <button type="submit" disabled={working}>Keep limits</button>
+      <button type="submit" class="btn primary" disabled={working}
+        >Keep limits</button
+      >
       <span aria-live="polite">
         {#if saved}<span class="saved">Saved.</span>{/if}
         {#if failure}<span class="error" role="alert">{failure}</span>{/if}
@@ -102,6 +104,13 @@
   }
   input {
     width: 7rem;
+    min-height: var(--control-size);
+    padding: var(--space-1) var(--space-2);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg);
+    color: var(--color-text);
+    font: inherit;
   }
   .desc,
   .muted {

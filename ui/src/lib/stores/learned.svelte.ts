@@ -4,7 +4,10 @@
 // that announces a new host and on a resync; a change shows what the API answers.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
-import { asPassThroughLearned } from "#lib/interception/learned.ts";
+import {
+  asPassThroughLearned,
+  onDecryptedAgain,
+} from "#lib/interception/learned.ts";
 import { sentence } from "#lib/rules/model.ts";
 import { live, type LiveSource } from "./live.svelte.ts";
 import { readFailure, SERVICE_DOWN } from "./read-failure.ts";
@@ -73,7 +76,14 @@ export class LearnedList {
       },
       resync: () => void this.load(id, true),
     });
-    return () => unsubscribe?.();
+    // The notice's own button decrypts a host without an event, so it says so here.
+    const stopNotice = onDecryptedAgain((workspace) => {
+      if (workspace === id) void this.load(id, true);
+    });
+    return () => {
+      unsubscribe?.();
+      stopNotice();
+    };
   }
 
   /** Decrypts one host again from the next connection. A host already gone counts as done. */

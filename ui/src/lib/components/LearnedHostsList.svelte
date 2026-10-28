@@ -47,6 +47,7 @@
             </span>
             <button
               type="button"
+              class="btn"
               disabled={working}
               aria-label="Decrypt {learned.host} again"
               onclick={() => run(() => store.decryptAgain(learned.host))}
@@ -59,6 +60,7 @@
       <div class="row">
         <button
           type="button"
+          class="btn"
           disabled={working}
           onclick={() => run(() => store.decryptAll())}
         >

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { beforeEach, describe, expect, it } from "vitest";
+import { decryptAgain } from "#lib/interception/learned.ts";
 import type { LiveListener } from "./live.svelte.ts";
 import { LearnedLimitsStore, LearnedList } from "./learned.svelte.ts";
 
@@ -160,6 +161,25 @@ describe("LearnedList", () => {
     expect(api.calls).toHaveLength(3);
     stop();
     expect(source.stopped).toBe(true);
+  });
+
+  it("reads again when the notice decrypts a host in its workspace, and not once stopped", async () => {
+    const stubApi = {
+      DELETE: async () => ({ response: { ok: true, status: 204 } }),
+    };
+    const list = new LearnedList(api as never, new Source());
+    const stop = list.start("web");
+    await Promise.resolve();
+    expect(api.calls).toHaveLength(1);
+    await decryptAgain(stubApi as never, "other", "x.example");
+    expect(api.calls).toHaveLength(1);
+    await decryptAgain(stubApi as never, "web", "x.example");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(api.calls).toHaveLength(2);
+    stop();
+    await decryptAgain(stubApi as never, "web", "x.example");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(api.calls).toHaveLength(2);
   });
 });
 

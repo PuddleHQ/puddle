@@ -111,7 +111,7 @@ mod tests {
     #[test]
     fn a_build_without_a_host_has_nothing_learned() {
         let none = NoLearned;
-        assert!(none.list(&ws("a")).is_empty());
+        assert_eq!(none.list(&ws("a")).len(), 0);
         assert!(!none.forget(&ws("a"), "x.example"));
         assert_eq!(none.clear(&ws("a")), 0);
     }

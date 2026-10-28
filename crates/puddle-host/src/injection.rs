@@ -827,7 +827,7 @@ mod tests {
         let service = crate::learned::HostLearned::new(Arc::clone(&terminations));
         let ws = workspace("alpha");
         let host = |h: &str| Host::parse_normalised(h).unwrap();
-        assert!(service.list(&ws).is_empty(), "not running: nothing learned");
+        assert_eq!(service.list(&ws).len(), 0, "not running: nothing learned");
         assert!(!service.forget(&ws, "pinned.example"));
         assert_eq!(service.clear(&ws), 0);
 
@@ -871,7 +871,7 @@ mod tests {
         assert!(service.forget(&ws, "pinned.example"));
         assert!(!learned.contains(&host("pinned.example")));
         assert_eq!(service.clear(&ws), 1);
-        assert!(service.list(&ws).is_empty());
+        assert_eq!(service.list(&ws).len(), 0);
     }
 
     #[tokio::test]

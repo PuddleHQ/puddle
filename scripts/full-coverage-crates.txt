@@ -3,3 +3,5 @@
 # A crate goes here once it measures 100 %, and never leaves it; a line that can't run goes in
 # scripts/full-coverage-exclusions.txt with its reason.
 crates/puddle-netpolicy
+crates/puddle-store
+crates/puddle-types

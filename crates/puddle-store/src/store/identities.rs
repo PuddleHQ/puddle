@@ -907,6 +907,10 @@ mod tests {
     }
 
     fn made(store: &Store) -> IdentityId {
+        made_as(store, "Work")
+    }
+
+    fn made_as(store: &Store, label: &str) -> IdentityId {
         let host = HostName::new("github.com").unwrap();
         let source = SourceSpec::Gh {
             host: host.clone(),
@@ -915,7 +919,7 @@ mod tests {
         let covers = Coverage::new([Owner::new("acme").unwrap()].into(), false).unwrap();
         store
             .create_identity(IdentityDraft {
-                label: "Work".into(),
+                label: label.into(),
                 author: Author::new("Me", "me@example.com").unwrap(),
                 credentials: vec![CredentialBinding::new(&host, source, covers).unwrap()],
             })
@@ -971,5 +975,106 @@ mod tests {
             Err(StoreError::IdentityInvalid(_))
         ));
         assert_eq!(store.workspace_git(&ws).unwrap().identities.len(), 0);
+    }
+
+    const DISK_FULL: &str = "database error: disk full";
+
+    #[test]
+    fn a_hand_edited_signing_is_reported_as_corrupt() {
+        let store = store();
+        let id = made(&store);
+        // The table's own check refuses other values; a hand edit gets past it.
+        store.break_database(
+            "PRAGMA ignore_check_constraints = ON;
+             UPDATE identities SET signing = 'gpg';
+             PRAGMA ignore_check_constraints = OFF",
+        );
+        let err = store.identity(id).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!("stored identities row {id} is invalid: unknown signing gpg")
+        );
+    }
+
+    #[test]
+    fn the_workspaces_an_identity_is_on_are_listed() {
+        let store = store();
+        let id = made(&store);
+        assert_eq!(store.identity_workspaces(id).unwrap(), []);
+        let ws = WorkspaceName::new("shop").unwrap();
+        store.attach_identity(&ws, id, None).unwrap();
+        assert_eq!(store.identity_workspaces(id).unwrap(), [ws]);
+    }
+
+    #[test]
+    fn attachments_that_cannot_be_read_are_a_database_error() {
+        let store = store();
+        let id = made(&store);
+        let ws = WorkspaceName::new("shop").unwrap();
+        store.break_database("DROP TABLE workspace_identities");
+        let expected = "database error: no such table: workspace_identities";
+        assert_eq!(
+            store.identity_workspaces(id).unwrap_err().to_string(),
+            expected
+        );
+        assert_eq!(
+            store.detach_identity(&ws, id).unwrap_err().to_string(),
+            expected
+        );
+    }
+
+    #[test]
+    fn an_identity_that_cannot_be_inserted_is_not_made() {
+        let store = store();
+        store.break_database(
+            "CREATE TRIGGER identity_inserts_fail BEFORE INSERT ON identities
+             BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+        );
+        let draft = IdentityDraft {
+            label: "Work".into(),
+            author: Author::new("Me", "me@example.com").unwrap(),
+            credentials: vec![],
+        };
+        let err = store.create_identity(draft).unwrap_err();
+        assert_eq!(err.to_string(), DISK_FULL);
+        assert_eq!(store.identities().unwrap(), []);
+    }
+
+    #[test]
+    fn an_identity_that_cannot_be_updated_keeps_what_it_had() {
+        let store = store();
+        let id = made(&store);
+        let before = store.identity(id).unwrap();
+        store.break_database(
+            "CREATE TRIGGER identity_updates_fail BEFORE UPDATE ON identities
+             BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+        );
+        let draft = IdentityDraft {
+            label: "Renamed".into(),
+            author: before.author.clone(),
+            credentials: before.credentials.clone(),
+        };
+        let err = store.update_identity(id, draft).unwrap_err();
+        assert_eq!(err.to_string(), DISK_FULL);
+        assert_eq!(store.identity(id).unwrap(), before);
+    }
+
+    #[test]
+    fn deleting_an_identity_that_is_not_the_default_leaves_the_default_alone() {
+        let store = store();
+        let default = made(&store);
+        let other = made_as(&store, "Personal");
+        assert_eq!(store.delete_identity(other).unwrap(), []);
+        assert_eq!(store.default_identity().unwrap().unwrap().id, default);
+        assert_eq!(store.identities().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn detaching_an_identity_that_is_not_attached_is_refused() {
+        let store = store();
+        let id = made(&store);
+        let ws = WorkspaceName::new("shop").unwrap();
+        let err = store.detach_identity(&ws, id).unwrap_err();
+        assert_eq!(err.to_string(), format!("no identity {id}"));
     }
 }

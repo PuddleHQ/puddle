@@ -32,6 +32,8 @@ use crate::rule::{Actor, Effect, NewRule, Rule, Scope};
 use crate::schema;
 
 mod environment;
+#[cfg(test)]
+mod failures;
 mod identities;
 mod interception;
 mod ports;
@@ -147,6 +149,27 @@ impl Store {
     pub(crate) fn audit_writes_work_again(&self) {
         lock(&self.conn)
             .execute_batch("DROP TRIGGER audit_write_fails")
+            .unwrap();
+    }
+
+    /// Runs `sql` on the connection, to break something a test wants to see fail: a trigger that
+    /// raises, or a table dropped.
+    pub(crate) fn break_database(&self, sql: &str) {
+        lock(&self.conn).execute_batch(sql).unwrap();
+    }
+
+    /// Makes every statement that calls the SQL function `name` fail to prepare.
+    pub(crate) fn refuse_sql_function(&self, name: &'static str) {
+        use rusqlite::hooks::{AuthAction, Authorization};
+        lock(&self.conn)
+            .authorizer(Some(
+                move |context: rusqlite::hooks::AuthContext<'_>| match context.action {
+                    AuthAction::Function { function_name } if function_name == name => {
+                        Authorization::Deny
+                    }
+                    _ => Authorization::Allow,
+                },
+            ))
             .unwrap();
     }
 }
@@ -271,7 +294,17 @@ impl Store {
         if let Some(decision) = self.match_rules(request, now, suffix_allows) {
             return Ok(decision);
         }
-        let mut conn = lock(&self.conn);
+        self.decide_locked(&mut lock(&self.conn), request, now, suffix_allows)
+    }
+
+    /// The part of [`Store::decide`] that runs with `conn` held.
+    fn decide_locked(
+        &self,
+        conn: &mut Connection,
+        request: &EgressRequest,
+        now: u64,
+        suffix_allows: SuffixAllows,
+    ) -> Result<Decision, StoreError> {
         // Snapshots are only swapped under `conn`; look again so a rule committed while we
         // waited for the lock decides instead of a new pending row.
         if let Some(decision) = self.match_rules(request, now, suffix_allows) {
@@ -1229,11 +1262,9 @@ fn close_decided_rows(
         "SELECT {PENDING_COLUMNS} FROM pending
          WHERE state = 'requested' AND (?1 IS NULL OR workspace_id = ?1) ORDER BY id"
     ))?;
+    let workspace = rule.scope.workspace().map(WorkspaceName::as_str);
     let open = stmt
-        .query_map(
-            [rule.scope.workspace().map(WorkspaceName::as_str)],
-            raw_pending,
-        )?
+        .query_map([workspace], raw_pending)?
         .map(|raw| pending_from_raw(&raw?))
         .collect::<Result<Vec<_>, _>>()?;
     drop(stmt);

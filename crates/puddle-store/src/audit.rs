@@ -1266,6 +1266,38 @@ mod tests {
     }
 
     #[test]
+    fn a_record_too_long_without_its_strings_is_refused() {
+        let record = AuditRecord::RuleSetChanged {
+            ts: 1,
+            set_id: "builtin:github".into(),
+            added: vec![String::new(); 2_000],
+            removed: Vec::new(),
+        };
+        assert!(matches!(record.to_line(), Err(AuditError::TooLarge)));
+    }
+
+    #[test]
+    fn long_strings_in_a_list_are_shortened_until_the_line_fits() {
+        let record = AuditRecord::RuleSetChanged {
+            ts: 1,
+            set_id: "builtin:github".into(),
+            added: vec!["a".repeat(1_000); 6],
+            removed: vec!["b".into()],
+        };
+        let line = record.to_line().unwrap();
+        assert!(line.len() <= MAX_LINE_BYTES, "{}", line.len());
+        let value: Value = serde_json::from_str(&line).unwrap();
+        let lengths: Vec<usize> = value["added"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry.as_str().unwrap().len())
+            .collect();
+        assert_eq!(lengths, [1_000, 500, 500, 500, 500, 500]);
+        assert_eq!(value["removed"], json!(["b"]));
+    }
+
+    #[test]
     fn connection_window_counts_excess_per_second() {
         let mut w = ConnectionWindow::default();
         assert_eq!(w.admit(5_000, 2), (true, None));

@@ -125,46 +125,39 @@ fn parse_root(d: Dialect, text: &str) -> Result<Value, MergeRefusal> {
 }
 
 fn check(d: Dialect, text: &str, expected: &Value) -> Result<(), MergeRefusal> {
-    match serde_json::from_str::<Value>(&d.blank(text)?.view) {
-        Ok(v) if &v == expected => Ok(()),
-        _ => Err(MergeRefusal::Inconsistent),
-    }
+    let parsed = serde_json::from_str::<Value>(&d.blank(text)?.view);
+    ensure(parsed.is_ok_and(|v| &v == expected))
 }
 
 // --- The value-level twin of each edit, for the self-check ------------------------------------
 
 fn value_set(root: &mut Value, key: &[String], value: Value) {
-    let Some((last, parents)) = key.split_last() else {
-        return;
-    };
-    let mut cur = root;
-    for k in parents {
-        let Some(obj) = cur.as_object_mut() else {
-            return;
-        };
-        cur = obj
-            .entry(k.clone())
-            .or_insert_with(|| Value::Object(Map::new()));
-    }
-    if let Some(obj) = cur.as_object_mut() {
-        obj.insert(last.clone(), value);
+    if let Some((last, parents)) = key.split_last() {
+        let mut cur = Some(root);
+        for k in parents {
+            cur = cur.and_then(Value::as_object_mut).map(|obj| {
+                obj.entry(k.clone())
+                    .or_insert_with(|| Value::Object(Map::new()))
+            });
+        }
+        if let Some(obj) = cur.and_then(Value::as_object_mut) {
+            obj.insert(last.clone(), value);
+        }
     }
 }
 
 /// Removes `key` (and nothing else) from the value tree.
 fn value_delete(root: &mut Value, key: &[String]) {
-    let Some((last, parents)) = key.split_last() else {
-        return;
-    };
-    let mut cur = root;
-    for k in parents {
-        let Some(next) = cur.as_object_mut().and_then(|o| o.get_mut(k)) else {
-            return;
-        };
-        cur = next;
-    }
-    if let Some(obj) = cur.as_object_mut() {
-        obj.remove(last);
+    if let Some((last, parents)) = key.split_last() {
+        let mut cur = Some(root);
+        for k in parents {
+            cur = cur
+                .and_then(Value::as_object_mut)
+                .and_then(|obj| obj.get_mut(k));
+        }
+        if let Some(obj) = cur.and_then(Value::as_object_mut) {
+            obj.remove(last);
+        }
     }
 }
 
@@ -186,8 +179,8 @@ struct Object {
 }
 
 /// The text is valid JSON when the scanner runs, so a surprise is a bug, not bad input.
-fn bug<T>() -> Result<T, MergeRefusal> {
-    Err(MergeRefusal::Inconsistent)
+fn ensure(holds: bool) -> Result<(), MergeRefusal> {
+    holds.then_some(()).ok_or(MergeRefusal::Inconsistent)
 }
 
 fn at(b: &[u8], i: usize) -> Option<u8> {
@@ -205,41 +198,39 @@ fn skip_ws(b: &[u8], mut i: usize) -> usize {
 fn skip_string(b: &[u8], mut i: usize) -> Result<usize, MergeRefusal> {
     i += 1;
     loop {
-        match at(b, i) {
-            Some(b'\\') => i += 2,
-            Some(b'"') => return Ok(i + 1),
-            Some(_) => i += 1,
-            None => return bug(),
+        match at(b, i).ok_or(MergeRefusal::Inconsistent)? {
+            b'\\' => i += 2,
+            b'"' => return Ok(i + 1),
+            _ => i += 1,
         }
     }
 }
 
 /// `i` is on the first byte of a value; returns the offset after it.
 fn skip_value(b: &[u8], mut i: usize) -> Result<usize, MergeRefusal> {
-    match at(b, i) {
-        Some(b'"') => skip_string(b, i),
-        Some(b'{' | b'[') => {
+    match at(b, i).ok_or(MergeRefusal::Inconsistent)? {
+        b'"' => skip_string(b, i),
+        b'{' | b'[' => {
             let mut depth = 0usize;
             loop {
-                match at(b, i) {
-                    Some(b'"') => {
+                match at(b, i).ok_or(MergeRefusal::Inconsistent)? {
+                    b'"' => {
                         i = skip_string(b, i)?;
                         continue;
                     }
-                    Some(b'{' | b'[') => depth += 1,
-                    Some(b'}' | b']') => {
+                    b'{' | b'[' => depth += 1,
+                    b'}' | b']' => {
                         depth -= 1;
                         if depth == 0 {
                             return Ok(i + 1);
                         }
                     }
-                    Some(_) => {}
-                    None => return bug(),
+                    _ => {}
                 }
                 i += 1;
             }
         }
-        Some(_) => {
+        _ => {
             while let Some(c) = at(b, i) {
                 if matches!(c, b',' | b'}' | b']' | b' ' | b'\t' | b'\n' | b'\r') {
                     break;
@@ -248,41 +239,33 @@ fn skip_value(b: &[u8], mut i: usize) -> Result<usize, MergeRefusal> {
             }
             Ok(i)
         }
-        None => bug(),
     }
 }
 
 /// The object whose `{` is at `open`.
 fn object_at(text: &str, open: usize) -> Result<Object, MergeRefusal> {
     let b = text.as_bytes();
-    if at(b, open) != Some(b'{') {
-        return bug();
-    }
+    ensure(at(b, open) == Some(b'{'))?;
     let mut members = Vec::new();
     let mut i = open + 1;
     loop {
         i = skip_ws(b, i);
-        match at(b, i) {
-            Some(b'}') => {
-                return Ok(Object {
-                    open,
-                    close: i,
-                    members,
-                });
-            }
-            Some(b'"') => {}
-            _ => return bug(),
+        if at(b, i) == Some(b'}') {
+            return Ok(Object {
+                open,
+                close: i,
+                members,
+            });
         }
+        ensure(at(b, i) == Some(b'"'))?;
         let key_start = i;
         let key_end = skip_string(b, i)?;
-        let Some(raw) = text.get(key_start..key_end) else {
-            return bug();
-        };
+        let raw = text
+            .get(key_start..key_end)
+            .ok_or(MergeRefusal::Inconsistent)?;
         let key: String = serde_json::from_str(raw).map_err(|_| MergeRefusal::Inconsistent)?;
         i = skip_ws(b, key_end);
-        if at(b, i) != Some(b':') {
-            return bug();
-        }
+        ensure(at(b, i) == Some(b':'))?;
         let value_start = skip_ws(b, i + 1);
         let value_end = skip_value(b, value_start)?;
         members.push(Member {
@@ -329,15 +312,14 @@ fn find(text: &str, key: &[String]) -> Result<Found, MergeRefusal> {
         if depth + 1 == key.len() {
             return Ok(Found::Member { obj, idx });
         }
-        let Some(m) = obj.members.get(idx) else {
-            return bug();
-        };
+        let m = obj.members.get(idx).ok_or(MergeRefusal::Inconsistent)?;
         if at(text.as_bytes(), m.value_start) != Some(b'{') {
             return Err(MergeRefusal::Conflict { key: shown() });
         }
         obj = object_at(text, m.value_start)?;
     }
-    bug()
+    // Only an empty path gets here: every other one returns from inside the loop.
+    Err(MergeRefusal::Inconsistent)
 }
 
 // --- Layout ----------------------------------------------------------------------------------
@@ -391,10 +373,9 @@ fn pretty(value: &Value, unit: &str, base: &str) -> String {
     let fmt = serde_json::ser::PrettyFormatter::with_indent(unit.as_bytes());
     let mut ser = serde_json::Serializer::with_formatter(&mut out, fmt);
     // Serialising a `Value` into a Vec can't fail.
-    let text = match serde::Serialize::serialize(value, &mut ser) {
-        Ok(()) => String::from_utf8(out).unwrap_or_default(),
-        Err(_) => value.to_string(),
-    };
+    let text = serde::Serialize::serialize(value, &mut ser)
+        .map(|()| String::from_utf8(out).unwrap_or_default())
+        .unwrap_or_default();
     text.replace('\n', &format!("\n{base}"))
 }
 
@@ -403,10 +384,9 @@ fn quoted(key: &str) -> String {
 }
 
 fn splice(text: &str, start: usize, end: usize, with: &str) -> Result<String, MergeRefusal> {
-    match (text.get(..start), text.get(end..)) {
-        (Some(head), Some(tail)) => Ok([head, with, tail].concat()),
-        _ => bug(),
-    }
+    let head = text.get(..start).ok_or(MergeRefusal::Inconsistent)?;
+    let tail = text.get(end..).ok_or(MergeRefusal::Inconsistent)?;
+    Ok([head, with, tail].concat())
 }
 
 // --- Edits -----------------------------------------------------------------------------------
@@ -418,12 +398,10 @@ fn set(d: Dialect, text: &str, key: &[String], value: &Value) -> Result<String, 
     match find(view, key)? {
         Found::Member { obj, idx } => {
             let unit = indent_unit(view, &obj);
-            let Some(m) = obj.members.get(idx) else {
-                return bug();
-            };
-            let Some(old) = view.get(m.value_start..m.value_end) else {
-                return bug();
-            };
+            let m = obj.members.get(idx).ok_or(MergeRefusal::Inconsistent)?;
+            let old = view
+                .get(m.value_start..m.value_end)
+                .ok_or(MergeRefusal::Inconsistent)?;
             if serde_json::from_str::<Value>(old).ok().as_ref() == Some(value) {
                 return Ok(text.to_owned());
             }
@@ -435,9 +413,10 @@ fn set(d: Dialect, text: &str, key: &[String], value: &Value) -> Result<String, 
             splice(text, m.value_start, m.value_end, &rendered)
         }
         Found::Missing { obj, depth } => {
-            let Some((name, below)) = key.get(depth..).and_then(<[String]>::split_first) else {
-                return bug();
-            };
+            let (name, below) = key
+                .get(depth..)
+                .and_then(<[String]>::split_first)
+                .ok_or(MergeRefusal::Inconsistent)?;
             let mut nested = value.clone();
             for k in below.iter().rev() {
                 let mut map = Map::new();
@@ -549,9 +528,7 @@ fn remove(d: Dialect, text: &str, key: &[String]) -> Result<(String, Option<usiz
     let mut text = text.to_owned();
     let mut top = None;
     for len in (1..=key.len()).rev() {
-        let Some(path) = key.get(..len) else {
-            return bug();
-        };
+        let path = key.get(..len).ok_or(MergeRefusal::Inconsistent)?;
         let blanked = d.blank(&text)?;
         let view = blanked.view.as_str();
         let (obj, idx) = match find(view, path) {
@@ -563,9 +540,7 @@ fn remove(d: Dialect, text: &str, key: &[String]) -> Result<(String, Option<usiz
         };
         if len < key.len() {
             // A parent: remove it only when the removal below left it empty, comments and all.
-            let Some(m) = obj.members.get(idx) else {
-                return bug();
-            };
+            let m = obj.members.get(idx).ok_or(MergeRefusal::Inconsistent)?;
             let inner = object_at(view, m.value_start)?;
             if !inner.members.is_empty() || blanked.has_comment_in(inner.open..inner.close) {
                 return Ok((text, top));
@@ -584,21 +559,14 @@ fn remove_member(
     idx: usize,
 ) -> Result<String, MergeRefusal> {
     let m = &obj.members;
-    let (start, end, joined) = match (
-        idx.checked_sub(1).and_then(|p| m.get(p)),
-        m.get(idx),
-        m.get(idx + 1),
-    ) {
+    let this = m.get(idx).ok_or(MergeRefusal::Inconsistent)?;
+    let (start, end, joined) = match (idx.checked_sub(1).and_then(|p| m.get(p)), m.get(idx + 1)) {
         // The only member: the object becomes `{}`.
-        (None, Some(_), None) => (obj.open + 1, obj.close, false),
+        (None, None) => (obj.open + 1, obj.close, false),
         // The first of several: up to the next key, so the next one takes its place.
-        (None, Some(this), Some(next)) => (this.key_start, next.key_start, false),
+        (None, Some(next)) => (this.key_start, next.key_start, false),
         // Any later one: from the end of the previous value (its comma goes with it).
-        (Some(prev), Some(this), _) => (prev.value_end, this.value_end, true),
-        (_, None, _) => return bug(),
-    };
-    let Some(this) = m.get(idx) else {
-        return bug();
+        (Some(prev), _) => (prev.value_end, this.value_end, true),
     };
     // The user's comments between the members stay; the removed member's own do not.
     let kept = kept_comments(
@@ -620,15 +588,16 @@ fn kept_comments(
     joined: bool,
 ) -> String {
     let mut out = String::new();
-    for c in &blanked.comments {
+    let comments = blanked
+        .comments
+        .iter()
+        .filter_map(|c| Some((c, text.get(c.clone())?)));
+    for (c, t) in comments {
         let inside_span = c.start >= span.start && c.end <= span.end;
         let inside_owned = c.start >= owned.start && c.end <= owned.end;
         if !inside_span || inside_owned {
             continue;
         }
-        let Some(t) = text.get(c.clone()) else {
-            continue;
-        };
         if out.is_empty() && joined {
             out.push(' ');
         }
@@ -1208,5 +1177,114 @@ mod tests {
             let _ = docker_spec().apply(Some(&bytes), &[k("a.b")]);
             let _ = unmerge_bytes(MergeFormat::Json, &bytes, &[k("a")]);
         }
+    }
+
+    #[test]
+    fn a_comment_only_file_without_a_final_newline_gets_the_object_on_its_own_line() {
+        let spec = vscode_spec();
+        let out = applied(&spec, "// mine", &[]);
+        assert!(out.starts_with("// mine\n{"), "{out}");
+    }
+
+    const REFUSED: Result<usize, MergeRefusal> = Err(MergeRefusal::Inconsistent);
+
+    #[test]
+    fn the_scanner_refuses_text_that_is_not_the_valid_json_it_expects() {
+        assert_eq!(skip_string(b"\"open", 0), REFUSED);
+        assert_eq!(skip_value(b"", 0), REFUSED);
+        assert_eq!(skip_value(b"{\"a\": [", 0), REFUSED);
+        assert_eq!(skip_value(b"\"open", 0), REFUSED);
+        assert_eq!(skip_value(b"[\"open", 0), REFUSED);
+        assert_eq!(skip_value(b"nul", 0), Ok(3));
+        assert_eq!(skip_value(b"[1, \"]\"]x", 0), Ok(8));
+    }
+
+    fn refused_object(text: &str) -> bool {
+        matches!(object_at(text, 0), Err(MergeRefusal::Inconsistent))
+    }
+
+    #[test]
+    fn an_object_scan_refuses_what_is_not_an_object_with_string_keys() {
+        assert!(refused_object("[1]"));
+        assert!(refused_object("{1: 2}"));
+        assert!(refused_object("{\"a\" 1}"));
+        assert!(refused_object("{\"a\":"));
+        assert!(refused_object("{\"\\q\": 1}"));
+        assert!(!refused_object("{\"a\": 1, \"b\": {\"c\": [1]}}"));
+    }
+
+    #[test]
+    fn edits_to_an_empty_key_path_are_refused() {
+        let value = json!(1);
+        assert!(matches!(
+            set(Dialect::Strict, "{}", &[], &value),
+            Err(MergeRefusal::Inconsistent)
+        ));
+        assert!(matches!(find("{}", &[]), Err(MergeRefusal::Inconsistent)));
+        assert!(matches!(
+            remove(Dialect::Strict, "{}", &[]),
+            Ok((t, None)) if t == "{}"
+        ));
+    }
+
+    #[test]
+    fn a_splice_outside_the_text_is_refused() {
+        assert_eq!(splice("abc", 1, 2, "X").unwrap(), "aXc");
+        assert_eq!(splice("abc", 9, 9, "X"), Err(MergeRefusal::Inconsistent));
+        assert_eq!(splice("abc", 1, 9, "X"), Err(MergeRefusal::Inconsistent));
+    }
+
+    #[test]
+    fn the_self_check_refuses_a_text_that_differs_from_the_expected_value() {
+        let expected = json!({"a": 1});
+        assert_eq!(check(Dialect::Strict, "{\"a\": 1}", &expected), Ok(()));
+        assert_eq!(
+            check(Dialect::Strict, "{\"a\": 2}", &expected),
+            Err(MergeRefusal::Inconsistent)
+        );
+        assert_eq!(
+            check(Dialect::Strict, "{", &expected),
+            Err(MergeRefusal::Inconsistent)
+        );
+    }
+
+    #[test]
+    fn value_edits_on_an_empty_path_or_through_a_non_object_change_nothing() {
+        let mut v = json!({"a": 1});
+        value_set(&mut v, &[], json!(2));
+        value_set(&mut v, &k("a.b"), json!(2));
+        value_delete(&mut v, &[]);
+        value_delete(&mut v, &k("a.b"));
+        value_delete(&mut v, &k("x.y"));
+        assert_eq!(v, json!({"a": 1}));
+        value_set(&mut v, &k("x.y"), json!(3));
+        assert_eq!(v, json!({"a": 1, "x": {"y": 3}}));
+    }
+
+    #[test]
+    fn removing_a_key_through_a_duplicated_parent_is_refused_with_the_duplicate_named() {
+        let err = remove(Dialect::Strict, r#"{"a": {}, "a": {}}"#, &k("a.b")).unwrap_err();
+        assert_eq!(err, MergeRefusal::DuplicateKey { key: "a".into() });
+    }
+
+    #[test]
+    fn applying_the_same_spec_twice_leaves_the_second_file_as_it_is() {
+        let spec = docker_spec();
+        let once = applied(&spec, DOCKER_LOGIN, &[]);
+        assert_eq!(applied(&spec, &once, &spec.keys()), once);
+    }
+
+    #[test]
+    fn unmerging_a_file_without_the_keys_leaves_it_as_it_is() {
+        let file = "{\"auths\": {}}";
+        assert_eq!(unmerged(&docker_spec(), file), file);
+    }
+
+    #[test]
+    fn a_member_that_is_the_last_of_several_is_removed_with_its_comma() {
+        let key = k("b");
+        let (out, top) = remove(Dialect::Strict, "{\"a\": 1, \"b\": 2}", &key).unwrap();
+        assert_eq!(out, "{\"a\": 1}");
+        assert_eq!(top, Some(1));
     }
 }

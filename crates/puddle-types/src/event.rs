@@ -576,15 +576,22 @@ mod tests {
     #[test]
     fn oom_kill_bounds_and_cleans_the_guest_supplied_name() {
         let long = "a".repeat(1000);
-        let Event::OomKill { process, pid, .. } = Event::oom_kill(name(), 7, &long) else {
-            panic!("wrong variant");
-        };
-        assert_eq!(process.len(), MAX_PROCESS_NAME_CHARS);
-        assert_eq!(pid, 7);
-        let Event::OomKill { process, .. } = Event::oom_kill(name(), 7, "a\nb\0c") else {
-            panic!("wrong variant");
-        };
-        assert_eq!(process, "a?b?c");
+        assert_eq!(
+            Event::oom_kill(name(), 7, &long),
+            Event::OomKill {
+                workspace: name(),
+                pid: 7,
+                process: "a".repeat(MAX_PROCESS_NAME_CHARS),
+            }
+        );
+        assert_eq!(
+            Event::oom_kill(name(), 7, "a\nb\0c"),
+            Event::OomKill {
+                workspace: name(),
+                pid: 7,
+                process: "a?b?c".to_owned(),
+            }
+        );
     }
 
     #[test]

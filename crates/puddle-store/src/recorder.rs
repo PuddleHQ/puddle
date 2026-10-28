@@ -89,6 +89,18 @@ mod tests {
     }
 
     #[test]
+    fn the_recorder_hands_out_the_store_it_records_into() {
+        let store = Arc::new(
+            Store::open_in_memory(Arc::new(ManualClock::new(1_000)), Limits::default()).unwrap(),
+        );
+        let problems = Arc::new(Problems::new(Arc::new(CollectingSink::default())));
+        let log = ConnectionRecorder::new(store.clone(), problems);
+        log.record(&event());
+        assert!(Arc::ptr_eq(log.store(), &store));
+        assert_eq!(store.audit_lines(0, 10).unwrap().len(), 1);
+    }
+
+    #[test]
     fn a_record_that_cannot_be_written_raises_one_problem_that_ends_with_the_next_write() {
         let store = Arc::new(
             Store::open_in_memory(Arc::new(ManualClock::new(1_000)), Limits::default()).unwrap(),

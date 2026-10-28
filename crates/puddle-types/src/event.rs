@@ -798,14 +798,6 @@ mod tests {
                 r#"{"type":"proxy_sign_in_failed","proxy":"proxy.corp:8080","scheme":null}"#,
                 None,
             ),
-            (
-                Event::PassThroughLearned {
-                    workspace: WorkspaceName::new("box").unwrap(),
-                    host: "pinned.example".into(),
-                },
-                r#"{"type":"pass_through_learned","workspace":"box","host":"pinned.example"}"#,
-                Some(WorkspaceName::new("box").unwrap()),
-            ),
         ] {
             assert_eq!(serde_json::to_string(&event).unwrap(), json);
             assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
@@ -1036,6 +1028,7 @@ mod tests {
                 "workspace_repositories_changed",
                 "workspace_ports_changed",
                 "workspace_port_forward_failed",
+                "pass_through_learned",
                 "credential_sign_in_needed",
                 "git_access_denied",
                 "git_no_identity",
@@ -1079,5 +1072,17 @@ mod tests {
         assert_eq!(sink.take().len(), 2);
         assert_eq!(sink.events(), []);
         NullSink.emit(Event::oom_kill(name(), 3, "z"));
+    }
+
+    #[test]
+    fn a_learned_pass_through_host_has_a_fixed_shape() {
+        let event = Event::PassThroughLearned {
+            workspace: WorkspaceName::new("box").unwrap(),
+            host: "pinned.example".into(),
+        };
+        let json = r#"{"type":"pass_through_learned","workspace":"box","host":"pinned.example"}"#;
+        assert_eq!(serde_json::to_string(&event).unwrap(), json);
+        assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
+        assert_eq!(event.workspace(), Some(&WorkspaceName::new("box").unwrap()));
     }
 }

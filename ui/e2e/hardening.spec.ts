@@ -434,11 +434,13 @@ test.describe("with the keyboard alone", () => {
       name: "Allow direct SSH for new workspaces?",
     });
     await expect(trust).toBeVisible();
+    // The dialog takes the focus when it opens; only then does Tab have a trap to be tested against.
+    await expect(trust.locator(":focus")).toHaveCount(1);
     await page.keyboard.press("Tab");
-    expect(
-      await trust.evaluate((el) => el.contains(document.activeElement)),
+    await expect(
+      trust.locator(":focus"),
       "the focus stays inside the dialog",
-    ).toBe(true);
+    ).toHaveCount(1);
     await page.keyboard.press("Escape");
     await expect(trust).toHaveCount(0);
     await expect(directSsh).toBeFocused();
@@ -486,14 +488,33 @@ test.describe("with the keyboard alone", () => {
       .getByRole("button", { name: /^Allow/ })
       .first();
     await tabTo(page, allow);
+    // A slow service: the list drops the row (a refresh does) before the answer to the decision
+    // arrives, and the page puts the focus back only once it has the answer. Holding the answer
+    // makes that window as wide as on a loaded runner, so the check below has to wait for it.
+    let release = () => {};
+    const held = new Promise<void>((done) => {
+      release = done;
+    });
+    let answered = 0;
+    await page.route("**/api/pending/*/approve", async (route) => {
+      answered += 1;
+      const answer = await route.fetch();
+      await held;
+      await route.fulfill({ response: answer });
+    });
     await page.keyboard.press("Enter");
     await expect(rows).toHaveCount(count - 1);
-    // The focus went somewhere the next Tab can continue from, not to the top of the page.
-    const where = await page.evaluate(() => {
-      const el = document.activeElement;
-      if (!el || el === document.body) return "body";
-      return el.closest("li.req, nav") ? "inbox" : `outside: ${el.tagName}`;
-    });
-    expect(where).toBe("inbox");
+    release();
+    expect(answered, "the decision went through the held route").toBe(1);
+    // The focus ends up somewhere the next Tab can continue from, not at the top of the page.
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const el = document.activeElement;
+          if (!el || el === document.body) return "body";
+          return el.closest("li.req, nav") ? "inbox" : `outside: ${el.tagName}`;
+        }),
+      )
+      .toBe("inbox");
   });
 });

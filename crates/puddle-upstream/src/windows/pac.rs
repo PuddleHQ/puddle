@@ -39,7 +39,7 @@ impl Slot {
     fn finish(&self, outcome: Result<(), u32>) {
         let mut guard = self.outcome.lock().unwrap_or_else(PoisonError::into_inner);
         *guard = Some(outcome);
-        // Notified while the lock is held, so the waiter cannot free the slot before this returns.
+        // Notified while the lock is held, so a waiter that sees the outcome cannot run ahead of this call.
         self.ready.notify_all();
     }
 
@@ -213,6 +213,8 @@ fn resolve_once(query: &PacQuery, auto_logon: bool) -> Result<Vec<Hop>, PacError
     let resolver = Handle(raw_resolver);
 
     let slot = Arc::new(Slot::default());
+    // Dropped before `resolver` on the paths that return with it live: a late callback in between
+    // finds no entry and does nothing.
     let registration = Registration::new(&slot);
     // SAFETY: `callback` matches WINHTTP_STATUS_CALLBACK; flags name only the two statuses it handles.
     unsafe {
@@ -381,7 +383,7 @@ mod tests {
     }
 
     #[test]
-    fn resolutions_leave_no_context_behind() {
+    fn resolutions_remove_their_registration() {
         let _serial = COUNTING.lock().unwrap_or_else(PoisonError::into_inner);
         let before = live();
         // Nothing listens on port 1, so each resolution ends in an error or a timeout.

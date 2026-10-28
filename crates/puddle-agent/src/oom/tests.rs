@@ -384,6 +384,56 @@ async fn a_log_line_ready_together_with_the_end_of_the_grace_period_is_served_fi
     task.abort();
 }
 
+/// The log line arrives while the tick that finds the grace period over is reading the counter.
+/// Nothing here depends on timing: the watch's own thread is held (a stalled counter read) until
+/// the grace period is over and, on the next tick, until the line is queued.
+#[tokio::test]
+async fn a_log_line_arriving_during_the_counter_read_that_ends_the_grace_period_is_served_first() {
+    let fake = Fake::new("midread", 0);
+    let (tx, mut rx) = mpsc::channel(8);
+    let sources = fake.sources();
+    let grace = sources.grace;
+    let kmsg = fake.kmsg();
+    let (queued_tx, queued) = std::sync::mpsc::channel();
+    let mut stage = 0_u8;
+    let task = tokio::spawn(watch_observed(
+        sources,
+        tx,
+        move |counter| {
+            if counter == Some(1) && stage == 0 {
+                // The reading that sees the kill: stall until its grace period is over, so the
+                // next tick starts with the entry due.
+                stage = 1;
+                std::thread::sleep(grace + Duration::from_millis(50));
+            } else if stage == 1 {
+                // The next tick's read is done and its due check is next: the line lands now.
+                stage = 2;
+                let mut f = std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(&kmsg)
+                    .unwrap();
+                f.write_all(b"3,3,3,-;Out of memory: Killed process 9 (hog) total-vm:9kB\n")
+                    .unwrap();
+                queued
+                    .recv_timeout(Duration::from_secs(10))
+                    .expect("the log reader queues the kill");
+            }
+        },
+        move || {
+            let _ = queued_tx.send(());
+        },
+    ));
+    // Give the watch its baseline before the counter moves.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    fake.set_counter(1);
+    assert_eq!(
+        next(&mut rx, Duration::from_secs(5)).await,
+        Some(AgentMessage::oom_kill(Some(9), Some("hog".into())))
+    );
+    assert_eq!(next(&mut rx, Duration::from_millis(400)).await, None);
+    task.abort();
+}
+
 #[tokio::test]
 async fn watch_reports_a_counted_kill_without_a_log_line_unnamed() {
     let fake = Fake::new("unnamed", 0);

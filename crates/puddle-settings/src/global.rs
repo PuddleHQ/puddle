@@ -14,7 +14,7 @@ use crate::{
 };
 
 /// The version of the terms the enable popup for Microsoft's server shows: the licence's address.
-/// A consent recorded for any other version does not cover the server ([`Consent::allows`]).
+/// A consent recorded for any other version does not cover the server ([`crate::Consent::allows`]).
 /// The settings screen shows the same address (`MS_TERMS_VERSION` in `ui/src/lib/settings/model.ts`).
 pub const MICROSOFT_TERMS_VERSION: &str = "https://code.visualstudio.com/license/server";
 

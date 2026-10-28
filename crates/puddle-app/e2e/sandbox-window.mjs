@@ -110,6 +110,9 @@ function connect(url) {
 async function attack(target, label) {
   const page = await connect(target.webSocketDebuggerUrl);
   try {
+    // The target is listed as soon as the navigation commits, a moment before the page's script
+    // has run: wait for the attack page itself (a missing page still fails, after the wait).
+    for (let i = 0; i < 50 && (await page.evaluate(`typeof window.__attackRun`)) !== "function"; i++) await sleep(200);
     const results = await page.evaluate("window.__attackRun()");
     const bridge = results.find((r) => r.name === "bridge");
     console.log(`     ${label}: IPC bridge present: ${bridge?.detail}`);
@@ -159,7 +162,13 @@ try {
   main?.close();
   if (!appExited) spawnSync("taskkill", ["/PID", String(app.pid), "/T", "/F"], { stdio: "ignore" });
   server.close();
-  rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  // WebView2's child processes can still hold the data folder for a moment after the kill; a
+  // leftover temp folder is not a result of this test.
+  try {
+    rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+  } catch (err) {
+    console.log(`note: could not remove ${scratch}: ${err.code ?? err}`);
+  }
 }
 
 if (failures.length > 0) {

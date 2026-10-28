@@ -208,6 +208,17 @@ test.describe("zoomed to 200 % on a 1280 px window", () => {
 test.describe("reduced motion", () => {
   test.use({ reducedMotion: "reduce" });
 
+  /**
+   * The status line of the card that is starting. The page has another `status` before the click (the
+   * "requests waiting" banner), so waiting for the first one would not wait for the spinner.
+   */
+  function busyStatus(page: Page) {
+    return page
+      .getByRole("article")
+      .filter({ hasText: "docs-site" })
+      .getByRole("status");
+  }
+
   /** Elements that still move: a transition or animation longer than a frame, or one that never ends. */
   function moving(page: Page): Promise<string[]> {
     return page.evaluate(() => {
@@ -253,7 +264,7 @@ test.describe("reduced motion", () => {
     await page.goto("/workspaces");
     await backend.control.step({ do: "hold_workspaces" });
     await page.getByRole("button", { name: "Start docs-site" }).click();
-    await expect(page.getByRole("status").first()).toBeVisible();
+    await expect(busyStatus(page)).toBeVisible();
     expect(await moving(page), "while docs-site starts").toEqual([]);
     // A short transition may still be finishing; a loop never ends, so only loops count.
     expect(
@@ -276,7 +287,7 @@ test.describe("reduced motion", () => {
     await open(page, backend, "/workspaces");
     await backend.control.step({ do: "hold_workspaces" });
     await page.getByRole("button", { name: "Start docs-site" }).click();
-    await expect(page.getByRole("status").first()).toBeVisible();
+    await expect(busyStatus(page)).toBeVisible();
     expect((await moving(page)).join("\n")).toContain("spin");
   });
 });

@@ -391,10 +391,9 @@ pub async fn install_latest(
             let _ = std::fs::remove_dir_all(&staging);
             return Err(err);
         }
-        if dir.exists() {
-            // A folder without the marker: an earlier attempt died; it is not a build.
-            std::fs::remove_dir_all(&dir)?;
-        }
+        // A folder without the marker is an earlier attempt that died: not a build, replaced whole
+        // (a missing folder is the usual case, so the answer is not looked at).
+        let _ = std::fs::remove_dir_all(&dir);
         std::fs::rename(&staging, &dir)?;
     }
     write_current(builds, &latest.commit)?;
@@ -419,9 +418,8 @@ async fn fetch_and_unpack(
         if actual != expected {
             return Err(InstallError::Checksum { expected, actual });
         }
-        if out.exists() {
-            std::fs::remove_dir_all(&out)?;
-        }
+        // Staging left by a dead attempt goes; usually there is none.
+        let _ = std::fs::remove_dir_all(&out);
         unpack(&tar, &out)?;
         if !out.join(PROGRAM).is_file() {
             return Err(InstallError::Archive(format!("no {PROGRAM}")));
@@ -460,10 +458,11 @@ fn sha256_of(path: &Path) -> io::Result<String> {
 
 /// The path of an archive entry without the tarball's top folder, `None` for the folder itself.
 fn below_top(path: &Path) -> Result<Option<PathBuf>, InstallError> {
-    let mut parts = path.components();
+    // A leading `./` is how some tools write every path; it is not a folder.
+    let mut parts = path.components().filter(|c| *c != Component::CurDir);
     match parts.next() {
         Some(Component::Normal(_)) => {}
-        Some(Component::CurDir) | None => return Ok(None),
+        None => return Ok(None),
         Some(_) => {
             return Err(InstallError::Archive(format!(
                 "the path {}, which leaves the folder",
@@ -475,7 +474,6 @@ fn below_top(path: &Path) -> Result<Option<PathBuf>, InstallError> {
     for part in parts {
         match part {
             Component::Normal(name) => rest.push(name),
-            Component::CurDir => {}
             _ => {
                 return Err(InstallError::Archive(format!(
                     "the path {}, which leaves the folder",
@@ -503,19 +501,16 @@ fn unpack(tarball: &Path, dest: &Path) -> Result<(), InstallError> {
         match entry.header().entry_type() {
             EntryType::Directory => std::fs::create_dir_all(&target)?,
             EntryType::Regular | EntryType::Continuous => {
-                if let Some(parent) = target.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
+                std::fs::create_dir_all(target.parent().unwrap_or(dest))?;
                 let mut file = std::fs::File::create(&target)?;
                 io::copy(&mut entry, &mut file)?;
                 #[cfg(unix)]
-                if let Ok(mode) = entry.header().mode() {
+                {
                     use std::os::unix::fs::PermissionsExt;
                     // Owner read/write always; the other bits as published.
-                    std::fs::set_permissions(
-                        &target,
-                        std::fs::Permissions::from_mode((mode & 0o755) | 0o600),
-                    )?;
+                    let mode = entry.header().mode().unwrap_or(0o644);
+                    let kept = std::fs::Permissions::from_mode((mode & 0o755) | 0o600);
+                    std::fs::set_permissions(&target, kept)?;
                 }
             }
             other => {
@@ -603,6 +598,30 @@ mod tests {
                 "https://update.code.visualstudio.com/commit:{COMMIT}/server-linux-arm64-web/stable"
             )
         );
+    }
+
+    #[test]
+    fn archive_paths_lose_their_top_folder_and_never_leave_the_build() {
+        let below = |p: &str| below_top(Path::new(p)).map_err(|e| e.to_string());
+        assert_eq!(
+            below("top/bin/code-server"),
+            Ok(Some(PathBuf::from("bin/code-server")))
+        );
+        assert_eq!(below("top/./a"), Ok(Some(PathBuf::from("a"))));
+        assert_eq!(below("./top/a"), Ok(Some(PathBuf::from("a"))));
+        // The top folder itself, and nothing at all.
+        assert_eq!(below("top/"), Ok(None));
+        assert_eq!(below(""), Ok(None));
+        assert!(below("top/../../x").is_err());
+        assert!(below("/etc/x").is_err());
+    }
+
+    #[test]
+    fn a_current_file_that_names_no_commit_names_no_build() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(current_build(dir.path()), None);
+        std::fs::write(dir.path().join("current"), "../../etc").unwrap();
+        assert_eq!(current_build(dir.path()), None);
     }
 
     #[test]

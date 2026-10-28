@@ -458,6 +458,7 @@ mod tests {
         assert_eq!(left.len(), 1, "{left:?}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_release_that_cannot_be_removed_is_left_and_the_others_still_go() {
         use std::os::unix::fs::PermissionsExt as _;

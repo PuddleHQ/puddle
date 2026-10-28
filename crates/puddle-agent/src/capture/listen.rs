@@ -9,8 +9,8 @@
 //! decides what the client sees: `200` and the tunnel, or a reset.
 //!
 //! A connection from a container (its source address is not one of the guest's own: the rules
-//! redirect forwarded traffic too) is marked with the origin header (`puddle_agent_proto::origin`), so the proxy passes it through
-//! undecrypted: the client has none of the workspace's CA settings (see
+//! redirect forwarded traffic too) is marked with the origin header, so the proxy passes it
+//! through undecrypted: the client has none of the workspace's CA settings (see
 //! [`crate::origin`]).
 //!
 //! A refused SSH client (libssh2, Go: clients that never read `ssh_config`) is told why before it

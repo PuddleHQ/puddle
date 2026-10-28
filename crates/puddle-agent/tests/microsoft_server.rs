@@ -375,6 +375,21 @@ async fn an_answer_about_another_build_or_without_a_usable_hash_is_refused() {
 }
 
 #[tokio::test]
+async fn the_newest_build_already_on_the_volume_is_made_current_without_a_download() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = leak(Service::honest(good_tarball()));
+    ensure_build(&first, PLATFORM, &builds(&dir)).await.unwrap();
+    // The pointer is lost (an older build was current, or the file was removed).
+    std::fs::remove_file(builds(&dir).join("current")).unwrap();
+    let again = leak(Service::honest(good_tarball()));
+    let made = install_latest(&again, PLATFORM, &builds(&dir))
+        .await
+        .unwrap();
+    assert_eq!(current_build(&builds(&dir)), Some(made));
+    assert_eq!(again.downloads.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn staging_left_by_a_dead_attempt_is_replaced() {
     let dir = tempfile::tempdir().unwrap();
     let stale = builds(&dir).join(format!("{COMMIT}.partial"));

@@ -57,13 +57,9 @@ pub async fn reply_to(
             };
             match control.switch() {
                 Ok(switched) => {
-                    tracing::info!(
-                        switched = switched.is_some(),
-                        "asked to run the staged editor server build"
-                    );
-                    HostReply::EditorBuild {
-                        switched: switched.is_some(),
-                    }
+                    let switched = switched.is_some();
+                    tracing::info!(switched, "asked to run the staged editor server build");
+                    HostReply::EditorBuild { switched }
                 }
                 Err(err) => {
                     tracing::warn!(%err, "could not switch the editor server build");

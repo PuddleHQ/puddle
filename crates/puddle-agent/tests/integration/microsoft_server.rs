@@ -1050,3 +1050,107 @@ async fn a_clean_up_leaves_files_it_does_not_know_alone() {
         ]
     );
 }
+
+#[tokio::test]
+async fn a_current_build_that_is_gone_is_replaced_by_the_staged_one_with_nothing_to_go_back_to() {
+    let dir = tempfile::tempdir().unwrap();
+    let (builds, service) = installed(&dir).await;
+    service.publish(NEWER, NEWER_RELEASE, good_tarball());
+    stage_update(&service, PLATFORM, &builds).await.unwrap();
+    std::fs::remove_dir_all(builds.join(COMMIT)).unwrap();
+    assert_eq!(switch_to_staged(&builds).unwrap().as_deref(), Some(NEWER));
+    assert_eq!(current_build(&builds), Some(builds.join(NEWER)));
+    // The build that was current is not complete, so it is no build to go back to.
+    assert!(!on_trial(&builds));
+    assert!(!builds.join("previous").exists());
+}
+
+/// Makes `path` unwritable for the test's user (root ignores the mode, so there it does nothing).
+fn lock(path: &Path) {
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o555)).unwrap();
+}
+
+fn unlock(path: &Path) {
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+fn is_root() -> bool {
+    let probe = tempfile::tempdir().unwrap();
+    lock(probe.path());
+    let writable = std::fs::write(probe.path().join("x"), "").is_ok();
+    unlock(probe.path());
+    writable
+}
+
+#[tokio::test]
+async fn an_old_build_that_cannot_be_removed_stays_and_the_clean_up_goes_on() {
+    if is_root() {
+        // skip-ok: root ignores a folder's mode, so nothing can fail to be removed; CI runs as a user
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (builds, _service) = installed(&dir).await;
+    let stuck = builds.join(NEWER);
+    std::fs::create_dir_all(stuck.join("inner")).unwrap();
+    std::fs::write(stuck.join("inner/file"), "x").unwrap();
+    lock(&stuck.join("inner"));
+    let leftover = builds.join(format!("{NEWER}.tar.gz.partial"));
+    std::fs::write(&leftover, "dead download").unwrap();
+    confirm(&builds, COMMIT).unwrap();
+    unlock(&stuck.join("inner"));
+    assert!(
+        stuck.join("inner/file").is_file(),
+        "the folder is still there"
+    );
+    assert!(!leftover.exists(), "the other leftover went all the same");
+    assert!(builds.join(COMMIT).is_dir());
+}
+
+fn control_for(builds: &Path) -> std::sync::Arc<Control> {
+    let mut server = EditorServer::microsoft("/d", "/f", 120, false, true);
+    server.dir = builds.to_string_lossy().into_owned();
+    Control::new(&server)
+}
+
+#[tokio::test]
+async fn the_host_asking_for_a_switch_gets_whether_a_newer_build_now_runs() {
+    use puddle_agent::host_control::reply_to;
+    use puddle_agent_proto::host_control::{HostMessage, HostReply};
+    let dir = tempfile::tempdir().unwrap();
+    let (builds, service) = installed(&dir).await;
+    let ask = |control| reply_to(HostMessage::SwitchEditorBuild, &[], control);
+    // A server that is not kept up to date has no control: the message is not for it.
+    assert_eq!(ask(None).await, HostReply::Ignored);
+    let control = control_for(&builds);
+    assert_eq!(
+        ask(Some(&control)).await,
+        HostReply::EditorBuild { switched: false }
+    );
+    service.publish(NEWER, NEWER_RELEASE, good_tarball());
+    stage_update(&service, PLATFORM, &builds).await.unwrap();
+    assert_eq!(
+        ask(Some(&control)).await,
+        HostReply::EditorBuild { switched: true }
+    );
+    assert_eq!(current_build(&builds), Some(builds.join(NEWER)));
+}
+
+#[tokio::test]
+async fn a_switch_that_cannot_be_recorded_is_answered_as_not_switched() {
+    use puddle_agent::host_control::reply_to;
+    use puddle_agent_proto::host_control::{HostMessage, HostReply};
+    if is_root() {
+        // skip-ok: root ignores a folder's mode, so nothing can fail to be removed; CI runs as a user
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (builds, service) = installed(&dir).await;
+    service.publish(NEWER, NEWER_RELEASE, good_tarball());
+    stage_update(&service, PLATFORM, &builds).await.unwrap();
+    let control = control_for(&builds);
+    lock(&builds);
+    let reply = reply_to(HostMessage::SwitchEditorBuild, &[], Some(&control)).await;
+    unlock(&builds);
+    assert_eq!(reply, HostReply::EditorBuild { switched: false });
+    assert_eq!(current_build(&builds), Some(builds.join(COMMIT)));
+}

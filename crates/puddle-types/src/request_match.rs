@@ -335,16 +335,20 @@ impl fmt::Display for PathPattern {
         if self.segments.is_empty() && !self.open {
             return f.write_str("/");
         }
+        let mut out = String::new();
         for segment in &self.segments {
             match segment {
-                Segment::One => f.write_str("/*")?,
-                Segment::Name(name) => write!(f, "/{name}")?,
+                Segment::One => out.push_str("/*"),
+                Segment::Name(name) => {
+                    out.push('/');
+                    out.push_str(name);
+                }
             }
         }
         if self.open {
-            f.write_str("/**")?;
+            out.push_str("/**");
         }
-        Ok(())
+        f.write_str(&out)
     }
 }
 

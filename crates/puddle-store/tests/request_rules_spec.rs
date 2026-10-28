@@ -253,3 +253,48 @@ fn a_row_that_cannot_be_read_back_is_reported_as_corrupt_and_not_dropped() {
         .unwrap();
     }
 }
+
+#[test]
+fn a_column_of_the_wrong_type_is_an_error_for_the_listing_and_never_a_guess() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    drop(Store::open(&path, Arc::new(ManualClock::new(T0)), Limits::default()).unwrap());
+
+    // One row per column, each with that column holding a value of the wrong type.
+    let columns = [
+        "id",
+        "workspace_id",
+        "host",
+        "methods",
+        "path",
+        "created_at",
+        "created_by",
+    ];
+    let good = [
+        "1",
+        "NULL",
+        "'a.example.com'",
+        "'GET'",
+        "'/x'",
+        "1",
+        "'api'",
+    ];
+    let wrong = ["'one'", "5", "NULL", "NULL", "NULL", "NULL", "NULL"];
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    for (at, column) in columns.iter().enumerate() {
+        conn.execute_batch(
+            "DROP TABLE request_rules; \
+             CREATE TABLE request_rules (id, scope, workspace_id, host, methods, path, created_at, created_by);",
+        )
+        .unwrap();
+        let mut values = good.to_vec();
+        values[at] = wrong[at];
+        conn.execute_batch(&format!(
+            "INSERT INTO request_rules VALUES ({}, 'global', {}, {}, {}, {}, {}, {})",
+            values[0], values[1], values[2], values[3], values[4], values[5], values[6]
+        ))
+        .unwrap();
+        let store = Store::open(&path, Arc::new(ManualClock::new(T0)), Limits::default()).unwrap();
+        assert!(store.request_rules(None).is_err(), "{column}");
+    }
+}

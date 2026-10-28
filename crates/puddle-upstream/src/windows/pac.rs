@@ -2,7 +2,8 @@
 //! PAC and WPAD evaluation by Windows' own engine (`WinHttpGetProxyForUrlEx`): out of process,
 //! cancellable, and it returns the whole list including `DIRECT` and failover entries.
 
-use std::sync::{Arc, Condvar, Mutex, PoisonError, Weak};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use std::ffi::c_void;
@@ -59,17 +60,65 @@ impl Slot {
     }
 }
 
-/// What the WinHTTP callback gets as its context. Never freed: WinHTTP can call back after
-/// `WinHttpCloseHandle` returns, until a `HANDLE_CLOSING` status that this code does not ask for,
-/// so once handed over the box stays for the life of the process (one small allocation per
-/// resolution, plus the slot's memory without its value). It holds a `Weak`, so a late callback
-/// finds the resolution gone and does nothing.
-struct Context(Weak<Slot>);
+/// The slots of the PAC resolutions in flight, by resolution id. The id travels through WinHTTP as
+/// the request context and is never dereferenced, so a resolution allocates nothing that outlives
+/// it. WinHTTP can call back after `WinHttpCloseHandle` returns, until a `HANDLE_CLOSING` status
+/// that this code does not ask for, so a late call must be harmless: it finds no entry for its id
+/// and does nothing.
+struct Pending(Mutex<Vec<(usize, Arc<Slot>)>>);
 
-impl Context {
-    /// Leaks a context for `slot` and returns the address to give WinHTTP.
-    fn leak(slot: &Arc<Slot>) -> usize {
-        Box::into_raw(Box::new(Self(Arc::downgrade(slot)))) as usize
+impl Pending {
+    const fn new() -> Self {
+        Self(Mutex::new(Vec::new()))
+    }
+
+    fn entries(&self) -> MutexGuard<'_, Vec<(usize, Arc<Slot>)>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Files `slot` under a new id and returns the id.
+    fn add(&self, slot: &Arc<Slot>) -> usize {
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        self.entries().push((id, Arc::clone(slot)));
+        id
+    }
+
+    fn remove(&self, id: usize) {
+        // Dropped after the lock is released, as the slot's drop is not ours to constrain.
+        let removed = {
+            let mut entries = self.entries();
+            entries
+                .iter()
+                .position(|(entry, _)| *entry == id)
+                .map(|at| entries.swap_remove(at))
+        };
+        drop(removed);
+    }
+
+    /// The slot filed under `id`, if its resolution is still in flight.
+    fn find(&self, id: usize) -> Option<Arc<Slot>> {
+        self.entries()
+            .iter()
+            .find(|(entry, _)| *entry == id)
+            .map(|(_, slot)| Arc::clone(slot))
+    }
+}
+
+static PENDING: Pending = Pending::new();
+static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+
+/// A resolution's entry in `PENDING`, removed when it goes out of scope.
+struct Registration(usize);
+
+impl Registration {
+    fn new(slot: &Arc<Slot>) -> Self {
+        Self(PENDING.add(slot))
+    }
+}
+
+impl Drop for Registration {
+    fn drop(&mut self) {
+        PENDING.remove(self.0);
     }
 }
 
@@ -78,8 +127,8 @@ impl Context {
 ///
 /// # Safety
 ///
-/// `context` must be an address from `Context::leak` (never freed, so valid for the whole
-/// process), and `info` must be what WinHTTP documents for `status`. Only WinHTTP calls it.
+/// `info` must be what WinHTTP documents for `status`. `context` is only a lookup key, never
+/// dereferenced. Only WinHTTP calls it.
 unsafe extern "system" fn callback(
     _handle: *mut c_void,
     context: usize,
@@ -87,10 +136,7 @@ unsafe extern "system" fn callback(
     info: *mut c_void,
     _len: u32,
 ) {
-    // SAFETY: `context` is the leaked `Context` from `resolve_once`; nothing frees it, so it is
-    // alive whenever WinHTTP calls, even after the resolver handle was closed.
-    let context = unsafe { &*(context as *const Context) };
-    let Some(slot) = context.0.upgrade() else {
+    let Some(slot) = PENDING.find(context) else {
         return;
     };
     match status {
@@ -167,7 +213,7 @@ fn resolve_once(query: &PacQuery, auto_logon: bool) -> Result<Vec<Hop>, PacError
     let resolver = Handle(raw_resolver);
 
     let slot = Arc::new(Slot::default());
-    let context = Context::leak(&slot);
+    let registration = Registration::new(&slot);
     // SAFETY: `callback` matches WINHTTP_STATUS_CALLBACK; flags name only the two statuses it handles.
     unsafe {
         WinHttpSetStatusCallback(
@@ -201,8 +247,9 @@ fn resolve_once(query: &PacQuery, auto_logon: bool) -> Result<Vec<Hop>, PacError
     let url = wide(&query.url);
     // SAFETY: the resolver is live; `url` and `options` (and the PAC URL it points at) outlive the
     // call, and WinHTTP copies them before returning ERROR_IO_PENDING.
-    let code =
-        unsafe { WinHttpGetProxyForUrlEx(resolver.0, url.as_ptr(), &raw const options, context) };
+    let code = unsafe {
+        WinHttpGetProxyForUrlEx(resolver.0, url.as_ptr(), &raw const options, registration.0)
+    };
     let outcome = match code {
         0 => Some(Ok(())),
         ERROR_IO_PENDING => slot.wait(query.timeout),
@@ -210,7 +257,7 @@ fn resolve_once(query: &PacQuery, auto_logon: bool) -> Result<Vec<Hop>, PacError
     };
     let Some(outcome) = outcome else {
         // Timed out: closing the resolver cancels the request. A callback may still arrive after
-        // that; the leaked `Context` (see there) makes it a no-op.
+        // that; the registration is removed on return, and a late call finds no entry.
         drop(resolver);
         return Err(PacError::Timeout);
     };
@@ -256,18 +303,26 @@ fn collect(resolver: &Handle) -> Result<Vec<Hop>, PacError> {
 mod tests {
     use super::*;
 
+    /// Tests that count `PENDING`'s entries run one at a time: the table is process-wide.
+    static COUNTING: Mutex<()> = Mutex::new(());
+
+    fn live() -> usize {
+        PENDING.entries().len()
+    }
+
     fn call(context: usize, status: u32, info: *mut c_void) {
-        // SAFETY: `context` comes from `Context::leak`; `info` is null or a live
-        // `WINHTTP_ASYNC_RESULT` for the request-error status, as the callback expects.
+        // SAFETY: `context` is a lookup key; `info` is null or a live `WINHTTP_ASYNC_RESULT` for
+        // the request-error status, as the callback expects.
         unsafe { callback(std::ptr::null_mut(), context, status, info, 0) };
     }
 
     #[test]
     fn a_callback_fills_the_slot_of_a_resolution_that_is_waiting() {
+        let _serial = COUNTING.lock().unwrap_or_else(PoisonError::into_inner);
         let slot = Arc::new(Slot::default());
-        let context = Context::leak(&slot);
+        let registration = Registration::new(&slot);
         call(
-            context,
+            registration.0,
             WINHTTP_CALLBACK_STATUS_GETPROXYFORURL_COMPLETE,
             std::ptr::null_mut(),
         );
@@ -278,7 +333,7 @@ mod tests {
             dwError: 12002,
         };
         call(
-            context,
+            registration.0,
             WINHTTP_CALLBACK_STATUS_REQUEST_ERROR,
             (&raw mut failure).cast(),
         );
@@ -286,27 +341,59 @@ mod tests {
     }
 
     #[test]
-    fn a_callback_after_the_resolution_ended_finds_a_live_context_and_does_nothing() {
+    fn a_callback_after_the_resolution_ended_does_nothing() {
+        let _serial = COUNTING.lock().unwrap_or_else(PoisonError::into_inner);
         let slot = Arc::new(Slot::default());
-        let context = Context::leak(&slot);
-        drop(slot); // the resolution timed out or finished and left
-        // WinHTTP may still call, also with an error status; the context must be readable.
+        let id = Registration::new(&slot).0; // the registration is gone at once: the resolution ended
         let mut failure = WINHTTP_ASYNC_RESULT {
             dwResult: 0,
             dwError: 12017,
         };
         call(
-            context,
+            id,
             WINHTTP_CALLBACK_STATUS_REQUEST_ERROR,
             (&raw mut failure).cast(),
         );
         call(
-            context,
+            id,
             WINHTTP_CALLBACK_STATUS_GETPROXYFORURL_COMPLETE,
             std::ptr::null_mut(),
         );
-        // SAFETY: reclaimed only so the test does not leak; nothing calls it again.
-        let context = unsafe { Box::from_raw(context as *mut Context) };
-        assert!(context.0.upgrade().is_none());
+        assert_eq!(slot.wait(Duration::from_millis(10)), None);
+    }
+
+    #[test]
+    fn a_registration_holds_its_entry_until_it_is_dropped() {
+        let _serial = COUNTING.lock().unwrap_or_else(PoisonError::into_inner);
+        let before = live();
+        let slot = Arc::new(Slot::default());
+        let first = Registration::new(&slot);
+        let second = Registration::new(&slot);
+        assert_ne!(first.0, second.0);
+        assert_eq!(live(), before + 2);
+        drop(first);
+        assert_eq!(live(), before + 1);
+        assert!(PENDING.find(second.0).is_some());
+        drop(second);
+        assert_eq!(live(), before);
+        // The table's own clones are gone with the entries.
+        assert_eq!(Arc::strong_count(&slot), 1);
+    }
+
+    #[test]
+    fn resolutions_leave_no_context_behind() {
+        let _serial = COUNTING.lock().unwrap_or_else(PoisonError::into_inner);
+        let before = live();
+        // Nothing listens on port 1, so each resolution ends in an error or a timeout.
+        let query = PacQuery {
+            pac_url: Some("http://127.0.0.1:1/proxy.pac".to_owned()),
+            auto_detect: false,
+            url: "http://example.test/".to_owned(),
+            timeout: Duration::from_secs(5),
+        };
+        for _ in 0..5 {
+            let _ = resolve(&query);
+            assert_eq!(live(), before);
+        }
     }
 }

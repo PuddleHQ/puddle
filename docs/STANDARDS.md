@@ -368,6 +368,11 @@ the owner, then tagged `vX.Y.Z` on `main`.
   each `?` and each match arm as a region, and a region target would reward tests of the compiler's
   expansion. What it can't see: a line that ran without being asserted, and OS, network or VM code, which has
   its own tier.
+  Property tests run from a fixed seed under coverage (`scripts/coverage-run.sh` sets `PROPTEST_RNG_SEED`; ordinary
+  test runs stay random and keep exploring), so the executed lines are the same on every run: a line that only a random
+  case reaches would otherwise fail a pull request by chance. `scripts/check.sh coverage-determinism` (slow, in no gate set) runs
+  the listed crates twice and fails on any line one run executed and the other did not; run it after touching
+  `coverage-run.sh`, a property test or a listed crate's tests.
 - **Expectation above the gate:** security-sensitive modules (§5) aim for ≥ 95 % lines, and every
   branch of a decision (allow/deny/pending, each toggle) has a test. A change that lowers a
   crate's coverage says why in the commit.

@@ -42,7 +42,7 @@ tgt="\$TARGET/llvm-cov-target"
 case "\$2" in
 show-env) echo "export CARGO_LLVM_COV_TARGET_DIR='\$TARGET'"; exit 0 ;;
 nextest)
-    echo "stub cargo: \$*"
+    echo "stub cargo: \$* (PROPTEST_RNG_SEED=\${PROPTEST_RNG_SEED:-unset})"
     mkdir -p "\$tgt" && cp "\$PROFILES"/*.profraw "\$tgt"/
     [ -z "\${FAIL_TESTS:-}" ] || exit 100
     case " \$* " in *" --no-report "*) exit 0 ;; esac ;;
@@ -96,7 +96,7 @@ run() {
     set +e
     (
         # shellcheck disable=SC2016 # the script text is for the inner shell
-        env -u LLVM_PROFDATA_FLAGS -u GITHUB_ACTIONS PROFILES="$tmp/$name" TARGET="$tmp/target-$name" "$@" sh -c '
+        env -u LLVM_PROFDATA_FLAGS -u GITHUB_ACTIONS -u PROPTEST_RNG_SEED PROFILES="$tmp/$name" TARGET="$tmp/target-$name" "$@" sh -c '
             "$0/scripts/coverage-run.sh" "$1" --workspace && "$1" llvm-cov report --lcov' "$here" "$tmp/cargo"
     ) >"$tmp/$name.out" 2>&1
     echo $? >"$tmp/$name.rc"
@@ -111,6 +111,17 @@ grep -q -e '--no-report' "$tmp/clean.out" || fail "the tests step did not skip t
 ! grep -q 'coverage profile dropped' "$tmp/clean.out" || fail "warning without a cut file"
 
 # The failing case of a CI run: nine good files, so the last batch of four holds the cut file alone.
+# Property tests run from a fixed seed under coverage (a random one makes a 100 % gate fail by chance), and the
+# caller can pick another.
+grep -q 'PROPTEST_RNG_SEED=[0-9][0-9]*)' "$tmp/clean.out" || fail "the tests step did not fix the proptest seed: $(cat "$tmp/clean.out")"
+scenario seeded 1 0
+run seeded PROPTEST_RNG_SEED=7
+grep -q 'PROPTEST_RNG_SEED=7)' "$tmp/seeded.out" || fail "a seed given by the caller was replaced: $(cat "$tmp/seeded.out")"
+scenario unseeded 1 0
+run unseeded
+[ "$(sed -n 's/.*PROPTEST_RNG_SEED=\([0-9]*\)).*/\1/p' "$tmp/clean.out" | head -n 1)" = "$(sed -n 's/.*PROPTEST_RNG_SEED=\([0-9]*\)).*/\1/p' "$tmp/unseeded.out" | head -n 1)" ] ||
+    fail "the default seed changes between runs"
+
 scenario cut 8 1
 run cut
 [ "$(rc cut)" = 0 ] || fail "a batch of only a cut file failed the run: $(cat "$tmp/cut.out")"

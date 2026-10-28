@@ -19,6 +19,14 @@ set -u
 cargo=$1
 shift
 
+# Property tests draw random cases, so which arm a run reaches would change from run to run, and a 100 % gate
+# (scripts/full-coverage-crates.txt) would fail by chance on an arm only a proptest reaches (it did, on a pull
+# request that touched none of that code). A fixed seed under coverage makes the line set the same every run;
+# ordinary test runs keep their random seeds and keep exploring. Set PROPTEST_RNG_SEED to try another seed.
+# Proptest reads the variable in its default config, which every `proptest!` block here extends.
+PROPTEST_RNG_SEED=${PROPTEST_RNG_SEED:-20261028}
+export PROPTEST_RNG_SEED
+
 "$cargo" llvm-cov nextest --no-report "$@"
 rc=$?
 [ "$rc" = 0 ] || exit "$rc"

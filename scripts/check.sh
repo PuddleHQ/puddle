@@ -3,7 +3,7 @@
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
 #   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, silent-skips, quality, secrets, clippy, clippy-windows, deny, advisories, notices, openapi, test, doc, coverage,
-#   coverage-ratchet, diff-coverage, mutants,
+#   coverage-ratchet, diff-coverage, coverage-determinism, mutants,
 #   ui, ui-licences, ui-audit, ui-e2e
 #   fast     = fmt typos spdx shellcheck hooks platform-literals standalone git-pins silent-skips   (pre-commit hook)
 #   all      = fast quality git-env secrets clippy clippy-windows deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage
@@ -168,7 +168,7 @@ run_gate() {
         ;;
     hooks)
         scripts/pre-push-test.sh && scripts/mutants-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
-            scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/coverage-cargo-test.sh &&
+            scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/coverage-cargo-test.sh && scripts/coverage-determinism.sh --self-test &&
             ci/fetch-msb-test.sh && ci/fetch-code-server-test.sh && ci/fetch-tauri-cli-test.sh && ci/check-runtime-layout-test.sh &&
             ci/scope-test.sh && ci/apt-setup-test.sh && ci/advisories-issue-test.sh && ci/quality-issue-test.sh && ci/cache-drop-test.sh &&
             ci/should-run-test.sh && ci/cache-gc-test.sh && ci/raise-coverage-baseline-test.sh && ci/test-vm-skip-policy.sh
@@ -344,6 +344,11 @@ run_gate() {
         node ui/scripts/full-coverage.ts --lcov "$target/lcov.info" \
             --crates scripts/full-coverage-crates.txt --exclusions scripts/full-coverage-exclusions.txt
         diff_coverage "diff-coverage (rust)" "$target/lcov.info" .rs
+        ;;
+    coverage-determinism)
+        # Two coverage runs of the 100 % crates must execute the same lines (slow, not in a gate set; see
+        # scripts/coverage-determinism.sh).
+        scripts/coverage-determinism.sh "$plain_cargo"
         ;;
     mutants)
         # Mutation testing of the lines this change adds or changes, in the crates of

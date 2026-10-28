@@ -37,7 +37,9 @@ pub enum ShellError {
 /// A workspace window for the smoke test to attack.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxProbe {
-    /// The page to open, on a `probe.localhost:<port>` origin.
+    /// The workspace the window stands for (`probe`).
+    pub workspace: WorkspaceName,
+    /// The page to open, on a `<workspace>.localhost:<port>` origin.
     pub url: Url,
     /// WebView2's DevTools Protocol port for that window (Windows).
     pub debug_port: u16,
@@ -48,6 +50,7 @@ impl SandboxProbe {
     /// `PUDDLE_APP_SANDBOX_DEBUG_PORT` its debug port.
     fn from_env() -> Option<Self> {
         Some(Self {
+            workspace: WorkspaceName::new("probe").ok()?,
             url: Url::parse(&std::env::var("PUDDLE_APP_SANDBOX_PROBE").ok()?).ok()?,
             debug_port: std::env::var("PUDDLE_APP_SANDBOX_DEBUG_PORT")
                 .ok()?
@@ -230,12 +233,13 @@ fn open_probe<R: Runtime>(
         }),
     };
     let windows = SandboxWindows::new(hooks);
-    let workspace = WorkspaceName::new("probe").map_err(|_| tauri::Error::WindowNotFound)?;
+    let mut origin = probe.url.clone();
+    origin.set_path("/");
+    origin.set_query(None);
     let target = Target {
-        origin: Url::parse(&probe.url.origin().ascii_serialization())
-            .map_err(tauri::Error::InvalidUrl)?,
-        data_folder: sandbox_window::data_folder(&data.join("webview"), &workspace),
-        workspace,
+        origin,
+        data_folder: sandbox_window::data_folder(&data.join("webview"), &probe.workspace),
+        workspace: probe.workspace.clone(),
         settings: WindowSettings {
             zoom_hotkeys: true,
             clipboard_read: ClipboardRead::Ask,
@@ -400,6 +404,7 @@ pub(crate) mod tests {
         let app = tauri::test::mock_app();
         let data = tempfile::tempdir().unwrap();
         let probe = SandboxProbe {
+            workspace: WorkspaceName::new("probe").unwrap(),
             url: Url::parse("http://probe.localhost:4900/attack.html").unwrap(),
             debug_port: 9444,
         };

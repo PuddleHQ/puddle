@@ -72,8 +72,8 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
         Self::decrypt_changed(self, workspace)
     }
 
-    async fn rewrite_authors(&self, workspace: WorkspaceName, git: puddle_store::WorkspaceGit) {
-        Self::rewrite_authors(self, &workspace, &git).await;
+    async fn rewrite_authors(&self, workspace: WorkspaceName) {
+        Self::rewrite_authors(self, &workspace).await;
     }
 
     async fn all_git_changed(&self) {
@@ -951,8 +951,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// authors of the new identities. A workspace that does not run reads the settings at its
     /// next start.
     pub(crate) async fn git_changed(&self, name: &WorkspaceName) {
-        if let Some(git) = self.decrypt_changed(name) {
-            self.rewrite_authors(name, &git).await;
+        if self.decrypt_changed(name).is_some() {
+            self.rewrite_authors(name).await;
         }
     }
 
@@ -1027,13 +1027,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// Runs the boot plan again in the running guest when its authors differ from what the guest
     /// holds (the hook is idempotent: only the author files change).
-    pub(crate) async fn rewrite_authors(
-        &self,
-        name: &WorkspaceName,
-        git: &puddle_store::WorkspaceGit,
-    ) {
+    ///
+    /// The settings are read once the guest is ours alone: rewrites for one workspace start in
+    /// any order, and a copy taken when the change arrived could be applied after a newer one,
+    /// leaving the old authors and a problem the newer settings already ended.
+    pub(crate) async fn rewrite_authors(&self, name: &WorkspaceName) {
         let inner = &self.inner;
-        let wanted = authors(git);
         let rewrite = {
             let live = inner.live.lock().await;
             match live.get(name) {
@@ -1054,7 +1053,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 None => return, // not up yet
             }
         };
-        self.report_git_settings(name, git, &wanted);
+        // An error was told to the user by `decrypt_changed` for this same change.
+        let Ok(git) = inner.injection.git(name) else {
+            return;
+        };
+        let wanted = authors(&git);
+        self.report_git_settings(name, &git, &wanted);
         if guest.authors == wanted {
             return;
         }

@@ -15,6 +15,7 @@ mod common;
 mod bridge;
 mod capture;
 mod editor;
+mod editor_stream;
 mod forward;
 mod host_control;
 mod merge_file;

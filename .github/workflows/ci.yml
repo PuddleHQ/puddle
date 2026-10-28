@@ -375,6 +375,7 @@ jobs:
           path: |
             target/nextest/ci/junit.xml
             target/lcov.info
+            target/coverage-summary.json
           retention-days: 14
           if-no-files-found: ignore
       # Off the light mode (worked out again from the event, not from `scope`) both gates must have run.

@@ -4,7 +4,8 @@
 // committed baseline in scripts/coverage-baseline.json. The floor has no tolerance. The 0.05 is
 // measurement wobble: runs of the same code differ by a few hundredths, and a baseline set from
 // one run would otherwise fail the next. The baseline only goes up: when coverage rises a local
-// run writes the new value (rounded down to 0.1) for you to commit, and a change that lowers the
+// run writes the new value (rounded down to 0.1) into the file (do not commit it: the nightly `coverage-baseline`
+// workflow raises the baseline in its own pull request, from the CI measurement), and a change that lowers the
 // committed baseline fails unless COVERAGE_BASELINE_LOWER_OK=1, which scripts/check.sh sets only
 // when a commit of the change carries the trailer `Owner-OK: coverage-baseline`.
 //
@@ -144,11 +145,11 @@ export function main(argv: string[]): number {
     if (argv.includes("--write")) {
       writeFileSync(file, `${JSON.stringify(v.raised, null, 2)}\n`);
       console.log(
-        `coverage ratchet: baseline raised to lines ${v.raised.lines}, regions ${v.raised.regions} in ${file}; commit it`,
+        `coverage ratchet: baseline raised to lines ${v.raised.lines}, regions ${v.raised.regions} in ${file}`,
       );
     } else {
       console.log(
-        `coverage ratchet: coverage is above the baseline; raise it with \`scripts/check.sh coverage-ratchet\` and commit scripts/coverage-baseline.json`,
+        `coverage ratchet: coverage is above the baseline; the nightly coverage-baseline workflow raises it`,
       );
     }
   }

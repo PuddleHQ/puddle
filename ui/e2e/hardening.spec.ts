@@ -59,7 +59,7 @@ const TARGETS =
 /**
  * The visible targets smaller than 24 x 24 CSS px, as `selector WxH`. Left out, as WCAG 2.5.8 does:
  * a link inside a sentence, and a control that is not drawn (display none, the skip link until it
- * has focus). A native checkbox or radio counts with its label, which is what the user clicks.
+ * has focus). A checkbox or radio is measured as drawn, so the native 13 px box fails.
  */
 function smallTargets(page: Page, within = "body"): Promise<string[]> {
   return page.evaluate(
@@ -79,17 +79,13 @@ function smallTargets(page: Page, within = "body"): Promise<string[]> {
       )) {
         const style = getComputedStyle(el);
         if (style.display === "none" || style.visibility === "hidden") continue;
-        let box = el.getBoundingClientRect();
+        const box = el.getBoundingClientRect();
         // Not drawn: a closed region, or the skip link's one-pixel clip.
         if (box.width <= 1 || box.height <= 1) continue;
         if (
           el instanceof HTMLInputElement &&
           (el.type === "checkbox" || el.type === "radio")
         ) {
-          for (const label of el.labels ?? []) {
-            const lb = label.getBoundingClientRect();
-            if (lb.width >= MIN - 0.5 && lb.height >= MIN - 0.5) box = lb;
-          }
         }
         if (el.tagName === "A" && style.display === "inline") {
           const text = [...(el.parentElement?.childNodes ?? [])].some(
@@ -487,9 +483,11 @@ test.describe("with the keyboard alone", () => {
     await page.keyboard.press("Enter");
     await expect(rows).toHaveCount(count - 1);
     // The focus went somewhere the next Tab can continue from, not to the top of the page.
-    const where = await page.evaluate(
-      () => document.activeElement?.tagName ?? "",
-    );
-    expect(where).not.toBe("");
+    const where = await page.evaluate(() => {
+      const el = document.activeElement;
+      if (!el || el === document.body) return "body";
+      return el.closest("li.req, nav") ? "inbox" : `outside: ${el.tagName}`;
+    });
+    expect(where).toBe("inbox");
   });
 });

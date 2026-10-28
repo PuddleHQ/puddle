@@ -15,13 +15,11 @@ pub(crate) trait Changes: Clone + Send + Sync + 'static {
     /// settings when the workspace runs, else `None`.
     fn decrypt_changed(&self, workspace: &WorkspaceName) -> Option<WorkspaceGit>;
 
-    /// Brings the commit authors in the workspace's guest in line with `git`, which can take as
-    /// long as the guest needs to answer.
-    fn rewrite_authors(
-        &self,
-        workspace: WorkspaceName,
-        git: WorkspaceGit,
-    ) -> impl Future<Output = ()> + Send;
+    /// Brings the commit authors in the workspace's guest in line with its settings as they are
+    /// when this runs, which can take as long as the guest needs to answer. Rewrites of one
+    /// workspace start in any order, so each reads the settings itself rather than carry a copy:
+    /// an older copy applied last would undo the newer change.
+    fn rewrite_authors(&self, workspace: WorkspaceName) -> impl Future<Output = ()> + Send;
 
     /// Looks at every running workspace's Git settings again, after events were missed.
     fn all_git_changed(&self) -> impl Future<Output = ()> + Send;
@@ -57,10 +55,10 @@ pub(crate) fn follow<G: Changes>(mut events: Receiver<Event>, service: G) -> Joi
             tokio::select! {
                 event = events.recv() => match event {
                     Ok(Event::WorkspaceGitChanged { workspace }) => {
-                        if let Some(git) = service.decrypt_changed(&workspace) {
+                        if service.decrypt_changed(&workspace).is_some() {
                             let service = service.clone();
                             rewrites.spawn(async move {
-                                service.rewrite_authors(workspace, git).await;
+                                service.rewrite_authors(workspace).await;
                             });
                         }
                     }
@@ -129,7 +127,7 @@ mod tests {
                 .then(WorkspaceGit::unconfigured)
         }
 
-        async fn rewrite_authors(&self, workspace: WorkspaceName, _: WorkspaceGit) {
+        async fn rewrite_authors(&self, workspace: WorkspaceName) {
             self.calls
                 .lock()
                 .unwrap()

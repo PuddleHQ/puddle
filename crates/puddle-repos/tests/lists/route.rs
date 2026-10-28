@@ -420,12 +420,22 @@ async fn a_connection_idle_for_too_long_is_not_used_again() {
     let pki = Pki::new("localhost");
     let server = Server::start(&pki, Mode::Answer(Arc::new(|_| Reply::ok("[]")))).await;
     let host = format!("localhost:{}", server.addr.port());
-    let api = api(direct_chain(), &pki).with_idle_time(Duration::from_millis(20));
+    let hour = Duration::from_secs(3600);
+    let api = api(direct_chain(), &pki).with_idle_time(hour);
 
     api.get(request(&host, "/one")).await.unwrap();
-    // Idle window: three times the 20 ms idle time, so the pooled connection has expired.
-    tokio::time::sleep(Duration::from_millis(60)).await;
+    // The pool measures idle time on the tokio clock, which is paused only while it moves: the
+    // requests are real network IO, and a paused clock would not wait for them.
+    tokio::time::pause();
+    tokio::time::advance(hour / 2).await;
+    tokio::time::resume();
     api.get(request(&host, "/two")).await.unwrap();
+    assert_eq!(server.connections(), 1, "inside the idle time it is reused");
+
+    tokio::time::pause();
+    tokio::time::advance(hour + Duration::from_secs(1)).await;
+    tokio::time::resume();
+    api.get(request(&host, "/three")).await.unwrap();
 
     assert_eq!(server.connections(), 2);
 }

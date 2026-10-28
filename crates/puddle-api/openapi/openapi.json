@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.21.0"
+    "version": "0.22.0"
   },
   "paths": {
     "/api/app-icons": {
@@ -2521,6 +2521,146 @@
           },
           "421": {
             "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/interception/learned-limits": {
+      "get": {
+        "tags": [
+          "interception"
+        ],
+        "summary": "How long and how many hosts Puddle passes through after a tool refused its certificate.",
+        "operationId": "get_learned_limits",
+        "responses": {
+          "200": {
+            "description": "the limits (12 hours and 1024 hosts until changed)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearnedLimits"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "interception"
+        ],
+        "summary": "Changes how long and how many hosts a workspace passes through after a tool refused Puddle's\ncertificate. Running workspaces that decrypt every host apply it at once: a longer time or\nlarger list keeps what is learned, a shorter or smaller one drops what no longer fits.",
+        "operationId": "put_learned_limits",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LearnedLimits"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "saved; the limits now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearnedLimits"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "the time is not 60 to 2 592 000 seconds, or the size is not 1 to 10 000",
             "content": {
               "application/json": {
                 "schema": {
@@ -6522,6 +6662,245 @@
           },
           "422": {
             "description": "a name is not a host name, is an IP address or is too wide, or there are too many",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/interception/learned": {
+      "get": {
+        "tags": [
+          "interception"
+        ],
+        "summary": "The hosts the running workspace's tools refused Puddle's certificate for, which Puddle now\npasses through untouched. The list is empty for a workspace that is not running. A client\nrefetches on the `pass_through_learned` event.",
+        "operationId": "list_learned",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the learned hosts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearnedHosts"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "interception"
+        ],
+        "summary": "Decrypts every learned host of the workspace again from the next connection. Connections\nalready open keep going as they are.",
+        "operationId": "clear_learned",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "the list is empty now"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/interception/learned/{host}": {
+      "delete": {
+        "tags": [
+          "interception"
+        ],
+        "summary": "Decrypts one learned host again from the next connection. If the tool still refuses\nPuddle's certificate, the host is learned again, and the user is told again.",
+        "operationId": "forget_learned",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "host",
+            "in": "path",
+            "description": "the learned host name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "the host is decrypted again"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace, or the host is not on the list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
             "content": {
               "application/json": {
                 "schema": {
@@ -10946,6 +11325,31 @@
           },
           {
             "type": "object",
+            "description": "A tool in a workspace that decrypts every host refused Puddle's certificate for `host`, so\nPuddle stopped decrypting it and passes it through from now on (until the time is up or\nthe user decrypts it again). Refetch `GET /api/workspaces/{id}/interception/learned`.",
+            "required": [
+              "workspace",
+              "host",
+              "type"
+            ],
+            "properties": {
+              "host": {
+                "type": "string",
+                "description": "The host, lower case."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "pass_through_learned"
+                ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace."
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "A workspace asked for a credential and the source of it cannot supply one (not signed in,\nor the sign-in ran out). The user signs in from Puddle; a request never opens a sign-in\nwindow. Global: every subscriber gets it. Names only, never a value.",
             "required": [
               "host",
@@ -11904,6 +12308,64 @@
             "type": "integer",
             "format": "int64",
             "description": "How many events were dropped.",
+            "minimum": 0
+          }
+        }
+      },
+      "LearnedHost": {
+        "type": "object",
+        "description": "A host Puddle stopped decrypting in a workspace because a tool there refused Puddle's\ncertificate for it.",
+        "required": [
+          "host",
+          "expires_in_secs"
+        ],
+        "properties": {
+          "expires_in_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds until Puddle decrypts the host again by itself.",
+            "minimum": 0
+          },
+          "host": {
+            "type": "string",
+            "description": "The host name, lower case."
+          }
+        }
+      },
+      "LearnedHosts": {
+        "type": "object",
+        "description": "The hosts a running workspace passes through because its tools refused Puddle's certificate.",
+        "required": [
+          "hosts"
+        ],
+        "properties": {
+          "hosts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LearnedHost"
+            },
+            "description": "Soonest to expire first. Empty for a workspace that is not running: the list is kept in\nmemory and a start begins with none."
+          }
+        }
+      },
+      "LearnedLimits": {
+        "type": "object",
+        "description": "How long and how many hosts Puddle passes through after a tool refused its certificate. The\nsame for every workspace.",
+        "required": [
+          "ttl_secs",
+          "cap"
+        ],
+        "properties": {
+          "cap": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Hosts remembered per workspace, 1 to 10 000; the oldest makes room. Built in: 1024.",
+            "minimum": 0
+          },
+          "ttl_secs": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Seconds a host is passed through, 60 to 2 592 000 (30 days). Built in: 43 200 (12 hours).",
             "minimum": 0
           }
         }

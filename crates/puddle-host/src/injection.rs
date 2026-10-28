@@ -280,7 +280,7 @@ impl Injection {
             injector,
             stand_ins,
             logins,
-            learned: Arc::new(PassThrough::new()),
+            learned: Arc::new(self.learned_list(workspace)),
         };
         self.terminations.insert(
             workspace.clone(),
@@ -384,6 +384,18 @@ impl Injection {
         Ok(Some(git))
     }
 
+    /// An empty learned list for `workspace` that tells the user about each host it learns.
+    fn learned_list(&self, workspace: &WorkspaceName) -> PassThrough {
+        let events = Arc::clone(&self.inputs.events);
+        let workspace = workspace.clone();
+        PassThrough::new().observed(move |host| {
+            events.emit(Event::PassThroughLearned {
+                workspace: workspace.clone(),
+                host: host.to_string(),
+            });
+        })
+    }
+
     /// How `workspace` decrypts beyond its credential hosts, read from the store: its switch and
     /// the never-decrypt names (its own and the global ones). A name that does not parse is left
     /// out and logged; the settings API refuses such names, so this only meets old rows.
@@ -399,6 +411,13 @@ impl Injection {
         let global = store
             .global_never_decrypt()
             .map_err(|e| format!("cannot read the never-decrypt names: {e}"))?;
+        let limits = store
+            .learned_limits()
+            .map_err(|e| format!("cannot read the learned-host limits: {e}"))?;
+        learned.set_limits(
+            Duration::from_secs(u64::from(limits.ttl_secs)),
+            usize::try_from(limits.cap).unwrap_or(usize::MAX),
+        );
         let mut never = TerminationSet::new();
         for pattern in own.never_decrypt.iter().chain(&global) {
             match TerminationSet::parse([pattern.as_str()]) {
@@ -796,6 +815,117 @@ mod tests {
             "a change to the settings does not forget what the tools refused"
         );
         assert!(Arc::ptr_eq(after.interception().learned(), &learned));
+    }
+
+    #[tokio::test]
+    async fn a_host_a_tool_refused_is_announced_once_and_listed_forgotten_and_cleared_through_the_service()
+     {
+        use puddle_api::LearnedService;
+
+        let store = store();
+        let (injection, terminations, _, events) = injection_with_events(&store);
+        let service = crate::learned::HostLearned::new(Arc::clone(&terminations));
+        let ws = workspace("alpha");
+        let host = |h: &str| Host::parse_normalised(h).unwrap();
+        assert!(service.list(&ws).is_empty(), "not running: nothing learned");
+        assert!(!service.forget(&ws, "pinned.example"));
+        assert_eq!(service.clear(&ws), 0);
+
+        injection.begin(&ws, false).await.unwrap();
+        let learned = Arc::clone(
+            terminations
+                .termination(&ws)
+                .unwrap()
+                .interception()
+                .learned(),
+        );
+        learned.learn(&host("pinned.example"));
+        learned.learn(&host("pinned.example"));
+        learned.learn(&host("other.example"));
+        let told = told(&events);
+        assert_eq!(
+            told.iter()
+                .filter_map(|e| match e {
+                    Event::PassThroughLearned { workspace, host } =>
+                        Some((workspace.to_string(), host.clone())),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            [
+                ("alpha".to_owned(), "pinned.example".to_owned()),
+                ("alpha".to_owned(), "other.example".to_owned())
+            ],
+            "each new host once, renewing says nothing"
+        );
+
+        let listed = service.list(&ws);
+        assert_eq!(listed.len(), 2);
+        assert!(
+            listed
+                .iter()
+                .all(|h| (43_199..=43_200).contains(&h.expires_in_secs)),
+            "{listed:?}: the time is the built-in twelve hours, rounded up"
+        );
+        assert!(!service.forget(&ws, "never.example"));
+        assert!(!service.forget(&ws, "not a host"));
+        assert!(service.forget(&ws, "pinned.example"));
+        assert!(!learned.contains(&host("pinned.example")));
+        assert_eq!(service.clear(&ws), 1);
+        assert!(service.list(&ws).is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_learned_limits_reach_a_running_workspace_without_forgetting_what_it_learned() {
+        let store = store();
+        let (injection, terminations) = injection(&store);
+        let ws = workspace("alpha");
+        let host = |h: &str| Host::parse_normalised(h).unwrap();
+        injection.begin(&ws, false).await.unwrap();
+        let learned = Arc::clone(
+            terminations
+                .termination(&ws)
+                .unwrap()
+                .interception()
+                .learned(),
+        );
+        assert_eq!(
+            (learned.ttl(), learned.cap()),
+            (Duration::from_hours(12), 1024),
+            "the built-in limits"
+        );
+        for n in 0..3 {
+            learned.learn(&host(&format!("h{n}.example")));
+        }
+        store
+            .set_learned_limits(puddle_store::LearnedLimits {
+                ttl_secs: 600,
+                cap: 2,
+            })
+            .unwrap();
+        injection.resync(&ws).unwrap();
+        assert_eq!(
+            (learned.ttl(), learned.cap()),
+            (Duration::from_secs(600), 2)
+        );
+        assert_eq!(learned.list().len(), 2, "the oldest made room");
+        assert!(Arc::ptr_eq(
+            terminations
+                .termination(&ws)
+                .unwrap()
+                .interception()
+                .learned(),
+            &learned
+        ));
+    }
+
+    #[test]
+    fn the_stored_defaults_match_the_proxy_built_in_values() {
+        let built_in = puddle_store::LearnedLimits::default();
+        assert_eq!(
+            Duration::from_secs(u64::from(built_in.ttl_secs)),
+            puddle_proxy::LEARNED_TTL
+        );
+        assert_eq!(built_in.cap as usize, puddle_proxy::LEARNED_CAP);
     }
 
     #[tokio::test]

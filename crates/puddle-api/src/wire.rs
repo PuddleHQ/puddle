@@ -58,7 +58,10 @@ pub use identities::{
     IdentityView, NewWorkspaceIdentity, NewWorkspaceIdentityBasis, SwitchSource, TokenLeft,
     WorkspaceGitView, WorkspaceIdentitiesRequest, WorkspaceSwitchesRequest,
 };
-pub use interception::{GlobalNeverDecrypt, InterceptionRequest, InterceptionView};
+pub use interception::{
+    GlobalNeverDecrypt, InterceptionRequest, InterceptionView, LearnedHost, LearnedHosts,
+    LearnedLimits,
+};
 pub use logins::{KeptLoginList, KeptLoginView};
 pub use network_health::{
     DeadProxy, NetworkHealth, PacState, ProxyDetected, ProxyMode, ProxyProblem, ProxyProblemKind,

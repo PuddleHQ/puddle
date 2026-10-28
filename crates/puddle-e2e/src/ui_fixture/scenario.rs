@@ -694,6 +694,18 @@ pub enum Step {
         /// The ports that listen now.
         ports: Vec<u16>,
     },
+    /// A tool in a workspace refused Puddle's certificate for a host, as the proxy finds out when
+    /// a workspace decrypts every host: the host joins the workspace's learned list and
+    /// `pass_through_learned` follows.
+    Learned {
+        /// The workspace's name.
+        workspace: String,
+        /// The host.
+        host: String,
+        /// Seconds the host stays passed through; 12 hours when left out.
+        #[serde(default)]
+        expires_in_secs: Option<u64>,
+    },
     /// Makes the throwaway-shell check of a shell init refuse with this text (what the script
     /// printed), or pass again when it is left out. Only a running workspace is checked.
     ShellInitCheck {

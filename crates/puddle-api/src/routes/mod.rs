@@ -14,6 +14,7 @@ use crate::credentials::CredentialService;
 use crate::dev_cert::DevCertService;
 use crate::doctor::DoctorService;
 use crate::events::EventHub;
+use crate::learned::LearnedService;
 use crate::network_health::NetworkHealthService;
 use crate::ports::PortsService;
 use crate::repos::RepoService;
@@ -64,6 +65,7 @@ pub(crate) struct AppState {
     /// Where the development certificate stands (the first-run flow's certificates step).
     pub(crate) dev_cert: Arc<dyn DevCertService>,
     pub(crate) ports: Arc<dyn PortsService>,
+    pub(crate) learned: Arc<dyn LearnedService>,
     /// Becomes `true` when the server shuts down; ends SSE streams.
     pub(crate) shutdown: watch::Receiver<bool>,
 }
@@ -200,6 +202,15 @@ fn environment_router() -> OpenApiRouter<AppState> {
         .routes(routes!(
             interception::get_global_never_decrypt,
             interception::put_global_never_decrypt
+        ))
+        .routes(routes!(
+            interception::list_learned,
+            interception::clear_learned
+        ))
+        .routes(routes!(interception::forget_learned))
+        .routes(routes!(
+            interception::get_learned_limits,
+            interception::put_learned_limits
         ))
         .routes(routes!(logins::list_logins))
         .routes(routes!(logins::forget_login))

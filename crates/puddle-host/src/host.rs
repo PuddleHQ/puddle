@@ -46,6 +46,7 @@ use crate::dev_cert::{DevCertSource, host_dev_cert};
 use crate::doctor::system_doctor;
 use crate::files::{FileSettings, WorkspaceBook};
 use crate::injection::{Injection, InjectorFactory, InjectorInputs, forward_sign_in_needed};
+use crate::learned::HostLearned;
 use crate::ports::{HostPorts, StorePins};
 use crate::ssh_config::SshSetup;
 use crate::workspaces::{Parts, known_ids};
@@ -593,6 +594,7 @@ impl<R: Runtime + Clone> Host<R> {
         .with_doctor(system_doctor(&config.layout, &config.expected_runtime))
         .with_dev_cert(dev_cert)
         .with_ports(Arc::new(HostPorts::new(ports)))
+        .with_learned(Arc::new(HostLearned::new(injecting.terminations.clone())))
         .with_endpoints(endpoints.clone());
         let served = serve_api(&config, services).await?;
         steps.push(Step::ApiServing);

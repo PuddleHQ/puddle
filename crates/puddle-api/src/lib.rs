@@ -53,6 +53,7 @@ mod error;
 mod events;
 mod extract;
 mod fake_workspaces;
+mod learned;
 mod network_health;
 mod openapi;
 mod ports;
@@ -79,6 +80,7 @@ pub use doctor::{DoctorError, DoctorService, FakeDoctor, HostDoctor, NoDoctor, R
 pub use error::{ApiErrorBody, ErrorCode};
 pub use events::{DEFAULT_EVENT_BUFFER, EventHub, Lagged};
 pub use fake_workspaces::{FakeLauncher, FakeWorkspaces, Unsaved};
+pub use learned::{FakeLearned, LearnedService, NoLearned};
 pub use network_health::{
     FakeNetworkHealth, HostNetworkHealth, NetworkHealthError, NetworkHealthService,
     NoNetworkHealth, forward_network_changes, forward_proxy_sign_in_failures,

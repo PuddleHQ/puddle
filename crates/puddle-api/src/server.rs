@@ -30,6 +30,7 @@ use crate::dev_cert::{DevCertService, NoDevCert};
 use crate::doctor::{DoctorService, NoDoctor};
 use crate::error::ApiError;
 use crate::events::EventHub;
+use crate::learned::{LearnedService, NoLearned};
 use crate::network_health::{NetworkHealthService, NoNetworkHealth};
 use crate::ports::{NoPorts, PortsService};
 use crate::repos::{NoRepos, RepoService};
@@ -147,6 +148,9 @@ pub struct Services {
     /// A workspace's ports and forwards. [`Services::new`] starts with [`NoPorts`], which answers
     /// 503; set the real one with [`Services::with_ports`].
     pub ports: Arc<dyn PortsService>,
+    /// The hosts a workspace's tools refused Puddle's certificate for. [`Services::new`] starts
+    /// with [`NoLearned`] (an empty list); set the real one with [`Services::with_learned`].
+    pub learned: Arc<dyn LearnedService>,
     /// The registry of Puddle's own listeners that the workspace proxy's guard consults. The API
     /// registers its address here when it binds, so a workspace can't reach it even with the
     /// loopback toggle on. [`Services::new`] starts with an empty registry of its own; give the
@@ -177,6 +181,7 @@ impl Services {
             doctor: Arc::new(NoDoctor),
             dev_cert: Arc::new(NoDevCert),
             ports: Arc::new(NoPorts),
+            learned: Arc::new(NoLearned),
             endpoints: PuddleEndpoints::new(),
         }
     }
@@ -234,6 +239,13 @@ impl Services {
     #[must_use]
     pub fn with_ports(mut self, ports: Arc<dyn PortsService>) -> Self {
         self.ports = ports;
+        self
+    }
+
+    /// These services with this learned-hosts implementation.
+    #[must_use]
+    pub fn with_learned(mut self, learned: Arc<dyn LearnedService>) -> Self {
+        self.learned = learned;
         self
     }
 
@@ -315,6 +327,7 @@ impl ApiServer {
             doctor: services.doctor,
             dev_cert: services.dev_cert,
             ports: services.ports,
+            learned: services.learned,
             shutdown,
         };
         // System managed follows the stored setup from the first request on (rules spec R-41).

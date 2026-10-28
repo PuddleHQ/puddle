@@ -6,6 +6,7 @@
 
 use axum::Json;
 use axum::extract::State;
+use axum::http::StatusCode;
 use puddle_netpolicy::normalise_host;
 use puddle_types::{Host, WorkspaceName};
 
@@ -13,7 +14,9 @@ use crate::ApiErrorBody;
 use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
-use crate::wire::{GlobalNeverDecrypt, InterceptionRequest, InterceptionView};
+use crate::wire::{
+    GlobalNeverDecrypt, InterceptionRequest, InterceptionView, LearnedHosts, LearnedLimits,
+};
 
 /// Most names one list may hold.
 const MAX_NAMES: usize = 500;
@@ -170,4 +173,151 @@ pub(crate) async fn put_global_never_decrypt(
     })
     .await?;
     Ok(Json(GlobalNeverDecrypt { never_decrypt }))
+}
+
+/// Shortest time a host may be passed through: a minute.
+const MIN_TTL_SECS: u32 = 60;
+/// Longest: 30 days.
+const MAX_TTL_SECS: u32 = 30 * 24 * 3600;
+/// Most hosts a workspace may remember.
+const MAX_CAP: u32 = 10_000;
+
+/// The hosts the running workspace's tools refused Puddle's certificate for, which Puddle now
+/// passes through untouched. The list is empty for a workspace that is not running. A client
+/// refetches on the `pass_through_learned` event.
+#[utoipa::path(
+    get,
+    path = "/api/workspaces/{id}/interception/learned",
+    tag = "interception",
+    params(("id" = String, Path, description = "workspace id")),
+    responses(
+        (status = OK, description = "the learned hosts", body = LearnedHosts),
+        (status = NOT_FOUND, description = "no such workspace", body = ApiErrorBody)
+    )
+)]
+pub(crate) async fn list_learned(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<LearnedHosts>, ApiError> {
+    let name = named(&state, &id).await?;
+    Ok(Json(LearnedHosts {
+        hosts: state.learned.list(&name),
+    }))
+}
+
+/// Decrypts every learned host of the workspace again from the next connection. Connections
+/// already open keep going as they are.
+#[utoipa::path(
+    delete,
+    path = "/api/workspaces/{id}/interception/learned",
+    tag = "interception",
+    params(("id" = String, Path, description = "workspace id")),
+    responses(
+        (status = NO_CONTENT, description = "the list is empty now"),
+        (status = NOT_FOUND, description = "no such workspace", body = ApiErrorBody)
+    )
+)]
+pub(crate) async fn clear_learned(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let name = named(&state, &id).await?;
+    state.learned.clear(&name);
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Decrypts one learned host again from the next connection. If the tool still refuses
+/// Puddle's certificate, the host is learned again, and the user is told again.
+#[utoipa::path(
+    delete,
+    path = "/api/workspaces/{id}/interception/learned/{host}",
+    tag = "interception",
+    params(
+        ("id" = String, Path, description = "workspace id"),
+        ("host" = String, Path, description = "the learned host name")
+    ),
+    responses(
+        (status = NO_CONTENT, description = "the host is decrypted again"),
+        (status = NOT_FOUND, description = "no such workspace, or the host is not on the list", body = ApiErrorBody)
+    )
+)]
+pub(crate) async fn forget_learned(
+    State(state): State<AppState>,
+    Path((id, host)): Path<(String, String)>,
+) -> Result<StatusCode, ApiError> {
+    let name = named(&state, &id).await?;
+    let learned = match normalise_host(&host).map(puddle_netpolicy::Target::into_host) {
+        Ok(Host::Name(host)) => host.to_string(),
+        _ => String::new(),
+    };
+    if !learned.is_empty() && state.learned.forget(&name, &learned) {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::not_found(format!(
+            "{host:?} is not on the learned list of {name}"
+        )))
+    }
+}
+
+/// How long and how many hosts Puddle passes through after a tool refused its certificate.
+#[utoipa::path(
+    get,
+    path = "/api/interception/learned-limits",
+    tag = "interception",
+    responses((status = OK, description = "the limits (12 hours and 1024 hosts until changed)", body = LearnedLimits))
+)]
+pub(crate) async fn get_learned_limits(
+    State(state): State<AppState>,
+) -> Result<Json<LearnedLimits>, ApiError> {
+    Ok(Json(blocking(move || limits(&state)).await?))
+}
+
+fn limits(state: &AppState) -> Result<LearnedLimits, ApiError> {
+    let saved = state.store.learned_limits()?;
+    Ok(LearnedLimits {
+        ttl_secs: saved.ttl_secs,
+        cap: saved.cap,
+    })
+}
+
+/// Changes how long and how many hosts a workspace passes through after a tool refused Puddle's
+/// certificate. Running workspaces that decrypt every host apply it at once: a longer time or
+/// larger list keeps what is learned, a shorter or smaller one drops what no longer fits.
+#[utoipa::path(
+    put,
+    path = "/api/interception/learned-limits",
+    tag = "interception",
+    request_body = LearnedLimits,
+    responses(
+        (status = OK, description = "saved; the limits now", body = LearnedLimits),
+        (status = UNPROCESSABLE_ENTITY, description = "the time is not 60 to 2 592 000 seconds, or the size is not 1 to 10 000", body = ApiErrorBody)
+    )
+)]
+pub(crate) async fn put_learned_limits(
+    State(state): State<AppState>,
+    crate::extract::Json(body): crate::extract::Json<LearnedLimits>,
+) -> Result<Json<LearnedLimits>, ApiError> {
+    if !(MIN_TTL_SECS..=MAX_TTL_SECS).contains(&body.ttl_secs) {
+        return Err(ApiError::invalid(format!(
+            "the time must be {MIN_TTL_SECS} to {MAX_TTL_SECS} seconds ({} given)",
+            body.ttl_secs
+        )));
+    }
+    if !(1..=MAX_CAP).contains(&body.cap) {
+        return Err(ApiError::invalid(format!(
+            "the size must be 1 to {MAX_CAP} hosts ({} given)",
+            body.cap
+        )));
+    }
+    blocking(move || {
+        state
+            .store
+            .set_learned_limits(puddle_store::LearnedLimits {
+                ttl_secs: body.ttl_secs,
+                cap: body.cap,
+            })?;
+        limits(&state)
+    })
+    .await
+    .map(Json)
 }

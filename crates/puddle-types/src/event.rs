@@ -230,6 +230,15 @@ pub enum Event {
         /// What went wrong and what to do, for the user.
         reason: String,
     },
+    /// A tool in a workspace that decrypts every host refused Puddle's certificate for `host`, so
+    /// Puddle stopped decrypting it and passes it through from now on (until the time is up or
+    /// the user decrypts it again). Refetch `GET /api/workspaces/{id}/interception/learned`.
+    PassThroughLearned {
+        /// The workspace.
+        workspace: WorkspaceName,
+        /// The host, lower case.
+        host: String,
+    },
     /// A workspace asked for a credential and the source of it cannot supply one (not signed in,
     /// or the sign-in ran out). The user signs in from Puddle; a request never opens a sign-in
     /// window. Global: every subscriber gets it. Names only, never a value.
@@ -466,7 +475,8 @@ impl Event {
             | Self::WorkspaceSshFailed { workspace, .. }
             | Self::WorkspaceSshRecovered { workspace }
             | Self::WorkspacePortsChanged { workspace }
-            | Self::WorkspacePortForwardFailed { workspace, .. } => Some(workspace),
+            | Self::WorkspacePortForwardFailed { workspace, .. }
+            | Self::PassThroughLearned { workspace, .. } => Some(workspace),
             Self::PendingOpened { request } => Some(&request.workspace),
             Self::RulesChanged {}
             | Self::IdentitiesChanged {}
@@ -787,6 +797,14 @@ mod tests {
                 },
                 r#"{"type":"proxy_sign_in_failed","proxy":"proxy.corp:8080","scheme":null}"#,
                 None,
+            ),
+            (
+                Event::PassThroughLearned {
+                    workspace: WorkspaceName::new("box").unwrap(),
+                    host: "pinned.example".into(),
+                },
+                r#"{"type":"pass_through_learned","workspace":"box","host":"pinned.example"}"#,
+                Some(WorkspaceName::new("box").unwrap()),
             ),
         ] {
             assert_eq!(serde_json::to_string(&event).unwrap(), json);

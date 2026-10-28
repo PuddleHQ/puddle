@@ -468,6 +468,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/interception/learned-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** How long and how many hosts Puddle passes through after a tool refused its certificate. */
+        get: operations["get_learned_limits"];
+        /**
+         * Changes how long and how many hosts a workspace passes through after a tool refused Puddle's
+         *     certificate. Running workspaces that decrypt every host apply it at once: a longer time or
+         *     larger list keeps what is learned, a shorter or smaller one drops what no longer fits.
+         */
+        put: operations["put_learned_limits"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/interception/never-decrypt": {
         parameters: {
             query?: never;
@@ -1097,6 +1119,51 @@ export interface paths {
         put: operations["put_interception"];
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/interception/learned": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The hosts the running workspace's tools refused Puddle's certificate for, which Puddle now
+         *     passes through untouched. The list is empty for a workspace that is not running. A client
+         *     refetches on the `pass_through_learned` event.
+         */
+        get: operations["list_learned"];
+        put?: never;
+        post?: never;
+        /**
+         * Decrypts every learned host of the workspace again from the next connection. Connections
+         *     already open keep going as they are.
+         */
+        delete: operations["clear_learned"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/interception/learned/{host}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Decrypts one learned host again from the next connection. If the tool still refuses
+         *     Puddle's certificate, the host is learned again, and the user is told again.
+         */
+        delete: operations["forget_learned"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2519,6 +2586,13 @@ export interface components {
             /** @description The workspace. */
             workspace: components["schemas"]["WorkspaceName"];
         } | {
+            /** @description The host, lower case. */
+            host: string;
+            /** @enum {string} */
+            type: "pass_through_learned";
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
+        } | {
             /** @description The Git host the workspace was talking to. */
             host: string;
             /** @description The source, as one line of names (`gh account me on github.com`). */
@@ -2907,6 +2981,43 @@ export interface components {
              * @description How many events were dropped.
              */
             missed: number;
+        };
+        /**
+         * @description A host Puddle stopped decrypting in a workspace because a tool there refused Puddle's
+         *     certificate for it.
+         */
+        LearnedHost: {
+            /**
+             * Format: int64
+             * @description Seconds until Puddle decrypts the host again by itself.
+             */
+            expires_in_secs: number;
+            /** @description The host name, lower case. */
+            host: string;
+        };
+        /** @description The hosts a running workspace passes through because its tools refused Puddle's certificate. */
+        LearnedHosts: {
+            /**
+             * @description Soonest to expire first. Empty for a workspace that is not running: the list is kept in
+             *     memory and a start begins with none.
+             */
+            hosts: components["schemas"]["LearnedHost"][];
+        };
+        /**
+         * @description How long and how many hosts Puddle passes through after a tool refused its certificate. The
+         *     same for every workspace.
+         */
+        LearnedLimits: {
+            /**
+             * Format: int32
+             * @description Hosts remembered per workspace, 1 to 10 000; the oldest makes room. Built in: 1024.
+             */
+            cap: number;
+            /**
+             * Format: int32
+             * @description Seconds a host is passed through, 60 to 2 592 000 (30 days). Built in: 43 200 (12 hours).
+             */
+            ttl_secs: number;
         };
         /**
          * @description A class of local destination with its own toggle. Everything outside these is public.
@@ -6341,6 +6452,131 @@ export interface operations {
             };
         };
     };
+    get_learned_limits: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the limits (12 hours and 1024 hosts until changed) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearnedLimits"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_learned_limits: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LearnedLimits"];
+            };
+        };
+        responses: {
+            /** @description saved; the limits now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearnedLimits"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the time is not 60 to 2 592 000 seconds, or the size is not 1 to 10 000 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
     get_global_never_decrypt: {
         parameters: {
             query?: never;
@@ -9619,6 +9855,208 @@ export interface operations {
             };
             /** @description a name is not a host name, is an IP address or is too wide, or there are too many */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_learned: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the learned hosts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearnedHosts"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    clear_learned: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the list is empty now */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    forget_learned: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+                /** @description the learned host name */
+                host: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the host is decrypted again */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace, or the host is not on the list */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
                 headers: {
                     [name: string]: unknown;
                 };

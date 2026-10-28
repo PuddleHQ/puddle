@@ -583,7 +583,7 @@ async fn a_certificate_alert_on_a_host_with_a_rule_never_teaches_the_host_as_pas
         "guest_tls_rejected"
     );
     assert!(!learned.contains(&host("api.test")));
-    assert!(learned.list().is_empty(), "nothing is remembered");
+    assert_eq!(learned.list().len(), 0, "nothing is remembered");
 
     // The next connection is still decrypted and judged, not passed through.
     let mut client = guest.tls("api.test:443", None).await.unwrap();
@@ -592,5 +592,5 @@ async fn a_certificate_alert_on_a_host_with_a_rule_never_teaches_the_host_as_pas
     client.close().await;
     let events = rig.events(2).await;
     assert_eq!(events[1].reason.to_string(), "request_rule");
-    assert!(learned.list().is_empty());
+    assert_eq!(learned.list().len(), 0);
 }

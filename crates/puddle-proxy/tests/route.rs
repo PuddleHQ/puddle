@@ -50,18 +50,18 @@ struct Rig {
 }
 
 impl Rig {
-    fn new(config: ProxyConfig) -> Self {
+    fn new(config: &ProxyConfig) -> Self {
         Self::with_resolver(config, StaticResolver::new())
     }
 
     /// `*.test` names from `resolver`, every address allowed (the servers are on loopback).
-    fn with_resolver(config: ProxyConfig, resolver: StaticResolver) -> Self {
+    fn with_resolver(config: &ProxyConfig, resolver: StaticResolver) -> Self {
         Self::with_checks(config, resolver, Arc::new(AnyAddress))
     }
 
     /// As [`Self::with_resolver`], with `check` deciding which resolved addresses may be used.
     fn with_checks(
-        config: ProxyConfig,
+        config: &ProxyConfig,
         resolver: StaticResolver,
         check: Arc<dyn AddressCheck>,
     ) -> Self {
@@ -72,7 +72,7 @@ impl Rig {
                 .with_connection_log(log.clone())
                 .with_resolver(Arc::new(resolver))
                 .with_address_check(check)
-                .with_config(config),
+                .with_config(*config),
         );
         let root = IpcRoot::new().unwrap();
         let route = proxy.serve_route(root.listen().unwrap(), workspace("box"));
@@ -308,7 +308,7 @@ async fn round_trip(control: &mut Control, authority: &str, i: usize) -> io::Res
 async fn parallel_connects_256_all_succeed_with_no_stall_over_5_s() {
     let echo = echo_server().await;
     let rig = Rig::with_resolver(
-        ProxyConfig::default(),
+        &ProxyConfig::default(),
         StaticResolver::new().with("echo.test", &[LOCAL]),
     );
     rig.policy.allow(&host("echo.test"));
@@ -356,7 +356,7 @@ async fn parallel_connects_256_all_succeed_with_no_stall_over_5_s() {
 async fn an_unknown_host_is_refused_and_pending_then_passes_once_approved() {
     let echo = echo_server().await;
     let rig = Rig::with_resolver(
-        ProxyConfig::default(),
+        &ProxyConfig::default(),
         StaticResolver::new().with("new.test", &[LOCAL]),
     );
     let mut guest = rig.guest().await;
@@ -395,7 +395,7 @@ async fn an_unknown_host_is_refused_and_pending_then_passes_once_approved() {
 
 #[tokio::test]
 async fn refusals_carry_decision_headers_and_end_cleanly() {
-    let rig = Rig::new(ProxyConfig::default());
+    let rig = Rig::new(&ProxyConfig::default());
     rig.policy.deny_host(&host("bad.test"));
     let mut guest = rig.guest().await;
 
@@ -440,7 +440,7 @@ async fn refusals_carry_decision_headers_and_end_cleanly() {
 
 #[tokio::test]
 async fn a_head_over_64_kib_gets_431() {
-    let rig = Rig::new(ProxyConfig::default());
+    let rig = Rig::new(&ProxyConfig::default());
     let mut guest = rig.guest().await;
     let head = format!(
         "GET http://a.test/ HTTP/1.1\r\nX-Big: {}\r\n\r\n",
@@ -453,7 +453,7 @@ async fn a_head_over_64_kib_gets_431() {
 
 #[tokio::test]
 async fn a_head_that_never_ends_gets_408() {
-    let rig = Rig::new(ProxyConfig::default().with_head_timeout(Duration::from_millis(200)));
+    let rig = Rig::new(&ProxyConfig::default().with_head_timeout(Duration::from_millis(200)));
     let mut guest = rig.guest().await;
     let started = Instant::now();
     let (code, _) = guest
@@ -472,7 +472,7 @@ async fn a_head_that_never_ends_gets_408() {
 
 #[tokio::test]
 async fn requests_that_are_not_for_a_proxy_get_400() {
-    let rig = Rig::new(ProxyConfig::default());
+    let rig = Rig::new(&ProxyConfig::default());
     let mut guest = rig.guest().await;
     for head in [
         "GET / HTTP/1.1\r\nHost: a.test\r\n\r\n",
@@ -492,7 +492,7 @@ async fn requests_that_are_not_for_a_proxy_get_400() {
 
 #[tokio::test]
 async fn a_stream_closed_before_a_request_is_dropped_quietly() {
-    let rig = Rig::new(ProxyConfig::default());
+    let rig = Rig::new(&ProxyConfig::default());
     let mut guest = rig.guest().await;
     let mut stream = guest.stream().await;
     stream.write_all(b"\r\n").await.unwrap();
@@ -507,7 +507,7 @@ async fn a_plain_http_request_is_forwarded_once_with_the_checked_host() {
     let response = "HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello";
     let (server, received) = http_server(response, 4).await;
     let rig = Rig::with_resolver(
-        ProxyConfig::default(),
+        &ProxyConfig::default(),
         StaticResolver::new().with("web.test", &[LOCAL]),
     );
     rig.policy.allow(&host("web.test"));
@@ -557,7 +557,7 @@ async fn hostile_hg09_a_second_request_after_the_first_answer_is_never_looked_at
     let response = "HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok";
     let (server, received) = http_server(response, 0).await;
     let rig = Rig::with_resolver(
-        ProxyConfig::default(),
+        &ProxyConfig::default(),
         StaticResolver::new()
             .with("web.test", &[LOCAL])
             .with("evil.test", &[LOCAL]),
@@ -605,7 +605,7 @@ async fn hostile_hg08_a_mixed_answer_is_connected_at_the_allowed_address_and_aud
     let response = "HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok";
     let (server, received) = http_server(response, 0).await;
     let rig = Rig::with_checks(
-        ProxyConfig::default(),
+        &ProxyConfig::default(),
         StaticResolver::new().with("mixed.test", &[refused, LOCAL]),
         Arc::new(RefuseOneAddress(refused)),
     );
@@ -635,7 +635,7 @@ async fn a_chunked_upload_is_forwarded_with_its_framing() {
     let chunked = "4\r\nabcd\r\n0\r\n\r\n";
     let (server, received) = http_server(response, chunked.len()).await;
     let rig = Rig::with_resolver(
-        ProxyConfig::default(),
+        &ProxyConfig::default(),
         StaticResolver::new().with("web.test", &[LOCAL]),
     );
     rig.policy.allow(&host("web.test"));
@@ -656,7 +656,7 @@ async fn a_chunked_upload_is_forwarded_with_its_framing() {
 #[tokio::test]
 async fn bytes_sent_with_the_connect_reach_the_server() {
     let echo = echo_server().await;
-    let rig = Rig::new(ProxyConfig::default());
+    let rig = Rig::new(&ProxyConfig::default());
     rig.policy.allow(&host("127.0.0.1"));
     let mut guest = rig.guest().await;
     let mut stream = guest.stream().await;
@@ -678,7 +678,7 @@ async fn an_unreachable_server_is_a_502() {
         let l = TcpListener::bind((LOCAL, 0)).await.unwrap();
         l.local_addr().unwrap()
     };
-    let rig = Rig::new(ProxyConfig::default());
+    let rig = Rig::new(&ProxyConfig::default());
     rig.policy.allow(&host("127.0.0.1"));
     let mut guest = rig.guest().await;
     let (code, _) = guest.connect_to(&closed.to_string()).await;
@@ -687,7 +687,7 @@ async fn an_unreachable_server_is_a_502() {
 
 #[tokio::test]
 async fn a_policy_failure_is_a_503() {
-    let rig = Rig::new(ProxyConfig::default());
+    let rig = Rig::new(&ProxyConfig::default());
     rig.policy.allow(&host("127.0.0.1"));
     rig.policy.set_unavailable(true);
     let mut guest = rig.guest().await;
@@ -742,7 +742,7 @@ async fn each_route_speaks_for_its_own_workspace() {
 #[tokio::test]
 async fn connections_over_the_workspace_limit_get_503_until_one_closes() {
     let echo = echo_server().await;
-    let rig = Rig::new(ProxyConfig::default().with_max_streams_per_workspace(2));
+    let rig = Rig::new(&ProxyConfig::default().with_max_streams_per_workspace(2));
     rig.policy.allow(&host("127.0.0.1"));
     let mut guest = rig.guest().await;
     let target = echo.to_string();
@@ -774,7 +774,7 @@ async fn connections_over_the_workspace_limit_get_503_until_one_closes() {
 async fn a_connection_over_the_limit_is_refused_with_its_reason_and_audited() {
     let echo = echo_server().await;
     let rig = Rig::new(
-        ProxyConfig::default()
+        &ProxyConfig::default()
             .with_max_streams_per_workspace(1)
             .with_head_timeout(Duration::from_millis(300)),
     );
@@ -825,7 +825,7 @@ async fn a_connection_over_the_limit_is_refused_with_its_reason_and_audited() {
 
 #[tokio::test]
 async fn agent_connections_over_the_route_limit_are_dropped() {
-    let rig = Rig::new(ProxyConfig::default().with_max_sessions_per_route(1));
+    let rig = Rig::new(&ProxyConfig::default().with_max_sessions_per_route(1));
     let mut first = rig.guest().await;
     // The first session is served (and counted once its first frame arrives).
     let (code, _) = first.connect_to("x.test:443").await;
@@ -849,7 +849,7 @@ async fn agent_connections_over_the_route_limit_are_dropped() {
 
 #[tokio::test]
 async fn a_shut_down_route_accepts_no_one() {
-    let rig = Rig::new(ProxyConfig::default());
+    let rig = Rig::new(&ProxyConfig::default());
     let path = rig.route.endpoint().path().to_path_buf();
     let mut guest = rig.guest().await;
     let (code, _) = guest.connect_to("x.test:443").await;
@@ -873,7 +873,7 @@ async fn a_shut_down_route_accepts_no_one() {
 /// keeps serving the real agent.
 #[tokio::test]
 async fn a_connection_that_is_not_an_agent_is_dropped_and_the_route_keeps_serving() {
-    let rig = Rig::new(ProxyConfig::default());
+    let rig = Rig::new(&ProxyConfig::default());
     let mut intruder = puddle_ipc::connect(rig.route.endpoint().path())
         .await
         .unwrap();
@@ -911,7 +911,7 @@ async fn a_server_answering_before_the_upload_ends_reaches_the_guest() {
         // Keep reading so the upload doesn't fail on our side first.
         let _ = tokio::io::copy(&mut conn, &mut tokio::io::sink()).await;
     });
-    let rig = Rig::new(ProxyConfig::default());
+    let rig = Rig::new(&ProxyConfig::default());
     rig.policy.allow(&host("127.0.0.1"));
     let mut guest = rig.guest().await;
     let mut stream = guest.stream().await;
@@ -946,7 +946,7 @@ async fn a_server_reset_during_a_plain_http_request_reaches_the_guest_as_an_erro
         conn.set_zero_linger().unwrap();
         drop(conn);
     });
-    let rig = Rig::new(ProxyConfig::default());
+    let rig = Rig::new(&ProxyConfig::default());
     rig.policy.allow(&host("127.0.0.1"));
     let mut guest = rig.guest().await;
     let mut stream = guest.stream().await;
@@ -966,7 +966,7 @@ async fn a_server_reset_during_a_plain_http_request_reaches_the_guest_as_an_erro
 async fn an_allowed_connect_is_reported_with_address_and_bytes() {
     let echo = echo_server().await;
     let rig = Rig::with_resolver(
-        ProxyConfig::default(),
+        &ProxyConfig::default(),
         StaticResolver::new().with("echo.test", &[LOCAL]),
     );
     let rule = rig.policy.allow(&host("echo.test"));
@@ -1030,7 +1030,7 @@ async fn refused_connections_are_reported_with_decision_and_reason() {
         let l = TcpListener::bind((LOCAL, 0)).await.unwrap();
         l.local_addr().unwrap()
     };
-    let rig = Rig::new(ProxyConfig::default());
+    let rig = Rig::new(&ProxyConfig::default());
     let deny = rig.policy.deny_host(&host("bad.test"));
     let allow = rig.policy.allow(&host("127.0.0.1"));
     let mut guest = rig.guest().await;
@@ -1146,7 +1146,7 @@ async fn node_fetch_connect_for_plain_http_is_relayed_unchanged_and_audited_with
     let (head_part, body_part) = node_fetch::TUNNELED.split_once("\r\n\r\n").unwrap();
     let (server, received) = http_server(response, body_part.len()).await;
     let rig = Rig::with_resolver(
-        ProxyConfig::default(),
+        &ProxyConfig::default(),
         StaticResolver::new().with("node.fixture.test", &[LOCAL]),
     );
     let rule = rig.policy.allow(&host("node.fixture.test"));
@@ -1198,7 +1198,7 @@ async fn node_fetch_connect_for_plain_http_is_relayed_unchanged_and_audited_with
 /// (counted twice), the same deny rule, and nothing resolved or connected before the decision.
 #[tokio::test]
 async fn connect_to_port_80_and_absolute_form_http_get_the_same_decision() {
-    let rig = Rig::new(ProxyConfig::default());
+    let rig = Rig::new(&ProxyConfig::default());
     let mut guest = rig.guest().await;
     let (code, _) = guest.request(node_fetch::CONNECT).await;
     assert_eq!(code, 403);
@@ -1248,7 +1248,7 @@ async fn a_tunnel_only_ever_reaches_the_checked_address_whatever_it_carries() {
     let response = "HTTP/1.1 204 No Content\r\n\r\n";
     let (server, received) = http_server(response, 0).await;
     let rig = Rig::with_resolver(
-        ProxyConfig::default(),
+        &ProxyConfig::default(),
         StaticResolver::new().with("web.test", &[LOCAL]),
     );
     rig.policy.allow(&host("web.test"));

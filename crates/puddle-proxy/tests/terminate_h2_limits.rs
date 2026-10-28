@@ -93,7 +93,7 @@ async fn a_stream_over_the_workspace_budget_is_refused_and_a_finished_one_gives_
     let config = ProxyConfig::default().with_max_h2_streams_per_workspace(2);
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
-        .config(config)
+        .config(&config)
         .build();
     let mut guest = rig.guest().await;
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
@@ -160,7 +160,7 @@ async fn sockets_of_the_http11_pool_count_against_the_workspace_connection_limit
     let config = ProxyConfig::default().with_max_streams_per_workspace(3);
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
-        .config(config)
+        .config(&config)
         .build();
     let mut guest = rig.guest().await;
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
@@ -228,7 +228,7 @@ async fn a_stream_that_is_never_polled_ends_its_connection_and_the_audit_says_wh
     );
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
-        .config(config)
+        .config(&config)
         .build();
     let mut guest = rig.guest().await;
     let mut tls = raw(&mut guest).await;
@@ -288,7 +288,7 @@ async fn a_peer_that_ignores_the_shutdown_is_dropped_after_the_grace() {
         );
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
-        .config(config)
+        .config(&config)
         .build();
     let mut guest = rig.guest().await;
     let mut tls = raw(&mut guest).await;
@@ -327,7 +327,7 @@ async fn a_stream_queued_behind_the_servers_stream_limit_is_answered_after_the_h
     );
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
-        .config(config)
+        .config(&config)
         .build();
     let mut guest = rig.guest().await;
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
@@ -421,7 +421,7 @@ async fn streams_asking_for_a_dead_server_share_one_attempt() {
     );
     let rig = RigBuilder::new(&pki)
         .name("bound.test", dead.addr)
-        .config(config)
+        .config(&config)
         .build();
     let mut guest = rig.guest().await;
     // The handshake's own attempt fails after the TLS timeout; the first stream is told why.
@@ -481,7 +481,7 @@ async fn a_stream_waiting_for_another_streams_attempt_gives_up_after_the_head_ti
     );
     let rig = RigBuilder::new(&pki)
         .name("bound.test", dead.addr)
-        .config(config)
+        .config(&config)
         .build();
     let mut guest = rig.guest().await;
     let client = guest.h2("bound.test:443", &[b"h2"]).await;
@@ -551,7 +551,7 @@ async fn a_stream_the_server_never_answers_is_ended_by_the_idle_limit() {
     );
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
-        .config(config)
+        .config(&config)
         .build();
     let mut guest = rig.guest().await;
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
@@ -635,7 +635,7 @@ async fn an_agreed_websocket_over_http11_that_goes_silent_is_closed_and_recorded
     );
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
-        .config(config)
+        .config(&config)
         .build();
     let mut guest = rig.guest().await;
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
@@ -693,7 +693,7 @@ async fn an_agreed_websocket_over_http2_that_goes_silent_is_closed_and_recorded(
     );
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
-        .config(config)
+        .config(&config)
         .build();
     let mut guest = rig.guest().await;
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
@@ -756,7 +756,7 @@ async fn a_header_block_left_open_is_recorded_as_the_limit_that_ended_the_connec
     let config = ProxyConfig::default().with_head_timeout(Duration::from_secs(1));
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
-        .config(config)
+        .config(&config)
         .build();
     let mut guest = rig.guest().await;
     let mut tls = raw(&mut guest).await;

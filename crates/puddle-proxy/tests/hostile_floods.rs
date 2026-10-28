@@ -49,7 +49,7 @@ async fn hostile_hg11_a_hundred_thousand_streams_over_the_cap_are_each_refused_a
     let config = ProxyConfig::default()
         .with_max_streams_per_workspace(CAP)
         .with_head_timeout(Duration::from_secs(120));
-    let rig = rig_with(config).await;
+    let rig = rig_with(&config).await;
     let mut guests = Guests::start(TEST, &rig.attacked);
     guests.until(FLOODING).await;
     let before = HEAP.restart_peak();

@@ -371,7 +371,7 @@ async fn an_idle_h2_connection_is_closed_after_the_keepalive_timeout() {
     );
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
-        .config(config)
+        .config(&config)
         .build();
     let mut guest = rig.guest().await;
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;

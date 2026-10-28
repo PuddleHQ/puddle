@@ -43,7 +43,7 @@ async fn hostile_hg11_ten_thousand_stalled_heads_are_cut_off_at_the_deadline_and
     let config = ProxyConfig::default()
         .with_max_streams_per_workspace(CAP)
         .with_head_timeout(DEADLINE);
-    let rig = rig_with(config).await;
+    let rig = rig_with(&config).await;
     let mut guests = Vec::new();
     for _ in 0..SESSIONS {
         guests.push(Guest::connect(&rig.attacked).await);

@@ -632,8 +632,8 @@ impl RigBuilder {
         self
     }
 
-    pub(crate) fn config(mut self, config: ProxyConfig) -> Self {
-        self.config = config;
+    pub(crate) fn config(mut self, config: &ProxyConfig) -> Self {
+        self.config = *config;
         self
     }
 

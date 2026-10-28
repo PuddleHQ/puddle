@@ -223,7 +223,7 @@ async fn a_server_that_never_finishes_the_tls_handshake_is_a_504_on_the_first_st
     );
     let rig = RigBuilder::new(&pki)
         .name("bound.test", addr)
-        .config(config)
+        .config(&config)
         .build();
     let mut guest = rig.guest().await;
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
@@ -255,7 +255,7 @@ async fn a_server_that_does_not_answer_is_a_504_and_the_connection_goes_on() {
     );
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
-        .config(config)
+        .config(&config)
         .build();
     let mut guest = rig.guest().await;
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
@@ -396,7 +396,7 @@ async fn a_guest_that_stops_its_handshake_after_the_hello_is_dropped_at_the_hand
     );
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
-        .config(config)
+        .config(&config)
         .build();
     let guest = rig.guest().await;
     let (port, _bridge) = guest.bridge("bound.test:443").await;
@@ -432,7 +432,7 @@ async fn a_guest_that_sends_no_hello_at_all_is_dropped_at_the_handshake_timeout(
     );
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
-        .config(config)
+        .config(&config)
         .build();
     let mut guest = rig.guest().await;
     let (code, mut tunnel) = guest.connect_to("bound.test:443").await;
@@ -442,4 +442,142 @@ async fn a_guest_that_sends_no_hello_at_all_is_dropped_at_the_handshake_timeout(
     assert!(ended.is_ok(), "the proxy hung up");
     assert!(server.recorded().is_empty());
     assert_eq!(rig.events(1).await.len(), 1);
+}
+
+/// A client socket that pauses before its first write after the server's flight has arrived: a
+/// client that stalls in the middle of its handshake, as curl does while it reads its trust
+/// anchors from a busy disk.
+struct StallsAfterServerFlight {
+    inner: tokio::net::TcpStream,
+    pause: Duration,
+    heard: bool,
+    stall: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
+    stalled: bool,
+}
+
+impl tokio::io::AsyncRead for StallsAfterServerFlight {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        let before = buf.filled().len();
+        let polled = std::pin::Pin::new(&mut this.inner).poll_read(cx, buf);
+        this.heard |= buf.filled().len() > before;
+        polled
+    }
+}
+
+impl tokio::io::AsyncWrite for StallsAfterServerFlight {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        data: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        use std::future::Future as _;
+        let this = self.get_mut();
+        if this.heard && !this.stalled {
+            let pause = this.pause;
+            // Simulated latency: the stall is the behaviour under test.
+            let stall = this
+                .stall
+                .get_or_insert_with(|| Box::pin(tokio::time::sleep(pause)));
+            std::task::ready!(stall.as_mut().poll(cx));
+            this.stalled = true;
+        }
+        std::pin::Pin::new(&mut this.inner).poll_write(cx, data)
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
+    }
+}
+
+/// A `GET /` to a bound host from a guest that stalls 1 s in its handshake, with a 300 ms budget
+/// for the proxy's own handshakes and `guest_budget` for the guest's: the response, or the error
+/// that ended it.
+async fn get_with_a_stalled_handshake(guest_budget: Duration) -> Result<String, String> {
+    let pki = Pki::new();
+    let server = FakeServer::tls(
+        pki.server_config("bound.test", Flaw::None),
+        Arc::new(|_| Reply::ok("hello")),
+    )
+    .await;
+    let defaults = ProxyConfig::default();
+    let config = defaults
+        .with_terminate_timeouts(
+            Duration::from_millis(300),
+            defaults.keepalive_timeout,
+            defaults.upstream_head_timeout,
+            defaults.body_idle_timeout,
+        )
+        .with_guest_handshake_timeout(guest_budget);
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .config(&config)
+        .build();
+    let guest = rig.guest().await;
+    let (port, _bridge) = guest.bridge("bound.test:443").await;
+    let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let stalling = StallsAfterServerFlight {
+        inner: tcp,
+        pause: Duration::from_secs(1),
+        heard: false,
+        stall: None,
+        stalled: false,
+    };
+    let roots = [rig.ca.certificate().der().clone()];
+    let client = terminate_support::Guest::client_config(&roots, &[b"http/1.1"]);
+    let mut tls = tokio_rustls::TlsConnector::from(Arc::new(client))
+        .connect(
+            rustls::pki_types::ServerName::try_from("bound.test").unwrap(),
+            stalling,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    tls.write_all(b"GET / HTTP/1.1\r\nHost: bound.test\r\nConnection: close\r\n\r\n")
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut answer = Vec::new();
+    let read = tokio::time::timeout(Duration::from_secs(10), tls.read_to_end(&mut answer)).await;
+    let answer = String::from_utf8_lossy(&answer).into_owned();
+    match read {
+        Ok(Ok(_)) => Ok(answer),
+        // A server that ends with a close and no `close_notify` still gave its whole answer.
+        Ok(Err(_)) if !answer.is_empty() => Ok(answer),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err("no answer within 10 s".to_owned()),
+    }
+}
+
+#[tokio::test]
+async fn a_guest_that_stalls_in_its_handshake_longer_than_the_upstream_budget_still_gets_its_answer()
+ {
+    let answer = get_with_a_stalled_handshake(Duration::from_secs(10))
+        .await
+        .unwrap();
+    assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+    assert!(answer.ends_with("hello"), "{answer}");
+}
+
+#[tokio::test]
+async fn a_guest_that_stalls_in_its_handshake_past_its_own_budget_is_dropped() {
+    let ended = get_with_a_stalled_handshake(Duration::from_millis(300)).await;
+    assert!(
+        ended.is_err(),
+        "the 1 s stall outlasts a 300 ms budget: {ended:?}"
+    );
 }

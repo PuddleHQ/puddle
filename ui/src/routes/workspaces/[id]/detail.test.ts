@@ -122,6 +122,7 @@ function reset() {
   api.kept = {};
   api.interception = {};
   api.globalNeverDecrypt = [];
+  api.learned = {};
   api.refuse.clear();
   rules.rules = [];
   rules.calls = [];
@@ -895,6 +896,57 @@ describe("the settings tab", () => {
     await fireEvent.click(box);
     expect(await screen.findByRole("alert")).toHaveTextContent("Disk full.");
     expect(box.checked).toBe(false);
+  });
+
+  it("lists the hosts a tool refused Puddle's certificate for and decrypts them again", async () => {
+    api.learned["demo"] = [
+      { host: "pinned.example", expires_in_secs: 600 },
+      { host: "other.example", expires_in_secs: 7200 },
+    ];
+    await open();
+    const group = await screen.findByRole("group", {
+      name: "Left alone after a tool refused Puddle's certificate",
+    });
+    await screen.findByText("pinned.example");
+    expect(group).toHaveTextContent("decrypted again by itself in 10 minutes");
+    expect(group).toHaveTextContent("2 hours");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Decrypt pinned.example again" }),
+    );
+    await vi.waitFor(() =>
+      expect(group).not.toHaveTextContent("pinned.example"),
+    );
+    expect(group).toHaveTextContent("other.example");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Decrypt all again" }),
+    );
+    await vi.waitFor(() => expect(group).toHaveTextContent("None."));
+  });
+
+  it("says why a host could not be decrypted again and keeps the list", async () => {
+    api.learned["demo"] = [{ host: "pinned.example", expires_in_secs: 600 }];
+    await open();
+    await screen.findByText("pinned.example");
+    api.refuse.set("DELETE /api/workspaces/{id}/interception/learned/{host}", {
+      status: 500,
+      message: "the list is locked",
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Decrypt pinned.example again" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The list is locked.",
+    );
+    expect(screen.getByText("pinned.example")).toBeInTheDocument();
+  });
+
+  it("says when the learned list can't be read", async () => {
+    api.refuse.set("GET /api/workspaces/{id}/interception/learned", {
+      status: 500,
+      message: "list broken",
+    });
+    await open();
+    expect(await screen.findByText("List broken.")).toBeInTheDocument();
   });
 
   it("says when the decrypt setting can't be read", async () => {

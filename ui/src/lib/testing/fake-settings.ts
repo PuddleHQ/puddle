@@ -62,6 +62,8 @@ export class FakeSettings {
   consent: S["Consent"] = { state: "not_asked" };
   /** The names no workspace decrypts. */
   neverDecrypt: string[] = [];
+  /** How long and how many learned hosts are passed through. */
+  learnedLimits: S["LearnedLimits"] = { ttl_secs: 43_200, cap: 1024 };
   calls: string[] = [];
   bodies: unknown[] = [];
   down = false;
@@ -81,6 +83,7 @@ export class FakeSettings {
     this.customIcon = null;
     this.consent = fresh.consent;
     this.neverDecrypt = [];
+    this.learnedLimits = { ttl_secs: 43_200, cap: 1024 };
     this.calls = [];
     this.bodies = [];
     this.down = false;
@@ -173,6 +176,8 @@ export class FakeSettings {
         return this.reply(200, this.consents());
       case "/api/interception/never-decrypt":
         return this.reply(200, { never_decrypt: this.neverDecrypt });
+      case "/api/interception/learned-limits":
+        return this.reply(200, this.learnedLimits);
       case "/api/app-icons":
         return this.reply(200, {
           built_in: (
@@ -195,6 +200,10 @@ export class FakeSettings {
     if (this.down) throw new TypeError("down");
     const refused = this.refusal(`PUT ${path}`);
     if (refused) return refused;
+    if (path === "/api/interception/learned-limits") {
+      this.learnedLimits = init.body as S["LearnedLimits"];
+      return this.reply(200, this.learnedLimits);
+    }
     if (path === "/api/interception/never-decrypt") {
       this.neverDecrypt = [
         ...(init.body as S["GlobalNeverDecrypt"]).never_decrypt,

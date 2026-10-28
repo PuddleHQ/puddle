@@ -17,6 +17,7 @@ import { asWorkspaceEvent } from "#lib/workspaces/events.ts";
 import { identities } from "#lib/stores/identities.svelte.ts";
 import type { LiveSource } from "#lib/stores/live.svelte.ts";
 import { CredentialNotices, type IdentityLookup } from "./credentials.ts";
+import { LearnedNotices } from "#lib/interception/learned.ts";
 import { EnvironmentNotices } from "./environment.ts";
 import { LoginNotices } from "./logins.ts";
 import { InAppNotifier, type Notifier } from "./notifier.ts";
@@ -45,6 +46,7 @@ export class NoticeWatcher {
   readonly #credentials: CredentialNotices;
   readonly #logins: LoginNotices;
   readonly #environment: EnvironmentNotices;
+  readonly #learned: LearnedNotices;
   readonly #problems: ProblemNotices;
   readonly #status = new Map<string, Status>();
   readonly #expected = new Set<string>();
@@ -62,6 +64,7 @@ export class NoticeWatcher {
     });
     this.#logins = new LoginNotices(this.#notifier, this.#api);
     this.#environment = new EnvironmentNotices(this.#notifier);
+    this.#learned = new LearnedNotices(this.#notifier, this.#api);
     this.#problems = new ProblemNotices(this.#notifier, this.#api);
   }
 
@@ -86,6 +89,7 @@ export class NoticeWatcher {
       this.#credentials.handle(raw) ||
       this.#logins.handle(raw) ||
       this.#environment.handle(raw) ||
+      this.#learned.handle(raw) ||
       this.#problems.handle(raw)
     ) {
       return;

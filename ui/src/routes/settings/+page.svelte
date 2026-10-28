@@ -7,6 +7,7 @@
   import MicrosoftServerDialog from "#lib/components/MicrosoftServerDialog.svelte";
   import AppIconSettings from "#lib/components/AppIconSettings.svelte";
   import GlobalNeverDecrypt from "#lib/components/GlobalNeverDecrypt.svelte";
+  import LearnedLimitsSetting from "#lib/components/LearnedLimitsSetting.svelte";
   import Toast from "#lib/components/Toast.svelte";
   import EnvironmentTable from "#lib/components/EnvironmentTable.svelte";
   import { EnvironmentStore } from "#lib/stores/environment.svelte.ts";
@@ -735,6 +736,7 @@
         </div>
 
         <GlobalNeverDecrypt />
+        <LearnedLimitsSetting />
       </section>
 
       <section class="card" id="s-vsc" aria-labelledby="h-vsc">

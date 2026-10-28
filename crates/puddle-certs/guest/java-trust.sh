@@ -43,11 +43,25 @@ for tool in awk cksum readlink; do
     }
 done
 
-# Every keytool the image has: the one on PATH, JAVA_HOME's, then the usual JDK folders.
+# Every keytool the image has: the one on PATH, JAVA_HOME's, then the usual JDK folders and the
+# version managers' (SDKMAN, IntelliJ's ~/.jdks, asdf, mise: for root, for each home below /home,
+# for $HOME and SDKMAN's shared folder). A JDK unpacked anywhere else, and not on PATH or in
+# JAVA_HOME, is not found.
 keytools=
 for k in "$(command -v keytool 2>/dev/null || true)" "${JAVA_HOME:+$JAVA_HOME/bin/keytool}" \
-    "$ROOT"/usr/lib/jvm/*/bin/keytool "$ROOT"/opt/java/*/bin/keytool \
-    "$ROOT"/opt/jdk*/bin/keytool "$ROOT"/usr/local/openjdk-*/bin/keytool; do
+    "${SDKMAN_DIR:-/nonexistent}"/candidates/java/*/bin/keytool \
+    "${HOME:-/nonexistent}"/.sdkman/candidates/java/*/bin/keytool \
+    "$ROOT"/usr/lib/jvm/*/bin/keytool "$ROOT"/usr/lib64/jvm/*/bin/keytool \
+    "$ROOT"/usr/java/*/bin/keytool "$ROOT"/usr/local/java*/bin/keytool \
+    "$ROOT"/opt/java/*/bin/keytool \
+    "$ROOT"/opt/jdk*/bin/keytool "$ROOT"/usr/local/openjdk-*/bin/keytool \
+    "$ROOT"/usr/local/sdkman/candidates/java/*/bin/keytool \
+    "$ROOT"/root/.sdkman/candidates/java/*/bin/keytool \
+    "$ROOT"/root/.jdks/*/bin/keytool "$ROOT"/root/.asdf/installs/java/*/bin/keytool \
+    "$ROOT"/root/.local/share/mise/installs/java/*/bin/keytool \
+    "$ROOT"/home/*/.sdkman/candidates/java/*/bin/keytool \
+    "$ROOT"/home/*/.jdks/*/bin/keytool "$ROOT"/home/*/.asdf/installs/java/*/bin/keytool \
+    "$ROOT"/home/*/.local/share/mise/installs/java/*/bin/keytool; do
     [ -n "$k" ] && [ -x "$k" ] || continue
     # With PUDDLE_ROOT set (tests) a Java outside it is the test host's own: never touch it.
     case "$(readlink -f "$k")" in

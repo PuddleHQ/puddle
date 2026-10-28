@@ -822,6 +822,50 @@ fn a_keytool_on_path_behind_a_symlink_finds_a_symlinked_store_and_a_jdk8_layout(
 }
 
 #[test]
+fn jdks_of_version_managers_are_found_and_one_in_an_unlisted_folder_is_the_documented_limit() {
+    let (corp_der, _) = root_pem("Corp Root");
+    let t = trust(&[&corp_der], &[&puddle_ca()]);
+    let found = [
+        "/root/.sdkman/candidates/java/21.0.4-tem",
+        "/home/dev/.sdkman/candidates/java/17.0.12-tem",
+        "/usr/local/sdkman/candidates/java/11.0.24-tem",
+        "/home/dev/.jdks/corretto-21",
+        "/root/.asdf/installs/java/temurin-21",
+        "/home/dev/.local/share/mise/installs/java/21",
+        "/usr/java/jdk-17",
+    ];
+    for sh in shells() {
+        let g = Guest::new(&sh, "", false);
+        for home in found {
+            g.jdk(home, &format!("{home}/lib/security/cacerts"));
+        }
+        // SDKMAN's `current` is a link to a version: one store, imported once.
+        std::os::unix::fs::symlink(
+            g.p("/root/.sdkman/candidates/java/21.0.4-tem"),
+            g.p("/root/.sdkman/candidates/java/current"),
+        )
+        .unwrap();
+        // Not on PATH, not in JAVA_HOME, not in a listed folder: not found.
+        g.jdk(
+            "/srv/tools/jdk-21",
+            "/srv/tools/jdk-21/lib/security/cacerts",
+        );
+        let out = g.boot(&t);
+        assert!(out.status.success(), "{}: {}", sh.display(), show(&out));
+        for home in found {
+            let store = format!("{home}/lib/security/cacerts");
+            assert_eq!(g.aliases(&store).len(), 3, "{home}: {}", stdout_of(&out));
+        }
+        assert_eq!(
+            g.aliases("/srv/tools/jdk-21/lib/security/cacerts"),
+            ["distro-root"],
+            "a JDK in an unlisted folder is left alone (the documented limit)"
+        );
+        assert_eq!(g.keytool_calls("-importcert"), found.len() * 2);
+    }
+}
+
+#[test]
 fn an_unchanged_boot_does_not_start_keytool_and_a_rebuilt_cacerts_is_filled_again() {
     let (corp_der, _) = root_pem("Corp Root");
     let t = trust(&[&corp_der], &[&puddle_ca()]);

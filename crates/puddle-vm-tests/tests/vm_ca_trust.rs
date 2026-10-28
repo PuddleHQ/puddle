@@ -11,8 +11,8 @@
 //!   trust. Only the `cacerts` import of the Java boot step can make that work (Java reads no
 //!   variable).
 //! - `denoland/deno:debian`: `fetch` works through `DENO_CERT` (Deno keeps its own roots).
-//! - `python:3.9-slim`: `pip download` from an index at that URL works through `PIP_CERT`
-//!   with `PIP_CERT` alone (the other variables unset) and fails with none of them.
+//! - `python:3.9-slim`: `pip download` from an index at that URL works with
+//!   `PIP_CERT` alone (the other variables unset) and fails with none of them.
 //!
 //! Each tool fails before the files are applied (the negative control), so a pass is the trust
 //! and not a trusting image. The wire peer is the fixture server, not the proxy process: the

@@ -1356,6 +1356,17 @@ mod termination {
     }
 
     #[test]
+    fn a_bound_name_is_never_reported_as_passed_through_whatever_the_client() {
+        let proxy = terminating_proxy();
+        for from_container in [false, true] {
+            assert_eq!(
+                proxy.skipped(&at("github.com", 443, workspace()), from_container),
+                None
+            );
+        }
+    }
+
+    #[test]
     fn only_a_bound_name_on_443_for_a_workspace_with_a_termination_is_terminated() {
         let proxy = terminating_proxy();
         let terminated = |h: &str, port: u16| {

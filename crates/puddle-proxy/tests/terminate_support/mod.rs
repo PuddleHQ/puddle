@@ -199,6 +199,9 @@ pub(crate) struct Reply {
     pub(crate) trickle: Option<Duration>,
     /// Wait this long before replying.
     pub(crate) delay: Option<Duration>,
+    /// Wait for a permit from this semaphore before replying (it is used up), so a test decides
+    /// when the reply goes out instead of a timer.
+    pub(crate) gate: Option<Arc<tokio::sync::Semaphore>>,
 }
 
 impl Reply {
@@ -208,6 +211,7 @@ impl Reply {
             close: false,
             trickle: None,
             delay: None,
+            gate: None,
         }
     }
 
@@ -237,6 +241,11 @@ impl Reply {
 
     pub(crate) fn after(mut self, delay: Duration) -> Self {
         self.delay = Some(delay);
+        self
+    }
+
+    pub(crate) fn held_by(mut self, gate: &Arc<tokio::sync::Semaphore>) -> Self {
+        self.gate = Some(Arc::clone(gate));
         self
     }
 }
@@ -340,6 +349,11 @@ async fn serve_http<S: AsyncRead + AsyncWriteExt + Unpin>(
         let reply = handler(&recorded);
         if let Some(delay) = reply.delay {
             tokio::time::sleep(delay).await;
+        }
+        if let Some(gate) = &reply.gate
+            && let Ok(permit) = gate.acquire().await
+        {
+            permit.forget();
         }
         let stream = reader.get_mut();
         match reply.trickle {
@@ -908,6 +922,18 @@ impl Guest {
     ) -> io::Result<Client> {
         let (code, reader) = self.connect_to(authority).await;
         assert_eq!(code, 200, "CONNECT {authority}");
+        self.tls_over(reader, authority, sni, alpn, send_sni).await
+    }
+
+    /// The TLS handshake of [`Self::tls_with`], on a `CONNECT` that has been answered already.
+    pub(crate) async fn tls_over(
+        &self,
+        reader: BufReader<StreamHandle>,
+        authority: &str,
+        sni: Option<&str>,
+        alpn: &[&[u8]],
+        send_sni: bool,
+    ) -> io::Result<Client> {
         let roots = [self.ca.certificate().der().clone()];
         let mut config = Self::client_config(&roots, alpn);
         config.enable_sni = send_sni;

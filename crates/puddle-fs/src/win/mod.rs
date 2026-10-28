@@ -227,7 +227,10 @@ pub fn dacl_is_owner_only(file: &File) -> io::Result<Result<(), String>> {
         if u32::from(header.AceType) != ACCESS_ALLOWED_ACE_TYPE {
             return Ok(Err(format!("entry {index} is not a plain allow entry")));
         }
-        // SAFETY: the type check above makes this an ACCESS_ALLOWED_ACE. The SID starts at
+        if !ace_holds_a_sid(header.AceSize) {
+            return Ok(Err(format!("entry {index} is too short to hold a SID")));
+        }
+        // SAFETY: the type and size checks above make this a whole ACCESS_ALLOWED_ACE. The SID starts at
         // `SidStart` and extends past the struct, so the pointer is taken straight from the one
         // `GetAce` gave (no reference to the struct in between, whose provenance would end at the
         // struct). `EqualSid` only reads it; the user's SID is valid while `user` lives.
@@ -246,6 +249,12 @@ pub fn dacl_is_owner_only(file: &File) -> io::Result<Result<(), String>> {
         }
     }
     Ok(Ok(()))
+}
+
+/// Whether an ACE of `ace_size` bytes holds the whole `ACCESS_ALLOWED_ACE` struct, so that the
+/// SID at its end is inside the entry before anything reads it.
+fn ace_holds_a_sid(ace_size: u16) -> bool {
+    usize::from(ace_size) >= size_of::<ACCESS_ALLOWED_ACE>()
 }
 
 /// Opens this process's token with `access`.
@@ -505,6 +514,15 @@ mod tests {
             owner_only_sddl("S-1-5-21-1-2-3-1001", "FA", true),
             "D:P(A;OICI;FA;;;S-1-5-21-1-2-3-1001)"
         );
+    }
+
+    #[test]
+    fn an_ace_shorter_than_its_struct_cannot_hold_a_sid() {
+        let whole = u16::try_from(size_of::<ACCESS_ALLOWED_ACE>()).unwrap();
+        assert!(ace_holds_a_sid(whole));
+        assert!(ace_holds_a_sid(whole + 8));
+        assert!(!ace_holds_a_sid(whole - 1));
+        assert!(!ace_holds_a_sid(0));
     }
 
     #[test]

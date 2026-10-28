@@ -271,10 +271,35 @@ const TOKENS = {
 // What each screen has on it: its first heading's size (the same in both densities) and the
 // controls the checks below measure.
 const LAYOUT = {
-  "/settings": { h1: 32, card: true, select: true, oneLineButton: true },
-  "/workspaces": { h1: 24, card: true, select: false, oneLineButton: true },
-  "/rules": { h1: 24, card: false, select: true, oneLineButton: true },
-  "/activity": { h1: 24, card: false, select: true, oneLineButton: false },
+  "/settings": {
+    h1: 32,
+    card: true,
+    select: true,
+    selectWaitsForData: true,
+    oneLineButton: true,
+  },
+  "/workspaces": {
+    h1: 24,
+    card: true,
+    select: false,
+    selectWaitsForData: false,
+    oneLineButton: true,
+  },
+  "/rules": {
+    h1: 24,
+    card: false,
+    select: true,
+    selectWaitsForData: true,
+    oneLineButton: true,
+  },
+  // The Activity filters are in its header, so they show before the log has loaded.
+  "/activity": {
+    h1: 24,
+    card: false,
+    select: true,
+    selectWaitsForData: false,
+    oneLineButton: false,
+  },
 } as const;
 
 type Box = {
@@ -307,10 +332,47 @@ async function measure(page: Page, selector: string): Promise<Box | null> {
   }, selector);
 }
 
+// The measure of an element that exists only once the screen has loaded its data (the Rules
+// filters, the Settings cards): polled until it has a box, never read once.
 async function required(page: Page, selector: string): Promise<Box> {
-  const box = await measure(page, selector);
-  expect(box, `${selector} is on the screen`).not.toBeNull();
-  return box as Box;
+  let box: Box | null = null;
+  await expect
+    .poll(
+      async () => {
+        box = await measure(page, selector);
+        return box !== null;
+      },
+      { message: `${selector} is on the screen` },
+    )
+    .toBe(true);
+  return box as unknown as Box;
+}
+
+// What each screen reads before it shows its controls.
+const DATA = {
+  "/settings": "/api/settings",
+  "/workspaces": "/api/workspaces",
+  "/rules": "/api/rules",
+  "/activity": "/api/audit",
+} as const;
+
+// Holds the screen's data read until `release()`, so every screen is measured once with its data
+// missing, whatever the runner's speed. `reads()` says how many reads it held.
+async function holdData(page: Page, pathname: string) {
+  let held = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((done) => (release = done));
+  await page.route(
+    (url) => url.pathname === pathname,
+    async (route) => {
+      if (route.request().method() === "GET") {
+        held += 1;
+        await gate;
+      }
+      await route.continue();
+    },
+  );
+  return { release, reads: () => held };
 }
 
 test.describe("layout by density", () => {
@@ -328,10 +390,18 @@ test.describe("layout by density", () => {
         await backend.installClock(page);
         await open(page, backend, "/settings");
         await setDensity(page, density);
+        const data = await holdData(page, DATA[path as keyof typeof DATA]);
         await page.goto(path);
         await expect(
           page.getByRole("heading", { level: 1, name: heading }),
         ).toBeVisible();
+        // The heading shows while the data is still on its way: the controls below are not there yet.
+        await expect
+          .poll(data.reads, { message: "the screen's data read is held" })
+          .toBeGreaterThan(0);
+        if (layout.selectWaitsForData)
+          expect(await measure(page, "main select")).toBeNull();
+        data.release();
 
         // The page settles on the chosen density once the settings have loaded.
         await expect

@@ -133,9 +133,9 @@ impl Agent {
             }
             None => (None, None),
         };
-        if let Some(editor) = config.editor.clone() {
+        if let (Some(editor), Some(control)) = (config.editor.clone(), upstream.editor_control()) {
             tasks.spawn(exthost::sweep_loop(1));
-            tasks.spawn(editor::run(editor));
+            tasks.spawn(editor::run(editor, control));
         }
         if let Some(watch) = config.entrypoint.clone() {
             tasks.spawn(entrypoint::watch(watch, tx.clone()));

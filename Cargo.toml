@@ -93,7 +93,7 @@ tokio-yamux = { version = "0.3.20", default-features = false, features = ["tokio
 futures-util = { version = "0.3.31", default-features = false, features = ["std"] }
 libc = "0.2.172"
 # Interface listing for the guest agent (getifaddrs, if_nametoindex) without hand-written FFI.
-nix = { version = "0.31.3", default-features = false, features = ["net"] }
+nix = { version = "0.31.3", default-features = false, features = ["net", "signal"] }
 rustix = { version = "1.1.5", default-features = false, features = ["std", "process"] }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "std"] }
 getrandom = "0.4"

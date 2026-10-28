@@ -15,6 +15,7 @@
 //! | [`ENV_WORKSPACE_FILE`] | the multi-root file the editor opens instead when it exists and lists folders (optional) |
 //! | [`ENV_KIND`] | which server: unset or `code-server`, or `microsoft` (Microsoft's own, which the agent downloads) |
 //! | [`ENV_TELEMETRY`] | `1` or `0`: whether Microsoft's server may send telemetry (only with `microsoft`) |
+//! | [`ENV_AUTO_UPDATE`] | `1` or `0`: whether the agent looks for newer builds of Microsoft's server (only with `microsoft`; unset is `1`) |
 //!
 //! For Microsoft's server [`ENV_DIR`] is the folder its builds are unpacked into, one folder per
 //! build, on the workspace volume: the host mounts no release, the agent fetches one.
@@ -53,6 +54,9 @@ pub const ENV_KIND: &str = "PUDDLE_AGENT_EDITOR_KIND";
 /// The telemetry variable of Microsoft's server.
 pub const ENV_TELEMETRY: &str = "PUDDLE_AGENT_EDITOR_TELEMETRY";
 
+/// The automatic-update variable of Microsoft's server.
+pub const ENV_AUTO_UPDATE: &str = "PUDDLE_AGENT_EDITOR_AUTO_UPDATE";
+
 /// The folder below the data folder that holds Microsoft's builds, one folder per build.
 pub const MICROSOFT_BUILDS: &str = "servers";
 
@@ -79,6 +83,8 @@ pub enum ServerKind {
     Microsoft {
         /// Whether the server may send telemetry to Microsoft (the user's choice in the popup).
         telemetry: bool,
+        /// Whether the agent looks for newer builds at start and daily (the user's setting).
+        auto_update: bool,
     },
 }
 
@@ -127,10 +133,14 @@ impl EditorServer {
         folder: impl Into<String>,
         grace_secs: u32,
         telemetry: bool,
+        auto_update: bool,
     ) -> Self {
         let mut server = Self::new(data, folder, grace_secs);
         server.dir = format!("{}/{MICROSOFT_BUILDS}", server.data);
-        server.kind = ServerKind::Microsoft { telemetry };
+        server.kind = ServerKind::Microsoft {
+            telemetry,
+            auto_update,
+        };
         server
     }
 
@@ -154,9 +164,17 @@ impl EditorServer {
         if let Some(file) = &self.workspace_file {
             env.push((ENV_WORKSPACE_FILE, file.clone()));
         }
-        if let ServerKind::Microsoft { telemetry } = self.kind {
+        if let ServerKind::Microsoft {
+            telemetry,
+            auto_update,
+        } = self.kind
+        {
             env.push((ENV_KIND, "microsoft".to_owned()));
             env.push((ENV_TELEMETRY, if telemetry { "1" } else { "0" }.to_owned()));
+            env.push((
+                ENV_AUTO_UPDATE,
+                if auto_update { "1" } else { "0" }.to_owned(),
+            ));
         }
         env
     }
@@ -205,11 +223,13 @@ impl EditorServer {
         };
         let kind = match get(ENV_KIND).as_deref() {
             None | Some("code-server") => {
-                if get(ENV_TELEMETRY).is_some() {
-                    return Err(EditorEnvError::new(
-                        ENV_TELEMETRY,
-                        "only Microsoft's server has telemetry",
-                    ));
+                for var in [ENV_TELEMETRY, ENV_AUTO_UPDATE] {
+                    if get(var).is_some() {
+                        return Err(EditorEnvError::new(
+                            var,
+                            "only Microsoft's server has this setting",
+                        ));
+                    }
                 }
                 ServerKind::CodeServer
             }
@@ -218,6 +238,14 @@ impl EditorServer {
                     None | Some("0") => false,
                     Some("1") => true,
                     Some(_) => return Err(EditorEnvError::new(ENV_TELEMETRY, "expected 0 or 1")),
+                },
+                // An older host sends none: updates are on unless the user turned them off.
+                auto_update: match get(ENV_AUTO_UPDATE).as_deref() {
+                    None | Some("1") => true,
+                    Some("0") => false,
+                    Some(_) => {
+                        return Err(EditorEnvError::new(ENV_AUTO_UPDATE, "expected 0 or 1"));
+                    }
                 },
             },
             Some(_) => {
@@ -311,15 +339,22 @@ mod tests {
 
     #[test]
     fn microsoft_s_server_keeps_its_builds_below_its_data_and_reads_back() {
-        for telemetry in [false, true] {
+        for (telemetry, auto_update) in [(false, true), (true, false), (false, false)] {
             let server = EditorServer::microsoft(
                 "/workspaces/a/.puddle/vscode-server",
                 "/workspaces/a",
                 90,
                 telemetry,
+                auto_update,
             );
             assert_eq!(server.dir, "/workspaces/a/.puddle/vscode-server/servers");
-            assert_eq!(server.kind, ServerKind::Microsoft { telemetry });
+            assert_eq!(
+                server.kind,
+                ServerKind::Microsoft {
+                    telemetry,
+                    auto_update
+                }
+            );
             let env = server.env();
             let vars: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
             assert_eq!(read(&vars), Ok(Some(server)));
@@ -330,7 +365,7 @@ mod tests {
             plain
                 .env()
                 .iter()
-                .all(|(k, _)| *k != ENV_KIND && *k != ENV_TELEMETRY)
+                .all(|(k, _)| ![ENV_KIND, ENV_TELEMETRY, ENV_AUTO_UPDATE].contains(k))
         );
         let named = read(&[
             (ENV_DIR, "/e"),
@@ -355,7 +390,12 @@ mod tests {
         );
         // Telemetry means something only for Microsoft's server: setting it for code-server is a mistake.
         assert!(with(&[(ENV_TELEMETRY, "1")]).starts_with(ENV_TELEMETRY));
-        // Microsoft's server without the variable: telemetry off.
+        assert!(with(&[(ENV_AUTO_UPDATE, "0")]).starts_with(ENV_AUTO_UPDATE));
+        assert!(
+            with(&[(ENV_KIND, "microsoft"), (ENV_AUTO_UPDATE, "yes")]).starts_with(ENV_AUTO_UPDATE)
+        );
+        // Microsoft's server without the variables: telemetry off, updates on (an older host
+        // sends no update setting).
         let off = read(&[
             (ENV_DIR, "/e"),
             (ENV_DATA, "/d"),
@@ -364,7 +404,10 @@ mod tests {
         ]);
         assert_eq!(
             off.unwrap().unwrap().kind,
-            ServerKind::Microsoft { telemetry: false }
+            ServerKind::Microsoft {
+                telemetry: false,
+                auto_update: true
+            }
         );
     }
 

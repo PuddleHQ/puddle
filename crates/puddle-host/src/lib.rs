@@ -70,4 +70,6 @@ pub use platform::{Platform, SystemPlatform};
 pub use proxy_passwords::{ProxyPasswordError, ProxyPasswords};
 pub use ssh_config::{SshSettings, ssh_host};
 pub use vscode::VsCodeLauncher;
-pub use workspaces::{EndExtensionHostsError, HostWorkspaces, RewriteGate};
+pub use workspaces::{
+    EndExtensionHostsError, HostWorkspaces, RewriteGate, SwitchEditorBuildError,
+};

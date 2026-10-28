@@ -11,6 +11,7 @@ use puddle_agent_proto::forward::{ANSWER_TIMEOUT, read_line_exact};
 use puddle_agent_proto::kind::{MAX_PREAMBLE, StreamKind, parse_preamble};
 use tokio_yamux::StreamHandle;
 
+use crate::editor::Control;
 use crate::editor_stream::{self, EditorAccess};
 use crate::forward::Forwards;
 use crate::host_control;
@@ -23,21 +24,25 @@ pub struct HostStreams {
     servers: Vec<PathBuf>,
     /// The editor server the host may connect to, `None` while the agent runs none.
     editor: Option<EditorAccess>,
+    /// What a `host-control` message reaches of the editor server, `None` while the agent runs none.
+    control: Option<Arc<Control>>,
 }
 
 impl HostStreams {
-    /// Serves forwards with `forwards`, ends the extension hosts of the servers in `servers` and
-    /// lets the host reach `editor`.
+    /// Serves forwards with `forwards`, ends the extension hosts of the servers in `servers`,
+    /// lets the host reach `editor` and restart it onto a newer build through `control`.
     #[must_use]
     pub fn new(
         forwards: Arc<Forwards>,
         servers: Vec<PathBuf>,
         editor: Option<EditorAccess>,
+        control: Option<Arc<Control>>,
     ) -> Arc<Self> {
         Arc::new(Self {
             forwards,
             servers,
             editor,
+            control,
         })
     }
 
@@ -52,7 +57,9 @@ impl HostStreams {
         };
         match parse_preamble(&preamble) {
             Ok((StreamKind::Forward, 1)) => self.forwards.serve(stream).await,
-            Ok((StreamKind::HostControl, 1)) => host_control::serve(stream, &self.servers).await,
+            Ok((StreamKind::HostControl, 1)) => {
+                host_control::serve(stream, &self.servers, self.control.as_deref()).await;
+            }
             Ok((StreamKind::Editor, 1)) => {
                 editor_stream::serve(stream, self.editor.as_ref()).await;
             }

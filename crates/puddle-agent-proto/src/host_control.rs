@@ -44,6 +44,10 @@ pub enum HostMessage {
     /// guest and everything they started (language servers, debuggees), and leave the terminals
     /// (the servers' pty hosts) and everything else alone.
     EndExtensionHosts,
+    /// No window is connected to the sandbox's editor server: if a newer build of Microsoft's
+    /// server is downloaded and waiting, restart the server on it. Does nothing (and says so)
+    /// when none is waiting, and for a sandbox that runs another server.
+    SwitchEditorBuild,
     /// A message type this side doesn't know. Answered with [`HostReply::Ignored`].
     #[serde(other)]
     Unknown,
@@ -63,6 +67,11 @@ pub enum HostReply {
         /// Debuggees found without a parent that could still use them, and ended.
         #[serde(default)]
         orphans: u32,
+    },
+    /// [`HostMessage::SwitchEditorBuild`] is done.
+    EditorBuild {
+        /// Whether the server was restarted on a newer build.
+        switched: bool,
     },
     /// The agent doesn't know the message and did nothing.
     Ignored,
@@ -182,6 +191,17 @@ mod tests {
             HostReply::from_line(&HostReply::Ignored.to_line()),
             Ok(HostReply::Ignored)
         );
+    }
+
+    #[test]
+    fn the_switch_message_and_its_reply_round_trip() {
+        let message = HostMessage::SwitchEditorBuild;
+        assert_eq!(message.to_line(), b"{\"type\":\"switch_editor_build\"}\n");
+        assert_eq!(HostMessage::from_line(&message.to_line()), Ok(message));
+        for switched in [false, true] {
+            let reply = HostReply::EditorBuild { switched };
+            assert_eq!(HostReply::from_line(&reply.to_line()), Ok(reply));
+        }
     }
 
     #[test]

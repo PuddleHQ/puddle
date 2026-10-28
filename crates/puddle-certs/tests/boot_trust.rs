@@ -833,6 +833,8 @@ fn jdks_of_version_managers_are_found_and_one_in_an_unlisted_folder_is_the_docum
         "/root/.asdf/installs/java/temurin-21",
         "/home/dev/.local/share/mise/installs/java/21",
         "/usr/java/jdk-17",
+        "/usr/lib64/jvm/java-21",
+        "/usr/local/java-17",
     ];
     for sh in shells() {
         let g = Guest::new(&sh, "", false);
@@ -854,7 +856,13 @@ fn jdks_of_version_managers_are_found_and_one_in_an_unlisted_folder_is_the_docum
         assert!(out.status.success(), "{}: {}", sh.display(), show(&out));
         for home in found {
             let store = format!("{home}/lib/security/cacerts");
-            assert_eq!(g.aliases(&store).len(), 3, "{home}: {}", stdout_of(&out));
+            let aliases = g.aliases(&store);
+            assert_eq!(aliases.len(), 3, "{home}: {}", stdout_of(&out));
+            assert_eq!(aliases[0], "distro-root");
+            assert!(
+                aliases[1..].iter().all(|a| a.starts_with("puddle-")),
+                "{aliases:?}"
+            );
         }
         assert_eq!(
             g.aliases("/srv/tools/jdk-21/lib/security/cacerts"),

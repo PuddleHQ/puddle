@@ -44,8 +44,8 @@ for tool in awk cksum readlink; do
 done
 
 # Every keytool the image has: the one on PATH, JAVA_HOME's, then the usual JDK folders and the
-# version managers' (SDKMAN, IntelliJ's ~/.jdks, asdf, mise: for root, for each home below /home,
-# for $HOME and SDKMAN's shared folder). A JDK unpacked anywhere else, and not on PATH or in
+# version managers' (SDKMAN, IntelliJ's ~/.jdks, asdf, mise: for root and for each home below
+# /home; only SDKMAN is also looked up under $HOME and SDKMAN_DIR). A JDK unpacked anywhere else, and not on PATH or in
 # JAVA_HOME, is not found.
 keytools=
 for k in "$(command -v keytool 2>/dev/null || true)" "${JAVA_HOME:+$JAVA_HOME/bin/keytool}" \

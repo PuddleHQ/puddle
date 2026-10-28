@@ -392,6 +392,14 @@ impl Proxy {
         Some((termination, mode, &terminations.tls))
     }
 
+    /// The workspace's termination, which also holds its rules on method and path.
+    fn termination_of(&self, request: &EgressRequest) -> Option<Arc<terminate::Termination>> {
+        self.terminations
+            .as_ref()?
+            .source
+            .termination(&request.workspace)
+    }
+
     /// Why a host that the workspace would decrypt (it decrypts every host) is passed through
     /// instead: on its never-decrypt list, or one its tools did not accept the certificate for.
     fn skipped(&self, request: &EgressRequest) -> Option<&'static str> {
@@ -719,6 +727,57 @@ async fn refuse_over_limit(handler: &WorkspaceHandler, mut reader: GuestReader) 
     }
 }
 
+/// What the record of a connection says once a rule on method and path has decided about it.
+type RecordChange = Box<dyn FnOnce(&mut ConnectionEvent) + Send>;
+
+/// Applies the workspace's rules on method and path to what the proxy can read without
+/// decrypting: a plain-HTTP request, and (because a tunnel's content is not readable) a tunnel
+/// to a covered host on a port that is not decrypted. `None`: nothing refuses it.
+fn refuse_by_request_rule(
+    proxy: &Proxy,
+    request: &EgressRequest,
+    head: &Head,
+    path: Option<&str>,
+) -> Option<(Refusal, RecordChange)> {
+    let termination = proxy.termination_of(request)?;
+    let rules = termination.request_rules();
+    if !rules.covers(&request.host) {
+        return None;
+    }
+    let Some(path) = path else {
+        if request.port == terminate::request::HTTPS_PORT {
+            return None;
+        }
+        // Only port 443 is decrypted, so a tunnel to another port of a covered host would carry
+        // requests the rules never see.
+        let code = "request_rule_port";
+        let refusal = Refusal::new(
+            "403 Forbidden",
+            format!(
+                "{} has rules on method and path, which Puddle can only apply to HTTPS on port 443 and to plain HTTP: a tunnel to port {} is refused",
+                request.host, request.port
+            ),
+        )
+        .coded(code);
+        let change: RecordChange = Box::new(move |event| {
+            event.decision = ConnectionDecision::Blocked;
+            event.reason = ConnectionReason::Refused(code);
+        });
+        return Some((refusal, change));
+    };
+    let view = terminate::RequestView::new(&head.method, path, &head.headers);
+    let rule = rules.refusing(&request.host, &view)?;
+    let line = HttpRequestLine::new(head.method.as_str(), path);
+    let refusal = terminate::request_rules::refusal(rule, &head.method, &request.host);
+    let change: RecordChange = Box::new(move |event| {
+        event.decision = ConnectionDecision::Deny;
+        event.reason = ConnectionReason::RequestRule;
+        event.request_rule = Some(rule);
+        event.http = Some(line);
+    });
+    Some((refusal, change))
+}
+
 /// Decides, connects and relays one request whose destination is known; returns what the audit
 /// records about it (bytes are filled in by the caller once the stream is gone).
 async fn relay(
@@ -743,6 +802,12 @@ async fn relay(
             return event;
         }
     };
+    if let Some(refused) = refuse_by_request_rule(proxy, request, head, path.as_deref()) {
+        let (refusal, change) = refused;
+        change(&mut event);
+        refuse(reader.get_mut(), &refusal).await;
+        return event;
+    }
     // A bound host is terminated: the guest's TLS handshake comes first, so a client that asks
     // for the wrong name never causes a connection to the real server.
     if path.is_none()
@@ -761,13 +826,21 @@ async fn relay(
         });
         let done = terminate::run(cx, reader).await;
         event.http = done.http;
+        if let Some(refused) = &done.refused_by_rule {
+            event.http = Some(refused.line.clone());
+        }
         event.resolved_ip = done.resolved_ip;
         event.upstream = done.hop;
         event.outcome = done.connect;
         event.injected = done.injected;
         event.binding_id = done.binding_id;
         event.unswapped_stand_ins = done.unswapped_stand_ins;
-        if done.sni_mismatch {
+        if let Some(refused) = &done.refused_by_rule {
+            // A rule on method and path refused a request: the first one is the one recorded.
+            event.decision = ConnectionDecision::Deny;
+            event.reason = ConnectionReason::RequestRule;
+            event.request_rule = Some(refused.rule);
+        } else if done.sni_mismatch {
             event.decision = ConnectionDecision::Blocked;
             event.reason = ConnectionReason::SniMismatch;
         } else if done.certificate_unavailable {

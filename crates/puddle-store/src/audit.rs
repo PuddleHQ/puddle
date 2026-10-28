@@ -73,6 +73,11 @@ pub struct ConnectionRecord {
     /// records written before rule sets existed.
     #[serde(default)]
     pub rule_set: Option<String>,
+    /// The rule on method and path that refused a request of the connection (reason
+    /// `request_rule`); `method` and `path` are that request's. Its own numbering, apart from
+    /// `rule_id`. Absent in records written before it existed.
+    #[serde(default)]
+    pub request_rule: Option<i64>,
     /// The pending row.
     pub pending_id: Option<i64>,
     /// The credential binding, by id.
@@ -115,6 +120,7 @@ impl ConnectionRecord {
             reason: event.reason.to_string(),
             rule_id: event.rule_id.map(|id| id.0),
             rule_set: event.rule_set.map(|set| set.to_string()),
+            request_rule: event.request_rule.map(|id| id.0),
             pending_id: event.pending_id.map(|id| id.0),
             binding_id: event.binding_id.clone(),
             injected: event.injected,
@@ -166,6 +172,7 @@ impl ConnectionRecord {
             reason: reason.to_string(),
             rule_id: None,
             rule_set: None,
+            request_rule: None,
             pending_id: None,
             binding_id: None,
             injected: false,
@@ -319,6 +326,27 @@ pub enum RuleDeleteReason {
     SetDeleted,
 }
 
+/// A rule on method and path as it appears in the audit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestRuleWire {
+    /// Row id, numbered apart from the rules on hosts.
+    pub id: i64,
+    /// `global` or `workspace`.
+    pub scope: String,
+    /// The workspace, for a workspace rule.
+    pub workspace_id: Option<String>,
+    /// The host pattern (`example.com` or `*.example.com`).
+    pub host: String,
+    /// The methods it names, upper case; empty for every method.
+    pub methods: Vec<String>,
+    /// The path pattern, in canonical form.
+    pub path: String,
+    /// Epoch ms.
+    pub created_at: u64,
+    /// `cli`, `ui` or `api`.
+    pub created_by: String,
+}
+
 /// A rule set the user made, as it appears in the audit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuleSetWire {
@@ -409,6 +437,24 @@ pub enum AuditRecord {
         ts: u64,
         /// The whole rule.
         rule: RuleWire,
+    },
+    /// A rule on method and path created (R-46).
+    RequestRuleCreated {
+        /// Epoch ms.
+        ts: u64,
+        /// The rule.
+        rule: RequestRuleWire,
+    },
+    /// A rule on method and path deleted.
+    RequestRuleDeleted {
+        /// Epoch ms.
+        ts: u64,
+        /// The rule as it was.
+        rule: RequestRuleWire,
+        /// User or workspace deletion.
+        reason: RuleDeleteReason,
+        /// Who deleted it.
+        actor: String,
     },
     /// A rule set made by the user (R-43).
     RuleSetCreated {
@@ -530,7 +576,7 @@ impl AuditOutcome {
 
 impl AuditRecord {
     /// Every `type` tag, in declaration order.
-    pub const KINDS: [&'static str; 16] = [
+    pub const KINDS: [&'static str; 18] = [
         "connection",
         "pending_created",
         "pending_decided",
@@ -540,6 +586,8 @@ impl AuditRecord {
         "rule_updated",
         "rule_deleted",
         "rule_expired",
+        "request_rule_created",
+        "request_rule_deleted",
         "rule_set_created",
         "rule_set_updated",
         "rule_set_deleted",
@@ -564,6 +612,9 @@ impl AuditRecord {
             | Self::RuleUpdated { rule, .. }
             | Self::RuleDeleted { rule, .. }
             | Self::RuleExpired { rule, .. } => &rule.pattern,
+            Self::RequestRuleCreated { rule, .. } | Self::RequestRuleDeleted { rule, .. } => {
+                &rule.host
+            }
             Self::PendingSuppressed { .. }
             | Self::RuleSetCreated { .. }
             | Self::RuleSetUpdated { .. }
@@ -611,6 +662,8 @@ impl AuditRecord {
             | Self::RuleUpdated { .. }
             | Self::RuleDeleted { .. }
             | Self::RuleExpired { .. }
+            | Self::RequestRuleCreated { .. }
+            | Self::RequestRuleDeleted { .. }
             | Self::RuleSetCreated { .. }
             | Self::RuleSetUpdated { .. }
             | Self::RuleSetDeleted { .. }
@@ -634,6 +687,8 @@ impl AuditRecord {
             Self::RuleUpdated { .. } => "rule_updated",
             Self::RuleDeleted { .. } => "rule_deleted",
             Self::RuleExpired { .. } => "rule_expired",
+            Self::RequestRuleCreated { .. } => "request_rule_created",
+            Self::RequestRuleDeleted { .. } => "request_rule_deleted",
             Self::RuleSetCreated { .. } => "rule_set_created",
             Self::RuleSetUpdated { .. } => "rule_set_updated",
             Self::RuleSetDeleted { .. } => "rule_set_deleted",
@@ -657,6 +712,8 @@ impl AuditRecord {
             | Self::RuleUpdated { ts, .. }
             | Self::RuleDeleted { ts, .. }
             | Self::RuleExpired { ts, .. }
+            | Self::RequestRuleCreated { ts, .. }
+            | Self::RequestRuleDeleted { ts, .. }
             | Self::RuleSetCreated { ts, .. }
             | Self::RuleSetUpdated { ts, .. }
             | Self::RuleSetDeleted { ts, .. }
@@ -680,6 +737,9 @@ impl AuditRecord {
             | Self::RuleUpdated { rule, .. }
             | Self::RuleDeleted { rule, .. }
             | Self::RuleExpired { rule, .. } => rule.workspace_id.as_deref(),
+            Self::RequestRuleCreated { rule, .. } | Self::RequestRuleDeleted { rule, .. } => {
+                rule.workspace_id.as_deref()
+            }
             Self::RuleSetSwitched { workspace_id, .. }
             | Self::SystemManagedChanged { workspace_id, .. } => workspace_id.as_deref(),
             Self::RuleSetCreated { .. }

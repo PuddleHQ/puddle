@@ -568,6 +568,8 @@ pub(crate) struct RigBuilder {
     pub(crate) exchanges: Option<Arc<dyn puddle_proxy::ExchangeRewriter>>,
     /// How `box` decrypts beyond its bound hosts (off by default).
     pub(crate) interception: Interception,
+    /// The rules on method and path `box` has.
+    pub(crate) request_rules: puddle_proxy::RequestRules,
 }
 
 impl RigBuilder {
@@ -583,7 +585,14 @@ impl RigBuilder {
             stand_ins: (Arc::new(StandIns::new()), Arc::new(StandIns::new())),
             exchanges: None,
             interception: Interception::default(),
+            request_rules: puddle_proxy::RequestRules::default(),
         }
+    }
+
+    /// Gives `box` rules on method and path (they decrypt the hosts they name).
+    pub(crate) fn request_rules(mut self, rules: puddle_proxy::RequestRules) -> Self {
+        self.request_rules = rules;
+        self
     }
 
     /// Makes `box` decrypt every host (`all`) except the names of `never`.
@@ -676,7 +685,8 @@ impl RigBuilder {
             Arc::clone(&self.injector),
         )
         .with_stand_ins(self.stand_ins.0)
-        .with_interception(self.interception.clone());
+        .with_interception(self.interception.clone())
+        .with_request_rules(self.request_rules);
         if let Some(exchanges) = self.exchanges {
             termination = termination.with_exchanges(exchanges);
         }

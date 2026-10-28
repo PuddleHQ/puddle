@@ -37,6 +37,7 @@ mod failures;
 mod identities;
 mod interception;
 mod ports;
+mod request_rules;
 mod sets;
 mod shell_init;
 
@@ -44,6 +45,7 @@ pub use interception::{
     DEFAULT_LEARNED_CAP, DEFAULT_LEARNED_TTL_SECS, LearnedLimits, WorkspaceInterception,
 };
 pub use ports::PinnedPort;
+pub use request_rules::{MAX_REQUEST_RULES, NewRequestRule, RequestRule};
 pub use sets::{RuleSetEntryInfo, RuleSetInfo, SystemHost, SystemPlan, parse_rule_set};
 
 /// Tunable limits. The defaults are the spec's *(default)* values.
@@ -750,6 +752,7 @@ impl Store {
             // Its pinned forwards go with it.
             ports::delete_workspace_rows(tx, workspace)?;
             interception::delete_workspace_rows(tx, workspace)?;
+            request_rules::delete_workspace_rows(tx, workspace, now, fx)?;
             Ok(WorkspaceDeletion {
                 rules_deleted: rules.len() as u64,
                 pending_expired: expired,

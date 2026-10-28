@@ -104,7 +104,7 @@ impl fmt::Display for ConnectionOutcome {
 /// Why the proxy decided as it did (R-24). Serialised as a string: `rule`, `no_rule`, a
 /// [`BlockReason::code`] (`toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`,
 /// `local_address`, `settings_unreadable`), `policy_unavailable`, `puddle_request`, `sni_mismatch`, `guest_tls_rejected`, `certificate_unavailable`,
-/// `connection_limit`, `suppressed`, `merged`, `limit:<code>` (a limit ended the connection or cut a stream of it), `pass_through:<code>` (a host the workspace decrypts only because it decrypts every host was passed through untouched), `puddle_request_failed:<code>` or, for a request the credential rules refused on a decrypted connection, the
+/// `connection_limit`, `request_rule`, `suppressed`, `merged`, `limit:<code>` (a limit ended the connection or cut a stream of it), `pass_through:<code>` (a host the workspace decrypts only because it decrypts every host was passed through untouched), `puddle_request_failed:<code>` or, for a request the credential rules refused on a decrypted connection, the
 /// refusal's code (`push_denied`, `pull_denied`, `credential_unavailable`, ...).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -119,6 +119,9 @@ pub enum ConnectionReason {
     PolicyUnavailable,
     /// Puddle's own request, which no rule decides (an image pull that passed the address guard).
     PuddleRequest,
+    /// A rule on method and path refused a request on a decrypted connection (R-46); the
+    /// record's `request_rule` names it and `method` and `path` the request.
+    RequestRule,
     /// A terminated TLS connection's client asked for a name other than the one it
     /// `CONNECT`ed to (or none): the handshake was refused and nothing went upstream.
     SniMismatch,
@@ -168,6 +171,7 @@ impl fmt::Display for ConnectionReason {
             Self::Blocked(reason) => f.write_str(reason.code()),
             Self::PolicyUnavailable => f.write_str("policy_unavailable"),
             Self::PuddleRequest => f.write_str("puddle_request"),
+            Self::RequestRule => f.write_str("request_rule"),
             Self::SniMismatch => f.write_str("sni_mismatch"),
             Self::ConnectionLimit => f.write_str("connection_limit"),
             Self::GuestTlsRejected => f.write_str("guest_tls_rejected"),
@@ -195,7 +199,9 @@ impl fmt::Display for ConnectionReason {
 pub fn request_path(target: &str) -> &str {
     let end = target.find(['?', '#']).unwrap_or(target.len());
     let target = target.get(..end).unwrap_or_default();
-    match target.find("://") {
+    // Only an absolute-form target (`http://host/path`) has an authority to cut off: a `://` later
+    // in an origin-form path (`/a://b/c`) is part of the path.
+    match target.find("://").filter(|_| !target.starts_with('/')) {
         Some(scheme_end) => {
             let rest = target.get(scheme_end + 3..).unwrap_or_default();
             rest.find('/')
@@ -269,6 +275,9 @@ pub struct ConnectionEvent {
     pub rule_id: Option<RuleId>,
     /// The rule set whose entry decided, if one did (R-24).
     pub rule_set: Option<RuleSetId>,
+    /// The rule on method and path that refused a request of the connection, if one did (R-24,
+    /// R-46). Its own numbering, apart from [`Self::rule_id`].
+    pub request_rule: Option<RuleId>,
     /// The pending row, when pending.
     pub pending_id: Option<PendingId>,
     /// The credential binding used, by id only. Never the credential.
@@ -309,6 +318,7 @@ impl ConnectionEvent {
             reason,
             rule_id: None,
             rule_set: None,
+            request_rule: None,
             pending_id: None,
             binding_id: None,
             injected: false,
@@ -340,6 +350,7 @@ impl ConnectionEvent {
             reason,
             rule_id: None,
             rule_set: None,
+            request_rule: None,
             pending_id: None,
             binding_id: None,
             injected: false,
@@ -505,6 +516,7 @@ mod tests {
             ),
             (ConnectionReason::PolicyUnavailable, "policy_unavailable"),
             (ConnectionReason::SniMismatch, "sni_mismatch"),
+            (ConnectionReason::RequestRule, "request_rule"),
             (ConnectionReason::ConnectionLimit, "connection_limit"),
             (ConnectionReason::GuestTlsRejected, "guest_tls_rejected"),
             (
@@ -662,6 +674,7 @@ mod tests {
         assert_eq!(request_path("http://h.example/x/y?z"), "/x/y");
         assert_eq!(request_path("http://u:p@h.example"), "/");
         assert_eq!(request_path("*"), "*");
+        assert_eq!(request_path("/a://b/admin"), "/a://b/admin");
     }
 
     #[test]

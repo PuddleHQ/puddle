@@ -901,6 +901,16 @@ pub enum RuleDeleteReason {
     SetDeleted,
 }
 
+impl From<store::RuleDeleteReason> for RuleDeleteReason {
+    fn from(reason: store::RuleDeleteReason) -> Self {
+        match reason {
+            store::RuleDeleteReason::User => Self::User,
+            store::RuleDeleteReason::WorkspaceDeleted => Self::WorkspaceDeleted,
+            store::RuleDeleteReason::SetDeleted => Self::SetDeleted,
+        }
+    }
+}
+
 /// One audit record (rules spec R-24): a tagged union on `type`. `host`, `path` and the like come
 /// from the guest, so escape them when rendering. Records written by an older Puddle lack the
 /// fields added since, which read as `null`.
@@ -1269,11 +1279,7 @@ impl From<store::AuditRecord> for AuditRecord {
             } => Self::RuleDeleted {
                 ts,
                 rule: rule.into(),
-                reason: match reason {
-                    store::RuleDeleteReason::User => RuleDeleteReason::User,
-                    store::RuleDeleteReason::WorkspaceDeleted => RuleDeleteReason::WorkspaceDeleted,
-                    store::RuleDeleteReason::SetDeleted => RuleDeleteReason::SetDeleted,
-                },
+                reason: reason.into(),
                 actor,
             },
             R::RuleExpired { ts, rule } => Self::RuleExpired {
@@ -1292,11 +1298,7 @@ impl From<store::AuditRecord> for AuditRecord {
             } => Self::RequestRuleDeleted {
                 ts,
                 rule: rule.into(),
-                reason: match reason {
-                    store::RuleDeleteReason::User => RuleDeleteReason::User,
-                    store::RuleDeleteReason::WorkspaceDeleted => RuleDeleteReason::WorkspaceDeleted,
-                    store::RuleDeleteReason::SetDeleted => RuleDeleteReason::SetDeleted,
-                },
+                reason: reason.into(),
                 actor,
             },
             R::RuleSetCreated {

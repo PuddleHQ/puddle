@@ -274,9 +274,6 @@ impl PathPattern {
         let mut segments = Vec::new();
         let mut open = false;
         for (at, segment) in canonical.iter().enumerate() {
-            if open {
-                return Err(PathPatternError::OpenNotLast);
-            }
             match segment.as_str() {
                 OPEN => {
                     open = true;

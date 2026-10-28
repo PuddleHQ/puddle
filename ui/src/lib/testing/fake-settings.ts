@@ -3,6 +3,7 @@
 // returns them. Like the API it refuses Microsoft's server without a granted consent. Not
 // shipped (tests import it).
 import type { components } from "#lib/api/schema.d.ts";
+import { needsMicrosoftConsent } from "#lib/settings/model.ts";
 
 type S = components["schemas"];
 type Body = S["GlobalSettingsRequest"];
@@ -221,6 +222,14 @@ export class FakeSettings {
               at: 1_700_000_000_000,
               terms_version: b.terms_version,
             };
+      // Like the API: a record that does not cover today's terms takes Microsoft's server back to
+      // code-server in the same save.
+      if (
+        this.vscode.server === "microsoft" &&
+        needsMicrosoftConsent(this.consent)
+      ) {
+        this.vscode = { ...this.vscode, server: "code_server" };
+      }
       return this.reply(200, this.consents());
     }
     const b = init.body as Body;

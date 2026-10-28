@@ -127,15 +127,10 @@ pub(crate) async fn put_global(
         let repo = state.settings.as_ref();
         let mut loaded = load_global(repo)?;
         body.apply_to(&mut loaded.settings)?;
-        // Consent fails closed: Microsoft's server is only chosen after the user agreed.
+        // Consent fails closed: Microsoft's server is only chosen while the recorded consent
+        // covers the terms the popup shows today, not on a grant of other terms or a decline.
         if loaded.settings.vscode_server.server() == puddle_settings::ServerChoice::Microsoft
-            && !matches!(
-                loaded
-                    .settings
-                    .consents
-                    .get(puddle_settings::ConsentKind::VsCodeServer),
-                puddle_settings::Consent::Granted { .. }
-            )
+            && !loaded.settings.microsoft_consented()
         {
             return Err(ApiError::invalid(
                 "vscode_server.server: Microsoft's server needs the user's consent first",
@@ -246,6 +241,11 @@ pub(crate) async fn get_consents(
 
 /// Records the user's answer to a consent prompt, with the terms version shown. Puddle stamps
 /// the time.
+///
+/// An answer that leaves Microsoft's server chosen without a consent covering today's terms (a
+/// decline, which is how the user withdraws it, or a record for other terms) also takes the
+/// server choice back to code-server, in the same save. The server's telemetry and update
+/// options stay as the user set them.
 #[utoipa::path(
     put,
     path = "/api/consents/{kind}",
@@ -271,6 +271,11 @@ pub(crate) async fn put_consent(
         let repo = state.settings.as_ref();
         let mut loaded = load_global(repo)?;
         loaded.settings.consents.set(kind.into(), consent);
+        if loaded.settings.vscode_server.server() == puddle_settings::ServerChoice::Microsoft
+            && !loaded.settings.microsoft_consented()
+        {
+            loaded.settings.vscode_server.server = Some(puddle_settings::ServerChoice::CodeServer);
+        }
         repo.save_global(loaded.settings.to_document())?;
         Ok(Consents::from(&loaded.settings.consents))
     })

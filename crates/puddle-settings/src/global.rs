@@ -9,9 +9,14 @@ use serde_json::Value;
 use crate::document::{self, Document};
 use crate::migrate::{self, Migration};
 use crate::{
-    AppIconChoice, CloseBehaviour, Consents, DensityChoice, FirstRun, HexColour, Loaded,
-    PaletteChoice, ServerChoice, SettingsError, ThemeChoice, WorkspaceLayer,
+    AppIconChoice, CloseBehaviour, ConsentKind, Consents, DensityChoice, FirstRun, HexColour,
+    Loaded, PaletteChoice, ServerChoice, SettingsError, TermsVersion, ThemeChoice, WorkspaceLayer,
 };
+
+/// The version of the terms the enable popup for Microsoft's server shows: the licence's address.
+/// A consent recorded for any other version does not cover the server ([`Consent::allows`]).
+/// The settings screen shows the same address (`MS_TERMS_VERSION` in `ui/src/lib/settings/model.ts`).
+pub const MICROSOFT_TERMS_VERSION: &str = "https://code.visualstudio.com/license/server";
 
 /// The current shape of [`GlobalSettings`] documents.
 pub const GLOBAL_SCHEMA_VERSION: u32 = 2;
@@ -73,6 +78,27 @@ impl GlobalSettings {
     #[must_use]
     pub fn to_document(&self) -> Value {
         document::store(self)
+    }
+
+    /// Whether the user's recorded consent covers Microsoft's server under the terms Puddle
+    /// shows today ([`MICROSOFT_TERMS_VERSION`]). A decline, no answer and an agreement to other
+    /// terms all say no.
+    #[must_use]
+    pub fn microsoft_consented(&self) -> bool {
+        TermsVersion::new(MICROSOFT_TERMS_VERSION)
+            .is_ok_and(|terms| self.consents.get(ConsentKind::VsCodeServer).allows(&terms))
+    }
+
+    /// The server the browser editor runs: Microsoft's only when it is chosen *and* the consent
+    /// covers it ([`Self::microsoft_consented`]); anything else, a choice that outlived its consent
+    /// included, is the bundled code-server. Everything that starts or allows Microsoft's server
+    /// asks here, never the choice alone.
+    #[must_use]
+    pub fn editor_server(&self) -> ServerChoice {
+        match self.vscode_server.server() {
+            ServerChoice::Microsoft if self.microsoft_consented() => ServerChoice::Microsoft,
+            _ => ServerChoice::CodeServer,
+        }
     }
 }
 
@@ -327,7 +353,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::{Consent, ConsentKind, TermsVersion, UnixMillis};
+    use crate::{Consent, UnixMillis};
 
     #[test]
     fn empty_object_is_all_defaults_and_writes_back_as_version_only() {
@@ -569,5 +595,56 @@ mod tests {
         let doc = g.to_document();
         assert_eq!(doc["consents"]["vscode_server"]["state"], "granted");
         assert_eq!(GlobalSettings::from_document(doc).unwrap().settings, g);
+    }
+
+    fn chosen_with(consent: Consent) -> GlobalSettings {
+        let mut g = GlobalSettings::default();
+        g.vscode_server.server = Some(ServerChoice::Microsoft);
+        g.consents.set(ConsentKind::VsCodeServer, consent);
+        g
+    }
+
+    fn granted(terms: &str) -> Consent {
+        Consent::Granted {
+            at: UnixMillis(1),
+            terms_version: TermsVersion::new(terms).unwrap(),
+        }
+    }
+
+    #[test]
+    fn microsoft_runs_only_when_chosen_and_consent_covers_todays_terms() {
+        assert_eq!(
+            chosen_with(granted(MICROSOFT_TERMS_VERSION)).editor_server(),
+            ServerChoice::Microsoft
+        );
+        // The choice alone is not enough, whatever the record says instead of a grant.
+        for consent in [
+            Consent::NotAsked,
+            Consent::Declined {
+                at: UnixMillis(1),
+                terms_version: TermsVersion::new(MICROSOFT_TERMS_VERSION).unwrap(),
+            },
+            granted("https://code.visualstudio.com/license/server-2027"),
+        ] {
+            let g = chosen_with(consent.clone());
+            assert_eq!(g.editor_server(), ServerChoice::CodeServer, "{consent:?}");
+            assert!(!g.microsoft_consented(), "{consent:?}");
+        }
+        // A consent with the choice left on code-server stays code-server.
+        let mut g = chosen_with(granted(MICROSOFT_TERMS_VERSION));
+        g.vscode_server.server = None;
+        assert!(g.microsoft_consented());
+        assert_eq!(g.editor_server(), ServerChoice::CodeServer);
+    }
+
+    #[test]
+    fn the_settings_screen_shows_the_terms_version_the_gate_checks() {
+        // The popup records the version it shows; a different string there would record consents
+        // the gate never accepts.
+        let model = include_str!("../../../ui/src/lib/settings/model.ts");
+        assert!(
+            model.contains(&format!("MS_TERMS_URL = \"{MICROSOFT_TERMS_VERSION}\"")),
+            "ui/src/lib/settings/model.ts shows other terms than MICROSOFT_TERMS_VERSION"
+        );
     }
 }

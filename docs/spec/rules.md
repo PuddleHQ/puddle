@@ -368,7 +368,7 @@ the API. *Added 2026-10-08.*
 
   | Setting | Hosts | Applies to |
   |---|---|---|
-  | The browser editor runs Microsoft's VS Code server (consent granted) | `update.code.visualstudio.com`, `vscode.download.prss.microsoft.com`, `marketplace.visualstudio.com`, `*.gallery.vsassets.io`, `*.gallerycdn.vsassets.io` | every workspace |
+  | The browser editor runs Microsoft's VS Code server (consent granted for the terms Puddle shows) | `update.code.visualstudio.com`, `vscode.download.prss.microsoft.com`, `marketplace.visualstudio.com`, `*.gallery.vsassets.io`, `*.gallerycdn.vsassets.io` | every workspace |
   | The browser editor runs the bundled code-server (the default) | `open-vsx.org`, `openvsx.eclipsecontent.org` | every workspace |
   | Direct SSH is on for a workspace | the five Microsoft hosts | that workspace |
 

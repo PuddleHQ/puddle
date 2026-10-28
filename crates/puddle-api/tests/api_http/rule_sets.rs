@@ -57,7 +57,8 @@ async fn system_managed_follows_the_editor_server_choice() {
 
     // Microsoft's server, after consent: Microsoft's hosts instead of Open VSX.
     let waiting = api.request("box", "marketplace.visualstudio.com");
-    let granted = json!({"decision": "granted", "terms_version": "https://example.test/terms"});
+    let granted =
+        json!({"decision": "granted", "terms_version": puddle_settings::MICROSOFT_TERMS_VERSION});
     api.send("PUT", "/api/consents/vscode_server", Some(&granted))
         .await;
     let reply = api
@@ -78,14 +79,14 @@ async fn system_managed_follows_the_editor_server_choice() {
     assert_eq!(row["decided_by"], "system");
     assert_eq!(row["rule_set"], "system");
 
-    // Withdrawing the consent withdraws the hosts.
-    let declined = json!({"decision": "declined", "terms_version": "https://example.test/terms"});
+    // Withdrawing the consent withdraws Microsoft's hosts; the editor is code-server again.
+    let declined =
+        json!({"decision": "declined", "terms_version": puddle_settings::MICROSOFT_TERMS_VERSION});
     api.send("PUT", "/api/consents/vscode_server", Some(&declined))
         .await;
-    assert_eq!(
-        system_hosts(&api.get("/api/rule-sets").await.json()),
-        Vec::<(String, String)>::new()
-    );
+    let hosts = system_hosts(&api.get("/api/rule-sets").await.json());
+    assert!(!hosts.iter().any(|(_, reason)| reason == "microsoft_server"));
+    assert!(hosts.contains(&("open-vsx.org".into(), "code_server".into())));
     let audit = api
         .get("/api/audit?type=system_managed_changed")
         .await

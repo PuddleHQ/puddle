@@ -914,6 +914,20 @@ describe("Microsoft's server", () => {
     expect(api.consent.state).toBe("granted");
   });
 
+  it("says so when the service does not answer the withdrawal", async () => {
+    api.consent = {
+      state: "granted",
+      at: 1_700_000_000_000,
+      terms_version: MS_TERMS_VERSION,
+    };
+    await open();
+    api.down = true;
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Withdraw consent" }),
+    );
+    expect(await screen.findByText(/service isn't answering/)).toBeVisible();
+  });
+
   it("asks again when the terms changed since the user agreed", async () => {
     api.consent = { state: "granted", at: 1, terms_version: "older-terms" };
     await open();

@@ -3,8 +3,3 @@
 # line in the file) | [xN |] reason. Only code no test can reach belongs here (a fallback arm of an enum another
 # crate marked non-exhaustive); a line that merely lacks a test gets the test. An entry that matches
 # nothing fails the gate, so this list never keeps a stale reason.
-crates/puddle-store/src/store/request_rules.rs | reason: RuleDeleteReason::WorkspaceDeleted,\nactor: actor_str(Actor::System),\n},\n)?; | the `?` on a failed database write or read inside a transaction; the store cannot be made to fail there in a test, and the success path of the statement is covered
-crates/puddle-store/src/store/request_rules.rs | [scope],\n\|r\| r.get(0),\n)?; | the `?` on a failed database write or read inside a transaction; the store cannot be made to fail there in a test, and the success path of the statement is covered
-crates/puddle-store/src/store/request_rules.rs | new.created_by.as_str(),\n],\n)?; | the `?` on a failed database write or read inside a transaction; the store cannot be made to fail there in a test, and the success path of the statement is covered
-crates/puddle-store/src/store/request_rules.rs | ts: now,\nrule: rule.wire(),\n},\n)?; | the `?` on a failed database write or read inside a transaction; the store cannot be made to fail there in a test, and the success path of the statement is covered
-crates/puddle-store/src/store/request_rules.rs | reason: RuleDeleteReason::User,\nactor: actor_str(actor),\n},\n)?; | the `?` on a failed database write or read inside a transaction; the store cannot be made to fail there in a test, and the success path of the statement is covered

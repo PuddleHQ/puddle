@@ -406,3 +406,78 @@ fn pinned_ports_that_cannot_be_read_are_a_database_error() {
         "database error: no such table: pinned_ports"
     );
 }
+
+fn request_rule() -> NewRequestRule {
+    NewRequestRule {
+        workspace: Some(workspace()),
+        host: "api.example".to_owned(),
+        methods: puddle_types::Methods::parse(["DELETE"]).unwrap(),
+        path: puddle_types::PathPattern::parse("/**").unwrap(),
+        created_by: Actor::Cli,
+    }
+}
+
+#[test]
+fn a_request_rule_whose_scope_cannot_be_counted_is_not_made() {
+    let store = store();
+    store.refuse_sql_function("count");
+
+    let err = store.add_request_rule(&request_rule()).unwrap_err();
+
+    assert!(
+        err.to_string()
+            .starts_with("database error: not authorized to use function: COUNT"),
+        "{err}"
+    );
+    assert_eq!(store.request_rules(None).unwrap(), []);
+}
+
+#[test]
+fn a_request_rule_that_cannot_be_inserted_is_not_made() {
+    let store = store();
+    store.break_database(
+        "CREATE TRIGGER request_rule_inserts_fail BEFORE INSERT ON request_rules
+         BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+    );
+
+    let err = store.add_request_rule(&request_rule()).unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(store.request_rules(None).unwrap(), []);
+}
+
+#[test]
+fn a_request_rule_whose_record_cannot_be_written_is_not_made() {
+    let store = store();
+    store.fail_audit_writes("request_rule_created");
+
+    let err = store.add_request_rule(&request_rule()).unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(store.request_rules(None).unwrap(), []);
+    assert_eq!(audit_kinds(&store), Vec::<String>::new());
+}
+
+#[test]
+fn a_request_rule_whose_deletion_cannot_be_recorded_stays() {
+    let store = store();
+    let rule = store.add_request_rule(&request_rule()).unwrap();
+    store.fail_audit_writes("request_rule_deleted");
+
+    let err = store.delete_request_rule(rule.id, Actor::Cli).unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(store.request_rules(None).unwrap(), [rule]);
+}
+
+#[test]
+fn a_workspace_whose_request_rule_deletion_cannot_be_recorded_keeps_its_request_rules() {
+    let store = store();
+    let rule = store.add_request_rule(&request_rule()).unwrap();
+    store.fail_audit_writes("request_rule_deleted");
+
+    let err = store.delete_workspace(&workspace()).unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(store.request_rules(None).unwrap(), [rule]);
+}

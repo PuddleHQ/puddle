@@ -249,6 +249,36 @@ impl Drop for Fake {
     }
 }
 
+/// Counts the watch's counter readings: the first is its baseline.
+struct Polls(tokio::sync::watch::Receiver<u64>);
+
+impl Polls {
+    /// Starts [`watch_observed`] and returns its task with the reading counter.
+    fn start(
+        sources: OomSources,
+        out: mpsc::Sender<AgentMessage>,
+    ) -> (tokio::task::JoinHandle<()>, Self) {
+        let (count, rx) = tokio::sync::watch::channel(0_u64);
+        let task = tokio::spawn(watch_observed(sources, out, move || {
+            count.send_modify(|n| *n += 1);
+        }));
+        (task, Self(rx))
+    }
+
+    /// Waits until `n` readings have been made in all.
+    async fn reach(&mut self, n: u64) {
+        tokio::time::timeout(Duration::from_secs(5), self.0.wait_for(|&seen| seen >= n))
+            .await
+            .expect("the watch reads its counter")
+            .expect("the watch is running");
+    }
+
+    /// The number of readings so far.
+    fn now(&self) -> u64 {
+        *self.0.borrow()
+    }
+}
+
 async fn next(rx: &mut mpsc::Receiver<AgentMessage>, within: Duration) -> Option<AgentMessage> {
     tokio::time::timeout(within, rx.recv()).await.ok().flatten()
 }
@@ -284,13 +314,13 @@ async fn watch_reports_a_logged_kill_once_with_its_name_and_nothing_from_before_
 async fn a_log_line_ready_together_with_the_end_of_the_grace_period_is_served_first() {
     let fake = Fake::new("stall", 0);
     let (tx, mut rx) = mpsc::channel(8);
-    let task = tokio::spawn(watch(fake.sources(), tx));
-    // Ordering with no signal: three polls (20 ms) let the watch read its baseline counter before the test changes it.
-    tokio::time::sleep(Duration::from_millis(60)).await;
+    let (task, mut polls) = Polls::start(fake.sources(), tx);
+    polls.reach(1).await;
     for round in 1..=10_u32 {
         fake.set_counter(u64::from(round));
-        // The counter is read within a poll (20 ms); the grace period (200 ms) runs from then.
-        tokio::time::sleep(Duration::from_millis(60)).await;
+        // A reading that began before the change can finish after it, so wait for the second one;
+        // the grace period (200 ms) runs from it.
+        polls.reach(polls.now() + 2).await;
         fake.log(&format!(
             "3,{round},{round},-;Out of memory: Killed process {round} (hog) total-vm:9kB\n"
         ));
@@ -310,9 +340,8 @@ async fn a_log_line_ready_together_with_the_end_of_the_grace_period_is_served_fi
 async fn watch_reports_a_counted_kill_without_a_log_line_unnamed() {
     let fake = Fake::new("unnamed", 0);
     let (tx, mut rx) = mpsc::channel(8);
-    let task = tokio::spawn(watch(fake.sources(), tx));
-    // Ordering with no signal: three polls (20 ms) let the watch read its baseline counter before the test changes it.
-    tokio::time::sleep(Duration::from_millis(60)).await;
+    let (task, mut polls) = Polls::start(fake.sources(), tx);
+    polls.reach(1).await;
     fake.set_counter(2);
     assert_eq!(
         next(&mut rx, Duration::from_secs(2)).await,
@@ -332,9 +361,9 @@ async fn watch_works_from_the_log_alone_and_gives_up_with_no_source() {
     let mut sources = fake.sources();
     sources.vmstat = fake.dir.join("missing");
     let (tx, mut rx) = mpsc::channel(8);
-    let task = tokio::spawn(watch(sources.clone(), tx));
-    // Ordering with no signal: three polls (20 ms) let the watch open the log before the test writes to it.
-    tokio::time::sleep(Duration::from_millis(60)).await;
+    let (task, mut polls) = Polls::start(sources.clone(), tx);
+    // The log is opened before the first reading.
+    polls.reach(1).await;
     fake.log("3,3,3,-;Out of memory: Killed process 7 (x) total-vm:9kB\n");
     assert_eq!(
         next(&mut rx, Duration::from_secs(2)).await,

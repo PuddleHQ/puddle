@@ -537,6 +537,19 @@ mod tests {
 
     /// A proxy that reads one request head, hands it to the test, and answers `reply`.
     async fn proxy(reply: &'static [u8]) -> (SocketAddr, tokio::sync::oneshot::Receiver<Vec<u8>>) {
+        let (addr, seen, _) = proxy_signalling(reply).await;
+        (addr, seen)
+    }
+
+    /// [`proxy`], and a receiver that fires when the proxy has read the request's head.
+    async fn proxy_signalling(
+        reply: &'static [u8],
+    ) -> (
+        SocketAddr,
+        tokio::sync::oneshot::Receiver<Vec<u8>>,
+        tokio::sync::oneshot::Receiver<()>,
+    ) {
+        let (head_tx, head_rx) = tokio::sync::oneshot::channel();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -549,6 +562,7 @@ mod tests {
                 assert_ne!(n, 0, "the client closed before its request");
                 seen.extend_from_slice(&buf[..n]);
             }
+            let _ = head_tx.send(());
             // Give a client that sends its first bytes behind the head time to do so.
             tokio::time::sleep(Duration::from_millis(50)).await;
             let _ = tx.send(seen);
@@ -559,7 +573,7 @@ mod tests {
                 let _ = tokio::io::copy(&mut r, &mut w).await;
             }
         });
-        (addr, rx)
+        (addr, rx, head_rx)
     }
 
     /// No name resolves: the unit tests never ask a resolver.
@@ -623,8 +637,8 @@ mod tests {
 
     #[tokio::test]
     async fn anything_else_is_carried_both_ways_with_no_announcement() {
-        let (addr, seen) =
-            proxy(b"HTTP/1.1 200 Connection Established\r\n\r\nserver says hi\n").await;
+        let (addr, seen, head_read) =
+            proxy_signalling(b"HTTP/1.1 200 Connection Established\r\n\r\nserver says hi\n").await;
         let (mut client, stdin) = tokio::io::duplex(64);
         let (stdout, mut out) = tokio::io::duplex(64);
         let mut stderr = Vec::new();
@@ -640,8 +654,8 @@ mod tests {
             (exit, stderr)
         });
         client.write_all(b"hello").await.unwrap();
-        // Ordering with no signal: lets the bridge take "hello" as the first bytes before the later upload arrives.
-        tokio::time::sleep(Duration::from_millis(150)).await;
+        // The proxy has the request, so the bridge took "hello" as the first bytes already.
+        head_read.await.unwrap();
         client.write_all(b" later").await.unwrap();
         client.shutdown().await.unwrap();
         let (exit, stderr) = task.await.unwrap();

@@ -710,6 +710,16 @@ mod tests {
     }
 
     #[test]
+    fn a_change_to_the_request_rules_has_a_fixed_shape_and_no_workspace() {
+        let event = Event::RequestRulesChanged {};
+        assert_eq!(
+            serde_json::to_string(&event).unwrap(),
+            r#"{"type":"request_rules_changed"}"#
+        );
+        assert_eq!(event.workspace(), None);
+    }
+
+    #[test]
     fn pending_rule_and_audit_events_have_fixed_shapes() {
         let request = PendingSummary {
             id: 7,
@@ -758,11 +768,6 @@ mod tests {
                 Some(name()),
             ),
             (Event::RulesChanged {}, r#"{"type":"rules_changed"}"#, None),
-            (
-                Event::RequestRulesChanged {},
-                r#"{"type":"request_rules_changed"}"#,
-                None,
-            ),
             (
                 Event::IdentitiesChanged {},
                 r#"{"type":"identities_changed"}"#,

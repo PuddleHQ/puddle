@@ -778,6 +778,43 @@ fn refuse_by_request_rule(
     Some((refusal, change))
 }
 
+/// What the record of a connection says once the decrypted session behind it has ended.
+fn record_terminated(event: &mut ConnectionEvent, done: terminate::Outcome) {
+    event.http = done.http;
+    if let Some(refused) = &done.refused_by_rule {
+        event.http = Some(refused.line.clone());
+    }
+    event.resolved_ip = done.resolved_ip;
+    event.upstream = done.hop;
+    event.outcome = done.connect;
+    event.injected = done.injected;
+    event.binding_id = done.binding_id;
+    event.unswapped_stand_ins = done.unswapped_stand_ins;
+    if let Some(refused) = &done.refused_by_rule {
+        // A rule on method and path refused a request: the first one is the one recorded.
+        event.decision = ConnectionDecision::Deny;
+        event.reason = ConnectionReason::RequestRule;
+        event.request_rule = Some(refused.rule);
+    } else if done.sni_mismatch {
+        event.decision = ConnectionDecision::Blocked;
+        event.reason = ConnectionReason::SniMismatch;
+    } else if done.certificate_unavailable {
+        // Puddle's own failure, not the client's: the rule's decision stands.
+        event.reason = ConnectionReason::CertificateUnavailable;
+    } else if done.certificate_refused {
+        // Puddle blocked nothing: the rule's decision stands and the tool refused.
+        event.reason = ConnectionReason::GuestTlsRejected;
+    } else if let Some(code) = done.ended {
+        // Puddle blocked nothing at the start: the rule's decision stands, a limit cut it short.
+        event.reason = ConnectionReason::LimitEnded(code);
+    } else if let Some(code) = done.refused {
+        event.decision = ConnectionDecision::Blocked;
+        event.reason = ConnectionReason::Refused(code);
+    } else if let Some(code) = done.passed_through {
+        event.reason = ConnectionReason::PassedThrough(code);
+    }
+}
+
 /// Decides, connects and relays one request whose destination is known; returns what the audit
 /// records about it (bytes are filled in by the caller once the stream is gone).
 async fn relay(
@@ -825,39 +862,7 @@ async fn relay(
             streams: Arc::clone(&handler.h2_streams),
         });
         let done = terminate::run(cx, reader).await;
-        event.http = done.http;
-        if let Some(refused) = &done.refused_by_rule {
-            event.http = Some(refused.line.clone());
-        }
-        event.resolved_ip = done.resolved_ip;
-        event.upstream = done.hop;
-        event.outcome = done.connect;
-        event.injected = done.injected;
-        event.binding_id = done.binding_id;
-        event.unswapped_stand_ins = done.unswapped_stand_ins;
-        if let Some(refused) = &done.refused_by_rule {
-            // A rule on method and path refused a request: the first one is the one recorded.
-            event.decision = ConnectionDecision::Deny;
-            event.reason = ConnectionReason::RequestRule;
-            event.request_rule = Some(refused.rule);
-        } else if done.sni_mismatch {
-            event.decision = ConnectionDecision::Blocked;
-            event.reason = ConnectionReason::SniMismatch;
-        } else if done.certificate_unavailable {
-            // Puddle's own failure, not the client's: the rule's decision stands.
-            event.reason = ConnectionReason::CertificateUnavailable;
-        } else if done.certificate_refused {
-            // Puddle blocked nothing: the rule's decision stands and the tool refused.
-            event.reason = ConnectionReason::GuestTlsRejected;
-        } else if let Some(code) = done.ended {
-            // Puddle blocked nothing at the start: the rule's decision stands, a limit cut it short.
-            event.reason = ConnectionReason::LimitEnded(code);
-        } else if let Some(code) = done.refused {
-            event.decision = ConnectionDecision::Blocked;
-            event.reason = ConnectionReason::Refused(code);
-        } else if let Some(code) = done.passed_through {
-            event.reason = ConnectionReason::PassedThrough(code);
-        }
+        record_terminated(&mut event, done);
         return event;
     }
     let out = match connect_out(

@@ -80,6 +80,12 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
         Self::all_git_changed(self).await;
     }
 
+    fn all_request_rules_changed(&self) {
+        for name in self.inner.injection.running_workspaces() {
+            Self::decrypt_changed(self, &name);
+        }
+    }
+
     async fn environment_changed(&self, workspace: WorkspaceName) {
         Self::environment_changed(self, &workspace).await;
     }

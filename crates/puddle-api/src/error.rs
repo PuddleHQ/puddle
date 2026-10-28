@@ -168,6 +168,7 @@ impl From<StoreError> for ApiError {
         match err {
             StoreError::UnknownPending(_)
             | StoreError::UnknownRule(_)
+            | StoreError::UnknownRequestRule(_)
             | StoreError::UnknownRuleSet(_)
             | StoreError::UnknownIdentity(_)
             | StoreError::UnknownRepo(_)
@@ -190,7 +191,8 @@ impl From<StoreError> for ApiError {
             | StoreError::RuleSetName(_)
             | StoreError::IdentityInvalid(_)
             | StoreError::EnvInvalid(_)
-            | StoreError::ShellInitInvalid(_) => Self::invalid(err.to_string()),
+            | StoreError::ShellInitInvalid(_)
+            | StoreError::RequestRuleInvalid(_) => Self::invalid(err.to_string()),
             _ => Self::internal(&err),
         }
     }
@@ -343,6 +345,11 @@ mod tests {
                 StatusCode::NOT_FOUND,
             ),
             (StoreError::UnknownRule(RuleId(1)), StatusCode::NOT_FOUND),
+            (StoreError::UnknownRequestRule(1), StatusCode::NOT_FOUND),
+            (
+                StoreError::RequestRuleInvalid("x".into()),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
             (
                 StoreError::UnknownRuleSet("user:1".into()),
                 StatusCode::NOT_FOUND,

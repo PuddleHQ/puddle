@@ -38,6 +38,7 @@ mod ports;
 mod problems;
 mod repos;
 mod repositories;
+mod request_rules;
 mod rule_sets;
 mod rules;
 pub(crate) mod settings;
@@ -85,6 +86,11 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(rules::list_rules, rules::create_rule))
         .routes(routes!(rules::delete_rule))
         .routes(routes!(rules::set_rule_expiry))
+        .routes(routes!(
+            request_rules::list_request_rules,
+            request_rules::create_request_rule
+        ))
+        .routes(routes!(request_rules::delete_request_rule))
         .routes(routes!(
             rule_sets::list_rule_sets,
             rule_sets::create_rule_set

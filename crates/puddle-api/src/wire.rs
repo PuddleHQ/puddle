@@ -35,6 +35,7 @@ mod network_health;
 mod ports;
 mod repos;
 mod repositories;
+mod request_rules;
 mod rule_sets;
 mod shell_init;
 mod start_folder;
@@ -75,6 +76,7 @@ pub use repos::{
     RepoVisibility,
 };
 pub use repositories::{AddRepositoryRequest, Checkout, CheckoutManage, Checkouts, RemoteNote};
+pub use request_rules::{NewRequestRuleRequest, RequestRule, RequestRuleList};
 pub use rule_sets::{
     NewRuleSetRequest, RuleSetEntry, RuleSetKind, RuleSetList, RuleSetOverride,
     RuleSetSwitchRequest, RuleSetSwitched, RuleSetUpdateRequest, RuleSetView, SystemManagedHost,
@@ -647,6 +649,53 @@ impl From<store::RuleWire> for AuditRule {
     }
 }
 
+/// A rule on method and path, as an audit record shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct AuditRequestRule {
+    /// Row id, numbered apart from the rules on hosts.
+    pub id: i64,
+    /// `global` or `workspace`.
+    pub scope: String,
+    /// The workspace, for a workspace rule.
+    #[schema(required = true)]
+    pub workspace_id: Option<String>,
+    /// The host pattern: `example.com` or `*.example.com`.
+    pub host: String,
+    /// The methods it names, upper case; empty for every method.
+    pub methods: Vec<String>,
+    /// The path pattern, in canonical form.
+    pub path: String,
+    /// Epoch ms.
+    pub created_at: u64,
+    /// `cli`, `ui` or `api`.
+    pub created_by: String,
+}
+
+impl From<store::RequestRuleWire> for AuditRequestRule {
+    fn from(rule: store::RequestRuleWire) -> Self {
+        let store::RequestRuleWire {
+            id,
+            scope,
+            workspace_id,
+            host,
+            methods,
+            path,
+            created_at,
+            created_by,
+        } = rule;
+        Self {
+            id,
+            scope,
+            workspace_id,
+            host,
+            methods,
+            path,
+            created_at,
+            created_by,
+        }
+    }
+}
+
 /// A rule set you made, as an audit record shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct AuditRuleSet {
@@ -897,6 +946,12 @@ pub enum AuditRecord {
         /// The deciding rule.
         #[schema(required = true)]
         rule_id: Option<i64>,
+        /// The rule on method and path that refused the request, when `reason` is
+        /// `request_rule`; `method` and `path` are that request's. Numbered apart from `rule_id`.
+        /// Records written before it existed read as `null`.
+        #[serde(default)]
+        #[schema(required = true)]
+        request_rule: Option<i64>,
         /// The rule set whose entry decided (`system`, `builtin:<slug>`, `user:<id>`).
         #[serde(default)]
         #[schema(required = true)]
@@ -999,6 +1054,24 @@ pub enum AuditRecord {
         /// The rule.
         rule: AuditRule,
     },
+    /// A rule on method and path created.
+    RequestRuleCreated {
+        /// Epoch ms.
+        ts: u64,
+        /// The rule.
+        rule: AuditRequestRule,
+    },
+    /// A rule on method and path deleted.
+    RequestRuleDeleted {
+        /// Epoch ms.
+        ts: u64,
+        /// The rule as it was.
+        rule: AuditRequestRule,
+        /// Why.
+        reason: RuleDeleteReason,
+        /// Who deleted it.
+        actor: String,
+    },
     /// A rule set made.
     RuleSetCreated {
         /// Epoch ms.
@@ -1092,6 +1165,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
             outcome,
             reason,
             rule_id,
+            request_rule,
             rule_set,
             pending_id,
             binding_id,
@@ -1116,6 +1190,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
             outcome: outcome.map(Into::into),
             reason,
             rule_id,
+            request_rule,
             rule_set,
             pending_id,
             binding_id,
@@ -1204,6 +1279,25 @@ impl From<store::AuditRecord> for AuditRecord {
             R::RuleExpired { ts, rule } => Self::RuleExpired {
                 ts,
                 rule: rule.into(),
+            },
+            R::RequestRuleCreated { ts, rule } => Self::RequestRuleCreated {
+                ts,
+                rule: rule.into(),
+            },
+            R::RequestRuleDeleted {
+                ts,
+                rule,
+                reason,
+                actor,
+            } => Self::RequestRuleDeleted {
+                ts,
+                rule: rule.into(),
+                reason: match reason {
+                    store::RuleDeleteReason::User => RuleDeleteReason::User,
+                    store::RuleDeleteReason::WorkspaceDeleted => RuleDeleteReason::WorkspaceDeleted,
+                    store::RuleDeleteReason::SetDeleted => RuleDeleteReason::SetDeleted,
+                },
+                actor,
             },
             R::RuleSetCreated {
                 ts,
@@ -1356,6 +1450,10 @@ pub enum AuditType {
     RuleDeleted,
     /// A rule expired.
     RuleExpired,
+    /// A rule on method and path created.
+    RequestRuleCreated,
+    /// A rule on method and path deleted.
+    RequestRuleDeleted,
     /// A rule set made.
     RuleSetCreated,
     /// A rule set renamed.
@@ -1385,6 +1483,8 @@ impl AuditType {
             Self::RuleUpdated => "rule_updated",
             Self::RuleDeleted => "rule_deleted",
             Self::RuleExpired => "rule_expired",
+            Self::RequestRuleCreated => "request_rule_created",
+            Self::RequestRuleDeleted => "request_rule_deleted",
             Self::RuleSetCreated => "rule_set_created",
             Self::RuleSetUpdated => "rule_set_updated",
             Self::RuleSetDeleted => "rule_set_deleted",
@@ -2813,6 +2913,8 @@ mod tests {
             AuditType::RuleUpdated,
             AuditType::RuleDeleted,
             AuditType::RuleExpired,
+            AuditType::RequestRuleCreated,
+            AuditType::RequestRuleDeleted,
             AuditType::RuleSetCreated,
             AuditType::RuleSetUpdated,
             AuditType::RuleSetDeleted,
@@ -2897,7 +2999,7 @@ mod tests {
             "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
             "port": 443, "resolved_ip": "93.184.216.34", "upstream": "PROXY corp:3128",
             "decision": "allow", "outcome": "connected", "reason": "rule", "rule_id": 4, "rule_set": "user:2",
-            "pending_id": null, "binding_id": null, "injected": false, "unswapped_stand_ins": [],
+            "request_rule": 3, "pending_id": null, "binding_id": null, "injected": false, "unswapped_stand_ins": [],
             "method": "GET", "path": "/",
             "path_truncated": false, "bytes_up": 1, "bytes_down": 2, "count": null
         });
@@ -2906,6 +3008,12 @@ mod tests {
             serde_json::to_value(AuditRecord::from(record)).unwrap(),
             stored
         );
+        // Written before `request_rule` existed.
+        let mut before_rules = stored.clone();
+        before_rules.as_object_mut().unwrap().remove("request_rule");
+        let record: store::AuditRecord = serde_json::from_value(before_rules).unwrap();
+        let back = serde_json::to_value(AuditRecord::from(record)).unwrap();
+        assert_eq!(back["request_rule"], Value::Null);
         // Written before `upstream` existed.
         let mut old = stored;
         old.as_object_mut().unwrap().remove("upstream");

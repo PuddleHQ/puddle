@@ -22,12 +22,12 @@ use std::time::Duration;
 use puddle_ca::{CaBuilder, CaCertificate, WorkspaceCa};
 use puddle_inject::{CredentialSource, GitInjector, StoreSettings};
 use puddle_proxy::{
-    Injector, Interception, PassThrough, StandInOrigin, StandIns, Termination, TerminationSet,
-    TerminationSource, Terminations,
+    Injector, Interception, PassThrough, RequestRule, RequestRules, StandInOrigin, StandIns,
+    Termination, TerminationSet, TerminationSource, Terminations,
 };
 use puddle_secrets::{Fetch, SecretCache, SecretStore, SourceSpec, Sources};
 use puddle_store::{Store, WorkspaceGit};
-use puddle_types::{Event, EventSink, GuestEnv, WorkspaceName};
+use puddle_types::{Event, EventSink, GuestEnv, RuleId, WorkspaceName};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
@@ -102,11 +102,17 @@ struct Running {
 impl Running {
     /// What the workspace's termination is made of, around `set`: the registry of its stand-ins
     /// (secrets and captured logins share it) and the reading of its login exchanges.
-    fn termination(&self, set: TerminationSet, interception: Interception) -> Termination {
+    fn termination(
+        &self,
+        set: TerminationSet,
+        interception: Interception,
+        request_rules: RequestRules,
+    ) -> Termination {
         Termination::new(set, Arc::clone(&self.ca), Arc::clone(&self.injector))
             .with_stand_ins(Arc::clone(&self.stand_ins))
             .with_exchanges(Arc::new(self.logins.clone()))
             .with_interception(interception)
+            .with_request_rules(request_rules)
     }
 }
 
@@ -287,6 +293,7 @@ impl Injection {
             now.termination(
                 decrypted(&git, &now.stand_ins, &now.logins),
                 self.interception(workspace, &now.learned)?,
+                self.request_rules(workspace)?,
             ),
         );
         running.insert(workspace.clone(), now);
@@ -378,6 +385,7 @@ impl Injection {
             now.termination(
                 decrypted(&git, &now.stand_ins, &now.logins),
                 self.interception(workspace, &now.learned)?,
+                self.request_rules(workspace)?,
             ),
         );
         drop(running);
@@ -428,6 +436,26 @@ impl Injection {
         Ok(Interception::new(Arc::clone(learned))
             .decrypt_all(own.decrypt_all)
             .never_decrypt(never))
+    }
+
+    /// The rules on method and path that apply to `workspace`, global and its own. A row the
+    /// proxy cannot take (a host that is no longer valid) is left out and logged.
+    fn request_rules(&self, workspace: &WorkspaceName) -> Result<RequestRules, String> {
+        let rows = self
+            .inputs
+            .store
+            .request_rules(Some(workspace))
+            .map_err(|e| format!("cannot read the rules on method and path: {e}"))?;
+        let mut rules = Vec::with_capacity(rows.len());
+        for row in rows {
+            match RequestRule::new(RuleId(row.id), &row.host, row.methods, row.path) {
+                Ok(rule) => rules.push(rule),
+                Err(e) => {
+                    tracing::warn!(id = row.id, host = %row.host, error = %e, "a rule on method and path is not valid")
+                }
+            }
+        }
+        Ok(RequestRules::new(rules))
     }
 
     /// Drops `workspace`'s CA and what it decrypts. Connections already open keep what they have;
@@ -734,6 +762,61 @@ mod tests {
             .certificate()
             .clone();
         assert_eq!(ca_before, ca_after);
+    }
+
+    #[tokio::test]
+    async fn the_rules_on_method_and_path_follow_the_store_and_their_hosts_are_decrypted() {
+        let store = store();
+        let (injection, terminations) = injection(&store);
+        let ws = workspace("alpha");
+        let host = |h: &str| Host::parse_normalised(h).unwrap();
+        let add = |workspace: Option<&WorkspaceName>, host: &str, path: &str| {
+            store
+                .add_request_rule(&puddle_store::NewRequestRule {
+                    workspace: workspace.cloned(),
+                    host: host.to_owned(),
+                    methods: puddle_types::Methods::parse(["DELETE"]).unwrap(),
+                    path: puddle_types::PathPattern::parse(path).unwrap(),
+                    created_by: puddle_store::Actor::Api,
+                })
+                .unwrap()
+        };
+        let delete_refused = |t: &Terminations, h: &str, path: &str| {
+            let headers: Vec<String> = Vec::new();
+            let view = RequestView::new("DELETE", path, &headers);
+            t.termination(&ws)
+                .unwrap()
+                .request_rules()
+                .refusing(&host(h), &view)
+        };
+        add(None, "global.example", "/a");
+        add(Some(&workspace("beta")), "beta.example", "/a");
+        // Too wide for the proxy's grammar: the row is left out, the others still apply.
+        add(Some(&ws), "*.com", "/a");
+        let own = add(Some(&ws), "own.example", "/b/**");
+        injection.begin(&ws, false).await.unwrap();
+        assert!(delete_refused(&terminations, "global.example", "/a").is_some());
+        assert_eq!(
+            delete_refused(&terminations, "own.example", "/b/c").map(|id| id.0),
+            Some(own.id)
+        );
+        assert!(
+            delete_refused(&terminations, "beta.example", "/a").is_none(),
+            "another workspace's rule does not apply"
+        );
+        assert!(delete_refused(&terminations, "own.example", "/other").is_none());
+        let decrypted = terminations.termination(&ws).unwrap();
+        assert!(decrypted.set().contains(&host("own.example")));
+        assert!(decrypted.set().contains(&host("global.example")));
+        assert!(!decrypted.set().contains(&host("beta.example")));
+
+        store
+            .delete_request_rule(own.id, puddle_store::Actor::Api)
+            .unwrap();
+        add(Some(&ws), "new.example", "/n");
+        injection.resync(&ws).unwrap();
+        assert!(delete_refused(&terminations, "own.example", "/b/c").is_none());
+        assert!(delete_refused(&terminations, "new.example", "/n").is_some());
     }
 
     #[tokio::test]

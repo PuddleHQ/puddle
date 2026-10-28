@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.22.0"
+    "version": "0.23.0"
   },
   "paths": {
     "/api/app-icons": {
@@ -3560,6 +3560,250 @@
           },
           "503": {
             "description": "not available in this build",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/request-rules": {
+      "get": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "The rules on method and path: all of them, or the ones that apply to one workspace (the\nglobal ones and its own).",
+        "operationId": "list_request_rules",
+        "parameters": [
+          {
+            "name": "workspace",
+            "in": "query",
+            "description": "only the rules that apply to this workspace",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the rules, in id order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestRuleList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "not a workspace name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "Makes a rule that refuses the named methods of the named paths on a host. The host is\ndecrypted from now on whatever the workspace's other settings say, so the rule can read its\nrequests; a tunnel to another port of the host is refused.",
+        "operationId": "create_request_rule",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewRequestRuleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "the new rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestRule"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid host, method or path, or more than 500 rules in the scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/request-rules/{id}": {
+      "delete": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "Deletes a rule on method and path.",
+        "operationId": "delete_request_rule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "rule id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the deleted rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestRule"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -8900,6 +9144,7 @@
               "outcome",
               "reason",
               "rule_id",
+              "request_rule",
               "rule_set",
               "pending_id",
               "binding_id",
@@ -9017,6 +9262,14 @@
               "reason": {
                 "type": "string",
                 "description": "Why: `rule`, `no_rule`, or a block reason."
+              },
+              "request_rule": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "The rule on method and path that refused the request, when `reason` is\n`request_rule`; `method` and `path` are that request's. Numbered apart from `rule_id`.\nRecords written before it existed read as `null`."
               },
               "resolved_ip": {
                 "type": [
@@ -9325,6 +9578,70 @@
           },
           {
             "type": "object",
+            "description": "A rule on method and path created.",
+            "required": [
+              "ts",
+              "rule",
+              "type"
+            ],
+            "properties": {
+              "rule": {
+                "$ref": "#/components/schemas/AuditRequestRule",
+                "description": "The rule."
+              },
+              "ts": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "request_rule_created"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A rule on method and path deleted.",
+            "required": [
+              "ts",
+              "rule",
+              "reason",
+              "actor",
+              "type"
+            ],
+            "properties": {
+              "actor": {
+                "type": "string",
+                "description": "Who deleted it."
+              },
+              "reason": {
+                "$ref": "#/components/schemas/RuleDeleteReason",
+                "description": "Why."
+              },
+              "rule": {
+                "$ref": "#/components/schemas/AuditRequestRule",
+                "description": "The rule as it was."
+              },
+              "ts": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "request_rule_deleted"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "A rule set made.",
             "required": [
               "ts",
@@ -9603,6 +9920,63 @@
         ],
         "description": "One audit record (rules spec R-24): a tagged union on `type`. `host`, `path` and the like come\nfrom the guest, so escape them when rendering. Records written by an older Puddle lack the\nfields added since, which read as `null`."
       },
+      "AuditRequestRule": {
+        "type": "object",
+        "description": "A rule on method and path, as an audit record shows it.",
+        "required": [
+          "id",
+          "scope",
+          "workspace_id",
+          "host",
+          "methods",
+          "path",
+          "created_at",
+          "created_by"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch ms.",
+            "minimum": 0
+          },
+          "created_by": {
+            "type": "string",
+            "description": "`cli`, `ui` or `api`."
+          },
+          "host": {
+            "type": "string",
+            "description": "The host pattern: `example.com` or `*.example.com`."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Row id, numbered apart from the rules on hosts."
+          },
+          "methods": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The methods it names, upper case; empty for every method."
+          },
+          "path": {
+            "type": "string",
+            "description": "The path pattern, in canonical form."
+          },
+          "scope": {
+            "type": "string",
+            "description": "`global` or `workspace`."
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The workspace, for a workspace rule."
+          }
+        }
+      },
       "AuditRule": {
         "type": "object",
         "description": "A rule as an audit record shows it.",
@@ -9734,6 +10108,8 @@
           "rule_updated",
           "rule_deleted",
           "rule_expired",
+          "request_rule_created",
+          "request_rule_deleted",
           "rule_set_created",
           "rule_set_updated",
           "rule_set_deleted",
@@ -11045,6 +11421,21 @@
                 "type": "string",
                 "enum": [
                   "rules_changed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A rule on method and path was created or deleted. Global: refetch `GET /api/request-rules`.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "request_rules_changed"
                 ]
               }
             }
@@ -12530,6 +12921,44 @@
         },
         "additionalProperties": false
       },
+      "NewRequestRuleRequest": {
+        "type": "object",
+        "description": "A rule on method and path to make.",
+        "required": [
+          "workspace",
+          "host",
+          "path"
+        ],
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "A host name or `*.` followed by a domain with at least two labels; no IP address."
+          },
+          "methods": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "HTTP methods (letters and digits, case does not matter); left out or empty for every\nmethod. At most 16."
+          },
+          "path": {
+            "type": "string",
+            "description": "The path: `/` followed by segments, where `*` is one whole segment and a closing `/**` is\neverything below. No query string. It is compared after percent-decoding, with `.` and\n`..` resolved and case ignored."
+          },
+          "workspace": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace the rule applies to; `null` for every workspace."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "NewRuleRequest": {
         "type": "object",
         "description": "A rule to create directly (not from a pending request).",
@@ -13589,6 +14018,78 @@
           "internal",
           "unknown"
         ]
+      },
+      "RequestRule": {
+        "type": "object",
+        "description": "A rule on method and path. It only refuses: the requests it names to a host Puddle decrypts\nare answered with a 403 and never leave the computer. The host is always decrypted for it.",
+        "required": [
+          "id",
+          "workspace",
+          "host",
+          "methods",
+          "path",
+          "created_at",
+          "created_by"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch ms.",
+            "minimum": 0
+          },
+          "created_by": {
+            "type": "string",
+            "description": "`cli`, `ui` or `api`."
+          },
+          "host": {
+            "type": "string",
+            "description": "The host pattern: `example.com` or `*.example.com`."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Row id, never reused. Numbered apart from the rules on hosts."
+          },
+          "methods": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The methods it names, upper case; empty for every method."
+          },
+          "path": {
+            "type": "string",
+            "description": "The path pattern in canonical form: `/a/b`, with `*` for one segment and a closing `/**`\nfor everything below."
+          },
+          "workspace": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace it applies to; `null` for every workspace."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "RequestRuleList": {
+        "type": "object",
+        "description": "Rules on method and path.",
+        "required": [
+          "rules"
+        ],
+        "properties": {
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RequestRule"
+            },
+            "description": "In id order."
+          }
+        }
       },
       "ResolvedBool": {
         "type": "object",

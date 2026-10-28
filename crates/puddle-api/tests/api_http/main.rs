@@ -27,6 +27,7 @@ mod ports;
 mod problems;
 mod repos;
 mod repositories;
+mod request_rules;
 mod routes;
 mod rule_sets;
 #[cfg(windows)]

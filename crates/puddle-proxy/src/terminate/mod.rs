@@ -87,7 +87,7 @@ pub use inject::{
 };
 pub use intercept::{Interception, LEARNED_CAP, LEARNED_TTL, PassThrough};
 pub use request_rules::{RequestRule, RequestRules};
-pub(crate) use session::{Context, run};
+pub(crate) use session::{Context, Outcome, run};
 pub use set::{PatternError, TerminationSet};
 pub use stand_in::{StandIn, StandInError, StandInOrigin, StandIns, secret_stand_in};
 pub use token_body::{BodyFormat, TokenBody, TokenBodyError};

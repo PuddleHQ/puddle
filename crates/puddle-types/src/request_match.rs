@@ -505,7 +505,7 @@ mod tests {
     #[test]
     fn a_path_that_never_stops_decoding_ends_in_bounded_work() {
         let deep = "%25".repeat(200);
-        assert!(!canon(&format!("/{deep}41")).is_empty());
+        assert_ne!(canon(&format!("/{deep}41")), "");
         assert!(canon("/%2525252525252525252e%2525252525252525252e/x").contains('%'));
     }
 

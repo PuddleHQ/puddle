@@ -568,6 +568,11 @@ async fn a_stream_that_is_idle_by_design_is_not_cut_by_the_body_stall_timeout() 
     let rig = rig_with(&pki, server.addr, config, TestInjector::always());
     let mut guest = rig.guest().await;
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
+    // Only the window runs on a paused clock (the proxy, the rig and the server share this runtime), so its
+    // 5 s cost no wall time. Setup stays real: the policy runs on the blocking pool, which a paused clock
+    // does not wait for.
+    tokio::time::pause();
     let got = client.get("bound.test", "/watch").await;
+    tokio::time::resume();
     assert_eq!(got.text(), "tick tick ");
 }

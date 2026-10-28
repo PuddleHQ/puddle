@@ -19,6 +19,7 @@ use tokio::task::{JoinHandle, JoinSet};
 use tokio_yamux::{Control, Session, StreamHandle};
 
 use crate::config::{Config, Target};
+use crate::editor::Control as EditorControl;
 use crate::editor_stream;
 use crate::forward::Forwards;
 use crate::host_streams::HostStreams;
@@ -48,6 +49,8 @@ pub struct Upstream {
     next: AtomicUsize,
     /// What the host's own streams (port forwards, messages) are served by.
     host_streams: Arc<HostStreams>,
+    /// What reaches the editor server this agent runs, `None` while it runs none.
+    editor_control: Option<Arc<EditorControl>>,
 }
 
 impl std::fmt::Debug for Upstream {
@@ -64,6 +67,10 @@ impl Upstream {
     /// until the first [`Upstream::open`].
     #[must_use]
     pub fn new(config: &Config) -> Self {
+        let editor_control = config
+            .editor
+            .as_ref()
+            .map(|e| EditorControl::new(&e.server));
         Self {
             target: config.target.clone(),
             vsock_buffer: config.vsock_buffer,
@@ -78,8 +85,17 @@ impl Upstream {
                     .map(|e| PathBuf::from(&e.server.dir))
                     .collect(),
                 config.editor.as_ref().map(editor_stream::EditorAccess::of),
+                editor_control.clone(),
             ),
+            editor_control,
         }
+    }
+
+    /// The control of the editor server this agent runs: the host's messages and the agent's
+    /// own update schedule both reach the server through it.
+    #[must_use]
+    pub fn editor_control(&self) -> Option<Arc<EditorControl>> {
+        self.editor_control.clone()
     }
 
     /// Opens a new stream to the host on the next session, dialling it if it isn't up.

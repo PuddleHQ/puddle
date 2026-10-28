@@ -170,7 +170,7 @@ mod tests {
         opened.write_all(first).await.unwrap();
         let serving = tokio::spawn(async move {
             let inbound = agent.next().await.unwrap().unwrap();
-            let streams = HostStreams::new(forwards, Vec::new(), None);
+            let streams = HostStreams::new(forwards, Vec::new(), None, None);
             let task = tokio::spawn(async move { streams.serve(inbound).await });
             while agent.next().await.is_some() {}
             task.await.unwrap();

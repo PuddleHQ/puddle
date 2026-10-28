@@ -575,6 +575,8 @@ impl Rig {
         options.launcher = self.launcher.clone();
         options.secret_store = Some(self.secrets.clone());
         options.dev_cert = Some(self.dev_cert.clone() as Arc<dyn DevCertSource>);
+        // No guest runs here, so nothing may ask the machine's DNS about a name.
+        options.resolver = Some(Arc::new(puddle_proxy::testing::StaticResolver::new()));
         Host::start(
             prepared,
             &FakeFactory::new(&self.runtime, &self.log),

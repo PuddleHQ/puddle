@@ -28,7 +28,7 @@ use puddle_fs::DataLock;
 use puddle_lifecycle::{Inventory, Lifecycle, ShutdownReport, adopt_workspaces, reconcile};
 use puddle_netpolicy::{LocalAccess, NetPolicy, PuddleEndpoints};
 use puddle_ports::Ports;
-use puddle_proxy::{Proxy, ProxyUrl, PullProxy, PullRoute, Terminations, Upstream};
+use puddle_proxy::{Proxy, ProxyUrl, PullProxy, PullRoute, Resolver, Terminations, Upstream};
 use puddle_repos::{HostApi, Repos};
 use puddle_secrets::{SecretCache, SecretStore, Sources, ToolPaths};
 use puddle_settings::resolve;
@@ -295,6 +295,10 @@ pub struct HostOptions {
     /// workspace gets at boot. Without one, the host's own (its certificate stores and the data
     /// folder). Tests give a double.
     pub dev_cert: Option<Arc<dyn DevCertSource>>,
+    /// Looks up the addresses of a name a rule allows, for the sandbox proxy's connects. Without
+    /// one, the operating system's resolver. Tests give a double, so a name only a fake company
+    /// proxy knows is never a question for the machine's real DNS.
+    pub resolver: Option<Arc<dyn Resolver>>,
 }
 
 impl Default for HostOptions {
@@ -305,6 +309,7 @@ impl Default for HostOptions {
             injector: None,
             secret_store: None,
             dev_cert: None,
+            resolver: None,
         }
     }
 }
@@ -1001,18 +1006,20 @@ impl Egress {
             local_access(access_settings.as_ref(), workspace)
         }))
         .with_endpoints(endpoints.clone());
-        let proxy = Arc::new(
-            Proxy::new(
-                connections.store().clone(),
-                events.clone() as Arc<dyn EventSink>,
-            )
-            .with_connection_log(connections.clone())
-            .with_address_check(Arc::new(guard))
-            .with_upstream(upstream.clone())
-            .with_termination(terminations, tls)
-            .with_agent_reports(reports)
-            .with_guest_watcher(Arc::new(ports)),
-        );
+        let mut proxy = Proxy::new(
+            connections.store().clone(),
+            events.clone() as Arc<dyn EventSink>,
+        )
+        .with_connection_log(connections.clone())
+        .with_address_check(Arc::new(guard))
+        .with_upstream(upstream.clone())
+        .with_termination(terminations, tls)
+        .with_agent_reports(reports)
+        .with_guest_watcher(Arc::new(ports));
+        if let Some(resolver) = &options.resolver {
+            proxy = proxy.with_resolver(Arc::clone(resolver));
+        }
+        let proxy = Arc::new(proxy);
         Self {
             proxy,
             upstream,

@@ -75,6 +75,13 @@ async fn a_rule_is_made_listed_by_scope_and_deleted() {
         404
     );
 
+    let created = api.get("/api/audit?type=request_rule_created").await.json();
+    assert_eq!(created["entries"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        created["entries"][0]["record"]["rule"]["host"],
+        "x.example.net"
+    );
+
     let audit = api.get("/api/audit?type=request_rule_deleted").await.json();
     assert_eq!(
         audit["entries"][0]["record"]["rule"]["host"],

@@ -11,8 +11,9 @@
 //!   trust. Only the `cacerts` import of the Java boot step can make that work (Java reads no
 //!   variable).
 //! - `denoland/deno:debian`: `fetch` works through `DENO_CERT` (Deno keeps its own roots).
-//! - `python:3.13-slim`: `pip download` from an index at that URL works through `PIP_CERT`,
-//!   and reads the variable (an empty bundle in it fails the same fetch).
+//! - `python:3.9-slim`: `pip download` from an index at that URL works through `PIP_CERT`
+//!   (this pip keeps its own bundle; newer ones also read the system store), and without
+//!   it or with an empty bundle in it the same fetch fails.
 //!
 //! Each tool fails before the files are applied (the negative control), so a pass is the trust
 //! and not a trusting image. The wire peer is the fixture server, not the proxy process: the
@@ -35,7 +36,7 @@ use puddle_vm_tests::{HarnessError, VmEnv, within};
 
 const JAVA_IMAGE: &str = "eclipse-temurin:21-jdk";
 const DENO_IMAGE: &str = "denoland/deno:debian";
-const PIP_IMAGE: &str = "python:3.13-slim";
+const PIP_IMAGE: &str = "python:3.9-slim";
 const CREATE_BUDGET: Duration = Duration::from_mins(15);
 const EXEC_BUDGET: Duration = Duration::from_mins(3);
 const STOP_BUDGET: Duration = Duration::from_mins(1);
@@ -307,10 +308,15 @@ async fn deno_run(env: &VmEnv) -> Result<(), HarnessError> {
         );
         assert!(out.lines().any(|l| l == "deno: puddle-ok"), "{out}");
 
-        // DENO_CERT is what does it: the other variables are set and Deno ignores them.
-        let without = format!(". /etc/profile.d/01-puddle-env.sh; unset DENO_CERT; {run}");
-        let (code, out) = sh(&sandbox, "deno without DENO_CERT", without).await?;
-        assert_ne!(code, 0, "Deno trusted the CA without DENO_CERT: {out}");
+        // DENO_CERT alone does it, and without it Deno fails: no other variable, and the image
+        // has no system store the boot files filled.
+        let alone = "env -i HOME=/root PATH=\"$PATH\" DENO_CERT=/etc/puddle/extra-cas.pem deno run -A /tmp/fetch.ts 2>&1";
+        let (code, out) = sh(&sandbox, "deno with DENO_CERT only", alone.to_owned()).await?;
+        assert_eq!(code, 0, "DENO_CERT alone was not enough: {out}");
+        assert!(out.lines().any(|l| l == "deno: puddle-ok"), "{out}");
+        let bare = "env -i HOME=/root PATH=\"$PATH\" deno run -A /tmp/fetch.ts 2>&1";
+        let (code, out) = sh(&sandbox, "deno bare", bare.to_owned()).await?;
+        assert_ne!(code, 0, "Deno trusted the CA with no variable set: {out}");
         finish(&sandbox).await
     }))
     .await
@@ -355,6 +361,13 @@ exit $rc"
         assert_eq!(code, 0, "pip refused the certificate with PIP_CERT: {out}");
         assert!(out.contains("Successfully downloaded puddletest"), "{out}");
 
+        let (code, out) = sh(
+            &sandbox,
+            "pip without PIP_CERT",
+            serve(". /etc/profile.d/01-puddle-env.sh; unset PIP_CERT"),
+        )
+        .await?;
+        assert_ne!(code, 0, "pip trusted the CA without PIP_CERT: {out}");
         // pip reads PIP_CERT (the variable, not only the system store the image's own
         // `update-ca-certificates` filled): an empty bundle in it makes the same fetch fail.
         let (code, out) = sh(

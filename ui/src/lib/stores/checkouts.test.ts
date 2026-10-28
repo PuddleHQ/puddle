@@ -81,6 +81,27 @@ describe("the checkout listing", () => {
     expect(store.listing?.checkouts[0]?.directory).toBe("new");
   });
 
+  it("never lets a slow failure replace a newer answer", async () => {
+    api.checkouts["dev"] = listing([checkout("new")]);
+    const read = api.GET;
+    let fail!: () => void;
+    const gate = new Promise<void>(
+      (_, reject) => (fail = () => reject(new TypeError("down"))),
+    );
+    api.GET = (async (...args: Parameters<typeof read>) => {
+      api.GET = read;
+      await gate;
+      return read(...args);
+    }) as never;
+    const first = store.load("dev");
+    await store.load("dev", true);
+    fail();
+    await first;
+    expect(store.status).toBe("ready");
+    expect(store.error).toBeNull();
+    expect(store.listing?.checkouts[0]?.directory).toBe("new");
+  });
+
   it("is read again when the workspace's list, state or operations change", async () => {
     const stop = store.start("dev");
     await vi.waitFor(() => expect(store.status).toBe("ready"));

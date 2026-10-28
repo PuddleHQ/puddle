@@ -116,3 +116,20 @@ describe("confirming a decision for every workspace", () => {
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 });
+
+describe("the more-choices popover", () => {
+  it("closes when the chevron of the row it hangs from is pressed again", async () => {
+    inbox.add(request(1, { host: "a.example.com" }), "example.com");
+    render(InboxPage);
+    await screen.findByRole("heading", { name: "example.com" });
+    const chevron = screen.getByRole("button", {
+      name: /^More choices for a\.example\.com/,
+    });
+    await fireEvent.click(chevron);
+    await screen.findByRole("dialog", { hidden: true });
+    await fireEvent.click(chevron);
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("dialog", { hidden: true })).toBeNull(),
+    );
+  });
+});

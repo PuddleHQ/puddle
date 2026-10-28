@@ -632,6 +632,36 @@ describe("CreateWorkspaceDialog with several repositories", () => {
     });
   });
 
+  it("sends a row whose Pull switch was cleared", async () => {
+    const { create } = open();
+    await screen.findByRole("dialog");
+    await fireEvent.input(url(1), {
+      target: { value: "https://github.com/acme/api.git" },
+    });
+    await fireEvent.click(
+      within(row(1)).getByRole("checkbox", { name: "Pull" }),
+    );
+    await fireEvent.click(submit());
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create.mock.calls[0]?.[0]).toEqual({
+      name: "api",
+      repositories: [{ url: "https://github.com/acme/api.git", pull: false }],
+    });
+  });
+
+  it("puts focus on the name when only the name is wrong", async () => {
+    const { create } = open();
+    await screen.findByRole("dialog");
+    await fireEvent.input(url(1), {
+      target: { value: "https://github.com/acme/api.git" },
+    });
+    await type("Name", "");
+    await fireEvent.click(submit());
+    await vi.waitFor(() => expect(field("Name")).toHaveFocus());
+    expect(field("Name")).toHaveAttribute("aria-invalid", "true");
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("takes a pick from the list in a later row and moves focus to that row's directory", async () => {
     const repos = new FakeRepos();
     repos.repos = [repoView("acme", "web")];

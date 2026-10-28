@@ -52,6 +52,7 @@ function open(
   over: {
     entries?: { url: string; directory: string }[];
     onDisk?: string[];
+    identities?: (typeof work)[];
   } = {},
   result: string | null = null,
 ) {
@@ -62,7 +63,7 @@ function open(
       entries: over.entries ?? [],
       onDisk: over.onDisk ?? [],
       identities: {
-        identities: [work, personal],
+        identities: over.identities ?? [work, personal],
         ensureLoaded: async () => {},
       },
       onSubmit,
@@ -167,5 +168,56 @@ describe("the Add repository dialog", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     await type("Directory", "other");
     expect(screen.queryByText("The directory is taken.")).toBeNull();
+  });
+
+  it("says what is wrong when the address or the directory is empty or malformed", async () => {
+    const onSubmit = open();
+    await screen.findByRole("dialog");
+    await fireEvent.click(clone());
+    expect(
+      await screen.findByText("Enter the repository's HTTPS URL."),
+    ).toBeInTheDocument();
+    await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
+    await type("Directory", ".hidden");
+    expect(
+      await screen.findByText("Don't start with a dot or a hyphen."),
+    ).toBeInTheDocument();
+    await fireEvent.click(clone());
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("lists every identity as another one when none covers the address", async () => {
+    open();
+    await screen.findByRole("dialog");
+    await type("Git repository (HTTPS)", "https://example.org/acme/web.git");
+    const other = screen.getByRole("group", { name: "Other identities" });
+    expect(
+      Array.from(other.querySelectorAll("option")).map((o) => o.textContent),
+    ).toEqual(["Work", "Personal"]);
+  });
+
+  it("lists the identities that do not cover the address apart from those that do", async () => {
+    const gitlab = identity(3, {
+      label: "GitLab",
+      is_default: false,
+      credentials: [credential({ host: "gitlab.com" })],
+    });
+    open({ identities: [work, personal, gitlab] });
+    await screen.findByRole("dialog");
+    await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
+    const labels = (group: string) =>
+      Array.from(
+        screen.getByRole("group", { name: group }).querySelectorAll("option"),
+      ).map((o) => o.textContent);
+    expect(labels("Cover this repository")).toEqual(["Work", "Personal"]);
+    expect(labels("Other identities")).toEqual(["GitLab"]);
+  });
+
+  it("closes without cloning when the user cancels", async () => {
+    const onSubmit = open();
+    await screen.findByRole("dialog");
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });

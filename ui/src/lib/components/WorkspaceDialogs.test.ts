@@ -64,6 +64,14 @@ describe("WorkspaceDialogs", () => {
     ).toBeInTheDocument();
   });
 
+  it("closes the create form when Escape is pressed", async () => {
+    render(WorkspaceDialogs);
+    actions.openCreate();
+    const dialog = await screen.findByRole("dialog", { name: "New workspace" });
+    await fireEvent.keyDown(dialog, { key: "Escape" });
+    await vi.waitFor(() => expect(actions.createOpen).toBe(false));
+  });
+
   it("renames from the dialog: starts from the current name, refuses a clash before asking, then saves and says so", async () => {
     api.list = [
       workspace("demo", { status: "running" }),
@@ -103,6 +111,20 @@ describe("WorkspaceDialogs", () => {
     expect(toasts.items.map((t) => t.message)).toEqual([
       "Renamed to Web shop.",
     ]);
+  });
+
+  it("closes the rename dialog on Cancel without saving", async () => {
+    await workspaces.refresh();
+    render(WorkspaceDialogs);
+    actions.openRename(workspaces.byName("demo")!);
+    const dialog = await screen.findByRole("dialog", {
+      name: "Rename workspace",
+    });
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    );
+    await vi.waitFor(() => expect(actions.renameOpen).toBe(false));
+    expect(api.calls).not.toContain("PATCH /api/workspaces/{id}");
   });
 
   it("shows the service's refusal in the dialog and keeps it open", async () => {
@@ -267,5 +289,17 @@ describe("WorkspaceDialogs", () => {
       expect(api.calls).toContain("DELETE /api/workspaces/{id}"),
     );
     expect(toasts.items.at(-1)?.message).toBe("Deleting demo.");
+  });
+
+  it("keeps the workspace when the user cancels the delete", async () => {
+    api.list = [workspace("demo", { status: "stopped" })];
+    api.check = dirty("demo");
+    await workspaces.refresh();
+    render(WorkspaceDialogs);
+    await actions.askDelete(workspaces.byName("demo")!);
+    await screen.findByRole("alertdialog", { name: "Delete demo?" });
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await vi.waitFor(() => expect(actions.deleteOpen).toBe(false));
+    expect(api.calls).not.toContain("DELETE /api/workspaces/{id}");
   });
 });

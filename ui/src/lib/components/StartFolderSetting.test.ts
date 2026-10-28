@@ -145,6 +145,14 @@ describe("the start folder setting", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows no warning when the host's problem list can't be read", async () => {
+    api.refuse.set("GET /api/problems", { status: 500, message: "boom" });
+    mount({ start_folder: "api/web" });
+    await waitFor(() => expect(api.calls).toContain("GET /api/problems"));
+    expect(field()).toHaveValue("api/web");
+    expect(screen.queryByText("The folder does not exist.")).toBeNull();
+  });
+
   it("says a stopped workspace is checked at its start", () => {
     mount({ status: "stopped", start_folder: "api" });
     expect(

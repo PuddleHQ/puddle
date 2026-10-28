@@ -357,6 +357,26 @@ describe("polling", () => {
     stop();
   });
 
+  it("a poll still in flight when it is stopped schedules nothing more", async () => {
+    const { inbox, store } = setup({ pollMs: 1000 });
+    const stop = store.start();
+    await vi.advanceTimersByTimeAsync(0);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const read = inbox.GET;
+    inbox.GET = (async (...args: Parameters<typeof read>) => {
+      await gate;
+      return read(...args);
+    }) as never;
+    await vi.advanceTimersByTimeAsync(1000);
+    stop();
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    const reads = inbox.calls.length;
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(inbox.calls.length).toBe(reads);
+  });
+
   it("stopped before the first load finishes, it never schedules a poll", async () => {
     const inbox = new FakeInbox();
     const store = new PendingStore({ api: inbox as never, pollMs: 500 });

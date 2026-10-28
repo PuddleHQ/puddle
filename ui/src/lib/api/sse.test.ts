@@ -301,6 +301,18 @@ describe("eventStream", () => {
     expect(seen).toHaveLength(1);
   });
 
+  it("ends without reconnecting when aborted as the stream ends", async () => {
+    const t = setup([() => sse([status("a")])]);
+    const seen: PuddleEvent[] = [];
+    for await (const event of eventStream(t.base)) {
+      seen.push(event);
+      t.controller.abort();
+    }
+    expect(seen).toHaveLength(1);
+    expect(t.states).not.toContain("reconnecting");
+    expect(t.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("ends without connecting when already aborted, and while waiting to retry", async () => {
     const aborted = setup([() => sse([])]);
     aborted.controller.abort();

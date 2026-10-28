@@ -134,6 +134,12 @@ describe("exclusions file", () => {
       'return Err(format!("exited early\\n{}", why()));',
     ]);
   });
+  it("keeps a lone backslash that escapes nothing", () => {
+    const [e] = parseExclusions(
+      'a.rs | let pattern = r"\\d+"; | a regex with a backslash',
+    );
+    expect(e?.lines).toEqual(['let pattern = r"\\d+";']);
+  });
   it("accepts every entry of the committed file", () => {
     const file = join(
       import.meta.dirname,

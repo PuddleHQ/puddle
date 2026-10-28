@@ -178,11 +178,7 @@
   }
 
   async function removeRow(at: number) {
-    const gone = rows[at];
-    if (!gone) return;
     rows = rows.filter((_, i) => i !== at);
-    const { [gone.key]: _dropped, ...kept } = rowErrors;
-    rowErrors = kept;
     await tick();
     const next = rows[at];
     if (next) focus(rowId(next, "url"));

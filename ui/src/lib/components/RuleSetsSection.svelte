@@ -99,10 +99,8 @@
     return null;
   }
 
-  async function confirmDelete() {
-    const set = deleting;
+  async function confirmDelete(set: RuleSet) {
     deleting = null;
-    if (!set) return;
     const result = await store.remove(set.id);
     toasts.push(
       result.ok ? `Deleted rule set ${set.name}.` : result.message,
@@ -185,7 +183,9 @@
   detail="Requests its entries allowed or denied are decided anew the next time a workspace asks. Connections that are already open stay open."
   confirmLabel="Delete rule set"
   tone="deny"
-  onConfirm={() => void confirmDelete()}
+  onConfirm={() => {
+    if (deleting) void confirmDelete(deleting);
+  }}
   onCancel={() => {
     deleting = null;
   }}

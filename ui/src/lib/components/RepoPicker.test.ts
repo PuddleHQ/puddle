@@ -156,6 +156,16 @@ describe("RepoPicker", () => {
     );
   });
 
+  it("shows only the refusal when no list was ever read", async () => {
+    api.refuse = { status: 503, message: "repository lists are not available" };
+    show();
+    await open();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Repository lists are not available.",
+    );
+    expect(screen.getByRole("status").textContent?.trim()).toBe("");
+  });
+
   it("warns about a project with a space but still lists it", async () => {
     api.repos = [
       repoView("contoso", "scanner", {

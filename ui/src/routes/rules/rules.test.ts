@@ -245,6 +245,25 @@ describe("adding", () => {
       });
   };
 
+  it("sends what is chosen last when the user changes their mind about effect and who", async () => {
+    seed();
+    const dialog = await open();
+    await fill(dialog, "changed.example.org");
+    await fireEvent.click(within(dialog).getByLabelText("Deny"));
+    await fireEvent.click(within(dialog).getByLabelText("Allow"));
+    await fireEvent.click(within(dialog).getByLabelText(/Every workspace/));
+    await fireEvent.click(within(dialog).getByLabelText("One workspace"));
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Add rule" }),
+    );
+    await waitFor(() => expect(api.bodies).toHaveLength(1));
+    expect(api.bodies[0]).toMatchObject({
+      pattern: "changed.example.org",
+      effect: "allow",
+      scope: { type: "workspace", workspace: "shop" },
+    });
+  });
+
   it("adds a workspace rule with an expiry and says so", async () => {
     seed();
     const dialog = await open();

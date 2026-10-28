@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import { readFileSync } from "node:fs";
 import adapter from "@sveltejs/adapter-static";
 import { sveltekit } from "@sveltejs/kit/vite";
 import { defineConfig } from "vitest/config";
 import { devProxy } from "./tools/dev-proxy.ts";
 import { shippedPackages } from "./tools/shipped-packages.ts";
+
+// The best coverage reached so far (scripts/ui-coverage-ratchet.ts raises it, never lowers it): the
+// thresholds below, so a run under any of the four fails.
+const baseline = JSON.parse(
+  readFileSync(new URL("./coverage-baseline.json", import.meta.url), "utf8"),
+) as Record<"lines" | "branches" | "functions" | "statements", number>;
 
 export default defineConfig({
   plugins: [
@@ -54,7 +61,7 @@ export default defineConfig({
     ],
     coverage: {
       provider: "v8",
-      include: ["src/**/*.{ts,svelte}", "tools/**/*.ts"],
+      include: ["src/**/*.{ts,svelte}", "tools/**/*.ts", "scripts/**/*.ts"],
       exclude: [
         "src/**/*.test.ts",
         "tools/**/*.test.ts",
@@ -62,13 +69,15 @@ export default defineConfig({
         "src/lib/api/schema.d.ts",
         "src/lib/testing/**",
         "src/app.d.ts",
+        // Process glue that starts a dev server, a fixture binary or a browser; the e2e gate runs them.
+        "scripts/dev-fixture.ts",
+        "scripts/fixture-binary.ts",
+        "scripts/webkit-probe.ts",
       ],
-      reporter: ["text-summary", "text", "lcov"],
+      reporter: ["text-summary", "text", "lcov", "json-summary"],
       thresholds: {
-        lines: 85,
-        branches: 80,
-        functions: 85,
-        statements: 85,
+        ...baseline,
+        "src/lib/**": { lines: 100, functions: 100, statements: 100 },
         "src/lib/api/**": { lines: 95, branches: 90 },
         "src/lib/decision/**": { lines: 95, branches: 90 },
         "src/lib/rules/**": { lines: 95, branches: 90 },

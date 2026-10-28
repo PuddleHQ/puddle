@@ -527,6 +527,26 @@ describe("listening", () => {
       1,
     );
   });
+
+  it("a poll still in flight when it is stopped schedules nothing more", async () => {
+    vi.useFakeTimers();
+    const stop = store.start();
+    await vi.advanceTimersByTimeAsync(0);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const read = api.GET as (...args: unknown[]) => Promise<unknown>;
+    api.GET = (async (...args: unknown[]) => {
+      await gate;
+      return read(...args);
+    }) as never;
+    await vi.advanceTimersByTimeAsync(1000);
+    stop();
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    const reads = api.calls.length;
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(api.calls.length).toBe(reads);
+  });
 });
 
 describe("fieldOf", () => {

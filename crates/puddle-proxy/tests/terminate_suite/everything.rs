@@ -3,7 +3,7 @@
 //! untouched (a never-decrypt name, a host a tool refused the certificate for, anything that is
 //! not TLS, a server Puddle's TLS cannot talk to), and that the switch applies to the next
 //! connection.
-mod terminate_support;
+use crate::terminate_support;
 
 use std::sync::Arc;
 use std::time::Duration;

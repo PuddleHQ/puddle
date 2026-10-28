@@ -241,17 +241,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("puddle.db-wal");
         fs::write(&path, b"x").unwrap();
+        let (denied_once, denied_once_rx) = std::sync::mpsc::channel();
         let deleter = {
             let path = path.clone();
             thread::spawn(move || {
-                // Ordering with no signal: the delete lands while the tighten step retries.
-                thread::sleep(Duration::from_millis(50));
+                // The delete lands only after the tighten step was denied once, so it is retrying.
+                denied_once_rx.recv().unwrap();
                 fs::remove_file(path).unwrap();
             })
         };
         // The file exists and is denied until it is deleted, then it is missing.
         let result = tighten_file_within(Duration::from_secs(10), || {
             Err(if path.exists() {
+                let _ = denied_once.send(());
                 denied()
             } else {
                 io::Error::from(io::ErrorKind::NotFound)

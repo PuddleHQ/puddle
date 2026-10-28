@@ -237,12 +237,20 @@ mod tests {
         let path = dir.path().join("puddle.db-wal");
         fs::write(&path, b"x").unwrap();
         let keeper = delete_pending(&path);
+        let (denied_once, denied_once_rx) = std::sync::mpsc::channel();
         let closer = std::thread::spawn(move || {
-            // Ordering with no signal: the pending delete completes while the tighten step retries.
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            // The pending delete completes only after the tighten step was denied once, so it is retrying.
+            denied_once_rx.recv().unwrap();
             drop(keeper);
         });
-        assert_eq!(crate::private::tighten_file(&path).unwrap(), None);
+        let result = crate::private::tighten_file_within(crate::private::DELETE_GRACE, || {
+            let result = tighten_file(&path);
+            if result.is_err() {
+                let _ = denied_once.send(());
+            }
+            result
+        });
+        assert_eq!(result.unwrap(), None);
         closer.join().unwrap();
     }
 

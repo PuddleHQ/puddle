@@ -55,14 +55,13 @@ async fn a_held_name_goes_to_its_server_and_any_other_name_is_connected_to_as_it
     let _ = conn.read_to_end(&mut got).await;
     assert!(!String::from_utf8_lossy(&got).contains("hello from elsewhere"));
 
-    // A client that goes away before it finishes its request is forgotten.
+    // A client that goes away before it finishes its request is forgotten: the proxy serves the
+    // next connection and the `connects` list below holds no entry for it, whenever it notices.
     drop(
         TcpStream::connect(("127.0.0.1", proxy.port()))
             .await
             .unwrap(),
     );
-    // Ordering with no signal: the proxy sees the half-open client go away before the next connection.
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     // Another name: connected to as it stands.
     let (mut conn, line) = connect(&proxy, &format!("127.0.0.1:{elsewhere_port}")).await;

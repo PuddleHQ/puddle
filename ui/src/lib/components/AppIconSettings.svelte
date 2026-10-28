@@ -224,8 +224,8 @@
   }
   .choice input {
     justify-self: start;
-    width: 1.25rem;
-    height: 1.25rem;
+    width: 1.5rem;
+    height: 1.5rem;
     margin: 0;
   }
   .blank {

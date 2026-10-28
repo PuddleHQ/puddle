@@ -61,6 +61,8 @@ input[type="checkbox"],
 input[type="radio"] {
   width: 1.5rem;
   height: 1.5rem;
+  /* A flex row must not squeeze the box below 24 px. */
+  flex: none;
 }
 
 summary {

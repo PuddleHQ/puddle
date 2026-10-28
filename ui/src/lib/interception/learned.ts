@@ -39,6 +39,16 @@ export function timeLeft(seconds: number): string {
     : `${unit(hours, "hour")} ${unit(rest, "minute")}`;
 }
 
+const decryptedAgain = new Set<(workspace: string) => void>();
+
+/** Calls `listener` with the workspace when a host there was decrypted again from this window. */
+export function onDecryptedAgain(
+  listener: (workspace: string) => void,
+): () => void {
+  decryptedAgain.add(listener);
+  return () => decryptedAgain.delete(listener);
+}
+
 /**
  * Makes Puddle decrypt `host` again from the next connection. A failure throws the API's own
  * words. A host that is no longer listed (expired, or decrypted again from another window) counts
@@ -58,14 +68,15 @@ export async function decryptAgain(
   } catch {
     throw new Error("Puddle's service isn't answering. Try again.");
   }
-  if (result.response.status === 404) return;
-  if (!result.response.ok) {
-    throw new Error(
-      result.error?.message
-        ? sentence(result.error.message)
-        : "Puddle couldn't decrypt the host again.",
-    );
+  if (result.response.ok || result.response.status === 404) {
+    for (const listener of decryptedAgain) listener(workspace);
+    return;
   }
+  throw new Error(
+    result.error?.message
+      ? sentence(result.error.message)
+      : "Puddle couldn't decrypt the host again.",
+  );
 }
 
 export const learnedKey = (workspace: string, host: string) =>

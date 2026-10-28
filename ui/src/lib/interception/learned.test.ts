@@ -7,6 +7,7 @@ import {
   asPassThroughLearned,
   decryptAgain,
   LearnedNotices,
+  onDecryptedAgain,
   timeLeft,
 } from "./learned.ts";
 
@@ -68,6 +69,21 @@ describe("decryptAgain", () => {
       'DELETE /api/workspaces/{id}/interception/learned/{host} {"id":"web","host":"pinned.example"}',
       'DELETE /api/workspaces/{id}/interception/learned/{host} {"id":"web","host":"pinned.example"}',
     ]);
+  });
+
+  it("tells listeners which workspace a host was decrypted again in, not after a failure or once removed", async () => {
+    const api = new Stub();
+    const heard: string[] = [];
+    const stop = onDecryptedAgain((workspace) => heard.push(workspace));
+    await decryptAgain(api as never, "web", "a.example");
+    api.status = 500;
+    await expect(
+      decryptAgain(api as never, "web", "b.example"),
+    ).rejects.toThrow();
+    stop();
+    api.status = 200;
+    await decryptAgain(api as never, "other", "c.example");
+    expect(heard).toEqual(["web"]);
   });
 
   it("throws the API's own words, or says the service is down", async () => {

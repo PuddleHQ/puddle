@@ -93,6 +93,10 @@ pub struct Control {
     /// remove the download's folders.
     work: Mutex<()>,
     restart: Notify,
+    /// Held by whoever reads or moves the pointers (a switch, a claim of the build to run, a
+    /// confirmation, a rollback), never across an await: those run in a few microseconds and must
+    /// not interleave, or a build that is running could be deleted as "the previous one".
+    pointers: std::sync::Mutex<()>,
     times: UpdateTimes,
     /// Whether this server updates at all (Microsoft's, with the user's setting on).
     updates: bool,
@@ -112,6 +116,7 @@ impl Control {
             builds: PathBuf::from(&server.dir),
             work: Mutex::new(()),
             restart: Notify::new(),
+            pointers: std::sync::Mutex::new(()),
             times,
             updates: matches!(
                 server.kind,
@@ -133,11 +138,31 @@ impl Control {
         if !self.updates {
             return Ok(None);
         }
+        let _pointers = self.pointers_lock();
         let switched = microsoft::switch_to_staged(&self.builds)?;
         if switched.is_some() {
             self.restart.notify_one();
         }
         Ok(switched)
+    }
+}
+
+impl Control {
+    fn pointers_lock(&self) -> std::sync::MutexGuard<'_, ()> {
+        // Nothing under the lock panics; a poisoned lock is as good as a free one.
+        self.pointers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The build to run now and whether it is on trial, read together with the restart request
+    /// they answer: a switch before this is the build returned, one after it restarts the server.
+    fn claim(&self) -> Option<(PathBuf, bool)> {
+        let _pointers = self.pointers_lock();
+        // A request left over from before is answered by this very read.
+        let _ = self.restart.notified().now_or_never();
+        let build = microsoft::current_build(&self.builds)?;
+        Some((build, microsoft::on_trial(&self.builds)))
     }
 }
 
@@ -264,6 +289,8 @@ struct Launch {
     program: PathBuf,
     args: Vec<OsString>,
     password_env: bool,
+    /// Microsoft's build this runs: its commit, and whether it has yet to prove itself.
+    build: Option<(String, bool)>,
 }
 
 /// The server's command: `launch`, the password in its environment when it takes one, and none
@@ -300,21 +327,29 @@ async fn launch(
             program: Path::new(&server.dir).join("bin/code-server"),
             args: arguments(server),
             password_env: true,
+            build: None,
         }),
         ServerKind::Microsoft { telemetry, .. } => {
             microsoft::prepare(server).map_err(|e| e.to_string())?;
             let platform =
                 microsoft::platform(std::env::consts::ARCH).map_err(|e| e.to_string())?;
-            let build = if let Some(build) = microsoft::current_build(&control.builds) {
-                build
-            } else {
+            if microsoft::current_build(&control.builds).is_none() {
                 // Not while an update download runs: it may be fetching this very build.
                 let _work = control.work.lock().await;
                 microsoft::ensure_build(fetch, platform, &control.builds)
                     .await
-                    .map_err(|e| e.to_string())?
-            };
+                    .map_err(|e| e.to_string())?;
+            }
+            // The build to run, read together with the restart request it answers.
+            let (build, on_trial) = control
+                .claim()
+                .ok_or("the editor server build vanished from the volume")?;
+            let commit = build
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
             Ok(Launch {
+                build: Some((commit, on_trial)),
                 program: build.join(microsoft::PROGRAM),
                 args: microsoft::arguments(
                     server,
@@ -442,12 +477,13 @@ async fn serve_forever(config: &EditorConfig, fetch: &impl Fetch, control: &Arc<
 
 /// Waits for the server on `port` to accept a connection (it is then a build worth keeping) and
 /// records that. Gives up after [`STARTUP`].
-async fn confirm_when_listening(control: Arc<Control>, port: u16) {
+async fn confirm_when_listening(control: Arc<Control>, port: u16, commit: String) {
     let deadline = Instant::now() + STARTUP;
     while Instant::now() < deadline {
         if port_taken(port).await {
             let _work = control.work.lock().await;
-            if let Err(err) = microsoft::confirm(&control.builds) {
+            let _pointers = control.pointers_lock();
+            if let Err(err) = microsoft::confirm(&control.builds, &commit) {
                 tracing::warn!(%err, "could not record that the editor server build started");
             }
             return;
@@ -458,9 +494,10 @@ async fn confirm_when_listening(control: Arc<Control>, port: u16) {
 
 /// After a server exited: a build that exited before it ever accepted a connection is dropped
 /// for the build it replaced.
-async fn settle_trial(control: &Control) {
+async fn settle_trial(control: &Control, commit: &str) {
     let _work = control.work.lock().await;
-    match microsoft::roll_back(&control.builds) {
+    let _pointers = control.pointers_lock();
+    match microsoft::roll_back(&control.builds, commit) {
         Ok(true) => tracing::error!(
             "the new editor server build exited before it started; running the previous one again"
         ),
@@ -528,22 +565,17 @@ async fn start_once(
         password
     };
     let inherited = std::env::vars_os().filter_map(|(k, _)| k.into_string().ok());
-    // A restart asked for while no server ran is answered by this start already (it reads the
-    // current build), so a request left over is not one for the server about to run.
-    let _ = control.restart.notified().now_or_never();
     let mut child = command(launch, &password, inherited).spawn()?;
     tracing::info!(
         port = config.server.port,
         grace_secs = config.server.grace_secs,
         "the editor server started"
     );
-    let microsoft = matches!(config.server.kind, ServerKind::Microsoft { .. });
-    // Whether this server runs a build that has not run before and has one to fall back to.
-    let on_trial = microsoft && microsoft::on_trial(&control.builds);
-    let confirming = microsoft.then(|| {
+    let confirming = launch.build.as_ref().map(|(commit, _)| {
         tokio::spawn(confirm_when_listening(
             Arc::clone(control),
             config.server.port,
+            commit.clone(),
         ))
     });
     let mut replaced = false;
@@ -560,8 +592,10 @@ async fn start_once(
     }
     // A build that ended on its own before it accepted a connection is not worth keeping; one
     // that was stopped to make room for the next is not a failure.
-    if on_trial && !replaced {
-        settle_trial(control).await;
+    if let Some((commit, true)) = &launch.build
+        && !replaced
+    {
+        settle_trial(control, commit).await;
     }
     status
 }
@@ -757,6 +791,7 @@ mod tests {
             program: Path::new("/puddle/code-server").join("bin/code-server"),
             args: arguments(&server()),
             password_env: true,
+            build: None,
         };
         let cmd = command(&launch, &password, inherited);
         let envs: std::collections::BTreeMap<String, Option<String>> = cmd
@@ -782,6 +817,35 @@ mod tests {
                 .join("bin/code-server")
                 .as_os_str()
         );
+    }
+
+    #[test]
+    fn a_switch_made_before_the_server_reads_its_build_is_not_a_restart_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let builds = dir.path().join("servers");
+        let (old, new) = ("1".repeat(40), "2".repeat(40));
+        for commit in [&old, &new] {
+            let program = builds.join(commit).join(microsoft::PROGRAM);
+            std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+            std::fs::write(&program, "").unwrap();
+            std::fs::write(builds.join(commit).join(".puddle-installed"), "").unwrap();
+        }
+        std::fs::write(builds.join("current"), &old).unwrap();
+        let mut server = EditorServer::microsoft("/d", "/f", 120, false, true);
+        server.dir = builds.to_string_lossy().into_owned();
+        let control = Control::new(&server);
+        assert_eq!(control.claim(), Some((builds.join(&old), false)));
+        // Staged and switched while no server runs: the next read gets the new build, on trial,
+        // and the request that switch made is spent by that read, not left to stop the server
+        // that is about to start.
+        std::fs::write(builds.join("staged"), &new).unwrap();
+        assert_eq!(control.switch().unwrap(), Some(new.clone()));
+        assert_eq!(control.claim(), Some((builds.join(&new), true)));
+        assert!(control.restart.notified().now_or_never().is_none());
+        // A switch after the read is a request the running server answers.
+        std::fs::write(builds.join("staged"), &old).unwrap();
+        assert_eq!(control.switch().unwrap(), Some(old));
+        assert!(control.restart.notified().now_or_never().is_some());
     }
 
     #[test]

@@ -1003,21 +1003,27 @@ async fn the_first_build_has_nothing_to_go_back_to_and_a_confirmed_build_is_neve
     let (builds, service) = installed(&dir).await;
     // The first install: no previous build, so no trial and no rollback.
     assert!(!on_trial(&builds));
-    assert!(!roll_back(&builds).unwrap());
-    confirm(&builds).unwrap();
+    assert!(!roll_back(&builds, COMMIT).unwrap());
+    confirm(&builds, COMMIT).unwrap();
     service.publish(NEWER, NEWER_RELEASE, good_tarball());
     stage_update(&service, PLATFORM, &builds).await.unwrap();
     assert_eq!(switch_to_staged(&builds).unwrap().as_deref(), Some(NEWER));
     assert!(on_trial(&builds));
+    // The old build's late confirmation or failure (its server ended after the switch) changes
+    // nothing: it is not the current build any more, and it is still kept.
+    confirm(&builds, COMMIT).unwrap();
+    assert!(on_trial(&builds));
+    assert!(!roll_back(&builds, COMMIT).unwrap());
+    assert!(builds.join(COMMIT).is_dir());
     // Confirmed: the trial is over and the old build is gone.
-    confirm(&builds).unwrap();
+    confirm(&builds, NEWER).unwrap();
     assert!(!on_trial(&builds));
-    assert!(!roll_back(&builds).unwrap());
+    assert!(!roll_back(&builds, NEWER).unwrap());
     assert_eq!(names(&builds), [NEWER, "confirmed", "current"]);
     // With nothing current at all, confirming is a no-op.
     let empty = dir.path().join("empty");
     std::fs::create_dir(&empty).unwrap();
-    confirm(&empty).unwrap();
+    confirm(&empty, COMMIT).unwrap();
     assert_eq!(names(&empty), Vec::<String>::new());
 }
 
@@ -1032,7 +1038,7 @@ async fn a_clean_up_leaves_files_it_does_not_know_alone() {
     )
     .unwrap();
     std::fs::create_dir(builds.join("somebody-elses-folder")).unwrap();
-    confirm(&builds).unwrap();
+    confirm(&builds, COMMIT).unwrap();
     assert_eq!(
         names(&builds),
         [

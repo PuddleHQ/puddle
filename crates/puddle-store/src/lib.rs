@@ -27,7 +27,7 @@ mod workspace_git;
 
 pub use audit::{
     AuditError, AuditOutcome, AuditRecord, ConnectionRecord, MAX_FIELD_BYTES, MAX_LINE_BYTES,
-    PendingExpiryReason, PendingWire, RuleDeleteReason, RuleSetWire, RuleWire,
+    PendingExpiryReason, PendingWire, RequestRuleWire, RuleDeleteReason, RuleSetWire, RuleWire,
 };
 pub use catalogue::{BUILT_IN_SETS, BuiltInSet, CatalogueEntry, SystemReason, built_in};
 pub use clock::{Clock, ManualClock, SystemClock};
@@ -53,8 +53,9 @@ pub use schema::SCHEMA_VERSION;
 pub use shell_init::{MAX_SHELL_INIT_BYTES, ShellInit, ShellInitText};
 pub use store::{
     AuditCursor, AuditFilter, DEFAULT_LEARNED_CAP, DEFAULT_LEARNED_TTL_SECS, LearnedLimits, Limits,
-    PinnedPort, RuleSetEntryInfo, RuleSetInfo, Store, SweepReport, SystemHost, SystemPlan,
-    WorkspaceDeletion, WorkspaceInterception, parse_rule_set,
+    MAX_REQUEST_RULES, NewRequestRule, PinnedPort, RequestRule, RuleSetEntryInfo, RuleSetInfo,
+    Store, SweepReport, SystemHost, SystemPlan, WorkspaceDeletion, WorkspaceInterception,
+    parse_rule_set,
 };
 pub use sweeper::{DEFAULT_SWEEP_PERIOD, SWEEP_PROBLEM, Sweeper};
 pub use workspace_git::{

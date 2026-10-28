@@ -145,6 +145,8 @@ pub enum Event {
     },
     /// Rules were created, changed, deleted or expired. Global: every subscriber gets it.
     RulesChanged {},
+    /// A rule on method and path was created or deleted. Global: refetch `GET /api/request-rules`.
+    RequestRulesChanged {},
     /// The list of identities, their order, the default or an identity's author or credentials
     /// changed. Carries no data: refetch `GET /api/identities`.
     IdentitiesChanged {},
@@ -479,6 +481,7 @@ impl Event {
             | Self::PassThroughLearned { workspace, .. } => Some(workspace),
             Self::PendingOpened { request } => Some(&request.workspace),
             Self::RulesChanged {}
+            | Self::RequestRulesChanged {}
             | Self::IdentitiesChanged {}
             | Self::RepoListsChanged {}
             | Self::GlobalEnvChanged {}
@@ -755,6 +758,11 @@ mod tests {
                 Some(name()),
             ),
             (Event::RulesChanged {}, r#"{"type":"rules_changed"}"#, None),
+            (
+                Event::RequestRulesChanged {},
+                r#"{"type":"request_rules_changed"}"#,
+                None,
+            ),
             (
                 Event::IdentitiesChanged {},
                 r#"{"type":"identities_changed"}"#,

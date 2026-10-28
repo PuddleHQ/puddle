@@ -64,6 +64,7 @@ mod inject;
 mod intercept;
 mod leg;
 pub(crate) mod request;
+pub(crate) mod request_rules;
 mod response;
 mod session;
 mod set;
@@ -85,6 +86,7 @@ pub use inject::{
     NoInjection, RequestView, SecretValue, Unauthorized,
 };
 pub use intercept::{Interception, LEARNED_CAP, LEARNED_TTL, PassThrough};
+pub use request_rules::{RequestRule, RequestRules};
 pub(crate) use session::{Context, Outcome, run};
 pub use set::{PatternError, TerminationSet};
 pub use stand_in::{StandIn, StandInError, StandInOrigin, StandIns, secret_stand_in};
@@ -106,6 +108,7 @@ pub struct Termination {
     stand_ins: Arc<StandIns>,
     exchanges: Option<Arc<dyn ExchangeRewriter>>,
     interception: Interception,
+    request_rules: RequestRules,
 }
 
 /// How a connection to a host is decrypted.
@@ -135,6 +138,7 @@ impl Termination {
             stand_ins: Arc::new(StandIns::new()),
             exchanges: None,
             interception: Interception::default(),
+            request_rules: RequestRules::default(),
         }
     }
 
@@ -143,6 +147,21 @@ impl Termination {
     pub fn with_interception(mut self, interception: Interception) -> Self {
         self.interception = interception;
         self
+    }
+
+    /// Refuses the requests `rules` name, and decrypts the hosts they name whatever the switch
+    /// and the never-decrypt list say: a request that cannot be read cannot be judged.
+    #[must_use]
+    pub fn with_request_rules(mut self, rules: RequestRules) -> Self {
+        self.set.extend(&rules.hosts());
+        self.request_rules = rules;
+        self
+    }
+
+    /// The workspace's rules on method and path.
+    #[must_use]
+    pub fn request_rules(&self) -> &RequestRules {
+        &self.request_rules
     }
 
     /// The workspace's switch, its never-decrypt list and the hosts learned so far.

@@ -35,6 +35,7 @@ mod merge;
 mod name;
 mod policy;
 mod problems;
+mod request_match;
 
 pub use connection::{
     ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin, ConnectionOutcome,
@@ -63,6 +64,10 @@ pub use policy::{
     PolicyError, ProtocolHint, RuleId, RuleSetId, SuffixAllows,
 };
 pub use problems::{Problem, Problems};
+pub use request_match::{
+    CanonicalPath, MAX_METHODS, MAX_PATH_PATTERN, MAX_PATH_SEGMENTS, MethodError, Methods,
+    PathPattern, PathPatternError, percent_decoded, target_path,
+};
 
 /// Puddle's version, from the workspace manifest.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

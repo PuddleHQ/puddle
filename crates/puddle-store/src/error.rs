@@ -113,6 +113,12 @@ pub enum StoreError {
     /// A shell init was refused; the text says why.
     #[error("{0}")]
     ShellInitInvalid(String),
+    /// A rule on method and path was refused; the text says why.
+    #[error("{0}")]
+    RequestRuleInvalid(String),
+    /// No rule on method and path has this id.
+    #[error("no rule on method and path {0}")]
+    UnknownRequestRule(i64),
     /// An audit record couldn't be written.
     #[error(transparent)]
     Audit(#[from] AuditError),

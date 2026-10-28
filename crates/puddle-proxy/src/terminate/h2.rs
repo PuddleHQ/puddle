@@ -38,6 +38,7 @@ use super::inject::{
 };
 use super::leg::{self, BoxError, Connected, H1Pool, H2Conn, Lease, UpBody};
 use super::request::{self, UpstreamVersion, bad, misdirected};
+use super::request_rules::{self, Refused};
 use super::session::{Context, Outcome};
 use super::streams::{
     Activity, Clock, Registry, SWEEP_INTERVAL, Step, StreamGuard, Sweeper, ended,
@@ -525,6 +526,7 @@ async fn exchange(
         }
     }
     tracing::debug!(host = %cx.target.host, method = %checked.method, path = %puddle_types::request_path(&checked.path), "terminated request (h2)");
+    refuse_by_rule(shared, &checked, request.headers())?;
     if let Some(protocol) = &checked.protocol
         && protocol.as_str() != "websocket"
     {
@@ -698,6 +700,36 @@ async fn read_exchange_answer(
                 format!("{} did not finish its answer", cx.target.host),
             )
         })
+}
+
+/// Refuses the request when a rule on method and path names it, before anything is sent
+/// upstream, as the HTTP/1.1 path does. Only this stream is refused; the connection goes on.
+fn refuse_by_rule(shared: &Shared, checked: &Checked, headers: &HeaderMap) -> Result<(), Refusal> {
+    let cx = &shared.cx;
+    let lines = header_lines(headers, &cx.target.host.to_string());
+    let view = RequestView::new(checked.method.as_str(), &checked.path, &lines);
+    let Some(rule) = cx
+        .termination
+        .request_rules()
+        .refusing(&cx.target.host, &view)
+    else {
+        return Ok(());
+    };
+    tracing::info!(host = %cx.target.host, %rule, "request refused by a rule on method and path (h2)");
+    shared
+        .outcome
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .refused_by_rule
+        .get_or_insert_with(|| Refused {
+            rule,
+            line: HttpRequestLine::new(checked.method.as_str(), &checked.path),
+        });
+    Err(request_rules::refusal(
+        rule,
+        checked.method.as_str(),
+        &cx.target.host,
+    ))
 }
 
 /// Asks the injector about the request, as the HTTP/1.1 path does: what it may add, or why the

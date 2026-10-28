@@ -330,6 +330,41 @@ pub fn install(plan: &Plan) -> io::Result<Fingerprint> {
     read()?.ok_or_else(|| io::Error::other("the table is not there right after it was installed"))
 }
 
+/// The three requests `read` makes, so a test can change the kernel's state between them.
+trait Kernel {
+    fn table_exists(&self) -> io::Result<bool>;
+    fn dump_chains(&self) -> io::Result<Vec<Vec<u8>>>;
+    fn dump_rules(&self) -> io::Result<Vec<Vec<u8>>>;
+}
+
+impl Kernel for Socket {
+    fn table_exists(&self) -> io::Result<bool> {
+        let mut get = Writer::default();
+        let at = get.begin(kind(GETTABLE), F_REQUEST | F_ACK, 1);
+        get.nfgen(INET, 0);
+        get.string(1, TABLE);
+        get.end(at);
+        found(self.transact(&get.finish(), 1))
+    }
+
+    fn dump_chains(&self) -> io::Result<Vec<Vec<u8>>> {
+        self.dump(&dump_request(GETCHAIN, 2), kind(NEWCHAIN))
+    }
+
+    fn dump_rules(&self) -> io::Result<Vec<Vec<u8>>> {
+        self.dump(&dump_request(GETRULE, 3), kind(NEWRULE))
+    }
+}
+
+/// The kernel's answer to a table lookup: ENOENT means the table is not there.
+fn found(answer: io::Result<()>) -> io::Result<bool> {
+    match answer {
+        Ok(()) => Ok(true),
+        Err(err) if err.raw_os_error() == Some(2) => Ok(false),
+        Err(err) => Err(err),
+    }
+}
+
 /// The table as the kernel holds it, `None` when there is none.
 ///
 /// Blocking: call from `spawn_blocking`.
@@ -338,19 +373,15 @@ pub fn install(plan: &Plan) -> io::Result<Fingerprint> {
 ///
 /// A netlink failure other than the table missing.
 pub fn read() -> io::Result<Option<Fingerprint>> {
-    let socket = Socket::netfilter()?;
-    let mut get = Writer::default();
-    let at = get.begin(kind(GETTABLE), F_REQUEST | F_ACK, 1);
-    get.nfgen(INET, 0);
-    get.string(1, TABLE);
-    get.end(at);
-    match socket.transact(&get.finish(), 1) {
-        Ok(()) => {}
-        Err(err) if err.raw_os_error() == Some(2) => return Ok(None),
-        Err(err) => return Err(err),
+    read_from(&Socket::netfilter()?)
+}
+
+fn read_from(kernel: &impl Kernel) -> io::Result<Option<Fingerprint>> {
+    if !kernel.table_exists()? {
+        return Ok(None);
     }
     let mut chains = Vec::new();
-    for body in socket.dump(&dump_request(GETCHAIN, 2), kind(NEWCHAIN))? {
+    for body in kernel.dump_chains()? {
         let Some(all) = ours(&body, 1) else { continue };
         let mut identity = Vec::new();
         let mut name = String::new();
@@ -368,13 +399,18 @@ pub fn read() -> io::Result<Option<Fingerprint>> {
     }
     chains.sort();
     let mut rules = Vec::new();
-    for body in socket.dump(&dump_request(GETRULE, 3), kind(NEWRULE))? {
+    for body in kernel.dump_rules()? {
         let Some(all) = ours(&body, 1) else { continue };
         let chain = all.iter().find(|(ty, _)| *ty == 2).map(|(_, p)| string(p));
         let exprs = all.iter().find(|(ty, _)| *ty == 4).map(|(_, p)| p.to_vec());
         if let (Some(chain), Some(exprs)) = (chain, exprs) {
             rules.push((chain, exprs));
         }
+    }
+    // A delete between the first check and the dumps leaves them empty, which would read as an
+    // edit instead of a missing table.
+    if !kernel.table_exists()? {
+        return Ok(None);
     }
     Ok(Some(Fingerprint { chains, rules }))
 }
@@ -439,6 +475,36 @@ mod tests {
             wan: "eth0".to_owned(),
             log_group: Some(17),
         })
+    }
+
+    /// A kernel whose table is deleted once the chain dump has been taken.
+    struct DeletedMidRead(std::cell::Cell<bool>);
+
+    impl Kernel for DeletedMidRead {
+        fn table_exists(&self) -> io::Result<bool> {
+            Ok(!self.0.get())
+        }
+        fn dump_chains(&self) -> io::Result<Vec<Vec<u8>>> {
+            self.0.set(true);
+            Ok(Vec::new())
+        }
+        fn dump_rules(&self) -> io::Result<Vec<Vec<u8>>> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn only_enoent_means_the_table_is_missing() {
+        assert!(found(Ok(())).unwrap());
+        assert!(!found(Err(io::Error::from_raw_os_error(2))).unwrap());
+        let other = found(Err(io::Error::from_raw_os_error(1))).unwrap_err();
+        assert_eq!(other.raw_os_error(), Some(1));
+    }
+
+    #[test]
+    fn a_table_deleted_between_the_check_and_the_dumps_reads_as_missing() {
+        let read = read_from(&DeletedMidRead(std::cell::Cell::new(false))).unwrap();
+        assert_eq!(read, None);
     }
 
     #[test]

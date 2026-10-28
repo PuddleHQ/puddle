@@ -677,8 +677,8 @@ mod tests {
 
     /// A probe that says "taken" until `free` is set, counting how often it was asked.
     fn probe(
-        asked: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-        free: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        asked: Arc<std::sync::atomic::AtomicUsize>,
+        free: Arc<std::sync::atomic::AtomicBool>,
     ) -> impl FnMut(u16) -> std::future::Ready<bool> {
         use std::sync::atomic::Ordering::SeqCst;
         move |_| {

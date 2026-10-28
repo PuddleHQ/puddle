@@ -690,3 +690,220 @@ fn a_host_with_no_certificate_leaves_the_guest_without_one_and_drops_one_it_had(
     assert!(fresh.boot(&trust(&[], &[])).status.success());
     assert!(!fresh.p("/etc/puddle/dev-cert").exists());
 }
+
+// --- Java's cacerts (the plan's java-trust step, through the real boot.sh) -------------------------
+
+/// Stands in for `keytool`: a store is a text file of aliases (the imported certificates are kept
+/// next to it, `<store>.<alias>`), the password is `changeit` unless `<store>.password` says
+/// otherwise, and an import fails while `<store>.failimport` exists. Every call is logged.
+const KEYTOOL_STUB: &str = r#"#!/bin/sh
+echo "$*" >>"$PUDDLE_ROOT/keytool.log"
+op= store= pass= alias= file=
+while [ $# -gt 0 ]; do
+    case $1 in
+    -list | -importcert | -delete) op=$1 ;;
+    -keystore) store=$2; shift ;;
+    -storepass) pass=$2; shift ;;
+    -alias) alias=$2; shift ;;
+    -file) file=$2; shift ;;
+    esac
+    shift
+done
+want=changeit
+[ -f "$store.password" ] && want=$(cat "$store.password")
+[ "$pass" = "$want" ] || { echo "keytool error: Keystore was tampered with, or password was incorrect" >&2; exit 1; }
+case $op in
+-list)
+    echo "Keystore type: PKCS12"
+    while read -r a; do
+        echo "$a, Oct 28, 2026, trustedCertEntry,"
+        echo "Certificate fingerprint (SHA-256): AA"
+    done <"$store"
+    ;;
+-importcert)
+    [ ! -f "$store.failimport" ] || { echo "keytool error: cannot import" >&2; exit 1; }
+    grep -q -- '-----BEGIN CERTIFICATE-----' "$file" || exit 1
+    echo "$alias" >>"$store"
+    cp "$file" "$store.$alias"
+    echo "Certificate was added to keystore"
+    ;;
+-delete)
+    grep -vx "$alias" "$store" >"$store.new"
+    mv "$store.new" "$store"
+    ;;
+esac
+"#;
+
+/// Where a fake JDK's `cacerts` is, relative to the guest root, for the layouts that exist.
+const JDK17_STORE: &str = "/usr/lib/jvm/java-17/lib/security/cacerts";
+const JDK8_STORE: &str = "/opt/jdk8/jre/lib/security/cacerts";
+
+impl Guest {
+    /// A JDK at `home` (`bin/keytool`, a store holding one distro alias).
+    fn jdk(&self, home: &str, store: &str) {
+        write_exec(&self.p(&format!("{home}/bin/keytool")), KEYTOOL_STUB);
+        self.write(store, "distro-root\n");
+    }
+
+    /// How many keytool calls started with `op` (an empty `op` counts every call).
+    fn keytool_calls(&self, op: &str) -> usize {
+        std::fs::read_to_string(self.root.join("keytool.log"))
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| l.starts_with(op))
+            .count()
+    }
+
+    /// The aliases in a store, in order.
+    fn aliases(&self, store: &str) -> Vec<String> {
+        self.read(store).lines().map(str::to_owned).collect()
+    }
+}
+
+fn stdout_of(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+#[test]
+fn an_image_with_java_gets_the_extra_cas_in_its_cacerts_next_to_the_distro_entries() {
+    let (corp_der, corp) = root_pem("Corp Root");
+    let ca = puddle_ca();
+    let t = trust(&[&corp_der], &[&ca]);
+    for sh in shells() {
+        let g = Guest::new(&sh, "", false);
+        g.jdk("/usr/lib/jvm/java-17", JDK17_STORE);
+        let out = g.boot(&t);
+        assert!(out.status.success(), "{}: {}", sh.display(), show(&out));
+        let stdout = stdout_of(&out);
+        assert!(stdout.contains("updated, 2 added, 0 removed"), "{stdout}");
+        let aliases = g.aliases(JDK17_STORE);
+        assert_eq!(aliases[0], "distro-root", "the image's entries stay");
+        assert_eq!(aliases.len(), 3);
+        assert!(aliases[1..].iter().all(|a| a.starts_with("puddle-")));
+        // What went in is the certificate itself, whole.
+        let imported: Vec<String> = aliases[1..]
+            .iter()
+            .map(|a| g.read(&format!("{JDK17_STORE}.{a}")))
+            .collect();
+        assert!(imported.iter().any(|p| body(p) == body(ca.pem())));
+        assert!(imported.iter().any(|p| body(p) == body(&corp)));
+    }
+}
+
+#[test]
+fn a_keytool_on_path_behind_a_symlink_finds_a_symlinked_store_and_a_jdk8_layout() {
+    // Debian: /usr/bin/keytool is a link into the JDK, whose cacerts is a link to the system store.
+    let ca = puddle_ca();
+    let t = trust(&[], &[&ca]);
+    let mut g = Guest::new(&shells()[0], "", false);
+    write_exec(&g.p("/usr/lib/jvm/java-11/bin/keytool"), KEYTOOL_STUB);
+    g.write("/etc/ssl/certs/java/cacerts", "distro-root\n");
+    std::fs::create_dir_all(g.p("/usr/lib/jvm/java-11/lib/security")).unwrap();
+    std::os::unix::fs::symlink(
+        g.p("/etc/ssl/certs/java/cacerts"),
+        g.p("/usr/lib/jvm/java-11/lib/security/cacerts"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(g.p("/usr/bin-java")).unwrap();
+    std::os::unix::fs::symlink(
+        g.p("/usr/lib/jvm/java-11/bin/keytool"),
+        g.p("/usr/bin-java/keytool"),
+    )
+    .unwrap();
+    // JDK 8 keeps its store below jre/; it is only reachable by the folder search.
+    g.jdk("/opt/jdk8", JDK8_STORE);
+    g.path = format!("{}:{}", g.p("/usr/bin-java").display(), g.path);
+    let out = g.boot(&t);
+    assert!(out.status.success(), "{}", show(&out));
+    assert_eq!(g.aliases("/etc/ssl/certs/java/cacerts").len(), 2);
+    assert_eq!(g.aliases(JDK8_STORE).len(), 2);
+    // The link on PATH and the folder search reach the same store once: two stores, two imports.
+    assert_eq!(g.keytool_calls("-importcert"), 2);
+}
+
+#[test]
+fn an_unchanged_boot_does_not_start_keytool_and_a_rebuilt_cacerts_is_filled_again() {
+    let (corp_der, _) = root_pem("Corp Root");
+    let t = trust(&[&corp_der], &[&puddle_ca()]);
+    let g = Guest::new(&shells()[0], "", false);
+    g.jdk("/usr/lib/jvm/java-17", JDK17_STORE);
+    assert!(g.boot(&t).status.success());
+    let calls = g.keytool_calls("");
+    assert_eq!(calls, 3, "one list and two imports");
+    let out = g.boot(&t);
+    assert!(out.status.success(), "{}", show(&out));
+    assert!(stdout_of(&out).contains("unchanged"));
+    assert_eq!(g.keytool_calls(""), calls);
+    // A Java package update rebuilds cacerts from the system store, without Puddle's entries.
+    g.write(JDK17_STORE, "distro-root\nnew-distro-root\n");
+    let out = g.boot(&t);
+    assert!(out.status.success(), "{}", show(&out));
+    assert!(stdout_of(&out).contains("2 added"));
+    assert_eq!(g.aliases(JDK17_STORE).len(), 4);
+}
+
+#[test]
+fn a_ca_that_left_the_extra_cas_leaves_the_cacerts_and_the_image_entries_stay() {
+    let (a_der, _) = root_pem("Corp Root A");
+    let (b_der, _) = root_pem("Corp Root B");
+    let g = Guest::new(&shells()[0], "", false);
+    g.jdk("/usr/lib/jvm/java-17", JDK17_STORE);
+    assert!(g.boot(&trust(&[&a_der, &b_der], &[])).status.success());
+    let before = g.aliases(JDK17_STORE);
+    assert_eq!(before.len(), 3);
+    let out = g.boot(&trust(&[&a_der], &[]));
+    assert!(out.status.success(), "{}", show(&out));
+    assert!(stdout_of(&out).contains("0 added, 1 removed"));
+    let after = g.aliases(JDK17_STORE);
+    assert_eq!(after.len(), 2);
+    assert_eq!(after[0], "distro-root");
+    assert!(before.contains(&after[1]));
+    assert_eq!(g.keytool_calls("-delete"), 1);
+}
+
+#[test]
+fn an_image_without_java_boots_and_starts_no_keytool() {
+    let (corp_der, _) = root_pem("Corp Root");
+    let g = Guest::new(&shells()[0], "", false);
+    let out = g.boot(&trust(&[&corp_der], &[]));
+    assert!(out.status.success(), "{}", show(&out));
+    assert!(stdout_of(&out).contains("no Java in this image"));
+    assert!(!g.root.join("keytool.log").exists());
+    assert!(!g.p("/etc/puddle/java-trust.state").exists());
+}
+
+#[test]
+fn a_store_with_another_password_is_skipped_and_the_boot_still_succeeds() {
+    let (corp_der, _) = root_pem("Corp Root");
+    let t = trust(&[&corp_der], &[]);
+    let g = Guest::new(&shells()[0], "", false);
+    g.jdk("/usr/lib/jvm/java-17", JDK17_STORE);
+    g.write(&format!("{JDK17_STORE}.password"), "not-the-default");
+    let out = g.boot(&t);
+    assert!(out.status.success(), "{}", show(&out));
+    let stdout = stdout_of(&out);
+    assert!(
+        stdout.contains("cannot be listed with the default password, skipped"),
+        "{stdout}"
+    );
+    assert_eq!(g.aliases(JDK17_STORE), ["distro-root"]);
+    assert!(!g.p("/etc/puddle/java-trust.state").exists());
+}
+
+#[test]
+fn a_failed_import_is_reported_not_recorded_and_retried_at_the_next_boot() {
+    let (corp_der, _) = root_pem("Corp Root");
+    let t = trust(&[&corp_der], &[]);
+    let g = Guest::new(&shells()[0], "", false);
+    g.jdk("/usr/lib/jvm/java-17", JDK17_STORE);
+    g.write(&format!("{JDK17_STORE}.failimport"), "");
+    let out = g.boot(&t);
+    assert!(out.status.success(), "{}", show(&out));
+    assert!(stdout_of(&out).contains("some changes failed, will retry at the next boot"));
+    assert!(!g.p("/etc/puddle/java-trust.state").exists());
+    std::fs::remove_file(g.p(&format!("{JDK17_STORE}.failimport"))).unwrap();
+    let out = g.boot(&t);
+    assert!(out.status.success(), "{}", show(&out));
+    assert!(stdout_of(&out).contains("1 added"));
+    assert_eq!(g.aliases(JDK17_STORE).len(), 2);
+}

@@ -15,8 +15,10 @@
 //! changed (the system store, for curl, git, apt, Go, .NET, Python `ssl`), then runs the step
 //! (`guest/ca-bundle.sh`), which writes `/etc/puddle/ca-bundle.pem`: the image's bundle plus
 //! the extra CAs, each certificate once, rewritten only when it changed. `SSL_CERT_FILE`,
-//! `REQUESTS_CA_BUNDLE` and `CURL_CA_BUNDLE` point at that bundle, `NODE_EXTRA_CA_CERTS` at the
-//! extra CAs alone (Node adds them to its own roots).
+//! `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `PIP_CERT` and `GIT_SSL_CAINFO` point at that bundle,
+//! `NODE_EXTRA_CA_CERTS` and `DENO_CERT` at the extra CAs alone (both add them to their own
+//! roots). A second step (`guest/java-trust.sh`) imports the extra CAs into the JVM's `cacerts`
+//! when the image has Java.
 //!
 //! ```no_run
 //! use std::time::SystemTime;
@@ -40,6 +42,7 @@ mod store;
 
 pub use guest::{
     BUNDLE_STEP_PATH, BUNDLE_STEP_SH, CA_BUNDLE_PATH, EXTRA_CAS_PATH, GuestTrust, HOST_CA_DIR,
+    JAVA_STEP_PATH, JAVA_STEP_SH,
 };
 pub use select::{CertKind, CorporateRoots, Fingerprint, SkipReason, SkippedCert, SyncedCert};
 pub use store::{

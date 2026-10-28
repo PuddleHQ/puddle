@@ -5066,6 +5066,38 @@ async fn git_settings_the_host_cannot_read_stop_a_start_and_change_nothing_while
     host.shutdown().await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rule_on_method_and_path_reaches_the_running_workspaces_and_decrypts_its_host() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    assert!(!decrypts(&host, "acme", "api.example.com"));
+
+    // A rule for every workspace: the running one decrypts the host from then on.
+    let made = api
+        .post(
+            "/api/request-rules",
+            r#"{"host": "api.example.com", "methods": ["DELETE"], "path": "/repos/**"}"#,
+        )
+        .await;
+    assert_eq!(made.status, 201, "{}", made.body);
+    eventually("the rule's host is decrypted", || {
+        decrypts(&host, "acme", "api.example.com")
+    })
+    .await;
+
+    // Deleting it takes the host out of the set again.
+    let gone = api.delete("/api/request-rules/1", None).await;
+    assert_eq!(gone.status, 200, "{}", gone.body);
+    eventually("the host is no longer decrypted", || {
+        !decrypts(&host, "acme", "api.example.com")
+    })
+    .await;
+    host.shutdown().await;
+}
+
 fn has_problem(host: &Host<FakeRuntime>, key: &str) -> bool {
     host.problems().list().iter().any(|p| p.key == key)
 }

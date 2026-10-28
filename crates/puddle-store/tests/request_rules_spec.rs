@@ -220,3 +220,36 @@ fn a_refused_request_is_the_connections_record_with_its_rule_method_and_path() {
     assert_eq!(record["path"], "/repos/a/b");
     assert_eq!(record["decision"], "deny");
 }
+
+#[test]
+fn a_row_that_cannot_be_read_back_is_reported_as_corrupt_and_not_dropped() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    let store = Store::open(&path, Arc::new(ManualClock::new(T0)), Limits::default()).unwrap();
+    store
+        .add_request_rule(&new_rule(None, "a.example.com", &["GET"], "/x"))
+        .unwrap();
+    drop(store);
+
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    for (damage, said) in [
+        ("path = 'no-slash'", "path"),
+        ("methods = 'GE T'", "method"),
+        ("created_at = -1", "negative time"),
+    ] {
+        conn.execute(&format!("UPDATE request_rules SET {damage}"), [])
+            .unwrap();
+        let store = Store::open(&path, Arc::new(ManualClock::new(T0)), Limits::default()).unwrap();
+        let err = store.request_rules(None).unwrap_err();
+        assert!(
+            matches!(&err, StoreError::Corrupt { table: "request_rules", id: 1, reason } if reason.contains(said)),
+            "{damage}: {err:?}"
+        );
+        drop(store);
+        conn.execute(
+            "UPDATE request_rules SET path = '/x', methods = 'GET', created_at = 1",
+            [],
+        )
+        .unwrap();
+    }
+}

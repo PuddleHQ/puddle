@@ -306,7 +306,7 @@ impl From<&PendingRow> for PendingWire {
 #[serde(rename_all = "snake_case")]
 pub enum PendingExpiryReason {
     /// No repeat for seven days. Earlier versions wrote this; requests no longer expire by age
-    /// (R-46), so it only appears in old records.
+    /// (R-49), so it only appears in old records.
     Stale,
     /// Its workspace was deleted (R-21).
     #[serde(alias = "sandbox_deleted")]
@@ -438,7 +438,7 @@ pub enum AuditRecord {
         /// The whole rule.
         rule: RuleWire,
     },
-    /// A rule on method and path created (R-46).
+    /// A rule on method and path created (R-49).
     RequestRuleCreated {
         /// Epoch ms.
         ts: u64,

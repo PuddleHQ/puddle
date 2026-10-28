@@ -7,6 +7,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { runCli } from "./cli.ts";
 
 const root = resolve(import.meta.dirname, "..");
 
@@ -80,8 +81,8 @@ export function failing(
   });
 }
 
-function main(): number {
-  const json = process.argv.includes("--json");
+export function main(argv: string[] = []): number {
+  const json = argv.includes("--json");
   const exceptions = JSON.parse(
     readFileSync(resolve(root, "audit-exceptions.json"), "utf8"),
   ).exceptions;
@@ -143,6 +144,4 @@ function main(): number {
   return 0;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === import.meta.filename) {
-  process.exitCode = main();
-}
+runCli(import.meta.filename, main);

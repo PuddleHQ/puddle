@@ -65,7 +65,7 @@
   let manageOpen = $state(false);
   let managing = $state<{ directory: string; url: string } | null>(null);
   let removeOpen = $state(false);
-  let removing = $state<string | null>(null);
+  let removing = $state("");
   let problem = $state<string | null>(null);
   let focusAfterManage = false;
 
@@ -96,13 +96,10 @@
     return null;
   }
 
-  async function manage(choice: {
-    identity: number | null;
-    pull: boolean;
-    push: boolean;
-  }): Promise<string | null> {
-    const checkout = managing;
-    if (!checkout) return null;
+  async function manage(
+    checkout: { directory: string; url: string },
+    choice: { identity: number | null; pull: boolean; push: boolean },
+  ): Promise<string | null> {
     const result = await store.add({
       kind: "existing",
       directory: checkout.directory,
@@ -126,7 +123,6 @@
 
   async function remove() {
     const directory = removing;
-    if (directory === null) return;
     problem = null;
     const result = await store.remove(directory);
     if (!result.ok) {
@@ -329,13 +325,14 @@
 <AddRepositoryDialog bind:open={addOpen} {entries} {onDisk} onSubmit={add} />
 
 {#if managing}
+  {@const checkout = managing}
   <ManageCheckoutDialog
     bind:open={manageOpen}
     directory={managing.directory}
     url={managing.url}
     identities={identities.identities}
     chosen={pickedFor(managing.url)}
-    onSubmit={manage}
+    onSubmit={(choice) => manage(checkout, choice)}
     returnFocusTo={() => {
       const goes = focusAfterManage;
       focusAfterManage = false;
@@ -346,7 +343,7 @@
 
 <ConfirmDialog
   bind:open={removeOpen}
-  title="Remove {removing ?? ''} from the list?"
+  title="Remove {removing} from the list?"
   summary="Puddle stops managing it: the folder and its files stay in the workspace."
   detail="The checkout keeps working with plain Git. Its Git settings and identities stay as they are, and you can manage it again later."
   confirmLabel="Remove from the list"

@@ -27,6 +27,7 @@
 # scripts/coverage-baseline.json; raise them, never lower them without the owner's OK. The ratchet
 # lets a total measure up to 0.05 points below its baseline (run-to-run wobble); the floors are exact.
 # The crates in scripts/full-coverage-crates.txt must keep every line covered (gate `coverage`).
+# The UI has its own ratchet, ui/coverage-baseline.json, which is also vitest's threshold (gate `ui`).
 # A change's added lines must also be covered (gates `coverage` for Rust, `ui` for the UI,
 # `diff-coverage` by hand); DIFF_BASE names the commit to measure from (CI sets it to the PR or push
 # base), else the merge base with origin/develop.
@@ -271,6 +272,17 @@ run_gate() {
         # coverage thresholds in ui/vite.config.ts, then the production build and its size budget.
         ui_install
         (cd ui && npm run format:check && npm run lint && npm run check && npm test)
+        # The UI's own ratchet: the thresholds are ui/coverage-baseline.json; a local run raises it, CI only compares.
+        base=$(diff_base)
+        lower_ok "$base"
+        ui_ratchet="--summary ui/coverage/coverage-summary.json --baseline ui/coverage-baseline.json"
+        [ -n "${CI:-}" ] || ui_ratchet="$ui_ratchet --write"
+        if [ -n "$base" ] && git cat-file -e "$base:ui/coverage-baseline.json" 2>/dev/null; then
+            git show "$base:ui/coverage-baseline.json" >ui/coverage/coverage-baseline.previous.json
+            ui_ratchet="$ui_ratchet --previous ui/coverage/coverage-baseline.previous.json"
+        fi
+        # shellcheck disable=SC2086 # $ui_ratchet is a list of flags, split on purpose
+        node ui/scripts/ui-coverage-ratchet.ts $ui_ratchet
         # vitest's lcov paths are relative to ui/; the exclusion file's paths are repository-relative.
         diff_coverage "diff-coverage (ui)" ui/coverage/lcov.info .ts,.svelte --prefix ui/
         ui_build

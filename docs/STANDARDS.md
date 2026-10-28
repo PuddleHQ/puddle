@@ -373,6 +373,15 @@ the owner, then tagged `vX.Y.Z` on `main`.
   case reaches would otherwise fail a pull request by chance. `scripts/check.sh coverage-determinism` (slow, in no gate set) runs
   the listed crates twice and fails on any line one run executed and the other did not; run it after touching
   `coverage-run.sh`, a property test or a listed crate's tests.
+- **The UI has the same ratchet.** `ui/coverage-baseline.json` holds the best lines, branches, functions and
+  statements percentages (rounded down to 0.1); `ui/vite.config.ts` uses them as vitest's thresholds, so
+  `npm test` fails under any of them, and `src/lib/**` must keep 100 % of its lines, functions and
+  statements. `ui/scripts/ui-coverage-ratchet.ts` (gate `ui`) fails a lowered baseline without the
+  `Owner-OK: coverage-baseline` trailer and, locally, raises it when a run measures higher (commit the file; CI only
+  compares). There is no wobble allowance: v8's counts are the same on every machine for the same code. The
+  build tooling in `ui/scripts/` is in the report; only the three files that start a dev server, a
+  fixture binary or a browser (`dev-fixture.ts`, `fixture-binary.ts`, `webkit-probe.ts`) are excluded, in
+  `ui/vite.config.ts`.
 - **Expectation above the gate:** security-sensitive modules (§5) aim for ≥ 95 % lines, and every
   branch of a decision (allow/deny/pending, each toggle) has a test. A change that lowers a
   crate's coverage says why in the commit.
@@ -582,7 +591,7 @@ and in `ci.yml` (Linux); every one but `ui-e2e` is also in the `pre-push` set; `
   test). A new API service gets its fake and a scenario field in `Fixture::build_state`; a new event needs
   nothing (an `Event` in JSON is a step). The `history` step writes N connection records over a week
   (the activity screen's long-log test).
-- **Coverage** (`ui/vite.config.ts`): lines ≥ 85 %, branches ≥ 80 % overall; `src/lib/api/**` (client,
+- **Coverage** (`ui/vite.config.ts`): the thresholds are `ui/coverage-baseline.json` (§9), `src/lib/**` 100 % of lines, functions and statements; `src/lib/api/**` (client,
   event stream), `src/lib/decision/**` (the four-outcome model), `src/lib/rules/**` (filter, sort, expiry),
   `src/lib/audit/**` (filters, the address, how a record reads, the drawn window) and `src/lib/workspaces/**` (what each state allows, form checks, settings choices) and `src/lib/settings/**` (consent wording, global settings choices) and `src/lib/network/**` (the network report in words, with a fix per problem) and `src/lib/notify/**` (notice list, event watcher) and `src/lib/identities/**` (how a source and its coverage read, the checks a form makes, clone addresses) ≥ 95 % lines, ≥ 90 % branches.
   Thresholds only go up.

@@ -36,9 +36,7 @@
     askOpen = true;
   }
 
-  async function confirmed() {
-    if (!asking) return;
-    const { action } = asking;
+  async function confirmed(action: NoticeAction) {
     working = true;
     try {
       await action.run();
@@ -119,6 +117,7 @@
 </div>
 
 {#if asking?.action.confirm}
+  {@const action = asking.action}
   {@const confirm = asking.action.confirm}
   <ConfirmDialog
     bind:open={askOpen}
@@ -135,7 +134,7 @@
         : undefined}
     {working}
     error={failure}
-    onConfirm={() => void confirmed()}
+    onConfirm={() => void confirmed(action)}
   />
 {/if}
 

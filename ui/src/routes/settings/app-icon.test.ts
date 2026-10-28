@@ -150,6 +150,15 @@ describe("the App icon section", () => {
     expect(api.calls).not.toContain("PUT /api/app-icons/custom");
   });
 
+  it("sends nothing when the file chooser closes without a file", async () => {
+    await open();
+    const input = screen.getByTestId("icon-file") as HTMLInputElement;
+    await fireEvent.change(input, { target: { files: [] } });
+    expect(api.calls).not.toContain("PUT /api/app-icons/custom");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(radio("Duck").checked).toBe(true);
+  });
+
   it("says the service did not answer when it is down", async () => {
     await open();
     api.down = true;

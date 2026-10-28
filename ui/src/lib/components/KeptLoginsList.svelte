@@ -42,9 +42,7 @@
     askOpen = true;
   }
 
-  async function confirmed() {
-    if (!asking) return;
-    const login = asking;
+  async function confirmed(login: KeptLogin) {
     working = true;
     const result = await store.forget(login.service);
     working = false;
@@ -112,7 +110,8 @@
 </section>
 
 {#if asking}
-  {@const confirm = forgetConfirm(workspaceLabel, asking.name)}
+  {@const login = asking}
+  {@const confirm = forgetConfirm(workspaceLabel, login.name)}
   <ConfirmDialog
     bind:open={askOpen}
     title={confirm.title}
@@ -124,7 +123,7 @@
     closeFocus={afterClose}
     {working}
     error={failure}
-    onConfirm={() => void confirmed()}
+    onConfirm={() => void confirmed(login)}
   />
 {/if}
 

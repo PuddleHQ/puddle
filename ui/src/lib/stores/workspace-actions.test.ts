@@ -313,6 +313,16 @@ describe("deleting", () => {
     expect(actions.deleting?.removes).toBeNull();
   });
 
+  it("ignores a second ask while the first check is being read", async () => {
+    api.check = cleanCheck("down");
+    const first = actions.askDelete(w("down"));
+    await actions.askDelete(w("down"));
+    await first;
+    expect(
+      api.calls.filter((c) => c === "GET /api/workspaces/{id}/delete-check"),
+    ).toHaveLength(1);
+  });
+
   it("says so when the check can't be read", async () => {
     api.refuse.set("GET /api/workspaces/{id}/delete-check", {
       status: 409,

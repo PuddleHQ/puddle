@@ -83,6 +83,15 @@ describe("the sign-in dialog", () => {
     expect(api.calls.length).toBe(calls);
   });
 
+  it("ignores a check that finishes after the dialog was closed", async () => {
+    api.unreadable.clear();
+    const done = mount();
+    vi.advanceTimersByTime(1000);
+    await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(done).not.toHaveBeenCalled();
+  });
+
   it("tells a helper-window sign-in from a code sign-in", () => {
     mount({ start: { code: null, url: null } });
     expect(

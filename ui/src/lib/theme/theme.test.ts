@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   applyTheme,
   browserStorage,
@@ -61,6 +61,19 @@ describe("theme choice", () => {
     expect(root.dataset["theme"]).toBe("light");
     applyTheme(root, "system");
     expect(root.dataset["theme"]).toBeUndefined();
+  });
+
+  it("has no storage where reading it throws", () => {
+    const blocked = vi
+      .spyOn(globalThis, "localStorage", "get")
+      .mockImplementation(() => {
+        throw new Error("blocked");
+      });
+    try {
+      expect(browserStorage()).toBeUndefined();
+    } finally {
+      blocked.mockRestore();
+    }
   });
 
   it("finds the browser's storage", () => {

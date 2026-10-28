@@ -161,6 +161,25 @@ describe("OptionsPopover", () => {
     });
   });
 
+  it("sends an exact match when the user goes back from the subdomains", async () => {
+    const { onDecide } = mount();
+    const dialog = await show();
+    await fireEvent.click(
+      within(dialog).getByRole("radio", {
+        name: /^Everything under example\.com/,
+      }),
+    );
+    await fireEvent.click(
+      within(dialog).getByRole("radio", { name: /^Only api\.example\.com/ }),
+    );
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: /Allow/ }),
+    );
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({ effect: "allow", match: "exact" }),
+    );
+  });
+
   it("starts from the narrowest choice every time it opens", async () => {
     mount();
     let dialog = await show();
@@ -186,6 +205,31 @@ describe("OptionsPopover", () => {
     onClose.mockClear();
     await fireEvent.keyDown(dialog, { key: "Escape" });
     expect(onDecide).not.toHaveBeenCalled();
+  });
+
+  const press = (on: Element) =>
+    fireEvent.pointerDown(on, {
+      button: 0,
+      pointerType: "mouse",
+      clientX: 500,
+      clientY: 500,
+    });
+
+  it("closes without deciding when the user presses outside it", async () => {
+    const { onDecide, onClose } = mount();
+    await show();
+    await press(document.body);
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(onDecide).not.toHaveBeenCalled();
+  });
+
+  it("stays open when the press lands on its own chevron, which toggles it", async () => {
+    const { onClose, anchor } = mount();
+    await show();
+    await press(anchor);
+    await new Promise((done) => setTimeout(done, 50));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { hidden: true })).toBeInTheDocument();
   });
 
   it("opened again, keeps focus on a choice focused at once; the anchor gets it back only on close", async () => {

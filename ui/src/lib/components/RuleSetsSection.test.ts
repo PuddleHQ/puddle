@@ -146,6 +146,17 @@ describe("making, renaming and deleting", () => {
     await waitFor(() => expect(lastToast()).toBe("Renamed to Client Y."));
   });
 
+  it("closes the new rule set dialog on Cancel without making anything", async () => {
+    mount();
+    await fireEvent.click(screen.getByRole("button", { name: "New rule set" }));
+    const dialog = await screen.findByRole("dialog", { name: "New rule set" });
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(api.calls).not.toContain("POST /api/rule-sets");
+  });
+
   it("deletes a set after asking", async () => {
     mount();
     await fireEvent.click(

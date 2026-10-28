@@ -262,6 +262,25 @@ describe("Manage this", () => {
     });
   });
 
+  it("changes nothing when the user cancels, and sends the Pull box as set", async () => {
+    await mount({ repositories: [] }, listing([checkout("scratch")]));
+    await fireEvent.click(
+      section().getByRole("button", { name: "Manage this: scratch" }),
+    );
+    let dialog = await screen.findByRole("dialog", { name: "Manage scratch" });
+    await fireEvent.click(within(dialog).getByLabelText("Pull"));
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(api.calls).not.toContain("POST /api/workspaces/{id}/repositories");
+    await fireEvent.click(
+      section().getByRole("button", { name: "Manage this: scratch" }),
+    );
+    dialog = await screen.findByRole("dialog", { name: "Manage scratch" });
+    expect(within(dialog).getByLabelText("Pull")).toBeChecked();
+  });
+
   it("shows the refusal when the remote changed, and keeps the dialog open", async () => {
     await mount({ repositories: [] }, listing([checkout("scratch")]));
     api.refuse.set("POST /api/workspaces/{id}/repositories", {
@@ -345,6 +364,51 @@ describe("removing and cloning again", () => {
     expect(await section().findByRole("alert")).toHaveTextContent(
       "The workspace is busy.",
     );
+  });
+});
+
+describe("refusals and changes", () => {
+  it("marks a checkout that has uncommitted changes", async () => {
+    await mount({}, listing([checkout("api", { entry: own, dirty: true })]));
+    expect(section().getByText("changes")).toBeInTheDocument();
+  });
+
+  it("shows why a clone again was refused", async () => {
+    await mount({}, listing([], { missing: ["api"] }));
+    api.refuse.set("POST /api/workspaces/{id}/repositories/{directory}/clone", {
+      status: 409,
+      message: "the workspace is busy",
+    });
+    await fireEvent.click(
+      section().getByRole("button", { name: "Clone again: api" }),
+    );
+    expect(await section().findByRole("alert")).toHaveTextContent(
+      "The workspace is busy.",
+    );
+    expect(toasts.items).toHaveLength(0);
+  });
+
+  it("keeps the Add repository dialog open with the service's refusal", async () => {
+    await mount();
+    api.refuse.set("POST /api/workspaces/{id}/repositories", {
+      status: 409,
+      message: "the workspace is busy",
+    });
+    await fireEvent.click(
+      section().getByRole("button", { name: "Add repository" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await fireEvent.input(
+      within(dialog).getByLabelText("Git repository (HTTPS)"),
+      { target: { value: "https://github.com/acme/web.git" } },
+    );
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Clone" }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "The workspace is busy.",
+    );
+    expect(toasts.items).toHaveLength(0);
   });
 });
 

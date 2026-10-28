@@ -6,6 +6,7 @@
 // MPL-2.0 and dev only).
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { runCli } from "./cli.ts";
 
 const root = resolve(import.meta.dirname, "..");
 const SHIPPED = join(root, ".svelte-kit", "shipped-packages.json");
@@ -119,7 +120,7 @@ export function render(entries: Entry[]): string {
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
-function main(argv: string[]): number {
+export function main(argv: string[]): number {
   if (!existsSync(SHIPPED)) {
     console.error(
       "ui-licences: run `npm run build` first (it lists the packages in the bundle)",
@@ -164,6 +165,4 @@ function main(argv: string[]): number {
   return 0;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === import.meta.filename) {
-  process.exitCode = main(process.argv.slice(2));
-}
+runCli(import.meta.filename, main);

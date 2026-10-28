@@ -23,6 +23,15 @@ const cases = (
   ) as { cases: Case[] }
 ).cases;
 
+describe("parseRepoUrl with control characters in the path", () => {
+  it.each([
+    "https://github.com/o/re\u0001po",
+    "https://github.com/o/re\u007fpo",
+  ])("refuses %j", (url) => {
+    expect(parseRepoUrl(url).ok).toBe(false);
+  });
+});
+
 describe("parseRepoUrl", () => {
   it.each(cases)("reads $url like the host does", ({ url, repo }) => {
     const got = parseRepoUrl(url);

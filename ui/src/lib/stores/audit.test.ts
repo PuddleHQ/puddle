@@ -143,6 +143,25 @@ describe("reading the log", () => {
     expect(store.entries).toHaveLength(400);
     expect(store.loadError).toBeNull();
   });
+  it("drops an older page that arrives after the filter changed", async () => {
+    fill(450);
+    const store = make();
+    await store.load(ALL);
+    const read = api.GET;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    api.GET = (async (...args: Parameters<typeof read>) => {
+      api.GET = read;
+      await gate;
+      return read(...args);
+    }) as never;
+    const older = store.loadMore();
+    await store.load({ ...ALL, kind: "connection" } as Filter);
+    const shown = ids(store);
+    release();
+    await older;
+    expect(ids(store)).toEqual(shown);
+  });
   it("reads the workspace names for the filter, sorted, and keeps them on failure", async () => {
     api.workspaces = ["web-shop", "api"];
     const store = make();

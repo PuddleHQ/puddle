@@ -120,6 +120,25 @@ describe("saving", () => {
     expect(store.view?.ui.notifications).toBe(false);
   });
 
+  it("still runs the saves queued behind one that threw", async () => {
+    await store.load();
+    const broken = new Proxy(
+      {},
+      {
+        ownKeys: () => {
+          throw new Error("unreadable patch");
+        },
+      },
+    );
+    const results = await Promise.allSettled([
+      store.save({ ui: broken }),
+      store.save({ ui: { sound: true } }),
+    ]);
+    expect(results[0]?.status).toBe("rejected");
+    expect(results[1]).toEqual({ status: "fulfilled", value: { ok: true } });
+    expect(store.view?.ui.sound).toBe(true);
+  });
+
   it("reports a refusal, a newer Puddle and a missing service", async () => {
     await store.load();
     api.refuse.set("PUT /api/settings", {

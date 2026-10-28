@@ -63,10 +63,8 @@
     if (store.found === null) void store.loadFound();
   });
 
-  function choose(index: number) {
+  function choose(account: FoundAccount, index: number) {
     pick = index;
-    const account = usable[index];
-    if (!account) return;
     const covers = coverageOf(account);
     ownersText = covers.owners.join(", ");
     rest = covers.rest_of_host;
@@ -79,7 +77,7 @@
       ownersText = "";
       rest = true;
     } else if (chosen) {
-      choose(pick ?? 0);
+      choose(chosen, pick ?? 0);
     }
   }
 
@@ -181,7 +179,7 @@
                 type="radio"
                 name="{id}-account"
                 checked={pick === index}
-                onchange={() => choose(index)}
+                onchange={() => choose(account, index)}
               />
               <span>
                 {foundLabel(account)}

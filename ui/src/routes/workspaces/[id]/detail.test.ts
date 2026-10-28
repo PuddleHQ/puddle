@@ -1080,6 +1080,17 @@ describe("the settings tab", () => {
     ).toBeInTheDocument();
   });
 
+  it("reads the kept logins again when the credential store did not answer and the user retries", async () => {
+    api.kept["demo"] = { logins: [], store_readable: false };
+    await open();
+    await screen.findByText(/couldn't read this computer's credential store/);
+    api.kept["demo"] = { logins: [], store_readable: true };
+    await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(
+      await screen.findByText(/keeps no logins for this workspace/),
+    ).toBeInTheDocument();
+  });
+
   it("saves a local toggle and the clipboard, keeping the others as they were", async () => {
     await open();
     await fireEvent.change(screen.getByLabelText("Private networks"), {

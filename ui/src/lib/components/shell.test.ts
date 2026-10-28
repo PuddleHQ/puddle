@@ -107,6 +107,17 @@ describe("Sidebar", () => {
     expect(document.documentElement.dataset["theme"]).toBeUndefined();
   });
 
+  it("keeps the theme when the chosen one is clicked again", async () => {
+    const set = vi.spyOn(theme, "set");
+    const shown = toasts.items.length;
+    render(Sidebar);
+    await fireEvent.click(screen.getByText("System"));
+    expect(set).not.toHaveBeenCalled();
+    expect(theme.choice).toBe("system");
+    expect(toasts.items).toHaveLength(shown);
+    vi.restoreAllMocks();
+  });
+
   it("says why a theme choice wasn't saved", async () => {
     vi.spyOn(theme, "set").mockResolvedValue({
       ok: false,

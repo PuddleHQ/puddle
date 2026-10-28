@@ -100,6 +100,78 @@ describe("collect and render", () => {
   });
 });
 
+describe("collect details", () => {
+  const dir = mkdtempSync(join(tmpdir(), "licences-details-"));
+  const make = (name: string, manifest: object) => {
+    const d = join(dir, name);
+    mkdirSync(d, { recursive: true });
+    writeFileSync(
+      join(d, "package.json"),
+      JSON.stringify({ name, version: "1.0.0", ...manifest }),
+    );
+    writeFileSync(join(d, "COPYING"), "text");
+    return d;
+  };
+
+  it("joins a legacy licences list into one OR expression, reads strings and untyped objects, and falls back to the homepage", () => {
+    try {
+      const { entries, problems } = collect([
+        make("a", {
+          licenses: ["MIT", { type: "ISC" }, {}],
+          homepage: "https://example.test/home",
+        }),
+      ]);
+      expect(entries).toEqual([
+        {
+          name: "a",
+          version: "1.0.0",
+          licence: "MIT OR ISC OR ",
+          text: "text",
+          repository: "https://example.test/home",
+        },
+      ]);
+      expect(problems).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("lists two versions of one package in version order", () => {
+    try {
+      const newer = make("same-a", {
+        name: "same",
+        version: "2.0.0",
+        license: "MIT",
+      });
+      const older = make("same-b", {
+        name: "same",
+        version: "1.0.0",
+        license: "MIT",
+      });
+      const { entries } = collect([newer, older]);
+      expect(entries.map((e) => e.version)).toEqual(["1.0.0", "2.0.0"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("renders an entry without a licence file as an empty text block", () => {
+    expect(
+      render([
+        {
+          name: "a",
+          version: "1.0.0",
+          licence: "MIT",
+          text: undefined,
+          repository: "",
+        },
+      ]),
+    ).toBe(
+      `Third-party software shipped in Puddle's user interface.\n\n${"=".repeat(72)}\na 1.0.0 (MIT)\n`,
+    );
+  });
+});
+
 describe("audit", () => {
   const report = {
     vulnerabilities: {
@@ -131,6 +203,7 @@ describe("audit", () => {
       "GHSA-2",
     ]);
     expect(advisories({})).toEqual([]);
+    expect(advisories({ vulnerabilities: { foo: {} } })).toEqual([]);
   });
 
   it("fails what is not excepted, an expired exception, and reports unused ones", () => {

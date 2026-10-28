@@ -163,6 +163,27 @@ describe("adding", () => {
     );
   });
 
+  it("goes back to a plain variable after looking at a secret, and the hosts field goes away", async () => {
+    render(Page);
+    const dialog = await openAdd();
+    await fireEvent.click(
+      within(dialog).getByRole("radio", {
+        name: /Secret: the workspace never sees/,
+      }),
+    );
+    expect(
+      within(dialog).getByLabelText("Hosts it may be sent to"),
+    ).toBeTruthy();
+    await fireEvent.click(
+      within(dialog).getByRole("radio", {
+        name: /Variable: the workspace sees its value/,
+      }),
+    );
+    expect(
+      within(dialog).queryByLabelText("Hosts it may be sent to"),
+    ).toBeNull();
+  });
+
   it("adds a secret: the value goes once, the table never shows it", async () => {
     render(Page);
     const dialog = await openAdd();

@@ -12,8 +12,7 @@
 //!   variable).
 //! - `denoland/deno:debian`: `fetch` works through `DENO_CERT` (Deno keeps its own roots).
 //! - `python:3.9-slim`: `pip download` from an index at that URL works through `PIP_CERT`
-//!   and reads the variable (a missing file in it fails the same fetch). The other variables
-//!   and the system store also carry pip, so the test cannot show that `PIP_CERT` is needed.
+//!   with `PIP_CERT` alone (the other variables unset) and fails with none of them.
 //!
 //! Each tool fails before the files are applied (the negative control), so a pass is the trust
 //! and not a trusting image. The wire peer is the fixture server, not the proxy process: the
@@ -361,15 +360,26 @@ exit $rc"
         assert_eq!(code, 0, "pip refused the certificate with PIP_CERT: {out}");
         assert!(out.contains("Successfully downloaded puddletest"), "{out}");
 
-        // pip reads PIP_CERT (the variable, not only the system store the image's own
-        // `update-ca-certificates` filled): a missing file in it makes the same fetch fail.
+        // PIP_CERT alone does it (this pip keeps its own bundle and ignores the system store),
+        // and with none of the variables the same fetch fails.
+        let drop_others = "unset REQUESTS_CA_BUNDLE CURL_CA_BUNDLE SSL_CERT_FILE GIT_SSL_CAINFO";
         let (code, out) = sh(
             &sandbox,
-            "pip with a missing PIP_CERT file",
-            serve(". /etc/profile.d/01-puddle-env.sh; export PIP_CERT=/nonexistent/bundle.pem"),
+            "pip with PIP_CERT only",
+            serve(&format!(". /etc/profile.d/01-puddle-env.sh; {drop_others}")),
         )
         .await?;
-        assert_ne!(code, 0, "pip ignored PIP_CERT: {out}");
+        assert_eq!(code, 0, "PIP_CERT alone was not enough: {out}");
+        assert!(out.contains("Successfully downloaded puddletest"), "{out}");
+        let (code, out) = sh(
+            &sandbox,
+            "pip with no variable",
+            serve(&format!(
+                ". /etc/profile.d/01-puddle-env.sh; {drop_others}; unset PIP_CERT"
+            )),
+        )
+        .await?;
+        assert_ne!(code, 0, "pip trusted the CA with no variable set: {out}");
         finish(&sandbox).await
     }))
     .await

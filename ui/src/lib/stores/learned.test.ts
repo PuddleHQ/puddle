@@ -66,6 +66,24 @@ class Source {
   }
 }
 
+function held() {
+  const waiting: Array<{
+    ok: (r: unknown) => void;
+    fail: (e: unknown) => void;
+  }> = [];
+  const call = () =>
+    new Promise((ok, fail) => {
+      waiting.push({ ok, fail });
+    });
+  return { api: { GET: call, PUT: call }, waiting };
+}
+
+const reply = (data: unknown) => ({
+  data,
+  error: undefined,
+  response: { status: 200, ok: true },
+});
+
 let api: Stub;
 beforeEach(() => {
   api = new Stub();
@@ -181,6 +199,25 @@ describe("LearnedList", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(api.calls).toHaveLength(2);
   });
+
+  it("ignores a slow read that a newer one has overtaken, whether it answers or fails", async () => {
+    const { api: slow, waiting } = held();
+    const list = new LearnedList(slow as never, undefined);
+    const stale = list.load("a");
+    const failing = list.load("b");
+    const fresh = list.load("c");
+    waiting[2]!.ok(
+      reply({ hosts: [{ host: "new.example", expires_in_secs: 1 }] }),
+    );
+    await fresh;
+    waiting[0]!.ok(reply({ hosts: [] }));
+    waiting[1]!.fail(new TypeError("fetch failed"));
+    await stale;
+    await failing;
+    expect(list.hosts.map((h) => h.host)).toEqual(["new.example"]);
+    expect(list.status).toBe("ready");
+    expect(list.reason).toBeNull();
+  });
 });
 
 describe("LearnedLimitsStore", () => {
@@ -217,5 +254,34 @@ describe("LearnedLimitsStore", () => {
     api.refuse = { status: 500, message: "broken" };
     await store.load();
     expect(store.reason).toBe("Broken.");
+  });
+
+  it("ignores a slow read that a newer one has overtaken, whether it answers or fails", async () => {
+    const { api: slow, waiting } = held();
+    const store = new LearnedLimitsStore(slow as never);
+    const stale = store.load();
+    const failing = store.load();
+    const fresh = store.load();
+    waiting[2]!.ok(reply({ ttl_secs: 60, cap: 2 }));
+    await fresh;
+    waiting[0]!.ok(reply({ ttl_secs: 1, cap: 1 }));
+    waiting[1]!.fail(new TypeError("fetch failed"));
+    await stale;
+    await failing;
+    expect(store.limits).toEqual({ ttl_secs: 60, cap: 2 });
+    expect(store.status).toBe("ready");
+    expect(store.reason).toBeNull();
+  });
+
+  it("keeps the limits of a newer read when a slow save answers after it", async () => {
+    const { api: slow, waiting } = held();
+    const store = new LearnedLimitsStore(slow as never);
+    const saving = store.save({ ttl_secs: 5, cap: 5 });
+    const reading = store.load();
+    waiting[1]!.ok(reply({ ttl_secs: 60, cap: 2 }));
+    await reading;
+    waiting[0]!.ok(reply({ ttl_secs: 5, cap: 5 }));
+    expect(await saving).toEqual({ ok: true });
+    expect(store.limits).toEqual({ ttl_secs: 60, cap: 2 });
   });
 });

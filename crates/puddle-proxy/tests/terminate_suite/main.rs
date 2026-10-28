@@ -9,6 +9,7 @@ mod alt_svc;
 mod basic;
 mod body;
 mod chain;
+mod everything;
 mod exchange;
 mod git_inject;
 mod grpc;

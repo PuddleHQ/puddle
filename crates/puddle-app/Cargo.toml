@@ -36,6 +36,11 @@ puddle-fs = { workspace = true }
 puddle-settings = { workspace = true }
 puddle-store = { workspace = true }
 puddle-types = { workspace = true }
+bytes = { workspace = true }
+http = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
 serde_json = { workspace = true }
 tauri = { workspace = true }
 tauri-plugin-notification = { workspace = true }
@@ -43,10 +48,15 @@ tauri-plugin-opener = { workspace = true }
 tauri-plugin-single-instance = { workspace = true }
 tauri-plugin-window-state = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 url = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+# Already in the tree through wry: the editor window turns the webview's browser shortcuts off.
+webview2-com = "0.39"
+windows = "0.62"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Already in the tree through the notification plugin: asks the session bus whether a tray host exists.

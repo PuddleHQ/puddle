@@ -6058,7 +6058,12 @@ dependencies = [
 name = "puddle-app"
 version = "0.0.0"
 dependencies = [
+ "bytes",
  "gtk",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "puddle-api",
  "puddle-appicon",
  "puddle-certs",
@@ -6085,6 +6090,8 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "webview2-com",
+ "windows",
  "zbus 6.1.0",
 ]
 

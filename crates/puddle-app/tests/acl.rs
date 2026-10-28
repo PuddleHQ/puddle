@@ -120,7 +120,7 @@ fn invoke(cmd: &str, origin: &str) -> InvokeRequest {
         error: CallbackFn(1),
         url: Url::parse(origin).unwrap(),
         body: InvokeBody::default(),
-        headers: tauri::http::HeaderMap::default(),
+        headers: http::HeaderMap::default(),
         invoke_key: INVOKE_KEY.to_string(),
     }
 }
@@ -183,5 +183,110 @@ fn plugin_commands_are_refused_to_the_main_window() {
     ] {
         let message = refusal(get_ipc_response(&window, invoke(cmd, api)));
         assert!(message.contains("not allowed"), "{cmd}: {message}");
+    }
+}
+
+mod sandbox_windows {
+    use std::sync::Arc;
+
+    use puddle_app::sandbox_window::{
+        Hooks, SandboxWindows, Target, WindowSettings, is_sandbox_label, label,
+    };
+    use puddle_settings::ClipboardRead;
+    use puddle_types::WorkspaceName;
+    use tauri::Manager;
+
+    use super::*;
+
+    fn open_sandbox(
+        app: &tauri::App<MockRuntime>,
+        name: &str,
+        data: &Path,
+    ) -> (WebviewWindow<MockRuntime>, Url) {
+        let workspace = WorkspaceName::new(name).unwrap();
+        let origin = Url::parse(&format!("http://{name}.localhost:4800/")).unwrap();
+        let windows = SandboxWindows::new(Hooks {
+            open_external: Arc::new(|_| {}),
+            refused: Arc::new(|_| {}),
+            last_closed: Arc::new(|_| {}),
+        });
+        let target = Target {
+            workspace: workspace.clone(),
+            origin: origin.clone(),
+            data_folder: data.join(name),
+            settings: WindowSettings {
+                zoom_hotkeys: true,
+                clipboard_read: ClipboardRead::Ask,
+            },
+            cookie: None,
+            debug_port: None,
+        };
+        let window = windows.open(app, &target).unwrap();
+        assert_eq!(window.label(), label(&workspace));
+        assert!(is_sandbox_label(window.label()));
+        (window, origin)
+    }
+
+    #[test]
+    fn a_workspace_window_is_refused_every_command_from_its_own_origin_and_the_apps() {
+        let (app, _main) = app_with_main();
+        let dir = tempfile::tempdir().unwrap();
+        let (window, origin) = open_sandbox(&app, "demo", dir.path());
+        for from in [
+            origin.as_str(),
+            "http://127.0.0.1:4711/",
+            "http://tauri.localhost/",
+            "tauri://localhost/",
+            "https://example.org/",
+        ] {
+            for cmd in [
+                "ping",
+                "plugin:app|version",
+                "plugin:opener|open_url",
+                "plugin:opener|open_path",
+                "plugin:window|set_title",
+                "plugin:webview|create_webview_window",
+                "plugin:event|emit",
+                "plugin:path|resolve_directory",
+                "plugin:window-state|save_window_state",
+                "no_such_command",
+            ] {
+                let message = refusal(get_ipc_response(&window, invoke(cmd, from)));
+                assert!(
+                    message.contains("not allowed"),
+                    "{cmd} from {from}: {message}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_capability_names_a_workspace_window() {
+        for file in capability_files() {
+            let capability = json(&file);
+            for label in strings(&capability["windows"])
+                .into_iter()
+                .chain(strings(&capability["webviews"]))
+            {
+                assert!(
+                    !is_sandbox_label(label),
+                    "{}: names {label}",
+                    file.display()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_workspace_window_exists_once_and_has_its_own_data_folder() {
+        let (app, _main) = app_with_main();
+        let dir = tempfile::tempdir().unwrap();
+        let (_first, _) = open_sandbox(&app, "alpha", dir.path());
+        let (_second, _) = open_sandbox(&app, "beta", dir.path());
+        assert!(dir.path().join("alpha").is_dir() && dir.path().join("beta").is_dir());
+        assert_eq!(app.webview_windows().len(), 3);
+        // Opening again brings the window forward and builds no second one.
+        let (_again, _) = open_sandbox(&app, "alpha", dir.path());
+        assert_eq!(app.webview_windows().len(), 3);
     }
 }

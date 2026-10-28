@@ -276,6 +276,14 @@ jobs:
           cargo build -p puddle-app --all-features --locked
           $env:PUDDLE_APP_EXE = Join-Path $PWD 'target\debug\puddle-app.exe'
           node crates/puddle-app/e2e/smoke.mjs
+      # A workspace window on a page the test serves attacks the shell like hostile editor script
+      # would: no Tauri command may succeed, in the window or in the second one it opens.
+      - name: workspace window attack test (WebView2)
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        shell: pwsh
+        run: |
+          $env:PUDDLE_APP_EXE = Join-Path $PWD 'target\debug\puddle-app.exe'
+          node crates/puddle-app/e2e/sandbox-window.mjs
       # The host needs the bundled runtime beside the program (the fork's msb.exe and libkrunfw.dll,
       # checksums pinned); no machine boots, so WHP is not needed.
       - name: desktop shell smoke test (WebView2, Puddle host)

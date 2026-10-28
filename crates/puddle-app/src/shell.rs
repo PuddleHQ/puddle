@@ -12,6 +12,10 @@ use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
 use crate::backend::{Backend, BackendError, Source};
+use puddle_settings::ClipboardRead;
+use puddle_types::WorkspaceName;
+
+use crate::sandbox_window::{self, Hooks, SandboxWindows, Target, WindowSettings};
 use crate::window::{MAIN_LABEL, OpenExternal, Refused, open_main};
 use crate::{crash, desktop, links};
 
@@ -28,6 +32,29 @@ pub enum ShellError {
     /// The shell couldn't put itself in the job that ends the workspaces' machines with it.
     #[error("cannot start: {0}")]
     Containment(#[from] LifecycleError),
+}
+
+/// A workspace window for the smoke test to attack.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxProbe {
+    /// The page to open, on a `probe.localhost:<port>` origin.
+    pub url: Url,
+    /// WebView2's DevTools Protocol port for that window (Windows).
+    pub debug_port: u16,
+}
+
+impl SandboxProbe {
+    /// The probe the environment asks for: `PUDDLE_APP_SANDBOX_PROBE` is the page and
+    /// `PUDDLE_APP_SANDBOX_DEBUG_PORT` its debug port.
+    fn from_env() -> Option<Self> {
+        Some(Self {
+            url: Url::parse(&std::env::var("PUDDLE_APP_SANDBOX_PROBE").ok()?).ok()?,
+            debug_port: std::env::var("PUDDLE_APP_SANDBOX_DEBUG_PORT")
+                .ok()?
+                .parse()
+                .ok()?,
+        })
+    }
 }
 
 /// How a run differs from the defaults. Development conveniences only; a release build ignores
@@ -51,6 +78,9 @@ pub struct Options {
     /// The host's data folder instead of the per-user one (`PUDDLE_APP_DATA_DIR`), so a test run
     /// or a second developer instance has state of its own.
     pub data_dir: Option<PathBuf>,
+    /// A workspace window on a page the test serves (`PUDDLE_APP_SANDBOX_PROBE`), for the smoke
+    /// test: it stands in for a workspace's editor, so the window's guards run in a real webview.
+    pub sandbox_probe: Option<SandboxProbe>,
     /// The guest agent instead of the one in the runtime folder (`PUDDLE_AGENT_BIN`, as for
     /// `puddle serve`).
     pub agent: Option<PathBuf>,
@@ -72,6 +102,7 @@ impl Options {
                     .and_then(|v| v.parse().ok()),
                 fixture: std::env::var_os("PUDDLE_APP_FIXTURE").is_some_and(|v| v == "1"),
                 data_dir: std::env::var_os("PUDDLE_APP_DATA_DIR").map(PathBuf::from),
+                sandbox_probe: SandboxProbe::from_env(),
                 agent: std::env::var_os("PUDDLE_AGENT_BIN").map(PathBuf::from),
             }
         } else {
@@ -98,7 +129,11 @@ pub fn context<R: Runtime>() -> tauri::Context<R> {
 /// it talks to the desktop's message bus). None of them is granted to any window.
 pub fn with_plugins<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_filter(sandbox_window::remembers_place)
+                .build(),
+        )
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
 }
@@ -170,8 +205,48 @@ pub fn open<R: Runtime>(
     } else {
         data_folder(options)
     };
+    if let Some(probe) = &options.sandbox_probe {
+        open_probe(app, probe, &data_folder(options).unwrap_or_default())?;
+    }
     desktop::attach(app, &window, &backend, marker_folder);
     app.manage(backend);
+    Ok(())
+}
+
+/// Opens the smoke test's workspace window. Its links are logged instead of opened, so a test run
+/// starts no browser.
+fn open_probe<R: Runtime>(
+    app: &AppHandle<R>,
+    probe: &SandboxProbe,
+    data: &std::path::Path,
+) -> Result<(), ShellError> {
+    let hooks = Hooks {
+        open_external: Arc::new(
+            |url| tracing::info!(%url, "sandbox window: opened in the browser"),
+        ),
+        refused: Arc::new(|url| tracing::info!(%url, "sandbox window: link refused")),
+        last_closed: Arc::new(|workspace| {
+            tracing::info!(%workspace, "sandbox window: last window closed");
+        }),
+    };
+    let windows = SandboxWindows::new(hooks);
+    let workspace = WorkspaceName::new("probe").map_err(|_| tauri::Error::WindowNotFound)?;
+    let target = Target {
+        origin: Url::parse(&probe.url.origin().ascii_serialization())
+            .map_err(tauri::Error::InvalidUrl)?,
+        data_folder: sandbox_window::data_folder(&data.join("webview"), &workspace),
+        workspace,
+        settings: WindowSettings {
+            zoom_hotkeys: true,
+            clipboard_read: ClipboardRead::Ask,
+        },
+        cookie: None,
+        debug_port: Some(probe.debug_port),
+    };
+    let window = windows.open(app, &target)?;
+    window.navigate(probe.url.clone())?;
+    tracing::info!(url = %probe.url, "sandbox window open");
+    app.manage(windows);
     Ok(())
 }
 
@@ -321,12 +396,34 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_probe_window_opens_on_its_page_in_a_data_folder_of_its_own() {
+        let app = tauri::test::mock_app();
+        let data = tempfile::tempdir().unwrap();
+        let probe = SandboxProbe {
+            url: Url::parse("http://probe.localhost:4900/attack.html").unwrap(),
+            debug_port: 9444,
+        };
+        open_probe(app.handle(), &probe, data.path()).unwrap();
+        let window = app.get_webview_window("vs-probe").unwrap();
+        assert_eq!(window.url().unwrap(), probe.url);
+        assert!(data.path().join("webview").join("probe").is_dir());
+        assert!(app.try_state::<SandboxWindows>().is_some());
+    }
+
+    #[test]
+    fn the_probe_comes_from_the_environment_only_when_both_values_are_there() {
+        // Only the parsing is shown: the process environment is shared between tests.
+        assert!(SandboxProbe::from_env().is_none());
+    }
+
+    #[test]
     fn the_defaults_pick_a_free_port_and_ask_for_nothing() {
         let options = Options::default();
         assert_eq!(options.port, 0);
         assert!(options.connection_file.is_none() && options.dev_url.is_none());
         assert!(options.debug_port.is_none() && !options.fixture);
         assert!(options.data_dir.is_none() && options.agent.is_none());
+        assert!(options.sandbox_probe.is_none());
         assert_eq!(Options::from_env().port, 0);
     }
 }

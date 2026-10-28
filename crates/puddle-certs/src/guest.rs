@@ -28,6 +28,13 @@ pub const BUNDLE_STEP_PATH: &str = "/usr/local/lib/puddle/ca-bundle.sh";
 /// The step script's text.
 pub const BUNDLE_STEP_SH: &str = include_str!("../guest/ca-bundle.sh");
 
+/// The step script (`guest/java-trust.sh`) in the guest: imports the extra CAs into the JVM's
+/// `cacerts` when the image has a JDK or JRE.
+pub const JAVA_STEP_PATH: &str = "/usr/local/lib/puddle/java-trust.sh";
+
+/// The Java step script's text.
+pub const JAVA_STEP_SH: &str = include_str!("../guest/java-trust.sh");
+
 /// Hex digits of the fingerprint in a host certificate's file name: enough to never collide in
 /// one store set, short enough to read.
 const NAME_HEX: usize = 16;
@@ -90,7 +97,7 @@ impl GuestTrust {
     /// 2. Puddle's CA files ([`TrustBundle::guest_files`]);
     /// 3. the development certificate's system-store copy, if there is one;
     /// 4. [`EXTRA_CAS_PATH`];
-    /// 5. the step script at [`BUNDLE_STEP_PATH`] (mode `0755`);
+    /// 5. the step scripts at [`BUNDLE_STEP_PATH`] and [`JAVA_STEP_PATH`] (mode `0755`);
     /// 6. the development certificate's own files, if there is one: certificate, key (mode
     ///    `0600`) and step script.
     ///
@@ -121,13 +128,17 @@ impl GuestTrust {
         files.push(fixed(EXTRA_CAS_PATH, self.extra_cas().into_bytes()));
         let step = fixed(BUNDLE_STEP_PATH, BUNDLE_STEP_SH.as_bytes().to_vec());
         files.extend(step.with_mode(0o755).ok());
+        let java = fixed(JAVA_STEP_PATH, JAVA_STEP_SH.as_bytes().to_vec());
+        files.extend(java.with_mode(0o755).ok());
         files.extend(dev_rest);
         files
     }
 
-    /// `NODE_EXTRA_CA_CERTS` (the extra CAs only; Node keeps its own roots) and
-    /// `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE` (the full bundle: OpenSSL, Python,
-    /// requests, pip, curl). With a development certificate also its file paths, .NET's trust
+    /// `NODE_EXTRA_CA_CERTS` and `DENO_CERT` (the extra CAs only: Node and Deno keep their own
+    /// roots and add these) and `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`,
+    /// `PIP_CERT`, `GIT_SSL_CAINFO` (the full bundle, for tools that replace their roots:
+    /// OpenSSL, Python, requests, pip, curl, git). Java has no variable for this and gets the
+    /// CAs in its `cacerts` from the [`JAVA_STEP_PATH`] step. With a development certificate also its file paths, .NET's trust
     /// folder and no generated .NET certificate. Empty when there is nothing to add.
     #[must_use]
     pub fn env(&self) -> GuestEnv {
@@ -137,9 +148,12 @@ impl GuestTrust {
         }
         for (name, value) in [
             ("NODE_EXTRA_CA_CERTS", EXTRA_CAS_PATH),
+            ("DENO_CERT", EXTRA_CAS_PATH),
             ("SSL_CERT_FILE", CA_BUNDLE_PATH),
             ("REQUESTS_CA_BUNDLE", CA_BUNDLE_PATH),
             ("CURL_CA_BUNDLE", CA_BUNDLE_PATH),
+            ("PIP_CERT", CA_BUNDLE_PATH),
+            ("GIT_SSL_CAINFO", CA_BUNDLE_PATH),
         ] {
             // Fixed, valid names and values: can't fail.
             let _ = env.set(name, value);
@@ -151,14 +165,15 @@ impl GuestTrust {
     }
 
     /// The steps the boot plan runs at every boot, in order, after `update-ca-certificates`:
-    /// the one that builds [`CA_BUNDLE_PATH`] from the image's bundle, then (with a development
+    /// the one that builds [`CA_BUNDLE_PATH`] from the image's bundle, the Java one, then (with a development
     /// certificate) the one that sets up .NET. Empty when there is nothing to add.
     #[must_use]
     pub fn boot_steps(&self) -> Vec<GuestPath> {
         if self.is_empty() {
             return Vec::new();
         }
-        std::iter::once(path(BUNDLE_STEP_PATH))
+        [path(BUNDLE_STEP_PATH), path(JAVA_STEP_PATH)]
+            .into_iter()
             .chain(self.dev.as_ref().map(|_| GuestDevCert::step()))
             .collect()
     }
@@ -271,6 +286,7 @@ mod tests {
                 GUEST_BUNDLE_PATH,
                 EXTRA_CAS_PATH,
                 BUNDLE_STEP_PATH,
+                JAVA_STEP_PATH,
             ]
         );
         let extra = text(&files, EXTRA_CAS_PATH);
@@ -283,20 +299,39 @@ mod tests {
             .unwrap();
         assert_eq!(step.mode(), 0o755);
         assert_eq!(step.contents(), BUNDLE_STEP_SH.as_bytes());
+        let java = files
+            .iter()
+            .find(|f| f.path().as_str() == JAVA_STEP_PATH)
+            .unwrap();
+        assert_eq!(java.mode(), 0o755);
+        assert_eq!(java.contents(), JAVA_STEP_SH.as_bytes());
         assert!(
             files
                 .iter()
-                .filter(|f| f.path().as_str() != BUNDLE_STEP_PATH)
+                .filter(|f| ![BUNDLE_STEP_PATH, JAVA_STEP_PATH].contains(&f.path().as_str()))
                 .all(|f| f.mode() == 0o644)
         );
 
         let env = trust.env();
-        assert_eq!(env.get("NODE_EXTRA_CA_CERTS"), Some(EXTRA_CAS_PATH));
-        for name in ["SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"] {
+        // Tools that add to their built-in roots take the extra CAs only.
+        for name in ["NODE_EXTRA_CA_CERTS", "DENO_CERT"] {
+            assert_eq!(env.get(name), Some(EXTRA_CAS_PATH), "{name}");
+        }
+        // Tools that replace their roots take the full bundle.
+        for name in [
+            "SSL_CERT_FILE",
+            "REQUESTS_CA_BUNDLE",
+            "CURL_CA_BUNDLE",
+            "PIP_CERT",
+            "GIT_SSL_CAINFO",
+        ] {
             assert_eq!(env.get(name), Some(CA_BUNDLE_PATH), "{name}");
         }
-        assert_eq!(env.len(), 4);
-        assert_eq!(trust.boot_steps(), [path(BUNDLE_STEP_PATH)]);
+        assert_eq!(env.len(), 7);
+        assert_eq!(
+            trust.boot_steps(),
+            [path(BUNDLE_STEP_PATH), path(JAVA_STEP_PATH)]
+        );
         assert!(!trust.is_empty());
     }
 
@@ -306,7 +341,7 @@ mod tests {
             &CorporateRoots::default(),
             &TrustBundle::new().with(puddle_ca()),
         );
-        assert_eq!(only_ca.boot_steps().len(), 1);
+        assert_eq!(only_ca.boot_steps().len(), 2);
         assert_eq!(
             text(&only_ca.guest_files(), EXTRA_CAS_PATH)
                 .matches("BEGIN")
@@ -315,7 +350,7 @@ mod tests {
         );
         let only_host = GuestTrust::new(&corporate(&[root_der("Corp")]), &TrustBundle::new());
         let files = only_host.guest_files();
-        assert_eq!(files.len(), 3, "one root, extra-cas, step");
+        assert_eq!(files.len(), 4, "one root, extra-cas, two steps");
         assert!(!only_host.env().is_empty());
     }
 
@@ -370,13 +405,14 @@ mod tests {
                 "/usr/local/share/ca-certificates/puddle-dev/localhost.crt",
                 EXTRA_CAS_PATH,
                 BUNDLE_STEP_PATH,
+                JAVA_STEP_PATH,
                 "/etc/puddle/dev-cert/localhost.crt",
                 "/etc/puddle/dev-cert/localhost.key",
                 "/usr/local/lib/puddle/dev-cert.sh",
             ]
         );
         let modes: Vec<u32> = files.iter().map(GuestFile::mode).collect();
-        assert_eq!(modes, [0o644, 0o644, 0o755, 0o644, 0o600, 0o755]);
+        assert_eq!(modes, [0o644, 0o644, 0o755, 0o755, 0o644, 0o600, 0o755]);
         // The certificate is the trust anchor in the extra CAs, once.
         assert_eq!(text(&files, EXTRA_CAS_PATH), dev.cert_pem());
         assert!(
@@ -402,7 +438,11 @@ mod tests {
         let steps: Vec<String> = trust.boot_steps().iter().map(ToString::to_string).collect();
         assert_eq!(
             steps,
-            [BUNDLE_STEP_PATH, "/usr/local/lib/puddle/dev-cert.sh"]
+            [
+                BUNDLE_STEP_PATH,
+                JAVA_STEP_PATH,
+                "/usr/local/lib/puddle/dev-cert.sh"
+            ]
         );
     }
 

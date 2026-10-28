@@ -40,10 +40,12 @@ pub const MAX_SECRET_HOSTS: usize = 32;
 /// user's `JAVA_TOOL_OPTIONS`, `MAVEN_ARGS`, `GRADLE_USER_HOME` and `DOCKER_CONFIG` are not here
 /// because Puddle adds to them instead of replacing them. A test in `puddle-host` compares this
 /// list with what the guest is actually given.
-pub const PUDDLE_OWNED_NAMES: [&str; 18] = [
+pub const PUDDLE_OWNED_NAMES: [&str; 21] = [
     "CARGO_NET_GIT_FETCH_WITH_CLI",
     "CURL_CA_BUNDLE",
+    "DENO_CERT",
     "ELECTRON_GET_USE_PROXY",
+    "GIT_SSL_CAINFO",
     "GLOBAL_AGENT_HTTPS_PROXY",
     "GLOBAL_AGENT_HTTP_PROXY",
     "GLOBAL_AGENT_NO_PROXY",
@@ -52,6 +54,7 @@ pub const PUDDLE_OWNED_NAMES: [&str; 18] = [
     "NODE_EXTRA_CA_CERTS",
     "NODE_USE_ENV_PROXY",
     "NO_PROXY",
+    "PIP_CERT",
     "REQUESTS_CA_BUNDLE",
     "SSL_CERT_FILE",
     "YARN_HTTPS_PROXY",

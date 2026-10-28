@@ -74,8 +74,12 @@ hook_env victim-tests "$cargo" llvm-cov nextest --workspace $exclude --all-featu
     -E 'binary(git_env) | (package(puddle-workspace) & test(/^(delete_check_sh|clear_locks_sh)::/))' >"$tmp/tests.log" 2>&1 ||
     { cat "$tmp/tests.log" >&2; echo "git-env-test: the git tests failed under the hook variables" >&2; exit 1; }
 # A renamed binary or module would match nothing and pass silently: every one of the three must have run.
+# CARGO_TERM_COLOR=always (CI) makes nextest colour the binary id and the module apart, so the
+# escape sequences between `integration` and `delete_check_sh` would hide the name: match on plain text.
+esc=$(printf '\033')
+sed "s/$esc\\[[0-9;]*m//g" "$tmp/tests.log" >"$tmp/tests.plain.log"
 for bin in 'xtask::git_env' 'puddle-workspace::integration delete_check_sh::' 'puddle-workspace::integration clear_locks_sh::'; do
-    grep -q "PASS.*$bin" "$tmp/tests.log" || {
+    grep -q "PASS.*$bin" "$tmp/tests.plain.log" || {
         cat "$tmp/tests.log" >&2
         echo "git-env-test: no test of $bin ran" >&2
         exit 1

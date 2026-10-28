@@ -8,6 +8,7 @@
 )]
 #![allow(dead_code, reason = "each test binary uses some of the helpers")]
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use std::time::SystemTime;
@@ -20,9 +21,10 @@ use puddle_host::{
     GuestSettings, Host, HostConfig, HostError, HostOptions, HostPaths, Platform, RuntimeFactory,
     RuntimeInputs, START_STEPS, prepare,
 };
+use puddle_proxy::{BoxFuture, Resolver, SystemResolver};
 use puddle_runtime::{RuntimeLayout, RuntimeVersion};
 use puddle_secrets::MemoryStore;
-use puddle_types::WorkspaceName;
+use puddle_types::{DomainName, WorkspaceName};
 use puddle_upstream::{Discovery, FakeOs, Mode, ProxyConfig, ProxyRules};
 use puddle_vm_tests::{RuntimePair, Settings, VmEnv, test_owner};
 
@@ -79,6 +81,36 @@ impl RuntimeFactory for HarnessFactory {
     }
 }
 
+/// The host's resolver for a test with fake sites: their names do not exist here (only the fake
+/// company proxy knows them), and every other name goes to the system resolver. Without this the
+/// proxy asks the machine's real DNS about the fake names on every connect, and a runner whose
+/// resolver stalls for a few seconds stalls every connect with it.
+struct FakeNames {
+    names: Vec<String>,
+}
+
+impl Resolver for FakeNames {
+    fn resolve<'a>(
+        &'a self,
+        name: &'a DomainName,
+        port: u16,
+    ) -> BoxFuture<'a, std::io::Result<Vec<std::net::SocketAddr>>> {
+        if self
+            .names
+            .iter()
+            .any(|n| n.eq_ignore_ascii_case(name.as_str()))
+        {
+            return Box::pin(async {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "a fake site: only the company proxy knows it",
+                ))
+            });
+        }
+        SystemResolver.resolve(name, port)
+    }
+}
+
 /// `options` with the host's upstream route set to the company proxy `proxy` (the only thing that
 /// knows the fake hosts' names).
 pub(crate) fn through_company_proxy(mut options: HostOptions, proxy: &NameProxy) -> HostOptions {
@@ -132,7 +164,10 @@ pub(crate) async fn web_internet(
     let web = WebHost::start(names, web_options).await;
     let proxy = NameProxy::start(&[]).await;
     web.register(&proxy, names);
-    let options = through_company_proxy(options, &proxy);
+    let mut options = through_company_proxy(options, &proxy);
+    options.resolver = Some(Arc::new(FakeNames {
+        names: names.iter().map(|n| (*n).to_owned()).collect(),
+    }));
     let platform = platform_trusting([web.root()]);
     WebInternet {
         web,
@@ -150,7 +185,7 @@ pub(crate) struct VmHost {
     /// The host's data folder.
     pub(crate) root: std::path::PathBuf,
     /// Where the host keeps the values of secrets: never the machine's own credential store.
-    pub(crate) secrets: std::sync::Arc<MemoryStore>,
+    pub(crate) secrets: Arc<MemoryStore>,
 }
 
 /// The host configuration over `root`: what [`start_vm_host_with`] and the second process of the
@@ -220,7 +255,7 @@ pub(crate) async fn start_vm_host_platform(
         opened: std::sync::Mutex::new(None),
     };
     let prepared = prepare(config, platform).unwrap();
-    let secrets = std::sync::Arc::new(MemoryStore::new());
+    let secrets = Arc::new(MemoryStore::new());
     let mut options = options;
     options.secret_store = Some(secrets.clone());
     let host = Host::start(prepared, &factory, options)

@@ -884,6 +884,7 @@ async fn a_new_build_that_exits_before_it_started_is_dropped_for_the_previous_on
 async fn nothing_is_looked_for_or_switched_with_automatic_updates_off() {
     let r = running(fixture_updating(false, false), false).await;
     r.publish_newer(false);
+    // An absence window: several update intervals (`quick`) pass, and nothing may have been asked.
     tokio::time::sleep(Duration::from_millis(600)).await;
     // Only the first install's three requests: no look, no download.
     assert_eq!(r.service.requests(), 3);
@@ -916,6 +917,7 @@ async fn a_switch_with_nothing_staged_leaves_the_server_running() {
     let r = running(fixture(false), false).await;
     let _listener = r.confirmed().await;
     assert_eq!(r.control.switch().unwrap(), None);
+    // An absence window: a restart, had the switch caused one, would have started a second server by now.
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(!r.f.out.join("2.pid").exists());
     assert!(alive(&read(&r.f.out, "1.pid")));

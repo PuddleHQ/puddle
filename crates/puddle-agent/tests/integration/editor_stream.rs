@@ -6,12 +6,10 @@
 #![expect(
     clippy::panic,
     clippy::unwrap_used,
-    unreachable_pub,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
 
-#[expect(dead_code, reason = "shared harness; this test uses part of it")]
-mod common;
+use crate::common;
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

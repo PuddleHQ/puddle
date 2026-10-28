@@ -49,6 +49,7 @@ mod ifaddrs;
 pub mod merge_file;
 pub mod microsoft;
 pub mod oom;
+#[cfg(target_os = "linux")]
 pub mod origin;
 pub mod ports;
 pub mod serve;

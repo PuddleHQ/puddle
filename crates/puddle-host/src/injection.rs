@@ -842,18 +842,15 @@ mod tests {
         learned.learn(&host("pinned.example"));
         learned.learn(&host("pinned.example"));
         learned.learn(&host("other.example"));
-        let told = told(&events);
+        let learned_event = |h: &str| Event::PassThroughLearned {
+            workspace: ws.clone(),
+            host: h.to_owned(),
+        };
         assert_eq!(
-            told.iter()
-                .filter_map(|e| match e {
-                    Event::PassThroughLearned { workspace, host } =>
-                        Some((workspace.to_string(), host.clone())),
-                    _ => None,
-                })
-                .collect::<Vec<_>>(),
+            told(&events),
             [
-                ("alpha".to_owned(), "pinned.example".to_owned()),
-                ("alpha".to_owned(), "other.example".to_owned())
+                learned_event("pinned.example"),
+                learned_event("other.example")
             ],
             "each new host once, renewing says nothing"
         );

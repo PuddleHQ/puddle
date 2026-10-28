@@ -99,16 +99,17 @@ impl PassThrough {
         inner.cap = cap.max(1);
         let now = Instant::now();
         inner.seen.retain(|_, at| now.duration_since(*at) < ttl);
-        while inner.seen.len() > inner.cap {
-            let Some(oldest) = inner
+        let excess = inner.seen.len().saturating_sub(inner.cap);
+        if excess > 0 {
+            let mut by_age: Vec<(Instant, String)> = inner
                 .seen
                 .iter()
-                .min_by_key(|(_, at)| **at)
-                .map(|(name, _)| name.clone())
-            else {
-                break;
-            };
-            inner.seen.remove(&oldest);
+                .map(|(name, at)| (*at, name.clone()))
+                .collect();
+            by_age.sort();
+            for (_, name) in by_age.into_iter().take(excess) {
+                inner.seen.remove(&name);
+            }
         }
     }
 

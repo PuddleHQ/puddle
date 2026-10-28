@@ -375,6 +375,20 @@ async fn an_answer_about_another_build_or_without_a_usable_hash_is_refused() {
 }
 
 #[tokio::test]
+async fn staging_left_by_a_dead_attempt_is_replaced() {
+    let dir = tempfile::tempdir().unwrap();
+    let stale = builds(&dir).join(format!("{COMMIT}.partial"));
+    std::fs::create_dir_all(&stale).unwrap();
+    std::fs::write(stale.join("stale"), "x").unwrap();
+    let service = leak(Service::honest(good_tarball()));
+    let made = ensure_build(&service, PLATFORM, &builds(&dir))
+        .await
+        .unwrap();
+    assert!(!made.join("stale").exists());
+    assert!(made.join("bin/code-server").is_file());
+}
+
+#[tokio::test]
 async fn a_half_made_build_is_not_a_build() {
     let dir = tempfile::tempdir().unwrap();
     let build = builds(&dir).join(COMMIT);
@@ -471,6 +485,13 @@ async fn the_downloader_runs_curl_with_https_only_and_wget_when_there_is_no_curl
     let args = std::fs::read_to_string(dir.path().join("wlog")).unwrap();
     assert!(args.contains("--https-only"), "{args}");
     assert!(args.contains("--output-document\n-\n"), "{args}");
+
+    // A curl that cannot be run (not a missing one) is an error of its own, not a fall back.
+    let plain_file = dir.path().join("not-executable");
+    std::fs::write(&plain_file, "x").unwrap();
+    let broken = Downloader::with_programs(&plain_file, &wget);
+    let err = broken.text("https://update.test/y").await.unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{err}");
 
     // Neither: the message names the missing tools.
     let none = Downloader::with_programs(dir.path().join("no-curl"), dir.path().join("no-wget"));

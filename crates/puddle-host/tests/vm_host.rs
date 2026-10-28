@@ -2523,17 +2523,17 @@ async fn radar(tag: &str, terminate: bool, no_proxy: bool) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_radar_package_managers_cold_with_the_registries_decrypted() {
-    radar("radt", true, false).await;
+    Box::pin(radar("radt", true, false)).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_radar_package_managers_cold_with_the_registries_spliced() {
-    radar("rads", false, false).await;
+    Box::pin(radar("rads", false, false)).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_radar_package_managers_cold_with_no_proxy_setting_through_the_stub_dns() {
-    radar("radn", false, true).await;
+    Box::pin(radar("radn", false, true)).await;
 }
 
 /// The variable that turns [`vm_host_second_process_probe`] from a no-op into the second

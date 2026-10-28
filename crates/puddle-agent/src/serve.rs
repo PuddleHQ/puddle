@@ -86,15 +86,17 @@ async fn request_start(client: &mut TcpStream) -> Vec<u8> {
     seen
 }
 
-/// `first` with the origin header after its request line. A first line that is not an HTTP/1
-/// request line (the proxy would refuse it anyway) is returned as it is.
+/// `first` with the origin header after its request line. Only a `CONNECT` is marked: the proxy
+/// decides about decrypting at the tunnel, and a plain request is forwarded to its server, which
+/// must not see the header. Anything else is returned as it is.
 fn mark_request(first: &[u8]) -> Vec<u8> {
     let Some(end) = first.iter().position(|b| *b == b'\n') else {
         return first.to_vec();
     };
     let (line, rest) = first.split_at(end + 1);
     let text = line.trim_ascii_end();
-    if !(text.ends_with(b" HTTP/1.1") || text.ends_with(b" HTTP/1.0")) {
+    let http1 = text.ends_with(b" HTTP/1.1") || text.ends_with(b" HTTP/1.0");
+    if !(text.starts_with(b"CONNECT ") && http1) {
         return first.to_vec();
     }
     let mut out = line.to_vec();
@@ -139,9 +141,10 @@ mod tests {
             marked,
             b"CONNECT registry.example:443 HTTP/1.1\r\nx-puddle-origin: container\r\nHost: registry.example:443\r\n\r\n"
         );
-        let plain = mark_request(b"GET http://a.example/ HTTP/1.0\r\n\r\n");
-        assert!(
-            plain.starts_with(b"GET http://a.example/ HTTP/1.0\r\nx-puddle-origin: container\r\n")
+        // A bare line feed ends a request line too, and what follows the line is kept.
+        assert_eq!(
+            mark_request(b"CONNECT a.example:443 HTTP/1.0\nHost: a.example\n\n"),
+            b"CONNECT a.example:443 HTTP/1.0\nx-puddle-origin: container\r\nHost: a.example\n\n"
         );
     }
 
@@ -153,6 +156,8 @@ mod tests {
             b"\x16\x03\x01\x02\x00\n",
             b"SSH-2.0-OpenSSH_9.6\r\n",
             b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n",
+            // A plain request goes to its own server, which must not get the header.
+            b"GET http://a.example/ HTTP/1.1\r\nHost: a.example\r\n\r\n",
         ] {
             assert_eq!(mark_request(first), first);
         }

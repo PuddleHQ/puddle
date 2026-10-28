@@ -8,9 +8,10 @@
 //! [`ORIGIN_HEADER`]: [`CONTAINER`] on the `CONNECT`.
 //!
 //! The header only ever makes the proxy decrypt less: a marked connection is passed through unless
-//! its host needs a credential added. A guest that sets it wrongly avoids Puddle's decryption for
-//! its own connection, which it can already do by refusing the certificate, and gains no access:
-//! the rules, the audit and every credential still apply.
+//! its host needs a credential added. A guest that sets it itself only keeps its own connections
+//! from being decrypted, and gains no access: the host rules, the audit of the connection and every
+//! credential still apply (what decryption adds, the request line and per-request checks, is
+//! missing for that connection).
 
 /// The request header that says which kind of client opened the connection.
 pub const ORIGIN_HEADER: &str = "x-puddle-origin";
@@ -25,6 +26,5 @@ mod tests {
     #[test]
     fn the_header_name_is_lower_case_for_the_proxy_comparison() {
         assert_eq!(ORIGIN_HEADER, ORIGIN_HEADER.to_ascii_lowercase());
-        assert_eq!(CONTAINER, "container");
     }
 }

@@ -5,16 +5,17 @@
 //! capture rules redirect them in `prerouting`) or on the bridge's address, with a source address
 //! from the bridge's subnet. The guest's own processes have the address of the interface they left
 //! on, or loopback. So a source that none of the guest's interfaces has is a container's.
-//! A container that shares the guest's network (`--network host`) is not told apart: it is the
-//! guest's own client.
+//! A container that shares the guest's network (`--network host`), one reaching the agent over IPv6,
+//! and a rootless one whose traffic arrives from loopback (slirp4netns) are not told apart: they
+//! look like the guest's own clients.
 //!
 //! The proxy gets the answer as [`puddle_agent_proto::origin::ORIGIN_HEADER`] on the request.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 /// Whether `peer` is a client in a container, by the guest's interface addresses. A listing that
-/// fails counts every IPv4 peer as a container's: that costs decryption only, where decrypting a
-/// container's connection would make its tools fail.
+/// fails counts every IPv4 peer but loopback as a container's: that costs decryption only, where
+/// decrypting a container's connection would make its tools fail.
 #[must_use]
 pub fn from_container(peer: SocketAddr) -> bool {
     #[cfg(target_os = "linux")]
@@ -26,8 +27,8 @@ pub fn from_container(peer: SocketAddr) -> bool {
                 is_foreign(peer, &own)
             }
             Err(err) => {
-                tracing::warn!(error = %err, "listing the guest's addresses failed; connections count as containers'");
-                peer.is_ipv4()
+                tracing::debug!(error = %err, "listing the guest's addresses failed; connections count as containers'");
+                peer.is_ipv4() && !peer.ip().is_loopback()
             }
         }
     }

@@ -566,6 +566,12 @@ mod tests {
     }
 
     #[test]
+    fn the_hooks_show_in_debug_output_without_their_closures() {
+        let Fixture { windows, .. } = fixture();
+        assert!(format!("{windows:?}").contains("Hooks"));
+    }
+
+    #[test]
     fn a_workspace_window_has_a_label_the_main_window_never_has() {
         assert_eq!(label(&workspace("demo")), "vs-demo");
         assert!(is_sandbox_label("vs-demo"));

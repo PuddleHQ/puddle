@@ -13,6 +13,9 @@
 # store that already matches; a Java package update that rebuilds cacerts changes its checksum
 # and the import runs again.
 #
+# The first boot of an image with Java starts keytool (a JVM) once per certificate, a second or so
+# each; later boots skip a store that already matches.
+#
 # This step never fails the boot: a store that is read-only, locked with another password or
 # missing is reported on stdout and skipped. POSIX sh; needs awk and cksum.
 #
@@ -85,7 +88,7 @@ extra_sum=$(cksum <"$EXTRA" | cut -d' ' -f1)
 kt() { # keytool with the one store and password; $1 is the keytool, then its arguments
     bin=$1
     shift
-    "$bin" "$@" -keystore "$store" -storepass "$PASS" -J-Xshare:auto -J-XX:TieredStopAtLevel=1 2>"$tmp/err"
+    "$bin" "$@" -keystore "$store" -storepass "$PASS" -J-Xshare:auto -J-XX:TieredStopAtLevel=1 </dev/null 2>"$tmp/err"
 }
 
 : >"$tmp/seen"

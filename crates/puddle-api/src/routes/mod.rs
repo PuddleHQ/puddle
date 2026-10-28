@@ -83,23 +83,7 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(pending::get_pending))
         .routes(routes!(pending::approve))
         .routes(routes!(pending::deny))
-        .routes(routes!(rules::list_rules, rules::create_rule))
-        .routes(routes!(rules::delete_rule))
-        .routes(routes!(rules::set_rule_expiry))
-        .routes(routes!(
-            request_rules::list_request_rules,
-            request_rules::create_request_rule
-        ))
-        .routes(routes!(request_rules::delete_request_rule))
-        .routes(routes!(
-            rule_sets::list_rule_sets,
-            rule_sets::create_rule_set
-        ))
-        .routes(routes!(
-            rule_sets::update_rule_set,
-            rule_sets::delete_rule_set
-        ))
-        .routes(routes!(rule_sets::switch_rule_set))
+        .merge(rules_router())
         .routes(routes!(audit::audit))
         .routes(routes!(settings::get_global, settings::put_global))
         .routes(routes!(
@@ -171,6 +155,30 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
             identities::set_git_repo,
             identities::remove_git_repo
         ))
+}
+
+/// The rules: allow and deny rules, rules on method and path, and rule sets. A router of their own
+/// so the stack frame that builds the whole API stays small (the host starts on a 1 MiB stack).
+#[inline(never)]
+fn rules_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(rules::list_rules, rules::create_rule))
+        .routes(routes!(rules::delete_rule))
+        .routes(routes!(rules::set_rule_expiry))
+        .routes(routes!(
+            request_rules::list_request_rules,
+            request_rules::create_request_rule
+        ))
+        .routes(routes!(request_rules::delete_request_rule))
+        .routes(routes!(
+            rule_sets::list_rule_sets,
+            rule_sets::create_rule_set
+        ))
+        .routes(routes!(
+            rule_sets::update_rule_set,
+            rule_sets::delete_rule_set
+        ))
+        .routes(routes!(rule_sets::switch_rule_set))
 }
 
 /// The upload of the user's own app icon: the one route whose body may be a few megabytes.

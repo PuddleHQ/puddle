@@ -32,7 +32,7 @@ went over every waiting frame for each frame received, so a reader that fell a w
 frames of 8 KiB) made each new frame cost thousands of steps, and a gibibyte down to a one-vCPU guest
 took 30 s against 5 s up. Regression tests:
 
-- `crates/puddle-agent/tests/relay.rs`: `a_client_that_stops_reading_does_not_stall_the_other_connections_of_its_session`
+- `crates/puddle-agent/tests/integration/relay.rs`: `a_client_that_stops_reading_does_not_stall_the_other_connections_of_its_session`
 - `crates/puddle-agent-proto/tests/yamux_window.rs`: `a_stream_sent_past_its_window_while_unread_is_reset_and_the_session_goes_on`,
   `a_stream_holding_a_full_window_and_a_close_while_unread_still_reads_to_the_end` and
   `a_window_of_small_frames_held_for_a_late_reader_moves_in_linear_time`
@@ -42,7 +42,7 @@ took 30 s against 5 s up. Regression tests:
 product's own crates and move 40 MiB through a half-closed connection:
 
 - `crates/puddle-proxy/tests/terminate_suite/tunnel_half_close.rs` (the proxy's spliced tunnel)
-- `crates/puddle-agent/tests/relay.rs`: `a_client_that_half_closes_still_gets_a_download_larger_than_the_stream_window`
+- `crates/puddle-agent/tests/integration/relay.rs`: `a_client_that_half_closes_still_gets_a_download_larger_than_the_stream_window`
   and `a_server_that_half_closes_still_gets_an_upload_larger_than_the_stream_window` (the guest agent)
 
 **Removal:** see `NOTICE`. When it is time, delete this directory and the patch entry, run every

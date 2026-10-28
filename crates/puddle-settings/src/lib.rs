@@ -71,7 +71,9 @@ mod workspace;
 pub use consent::{Consent, ConsentKind, Consents, TermsVersion, UnixMillis};
 pub use document::{Loaded, SettingsError};
 pub use first_run::FirstRun;
-pub use global::{GLOBAL_SCHEMA_VERSION, GlobalSettings, UiPrefs, VsCodeServer};
+pub use global::{
+    GLOBAL_SCHEMA_VERSION, GlobalSettings, MICROSOFT_TERMS_VERSION, UiPrefs, VsCodeServer,
+};
 pub use layer::{LocalToggles, WorkspaceLayer};
 pub use resolve::{Effective, EffectiveToggles, Resolved, Source, resolve};
 pub use values::{

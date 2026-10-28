@@ -93,6 +93,7 @@
   let trustOpen = $state(false);
   let popupOpen = $state(false);
   let popupBusy = $state(false);
+  let withdrawing = $state(false);
   let popupError = $state<string | null>(null);
   let version = $state<string | null>(null);
   let versionAsked = $state(false);
@@ -303,6 +304,21 @@
       toasts.push(microsoftChosenToast(telemetry), { ms: 12_000 });
     } else {
       popupError = result.message;
+    }
+  }
+
+  async function withdraw() {
+    withdrawing = true;
+    problem = null;
+    const result = await store.withdrawMicrosoft();
+    withdrawing = false;
+    if (result.ok) {
+      // The API put the server choice back to code-server: no draft of it remains.
+      draft = { ...draft, server: {} };
+      saved =
+        "Consent withdrawn. Workspaces use code-server when they next start.";
+    } else {
+      problem = result.message;
     }
   }
 
@@ -731,6 +747,12 @@
               <p class="desc">
                 You accepted Microsoft's terms on {when(consent.at)}.
               </p>
+              <button
+                type="button"
+                class="btn"
+                disabled={withdrawing}
+                onclick={() => void withdraw()}>Withdraw consent</button
+              >
             {/if}
           </div>
           <select

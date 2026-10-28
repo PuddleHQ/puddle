@@ -858,6 +858,62 @@ describe("Microsoft's server", () => {
     expect(api.consent.state).toBe("granted");
   });
 
+  it("withdraws the consent: records a decline, goes back to code-server and asks again next time", async () => {
+    api.consent = {
+      state: "granted",
+      at: 1_700_000_000_000,
+      terms_version: MS_TERMS_VERSION,
+    };
+    api.vscode = { server: "microsoft", telemetry: true, auto_update: null };
+    await open();
+    expect(screen.getByLabelText("Server")).toHaveValue("microsoft");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Withdraw consent" }),
+    );
+    await screen.findByText(/Consent withdrawn/);
+    expect(api.consent).toMatchObject({
+      state: "declined",
+      terms_version: MS_TERMS_VERSION,
+    });
+    expect(api.vscode.server).toBe("code_server");
+    // The telemetry choice stays; the screen shows what the API holds now.
+    expect(api.vscode.telemetry).toBe(true);
+    expect(screen.getByLabelText("Server")).toHaveValue("code_server");
+    expect(
+      screen.queryByRole("button", { name: "Withdraw consent" }),
+    ).toBeNull();
+    expect(screen.queryByText(/You accepted Microsoft's terms/)).toBeNull();
+    // Choosing Microsoft's server again shows the popup: nothing is assumed from before.
+    await choose("Server", "microsoft");
+    expect(await screen.findByRole("dialog")).toBeVisible();
+  });
+
+  it("offers no withdrawal before the terms were accepted", async () => {
+    await open();
+    expect(
+      screen.queryByRole("button", { name: "Withdraw consent" }),
+    ).toBeNull();
+  });
+
+  it("says when Puddle refuses the withdrawal and keeps the consent", async () => {
+    api.consent = {
+      state: "granted",
+      at: 1_700_000_000_000,
+      terms_version: MS_TERMS_VERSION,
+    };
+    await open();
+    api.refuse.set("PUT /api/consents/{kind}", {
+      status: 500,
+      error: "internal",
+      message: "disk is full",
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Withdraw consent" }),
+    );
+    expect(await screen.findByText(/disk is full/)).toBeVisible();
+    expect(api.consent.state).toBe("granted");
+  });
+
   it("asks again when the terms changed since the user agreed", async () => {
     api.consent = { state: "granted", at: 1, terms_version: "older-terms" };
     await open();

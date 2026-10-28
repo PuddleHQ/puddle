@@ -7,6 +7,9 @@ use serde_json::{Value, json};
 
 use crate::common::{START_MS, start};
 
+/// The terms the enable popup shows (`puddle_settings::MICROSOFT_TERMS_VERSION`).
+const MS_TERMS: &str = puddle_settings::MICROSOFT_TERMS_VERSION;
+
 fn null_layer() -> Value {
     json!({
         "memory": null,
@@ -345,7 +348,7 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
     );
 
     // A decline is not consent either.
-    let declined = json!({"decision": "declined", "terms_version": "https://example.test/terms"});
+    let declined = json!({"decision": "declined", "terms_version": MS_TERMS});
     api.send("PUT", "/api/consents/vscode_server", Some(&declined))
         .await;
     assert_eq!(
@@ -353,7 +356,14 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
         422
     );
 
-    let granted = json!({"decision": "granted", "terms_version": "https://example.test/terms"});
+    // Nor is an agreement to other terms than the ones the popup shows today.
+    let other = json!({"decision": "granted", "terms_version": "https://example.test/terms"});
+    api.send("PUT", "/api/consents/vscode_server", Some(&other))
+        .await;
+    let reply = api.send("PUT", "/api/settings", Some(&ms)).await;
+    assert_eq!(reply.status, 422, "{}", reply.body);
+
+    let granted = json!({"decision": "granted", "terms_version": MS_TERMS});
     api.send("PUT", "/api/consents/vscode_server", Some(&granted))
         .await;
     let body = json!({
@@ -429,6 +439,78 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
 
 /// A settings document a Puddle from before the rename left behind: its defaults show under the new
 /// name and the document is written back in the current shape.
+/// Withdrawing the consent for Microsoft's server also takes the server choice back to
+/// code-server in the same save, so the stored settings never say "Microsoft" without a consent.
+#[tokio::test]
+async fn withdrawing_the_microsoft_consent_returns_to_code_server_and_closes_its_hosts() {
+    let api = start().await;
+    let granted = json!({"decision": "granted", "terms_version": MS_TERMS});
+    api.send("PUT", "/api/consents/vscode_server", Some(&granted))
+        .await;
+    let chosen = json!({"vscode_server": {"server": "microsoft", "telemetry": true}});
+    assert_eq!(
+        api.send("PUT", "/api/settings", Some(&chosen)).await.status,
+        200
+    );
+
+    // The consent for another purpose changes nothing about the server.
+    let telemetry = json!({"decision": "declined", "terms_version": "t1"});
+    api.send("PUT", "/api/consents/telemetry", Some(&telemetry))
+        .await;
+    assert_eq!(
+        api.get("/api/settings").await.json()["vscode_server"]["server"],
+        "microsoft"
+    );
+
+    let withdrawn = json!({"decision": "declined", "terms_version": MS_TERMS});
+    let reply = api
+        .send("PUT", "/api/consents/vscode_server", Some(&withdrawn))
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(reply.json()["vscode_server"]["state"], "declined");
+    let settings = api.get("/api/settings").await.json();
+    assert_eq!(settings["vscode_server"]["server"], "code_server");
+    // The popup's telemetry choice is the user's own and stays for a later grant.
+    assert_eq!(settings["vscode_server"]["telemetry"], true);
+    let stored = api.settings.load_global().unwrap().unwrap();
+    assert_eq!(stored["vscode_server"]["server"], "code_server");
+    assert_eq!(stored["consents"]["vscode_server"]["state"], "declined");
+    // Choosing Microsoft's server again is refused until the user agrees again.
+    assert_eq!(
+        api.send("PUT", "/api/settings", Some(&chosen)).await.status,
+        422
+    );
+    api.running.shutdown().await;
+}
+
+/// A record for other terms than today's does not cover the server, so a Microsoft choice does
+/// not survive it; the same terms recorded again keep the choice.
+#[tokio::test]
+async fn a_grant_of_other_terms_does_not_keep_a_microsoft_choice() {
+    let api = start().await;
+    let granted = json!({"decision": "granted", "terms_version": MS_TERMS});
+    api.send("PUT", "/api/consents/vscode_server", Some(&granted))
+        .await;
+    let chosen = json!({"vscode_server": {"server": "microsoft"}});
+    api.send("PUT", "/api/settings", Some(&chosen)).await;
+    // The same terms granted again (the popup after a reinstall) keep the choice.
+    api.send("PUT", "/api/consents/vscode_server", Some(&granted))
+        .await;
+    assert_eq!(
+        api.get("/api/settings").await.json()["vscode_server"]["server"],
+        "microsoft"
+    );
+    // A record for other terms does not cover it.
+    let other = json!({"decision": "granted", "terms_version": "https://example.test/terms"});
+    api.send("PUT", "/api/consents/vscode_server", Some(&other))
+        .await;
+    assert_eq!(
+        api.get("/api/settings").await.json()["vscode_server"]["server"],
+        "code_server"
+    );
+    api.running.shutdown().await;
+}
+
 #[tokio::test]
 async fn global_settings_stored_under_the_old_name_are_read_and_rewritten() {
     let api = start().await;

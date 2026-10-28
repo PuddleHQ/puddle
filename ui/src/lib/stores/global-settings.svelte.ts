@@ -90,6 +90,28 @@ export class GlobalSettings {
     });
   }
 
+  /**
+   * Withdraws the agreement to Microsoft's terms: records a decline for the terms shown. The API
+   * also takes the server choice back to code-server in the same save, so the settings are read
+   * again; the server's telemetry and update choices stay. Takes effect when a workspace next starts.
+   */
+  withdrawMicrosoft(): Promise<SaveResult> {
+    return this.#serial(async () => {
+      try {
+        const { data, error } = await this.#api.PUT("/api/consents/{kind}", {
+          params: { path: { kind: "vscode_server" } },
+          body: { decision: "declined", terms_version: MS_TERMS_VERSION },
+        });
+        if (!data) return refused(error?.message);
+        this.consents = data;
+      } catch {
+        return unreachable();
+      }
+      await this.load(true);
+      return { ok: true };
+    });
+  }
+
   #serial<T>(run: () => Promise<T>): Promise<T> {
     const next = this.#queue.then(run, run);
     this.#queue = next.catch(() => undefined);

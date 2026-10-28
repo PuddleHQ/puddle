@@ -503,6 +503,7 @@
           "consents"
         ],
         "summary": "Records the user's answer to a consent prompt, with the terms version shown. Puddle stamps\nthe time.",
+        "description": "An answer that leaves Microsoft's server chosen without a consent covering today's terms (a\ndecline, which is how the user withdraws it, or a record for other terms) also takes the\nserver choice back to code-server, in the same save. The server's telemetry and update\noptions stay as the user set them.",
         "operationId": "put_consent",
         "parameters": [
           {

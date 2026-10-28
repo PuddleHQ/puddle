@@ -98,6 +98,10 @@ export interface paths {
         /**
          * Records the user's answer to a consent prompt, with the terms version shown. Puddle stamps
          *     the time.
+         * @description An answer that leaves Microsoft's server chosen without a consent covering today's terms (a
+         *     decline, which is how the user withdraws it, or a record for other terms) also takes the
+         *     server choice back to code-server, in the same save. The server's telemetry and update
+         *     options stay as the user set them.
          */
         put: operations["put_consent"];
         post?: never;

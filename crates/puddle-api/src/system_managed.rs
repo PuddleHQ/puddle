@@ -3,7 +3,7 @@
 //! Derived from the settings here and handed to the store, at start and after every settings
 //! or consent change, so the allows follow the choices that justify them.
 
-use puddle_settings::{Consent, ConsentKind, GlobalSettings, ServerChoice};
+use puddle_settings::{GlobalSettings, ServerChoice};
 use puddle_store::{SystemPlan, SystemReason};
 use puddle_types::{Problem, WorkspaceName};
 
@@ -15,8 +15,8 @@ use crate::routes::settings::{load_global, load_workspace};
 
 /// The System managed reasons for a setup.
 ///
-/// - The browser editor's server is a global choice: Microsoft's server (only with the
-///   consent granted) gives Microsoft's download and Marketplace hosts to every workspace; the
+/// - The browser editor's server is a global choice: Microsoft's server (only with a consent
+///   that covers today's terms) gives Microsoft's download and Marketplace hosts to every workspace; the
 ///   bundled code-server gives Open VSX.
 /// - `direct_ssh`: the workspaces with direct SSH on, which get Microsoft's hosts for themselves
 ///   (desktop VS Code installs Microsoft's server and extensions there).
@@ -25,17 +25,12 @@ use crate::routes::settings::{load_global, load_workspace};
 #[must_use]
 pub(crate) fn plan(global: &GlobalSettings, direct_ssh: &[WorkspaceName]) -> SystemPlan {
     let mut plan = SystemPlan::default();
-    let consented = matches!(
-        global.consents.get(ConsentKind::VsCodeServer),
-        Consent::Granted { .. }
-    );
-    match global.vscode_server.server() {
-        ServerChoice::Microsoft if consented => {
+    match global.editor_server() {
+        ServerChoice::Microsoft => {
             plan.everywhere.insert(SystemReason::MicrosoftServer);
         }
-        // Microsoft's server chosen without consent never runs: the API refuses the choice, so
-        // a document that has it anyway allows nothing.
-        ServerChoice::Microsoft => {}
+        // Includes Microsoft's server chosen without a consent that covers today's terms: the
+        // editor runs code-server then, so it gets Open VSX and Microsoft's hosts stay closed.
         ServerChoice::CodeServer => {
             plan.everywhere.insert(SystemReason::CodeServer);
         }
@@ -114,7 +109,9 @@ const PROBLEM_KEY: &str = "system-managed";
 
 #[cfg(test)]
 mod tests {
-    use puddle_settings::{TermsVersion, UnixMillis};
+    use puddle_settings::{
+        Consent, ConsentKind, MICROSOFT_TERMS_VERSION, TermsVersion, UnixMillis,
+    };
 
     use super::*;
 
@@ -126,7 +123,7 @@ mod tests {
                 ConsentKind::VsCodeServer,
                 Consent::Granted {
                     at: UnixMillis(1),
-                    terms_version: TermsVersion::new("t1").unwrap(),
+                    terms_version: TermsVersion::new(MICROSOFT_TERMS_VERSION).unwrap(),
                 },
             );
         }
@@ -150,7 +147,26 @@ mod tests {
             with.everywhere.into_iter().collect::<Vec<_>>(),
             [SystemReason::MicrosoftServer]
         );
-        assert_eq!(plan(&microsoft(false), &[]), SystemPlan::default());
+        // Chosen without a consent: the editor runs code-server, so that is what is allowed.
+        assert_eq!(
+            plan(&microsoft(false), &[]),
+            plan(&GlobalSettings::default(), &[])
+        );
+    }
+
+    #[test]
+    fn r41_a_consent_to_other_terms_does_not_open_microsofts_hosts() {
+        let mut global = microsoft(true);
+        global.consents.set(
+            ConsentKind::VsCodeServer,
+            Consent::Granted {
+                at: UnixMillis(1),
+                terms_version: TermsVersion::new("https://example.test/older-terms").unwrap(),
+            },
+        );
+        let plan = plan(&global, &[]);
+        assert!(!plan.everywhere.contains(&SystemReason::MicrosoftServer));
+        assert!(plan.everywhere.contains(&SystemReason::CodeServer));
     }
 
     #[test]

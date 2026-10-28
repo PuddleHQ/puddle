@@ -185,8 +185,15 @@ async fn a_new_agent_leaves_a_running_server_alone_and_takes_over_when_it_is_gon
     let port = f.config.editor.as_ref().unwrap().server.port;
     // Something answers on the port: the server an earlier agent left behind.
     let occupant = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+    occupant.set_nonblocking(true).unwrap();
     let _agent = Agent::start(f.config.clone()).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(700)).await;
+    // The agent's own look at the port is the signal; the short wait after it is for a start
+    // that would follow a look that found the port free (a child process, a few ms).
+    until("the agent to look at the port", || {
+        occupant.accept().is_ok()
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(
         !f.out.join("1.pid").exists(),
         "a second server must not start on a taken port"

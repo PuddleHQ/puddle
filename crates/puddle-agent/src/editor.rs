@@ -299,6 +299,24 @@ async fn port_taken(port: u16) -> bool {
         .is_ok()
 }
 
+/// Returns once `taken` says nothing answers on `port` (the probe is asked every [`PORT_POLL`]).
+async fn wait_until_free<Fut>(port: u16, mut taken: impl FnMut(u16) -> Fut)
+where
+    Fut: Future<Output = bool>,
+{
+    let mut warned = false;
+    while taken(port).await {
+        if !warned {
+            tracing::warn!(
+                port,
+                "the editor port is taken (by a server an earlier agent started?); waiting for it to be free"
+            );
+            warned = true;
+        }
+        tokio::time::sleep(PORT_POLL).await;
+    }
+}
+
 async fn start_once(
     config: &EditorConfig,
     launch: &Launch,
@@ -306,17 +324,7 @@ async fn start_once(
     if config.server.kind == ServerKind::CodeServer {
         prepare(&config.server)?;
     }
-    let mut warned = false;
-    while port_taken(config.server.port).await {
-        if !warned {
-            tracing::warn!(
-                port = config.server.port,
-                "the editor port is taken (by a server an earlier agent started?); waiting for it to be free"
-            );
-            warned = true;
-        }
-        tokio::time::sleep(PORT_POLL).await;
-    }
+    wait_until_free(config.server.port, port_taken).await;
     let password = if let Some(password) = existing_password(&config.password_file) {
         password
     } else {
@@ -407,6 +415,52 @@ mod tests {
         // A server told of no file never looks.
         let plain = EditorServer::new("/d", "/workspaces/a", 300);
         assert_eq!(target(&plain), OsString::from("/workspaces/a"));
+    }
+
+    /// A probe that says "taken" until `free` is set, counting how often it was asked.
+    fn probe(
+        asked: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        free: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> impl FnMut(u16) -> std::future::Ready<bool> {
+        use std::sync::atomic::Ordering::SeqCst;
+        move |_| {
+            asked.fetch_add(1, SeqCst);
+            std::future::ready(!free.load(SeqCst))
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_taken_port_is_asked_about_again_and_again_until_it_is_free() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+        let (asked, free) = (
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let waiting = tokio::spawn(wait_until_free(
+            41337,
+            probe(Arc::clone(&asked), Arc::clone(&free)),
+        ));
+        // Ten poll intervals with the port taken: still waiting, and it kept asking.
+        for _ in 0..10 {
+            tokio::time::advance(PORT_POLL).await;
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            !waiting.is_finished(),
+            "it went on while the port was taken"
+        );
+        assert!(
+            asked.load(SeqCst) >= 10,
+            "asked {} times",
+            asked.load(SeqCst)
+        );
+        free.store(true, SeqCst);
+        tokio::time::advance(PORT_POLL).await;
+        tokio::time::timeout(PORT_POLL, waiting)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[test]

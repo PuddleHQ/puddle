@@ -20,8 +20,9 @@
 //!   them to the proxy by name, installs and guards the rules that do it, and fails other UDP at
 //!   once ([`capture`]).
 //!
-//! - runs the browser editor's server (code-server, read-only from the host) and keeps it running
-//!   ([`editor`]), when the host asks.
+//! - runs the browser editor's server and keeps it running ([`editor`]), when the host asks:
+//!   code-server (read-only from the host), or Microsoft's own server, which the agent downloads
+//!   onto the workspace volume first ([`microsoft`]).
 //!
 //! It also applies merged guest files for the boot hook ([`merge_file`]) and is the `ProxyCommand`
 //! of the guest's `ssh` ([`connect`]), which today only refuses: SSH is not supported yet.
@@ -46,6 +47,7 @@ pub mod host_streams;
 #[cfg(target_os = "linux")]
 mod ifaddrs;
 pub mod merge_file;
+pub mod microsoft;
 pub mod oom;
 pub mod ports;
 pub mod serve;

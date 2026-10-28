@@ -21,7 +21,7 @@
 //! | `PUDDLE_AGENT_PORTS_POLL_MS` | `1000` | how often they are read |
 //! | `PUDDLE_AGENT_DNS` | `off` | the stub DNS server for tools that ignore the proxy settings: `on` (`198.18.0.1:53`), `off`, or `<ipv4>:<port>`. Binds exactly that address, retrying until an interface has it |
 //! | `PUDDLE_AGENT_DNS_TABLE` | `/run/puddle/dns-table` | where the stub keeps its name ⇄ address table across restarts; `off` keeps none |
-//! | `PUDDLE_AGENT_EDITOR_DIR` (+ `_PORT`, `_DATA`, `_FOLDER`, `_GRACE`) | unset | the browser editor's server: the release folder switches it on; the rest are in `puddle_agent_proto::editor` |
+//! | `PUDDLE_AGENT_EDITOR_DIR` (+ `_PORT`, `_DATA`, `_FOLDER`, `_GRACE`) | unset | the browser editor's server: the release folder switches it on; the rest (`_KIND` for Microsoft's server, `_TELEMETRY`) are in `puddle_agent_proto::editor` |
 //! | `PUDDLE_AGENT_EDITOR_PASSWORD_FILE` | `/run/puddle/editor-password` | where the server's password is written |
 //! | `PUDDLE_AGENT_CAPTURE` | `off` | transparent capture for tools that ignore the proxy settings: `on` installs the redirect rules, keeps them in place and listens for the redirected connections; it needs the stub DNS (`PUDDLE_AGENT_DNS` set to an address, or unset, which then means `on`), and `PUDDLE_AGENT_DNS=off` with it is an error. Linux guest only |
 //! | `PUDDLE_AGENT_CAPTURE_PORT` | `3129` | the port redirected connections arrive on (all addresses: containers' connections arrive on the bridge address) |

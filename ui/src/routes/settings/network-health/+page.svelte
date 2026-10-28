@@ -42,7 +42,7 @@
 
 <div class="head">
   <div>
-    <p class="crumb"><a href="/settings#s-net">&larr; Settings</a></p>
+    <p class="crumb"><a href="/settings#s-net">Settings</a> /</p>
     <h1 bind:this={heading} tabindex="-1">Network health</h1>
     <p class="sub">
       How Puddle reaches the internet from this computer: the proxy it found,

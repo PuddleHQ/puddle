@@ -28,7 +28,7 @@ use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 
-use super::{Guest, LOCAL, Pki, TlsStream};
+use super::{Guest, LOCAL, Pki, StreamHandle, TlsStream};
 
 pub(crate) type BoxError = Box<dyn std::error::Error + Send + Sync>;
 pub(crate) type Reply = Response<UnsyncBoxBody<Bytes, BoxError>>;
@@ -361,6 +361,25 @@ impl Guest {
     /// `CONNECT authority`, a TLS handshake offering `alpn`, then an HTTP/2 client on it.
     pub(crate) async fn h2(&mut self, authority: &str, alpn: &[&[u8]]) -> H2Guest {
         let client = self.tls_with(authority, None, alpn, true).await.unwrap();
+        assert_eq!(
+            client.alpn.as_deref(),
+            Some(&b"h2"[..]),
+            "h2 was negotiated"
+        );
+        Self::h2_over(client).await
+    }
+
+    /// As [`Self::h2`], on a `CONNECT` that has been answered already: a test can keep the proxy's
+    /// policy decision (which runs on the blocking pool) out of a window on a paused clock.
+    pub(crate) async fn h2_after_connect(
+        &self,
+        reader: BufReader<StreamHandle>,
+        authority: &str,
+    ) -> H2Guest {
+        let client = self
+            .tls_over(reader, authority, None, &[b"h2"], true)
+            .await
+            .unwrap();
         assert_eq!(
             client.alpn.as_deref(),
             Some(&b"h2"[..]),

@@ -78,6 +78,29 @@ async fn until(what: &str, mut done: impl FnMut() -> bool) {
     }
 }
 
+/// A timeout for a hang inside a [`paused`] window: virtual, so it costs nothing, and far longer
+/// than any limit under test, so a jump of the clock cannot reach it before the limit does.
+const FAR: Duration = Duration::from_secs(600);
+
+/// Runs `window` with the clock paused, so a limit that fires after seconds fires at once, and
+/// resumes it afterwards, also when `window` panics. Only for a window whose expected result is
+/// the limit firing: a paused clock jumps to the next timer whenever the runtime has no task to
+/// run, even while loopback data is on its way or the blocking pool is at work (the policy and the
+/// audit log run there), so it cannot show that data arrives before a limit, and the `CONNECT` and
+/// the audit read stay outside it. `pause` needs the current-thread runtime that `#[tokio::test]`
+/// gives.
+async fn paused<T>(window: impl Future<Output = T>) -> T {
+    struct Resume;
+    impl Drop for Resume {
+        fn drop(&mut self) {
+            tokio::time::resume();
+        }
+    }
+    tokio::time::pause();
+    let _resume = Resume;
+    window.await
+}
+
 fn reasons(events: &[ConnectionEvent]) -> Vec<ConnectionReason> {
     events.iter().map(|event| event.reason).collect()
 }
@@ -145,11 +168,14 @@ async fn a_stream_over_the_workspace_budget_is_refused_and_a_finished_one_gives_
 #[tokio::test]
 async fn sockets_of_the_http11_pool_count_against_the_workspace_connection_limit() {
     let pki = Pki::new();
+    // The slow requests are answered when the test lets them go, not after a time.
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let held = Arc::clone(&gate);
     let server = FakeServer::tls(
         pki.server_config("bound.test", Flaw::None),
-        Arc::new(|request| {
+        Arc::new(move |request| {
             if request.target == "/slow" {
-                Reply::ok("slow").after(Duration::from_secs(4))
+                Reply::ok("slow").held_by(&held)
             } else {
                 Reply::ok("quick")
             }
@@ -188,6 +214,7 @@ async fn sockets_of_the_http11_pool_count_against_the_workspace_connection_limit
     assert_eq!(refused.status, 503, "{refused:?}");
     assert_eq!(refused.header("x-puddle-blocked"), Some("connection_limit"));
     assert_eq!(server.accepted(), 3, "no fourth socket was opened");
+    gate.add_permits(3);
     for task in slow {
         assert_eq!(task.await.unwrap(), 200);
     }
@@ -239,6 +266,8 @@ async fn a_stream_that_is_never_polled_ends_its_connection_and_the_audit_says_wh
     tls.write_all(&frame(1, 0x4 | 0x1, 1, &get_block(b"/big")))
         .await
         .unwrap();
+    // Not on a paused clock: it would jump to the sweep before the upstream body has arrived, and
+    // the body would then be polled and reset instead of left unpolled.
     let started = Instant::now();
     let (seen, closed) = frames_until_end(&mut tls, Duration::from_secs(40)).await;
     assert!(closed, "the connection was never ended: {seen:?}");
@@ -292,9 +321,9 @@ async fn a_peer_that_ignores_the_shutdown_is_dropped_after_the_grace() {
         .build();
     let mut guest = rig.guest().await;
     let mut tls = raw(&mut guest).await;
-    let started = Instant::now();
+    let started = tokio::time::Instant::now();
     // Acknowledges SETTINGS and nothing else: the PING that follows the GOAWAY stays unanswered.
-    let (seen, closed) = frames_until_end(&mut tls, Duration::from_secs(30)).await;
+    let (seen, closed) = paused(frames_until_end(&mut tls, FAR)).await;
     assert!(closed, "{seen:?}");
     assert!(
         seen.iter().any(|(kind, ..)| *kind == 7),
@@ -346,11 +375,11 @@ async fn a_stream_queued_behind_the_servers_stream_limit_is_answered_after_the_h
     })
     .await;
     // The second stream has a body that is still being sent, so only its start can be waited for.
-    let asked = Instant::now();
-    let got = tokio::time::timeout(
-        Duration::from_secs(15),
+    let asked = tokio::time::Instant::now();
+    let got = paused(tokio::time::timeout(
+        FAR,
         client.request("POST", "bound.test", "/queued", &[], open_body()),
-    )
+    ))
     .await
     .expect("the queued stream was never answered");
     assert_eq!(got.status, 504);
@@ -425,10 +454,12 @@ async fn streams_asking_for_a_dead_server_share_one_attempt() {
         .build();
     let mut guest = rig.guest().await;
     // The handshake's own attempt fails after the TLS timeout; the first stream is told why.
-    let client = guest.h2("bound.test:443", &[b"h2"]).await;
+    let (code, reader) = guest.connect_to("bound.test:443").await;
+    assert_eq!(code, 200);
+    let client = paused(Box::pin(guest.h2_after_connect(reader, "bound.test:443"))).await;
     assert_eq!(dead.accepted(), 1);
-    let asked = Instant::now();
-    let statuses = concurrent_gets(&client, 5).await;
+    let asked = tokio::time::Instant::now();
+    let statuses = paused(concurrent_gets(&client, 5)).await;
     assert_eq!(statuses, [504; 5]);
     assert!(
         asked.elapsed() < Duration::from_millis(3500),
@@ -441,7 +472,7 @@ async fn streams_asking_for_a_dead_server_share_one_attempt() {
         "one attempt for all five streams, besides the handshake's"
     );
     // The failure is not remembered: the next stream tries again.
-    assert_eq!(concurrent_gets(&client, 1).await, [504]);
+    assert_eq!(paused(concurrent_gets(&client, 1)).await, [504]);
     assert_eq!(dead.accepted(), 3);
 }
 
@@ -484,10 +515,12 @@ async fn a_stream_waiting_for_another_streams_attempt_gives_up_after_the_head_ti
         .config(config)
         .build();
     let mut guest = rig.guest().await;
-    let client = guest.h2("bound.test:443", &[b"h2"]).await;
+    let (code, reader) = guest.connect_to("bound.test:443").await;
+    assert_eq!(code, 200);
+    let client = paused(Box::pin(guest.h2_after_connect(reader, "bound.test:443"))).await;
     // One stream takes the handshake's failure, one makes the attempt (3 s), one waits for it.
-    let asked = Instant::now();
-    assert_eq!(concurrent_gets(&client, 3).await, [503, 504, 504]);
+    let asked = tokio::time::Instant::now();
+    assert_eq!(paused(concurrent_gets(&client, 3)).await, [503, 504, 504]);
     assert!(
         asked.elapsed() < Duration::from_secs(8),
         "{:?}",
@@ -555,8 +588,8 @@ async fn a_stream_the_server_never_answers_is_ended_by_the_idle_limit() {
         .build();
     let mut guest = rig.guest().await;
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
-    let asked = Instant::now();
-    let got = tokio::time::timeout(Duration::from_secs(20), client.get("bound.test", "/hold"))
+    let asked = tokio::time::Instant::now();
+    let got = paused(tokio::time::timeout(FAR, client.get("bound.test", "/hold")))
         .await
         .expect("the stream was never answered");
     assert_eq!(got.status, 408);
@@ -712,7 +745,7 @@ async fn an_agreed_websocket_over_http2_that_goes_silent_is_closed_and_recorded(
     let mut echo = [0_u8; 5];
     io.read_exact(&mut echo).await.unwrap();
     let mut rest = Vec::new();
-    let read = tokio::time::timeout(Duration::from_secs(10), io.read_to_end(&mut rest)).await;
+    let read = paused(tokio::time::timeout(FAR, io.read_to_end(&mut rest))).await;
     assert!(read.is_ok(), "the silent WebSocket was never closed");
     drop(io);
     client.close().await;
@@ -764,7 +797,7 @@ async fn a_header_block_left_open_is_recorded_as_the_limit_that_ended_the_connec
     tls.write_all(&frame(1, 0x1, 1, &get_block(b"/")))
         .await
         .unwrap();
-    let (_, closed) = frames_until_end(&mut tls, Duration::from_secs(10)).await;
+    let (_, closed) = paused(frames_until_end(&mut tls, FAR)).await;
     assert!(closed);
     let events = rig.events(1).await;
     assert_eq!(

@@ -4439,6 +4439,119 @@ async fn the_workspaces_reconnection_grace_reaches_the_editor_server_at_the_next
     host.shutdown().await;
 }
 
+/// Writes a global settings document where the host reads it, before the host starts: the choice
+/// of Microsoft's server, with the consent as the document records it.
+fn write_global_settings(rig: &Rig, doc: &serde_json::Value) {
+    let dir = rig.dir.path().join("data").join("settings");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("global.json"), doc.to_string()).unwrap();
+}
+
+fn microsoft_chosen(terms: &str, telemetry: bool) -> serde_json::Value {
+    json!({
+        "schema_version": 2,
+        "vscode_server": {"server": "microsoft", "telemetry": telemetry},
+        "consents": {"vscode_server": {"state": "granted", "at": 1, "terms_version": terms}},
+    })
+}
+
+/// What the first boot of `acme` told the agent about its editor server.
+async fn editor_env_of_a_new_workspace(
+    rig: &Rig,
+    config: HostConfig,
+) -> std::collections::BTreeMap<String, String> {
+    let host = rig.start_with(config).await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let seen = agent_settings(&rig.guest.plan_bytes(rig.guest.boots() - 1));
+    host.shutdown().await;
+    seen
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn microsofts_server_runs_after_consent_with_its_own_folder_and_the_telemetry_choice() {
+    for telemetry in [false, true] {
+        let rig = Rig::new();
+        write_global_settings(
+            &rig,
+            &microsoft_chosen(puddle_settings::MICROSOFT_TERMS_VERSION, telemetry),
+        );
+        // No code-server bundled: Microsoft's is downloaded by the guest, not shipped.
+        let seen = editor_env_of_a_new_workspace(&rig, rig.config()).await;
+        let get = |name: &str| seen.get(name).map(String::as_str);
+        assert_eq!(get("PUDDLE_AGENT_EDITOR_KIND"), Some("microsoft"));
+        assert_eq!(
+            get("PUDDLE_AGENT_EDITOR_TELEMETRY"),
+            Some(if telemetry { "1" } else { "0" })
+        );
+        assert_eq!(
+            get("PUDDLE_AGENT_EDITOR_DIR"),
+            Some("/workspaces/acme/.puddle/vscode-server/servers")
+        );
+        assert_eq!(
+            get("PUDDLE_AGENT_EDITOR_DATA"),
+            Some("/workspaces/acme/.puddle/vscode-server")
+        );
+        assert_eq!(get("PUDDLE_AGENT_EDITOR_FOLDER"), Some("/workspaces/acme"));
+        assert_eq!(get("PUDDLE_AGENT_EDITOR_GRACE"), Some("300"));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn microsofts_server_never_starts_on_the_choice_alone() {
+    // The recorded consent is what counts: none, a decline and an agreement to other terms each
+    // leave the guest with code-server, and no word about Microsoft's server reaches it.
+    let covering = puddle_settings::MICROSOFT_TERMS_VERSION;
+    for (what, consents) in [
+        ("no consent", json!({})),
+        (
+            "a decline",
+            json!({"vscode_server": {"state": "declined", "at": 1, "terms_version": covering}}),
+        ),
+        (
+            "other terms",
+            json!({"vscode_server": {"state": "granted", "at": 1, "terms_version": "https://example.test/old"}}),
+        ),
+    ] {
+        let rig = Rig::new();
+        write_global_settings(
+            &rig,
+            &json!({
+                "schema_version": 2,
+                "vscode_server": {"server": "microsoft", "telemetry": true},
+                "consents": consents,
+            }),
+        );
+        let mut config = rig.config();
+        config.guest.code_server = Some(fake_code_server(&rig));
+        let seen = editor_env_of_a_new_workspace(&rig, config).await;
+        let get = |name: &str| seen.get(name).map(String::as_str);
+        assert_eq!(
+            get("PUDDLE_AGENT_EDITOR_DIR"),
+            Some("/puddle/code-server"),
+            "{what}"
+        );
+        assert_eq!(get("PUDDLE_AGENT_EDITOR_KIND"), None, "{what}");
+        assert_eq!(get("PUDDLE_AGENT_EDITOR_TELEMETRY"), None, "{what}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_without_code_server_and_without_microsofts_choice_runs_no_editor_server() {
+    let rig = Rig::new();
+    // Consent recorded, choice not made: code-server, which this host does not bundle.
+    write_global_settings(
+        &rig,
+        &json!({
+            "schema_version": 2,
+            "consents": {"vscode_server": {"state": "granted", "at": 1, "terms_version": puddle_settings::MICROSOFT_TERMS_VERSION}},
+        }),
+    );
+    let seen = editor_env_of_a_new_workspace(&rig, rig.config()).await;
+    assert!(seen.is_empty(), "{seen:?}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_host_without_code_server_starts_guests_without_an_editor_server() {
     let rig = Rig::new();

@@ -1,0 +1,697 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! Microsoft's VS Code server in the guest: found, downloaded, checked, unpacked on the workspace
+//! volume and started directly. The host asks for it only after the user's consent
+//! (`puddle_agent_proto::editor::ServerKind::Microsoft`); this module never decides that.
+//!
+//! The agent
+//!
+//! - asks Microsoft's update service for the newest `server-linux-<arch>-web` build, and for that
+//!   build's published SHA-256 (the `latest` answer carries none; `versions/<number>` does);
+//! - downloads the tarball from the same service (through Puddle's proxy, like every guest
+//!   connection) and refuses one whose SHA-256 is not the published one;
+//! - unpacks it into `<builds>/<commit>` beside a marker file written last, so a half-unpacked
+//!   build is never started, and remembers the newest complete one in `<builds>/current`;
+//! - starts `bin/code-server` from it with the flags in [`arguments`]. It never runs `code
+//!   serve-web`, never patches the files and keeps a build only on this workspace's volume.
+//!
+//! Resolving and downloading go through [`Fetch`], so the rest runs without a network in tests.
+//! The real one ([`Downloader`]) runs `curl`, or `wget` where there is no `curl`: the guest's own
+//! trust store and proxy variables apply to both, which is what makes the download pass through
+//! Puddle's proxy.
+//!
+//! A build that is already unpacked is used as it is; looking for a newer one is the update step.
+
+use std::ffi::{OsStr, OsString};
+use std::future::Future;
+use std::io::{self, Read as _};
+use std::path::{Component, Path, PathBuf};
+use std::process::Stdio;
+
+use flate2::read::GzDecoder;
+use puddle_agent_proto::editor::EditorServer;
+use serde::Deserialize;
+use sha2::{Digest as _, Sha256};
+use tar::EntryType;
+use tokio::process::Command;
+
+/// Microsoft's update service, the same one the `code` command uses.
+pub const UPDATE_SERVICE: &str = "https://update.code.visualstudio.com";
+
+/// Written into a build's folder after everything else: a folder without it is not a build.
+const MARKER: &str = ".puddle-installed";
+/// The file in the builds folder that names the build to start.
+const CURRENT: &str = "current";
+/// The server's program, below a build's folder.
+pub const PROGRAM: &str = "bin/code-server";
+/// Longest answer of the update service that is read (the real ones are a few hundred bytes).
+const MAX_ANSWER: usize = 64 * 1024;
+/// How long one metadata request may take.
+const ANSWER_SECS: u32 = 60;
+/// How long the download may take: the tarball is a few hundred MB.
+const DOWNLOAD_SECS: u32 = 3600;
+/// Where below the data folder the server keeps its own data.
+const SERVER_DATA: &str = "server-data";
+/// Where below the data folder its extensions live.
+const EXTENSIONS: &str = "extensions";
+
+/// Why a build could not be put on the volume.
+#[derive(Debug, thiserror::Error)]
+pub enum InstallError {
+    /// No server build exists for this machine's architecture.
+    #[error("Microsoft publishes no VS Code server for the {0} architecture")]
+    Unsupported(String),
+    /// The update service could not be asked or answered something unusable.
+    #[error("could not find the current VS Code server: {0}")]
+    Resolve(String),
+    /// The tarball could not be downloaded.
+    #[error("could not download the VS Code server: {0}")]
+    Download(String),
+    /// The download is not the file Microsoft published.
+    #[error(
+        "the downloaded VS Code server is not the published one (SHA-256 {actual}, expected {expected})"
+    )]
+    Checksum {
+        /// What Microsoft published.
+        expected: String,
+        /// What was downloaded.
+        actual: String,
+    },
+    /// The tarball holds something that must not be unpacked.
+    #[error("the VS Code server download holds {0}, which is not unpacked")]
+    Archive(String),
+    /// The volume could not be written.
+    #[error("could not write the VS Code server to the workspace volume: {0}")]
+    Io(#[from] io::Error),
+}
+
+/// The build name in the update service's path for a machine of architecture `arch` (the values
+/// of `std::env::consts::ARCH`).
+///
+/// # Errors
+///
+/// [`InstallError::Unsupported`] for an architecture Microsoft builds no server for.
+pub fn platform(arch: &str) -> Result<&'static str, InstallError> {
+    match arch {
+        "x86_64" => Ok("server-linux-x64-web"),
+        "aarch64" => Ok("server-linux-arm64-web"),
+        other => Err(InstallError::Unsupported(other.to_owned())),
+    }
+}
+
+/// The newest build the update service knows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Latest {
+    /// Its commit: names the build's folder and its download.
+    pub commit: String,
+    /// Its release number, such as `1.143.1`.
+    pub product_version: String,
+}
+
+#[derive(Deserialize)]
+struct LatestReply {
+    version: String,
+    #[serde(rename = "productVersion")]
+    product_version: String,
+}
+
+#[derive(Deserialize)]
+struct VersionReply {
+    version: String,
+    sha256hash: String,
+}
+
+fn is_commit(text: &str) -> bool {
+    text.len() == 40 && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn is_sha256(text: &str) -> bool {
+    text.len() == 64 && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// A release number as the service writes it (`1.143.1`, `1.144.0-insider`): it goes into a URL.
+fn is_release(text: &str) -> bool {
+    !text.is_empty()
+        && text.len() <= 40
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+}
+
+/// Reads the answer of [`latest_url`]. Everything that ends up in a path or a URL is checked.
+///
+/// # Errors
+///
+/// [`InstallError::Resolve`] for JSON that is not an answer or names a commit or release that
+/// cannot be one.
+pub fn parse_latest(json: &str) -> Result<Latest, InstallError> {
+    let reply: LatestReply = serde_json::from_str(json).map_err(|e| {
+        InstallError::Resolve(format!("the update service's answer is not usable: {e}"))
+    })?;
+    if !is_commit(&reply.version) || !is_release(&reply.product_version) {
+        return Err(InstallError::Resolve(
+            "the update service named a build with an unusable commit or release number".to_owned(),
+        ));
+    }
+    Ok(Latest {
+        commit: reply.version,
+        product_version: reply.product_version,
+    })
+}
+
+/// Reads the answer of [`versions_url`]: the published SHA-256 of the build `commit`.
+///
+/// # Errors
+///
+/// [`InstallError::Resolve`] for JSON that is not an answer, one about another build than
+/// `commit`, or a hash that is not 64 hex digits.
+pub fn parse_published_hash(json: &str, commit: &str) -> Result<String, InstallError> {
+    let reply: VersionReply = serde_json::from_str(json).map_err(|e| {
+        InstallError::Resolve(format!("the update service's answer is not usable: {e}"))
+    })?;
+    if reply.version != commit {
+        return Err(InstallError::Resolve(format!(
+            "the update service answered for build {} when asked for {commit}",
+            reply.version
+        )));
+    }
+    let hash = reply.sha256hash.to_ascii_lowercase();
+    if !is_sha256(&hash) {
+        return Err(InstallError::Resolve(
+            "the update service published no usable SHA-256 for the build".to_owned(),
+        ));
+    }
+    Ok(hash)
+}
+
+/// Where the newest build is named.
+#[must_use]
+pub fn latest_url(platform: &str) -> String {
+    format!("{UPDATE_SERVICE}/api/latest/{platform}/stable")
+}
+
+/// Where the build with release number `release` is described, with its SHA-256.
+#[must_use]
+pub fn versions_url(release: &str, platform: &str) -> String {
+    format!("{UPDATE_SERVICE}/api/versions/{release}/{platform}/stable")
+}
+
+/// Where the tarball of the build `commit` is downloaded.
+#[must_use]
+pub fn download_url(commit: &str, platform: &str) -> String {
+    format!("{UPDATE_SERVICE}/commit:{commit}/{platform}/stable")
+}
+
+/// How the agent reads the update service and downloads a build.
+pub trait Fetch: Send + Sync + 'static {
+    /// The body of `url` as text (a few hundred bytes).
+    fn text(&self, url: &str) -> impl Future<Output = io::Result<String>> + Send;
+
+    /// Downloads `url` to the file `dest`.
+    fn file(&self, url: &str, dest: &Path) -> impl Future<Output = io::Result<()>> + Send;
+}
+
+/// [`Fetch`] with the guest's own `curl`, or `wget` where it has none. HTTPS only, redirects
+/// included.
+#[derive(Debug, Clone)]
+pub struct Downloader {
+    curl: PathBuf,
+    wget: PathBuf,
+}
+
+impl Downloader {
+    /// The guest's `curl` and `wget`, found on its `PATH`.
+    #[must_use]
+    pub fn system() -> Self {
+        Self::with_programs("curl", "wget")
+    }
+
+    /// A downloader that runs these programs (tests use scripts).
+    #[must_use]
+    pub fn with_programs(curl: impl Into<PathBuf>, wget: impl Into<PathBuf>) -> Self {
+        Self {
+            curl: curl.into(),
+            wget: wget.into(),
+        }
+    }
+
+    fn curl_args(url: &str, secs: u32, dest: Option<&Path>) -> Vec<OsString> {
+        let mut args: Vec<OsString> = [
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--location",
+            "--proto",
+            "=https",
+            "--proto-redir",
+            "=https",
+            "--max-time",
+        ]
+        .map(OsString::from)
+        .into();
+        args.push(secs.to_string().into());
+        if let Some(dest) = dest {
+            args.push("--output".into());
+            args.push(dest.into());
+        }
+        args.push(url.into());
+        args
+    }
+
+    fn wget_args(url: &str, secs: u32, dest: Option<&Path>) -> Vec<OsString> {
+        let mut args: Vec<OsString> = ["--quiet", "--https-only", "--timeout"]
+            .map(OsString::from)
+            .into();
+        args.push(secs.to_string().into());
+        args.push("--output-document".into());
+        args.push(dest.map_or_else(|| OsString::from("-"), Into::into));
+        args.push(url.into());
+        args
+    }
+
+    /// Runs `curl`, else `wget` when there is no `curl`, and returns the standard output.
+    async fn run(&self, url: &str, secs: u32, dest: Option<&Path>) -> io::Result<Vec<u8>> {
+        let attempt = [
+            (&self.curl, Self::curl_args(url, secs, dest)),
+            (&self.wget, Self::wget_args(url, secs, dest)),
+        ];
+        for (program, args) in attempt {
+            let child = Command::new(program)
+                .args(args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .output()
+                .await;
+            match child {
+                Ok(out) if out.status.success() => return Ok(out.stdout),
+                Ok(out) => {
+                    let said = String::from_utf8_lossy(&out.stderr);
+                    return Err(io::Error::other(format!(
+                        "{} failed ({}): {}",
+                        program.display(),
+                        out.status,
+                        said.trim()
+                    )));
+                }
+                Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err),
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "the image has neither curl nor wget, which the VS Code server download needs",
+        ))
+    }
+}
+
+impl Fetch for Downloader {
+    async fn text(&self, url: &str) -> io::Result<String> {
+        let mut body = self.run(url, ANSWER_SECS, None).await?;
+        body.truncate(MAX_ANSWER);
+        String::from_utf8(body).map_err(|_| io::Error::other("the answer is not text"))
+    }
+
+    async fn file(&self, url: &str, dest: &Path) -> io::Result<()> {
+        self.run(url, DOWNLOAD_SECS, Some(dest)).await.map(drop)
+    }
+}
+
+/// The folder of the build `<builds>/current` names, when it is a complete build.
+#[must_use]
+pub fn current_build(builds: &Path) -> Option<PathBuf> {
+    let name = std::fs::read_to_string(builds.join(CURRENT)).ok()?;
+    let name = name.trim();
+    if !is_commit(name) {
+        return None;
+    }
+    let dir = builds.join(name);
+    (dir.join(MARKER).is_file() && dir.join(PROGRAM).is_file()).then_some(dir)
+}
+
+/// The build to start: the one already on the volume, else the newest from Microsoft, put there.
+///
+/// # Errors
+///
+/// [`InstallError`], naming what failed, when there is no build and none could be installed.
+pub async fn ensure_build(
+    fetch: &impl Fetch,
+    platform: &str,
+    builds: &Path,
+) -> Result<PathBuf, InstallError> {
+    match current_build(builds) {
+        Some(dir) => Ok(dir),
+        None => install_latest(fetch, platform, builds).await,
+    }
+}
+
+/// Puts the newest build on the volume (unless it is there) and makes it the current one.
+///
+/// # Errors
+///
+/// [`InstallError`]; a failed or refused download leaves no build behind, only what was there.
+pub async fn install_latest(
+    fetch: &impl Fetch,
+    platform: &str,
+    builds: &Path,
+) -> Result<PathBuf, InstallError> {
+    std::fs::create_dir_all(builds)?;
+    let answer = fetch
+        .text(&latest_url(platform))
+        .await
+        .map_err(|e| InstallError::Resolve(e.to_string()))?;
+    let latest = parse_latest(&answer)?;
+    let dir = builds.join(&latest.commit);
+    if !(dir.join(MARKER).is_file() && dir.join(PROGRAM).is_file()) {
+        let answer = fetch
+            .text(&versions_url(&latest.product_version, platform))
+            .await
+            .map_err(|e| InstallError::Resolve(e.to_string()))?;
+        let expected = parse_published_hash(&answer, &latest.commit)?;
+        let tarball = builds.join(format!("{}.tar.gz.partial", latest.commit));
+        let staging = builds.join(format!("{}.partial", latest.commit));
+        let fetched = fetch_and_unpack(
+            fetch,
+            &download_url(&latest.commit, platform),
+            &expected,
+            &tarball,
+            &staging,
+        )
+        .await;
+        // Whatever happened, the tarball (hundreds of MB) is not kept.
+        let _ = std::fs::remove_file(&tarball);
+        if let Err(err) = fetched {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(err);
+        }
+        if dir.exists() {
+            // A folder without the marker: an earlier attempt died; it is not a build.
+            std::fs::remove_dir_all(&dir)?;
+        }
+        std::fs::rename(&staging, &dir)?;
+    }
+    write_current(builds, &latest.commit)?;
+    Ok(dir)
+}
+
+async fn fetch_and_unpack(
+    fetch: &impl Fetch,
+    url: &str,
+    expected: &str,
+    tarball: &Path,
+    staging: &Path,
+) -> Result<(), InstallError> {
+    fetch
+        .file(url, tarball)
+        .await
+        .map_err(|e| InstallError::Download(e.to_string()))?;
+    let (tar, out) = (tarball.to_owned(), staging.to_owned());
+    let expected = expected.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let actual = sha256_of(&tar)?;
+        if actual != expected {
+            return Err(InstallError::Checksum { expected, actual });
+        }
+        if out.exists() {
+            std::fs::remove_dir_all(&out)?;
+        }
+        unpack(&tar, &out)?;
+        if !out.join(PROGRAM).is_file() {
+            return Err(InstallError::Archive(format!("no {PROGRAM}")));
+        }
+        std::fs::write(out.join(MARKER), b"")?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| io::Error::other(format!("the unpack task stopped: {e}")))?
+}
+
+/// `current`, replaced whole.
+fn write_current(builds: &Path, commit: &str) -> io::Result<()> {
+    let partial = builds.join(format!("{CURRENT}.partial"));
+    std::fs::write(&partial, commit)?;
+    std::fs::rename(&partial, builds.join(CURRENT))
+}
+
+fn sha256_of(path: &Path) -> io::Result<String> {
+    use std::fmt::Write as _;
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut chunk = vec![0_u8; 1 << 16];
+    loop {
+        let n = file.read(&mut chunk)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(chunk.get(..n).unwrap_or_default());
+    }
+    Ok(hasher.finalize().iter().fold(String::new(), |mut s, b| {
+        let _ = write!(s, "{b:02x}"); // writing to a String can't fail
+        s
+    }))
+}
+
+/// The path of an archive entry without the tarball's top folder, `None` for the folder itself.
+fn below_top(path: &Path) -> Result<Option<PathBuf>, InstallError> {
+    let mut parts = path.components();
+    match parts.next() {
+        Some(Component::Normal(_)) => {}
+        Some(Component::CurDir) | None => return Ok(None),
+        Some(_) => {
+            return Err(InstallError::Archive(format!(
+                "the path {}, which leaves the folder",
+                path.display()
+            )));
+        }
+    }
+    let mut rest = PathBuf::new();
+    for part in parts {
+        match part {
+            Component::Normal(name) => rest.push(name),
+            Component::CurDir => {}
+            _ => {
+                return Err(InstallError::Archive(format!(
+                    "the path {}, which leaves the folder",
+                    path.display()
+                )));
+            }
+        }
+    }
+    Ok((!rest.as_os_str().is_empty()).then_some(rest))
+}
+
+/// Unpacks the server tarball at `tarball` into `dest`, without its top folder. Only files and
+/// folders are unpacked (Microsoft's tarball has no links; one in it is an error, since a link is
+/// how a later entry could write outside `dest`).
+fn unpack(tarball: &Path, dest: &Path) -> Result<(), InstallError> {
+    let mut archive = tar::Archive::new(GzDecoder::new(std::fs::File::open(tarball)?));
+    std::fs::create_dir_all(dest)?;
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let path = entry.path()?.into_owned();
+        let Some(name) = below_top(&path)? else {
+            continue;
+        };
+        let target = dest.join(&name);
+        match entry.header().entry_type() {
+            EntryType::Directory => std::fs::create_dir_all(&target)?,
+            EntryType::Regular | EntryType::Continuous => {
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                let mut file = std::fs::File::create(&target)?;
+                io::copy(&mut entry, &mut file)?;
+                #[cfg(unix)]
+                if let Ok(mode) = entry.header().mode() {
+                    use std::os::unix::fs::PermissionsExt;
+                    // Owner read/write always; the other bits as published.
+                    std::fs::set_permissions(
+                        &target,
+                        std::fs::Permissions::from_mode((mode & 0o755) | 0o600),
+                    )?;
+                }
+            }
+            other => {
+                return Err(InstallError::Archive(format!(
+                    "{} as a {other:?} entry",
+                    name.display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The server's command line (without the program). `target` is what [`crate::editor::target`]
+/// says the editor opens.
+#[must_use]
+pub fn arguments(
+    server: &EditorServer,
+    telemetry: bool,
+    token_file: &Path,
+    target: &OsStr,
+) -> Vec<OsString> {
+    let data = Path::new(&server.data);
+    let mut args: Vec<OsString> = vec![
+        "--host".into(),
+        "127.0.0.1".into(),
+        "--port".into(),
+        server.port.to_string().into(),
+        "--connection-token-file".into(),
+        token_file.into(),
+        "--accept-server-license-terms".into(),
+        "--server-data-dir".into(),
+        data.join(SERVER_DATA).into(),
+        "--extensions-dir".into(),
+        data.join(EXTENSIONS).into(),
+        "--reconnection-grace-time".into(),
+        server.grace_secs.to_string().into(),
+    ];
+    if !telemetry {
+        args.push("--disable-telemetry".into());
+    }
+    args.push(
+        if target == OsStr::new(&server.folder) {
+            "--default-folder"
+        } else {
+            "--default-workspace"
+        }
+        .into(),
+    );
+    args.push(target.to_owned());
+    args
+}
+
+/// Makes the folders the server keeps its data in; the server makes the rest.
+///
+/// # Errors
+///
+/// When a folder can't be made.
+pub fn prepare(server: &EditorServer) -> io::Result<()> {
+    for sub in [SERVER_DATA, EXTENSIONS] {
+        std::fs::create_dir_all(Path::new(&server.data).join(sub))?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const COMMIT: &str = "e646868227c3e3a9e3f24277c8c7220be42c0be7";
+
+    #[test]
+    fn the_urls_are_the_ones_the_code_command_uses() {
+        assert_eq!(
+            latest_url("server-linux-x64-web"),
+            "https://update.code.visualstudio.com/api/latest/server-linux-x64-web/stable"
+        );
+        assert_eq!(
+            versions_url("1.143.1", "server-linux-x64-web"),
+            "https://update.code.visualstudio.com/api/versions/1.143.1/server-linux-x64-web/stable"
+        );
+        assert_eq!(
+            download_url(COMMIT, "server-linux-arm64-web"),
+            format!(
+                "https://update.code.visualstudio.com/commit:{COMMIT}/server-linux-arm64-web/stable"
+            )
+        );
+    }
+
+    #[test]
+    fn the_build_follows_the_machines_architecture() {
+        assert_eq!(platform("x86_64").unwrap(), "server-linux-x64-web");
+        assert_eq!(platform("aarch64").unwrap(), "server-linux-arm64-web");
+        let err = platform("riscv64").unwrap_err();
+        assert!(err.to_string().contains("riscv64"), "{err}");
+    }
+
+    #[test]
+    fn the_latest_answer_gives_the_commit_and_the_release() {
+        let answer = format!(
+            r#"{{"name":"1.143.1","version":"{COMMIT}","productVersion":"1.143.1","timestamp":1}}"#
+        );
+        assert_eq!(
+            parse_latest(&answer).unwrap(),
+            Latest {
+                commit: COMMIT.to_owned(),
+                product_version: "1.143.1".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn what_goes_into_a_path_or_a_url_is_checked() {
+        let with = |commit: &str, release: &str| {
+            parse_latest(&format!(
+                r#"{{"version":"{commit}","productVersion":"{release}"}}"#
+            ))
+        };
+        assert!(with(COMMIT, "1.144.0-insider").is_ok());
+        for (commit, release) in [
+            ("../../x", "1.0.0"),
+            (&COMMIT[..39], "1.0.0"),
+            (&COMMIT.to_uppercase(), "1.0.0"),
+            (COMMIT, "1.0/../0"),
+            (COMMIT, ""),
+            (COMMIT, "1 .0"),
+        ] {
+            assert!(with(commit, release).is_err(), "{commit} {release}");
+        }
+        assert!(parse_latest("{}").is_err());
+        assert!(parse_latest("nope").is_err());
+    }
+
+    #[test]
+    fn the_published_hash_must_belong_to_the_build_asked_for() {
+        let hash = "4626a9d6f036d382a77197f895eee35cce6843d0a7042ae8be850bec2c77188e";
+        let answer = format!(r#"{{"version":"{COMMIT}","sha256hash":"{hash}","hash":"{COMMIT}"}}"#);
+        assert_eq!(parse_published_hash(&answer, COMMIT).unwrap(), hash);
+        assert!(parse_published_hash(&answer, &"1".repeat(40)).is_err());
+        let no_hash = format!(r#"{{"version":"{COMMIT}"}}"#);
+        assert!(parse_published_hash(&no_hash, COMMIT).is_err());
+    }
+
+    #[test]
+    fn the_command_line_carries_the_terms_the_token_file_and_the_telemetry_choice() {
+        let server = EditorServer::microsoft("/w/.puddle/vscode-server", "/w", 120, false);
+        let token = Path::new("/run/puddle/editor-password");
+        let args = |telemetry: bool, target: &str| -> Vec<String> {
+            arguments(&server, telemetry, token, OsStr::new(target))
+                .into_iter()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect()
+        };
+        let off = args(false, "/w");
+        let after = |flag: &str| {
+            let at = off.iter().position(|a| a == flag).unwrap();
+            off[at + 1].as_str()
+        };
+        assert_eq!(after("--host"), "127.0.0.1");
+        assert_eq!(after("--port"), "41337");
+        assert_eq!(
+            after("--connection-token-file"),
+            "/run/puddle/editor-password"
+        );
+        assert_eq!(after("--reconnection-grace-time"), "120");
+        assert_eq!(after("--default-folder"), "/w");
+        assert!(off.iter().any(|a| a == "--accept-server-license-terms"));
+        assert!(off.iter().any(|a| a == "--disable-telemetry"));
+        // The data of the server and its extensions sit on the volume, in their own folders.
+        let under = |leaf: &str| {
+            Path::new("/w/.puddle/vscode-server")
+                .join(leaf)
+                .to_string_lossy()
+                .into_owned()
+        };
+        assert_eq!(after("--server-data-dir"), under("server-data"));
+        assert_eq!(after("--extensions-dir"), under("extensions"));
+        assert!(!args(true, "/w").iter().any(|a| a == "--disable-telemetry"));
+        // The multi-root file is a workspace, not a folder.
+        let file = args(false, "/w/.puddle/editor/w.code-workspace");
+        assert_eq!(
+            file[file.len() - 2..],
+            ["--default-workspace", "/w/.puddle/editor/w.code-workspace"]
+        );
+    }
+}

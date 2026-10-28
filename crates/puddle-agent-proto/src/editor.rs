@@ -13,6 +13,11 @@
 //! | [`ENV_GRACE`] | the reconnection grace in seconds |
 //! | [`ENV_FOLDER`] | the folder the editor opens (the workspace volume) |
 //! | [`ENV_WORKSPACE_FILE`] | the multi-root file the editor opens instead when it exists and lists folders (optional) |
+//! | [`ENV_KIND`] | which server: unset or `code-server`, or `microsoft` (Microsoft's own, which the agent downloads) |
+//! | [`ENV_TELEMETRY`] | `1` or `0`: whether Microsoft's server may send telemetry (only with `microsoft`) |
+//!
+//! For Microsoft's server [`ENV_DIR`] is the folder its builds are unpacked into, one folder per
+//! build, on the workspace volume: the host mounts no release, the agent fetches one.
 //!
 //! ```
 //! use puddle_agent_proto::editor::EditorServer;
@@ -43,6 +48,14 @@ pub const ENV_FOLDER: &str = "PUDDLE_AGENT_EDITOR_FOLDER";
 /// a folder. Unset: the editor always opens the folder.
 pub const ENV_WORKSPACE_FILE: &str = "PUDDLE_AGENT_EDITOR_WORKSPACE_FILE";
 
+/// The server variable.
+pub const ENV_KIND: &str = "PUDDLE_AGENT_EDITOR_KIND";
+/// The telemetry variable of Microsoft's server.
+pub const ENV_TELEMETRY: &str = "PUDDLE_AGENT_EDITOR_TELEMETRY";
+
+/// The folder below the data folder that holds Microsoft's builds, one folder per build.
+pub const MICROSOFT_BUILDS: &str = "servers";
+
 /// Where the agent writes the server's password (owner-only; the host reads it to sign the
 /// window in). It lives in `/run`: a new random value for each boot of the sandbox, kept while
 /// the sandbox runs, so a restarted server accepts the sessions the old one signed in.
@@ -56,9 +69,24 @@ pub const MIN_GRACE_SECS: u32 = 30;
 /// Longest reconnection grace the settings allow, in seconds (24 h).
 pub const MAX_GRACE_SECS: u32 = 86_400;
 
+/// Which server the agent runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ServerKind {
+    /// code-server, the release the host mounts read-only at [`EditorServer::dir`].
+    #[default]
+    CodeServer,
+    /// Microsoft's VS Code server: the agent downloads a build into [`EditorServer::dir`].
+    Microsoft {
+        /// Whether the server may send telemetry to Microsoft (the user's choice in the popup).
+        telemetry: bool,
+    },
+}
+
 /// How to run the editor server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorServer {
+    /// Which server.
+    pub kind: ServerKind,
     /// The code-server release folder in the guest ([`GUEST_DIR`] unless a test moves it).
     pub dir: String,
     /// The port on 127.0.0.1.
@@ -81,6 +109,7 @@ impl EditorServer {
     #[must_use]
     pub fn new(data: impl Into<String>, folder: impl Into<String>, grace_secs: u32) -> Self {
         Self {
+            kind: ServerKind::CodeServer,
             dir: GUEST_DIR.to_owned(),
             port: DEFAULT_PORT,
             data: data.into(),
@@ -88,6 +117,21 @@ impl EditorServer {
             workspace_file: None,
             grace_secs,
         }
+    }
+
+    /// Microsoft's server, kept in `data` (its builds in [`MICROSOFT_BUILDS`] below it), opening
+    /// `folder`.
+    #[must_use]
+    pub fn microsoft(
+        data: impl Into<String>,
+        folder: impl Into<String>,
+        grace_secs: u32,
+        telemetry: bool,
+    ) -> Self {
+        let mut server = Self::new(data, folder, grace_secs);
+        server.dir = format!("{}/{MICROSOFT_BUILDS}", server.data);
+        server.kind = ServerKind::Microsoft { telemetry };
+        server
     }
 
     /// The same server, opening `file` instead of the folder when it holds a multi-root list.
@@ -109,6 +153,10 @@ impl EditorServer {
         ];
         if let Some(file) = &self.workspace_file {
             env.push((ENV_WORKSPACE_FILE, file.clone()));
+        }
+        if let ServerKind::Microsoft { telemetry } = self.kind {
+            env.push((ENV_KIND, "microsoft".to_owned()));
+            env.push((ENV_TELEMETRY, if telemetry { "1" } else { "0" }.to_owned()));
         }
         env
     }
@@ -155,7 +203,32 @@ impl EditorServer {
                     EditorEnvError::new(ENV_GRACE, "expected seconds from 30 to 86400")
                 })?,
         };
+        let kind = match get(ENV_KIND).as_deref() {
+            None | Some("code-server") => {
+                if get(ENV_TELEMETRY).is_some() {
+                    return Err(EditorEnvError::new(
+                        ENV_TELEMETRY,
+                        "only Microsoft's server has telemetry",
+                    ));
+                }
+                ServerKind::CodeServer
+            }
+            Some("microsoft") => ServerKind::Microsoft {
+                telemetry: match get(ENV_TELEMETRY).as_deref() {
+                    None | Some("0") => false,
+                    Some("1") => true,
+                    Some(_) => return Err(EditorEnvError::new(ENV_TELEMETRY, "expected 0 or 1")),
+                },
+            },
+            Some(_) => {
+                return Err(EditorEnvError::new(
+                    ENV_KIND,
+                    "expected code-server or microsoft",
+                ));
+            }
+        };
         Ok(Some(Self {
+            kind,
             dir: path(ENV_DIR, dir)?,
             port,
             data: path(ENV_DATA, required(ENV_DATA)?)?,
@@ -234,6 +307,65 @@ mod tests {
         assert_eq!(read(&vars), Ok(Some(server)));
         let without = read(&[(ENV_DIR, "/e"), (ENV_DATA, "/d"), (ENV_FOLDER, "/f")]);
         assert_eq!(without.unwrap().unwrap().workspace_file, None);
+    }
+
+    #[test]
+    fn microsoft_s_server_keeps_its_builds_below_its_data_and_reads_back() {
+        for telemetry in [false, true] {
+            let server = EditorServer::microsoft(
+                "/workspaces/a/.puddle/vscode-server",
+                "/workspaces/a",
+                90,
+                telemetry,
+            );
+            assert_eq!(server.dir, "/workspaces/a/.puddle/vscode-server/servers");
+            assert_eq!(server.kind, ServerKind::Microsoft { telemetry });
+            let env = server.env();
+            let vars: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            assert_eq!(read(&vars), Ok(Some(server)));
+        }
+        // code-server sends neither variable, and reads as code-server without them or named.
+        let plain = EditorServer::new("/d", "/f", 300);
+        assert!(
+            plain
+                .env()
+                .iter()
+                .all(|(k, _)| *k != ENV_KIND && *k != ENV_TELEMETRY)
+        );
+        let named = read(&[
+            (ENV_DIR, "/e"),
+            (ENV_DATA, "/d"),
+            (ENV_FOLDER, "/f"),
+            (ENV_KIND, "code-server"),
+        ]);
+        assert_eq!(named.unwrap().unwrap().kind, ServerKind::CodeServer);
+    }
+
+    #[test]
+    fn an_unknown_server_or_a_telemetry_flag_that_does_not_fit_names_its_variable() {
+        let base = [(ENV_DIR, "/e"), (ENV_DATA, "/d"), (ENV_FOLDER, "/f")];
+        let with = |extra: &[(&'static str, &'static str)]| {
+            let mut v = base.to_vec();
+            v.extend_from_slice(extra);
+            read(&v).unwrap_err().to_string()
+        };
+        assert!(with(&[(ENV_KIND, "vscodium")]).starts_with(ENV_KIND));
+        assert!(
+            with(&[(ENV_KIND, "microsoft"), (ENV_TELEMETRY, "yes")]).starts_with(ENV_TELEMETRY)
+        );
+        // Telemetry means something only for Microsoft's server: setting it for code-server is a mistake.
+        assert!(with(&[(ENV_TELEMETRY, "1")]).starts_with(ENV_TELEMETRY));
+        // Microsoft's server without the variable: telemetry off.
+        let off = read(&[
+            (ENV_DIR, "/e"),
+            (ENV_DATA, "/d"),
+            (ENV_FOLDER, "/f"),
+            (ENV_KIND, "microsoft"),
+        ]);
+        assert_eq!(
+            off.unwrap().unwrap().kind,
+            ServerKind::Microsoft { telemetry: false }
+        );
     }
 
     #[test]

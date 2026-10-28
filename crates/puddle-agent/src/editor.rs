@@ -17,6 +17,10 @@
 //!   agent left running (the agent was killed; the server outlives it) is left alone: the agent
 //!   waits until the port is free instead of starting a second one that cannot bind.
 //!
+//! With the host's request for Microsoft's server ([`ServerKind::Microsoft`]) it runs that
+//! instead, after downloading it ([`crate::microsoft`]); the restart rules, the password file (there
+//! the server's connection token) and the port are the same.
+//!
 //! The server runs without the `VSCODE_*` variables of the agent's environment: with
 //! `VSCODE_IPC_HOOK_CLI` set, code-server hands its command line to the editor that variable
 //! names instead of serving.
@@ -27,8 +31,10 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-use puddle_agent_proto::editor::EditorServer;
+use puddle_agent_proto::editor::{EditorServer, ServerKind};
 use tokio::process::Command;
+
+use crate::microsoft::{self, Downloader, Fetch};
 
 /// Where the server's user data lives, below [`EditorServer::data`].
 const USER_DATA: &str = "user-data";
@@ -161,23 +167,64 @@ fn withheld(name: &str) -> bool {
     name.starts_with("VSCODE_") || name.starts_with("PUDDLE_AGENT_") || name == "PORT"
 }
 
-/// The server's command: the release's `bin/code-server`, the password in its environment, and
-/// none of the variables in `inherited` that [`withheld`] names.
+/// What to start: the program, its arguments, and the password for its environment (code-server
+/// reads it there; Microsoft's server reads its token from a file named in the arguments).
+struct Launch {
+    program: PathBuf,
+    args: Vec<OsString>,
+    password_env: bool,
+}
+
+/// The server's command: `launch`, the password in its environment when it takes one, and none
+/// of the variables in `inherited` that [`withheld`] names.
 fn command(
-    server: &EditorServer,
+    launch: &Launch,
     password: &str,
     inherited: impl IntoIterator<Item = String>,
 ) -> Command {
-    let mut command = Command::new(Path::new(&server.dir).join("bin/code-server"));
+    let mut command = Command::new(&launch.program);
     command
-        .args(arguments(server))
-        .env("PASSWORD", password)
+        .args(&launch.args)
         .stdin(Stdio::null())
         .kill_on_drop(true);
+    if launch.password_env {
+        command.env("PASSWORD", password);
+    }
     for name in inherited.into_iter().filter(|n| withheld(n)) {
         command.env_remove(name);
     }
     command
+}
+
+/// What the agent starts for `config`: code-server from the mounted release, or Microsoft's
+/// server from the build on the volume (fetched first when there is none).
+async fn launch(config: &EditorConfig, fetch: &impl Fetch) -> Result<Launch, String> {
+    let server = &config.server;
+    match server.kind {
+        ServerKind::CodeServer => Ok(Launch {
+            program: Path::new(&server.dir).join("bin/code-server"),
+            args: arguments(server),
+            password_env: true,
+        }),
+        ServerKind::Microsoft { telemetry } => {
+            microsoft::prepare(server).map_err(|e| e.to_string())?;
+            let platform =
+                microsoft::platform(std::env::consts::ARCH).map_err(|e| e.to_string())?;
+            let build = microsoft::ensure_build(fetch, platform, Path::new(&server.dir))
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(Launch {
+                program: build.join(microsoft::PROGRAM),
+                args: microsoft::arguments(
+                    server,
+                    telemetry,
+                    &config.password_file,
+                    &target(server),
+                ),
+                password_env: false,
+            })
+        }
+    }
 }
 
 /// The wait before start number `quick` (the number of quick exits in a row, 1 for the first).
@@ -198,20 +245,37 @@ fn prepare(server: &EditorServer) -> io::Result<()> {
 
 /// Runs the server and starts it again whenever it exits; never returns.
 pub async fn run(config: EditorConfig) {
+    run_with(config, Downloader::system()).await;
+}
+
+/// [`run`], with `fetch` for what Microsoft's server needs from the network.
+pub async fn run_with(config: EditorConfig, fetch: impl Fetch) {
     let server = &config.server;
-    let program = Path::new(&server.dir).join("bin/code-server");
-    if !program.is_file() {
-        // A sandbox made before the host bundled the server has no such mount; it gets one when
-        // it is made again.
-        tracing::warn!(program = %program.display(), "no editor server in this sandbox: it was made without the code-server mount");
-        return;
+    if server.kind == ServerKind::CodeServer {
+        let program = Path::new(&server.dir).join("bin/code-server");
+        if !program.is_file() {
+            // A sandbox made before the host bundled the server has no such mount; it gets one
+            // when it is made again.
+            tracing::warn!(program = %program.display(), "no editor server in this sandbox: it was made without the code-server mount");
+            return;
+        }
     }
     let mut quick = 0_u32;
     loop {
+        let launched = launch(&config, &fetch).await;
         let started = Instant::now();
-        match start_once(&config).await {
-            Ok(status) => tracing::warn!(%status, "the editor server exited"),
-            Err(err) => tracing::error!(error = %err, "the editor server could not run"),
+        match launched {
+            Ok(launch) => match start_once(&config, &launch).await {
+                Ok(status) => tracing::warn!(%status, "the editor server exited"),
+                Err(err) => tracing::error!(error = %err, "the editor server could not run"),
+            },
+            // Counted as a quick exit: a missing network must not be retried every second.
+            Err(reason) => {
+                tracing::error!(%reason, "the editor server could not be made ready");
+                quick = quick.saturating_add(1);
+                tokio::time::sleep(wait_after(quick)).await;
+                continue;
+            }
         }
         quick = if started.elapsed() >= HEALTHY {
             1
@@ -235,8 +299,13 @@ async fn port_taken(port: u16) -> bool {
         .is_ok()
 }
 
-async fn start_once(config: &EditorConfig) -> io::Result<std::process::ExitStatus> {
-    prepare(&config.server)?;
+async fn start_once(
+    config: &EditorConfig,
+    launch: &Launch,
+) -> io::Result<std::process::ExitStatus> {
+    if config.server.kind == ServerKind::CodeServer {
+        prepare(&config.server)?;
+    }
     let mut warned = false;
     while port_taken(config.server.port).await {
         if !warned {
@@ -256,7 +325,7 @@ async fn start_once(config: &EditorConfig) -> io::Result<std::process::ExitStatu
         password
     };
     let inherited = std::env::vars_os().filter_map(|(k, _)| k.into_string().ok());
-    let mut child = command(&config.server, &password, inherited).spawn()?;
+    let mut child = command(launch, &password, inherited).spawn()?;
     tracing::info!(
         port = config.server.port,
         grace_secs = config.server.grace_secs,
@@ -406,7 +475,12 @@ mod tests {
         ]
         .map(String::from);
         let password = puddle_types::fixture::password("editor");
-        let cmd = command(&server(), &password, inherited);
+        let launch = Launch {
+            program: Path::new("/puddle/code-server").join("bin/code-server"),
+            args: arguments(&server()),
+            password_env: true,
+        };
+        let cmd = command(&launch, &password, inherited);
         let envs: std::collections::BTreeMap<String, Option<String>> = cmd
             .as_std()
             .get_envs()

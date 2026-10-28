@@ -64,10 +64,11 @@ pub struct ProxyConfig {
     /// How long the proxy's own TLS handshake with a bound host may take.
     pub tls_handshake_timeout: Duration,
     /// How long each step of the guest's TLS handshake with the proxy may take: its hello after
-    /// the `CONNECT` answer, then the rest of the handshake. The proxy plays the server here, so the guest gets what common
-    /// servers give a client by default (nginx's `ssl_handshake_timeout`, Python's asyncio: 60 s):
-    /// a client stalled for longer than the upstream budget, by a busy disk or a paused machine,
-    /// still connects instead of finding its connection cut.
+    /// the `CONNECT` answer, then the rest of the handshake. The proxy plays the server here, so
+    /// the guest gets what common servers give a client by default (nginx's
+    /// `ssl_handshake_timeout`, Python's asyncio: 60 s): a client stalled for longer than the
+    /// upstream budget, by a busy disk or a paused machine, still connects instead of finding its
+    /// connection cut.
     pub guest_handshake_timeout: Duration,
     /// How long a terminated connection may sit idle between two requests before it is closed.
     pub keepalive_timeout: Duration,

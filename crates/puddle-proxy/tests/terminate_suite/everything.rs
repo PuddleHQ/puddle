@@ -281,6 +281,45 @@ async fn a_tool_that_refuses_the_certificate_is_learned_and_the_host_is_passed_t
 }
 
 #[tokio::test]
+async fn a_certificate_alert_on_a_host_with_a_credential_never_teaches_the_host_as_pass_through() {
+    let pki = Pki::new();
+    let server = free_server(&pki, "bound.test").await;
+    let learned = Arc::new(PassThrough::with_limits(Duration::from_secs(3600), 8));
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .decrypting_all(true, &[])
+        .learned(Arc::clone(&learned))
+        .build();
+    // A tool whose roots do not hold the workspace CA refuses the certificate.
+    let mut guest = rig.guest().await;
+    let (port, _bridge) = guest.bridge("bound.test:443").await;
+    let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let config = Guest::client_config(std::slice::from_ref(&pki.root), &[]);
+    let refused = tokio_rustls::TlsConnector::from(Arc::new(config))
+        .connect(ServerName::try_from("bound.test").unwrap(), tcp)
+        .await;
+    assert!(refused.is_err());
+    assert_eq!(
+        rig.events(1).await[0].reason.to_string(),
+        "guest_tls_rejected"
+    );
+    assert_eq!(learned.list().len(), 0, "nothing is remembered");
+
+    // The next connection is still decrypted and its credential added, not passed through.
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    assert_eq!(client.get("bound.test", "/").await.status, 200);
+    assert!(
+        server.recorded()[0].header("authorization").is_some(),
+        "the credential was added"
+    );
+    client.close().await;
+    assert_eq!(rig.events(2).await[1].reason.to_string(), "rule");
+    assert_eq!(learned.list().len(), 0);
+}
+
+#[tokio::test]
 async fn a_connection_that_is_not_tls_is_passed_through_with_the_bytes_already_read() {
     let pki = Pki::new();
     // A plain HTTP server on the TLS port: the tool speaks HTTP to it.

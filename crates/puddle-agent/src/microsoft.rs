@@ -47,8 +47,9 @@ pub const PROGRAM: &str = "bin/code-server";
 const MAX_ANSWER: usize = 64 * 1024;
 /// How long one metadata request may take.
 const ANSWER_SECS: u32 = 60;
-/// How long the download may take: the tarball is a few hundred MB.
-const DOWNLOAD_SECS: u32 = 3600;
+/// A download that moves under 1 KiB/s for this long is given up on; its total time is not capped
+/// (the tarball is a few hundred MB, over any kind of link).
+const STALL_SECS: u32 = 60;
 /// Where below the data folder the server keeps its own data.
 const SERVER_DATA: &str = "server-data";
 /// Where below the data folder its extensions live.
@@ -244,11 +245,17 @@ impl Downloader {
             "=https",
             "--proto-redir",
             "=https",
-            "--max-time",
         ]
         .map(OsString::from)
         .into();
-        args.push(secs.to_string().into());
+        if dest.is_some() {
+            // A file: only a stalled transfer ends it.
+            args.extend(["--speed-limit", "1024", "--speed-time"].map(OsString::from));
+            args.push(STALL_SECS.to_string().into());
+        } else {
+            args.push("--max-time".into());
+            args.push(secs.to_string().into());
+        }
         if let Some(dest) = dest {
             args.push("--output".into());
             args.push(dest.into());
@@ -313,7 +320,7 @@ impl Fetch for Downloader {
     }
 
     async fn file(&self, url: &str, dest: &Path) -> io::Result<()> {
-        self.run(url, DOWNLOAD_SECS, Some(dest)).await.map(drop)
+        self.run(url, STALL_SECS, Some(dest)).await.map(drop)
     }
 }
 

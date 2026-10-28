@@ -52,7 +52,10 @@ fn tarball(entries: &[(&str, u32, &str)]) -> Vec<u8> {
         // Written into the header as given: `set_path` would refuse the paths some tests need.
         let name = header.as_old_mut();
         name.name = [0; 100];
-        name.name[..path.len()].copy_from_slice(path.as_bytes());
+        name.name
+            .get_mut(..path.len())
+            .unwrap()
+            .copy_from_slice(path.as_bytes());
         header.set_size(content.len() as u64);
         header.set_mode(*mode);
         header.set_entry_type(if path.ends_with('/') {
@@ -142,6 +145,7 @@ impl Service {
 
 impl Fetch for &'static Service {
     async fn text(&self, url: &str) -> io::Result<String> {
+        tokio::task::yield_now().await; // a network answer is not instant
         self.asked.lock().unwrap().push(url.to_owned());
         self.texts.fetch_add(1, Ordering::SeqCst);
         self.check_up()?;
@@ -152,6 +156,7 @@ impl Fetch for &'static Service {
     }
 
     async fn file(&self, url: &str, dest: &Path) -> io::Result<()> {
+        tokio::task::yield_now().await; // a download is not instant
         self.asked.lock().unwrap().push(url.to_owned());
         self.downloads.fetch_add(1, Ordering::SeqCst);
         self.check_up()?;
@@ -436,6 +441,10 @@ async fn the_downloader_runs_curl_with_https_only_and_wget_when_there_is_no_curl
         .await
         .unwrap();
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "body");
+    // A file has no total time limit, only a stall limit.
+    let args = std::fs::read_to_string(&log).unwrap();
+    assert!(args.contains("--speed-time"), "{args}");
+    assert!(!args.contains("--max-time"), "{args}");
 
     // A failing download says what the tool said.
     let err = downloader.text("https://bad.test/").await.unwrap_err();

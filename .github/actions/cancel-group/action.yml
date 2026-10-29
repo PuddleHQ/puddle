@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Fail fast in the merge queue: cancels the rest of the merge group when a job fails (ci/cancel-group.sh).
+# Call it as the last step of a job with `if: ${{ failure() && github.event_name == 'merge_group' }}`
+# and `continue-on-error: true`. The job needs `actions: write`.
+name: cancel-group
+description: Cancel the other runs of this merge group once a job has failed
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        EVENT: ${{ github.event_name }}
+        JOB_STATUS: ${{ job.status }}
+        REF: ${{ github.ref }}
+        RUN_ID: ${{ github.run_id }}
+      run: ci/cancel-group.sh "$EVENT" "$JOB_STATUS" "$REF" "$RUN_ID"

@@ -735,7 +735,7 @@ def flake_self_test():
     case("w1 not a wait name", "w1", {FLAKE_HOST: "async fn settle(what: &str, within: Duration) {}\n"}, 0, 0)
     case("w1 in production code", "w1", {"crates/x/src/lib.rs": read("w1-wait-helper.bad.rs.txt")}, 0, 0)
     case("w1 reasoned", "w1", {FLAKE_HOST: reasoned(read("w1-wait-helper.bad.rs.txt"), "async fn eventually")}, 1, 0)
-    case("w1 in the kit", "w1", {"crates/puddle-test-kit/src/lib.rs": read("w1-wait-helper.bad.rs.txt")}, 0, 0)
+    case("w1 in the kit", "w1", {"crates/puddle-test-kit/tests/wait.rs": read("w1-wait-helper.bad.rs.txt")}, 0, 0)
     case("w2 original", "w2", {FLAKE_STORE: read("w2-store-lock.bad.rs.txt")}, 1, 1)
     case("w2 fix", "w2", {FLAKE_STORE: read("w2-store-lock.good.rs.txt")}, 0, 0)
     case("n1 original", "n1", {FLAKE_STORE: read("n1-clock-name.bad.rs.txt")}, 2, 2)
@@ -748,7 +748,7 @@ def flake_self_test():
     store = "crates/puddle-store/tests/events_and_audit_query.rs"
     case("t1 original", "t1", {store: read("t1-wall-clock-bar.bad.rs.txt")}, 1, 1)
     case("t1 fix keeps the bar", "t1", {store: read("t1-wall-clock-bar.good.rs.txt")}, 1, 1)
-    case("t1 a deadline loop is not a bar", "t1", {store: "fn t() { assert!(Instant::now() < deadline, \"late\"); }\n"}, 0, 0)
+    case("t1 a deadline loop is not a bar", "t1", {store: "fn t() { assert!(start.elapsed() < Duration::from_secs(1) || Instant::now() < deadline, \"late\"); }\n"}, 0, 0)
     case("t1 reasoned", "t1", {store: reasoned(read("t1-wall-clock-bar.good.rs.txt"), "assert!(best")}, 1, 0)
     case("o2 variable", "o2", {FLAKE_SPEC: read("o2-density-measure.bad.ts.txt")}, 1, 1)
     case("o2 poll", "o2", {FLAKE_SPEC: read("o2-density-measure.good.ts.txt")}, 0, 0)

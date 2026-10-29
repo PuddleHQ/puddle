@@ -1,0 +1,30 @@
+// Original code, kept as it was; puddle-certs tests/windows_store.rs at 8f3de0cd: a file name made from the clock.
+fn test_root(tag: &str) -> TestCert {
+    let nanos = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let mut p = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+    p.distinguished_name.push(
+        rcgen::DnType::CommonName,
+        format!("Puddle test root {tag} {nanos}"),
+    );
+    p.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    p.not_after = rcgen::date_time_ymd(2040, 1, 1);
+    let key = rcgen::KeyPair::generate().unwrap();
+    let der = p.self_signed(&key).unwrap().der().to_vec();
+    let file = std::env::temp_dir().join(format!("puddle-root-sync-{tag}-{nanos}.cer"));
+    std::fs::write(&file, &der).unwrap();
+    let thumbprint = powershell(&format!(
+        "(New-Object System.Security.Cryptography.X509Certificates.X509Certificate2('{}')).Thumbprint",
+        file.display()
+    ))
+    .unwrap()
+    .trim()
+    .to_owned();
+    TestCert {
+        der,
+        file,
+        thumbprint,
+    }
+}

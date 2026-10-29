@@ -1,0 +1,7 @@
+// Original code, kept as it was; ui/e2e/density.spec.ts at 692a2548: a read into a variable, then asserted once.
+async function required(page: Page, selector: string): Promise<Box> {
+  const box = await measure(page, selector);
+  expect(box, `${selector} is on the screen`).not.toBeNull();
+  return box as Box;
+}
+

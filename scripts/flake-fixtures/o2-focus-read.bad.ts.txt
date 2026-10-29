@@ -1,0 +1,10 @@
+// Original code, kept as it was; ui/e2e/hardening.spec.ts at 4921dfe5~4: the focus read once after a click.
+    await page.keyboard.press("Enter");
+    await expect(rows).toHaveCount(count - 1);
+    // The focus went somewhere the next Tab can continue from, not to the top of the page.
+    const where = await page.evaluate(
+      () => document.activeElement?.tagName ?? "",
+    );
+    expect(where).not.toBe("");
+  });
+});

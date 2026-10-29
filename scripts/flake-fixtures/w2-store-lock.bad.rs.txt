@@ -1,0 +1,9 @@
+// Original code, kept as it was; puddle-certs tests/windows_store.rs at 8f3de0cd: lock() waits for ever when another test process hangs.
+/// Held for a test's whole run: a test that reads the stores must not see another test's
+/// certificate come and go between two reads. A file lock, so it holds across nextest's test
+/// processes and `cargo test`'s threads alike; the OS releases it when a test process dies.
+fn lock_stores() -> File {
+    let file = File::create(std::env::temp_dir().join("puddle-store-tests.lock")).unwrap();
+    file.lock().unwrap();
+    file
+}

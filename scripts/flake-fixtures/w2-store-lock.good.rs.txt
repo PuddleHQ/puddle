@@ -1,0 +1,27 @@
+// Original code, kept as it was; the same lock after the fix (polls try_lock against a budget and names the holder).
+/// Takes the lock at `lock`, polling for `wait`; `Err` names the holder written to `holder`.
+fn acquire(lock: &Path, holder: &Path, wait: Duration) -> Result<StoreLock, String> {
+    let file = File::create(lock).unwrap();
+    let start = Instant::now();
+    loop {
+        match file.try_lock() {
+            Ok(()) => {
+                std::fs::write(holder, who_am_i()).unwrap();
+                return Ok(StoreLock {
+                    _file: file,
+                    holder: holder.to_owned(),
+                });
+            }
+            Err(std::fs::TryLockError::WouldBlock) => {}
+            Err(std::fs::TryLockError::Error(e)) => panic!("locking {}: {e}", lock.display()),
+        }
+        if start.elapsed() >= wait {
+            let who = std::fs::read_to_string(holder)
+                .unwrap_or_else(|_| "unknown (no holder file)".to_owned());
+            return Err(format!(
+                "no turn at the certificate stores after {wait:?}; last recorded holder {who} (a process that was killed leaves its record, so it may be gone; otherwise the stores are wedged or the holder is hung in a PowerShell call: see its output)"
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}

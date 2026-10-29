@@ -1,0 +1,16 @@
+// Original code, kept as it was; puddle-e2e src/lab/interceptor.rs at c4e246f9: the picked port is handed to mitmproxy, which can lose it to another process.
+                confdir.join("mitmproxy-ca.pem"),
+                format!("{}{}", root.key_pem, root.pem),
+            )
+            .unwrap();
+        }
+        let port = free_port();
+        let mut command = Command::new(bin);
+        command
+            // The log is read while the proxy runs; Python buffers a redirected stdout.
+            .env("PYTHONUNBUFFERED", "1")
+            .args(["--listen-host", &LOCAL.to_string(), "--listen-port"])
+            .arg(port.to_string())
+            .arg("--set")
+            .arg(format!("confdir={}", confdir.display()))
+            .args(["--set", "flow_detail=1", "--set", "termlog_verbosity=info"])

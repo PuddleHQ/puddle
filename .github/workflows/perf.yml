@@ -11,7 +11,7 @@ name: perf
 
 on:
   schedule:
-    - cron: "30 3 * * *"
+    - cron: "41 3 * * *"
   workflow_dispatch:
 
 permissions:

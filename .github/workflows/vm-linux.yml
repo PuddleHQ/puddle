@@ -17,7 +17,7 @@ name: vm-linux
 
 on:
   schedule:
-    - cron: "0 3 * * *"
+    - cron: "7 3 * * *"
   pull_request:
     branches: [develop]
   merge_group:

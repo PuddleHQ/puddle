@@ -51,7 +51,7 @@ name: cache-gc
 
 on:
   schedule:
-    - cron: "45 3 * * *"
+    - cron: "57 3 * * *"
   # Right after a develop run that may have saved a new entry, so the superseded one (1-4 GB) does
   # not wait for the nightly run, and right after a merge queue run of a required workflow, whose
   # npm, cargo-xwin or msb entries only a rerun of that queue entry could read.

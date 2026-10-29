@@ -3,7 +3,7 @@
 # small change to product code, and a test suite that still passes has not tested that code.
 #  - pull requests: the mutants on the lines the change adds or changes, in the crates of
 #    scripts/mutants-crates.txt. Not yet a required check (the ruleset lists four).
-#  - nightly 03:45 UTC: every mutant of every listed crate, one job per crate. A crate whose inputs hash like
+#  - nightly 03:53 UTC: every mutant of every listed crate, one job per crate. A crate whose inputs hash like
 #    those of its last passing run is skipped (the cache key is in scripts/mutants.sh). On Sundays the cache is
 #    ignored and everything runs, so a stale skip is found within a week.
 name: mutants
@@ -16,7 +16,7 @@ on:
       - ".cargo/mutants.toml"
       - ".github/workflows/mutants.yml"
   schedule:
-    - cron: "45 3 * * *"
+    - cron: "53 3 * * *"
   workflow_dispatch:
     inputs:
       uncached:

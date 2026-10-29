@@ -22,7 +22,7 @@ name: windows
 
 on:
   schedule:
-    - cron: "30 2 * * *"
+    - cron: "37 2 * * *"
   pull_request:
     branches: [develop, main]
   merge_group:

@@ -1,0 +1,10 @@
+// Original code, kept as it was; puddle-e2e tests/proxy_agent_store.rs at dec3bff5~1: records matched to destinations by position.
+    assert_eq!(records.len(), destinations.len(), "{records:?}");
+    for (record, (host, port)) in records.iter().zip(destinations) {
+        assert_eq!(record["host"], host, "{record}");
+        assert_eq!(record["port"], port, "{record}");
+        assert_eq!(record["decision"], "blocked", "{record}");
+        assert_eq!(record["reason"], "ssh_unsupported", "{record}");
+        assert!(record["pending_id"].is_null(), "{record}");
+        assert!(record["resolved_ip"].is_null(), "never connected: {record}");
+    }

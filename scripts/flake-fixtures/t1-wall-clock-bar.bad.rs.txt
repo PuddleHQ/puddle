@@ -1,0 +1,17 @@
+// Original code, kept as it was; puddle-store tests/events_and_audit_query.rs at 6d396df8~1: a 50 ms wall-clock bar.
+    for (name, filter, cursor) in cases {
+        // The best of three, so a scheduler hiccup on a busy runner doesn't fail the bar.
+        let best = (0..3)
+            .map(|_| {
+                let start = Instant::now();
+                let rows = store.audit_query(&filter, cursor, 100).unwrap();
+                let took = start.elapsed();
+                assert!(rows.len() <= 100);
+                took
+            })
+            .min()
+            .unwrap();
+        eprintln!("audit query {name}: {best:?}");
+        assert!(best < Duration::from_millis(50), "{name} took {best:?}");
+    }
+    // The filtered results are right, not just fast.

@@ -1,0 +1,13 @@
+// Original code, kept as it was; puddle-e2e src/lab/mod.rs at c4e246f9: a port picked from a listener that is dropped at once.
+
+/// A free loopback port. The port can be taken again before the caller binds it; the fixtures
+/// retry nothing, so a collision is a failed start, not a silent one.
+#[must_use]
+pub fn free_port() -> u16 {
+    std::net::TcpListener::bind((LOCAL, 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+

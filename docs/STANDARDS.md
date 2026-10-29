@@ -206,6 +206,16 @@ the owner, then tagged `vX.Y.Z` on `main`.
   its truth, so review still reads the reason. `scripts/quality-gate.py --list` prints every site. A daily workflow
   (`quality.yml`, `ci/quality-issue.sh`) keeps one issue with the open code-scanning and Dependabot alerts and the sites
   missing a reason, and what changed since the day before.
+- **Test shapes that raced before** (the `flake-*` kinds of `scripts/quality-gate.py`, `scripts/quality-gate.py --flakes`
+  lists each rule with its count and the fix its error names): a wait helper with no name or bound, `file.lock()` in a
+  test, `try_recv()`, a port picked and released, a name built from the clock, a wall-clock bar, records matched by
+  position, and an awaited page read asserted once. A site is accepted with `flake-ok: <why>` on its line or within three
+  lines above (in the UI also `eslint-disable-next-line no-restricted-syntax -- <why>`). The kinds are counted, not
+  failing, until their existing sites are fixed or reasoned; a rule then moves into `FLAKE_FAILING` and an unreasoned
+  site fails the `quality` gate like the others. Two rules live in the linters: clippy's `disallowed-methods` names
+  `std::env::temp_dir` (workspace level `allow` until its sites move; `scripts/flake-lints-test.sh` runs it at `warn`),
+  and an ESLint selector flags `expect(await ...)` in `ui/e2e` as a warning. Each rule's self-test replays the original
+  code of a flake it would have caught (`scripts/flake-fixtures/`).
 - **Security-sensitive code** (proxy decisions, credential injection, address classification, API
   auth, pipe/socket permissions, anything parsing guest input): treat all guest input as hostile,
   fail closed (deny on error), and add a hostile-guest test (§8) with the change.

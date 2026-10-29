@@ -1,0 +1,34 @@
+// Original code, kept as it was; puddle-host tests/fake_host.rs at 9f11a68a, flaked on a loaded runner: the event lands after the replies.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_proxy_that_turns_the_sign_in_down_is_one_event_and_a_failed_attempt() {
+    use puddle_upstream::{Behaviour, FakeProxy};
+    let rig = Rig::new();
+    let wrong = fixture::canary("wrong");
+    let proxy = FakeProxy::start(Behaviour::Basic {
+        user: "svc".into(),
+        password: fixture::password("right"),
+    })
+    .await;
+    let host = host_behind_proxy(&rig, &proxy, &wrong).await;
+    let mut events = host.events().subscribe();
+    let api = api(&host);
+    add_github_identity(&api, "ghp_unused_token").await;
+    // Two listings, each retrying the same wrong password: one episode.
+    let _ = api.get("/api/repos").await;
+    let _ = api.get("/api/repos").await;
+
+    let mut failures = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        if let Event::ProxySignInFailed { proxy, scheme } = event {
+            failures.push((proxy, scheme));
+        }
+    }
+    assert_eq!(
+        failures,
+        [(proxy.proxy_addr().to_string(), Some("Basic".to_owned()))]
+    );
+    let report = api.get("/api/network-health").await;
+    fixture::assert_absent("the network-health reply", &report.body, &wrong);
+    assert_eq!(report.json()["sign_in"]["attempts"][0]["result"], "failed");
+    host.shutdown().await;
+}

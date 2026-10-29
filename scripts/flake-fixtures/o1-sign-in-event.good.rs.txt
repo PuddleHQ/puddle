@@ -1,0 +1,51 @@
+// Original code, kept as it was; the same test after the fix (a bounded wait for the first event, then a window for a second).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_proxy_that_turns_the_sign_in_down_is_one_event_and_a_failed_attempt() {
+    use puddle_upstream::{Behaviour, FakeProxy};
+    let rig = Rig::new();
+    let wrong = fixture::canary("wrong");
+    let proxy = FakeProxy::start(Behaviour::Basic {
+        user: "svc".into(),
+        password: fixture::password("right"),
+    })
+    .await;
+    let host = host_behind_proxy(&rig, &proxy, &wrong).await;
+    let mut events = host.events().subscribe();
+    let api = api(&host);
+    add_github_identity(&api, "ghp_unused_token").await;
+    // Two listings, each retrying the same wrong password: one episode.
+    let _ = api.get("/api/repos").await;
+    let _ = api.get("/api/repos").await;
+
+    // The host forwards the failure from its own task, so the event can land after the replies:
+    // wait for the first one, then give a second (which must not come) a moment to show.
+    let mut failures = Vec::new();
+    let first = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match events.recv().await {
+                Ok(Event::ProxySignInFailed { proxy, scheme }) => return (proxy, scheme),
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(closed) => panic!("the event stream ended: {closed}"),
+            }
+        }
+    })
+    .await
+    .expect("the sign-in failure never reached the event stream");
+    failures.push(first);
+    let _ = tokio::time::timeout(Duration::from_millis(500), async {
+        while let Ok(event) = events.recv().await {
+            if let Event::ProxySignInFailed { proxy, scheme } = event {
+                failures.push((proxy, scheme));
+            }
+        }
+    })
+    .await;
+    assert_eq!(
+        failures,
+        [(proxy.proxy_addr().to_string(), Some("Basic".to_owned()))]
+    );
+    let report = api.get("/api/network-health").await;
+    fixture::assert_absent("the network-health reply", &report.body, &wrong);
+    assert_eq!(report.json()["sign_in"]["attempts"][0]["result"], "failed");
+    host.shutdown().await;
+}

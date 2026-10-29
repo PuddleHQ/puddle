@@ -1,0 +1,21 @@
+// Original code, kept as it was; the same loop after the fix (each record found by its destination).
+    assert_eq!(records.len(), destinations.len(), "{records:?}");
+    // Each record is written when its own connection ends, after the client has its answer, so
+    // two that follow each other can be stored in either order: find each by its destination.
+    for (host, port) in destinations {
+        let mut own = records
+            .iter()
+            .filter(|r| r["host"] == host && r["port"] == port);
+        let record = own
+            .next()
+            .unwrap_or_else(|| panic!("{host}:{port}: {records:?}"));
+        assert!(own.next().is_none(), "{host}:{port} twice: {records:?}");
+        assert_eq!(record["decision"], "blocked", "{record}");
+        assert_eq!(record["reason"], "ssh_unsupported", "{record}");
+        assert!(record["pending_id"].is_null(), "{record}");
+        assert!(record["resolved_ip"].is_null(), "never connected: {record}");
+    }
+    assert_eq!(
+        rig.store.open_pending(None).unwrap().len(),
+        0,
+        "nothing in the inbox"

@@ -81,18 +81,16 @@ export function overBudget(
   return lines;
 }
 
-function main(): void {
-  const build = join(root, "build");
+/** Check the built page in `build`; true when both budgets hold. */
+export function main(build = join(root, "build")): boolean {
   const html = readFileSync(join(build, "index.html"), "utf8");
   const sizes = measure(html, (path) => readFileSync(join(build, path)));
   const failures = overBudget(sizes);
   console.log(
     `bundle budget: initial js ${sizes.js} of ${INITIAL_JS_BUDGET} bytes gzipped, css ${sizes.css} of ${INITIAL_CSS_BUDGET}`,
   );
-  if (failures.length > 0) {
-    console.error(failures.join("\n"));
-    process.exit(1);
-  }
+  if (failures.length > 0) console.error(failures.join("\n"));
+  return failures.length === 0;
 }
 
-if (import.meta.main) main();
+if (import.meta.main && !main()) process.exit(1);

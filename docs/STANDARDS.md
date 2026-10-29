@@ -355,6 +355,9 @@ the owner, then tagged `vX.Y.Z` on `main`.
   pinned to its statement by writing the line above first, joined with `\n`); a backslash escapes the next character (`\|` for a bar of the code, `\\` for a backslash).
   The file may hold at most N matches of the text (`xN`, default 1), so a copy added later stops being excused.
   `*` excuses a whole file and is for code another OS or a VM runs.
+  Keep the entries sorted by path glob, then by the whole line (the gate fails an unsorted file and names the line):
+  a new entry goes at its sorted place, not at the end, so two pull requests that add entries for different files
+  merge without a conflict. The same holds for `scripts/full-coverage-exclusions.txt`.
   What it can't see: lines with no coverage data (comments, declarations, code compiled out of the Linux
   run such as `cfg(windows)` lines), files absent from the report (listed as "not measured", never
   failed), branch or region detail inside a covered line, and whether a covered line is asserted.

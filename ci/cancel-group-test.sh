@@ -57,6 +57,8 @@ table
 got=$(call merge_group failure "refs/heads/$G" 101)
 expect "first failure cancels the group, own run last" "102 104 101" "$got"
 grep -q -- '--branch gh-readonly-queue/develop/pr-7-aaa' "$tmp/log" || bad "the listing is not scoped to the group's branch"
+grep -q -- '--json databaseId,status' "$tmp/log" || bad "the listing does not ask for databaseId and status"
+grep -q -- 'select(.status != "completed")' "$tmp/log" || bad "the listing does not drop completed runs"
 grep -qE '^run cancel 201' "$tmp/log" && bad "cancelled a run of another group"
 grep -qE '^run cancel 103' "$tmp/log" && bad "cancelled a completed run"
 

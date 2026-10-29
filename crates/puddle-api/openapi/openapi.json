@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.23.0"
+    "version": "0.24.0"
   },
   "paths": {
     "/api/app-icons": {
@@ -3656,7 +3656,7 @@
         "tags": [
           "rules"
         ],
-        "summary": "Makes a rule that refuses the named methods of the named paths on a host. The host is\ndecrypted from now on whatever the workspace's other settings say, so the rule can read its\nrequests; a tunnel to another port of the host is refused.",
+        "summary": "Makes a rule that refuses the named methods of the named paths on a host. The host is\ndecrypted from now on whatever the workspace's other settings say, so the rule can read its\nrequests; a tunnel to another port of the host is refused. Its `warning` says when that\noverrides a never-decrypt name.",
         "operationId": "create_request_rule",
         "requestBody": {
           "content": {
@@ -14029,7 +14029,8 @@
           "methods",
           "path",
           "created_at",
-          "created_by"
+          "created_by",
+          "warning"
         ],
         "properties": {
           "created_at": {
@@ -14061,6 +14062,13 @@
           "path": {
             "type": "string",
             "description": "The path pattern in canonical form: `/a/b`, with `*` for one segment and a closing `/**`\nfor everything below."
+          },
+          "warning": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Set when the rule's host is on a never-decrypt list the rule applies under (the global\none, and the workspace's own or, for a global rule, any workspace's): the rule decrypts the\nhost anyway, so a tool there that does not trust Puddle's certificate fails on it. Names\nthe names it overrides; `null` when it overrides none."
           },
           "workspace": {
             "oneOf": [

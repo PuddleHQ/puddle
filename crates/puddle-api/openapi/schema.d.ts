@@ -689,7 +689,8 @@ export interface paths {
         /**
          * Makes a rule that refuses the named methods of the named paths on a host. The host is
          *     decrypted from now on whatever the workspace's other settings say, so the rule can read its
-         *     requests; a tunnel to another port of the host is refused.
+         *     requests; a tunnel to another port of the host is refused. Its `warning` says when that
+         *     overrides a never-decrypt name.
          */
         post: operations["create_request_rule"];
         delete?: never;
@@ -3741,6 +3742,13 @@ export interface components {
              *     for everything below.
              */
             path: string;
+            /**
+             * @description Set when the rule's host is on a never-decrypt list the rule applies under (the global
+             *     one, and the workspace's own or, for a global rule, any workspace's): the rule decrypts the
+             *     host anyway, so a tool there that does not trust Puddle's certificate fails on it. Names
+             *     the names it overrides; `null` when it overrides none.
+             */
+            warning: string | null;
             workspace: components["schemas"]["WorkspaceName"] | null;
         };
         /** @description Rules on method and path. */

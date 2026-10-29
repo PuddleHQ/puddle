@@ -25,10 +25,19 @@ pub struct RequestRule {
     pub created_at: u64,
     /// `cli`, `ui` or `api`.
     pub created_by: String,
+    /// Set when the rule's host is on a never-decrypt list the rule applies under (the global
+    /// one, and the workspace's own or, for a global rule, any workspace's): the rule decrypts the
+    /// host anyway, so a tool there that does not trust Puddle's certificate fails on it. Names
+    /// the names it overrides; `null` when it overrides none.
+    #[schema(required = true)]
+    pub warning: Option<String>,
 }
 
-impl From<puddle_store::RequestRule> for RequestRule {
-    fn from(rule: puddle_store::RequestRule) -> Self {
+impl RequestRule {
+    /// `rule` on the wire; `never` is every never-decrypt name as (workspace, name), the global
+    /// ones with no workspace.
+    pub(crate) fn new(rule: puddle_store::RequestRule, never: &[(Option<String>, String)]) -> Self {
+        let warning = overridden_warning(&rule, never);
         Self {
             id: rule.id,
             workspace: rule.workspace,
@@ -37,7 +46,72 @@ impl From<puddle_store::RequestRule> for RequestRule {
             path: rule.path.to_string(),
             created_at: rule.created_at,
             created_by: rule.created_by.as_str().to_owned(),
+            warning,
         }
+    }
+}
+
+/// Whether two host patterns in stored form (`example.com`, `*.example.com`) name a host in
+/// common. `*.example.com` names the names below `example.com`, not `example.com` itself.
+fn overlap(a: &str, b: &str) -> bool {
+    let below = |name: &str, domain: &str| {
+        name.strip_suffix(domain)
+            .is_some_and(|label| label.ends_with('.'))
+    };
+    match (a.strip_prefix("*."), b.strip_prefix("*.")) {
+        (None, None) => a == b,
+        (Some(domain), None) => below(b, domain),
+        (None, Some(domain)) => below(a, domain),
+        (Some(x), Some(y)) => x == y || below(x, y) || below(y, x),
+    }
+}
+
+/// The warning for `rule` when it overrides some of the names in `never` that it applies under.
+fn overridden_warning(
+    rule: &puddle_store::RequestRule,
+    never: &[(Option<String>, String)],
+) -> Option<String> {
+    let scope = rule.workspace.as_ref().map(WorkspaceName::as_str);
+    let names: Vec<String> = never
+        .iter()
+        .filter(|(workspace, name)| {
+            (workspace.is_none() || scope.is_none() || workspace.as_deref() == scope)
+                && overlap(&rule.host, name)
+        })
+        .map(|(workspace, name)| match workspace {
+            None => format!("{name} (every workspace)"),
+            Some(workspace) => format!("{name} (workspace {workspace})"),
+        })
+        .collect();
+    (!names.is_empty()).then(|| {
+        format!(
+            "{} is decrypted for this rule although the never-decrypt list names it: {}. A tool there that does not trust Puddle's certificate will fail on it.",
+            rule.host,
+            names.join(", ")
+        )
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::overlap;
+
+    #[test]
+    fn patterns_overlap_when_they_name_a_host_in_common() {
+        assert!(overlap("api.example.com", "api.example.com"));
+        assert!(!overlap("api.example.com", "web.example.com"));
+        assert!(overlap("*.example.com", "api.example.com"));
+        assert!(overlap("api.example.com", "*.example.com"));
+        assert!(
+            !overlap("*.example.com", "example.com"),
+            "a wildcard is below"
+        );
+        assert!(!overlap("example.com", "*.example.com"));
+        assert!(!overlap("*.example.com", "badexample.com"));
+        assert!(overlap("*.example.com", "*.example.com"));
+        assert!(overlap("*.example.com", "*.api.example.com"));
+        assert!(overlap("*.api.example.com", "*.example.com"));
+        assert!(!overlap("*.example.com", "*.example.org"));
     }
 }
 

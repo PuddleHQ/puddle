@@ -413,7 +413,10 @@ ever refuses, so no rule of this kind can open anything and there is no preceden
   the guest agent marks as being in a container too, because a request that cannot be read
   cannot be judged. A tunnel to another port of such a host is refused with
   the reason `request_rule_port`, since its requests would never be seen. The check comes before
-  anything is sent to the server and before a credential is added.
+  anything is sent to the server and before a credential is added. Because the rule overrides
+  the never-decrypt names, a rule whose host one of them names (the global ones, and the
+  workspace's own or, for a global rule, any workspace's) carries a `warning` in the API that
+  names them: a tool there that does not trust Puddle's certificate fails on that host.
 - **R-51 A path pattern** starts with `/` and is made of segments: a name, `*` (exactly one
   segment) or, last, `**` (any number of further segments, none included). `/gists` is that path
   alone, `/gists/**` is `/gists` and everything below it, `/**` is every path. `*` or `**` as part

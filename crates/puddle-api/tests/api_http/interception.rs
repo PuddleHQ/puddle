@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use crate::common::{Api, start};
 
-async fn workspace(api: &Api, name: &str) {
+pub(crate) async fn workspace(api: &Api, name: &str) {
     let reply = api
         .send(
             "POST",

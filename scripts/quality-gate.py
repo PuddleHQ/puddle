@@ -23,7 +23,8 @@ ROOT defaults to `puddle` (a checkout or a `git archive` export of it). Skips ta
 node_modules/, fuzz/corpus and build output. `vendor/` is third-party code we patch, counted apart.
 
 Flake rules (`flake-<id>` kinds; `--flakes` lists them with the fix each names) count test shapes that
-raced in the past: a wait helper that is unnamed or unbounded, `file.lock()`, `try_recv()`, a port picked
+raced in the past: a hand-rolled wait helper (every one outside the shared test kit counts; the row says
+whether it lacks a name or a bound), `file.lock()`, `try_recv()`, a port picked
 and dropped, a name built from the clock, a wall-clock bar, records matched by position, an awaited page read
 asserted once. A site is reasoned by `flake-ok: <why>` on the line or within three lines above. A rule is
 counted (`flake-<id>`, `flake-<id>-unreasoned`) until its sites are fixed or reasoned, then it is added to
@@ -390,7 +391,7 @@ def scan(root):
             flake_pickers = flake_rust(f, raw, code, com, test_lines, lambda kind, i, detail: add(kind, ctx(i), f, i, detail))
             port_pickers.update({n: f for n in flake_pickers})
 
-    # P-1: the callers of the port-picking functions found above, in any file.
+    # Rule p1: the callers of the port-picking functions found above, in any file.
     for f, (code, com) in stripped.items():
         if f.startswith("vendor/") or not port_pickers:
             continue
@@ -557,7 +558,7 @@ def flake_rust(f, raw, code, com, test, rows_add):
 
 
 def flake_port_calls(code, com, raw, pickers, rows_add):
-    """Callers of a port-picking fn (P-1): each one hands the caller a port another process can take."""
+    """Callers of a port-picking fn (rule p1): each one hands the caller a port another process can take."""
     for i, line in enumerate(code):
         for name in pickers:
             if re.search(rf"(?<!fn )\b{name}\(\)", line):
@@ -566,7 +567,7 @@ def flake_port_calls(code, com, raw, pickers, rows_add):
 
 
 def flake_e2e(lines, rows_add):
-    """O-2 in ui/e2e: an awaited page read asserted once (`expect(await read)`, or a read kept in a variable)."""
+    """Rule o2 in ui/e2e: an awaited page read asserted once (`expect(await read)`, or a read kept in a variable)."""
     awaited = {}
 
     def reasoned(i):
@@ -728,6 +729,11 @@ def flake_self_test():
     case("o1 outside tests", "o1", {"crates/x/src/lib.rs": "fn f() { while let Ok(e) = rx.try_recv() { use_it(e); } }\n"}, 0, 0)
     case("o1 reasoned", "o1", {FLAKE_HOST: reasoned(read("o1-sign-in-event.bad.rs.txt"), "events.try_recv()")}, 1, 0)
     case("w1 original", "w1", {FLAKE_HOST: read("w1-wait-helper.bad.rs.txt")}, 1, 1)
+    w1_rows = [r for r in run({FLAKE_HOST: read("w1-wait-helper.bad.rs.txt")}) if r[0] == "flake-w1"]
+    if not (w1_rows and w1_rows[0][3].startswith("no-bound ")):
+        failures.append(f"w1 original: the row must say the helper has no bound: {w1_rows}")
+    case("w1 not a wait name", "w1", {FLAKE_HOST: "async fn settle(what: &str, within: Duration) {}\n"}, 0, 0)
+    case("w1 in production code", "w1", {"crates/x/src/lib.rs": read("w1-wait-helper.bad.rs.txt")}, 0, 0)
     case("w1 reasoned", "w1", {FLAKE_HOST: reasoned(read("w1-wait-helper.bad.rs.txt"), "async fn eventually")}, 1, 0)
     case("w1 in the kit", "w1", {"crates/puddle-test-kit/src/lib.rs": read("w1-wait-helper.bad.rs.txt")}, 0, 0)
     case("w2 original", "w2", {FLAKE_STORE: read("w2-store-lock.bad.rs.txt")}, 1, 1)
@@ -742,6 +748,7 @@ def flake_self_test():
     store = "crates/puddle-store/tests/events_and_audit_query.rs"
     case("t1 original", "t1", {store: read("t1-wall-clock-bar.bad.rs.txt")}, 1, 1)
     case("t1 fix keeps the bar", "t1", {store: read("t1-wall-clock-bar.good.rs.txt")}, 1, 1)
+    case("t1 a deadline loop is not a bar", "t1", {store: "fn t() { assert!(Instant::now() < deadline, \"late\"); }\n"}, 0, 0)
     case("t1 reasoned", "t1", {store: reasoned(read("t1-wall-clock-bar.good.rs.txt"), "assert!(best")}, 1, 0)
     case("o2 variable", "o2", {FLAKE_SPEC: read("o2-density-measure.bad.ts.txt")}, 1, 1)
     case("o2 poll", "o2", {FLAKE_SPEC: read("o2-density-measure.good.ts.txt")}, 0, 0)
@@ -752,17 +759,29 @@ def flake_self_test():
     lint = one_shot.replace("  expect", "  // eslint-disable-next-line no-restricted-syntax -- the data is held\n  expect")
     case("o2 eslint-disable with a reason", "o2", {FLAKE_SPEC: lint}, 1, 0)
 
-    # A counted rule adds no `noreason` row; a rule flipped to failing adds one that names the fix.
-    files = {store: read("t1-wall-clock-bar.bad.rs.txt")}
-    if any(r[0] == "noreason" for r in run(files)):
-        failures.append("a counted rule must not add a noreason row")
-    FLAKE_FAILING.add("t1")
-    try:
-        miss = [r for r in run(files) if r[0] == "noreason"]
-    finally:
-        FLAKE_FAILING.discard("t1")
-    if len(miss) != 1 or not miss[0][3].startswith(f"flake-t1: {FLAKE_FIX['t1']} | "):
-        failures.append(f"a failing rule adds one noreason row that opens with the whole fix text: {miss}")
+    # A counted rule adds no `noreason` row; a rule flipped to failing adds one that opens with its fix.
+    bad = {
+        "o1": {FLAKE_HOST: read("o1-sign-in-event.bad.rs.txt")},
+        "w1": {FLAKE_HOST: read("w1-wait-helper.bad.rs.txt")},
+        "w2": {FLAKE_STORE: read("w2-store-lock.bad.rs.txt")},
+        "n1": {FLAKE_STORE: read("n1-clock-name.bad.rs.txt")},
+        "p1": {mod_rs: read("p1-free-port.bad.rs.txt")},
+        "a1": {"crates/puddle-e2e/tests/proxy_agent_store.rs": read("a1-positional-zip.bad.rs.txt")},
+        "t1": {store: read("t1-wall-clock-bar.bad.rs.txt")},
+        "o2": {FLAKE_SPEC: read("o2-density-measure.bad.ts.txt")},
+    }
+    if sorted(bad) != sorted(FLAKE_FIX):
+        failures.append(f"every rule needs a failing-flip case: {sorted(set(FLAKE_FIX) ^ set(bad))}")
+    for rule, files in bad.items():
+        if any(r[0] == "noreason" for r in run(files)):
+            failures.append(f"{rule}: a counted rule must not add a noreason row")
+        FLAKE_FAILING.add(rule)
+        try:
+            miss = [r for r in run(files) if r[0] == "noreason"]
+        finally:
+            FLAKE_FAILING.discard(rule)
+        if not miss or not all(r[3].startswith(f"flake-{rule}: {FLAKE_FIX[rule]} | ") for r in miss):
+            failures.append(f"{rule}: a failing rule adds noreason rows that open with the whole fix text: {miss}")
     return failures
 
 

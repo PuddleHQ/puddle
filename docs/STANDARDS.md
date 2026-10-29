@@ -207,7 +207,7 @@ the owner, then tagged `vX.Y.Z` on `main`.
   (`quality.yml`, `ci/quality-issue.sh`) keeps one issue with the open code-scanning and Dependabot alerts and the sites
   missing a reason, and what changed since the day before.
 - **Test shapes that raced before** (the `flake-*` kinds of `scripts/quality-gate.py`, `scripts/quality-gate.py --flakes`
-  lists each rule with its count and the fix its error names): a wait helper with no name or bound, `file.lock()` in a
+  lists each rule with its count and the fix its error names): a hand-rolled wait helper (the row says whether it lacks a name or a bound), `file.lock()` in a
   test, `try_recv()`, a port picked and released, a name built from the clock, a wall-clock bar, records matched by
   position, and an awaited page read asserted once. A site is accepted with `flake-ok: <why>` on its line or within three
   lines above (in the UI also `eslint-disable-next-line no-restricted-syntax -- <why>`). The kinds are counted, not

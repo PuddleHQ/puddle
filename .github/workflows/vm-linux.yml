@@ -149,7 +149,7 @@ jobs:
         uses: ./.github/actions/cancel-group
 
   tests:
-    name: vm-linux tests (partition ${{ matrix.partition }} of 3)
+    name: vm-linux tests (partition ${{ matrix.partition }} of ${{ matrix.of }})
     needs: build
     if: needs.build.outputs.run == 'true'
     permissions:
@@ -166,7 +166,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [1, 2, 3]
+        include:
+          - {partition: 1, of: 3}
+          - {partition: 2, of: 3}
+          - {partition: 3, of: 3}
+          - {partition: 1, of: 4}
+          - {partition: 2, of: 4}
+          - {partition: 3, of: 4}
+          - {partition: 4, of: 4}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: KVM preflight (infrastructure)
@@ -226,7 +233,6 @@ jobs:
           # own prefix, so its sandbox names and private msb home never meet another run's.
           base="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           FILTER='not (test(/(^|::)vm_machine_/) | test(/(^|::)vm_radar_/) | test(/(^|::)vm_soak_/))'
-          case "$GITHUB_EVENT_NAME" in schedule | workflow_dispatch) FILTER='not (test(/(^|::)vm_machine_/) | test(/(^|::)vm_radar_/))' ;; esac
           # At the deadline nextest stops the test still running, names it and writes junit.xml.
           # The other users of the vm profile (the radar, the real-machine run) need longer, so the
           # deadline comes from this job, as a tool config below the repository's.
@@ -236,7 +242,7 @@ jobs:
               --tool-config-file "vm-deadline:$RUNNER_TEMP/vm-deadline.toml" \
               --archive-file "$RUNNER_TEMP/bundle/vm-tests.tar.zst" \
               --extract-to "$RUNNER_TEMP/vmx" --extract-overwrite --workspace-remap . \
-              --partition hash:${{ matrix.partition }}/3 \
+              --partition hash:${{ matrix.partition }}/${{ matrix.of }} \
               -E "$FILTER"
           }
           if [ "$RUNS" = "1" ]; then
@@ -287,7 +293,7 @@ jobs:
         if: ${{ always() && steps.kvm.outputs.ok == 'true' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: vm-linux-results-${{ matrix.partition }}
+          name: vm-linux-results-${{ matrix.of }}-${{ matrix.partition }}
           path: |
             ${{ runner.temp }}/vmx/target/nextest/vm/junit.xml
             target/nextest/vm/junit.xml

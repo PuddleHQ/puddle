@@ -58,13 +58,11 @@ export APT_ETC="$tmp/apt" APT_HOSTS="$tmp/hosts" APT_RETRY_NO_REPAIR=1 APT_FIRST
 "$here/apt-retry.sh" true >"$tmp/out" 2>&1 || fail "retry: a passing command failed"
 ! grep -q retrying "$tmp/out" || fail "retry: a passing command was retried"
 printf 'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n' >"$tmp/apt/apt-mirrors.txt"
-# The stub decides "first try" by the mirror list, not by a marker it writes itself: a marker written
-# after the stub starts is lost when a starved runner starts the stub later than the first-try bound,
-# the try is cut off before it runs, and the retry would stall too. The list is Canonical-first
-# exactly when apt-retry.sh has stopped the first try and run apt-setup.sh --canonical.
+# The stubs tell the first try from the retry by the mirror list (Canonical first after the stop), not by a
+# marker they write: a stub that starts after the bound is killed before it can write one.
 cat >"$tmp/stall.sh" <<S
 #!/usr/bin/env bash
-if [ "\$(sed -n 1p "$tmp/apt/apt-mirrors.txt")" = "https://archive.ubuntu.com/ubuntu/	priority:1" ]; then exit 0; fi
+if [ "\$(sed -n 1p "$tmp/apt/apt-mirrors.txt")" = "$canonical" ]; then exit 0; fi
 sleep 30
 S
 chmod +x "$tmp/stall.sh"
@@ -107,13 +105,13 @@ PATH="$tmp/bin:$PATH" APT_ETC="$tmp/notdir" APT_RETRY_NO_REPAIR='' "$here/apt-re
 [ "$rc" = 7 ] || fail "retry: failing repair steps changed the status (got $rc)"
 grep -q "^::warning::apt-retry: 'apt-setup.sh --canonical' failed" "$tmp/out" || fail "retry: no warning for apt-setup.sh"
 grep -q "^::warning::apt-retry: 'dpkg --configure -a' failed" "$tmp/out" || fail "retry: no warning for dpkg"
-# A try that times out must not leave its apt-get behind: a helper in its own session (as sudo
-# starts one) holds a lock file, started and confirmed held here, outside the first-try bound, so a
-# slow start cannot skip the case. The retry fails while the helper runs.
+# A try that times out must not leave an apt lock held: this test starts a holder in its own session
+# (as sudo does) and confirms it holds the lock before the first try, so a slow stub cannot skip the
+# case. The retry fails while the holder runs.
 cat >"$tmp/lockhold.sh" <<S
 #!/usr/bin/env bash
 lock="$tmp/lock-frontend"
-if [ "\$(sed -n 1p "$tmp/apt/apt-mirrors.txt")" = "https://archive.ubuntu.com/ubuntu/	priority:1" ]; then
+if [ "\$(sed -n 1p "$tmp/apt/apt-mirrors.txt")" = "$canonical" ]; then
     flock -n "\$lock" true || { echo "E: Could not get lock \$lock" >&2; exit 1; }
     exit 0
 fi
@@ -124,7 +122,8 @@ printf 'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n' >"$tmp/apt/apt-mi
 : >"$tmp/lock-frontend"
 setsid flock "$tmp/lock-frontend" sleep 60 &
 holder=$!
-until ! flock -n "$tmp/lock-frontend" true; do sleep 0.05; done
+for _ in $(seq 200); do flock -n "$tmp/lock-frontend" true || break; sleep 0.05; done
+flock -n "$tmp/lock-frontend" true && fail "retry: the lock holder did not start"
 APT_LOCKS="$tmp/lock-frontend" "$here/apt-retry.sh" "$tmp/lockhold.sh" >"$tmp/out" 2>&1 ||
     fail "retry: the retry failed on a lock the stopped try left behind: $(tail -3 "$tmp/out" | tr '\n' '|')"
 grep -q "still holds an apt lock" "$tmp/out" || fail "retry: the lock holder was not named"

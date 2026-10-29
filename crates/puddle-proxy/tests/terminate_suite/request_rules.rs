@@ -406,6 +406,7 @@ async fn a_tunnel_to_another_port_of_a_covered_host_is_refused_because_its_reque
     let events = rig.events(1).await;
     assert_eq!(events[0].decision, ConnectionDecision::Blocked);
     assert_eq!(events[0].reason.to_string(), "request_rule_port");
+    assert_eq!(events[0].request_rule, Some(RuleId(2)), "the rule is named");
     // A host with no rule keeps its tunnels.
     let (status, _) = guest.connect_to("other.test:8443").await;
     assert_ne!(status, 403);

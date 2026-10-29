@@ -444,7 +444,8 @@ ever refuses, so no rule of this kind can open anything and there is no preceden
   `method` and `path` of the refused request (R-25 holds: no query, no header value). A connection
   that carries several requests has one record: the first refused request is the one it names,
   and a connection no rule refused names its first request as before. A refused tunnel is
-  `decision: blocked`, `reason: request_rule_port`.
+  `decision: blocked`, `reason: request_rule_port`, with `request_rule` the lowest-numbered rule
+  on the host (its `403` carries the same id in `x-puddle-request-rule`).
 - **R-55 No rule of this kind is ever made by Puddle.** Automated help may only allow (R-36), so
   rule sets, System managed and the AI judge never create one; every rule on method and path
   was made by the user over the API (a screen for them is not built yet) and shows in the audit with who made it.

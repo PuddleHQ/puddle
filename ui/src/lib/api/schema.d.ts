@@ -1728,7 +1728,8 @@ export interface components {
             /**
              * Format: int64
              * @description The rule on method and path that refused the request, when `reason` is
-             *     `request_rule`; `method` and `path` are that request's. Numbered apart from `rule_id`.
+             *     `request_rule`; `method` and `path` are that request's. For a tunnel refused with
+             *     `request_rule_port`, the lowest-numbered rule on the host. Numbered apart from `rule_id`.
              *     Records written before it existed read as `null`.
              */
             request_rule: number | null;

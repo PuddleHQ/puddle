@@ -519,9 +519,15 @@ names report on the queue's commit too. Two repository variables switch the rest
   msvc and UI jobs when their cache entries already exist (job `queue-tested`, `ci/should-run.sh --queue-tested`; specs
   marked `,pushskip`). The advisories still run.
 
+A failed job in a merge queue run cancels the rest of its merge group: every job that does work ends with the
+`cancel-group` step (`ci/cancel-group.sh`, needs `actions: write` on the job), which cancels each run that has not
+completed on that queue branch, in all four workflows. Only a `failure` triggers it, never a skipped or cancelled job, and
+pull request and push runs are untouched. The result jobs still run `if: always()` and report red. A second failure in
+another job is cancelled with the rest and shows on the requeue.
+
 The VM no-hypervisor policy fails a merge queue run like a PR, and `verdict --nightly-skips` accepts a skip only on a
 scheduled run. Self-tests: `ci/scope-test.sh` (light mode and merge queue cases, a verdict matrix over every event and
-variable, the workflow wiring), `ci/should-run-test.sh`, `ci/cache-gc-test.sh`, `ci/raise-coverage-baseline-test.sh`, `ci/test-vm-skip-policy.sh`, all in the
+variable, the workflow wiring), `ci/should-run-test.sh`, `ci/cancel-group-test.sh`, `ci/cache-gc-test.sh`, `ci/raise-coverage-baseline-test.sh`, `ci/test-vm-skip-policy.sh`, all in the
 `hooks` gate.
 Actions are pinned to commit SHAs and must be GitHub-owned or on the repo's allow-list (selected
 actions, SHA pinning required; an unpinned `uses:` ends as a `startup_failure` with no jobs).

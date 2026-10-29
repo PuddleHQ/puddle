@@ -62,6 +62,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      actions: write
     outputs:
       vm: ${{ steps.scope.outputs.vm }}
       light: ${{ steps.scope.outputs.light }}
@@ -80,15 +81,19 @@ jobs:
           MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
           PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
         run: ci/scope.sh
+      - name: Cancel the rest of the merge group
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        continue-on-error: true
+        uses: ./.github/actions/cancel-group
 
   build:
     name: vm-linux build (test archive, guest agent)
     needs: scope
     if: ${{ !cancelled() && needs.scope.outputs.vm != 'false' && needs.scope.outputs.light != 'true' }}
-    # `actions: read` for ci/should-run.sh (a separate gate job would be billed a full minute).
+    # `actions: write` for ci/cancel-group.sh (it covers the read ci/should-run.sh needs; a separate gate job would be billed a full minute).
     permissions:
       contents: read
-      actions: read
+      actions: write
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     outputs:
@@ -138,11 +143,18 @@ jobs:
           path: ${{ runner.temp }}/bundle
           retention-days: 1
           compression-level: 0 # the archive is already compressed
+      - name: Cancel the rest of the merge group
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        continue-on-error: true
+        uses: ./.github/actions/cancel-group
 
   tests:
     name: vm-linux tests (partition ${{ matrix.partition }} of 3)
     needs: build
     if: needs.build.outputs.run == 'true'
+    permissions:
+      contents: read
+      actions: write
     runs-on: ubuntu-24.04
     # ~67 VM tests in all, each partition a third of them; every test has its own 12-minute cap.
     # Three limits, each inside the next, so a hang ends in a named failure with its log uploaded
@@ -285,6 +297,10 @@ jobs:
             ${{ runner.temp }}/pvm/**/logs/**
           retention-days: 14
           if-no-files-found: ignore
+      - name: Cancel the rest of the merge group
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        continue-on-error: true
+        uses: ./.github/actions/cancel-group
 
   # One stable result for the build and every partition.
   # The develop ruleset requires it by this name: a rename changes the ruleset in the same change.

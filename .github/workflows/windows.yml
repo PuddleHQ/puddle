@@ -55,6 +55,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      actions: write
     outputs:
       win_rust: ${{ steps.scope.outputs.win_rust }}
       ui: ${{ steps.scope.outputs.ui }}
@@ -74,6 +75,10 @@ jobs:
           MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
           PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
         run: ci/scope.sh
+      - name: Cancel the rest of the merge group
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        continue-on-error: true
+        uses: ./.github/actions/cancel-group
 
   clippy:
     name: windows clippy
@@ -81,10 +86,10 @@ jobs:
     if: ${{ !cancelled() && needs.scope.outputs.win_rust != 'false' && needs.scope.outputs.light != 'true' }}
     runs-on: windows-2025
     timeout-minutes: 30
-    # `actions: read` for ci/should-run.sh (a separate gate job would be billed a full minute).
+    # `actions: write` for ci/cancel-group.sh (it covers the read ci/should-run.sh needs; a separate gate job would be billed a full minute).
     permissions:
       contents: read
-      actions: read
+      actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: anything new since the last green run?
@@ -109,6 +114,10 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: scripts/check.sh clippy
+      - name: Cancel the rest of the merge group
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        continue-on-error: true
+        uses: ./.github/actions/cancel-group
 
   tests:
     name: windows tests (nextest, doc tests, secret scan)
@@ -118,10 +127,10 @@ jobs:
     # Nearly all of it is compiling and linking the test binaries; running the 2000+ tests takes
     # under two minutes, so there is nothing to gain from splitting them across runners.
     timeout-minutes: 45
-    # `actions: read` for ci/should-run.sh (a separate gate job would be billed a full minute).
+    # `actions: write` for ci/cancel-group.sh (it covers the read ci/should-run.sh needs; a separate gate job would be billed a full minute).
     permissions:
       contents: read
-      actions: read
+      actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: anything new since the last green run?
@@ -234,6 +243,10 @@ jobs:
           path: target/nextest/ci/junit.xml
           retention-days: 14
           if-no-files-found: ignore
+      - name: Cancel the rest of the merge group
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        continue-on-error: true
+        uses: ./.github/actions/cancel-group
 
   ui:
     name: windows UI (unit tests, e2e on Edge, desktop shell smoke)
@@ -241,10 +254,10 @@ jobs:
     if: ${{ !cancelled() && needs.scope.outputs.ui != 'false' && needs.scope.outputs.light != 'true' }}
     runs-on: windows-2025
     timeout-minutes: 40
-    # `actions: read` for ci/should-run.sh (a separate gate job would be billed a full minute).
+    # `actions: write` for ci/cancel-group.sh (it covers the read ci/should-run.sh needs; a separate gate job would be billed a full minute).
     permissions:
       contents: read
-      actions: read
+      actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -330,6 +343,10 @@ jobs:
             ui/test-results
           retention-days: 14
           if-no-files-found: ignore
+      - name: Cancel the rest of the merge group
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        continue-on-error: true
+        uses: ./.github/actions/cancel-group
 
   # Nightly, pull requests to main and manual runs from develop only: it compiles everything a
   # second time, which a pull request to develop does not need. It keeps no Rust cache: the 1.6 GB
@@ -343,10 +360,10 @@ jobs:
       || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/develop') }}
     runs-on: windows-2025
     timeout-minutes: 45
-    # `actions: read` for ci/should-run.sh (a separate gate job would be billed a full minute).
+    # `actions: write` for ci/cancel-group.sh (it covers the read ci/should-run.sh needs; a separate gate job would be billed a full minute).
     permissions:
       contents: read
-      actions: read
+      actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: anything new since the last green run?
@@ -375,6 +392,10 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: cargo build --workspace --release --locked
+      - name: Cancel the rest of the merge group
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        continue-on-error: true
+        uses: ./.github/actions/cancel-group
 
   # One stable result for the jobs above. The release build is skipped on a pull request to
   # develop, a merge queue run and a manual run from a task branch (its own `if:`); a skipped job

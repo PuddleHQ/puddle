@@ -27,6 +27,7 @@ use puddle_certs::{
     SOURCES, StoreSnapshot,
 };
 use puddle_compute::ImageConfig;
+use puddle_types::GuestFile;
 
 /// The agent binary as the merge tool: reads the spec and leaves the file as it is.
 const MERGE_TOOL_STUB: &str = "#!/bin/sh\ncat >/dev/null\necho unchanged\n";
@@ -139,9 +140,30 @@ impl Guest {
     }
 
     fn boot(&self, trust: &GuestTrust) -> Output {
+        self.boot_files(trust, trust.guest_files())
+    }
+
+    /// [`Guest::boot`] with the extra CAs file passed through `edit`, as a corrupted certificate
+    /// in the host's stores would leave it.
+    fn boot_with_extra_edited(&self, trust: &GuestTrust, edit: impl Fn(&str) -> String) -> Output {
+        let files = trust
+            .guest_files()
+            .into_iter()
+            .map(|f| {
+                if f.path().as_str() != EXTRA_CAS_PATH {
+                    return f;
+                }
+                let text = edit(&String::from_utf8_lossy(f.contents()));
+                GuestFile::new(f.path().clone(), text.into_bytes())
+            })
+            .collect();
+        self.boot_files(trust, files)
+    }
+
+    fn boot_files(&self, trust: &GuestTrust, files: Vec<GuestFile>) -> Output {
         let mut b = BootPlan::builder(&ImageConfig::default())
             .no_agent()
-            .files(trust.guest_files())
+            .files(files)
             .env(&trust.env());
         for step in trust.boot_steps() {
             b = b.step(step);
@@ -725,6 +747,8 @@ case $op in
     ;;
 -importkeystore)
     [ ! -f "$store.failimport" ] || { echo "keytool error: cannot import" >&2; exit 1; }
+    # A certificate that is not X.509 makes Java's JKS loader, and so the whole import, fail.
+    ! grep -a -q NOTACERT "$src" || { echo "keytool error: java.security.cert.CertificateException: Unable to initialize" >&2; exit 1; }
     cp "$src" "$store.jks"
     if [ -f "$store.refuseentry" ]; then
         echo "Import command completed:  0 entries successfully imported, 1 entries failed or cancelled"
@@ -1069,4 +1093,83 @@ fn an_entry_keytool_refuses_with_exit_zero_is_a_failed_import_retried_at_the_nex
     assert!(out.status.success(), "{}", show(&out));
     assert!(stdout_of(&out).contains("some changes failed, will retry at the next boot"));
     assert!(!g.p("/etc/puddle/java-trust.state").exists());
+}
+
+/// A PEM block whose body decodes to `NOTACERT` and a number: no certificate (the stub's marker
+/// for one Java refuses; real keytool fails on such a block the same way).
+fn garbage_pem(n: u8) -> String {
+    const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut raw = b"NOTACERT".to_vec();
+    raw.extend([n, 0, 0, 0]);
+    let mut b64 = String::new();
+    for c in raw.chunks(3) {
+        let v = (usize::from(c[0]) << 16) | (usize::from(c[1]) << 8) | usize::from(c[2]);
+        for shift in [18, 12, 6, 0] {
+            b64.push(char::from(ABC[(v >> shift) & 63]));
+        }
+    }
+    format!("-----BEGIN CERTIFICATE-----\n{b64}\n-----END CERTIFICATE-----\n")
+}
+
+#[test]
+fn one_certificate_java_refuses_is_skipped_by_name_and_the_other_ten_arrive() {
+    let roots: Vec<(Vec<u8>, String)> = (0..9)
+        .map(|n| root_pem(&format!("Corp Root {n}")))
+        .collect();
+    let ders: Vec<&Vec<u8>> = roots.iter().map(|(d, _)| d).collect();
+    let t = trust(&ders, &[&puddle_ca()]);
+    for sh in shells() {
+        let g = Guest::new(&sh, "", false);
+        g.jdk("/usr/lib/jvm/java-17", JDK17_STORE);
+        let add_bad = |pem: &str| format!("{pem}{}", garbage_pem(1));
+        let out = g.boot_with_extra_edited(&t, add_bad);
+        assert!(out.status.success(), "{}: {}", sh.display(), show(&out));
+        let stdout = stdout_of(&out);
+        assert!(
+            stdout.contains("updated, 10 added, 0 removed, 1 skipped"),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("skipped certificate 11 of extra-cas.pem (alias puddle-"),
+            "{stdout}"
+        );
+        assert_eq!(g.aliases(JDK17_STORE).len(), 11, "distro entry plus ten");
+        // Bisection, not one import per certificate, and the outcome is recorded so the next
+        // boot starts no keytool.
+        assert!(g.keytool_calls("-importkeystore") <= 9);
+        assert!(g.p("/etc/puddle/java-trust.state").exists());
+        let before = g.keytool_calls("");
+        let out = g.boot_with_extra_edited(&t, add_bad);
+        assert!(stdout_of(&out).contains("unchanged"), "{}", show(&out));
+        assert_eq!(g.keytool_calls(""), before);
+    }
+}
+
+#[test]
+fn a_set_of_only_refused_certificates_is_not_recorded_and_the_boot_succeeds() {
+    let (der, _) = root_pem("Corp Root");
+    let t = trust(&[&der], &[]);
+    let g = Guest::new(&shells()[0], "", false);
+    g.jdk("/usr/lib/jvm/java-17", JDK17_STORE);
+    let out = g.boot_with_extra_edited(&t, |_| garbage_pem(1));
+    assert!(out.status.success(), "{}", show(&out));
+    assert!(stdout_of(&out).contains("skipped certificate 1 of extra-cas.pem"));
+    assert!(stdout_of(&out).contains("some changes failed, will retry at the next boot"));
+    assert!(!g.p("/etc/puddle/java-trust.state").exists());
+}
+
+#[test]
+fn many_refused_certificates_stop_at_the_import_cap_and_the_good_ones_still_arrive() {
+    let (der, _) = root_pem("Corp Root");
+    let t = trust(&[&der], &[]);
+    let g = Guest::new(&shells()[0], "", false);
+    g.jdk("/usr/lib/jvm/java-17", JDK17_STORE);
+    let out = g.boot_with_extra_edited(&t, |pem| {
+        (0..100).fold(pem.to_owned(), |acc, n| acc + &garbage_pem(n))
+    });
+    assert!(out.status.success(), "{}", show(&out));
+    assert_eq!(g.keytool_calls("-importkeystore"), 40, "the cap");
+    assert!(stdout_of(&out).contains("some changes failed, will retry at the next boot"));
+    assert!(!g.p("/etc/puddle/java-trust.state").exists());
+    assert_eq!(g.aliases(JDK17_STORE).len(), 2, "the good root arrived");
 }

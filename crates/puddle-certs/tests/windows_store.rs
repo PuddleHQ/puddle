@@ -98,7 +98,7 @@ fn acquire(lock: &Path, holder: &Path, wait: Duration) -> Result<StoreLock, Stri
             let who = std::fs::read_to_string(holder)
                 .unwrap_or_else(|_| "unknown (no holder file)".to_owned());
             return Err(format!(
-                "no turn at the certificate stores after {wait:?}; held by {who} (the stores are wedged or the holder is hung in a PowerShell call: see its output)"
+                "no turn at the certificate stores after {wait:?}; last recorded holder {who} (a process that was killed leaves its record, so it may be gone; otherwise the stores are wedged or the holder is hung in a PowerShell call: see its output)"
             ));
         }
         std::thread::sleep(Duration::from_millis(100));

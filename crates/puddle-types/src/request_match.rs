@@ -71,6 +71,68 @@ impl CanonicalPath {
     pub fn segments(&self) -> &[String] {
         &self.segments
     }
+
+    /// Every way a server may read the path of the request target `target` (origin form, with
+    /// its query), each in canonical form. A rule refuses the request when it names any of
+    /// them, because servers disagree and a rule only refuses:
+    ///
+    /// - the path decoded, then split at `/` and `\` ([`CanonicalPath::new`]);
+    /// - split first, then each segment decoded: a router that matches undecoded segments reads
+    ///   `/repos/a%2fb` as two segments, `repos` and `a/b`;
+    /// - cut at a `?` or `#` that only decoding reveals, as a hop that decodes the path before
+    ///   passing it on makes it: `/admin%3fx` is then `/admin`;
+    /// - with a `#` read as a plain character (a server that keeps it reads `/public#/../admin`
+    ///   as `/admin`);
+    /// - without a leading `//name`, which a parser that resolves the target against a base URL
+    ///   takes as an authority (`//evil.example/admin` is `/admin` there).
+    ///
+    /// ```
+    /// use puddle_types::CanonicalPath;
+    /// let read = |t: &str| -> Vec<Vec<String>> {
+    ///     CanonicalPath::readings(t).iter().map(|p| p.segments().to_vec()).collect()
+    /// };
+    /// assert_eq!(read("/Admin/?q=1"), [["admin"]]);
+    /// assert_eq!(read("/repos/a%2fb"), [vec!["repos", "a", "b"], vec!["repos", "a/b"]]);
+    /// assert!(read("/admin%3fx").contains(&vec!["admin".to_owned()]));
+    /// assert!(read("//evil.example/admin").contains(&vec!["admin".to_owned()]));
+    /// ```
+    #[must_use]
+    pub fn readings(target: &str) -> Vec<Self> {
+        let path = target_path(target);
+        let mut readings = vec![
+            Self::new(path),
+            Self {
+                segments: split_then_decoded(path),
+            },
+        ];
+        let decoded = percent_decoded(path);
+        if let Some(end) = decoded.find(['?', '#']) {
+            readings.push(Self::new(decoded.get(..end).unwrap_or_default()));
+        }
+        if target.contains('#') {
+            let literal = target
+                .find('?')
+                .map_or(target, |query| target.get(..query).unwrap_or_default())
+                .replace('#', "%23");
+            readings.push(Self::new(target_path(&literal)));
+        }
+        if let Some(rest) = decoded
+            .strip_prefix(['/', '\\'])
+            .and_then(|rest| rest.strip_prefix(['/', '\\']))
+        {
+            let after = rest
+                .find(['/', '\\'])
+                .map_or("", |at| rest.get(at..).unwrap_or_default());
+            readings.push(Self::new(after));
+        }
+        let mut unique: Vec<Self> = Vec::with_capacity(readings.len());
+        for reading in readings {
+            if !unique.contains(&reading) {
+                unique.push(reading);
+            }
+        }
+        unique
+    }
 }
 
 fn hex(byte: u8) -> Option<u8> {
@@ -134,37 +196,62 @@ pub fn percent_decoded(text: &str) -> String {
     text
 }
 
-fn canonical_segments(path: &str) -> Vec<String> {
-    let mut text = percent_decoded(path);
-    // C servers end a path at a NUL.
+/// `text` up to its first NUL: C servers end a path there.
+fn to_nul(mut text: String) -> String {
     if let Some(end) = text.find('\0') {
         text.truncate(end);
     }
+    text
+}
+
+fn canonical_segments(path: &str) -> Vec<String> {
+    let text = to_nul(percent_decoded(path));
     let mut segments: Vec<String> = Vec::new();
     for raw in text.split(['/', '\\']) {
-        // A path parameter (`;jsessionid=1`) is not part of the segment for some servers.
-        let raw = raw.split(';').next().unwrap_or_default();
-        let segment: String = raw
-            .chars()
-            .filter(|c| !c.is_control())
-            .collect::<String>()
-            .to_lowercase();
-        let spaced = segment.trim_end_matches(' ');
-        match spaced {
-            "." => continue,
-            ".." => {
-                segments.pop();
-                continue;
-            }
-            _ => {}
-        }
-        // Windows servers drop trailing dots and spaces.
-        let name = spaced.trim_end_matches('.');
-        if !name.is_empty() {
-            segments.push(name.to_owned());
+        push_segment(&mut segments, raw);
+    }
+    segments
+}
+
+/// The segments of `path` split where it has a `/` or `\\` as written, each decoded on its own,
+/// so an escaped separator stays inside its segment.
+fn split_then_decoded(path: &str) -> Vec<String> {
+    let mut segments: Vec<String> = Vec::new();
+    for raw in path.split(['/', '\\']) {
+        let decoded = percent_decoded(raw);
+        let ended = decoded.contains('\0');
+        push_segment(&mut segments, &to_nul(decoded));
+        if ended {
+            break;
         }
     }
     segments
+}
+
+/// Adds the segment `raw` (decoded) to `segments` in canonical form: `.` and empty segments
+/// go, `..` takes the last one away.
+fn push_segment(segments: &mut Vec<String>, raw: &str) {
+    // A path parameter (`;jsessionid=1`) is not part of the segment for some servers.
+    let raw = raw.split(';').next().unwrap_or_default();
+    let segment: String = raw
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect::<String>()
+        .to_lowercase();
+    let spaced = segment.trim_end_matches(' ');
+    match spaced {
+        "." => return,
+        ".." => {
+            segments.pop();
+            return;
+        }
+        _ => {}
+    }
+    // Windows servers drop trailing dots and spaces.
+    let name = spaced.trim_end_matches('.');
+    if !name.is_empty() {
+        segments.push(name.to_owned());
+    }
 }
 
 /// Why a path pattern was refused.

@@ -13,6 +13,11 @@
 # With the repository variable PUDDLE_QUEUE set to `on`, a pull request to develop skips clippy,
 # tests and UI here (the light mode, ci/scope.sh) and the merge queue runs them on the commit that
 # lands; the result job still reports. Unset, every pull request runs them.
+# With the repository variable PUDDLE_TIER set to `on`, a merge queue run also skips the native
+# clippy job and the whole UI job (they run nightly and on a pull request to main) unless the
+# group's diff touches a path that can break them (ci/scope.sh `escalates`: crates/puddle-app, any
+# path with `windows` in its name, this workflow). The result job accepts the skip and its summary
+# says the check is not a test result for them. The tests job stays in the queue.
 # The nightly also reruns each failed test once and lists the ones that pass only on retry
 # (ci/flaky-report.py); it never turns the run red. The nightly gate (ci/should-run.sh --events) counts
 # only nightly and manual runs as "already green" for every job, so a merge queue run on develop's
@@ -59,6 +64,8 @@ jobs:
     outputs:
       win_rust: ${{ steps.scope.outputs.win_rust }}
       ui: ${{ steps.scope.outputs.ui }}
+      defer_win_ui: ${{ steps.scope.outputs.defer_win_ui }}
+      defer_win_clippy: ${{ steps.scope.outputs.defer_win_clippy }}
       light: ${{ steps.scope.outputs.light }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -74,6 +81,7 @@ jobs:
           MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
           PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
+          PUDDLE_TIER: ${{ vars.PUDDLE_TIER }}
         run: ci/scope.sh
       - name: Cancel the rest of the merge group
         if: ${{ failure() && github.event_name == 'merge_group' }}
@@ -83,7 +91,7 @@ jobs:
   clippy:
     name: windows clippy
     needs: scope
-    if: ${{ !cancelled() && needs.scope.outputs.win_rust != 'false' && needs.scope.outputs.light != 'true' }}
+    if: ${{ !cancelled() && needs.scope.outputs.win_rust != 'false' && needs.scope.outputs.light != 'true' && needs.scope.outputs.defer_win_clippy != 'true' }}
     runs-on: windows-2025
     timeout-minutes: 30
     # `actions: write` for ci/cancel-group.sh (it covers the read ci/should-run.sh needs; a separate gate job would be billed a full minute).
@@ -251,7 +259,7 @@ jobs:
   ui:
     name: windows UI (unit tests, e2e on Edge, desktop shell smoke)
     needs: scope
-    if: ${{ !cancelled() && needs.scope.outputs.ui != 'false' && needs.scope.outputs.light != 'true' }}
+    if: ${{ !cancelled() && needs.scope.outputs.ui != 'false' && needs.scope.outputs.light != 'true' && needs.scope.outputs.defer_win_ui != 'true' }}
     runs-on: windows-2025
     timeout-minutes: 40
     # `actions: write` for ci/cancel-group.sh (it covers the read ci/should-run.sh needs; a separate gate job would be billed a full minute).
@@ -417,5 +425,6 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
           PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
+          PUDDLE_TIER: ${{ vars.PUDDLE_TIER }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: ci/scope.sh verdict clippy=win_rust,queue tests=win_rust,queue ui=ui,queue
+        run: ci/scope.sh verdict clippy=win_rust,queue,defer:defer_win_clippy tests=win_rust,queue ui=ui,queue,defer:defer_win_ui

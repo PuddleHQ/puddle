@@ -53,8 +53,14 @@ const CALL_LIMIT: Duration = Duration::from_secs(60);
 /// budget can still try to remove its certificate.
 const TEST_BUDGET: Duration = Duration::from_secs(100);
 
-/// The least a call is given when the test's budget is spent.
+/// The least a call is given when the test's budget is spent. A cleanup stops at its first hung
+/// call, so a spent budget costs at most one more call.
 const MIN_CALL: Duration = Duration::from_secs(5);
+
+const _: () = assert!(
+    TEST_BUDGET.as_secs() + MIN_CALL.as_secs() < 120,
+    "a spent budget plus one more call must end before nextest's 120 s per-test kill"
+);
 
 thread_local! {
     /// When this test's budget ends; set when it asks for its turn at the stores. A test that
@@ -888,8 +894,4 @@ fn a_call_draws_on_what_is_left_of_the_test_budget() {
     );
     DEADLINE.set(Some(Instant::now()));
     assert_eq!(call_limit(), (MIN_CALL, true));
-    assert!(
-        TEST_BUDGET + MIN_CALL < Duration::from_secs(120),
-        "a spent budget plus one more call must still end before nextest's 120 s kill"
-    );
 }

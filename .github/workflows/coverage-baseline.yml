@@ -7,7 +7,7 @@
 # A pull request opened or updated with the default GITHUB_TOKEN does not start the required checks (a GitHub rule against
 # workflow loops), so the job mints a short-lived installation token for the GitHub App "puddle-coverage-baseline" and opens the
 # pull request as that app. Maintainers need the app installed on this repository only, the repository variable
-# COVERAGE_BASELINE_APP_ID (the app's ID) and the repository secret COVERAGE_BASELINE_APP_PRIVATE_KEY (a private key of the app).
+# COVERAGE_BASELINE_CLIENT_ID (the app's public Client ID) and the repository secret COVERAGE_BASELINE_APP_PRIVATE_KEY (a private key of the app).
 # The app needs the repository permissions Contents and Pull requests (read and write) and Actions (read). The token asks for just
 # those three, on this repository only, and GitHub revokes it when the job ends.
 name: coverage-baseline
@@ -43,7 +43,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          app-id: ${{ vars.COVERAGE_BASELINE_APP_ID }}
+          client-id: ${{ vars.COVERAGE_BASELINE_CLIENT_ID }}
           private-key: ${{ secrets.COVERAGE_BASELINE_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write

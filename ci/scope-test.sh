@@ -143,6 +143,8 @@ tier_want "the ui manifest pulls WebKit back" "true true true false" ui/package.
 tier_want "the Playwright config pulls WebKit back" "true true true false" ui/playwright.config.ts
 tier_want "the Vite config pulls WebKit back" "true true true false" ui/vite.config.ts
 tier_want "the browser warm-up pulls WebKit back" "true true true false" ui/e2e/warm-up.ts
+tier_want "a shared e2e helper pulls WebKit back" "true true true false" ui/e2e/support.ts
+tier_want "the e2e fixture setup pulls WebKit back" "true true true false" ui/e2e/fixture.ts
 tier_want "a rename out of a component" "true true true false" ui/src/a.ts ui/src/lib/old.svelte
 tier_want "an e2e spec leaves WebKit to the nightly" "true true true true" ui/e2e/rules.spec.ts
 tier_want "a store module leaves WebKit to the nightly" "true true true true" ui/src/lib/stores/theme.ts

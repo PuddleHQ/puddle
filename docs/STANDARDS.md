@@ -520,8 +520,8 @@ names report on the queue's commit too. Two repository variables switch the rest
   msvc and UI jobs when their cache entries already exist (job `queue-tested`, `ci/should-run.sh --queue-tested`; specs
   marked `,pushskip`). The advisories still run.
 
-- `PUDDLE_TIER=on`: a merge queue run skips the jobs that run nightly and on a pull request to `main` instead: the VM
-  build and tests of `vm-windows`, the Windows UI job and the native Windows clippy job. `scope` sets `defer_vm_windows`,
+- `PUDDLE_TIER=on`: a merge queue run skips three jobs that run nightly and on a pull request to `main` instead, and narrows a
+  fourth. The three are the VM build and tests of `vm-windows`, the Windows UI job and the native Windows clippy job. `scope` sets `defer_vm_windows`,
   `defer_win_ui` and `defer_win_clippy` to `true` unless the group's diff pulls that job back into the queue
   (`escalates` in `ci/scope.sh`: `crates/puddle-compute-msb/`, `crates/puddle-app/` for the UI job, any path with
   `windows` in its name for the VM and clippy jobs, plus every always-run path, which covers the msb pin in `Cargo.toml`,
@@ -533,7 +533,7 @@ names report on the queue's commit too. Two repository variables switch the rest
   `defer_linux_webkit`; nothing skips, so the result job is unchanged and its `full-steps` guard accepts only
   `chromium`, and only with the variable `on` and the output `true`). A diff that touches markup, styles or the
   browser test setup (`ui/**/*.svelte`, `*.css`, `ui/src/app.html`, `ui/static/`, `ui/package.json`, the Playwright
-  and Vite configs, `ui/e2e/warm-up.ts`) keeps WebKit in the queue. WebKit runs nightly in `webkit.yml`, and a pull
+  and Vite configs, the e2e helpers `fixture.ts`, `fixture-build.ts`, `support.ts` and `warm-up.ts`) keeps WebKit in the queue. WebKit runs nightly in `webkit.yml`, and a pull
   request to `main` runs both browsers in `ci.yml`.
 
 A failed job in a merge queue run cancels the rest of its merge group: every job that does work ends with the

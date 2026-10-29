@@ -12,11 +12,12 @@
 # With the repository variable PUDDLE_QUEUE set to `on`, a pull request to develop runs in the light
 # mode (ci/scope.sh): the `git-env` and `notices` gates skip and the UI end-to-end tests run on
 # Chromium only; the merge queue runs them all on the commit that lands. Unset, every pull request
-# runs the full set. With PUDDLE_TIER set to `on`, a merge queue run also runs those tests on Chromium
-# only unless the diff touches markup, styles or the browser test setup (webkit.yml runs WebKit nightly;
-# a pull request to main runs both here). With PUDDLE_QUEUE_SKIP_PUSH set to `on`, a push to develop whose commit a green
-# merge queue run of this workflow tested skips the Rust, msvc and UI jobs when their caches exist
-# (the `queue-tested` job); it still runs the advisories.
+# runs the full set. With PUDDLE_TIER set to `on`, a merge queue run also runs the UI end-to-end tests
+# on Chromium only, unless the diff touches markup, styles or the browser test setup (ci/scope.sh);
+# webkit.yml runs WebKit nightly, and a pull request to main runs both browsers here.
+# With PUDDLE_QUEUE_SKIP_PUSH set to `on`, a push to develop whose commit a green merge queue run of
+# this workflow tested skips the Rust, msvc and UI jobs when their caches exist (the `queue-tested`
+# job); it still runs the advisories.
 # Advisories (RustSec, npm) are not one of those gates: a new advisory fails every pull request at once, whatever
 # the pull request changes. The separate `advisories` and `advisories-npm` jobs run on pull requests to main, on
 # pushes, nightly and by hand, never on a pull request to develop or a merge queue run (the `cargo-deny` step
@@ -607,7 +608,8 @@ jobs:
             ui/coverage/lcov.info
           retention-days: 14
           if-no-files-found: ignore
-      # Off the light mode (worked out again from the event) both browsers must have run.
+      # Off the light mode (worked out again from the event) both browsers must have run, except on a merge queue
+      # run in the nightly tier that scope said may skip WebKit.
       - name: the end-to-end tests ran on every browser
         if: ${{ !cancelled() }}
         env:

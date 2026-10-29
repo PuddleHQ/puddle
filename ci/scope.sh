@@ -134,7 +134,7 @@ escalates() {
     # listed: the engines share it, and the nightly WebKit run covers the rest.
     case $1 in
     ui/*.svelte | ui/*.css | ui/src/app.html | ui/static/* | ui/package.json | ui/playwright.config.ts | \
-        ui/vite.config.ts | ui/e2e/warm-up.ts) echo webkit ;;
+        ui/vite.config.ts | ui/e2e/warm-up.ts | ui/e2e/fixture.ts | ui/e2e/fixture-build.ts | ui/e2e/support.ts) echo webkit ;;
     esac
 }
 

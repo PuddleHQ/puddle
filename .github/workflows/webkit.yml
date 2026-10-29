@@ -1,9 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# The WebKit half of the Linux UI end-to-end tests, nightly and by hand (the nightly tier). A merge queue
-# run with the repository variable PUDDLE_TIER set to `on` runs those tests on Chromium alone unless its diff
-# touches markup, styles or the browser test setup (ci/scope.sh `escalates`, ci.yml job `ui`); this
-# workflow covers the engine every night, and a pull request to main runs both browsers in ci.yml. WebKit
-# stands in for WebKitGTK and, later, WKWebView.
+# The WebKit half of the Linux UI end-to-end tests, nightly and by hand: the half a merge queue run skips
+# with PUDDLE_TIER=on (ci/scope.sh). A pull request to main runs both browsers in ci.yml. WebKit stands in
+# for WebKitGTK and, later, WKWebView.
 # It is no required check. A red run opens the "Nightly red: webkit" issue (nightly-signal.yml) and
 # `ci/bisect-red.sh webkit.yml` names the commit. The nightly skips when this workflow already has a green
 # run on the commit, so a quiet day costs nothing.
@@ -16,11 +14,6 @@ on:
 
 permissions:
   contents: read
-
-# Each run finishes, so a regression cannot go unseen; none is dropped for a newer one.
-concurrency:
-  group: webkit-${{ github.run_id }}
-  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always

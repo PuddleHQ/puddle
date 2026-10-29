@@ -63,12 +63,14 @@ from it.
 
 ### Maintainer note: branch protection
 
-`develop` takes changes only through pull requests, merged by rebase, whose four checks pass:
+`develop` takes changes only through pull requests, merged by squash (one commit per pull request, titled and
+described from the pull request), whose four checks pass:
 `linux (all gates)`, `windows-msvc (build, clippy, tests)`, `vm-linux (KVM, msb microVMs)` and
 `vm-windows (WHP, msb microVMs)`. A pull request need not be up to date with `develop`, and no
 approving review is required while there is one maintainer; force-push and deletion are blocked.
-`main` blocks force-push and deletion only, and `v*` tags can't be deleted or moved. Tighten that when
-outside contributors join: an approving review on `develop`, and the same checks on `main`.
+`main` takes pull requests from `develop` merged with a merge commit, with the same four checks;
+force-push and deletion are blocked there too, and `v*` tags can't be deleted or moved. Tighten that when
+outside contributors join: an approving review on `develop` and `main`.
 
 ## Licence headers
 

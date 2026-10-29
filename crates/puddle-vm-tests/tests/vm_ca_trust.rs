@@ -460,12 +460,11 @@ async fn vm_ca_trust_pip_trusts_the_ca_through_pip_cert() {
 }
 
 /// The step's own wall time in milliseconds, as the apply script prints it.
-fn step_ms(out: &str, step: &str) -> u64 {
+fn step_ms(out: &str, step: &str) -> Option<u64> {
     let key = format!("step-ms {step} ");
     out.lines()
         .find_map(|l| l.strip_prefix(&key))
         .and_then(|ms| ms.trim().parse().ok())
-        .unwrap_or_else(|| panic!("no timing for {step} in: {out}"))
 }
 
 /// Many corporate roots (a managed machine) must not make the Java step the slow part of
@@ -479,13 +478,15 @@ async fn java_many_roots_run(env: &VmEnv) -> Result<(), HarnessError> {
         let script = prepare(&sandbox, &first, ("/tmp/Fetch.java", FETCH_JAVA)).await?;
         let steps = apply(&sandbox, script).await?;
         let ms = step_ms(&steps, JAVA_STEP_PATH);
+        assert!(ms.is_some(), "no timing for the Java step in: {steps}");
+        let ms = ms.unwrap();
         eprintln!("java step with {ROOTS} roots + 1 Puddle CA: {ms} ms");
         assert!(
             steps.contains(&format!("updated, {} added, 0 removed", ROOTS + 1)),
             "{steps}"
         );
         assert!(
-            ms <= JAVA_STEP_BUDGET.as_millis() as u64,
+            Duration::from_millis(ms) <= JAVA_STEP_BUDGET,
             "the Java step took {ms} ms for {ROOTS} roots, budget {JAVA_STEP_BUDGET:?}: {steps}"
         );
         let run = "cd /tmp && java Fetch.java 2>&1";

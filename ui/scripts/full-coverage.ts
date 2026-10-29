@@ -18,7 +18,7 @@ import {
   git,
   globToRegExp,
   occurrences,
-  parseExclusions,
+  readExclusions,
   parseLcov,
   type Coverage,
   type Exclusion,
@@ -154,7 +154,7 @@ export function main(argv: string[], cwd: string = process.cwd()): number {
     judge(
       parseLcov(readFileSync(lcov, "utf8"), root, ""),
       parseCrates(readFileSync(crates, "utf8")),
-      parseExclusions(readFileSync(exclusions, "utf8")),
+      readExclusions(exclusions),
       source,
     ),
   );

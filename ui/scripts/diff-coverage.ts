@@ -182,6 +182,33 @@ export function parseExclusions(text: string): Exclusion[] {
   return out;
 }
 
+/**
+ * The first entry that stands before the one above it, as a message, or undefined when the file is in order.
+ * Entries are sorted by path glob, then by the whole line, comparing code units; comments and blanks may sit
+ * anywhere. Two pull requests that add entries for different files then rarely edit neighbouring lines, so
+ * they merge without a conflict (an append at the end of the file always conflicted).
+ */
+export function exclusionOrderError(text: string): string | undefined {
+  let prev: { key: [string, string]; no: number } | undefined;
+  for (const [i, raw] of text.split(/\r?\n/).entries()) {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#")) continue;
+    const first = bar(line, 0);
+    const key: [string, string] = [
+      first < 0 ? line : line.slice(0, first).trim(),
+      line,
+    ];
+    if (
+      prev &&
+      (key[0] < prev.key[0] || (key[0] === prev.key[0] && key[1] < prev.key[1]))
+    ) {
+      return `exclusions line ${i + 1} belongs before line ${prev.no}: keep the entries sorted by path glob, then by the whole line, so two pull requests rarely edit the same lines (land.sh sorts a merge)`;
+    }
+    prev = { key, no: i + 1 };
+  }
+  return undefined;
+}
+
 export function globToRegExp(glob: string): RegExp {
   let re = "";
   for (let i = 0; i < glob.length; i += 1) {
@@ -285,6 +312,14 @@ export function judge(
   return report;
 }
 
+/** The exclusion file as a gate reads it: sorted, and every entry valid. */
+export function readExclusions(file: string): Exclusion[] {
+  const text = readFileSync(file, "utf8");
+  const bad = exclusionOrderError(text);
+  if (bad) throw new Error(bad);
+  return parseExclusions(text);
+}
+
 /** The environment without the variables a git hook exports, which would override `cwd`. */
 export function cleanGitEnv(
   env: NodeJS.ProcessEnv = process.env,
@@ -366,9 +401,7 @@ export function run(opts: Options, cwd: string = process.cwd()): number {
     repoRoot,
     opts.prefix,
   );
-  const exclusions = opts.exclusions
-    ? parseExclusions(readFileSync(opts.exclusions, "utf8"))
-    : [];
+  const exclusions = opts.exclusions ? readExclusions(opts.exclusions) : [];
   const cache = new Map<string, string[] | undefined>();
   const source: Source = (path) => {
     if (!cache.has(path)) {

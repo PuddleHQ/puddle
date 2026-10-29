@@ -23,7 +23,9 @@ import {
   cleanGitEnv,
   judge,
   parseDiff,
+  exclusionOrderError,
   parseExclusions,
+  readExclusions,
   parseLcov,
   run,
   runFromArgs,
@@ -139,6 +141,41 @@ describe("exclusions file", () => {
       'a.rs | let pattern = r"\\d+"; | a regex with a backslash',
     );
     expect(e?.lines).toEqual(['let pattern = r"\\d+";']);
+  });
+  it("names the first entry that stands before the one above it", () => {
+    const text =
+      "# h\na.rs | one one one one one one | r\n\n# c\nb.rs | x | r\na.rs | two two two two two two | r";
+    expect(exclusionOrderError(text)).toMatch(/line 6 belongs before line 5/);
+  });
+  it("orders by path glob, then by the whole line, and lets comments sit anywhere", () => {
+    expect(exclusionOrderError("")).toBeUndefined();
+    expect(
+      exclusionOrderError(
+        "# h\na.rs | b | r\n# c\na.rs | c | r\na.rs/x | a | r\n",
+      ),
+    ).toBeUndefined();
+    expect(exclusionOrderError("a.rs | c | r\na.rs | b | r")).toMatch(/line 2/);
+  });
+  it("readExclusions refuses an unsorted file and reads a sorted one", () => {
+    const dir = mkdtempSync(join(tmpdir(), "excl-"));
+    try {
+      const file = join(dir, "ex.txt");
+      writeFileSync(file, "b.rs | * | r\na.rs | * | r\n");
+      expect(() => readExclusions(file)).toThrow(/belongs before line 1/);
+      writeFileSync(file, "a.rs | * | r\nb.rs | * | r\n");
+      expect(readExclusions(file).map((e) => e.glob)).toEqual(["a.rs", "b.rs"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it("keeps the committed files sorted", () => {
+    for (const name of ["diff", "full"]) {
+      const file = join(
+        import.meta.dirname,
+        `../../scripts/${name}-coverage-exclusions.txt`,
+      );
+      expect(exclusionOrderError(readFileSync(file, "utf8"))).toBeUndefined();
+    }
   });
   it("accepts every entry of the committed file", () => {
     const file = join(

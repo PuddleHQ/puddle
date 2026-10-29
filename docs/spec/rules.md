@@ -442,13 +442,15 @@ ever refuses, so no rule of this kind can open anything and there is no preceden
   `repos` and `a/b`, so `/repos/*` names it); `;parameters` kept or dropped; `..` counting an
   empty segment or not; `\` a separator or part of a name; a NUL ending the path or kept; an
   escaped `.` or `..` resolved or kept as a name; one round of decoding or four; `.` and `..`
-  with trailing spaces or control characters recognised or not; a `?` or `#` that only decoding
+  with trailing spaces or control characters recognised or not; trailing dots alone or trailing
+  dots and spaces in any mix dropped from a segment; a `?` or `#` that only decoding
   reveals ending the path; and a leading `//name` read as an authority (`//evil.example/admin` is
   `/admin` to a server that resolves the target against a base URL).
 - **R-52 A method** is matched ignoring case. A request is also judged as every method it asks
   to be read as: an `X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override` header and a
   `_method` key in the query string, read as PHP reads it (pairs split at `&` or `;`, `+` a space,
-  `.` and a space in a key read as `_`). A rule on `DELETE` therefore refuses a `POST` that asks to
+  `.` and a space in a key read as `_`; a `+` in the value read both as a space and as written,
+  since it is a token character). A rule on `DELETE` therefore refuses a `POST` that asks to
   be a `DELETE`. An HTTP/2 extended `CONNECT` (a WebSocket over HTTP/2) is also judged as `GET`,
   the method an HTTP/1.1 server is sent for it, so a rule written for a WebSocket upgrade names
   it. Methods are HTTP tokens, at most 16 per rule. A rule cannot see a method carried in

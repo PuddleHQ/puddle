@@ -98,8 +98,8 @@ impl RequestRules {
     /// [`CanonicalPath::readings`]). The method is the one sent and also every method the
     /// request asks to be read as: an override header (`X-HTTP-Method-Override` and two like it)
     /// or a `_method` in the query string, read as PHP reads it (pairs split at `&` or `;`, a `+`
-    /// is a space, `.` and a space in a key are `_`). A rule on `DELETE` therefore refuses a
-    /// `POST` that asks to be a `DELETE`.
+    /// is a space, `.` and a space in a key are `_`) and also with a `+` in the value kept as
+    /// written. A rule on `DELETE` therefore refuses a `POST` that asks to be a `DELETE`.
     #[must_use]
     pub fn refusing(&self, host: &Host, request: &RequestView<'_>) -> Option<RuleId> {
         if !self.covers(host) {
@@ -124,7 +124,10 @@ impl RequestRules {
                     .replace(['.', ' '], "_")
                     .eq_ignore_ascii_case("_method")
             })
-            .map(|(_, value)| form(value).trim().to_owned())
+            .flat_map(|(_, value)| {
+                // `+` is a space to PHP but a token character in a method name.
+                [form(value), percent_decoded(value)].map(|method| method.trim().to_owned())
+            })
             .collect();
         methods.extend(asked.iter().map(String::as_str));
         self.rules
@@ -275,6 +278,18 @@ mod tests {
         }
         let other = headers("x-http-method-override: PATCH");
         let view = RequestView::new("POST", "/x", &other);
+        assert_eq!(rules.refusing(&host, &view), None);
+    }
+
+    #[test]
+    fn a_plus_in_a_method_named_by_the_query_is_read_as_written_and_as_a_space() {
+        let rules = RequestRules::new(vec![rule(1, "a.example.com", &["FOO+BAR"], "/**")]);
+        let host = host("a.example.com");
+        for target in ["/x?_method=FOO+BAR", "/x?_method=foo%2Bbar"] {
+            let view = RequestView::new("POST", target, &[]);
+            assert_eq!(rules.refusing(&host, &view), Some(RuleId(1)), "{target}");
+        }
+        let view = RequestView::new("POST", "/x?_method=FOO+BAZ", &[]);
         assert_eq!(rules.refusing(&host, &view), None);
     }
 

@@ -137,7 +137,7 @@ fn plain(segment: &str) -> bool {
 
 /// A segment that can name a real resource: plain names, joined by `/` when an API takes an
 /// escaped path as one segment (`/projects/group%2Fproject`). A rule protects real resources,
-/// so a segment a server reads as `;p=1\\..` or ` .` is no way around one.
+/// so a segment a server reads as `;p=1\..` or ` .` is no way around one.
 fn real(segment: &str) -> bool {
     segment.split('/').all(plain)
 }
@@ -207,6 +207,11 @@ fn the_readings_cover_the_known_server_disagreements() {
     assert!(named("/admin", "/admin%3fx=1"));
     assert!(named("/admin", "//evil.example/admin"));
     assert!(named("/admin", "/public#/../admin"));
+    // A space before trailing dots keeps the segment for a server that is not Windows, so a
+    // `*` still takes it there.
+    assert!(named("/x/*/y", "/x/%20./y"));
+    assert!(named("/x/*/y", "/x/%20.%20./y"));
+    assert!(named("/admin", "/admin%20."));
     assert!(!named("/admin", "/administrator"));
     assert!(!named("/repos/*", "/repos/a/b"));
 }

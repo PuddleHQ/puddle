@@ -99,39 +99,43 @@ impl CanonicalPath {
     #[must_use]
     pub fn readings(target: &str) -> Vec<Self> {
         let path = target_path(target);
-        let mut readings = vec![
-            Self::new(path),
-            Self {
-                segments: split_then_decoded(path),
-            },
-        ];
         let decoded = percent_decoded(path);
-        if let Some(end) = decoded.find(['?', '#']) {
-            readings.push(Self::new(decoded.get(..end).unwrap_or_default()));
+        let mut texts: Vec<String> = vec![path.to_owned()];
+        for decoded in [decode_once(path), decoded.clone()] {
+            if let Some(end) = decoded.find(['?', '#']) {
+                texts.push(decoded.get(..end).unwrap_or_default().to_owned());
+            }
         }
         if target.contains('#') {
             let literal = target
                 .find('?')
                 .map_or(target, |query| target.get(..query).unwrap_or_default())
                 .replace('#', "%23");
-            readings.push(Self::new(target_path(&literal)));
+            texts.push(target_path(&literal).to_owned());
         }
         if let Some(rest) = decoded
             .strip_prefix(['/', '\\'])
             .and_then(|rest| rest.strip_prefix(['/', '\\']))
         {
+            // More separators after the first two are skipped before the authority.
+            let rest = rest.trim_start_matches(['/', '\\']);
             let after = rest
                 .find(['/', '\\'])
                 .map_or("", |at| rest.get(at..).unwrap_or_default());
-            readings.push(Self::new(after));
+            texts.push(after.to_owned());
         }
-        let mut unique: Vec<Self> = Vec::with_capacity(readings.len());
-        for reading in readings {
-            if !unique.contains(&reading) {
-                unique.push(reading);
+        let mut readings: Vec<Self> = Vec::new();
+        for text in &texts {
+            for read in Read::all_for(text) {
+                let reading = Self {
+                    segments: segments_read(text, read),
+                };
+                if !readings.contains(&reading) {
+                    readings.push(reading);
+                }
             }
         }
-        unique
+        readings
     }
 }
 
@@ -196,7 +200,7 @@ pub fn percent_decoded(text: &str) -> String {
     text
 }
 
-/// `text` up to its first NUL: C servers end a path there.
+/// `text` up to its first NUL.
 fn to_nul(mut text: String) -> String {
     if let Some(end) = text.find('\0') {
         text.truncate(end);
@@ -205,52 +209,152 @@ fn to_nul(mut text: String) -> String {
 }
 
 fn canonical_segments(path: &str) -> Vec<String> {
-    let text = to_nul(percent_decoded(path));
-    let mut segments: Vec<String> = Vec::new();
-    for raw in text.split(['/', '\\']) {
-        push_segment(&mut segments, raw);
-    }
-    segments
+    segments_read(path, Read::default())
 }
 
-/// The segments of `path` split where it has a `/` or `\\` as written, each decoded on its own,
-/// so an escaped separator stays inside its segment.
-fn split_then_decoded(path: &str) -> Vec<String> {
-    let mut segments: Vec<String> = Vec::new();
-    for raw in path.split(['/', '\\']) {
-        let decoded = percent_decoded(raw);
-        let ended = decoded.contains('\0');
-        push_segment(&mut segments, &to_nul(decoded));
-        if ended {
-            break;
+/// One way servers read a path: a set of the flags below. Every combination is a reading,
+/// because servers combine these choices in every way.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Read(u8);
+
+impl Read {
+    /// Split where the path has a `/` or `\\` as written and decode each segment on its own (a
+    /// router that matches undecoded segments, for which `a%2fb` is one name); otherwise the
+    /// whole path is decoded first.
+    const SPLIT_FIRST: u8 = 1;
+    /// Keep a segment's `;parameters` as part of it; servlet containers drop them.
+    const KEEP_PARAMS: u8 = 2;
+    /// Count an empty segment when `..` takes one away, as the WHATWG URL parser does
+    /// (`/admin//..` is `/admin/`); otherwise empty segments go first, as when a server merges
+    /// slashes.
+    const KEEP_EMPTY: u8 = 4;
+    /// Read `\\` as part of a name, as nginx does (`/admin/a\\b/..` is `/admin/` there);
+    /// otherwise it separates segments, as on Windows and in the WHATWG URL parser.
+    const BACKSLASH_IN_NAME: u8 = 8;
+    /// Read a decoded NUL as part of a name; otherwise it ends the path, as C servers end it.
+    const NUL_IN_NAME: u8 = 16;
+    /// With [`Self::SPLIT_FIRST`]: resolve an escaped `.` or `..` (`%2e%2e`) as the WHATWG URL
+    /// parser does; otherwise it is a name.
+    const ESCAPED_DOTS: u8 = 32;
+    /// Decode one round only, as nearly every server does; otherwise as many as a server behind
+    /// another decoding hop might ([`percent_decoded`]).
+    const ONE_ROUND: u8 = 64;
+    /// Recognise `.` and `..` only as written; otherwise also with control characters and
+    /// trailing spaces around them (`.. ` is `..` on Windows).
+    const STRICT_DOTS: u8 = 128;
+
+    /// Every reading that can differ from the others for `path`: a flag whose character the
+    /// path does not hold changes nothing, so it is left out.
+    fn all_for(path: &str) -> impl Iterator<Item = Self> {
+        let decoded = percent_decoded(path);
+        let mut relevant = 0;
+        if path.contains('%') {
+            relevant |= Self::SPLIT_FIRST | Self::ESCAPED_DOTS;
+        }
+        if decode_once(path).contains('%') {
+            relevant |= Self::ONE_ROUND;
+        }
+        if decoded.contains(';') {
+            relevant |= Self::KEEP_PARAMS;
+        }
+        if decoded.contains("..") {
+            relevant |= Self::KEEP_EMPTY;
+        }
+        if decoded.contains('\\') {
+            relevant |= Self::BACKSLASH_IN_NAME;
+        }
+        if decoded.contains('\0') {
+            relevant |= Self::NUL_IN_NAME;
+        }
+        if decoded.contains(|c: char| c.is_control() || c == ' ') {
+            relevant |= Self::STRICT_DOTS;
+        }
+        (0..=u8::MAX)
+            .filter(move |flags| flags & !relevant == 0)
+            .map(Self)
+    }
+
+    fn has(self, flag: u8) -> bool {
+        self.0 & flag != 0
+    }
+
+    fn decode(self, text: &str) -> String {
+        if self.has(Self::ONE_ROUND) {
+            decode_once(text)
+        } else {
+            percent_decoded(text)
         }
     }
-    segments
+
+    fn separators(self) -> &'static [char] {
+        if self.has(Self::BACKSLASH_IN_NAME) {
+            &['/']
+        } else {
+            &['/', '\\']
+        }
+    }
 }
 
-/// Adds the segment `raw` (decoded) to `segments` in canonical form: `.` and empty segments
-/// go, `..` takes the last one away.
-fn push_segment(segments: &mut Vec<String>, raw: &str) {
-    // A path parameter (`;jsessionid=1`) is not part of the segment for some servers.
-    let raw = raw.split(';').next().unwrap_or_default();
+/// The segments of `path` in canonical form, read the way `read` says.
+fn segments_read(path: &str, read: Read) -> Vec<String> {
+    let mut segments: Vec<Option<String>> = Vec::new();
+    if read.has(Read::SPLIT_FIRST) {
+        for raw in path.split(read.separators()) {
+            match raw {
+                "." => {}
+                ".." => {
+                    segments.pop();
+                }
+                // An escaped dot is a name to a router that does not decode before matching.
+                _ => push_segment(
+                    &mut segments,
+                    &read.decode(raw),
+                    read,
+                    read.has(Read::ESCAPED_DOTS),
+                ),
+            }
+        }
+    } else {
+        let mut text = read.decode(path);
+        if !read.has(Read::NUL_IN_NAME) {
+            text = to_nul(text);
+        }
+        for raw in text.split(read.separators()) {
+            push_segment(&mut segments, raw, read, true);
+        }
+    }
+    segments.into_iter().flatten().collect()
+}
+
+/// Adds the decoded segment `raw` to `segments` in canonical form: with `dots`, `.` goes and
+/// `..` takes the last one away; an empty one is kept (as `None`) only when `read` counts it.
+fn push_segment(segments: &mut Vec<Option<String>>, raw: &str, read: Read, dots: bool) {
+    let raw = if read.has(Read::KEEP_PARAMS) {
+        raw
+    } else {
+        raw.split(';').next().unwrap_or_default()
+    };
     let segment: String = raw
         .chars()
         .filter(|c| !c.is_control())
         .collect::<String>()
         .to_lowercase();
     let spaced = segment.trim_end_matches(' ');
+    let dots = dots && (!read.has(Read::STRICT_DOTS) || matches!(raw, "." | ".."));
     match spaced {
-        "." => return,
-        ".." => {
+        "." if dots => return,
+        ".." if dots => {
             segments.pop();
             return;
         }
         _ => {}
     }
-    // Windows servers drop trailing dots and spaces.
-    let name = spaced.trim_end_matches('.');
+    // Windows servers drop trailing dots and spaces, in any mix (`admin .` is `admin`).
+    let name = spaced.trim_end_matches(['.', ' ']);
     if !name.is_empty() {
-        segments.push(name.to_owned());
+        segments.push(Some(name.to_owned()));
+    } else if read.has(Read::KEEP_EMPTY) {
+        segments.push(None);
     }
 }
 
@@ -571,6 +675,8 @@ mod tests {
             "/./././admin",
             "/x/.. /admin",
             "/x/../ /admin",
+            "/admin%20.",
+            "/admin.%20.%20",
         ] {
             assert_eq!(canon(spelling), "admin", "{spelling:?}");
         }

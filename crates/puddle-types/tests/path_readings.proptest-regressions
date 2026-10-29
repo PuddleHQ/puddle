@@ -1,0 +1,22 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 354c032b49890384916f669f4763b02b1b41499ac0d34f7e09404a8ccec0bd4d # shrinks to target = "/%2e", mask = 0, open_at = None
+cc 8ef563bc65622a70a8947fde4ed33ff6bd8fd3d275fef1550e24adcb64f12ff4 # shrinks to target = "/%20.", mask = 0, open_at = None
+cc f1314bfd90acf064174d755d37c36673c122128bde0d94679ce3aa2bc8c95ae3 # shrinks to target = "/;p=1", mask = 0, open_at = None
+cc aba764ce3c8e8b2f09a96679411a050caaaac80b50c07a85b5d089de00acb905 # shrinks to target = "/%00admin", mask = 0, open_at = None
+cc 8e6daba1884d57d26c17bd8d659c6147051094f746e3f58b7abab65598b7bcc6 # shrinks to target = "/;p=1/%2e", mask = 0, open_at = None
+cc f6be8146daf3436efefeafa703de4ca57d8b208bd7e93605412a5c8936302e9f # shrinks to target = "/;p=1//%2E%2e", mask = 0, open_at = None
+cc a4c653772def9382e93322c20b9d3b6a12c8d0906aae58149690ba1e84e1f971 # shrinks to target = "/admin\\%25/..", mask = 0, open_at = None
+cc f2a8ba12182de7ff4b15ee2c14b8e093be97dff61385e8db663d9b5b25136aac # shrinks to target = "/admin\\%2E%2e%20", mask = 251758343, open_at = None
+cc ba21adf4cda6ba0bffd2f05e5a31ab7786ea95838271ecca44eb0e7c5e6d2a9d # shrinks to target = "/%41%00%2f%2E%2e", mask = 0, open_at = None
+cc 57a15178458cbbe9f0f957c87fa14adfc7a20b8fb74754ab7ea277102f72e333 # shrinks to target = "/\\/admin", mask = 0, open_at = None
+cc 95fc1fff98624cdcb04d1d396592668eda2ea5fb0edece3edd8b1ff05b2ac06a # shrinks to target = "/admin/%2E%2e", mask = 0, open_at = Some(1)
+cc a1b7cabb78a4ac0ece80873477fbde9d8b7217865777ec60ff84a764adbc6207 # shrinks to target = "/admin%2f%25\\%2E%2e", mask = 0, open_at = None
+cc b2b61dc6010f90ec9694ab4c699b7781f312992ad19b10f2c2a25dcb2b2bc978 # shrinks to target = "/admin%252f%25/..%2f", mask = 0, open_at = None
+cc 26c2d279077daef5936fa8caf31141f1a85ce849e2c63b78024866ab6d179f99 # shrinks to target = "/admin%2f..%00", mask = 1123295089, open_at = Some(1)
+cc 717f6ec41df3da7b9a4bcbb10066fee6584976b353f248fc831043c7a42f732a # shrinks to target = "/admin%2f..%20", mask = 345684055, open_at = Some(1)
+cc 419c492eb63417dffeb17b113c4c8a4998f213157d8afcd846e47f804d593dfa # shrinks to target = "/%41/..%252f/..%3f", mask = 1831135975, open_at = None

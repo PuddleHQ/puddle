@@ -21,9 +21,10 @@
 # One certificate Java refuses (a corporate root cut short or malformed) fails a whole import, and
 # must cost the other certificates nothing. A failed import is therefore split in halves and each
 # half imported again, down to the single certificate, which is skipped with a line naming it.
-# One bad certificate among 150 takes about 15 imports (a few seconds). The imports are capped at
-# MAX_RUNS per store and boot; what the cap leaves out is retried at the next boot, which starts
-# from what already arrived, so a pathological set still converges and no boot waits for it.
+# Two bad certificates among 150 took 8.5 s in a real JDK image (about 25 imports). The imports are
+# capped at MAX_RUNS per store and boot, so the worst case (every certificate bad) is 40 imports,
+# roughly 20 s; what the cap leaves out is retried at the next boot, which starts from what
+# already arrived, so a pathological set still converges and no boot waits for it.
 #
 # This step never fails the boot: a store that is read-only, locked with another password or
 # missing is reported on stdout and skipped. POSIX sh; needs awk, cksum, readlink, base64, sha1sum and wc.
@@ -211,7 +212,7 @@ add_missing() {
             added=$((added + $#))
         elif [ "$#" -eq 1 ]; then
             skipped=$((skipped + 1))
-            say "$store: skipped certificate $(sed -n "s/^$1 //p" "$tmp/order") of $(basename "$EXTRA") (alias $1), Java refuses it: $(head -n 3 "$tmp/err" | tr '\n' ' ' | cut -c1-200)"
+            say "$store: skipped certificate $(sed -n "s/^$1 //p" "$tmp/order") of $(basename "$EXTRA") (alias $1), Java refuses it: $({ grep -i 'error\|exception' "$tmp/err" || tail -n 1 "$tmp/err"; } | head -n 2 | tr '\n' ' ' | cut -c1-200)"
         else
             half=$(($# / 2))
             first=

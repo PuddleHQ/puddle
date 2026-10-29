@@ -24,7 +24,8 @@
 # Two bad certificates among 150 took 8.5 s in a real JDK image (about 25 imports). The imports are
 # capped at MAX_RUNS per store and boot, so the worst case (every certificate bad) is 40 imports,
 # roughly 20 s; what the cap leaves out is retried at the next boot, which starts from what
-# already arrived, so a pathological set still converges and no boot waits for it.
+# already arrived. More than about 20 bad certificates ahead of the good ones is not finished
+# (each boot spends its imports on the same bad ones), but no boot waits for it.
 #
 # This step never fails the boot: a store that is read-only, locked with another password or
 # missing is reported on stdout and skipped. POSIX sh; needs awk, cksum, readlink, base64, sha1sum and wc.
@@ -195,14 +196,19 @@ add_missing() {
 '
     queue=$1
     runs=0
+    left=0
     while [ -n "$queue" ]; do
         cur=${queue%%"$nl"*}
         case $queue in
         *"$nl"*) queue=${queue#*"$nl"} ;;
         *) queue= ;;
         esac
+        again=$retried
+        retried=
         if [ "$runs" -ge "$MAX_RUNS" ]; then
             failed=1
+            # shellcheck disable=SC2086 # the same one-word aliases
+            left=$((left + $(set -- $cur && echo $#)))
             continue
         fi
         runs=$((runs + 1))
@@ -210,6 +216,11 @@ add_missing() {
         set -- $cur
         if import_set "$cur"; then
             added=$((added + $#))
+        elif [ "$#" -eq 1 ] && [ -z "$again" ]; then
+            # A single failure might be transient (memory, a lock): once more before skipping.
+            retried=1
+            queue="$cur${queue:+$nl$queue}"
+            continue
         elif [ "$#" -eq 1 ]; then
             skipped=$((skipped + 1))
             say "$store: skipped certificate $(sed -n "s/^$1 //p" "$tmp/order") of $(basename "$EXTRA") (alias $1), Java refuses it: $({ grep -i 'error\|exception' "$tmp/err" || tail -n 1 "$tmp/err"; } | head -n 2 | tr '\n' ' ' | cut -c1-200)"
@@ -223,6 +234,7 @@ add_missing() {
             queue="$first$nl$rest${queue:+$nl$queue}"
         fi
     done
+    [ "$left" -eq 0 ] || say "$store: import cap of $MAX_RUNS reached, $left certificates left for the next boot"
 }
 
 : >"$tmp/seen"

@@ -10,7 +10,8 @@
 #      measurement of another commit: a raise above what the tip reaches would fail the next pull request. The UI's
 #      measurement (`coverage-summary.json` in the `linux-ui-test-results` artifact of the `ui` job) is looked up the same
 #      way, and on an older commit when the files changed since touch nothing the `ui` job runs for (ci/scope.sh says
-#      ui=false). A baseline with no measurement tonight is left as it is; the other one is still raised.
+#      ui=false). A baseline with no measurement tonight keeps
+#      what develop and the open pull request hold (per field the higher); the other one is still raised.
 #   2. The ratchets (ui/scripts/coverage-ratchet.ts with the floors from scripts/check.sh, ui/scripts/ui-coverage-ratchet.ts)
 #      rewrite their baseline: per field the higher of the committed value and the measured one, rounded down to 0.1. A
 #      measurement below a baseline fails the job and raises nothing; neither ratchet ever writes a lower number.
@@ -84,31 +85,36 @@ if [ -z "$measured" ] && [ -z "$ui_measured" ]; then
 	exit 0
 fi
 
-# 2. The ratchets.
-tracked=()
-what=''
+# 2. The ratchets. A baseline with no measurement tonight keeps what the open pull request already raises it to (per field the
+# higher of that and develop's), so a night without that measurement neither drops nor closes a pending raise.
+pr=$("$gh" pr list -R "$repo" --head "$branch" --base develop --state open --json number --jq '.[0].number // empty')
+if [ -n "$pr" ]; then git fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch" 2>/dev/null || true; fi
+carry() { # carry <baseline file>
+	[ -n "$pr" ] && git show "origin/$branch:$1" >"$work/carry.json" 2>/dev/null || return 0
+	jq -s 'reduce (.[1] | to_entries[]) as $e (.[0]; .[$e.key] = ([.[$e.key], $e.value] | max))' "$1" "$work/carry.json" >"$work/carried.json"
+	cp "$work/carried.json" "$1"
+}
+tracked=("$bl" "$ubl")
 if [ -n "$measured" ]; then
 	cov_lines=$(sed -n 's/^COV_LINES=//p' scripts/check.sh)
 	cov_regions=$(sed -n 's/^COV_REGIONS=//p' scripts/check.sh)
 	[ -n "$cov_lines" ] && [ -n "$cov_regions" ] || { echo "cannot read the floors from scripts/check.sh" >&2; exit 2; }
-	old=$(git show "HEAD:$bl" | fields)
 	node "$here/../ui/scripts/coverage-ratchet.ts" --summary "$file" --baseline "$bl" \
 		--floor-lines "$cov_lines" --floor-regions "$cov_regions" --write
-	tracked+=("$bl")
-	if ! git diff --quiet -- "$bl"; then what="rust: $old -> $(fields <"$bl")"; fi
 else
-	say "Coverage baseline: no Rust measurement tonight; $bl is left as it is."
+	say "Coverage baseline: no Rust measurement tonight; $bl keeps what develop and the open pull request have."
+	carry "$bl"
 fi
 if [ -n "$ui_measured" ]; then
-	uold=$(git show "HEAD:$ubl" | fields)
 	node "$here/../ui/scripts/ui-coverage-ratchet.ts" --summary "$ui_file" --baseline "$ubl" --write
-	tracked+=("$ubl")
-	if ! git diff --quiet -- "$ubl"; then what="${what:+$what; }ui: $uold -> $(fields <"$ubl")"; fi
 else
-	say "Coverage baseline: no UI measurement tonight; $ubl is left as it is."
+	say "Coverage baseline: no UI measurement tonight; $ubl keeps what develop and the open pull request have."
+	carry "$ubl"
 fi
+what=''
+if ! git diff --quiet -- "$bl"; then what="rust: $(git show "HEAD:$bl" | fields) -> $(fields <"$bl")"; fi
+if ! git diff --quiet -- "$ubl"; then what="${what:+$what; }ui: $(git show "HEAD:$ubl" | fields) -> $(fields <"$ubl")"; fi
 at=${measured:-$ui_measured}
-pr=$("$gh" pr list -R "$repo" --head "$branch" --base develop --state open --json number --jq '.[0].number // empty')
 
 # 3. Nothing, the same, or a new raise.
 if git diff --quiet -- "${tracked[@]}"; then

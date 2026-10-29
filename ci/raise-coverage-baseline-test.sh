@@ -160,7 +160,7 @@ go env DRY_RUN=1; rc=$?
 # 10. a measurement below the baseline fails the job (the gate that went green on it would have failed too).
 fresh; run "$(tip)" 11 93.0 92.5
 go env; rc=$?
-[ $rc != 0 ] && ! G -C "$tmp/origin.git" rev-parse -q --verify ci/raise-coverage-baseline >/dev/null || bad "10: a measurement below the baseline did not fail (rc $rc)"
+[ $rc != 0 ] && ! G -C "$tmp/origin.git" rev-parse -q --verify ci/raise-coverage-baseline >/dev/null && grep -q 'below the baseline' "$tmp/out" || bad "10: a measurement below the baseline did not fail (rc $rc): $(cat "$tmp/out")"
 
 # 11. only the UI measured: its baseline is raised (rounded down per field), the Rust one stays, one commit, one pull request.
 fresh; urun "$(tip)" 21 99.84 91.25 99.6 99.6
@@ -196,7 +196,8 @@ go env; rc=$?
 # 14. a UI measurement below its baseline fails the job and raises nothing, not even the Rust file (the ui gate went green on it only if the baseline was lower).
 fresh; run "$(tip)" 11 94.07 92.5; urun "$(tip)" 21 99.0 91.2 99.6 99.6
 go env; rc=$?
-[ $rc != 0 ] && ! G -C "$tmp/origin.git" rev-parse -q --verify ci/raise-coverage-baseline >/dev/null || bad "14: a UI measurement below the baseline did not fail (rc $rc)"
+[ $rc != 0 ] && ! G -C "$tmp/origin.git" rev-parse -q --verify ci/raise-coverage-baseline >/dev/null && grep -q 'ui coverage ratchet: lines coverage .* below the baseline' "$tmp/out" \
+	|| bad "14: a UI measurement below the baseline did not fail (rc $rc): $(cat "$tmp/out")"
 
 # 15. neither ratchet ever writes a lower number: a measurement equal to the baselines changes no file and opens nothing.
 fresh; run "$(tip)" 11 93.5 92.5; urun "$(tip)" 21 99.7 91.2 99.6 99.6
@@ -220,6 +221,23 @@ go env; rc=$?
 fresh; run "$(tip)" 11 94.07 92.5; urun "$(tip)" 21 99.84 91.25 99.9 99.6
 go env DRY_RUN=1; rc=$?
 [ $rc = 0 ] && grep -q 'would raise it (rust: .*; ui: ' "$tmp/out" && ! G -C "$tmp/origin.git" rev-parse -q --verify ci/raise-coverage-baseline >/dev/null || bad "18: dry run (rc $rc): $(cat "$tmp/out")"
+
+# 19. a night that measures only one of the two keeps the other's pending raise: the open pull request is neither rebuilt without it nor closed.
+fresh; T=$(tip); run "$T" 11 94.07 92.5; urun "$T" 21 99.84 91.25 99.9 99.6
+go env
+before=$(G -C "$tmp/origin.git" rev-parse ci/raise-coverage-baseline)
+: >"$tmp/runs"; : >"$tmp/log"
+urun "$T" 23 99.84 91.25 99.9 99.6
+go env; rc=$?
+[ $rc = 0 ] && [ "$(G -C "$tmp/origin.git" rev-parse ci/raise-coverage-baseline)" = "$before" ] && [ "$(calls '^pr create')" = 0 ] && [ "$(calls '^pr close')" = 0 ] && [ -f "$tmp/pr" ] \
+	&& grep -q 'already raises it' "$tmp/out" || bad "19: UI-only night changed the pull request holding both raises (rc $rc, rust '$(remote_bl)'): $(cat "$tmp/out")"
+# the Rust measurement alone, with the UI baseline caught up on develop: the pull request keeps only what is still above develop
+: >"$tmp/runs"; : >"$tmp/log"
+G -C "$tmp/wt" checkout -q -f develop && uj 99.8 91.2 99.9 99.6 >"$tmp/wt/$ubl" && G -C "$tmp/wt" commit -qam "ui raised" && G -C "$tmp/wt" push -q origin develop
+run "$(G -C "$tmp/wt" rev-parse develop)" 24 94.07 92.5
+go env; rc=$?
+[ $rc = 0 ] && [ "$(remote_bl)" = '{"lines":94,"regions":92.5}' ] && [ "$(remote_ubl)" = '{"lines":99.8,"branches":91.2,"functions":99.9,"statements":99.6}' ] && [ "$(calls '^pr close')" = 0 ] \
+	|| bad "19: Rust-only night after the UI baseline caught up (rc $rc, ui '$(remote_ubl)'): $(cat "$tmp/out")"
 
 if [ $fail = 0 ]; then
 	echo "raise-coverage-baseline-test: ok"

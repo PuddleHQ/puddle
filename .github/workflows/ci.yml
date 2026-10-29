@@ -292,7 +292,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/gitleaks-cache
-          key: gitleaks-${{ runner.os }}-${{ hashFiles('ci/gitleaks.sha256') }}
+          key: gitleaks-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/gitleaks.sha256') }}
       - name: secret scanning (gitleaks, pinned and checksummed in ci/gitleaks.sha256)
         if: ${{ !cancelled() }}
         run: |
@@ -496,7 +496,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/gitleaks-cache
-          key: gitleaks-${{ runner.os }}-${{ hashFiles('ci/gitleaks.sha256') }}
+          key: gitleaks-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/gitleaks.sha256') }}
       - name: secret scanning (gitleaks, pinned and checksummed in ci/gitleaks.sha256)
         if: ${{ !cancelled() }}
         run: |

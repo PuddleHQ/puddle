@@ -574,8 +574,9 @@ for wf, (rid, rname, want_specs) in results.items():
             bad.append(f"{wf}: job {j} skips or narrows steps in the light mode but has {len(guards)} full-steps guards")
             continue
         g = guards[0]
-        if steps[-1] is not g:
-            bad.append(f"{wf}: job {j}: the full-steps guard must be the last step")
+        tail = [x for x in steps if x.get("uses") != "./.github/actions/cancel-group"]
+        if tail[-1] is not g:
+            bad.append(f"{wf}: job {j}: the full-steps guard must be the last step (before the cancel-group step)")
         if flat(g.get("if", "")) != "${{!cancelled()}}":
             bad.append(f"{wf}: job {j}: the full-steps guard must run with !cancelled()")
         genv = g.get("env", {})
@@ -596,6 +597,28 @@ for wf in ("windows", "vm-linux", "vm-windows"):
     for g in gates:
         if g.strip() != "--events schedule,workflow_dispatch":
             bad.append(f"{wf}: nightly gate {g.strip()!r} must be exactly '--events schedule,workflow_dispatch'")
+
+# Fail fast in the merge queue (ci/cancel-group.sh): every job that does work ends with the cancel-group step,
+# guarded by failure() on a merge_group event and best effort, and has `actions: write`; the result jobs, the
+# queue-tested lookup and the advisories checks (which skip on a merge queue run) do not.
+for wf, (rid, rname, want_specs) in results.items():
+    wjobs = yaml.safe_load(open(f"{d}/{wf}.yml"))["jobs"]
+    for j, spec in wjobs.items():
+        steps = spec.get("steps") or []
+        last = steps[-1] if steps else {}
+        has = last.get("uses") == "./.github/actions/cancel-group"
+        exempt = j == rid or (wf == "ci" and j in ("queue-tested", "advisories", "advisories-npm"))
+        if exempt:
+            if any(x.get("uses") == "./.github/actions/cancel-group" for x in steps):
+                bad.append(f"{wf}: job {j} must not cancel the group")
+            continue
+        if not has:
+            bad.append(f"{wf}: job {j} does not end with the cancel-group step")
+            continue
+        if flat(last.get("if", "")) != "${{failure()&&github.event_name=='merge_group'}}" or last.get("continue-on-error") is not True:
+            bad.append(f"{wf}: job {j}: the cancel-group step needs `failure() && merge_group` and continue-on-error")
+        if (spec.get("permissions") or {}).get("actions") != "write":
+            bad.append(f"{wf}: job {j}: the cancel-group step needs `actions: write` on the job")
 # The VM workflows fail on a missing hypervisor on a pull request and a merge queue run.
 if "ci/vm-skip-policy.sh" not in open(f"{d}/vm-linux.yml").read():
     bad.append("vm-linux: the KVM preflight does not use ci/vm-skip-policy.sh")

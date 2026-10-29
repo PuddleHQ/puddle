@@ -15,10 +15,9 @@
 # lands; the result job still reports. Unset, every pull request runs them.
 # The nightly also reruns each failed test once and lists the ones that pass only on retry
 # (ci/flaky-report.py); it never turns the run red. The nightly gate (ci/should-run.sh --events) counts
-# only nightly and manual runs as "already green" for the tests and the release build, so a merge
-# queue run on develop's commit does not stop the flake report or the release build; clippy and UI
-# also count a merge queue run, which ran them in full. A pull request run never counts: in the light
-# mode it skips them.
+# only nightly and manual runs as "already green" for every job, so a merge queue run on develop's
+# commit never stops the flake report, the release build, clippy or the UI job. A pull request run
+# never counts either.
 name: windows
 
 on:
@@ -93,7 +92,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ci/should-run.sh windows.yml --events schedule,workflow_dispatch,merge_group
+        run: ci/should-run.sh windows.yml --events schedule,workflow_dispatch
       - name: Toolchain (from rust-toolchain.toml)
         if: steps.changed.outputs.run == 'true'
         shell: bash
@@ -255,7 +254,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ci/should-run.sh windows.yml --events schedule,workflow_dispatch,merge_group
+        run: ci/should-run.sh windows.yml --events schedule,workflow_dispatch
       - name: Toolchain (from rust-toolchain.toml)
         if: steps.changed.outputs.run == 'true'
         shell: bash

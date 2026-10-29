@@ -58,6 +58,9 @@ run run=true "dispatch never skips" GITHUB_EVENT_NAME=workflow_dispatch -- windo
 run run=false "nightly, a green merge queue run counts" GITHUB_EVENT_NAME=schedule -- vm-linux.yml
 run run=true "nightly with --events, a merge queue run does not count" GITHUB_EVENT_NAME=schedule -- windows.yml --events schedule,workflow_dispatch
 { grep -q -- '--event schedule' "$tmp/log" && grep -q -- '--event workflow_dispatch' "$tmp/log"; } || bad "--events did not ask for each event"
+# A develop head the queue and the push run both tested, as the nightly sees it: it still runs.
+printf 'merge_group:c1\npush:c1\npull_request:c1\n' >"$tmp/runs"
+run run=true "nightly with --events, a queue-tested develop head still runs" GITHUB_EVENT_NAME=schedule -- vm-linux.yml --events schedule,workflow_dispatch
 printf 'merge_group:c1\nworkflow_dispatch:c1\n' >"$tmp/runs"
 run run=false "nightly with --events, a green dispatch counts" GITHUB_EVENT_NAME=schedule -- windows.yml --events schedule,workflow_dispatch
 printf 'schedule:c1\n' >"$tmp/runs"

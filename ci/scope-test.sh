@@ -582,6 +582,15 @@ for wf, (rid, rname, want_specs) in results.items():
                 bad.append(f"{wf}: job {j}: step {s.get('name')!r} skips in the light mode but the guard does not check it")
         if narrows and "PUDDLE_E2E_PROJECTS" not in str(spec.get("env", "")):
             bad.append(f"{wf}: job {j} narrows something other than PUDDLE_E2E_PROJECTS, which the guard cannot see")
+# The nightly gates of the VM jobs, Windows UI and clippy count only nightly and manual runs: a merge
+# queue run on develop's commit must not skip the soak tests or the nightly UI run.
+for wf in ("windows", "vm-linux", "vm-windows"):
+    gates = re.findall(r"run: ci/should-run\.sh \S+(.*)", open(f"{d}/{wf}.yml").read())
+    if not gates:
+        bad.append(f"{wf}: no should-run.sh gate found")
+    for g in gates:
+        if g.strip() != "--events schedule,workflow_dispatch":
+            bad.append(f"{wf}: nightly gate {g.strip()!r} must be exactly '--events schedule,workflow_dispatch'")
 # The VM workflows fail on a missing hypervisor on a pull request and a merge queue run.
 if "ci/vm-skip-policy.sh" not in open(f"{d}/vm-linux.yml").read():
     bad.append("vm-linux: the KVM preflight does not use ci/vm-skip-policy.sh")

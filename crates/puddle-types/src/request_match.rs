@@ -7,6 +7,11 @@
 //! a guest that spells `/admin` as `/%61dmin`, `//admin/`, `/x/../ADMIN` or `/admin;a=b` still
 //! meets the rule. Two paths that differ only in such spellings are the same path here even
 //! where a given server would tell them apart; that costs a request a refusal, never a bypass.
+//!
+//! Where servers disagree about a spelling (is `%2f` inside a segment a separator, does `..`
+//! count an empty segment, is `\` part of a name), one canonical form cannot over-match every
+//! server at once. [`CanonicalPath::readings`] therefore lists each reading a server may make of
+//! a request target, and a rule refuses the request when it names any of them.
 
 use std::fmt;
 
@@ -66,7 +71,10 @@ impl CanonicalPath {
         }
     }
 
-    /// The segments, lower case, with no empty, `.` or `..` among them.
+    /// The segments, lower case, with no empty, `.` or `..` among them and no control
+    /// character in them. In the form [`CanonicalPath::new`] makes, no segment holds `/`, `\`
+    /// or `;`; a reading from [`CanonicalPath::readings`] may keep an escaped `/`, a `\` or a
+    /// segment's `;parameters` in a name.
     #[must_use]
     pub fn segments(&self) -> &[String] {
         &self.segments
@@ -74,17 +82,27 @@ impl CanonicalPath {
 
     /// Every way a server may read the path of the request target `target` (origin form, with
     /// its query), each in canonical form. A rule refuses the request when it names any of
-    /// them, because servers disagree and a rule only refuses:
+    /// them, because servers disagree and a rule only refuses.
     ///
-    /// - the path decoded, then split at `/` and `\` ([`CanonicalPath::new`]);
-    /// - split first, then each segment decoded: a router that matches undecoded segments reads
-    ///   `/repos/a%2fb` as two segments, `repos` and `a/b`;
-    /// - cut at a `?` or `#` that only decoding reveals, as a hop that decodes the path before
-    ///   passing it on makes it: `/admin%3fx` is then `/admin`;
-    /// - with a `#` read as a plain character (a server that keeps it reads `/public#/../admin`
-    ///   as `/admin`);
-    /// - without a leading `//name`, which a parser that resolves the target against a base URL
-    ///   takes as an authority (`//evil.example/admin` is `/admin` there).
+    /// The texts read are the path itself and, where they differ:
+    ///
+    /// - the path cut at a `?` or `#` that only decoding reveals, as a hop that decodes the path
+    ///   before passing it on makes it: `/admin%3fx` is then `/admin`;
+    /// - the path with a `#` read as a plain character (a server that keeps it reads
+    ///   `/public#/../admin` as `/admin`);
+    /// - the path without a leading `//name`, which a parser that resolves the target against a
+    ///   base URL takes as an authority (`//evil.example/admin` is `/admin` there).
+    ///
+    /// Each text is read in every combination of these choices, because servers combine them in
+    /// every way: decode the whole path and then split it, or split where it has a `/` or `\`
+    /// as written and decode each segment (a router that matches undecoded segments reads
+    /// `/repos/a%2fb` as `repos` and `a/b`); keep or drop a segment's `;parameters`; let `..`
+    /// count an empty segment or merge empty segments first; read `\` as a separator or as part
+    /// of a name; let a decoded NUL end the path or stay in a name; after splitting, resolve an
+    /// escaped `.` or `..` or leave it a name; decode one round or as many as a chain of
+    /// decoding hops might; recognise `.` and `..` only as written or also with control
+    /// characters and trailing spaces around them. A choice whose character the text does not
+    /// hold changes nothing and is left out, so a plain path has one reading.
     ///
     /// ```
     /// use puddle_types::CanonicalPath;
@@ -218,7 +236,7 @@ fn canonical_segments(path: &str) -> Vec<String> {
 struct Read(u8);
 
 impl Read {
-    /// Split where the path has a `/` or `\\` as written and decode each segment on its own (a
+    /// Split where the path has a `/` or `\` as written and decode each segment on its own (a
     /// router that matches undecoded segments, for which `a%2fb` is one name); otherwise the
     /// whole path is decoded first.
     const SPLIT_FIRST: u8 = 1;
@@ -228,7 +246,7 @@ impl Read {
     /// (`/admin//..` is `/admin/`); otherwise empty segments go first, as when a server merges
     /// slashes.
     const KEEP_EMPTY: u8 = 4;
-    /// Read `\\` as part of a name, as nginx does (`/admin/a\\b/..` is `/admin/` there);
+    /// Read `\` as part of a name, as nginx does (`/admin/a\b/..` is `/admin/` there);
     /// otherwise it separates segments, as on Windows and in the WHATWG URL parser.
     const BACKSLASH_IN_NAME: u8 = 8;
     /// Read a decoded NUL as part of a name; otherwise it ends the path, as C servers end it.
@@ -305,7 +323,7 @@ fn segments_read(path: &str, read: Read) -> Vec<String> {
                 ".." => {
                     segments.pop();
                 }
-                // An escaped dot is a name to a router that does not decode before matching.
+                // A router that does not decode before matching never resolves an escaped dot.
                 _ => push_segment(
                     &mut segments,
                     &read.decode(raw),

@@ -793,7 +793,7 @@ fn refuse_by_request_rule(
         let refusal = Refusal::new(
             "403 Forbidden",
             format!(
-                "{} has rules on method and path (request rule {covering}), which Puddle can only apply to HTTPS on port 443 and to plain HTTP: a tunnel to port {} is refused",
+                "{} has rules on method and path (request rule {covering}), which Puddle can only apply to HTTPS on port 443 and to plain HTTP: a tunnel to port {} is refused. Use port 443, or delete the host's rules on method and path to open other ports",
                 request.host, request.port
             ),
         )

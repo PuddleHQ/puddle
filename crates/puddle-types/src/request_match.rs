@@ -101,7 +101,8 @@ impl CanonicalPath {
     /// of a name; let a decoded NUL end the path or stay in a name; after splitting, resolve an
     /// escaped `.` or `..` or leave it a name; decode one round or as many as a chain of
     /// decoding hops might; recognise `.` and `..` only as written or also with control
-    /// characters and trailing spaces around them. A choice whose character the text does not
+    /// characters and trailing spaces around them; drop a name's trailing dots only or its
+    /// trailing dots and spaces in any mix. A choice whose character the text does not
     /// hold changes nothing and is left out, so a plain path has one reading.
     ///
     /// ```
@@ -233,33 +234,39 @@ fn canonical_segments(path: &str) -> Vec<String> {
 /// One way servers read a path: a set of the flags below. Every combination is a reading,
 /// because servers combine these choices in every way.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-struct Read(u8);
+struct Read(u16);
 
 impl Read {
     /// Split where the path has a `/` or `\` as written and decode each segment on its own (a
     /// router that matches undecoded segments, for which `a%2fb` is one name); otherwise the
     /// whole path is decoded first.
-    const SPLIT_FIRST: u8 = 1;
+    const SPLIT_FIRST: u16 = 1;
     /// Keep a segment's `;parameters` as part of it; servlet containers drop them.
-    const KEEP_PARAMS: u8 = 2;
+    const KEEP_PARAMS: u16 = 2;
     /// Count an empty segment when `..` takes one away, as the WHATWG URL parser does
     /// (`/admin//..` is `/admin/`); otherwise empty segments go first, as when a server merges
     /// slashes.
-    const KEEP_EMPTY: u8 = 4;
+    const KEEP_EMPTY: u16 = 4;
     /// Read `\` as part of a name, as nginx does (`/admin/a\b/..` is `/admin/` there);
     /// otherwise it separates segments, as on Windows and in the WHATWG URL parser.
-    const BACKSLASH_IN_NAME: u8 = 8;
+    const BACKSLASH_IN_NAME: u16 = 8;
     /// Read a decoded NUL as part of a name; otherwise it ends the path, as C servers end it.
-    const NUL_IN_NAME: u8 = 16;
+    const NUL_IN_NAME: u16 = 16;
     /// With [`Self::SPLIT_FIRST`]: resolve an escaped `.` or `..` (`%2e%2e`) as the WHATWG URL
     /// parser does; otherwise it is a name.
-    const ESCAPED_DOTS: u8 = 32;
+    const ESCAPED_DOTS: u16 = 32;
     /// Decode one round only, as nearly every server does; otherwise as many as a server behind
     /// another decoding hop might ([`percent_decoded`]).
-    const ONE_ROUND: u8 = 64;
+    const ONE_ROUND: u16 = 64;
     /// Recognise `.` and `..` only as written; otherwise also with control characters and
     /// trailing spaces around them (`.. ` is `..` on Windows).
-    const STRICT_DOTS: u8 = 128;
+    const STRICT_DOTS: u16 = 128;
+    /// Drop only the trailing dots of a name and keep a space before them, as servers that are
+    /// not Windows do (`/x/ ./y` has three segments there); otherwise trailing dots and spaces go
+    /// in any mix, as on Windows (`admin .` is `admin`).
+    const DOTS_ONLY_TRIM: u16 = 256;
+    /// Every flag above.
+    const ALL: u16 = 511;
 
     /// Every reading that can differ from the others for `path`: a flag whose character the
     /// path does not hold changes nothing, so it is left out.
@@ -287,12 +294,15 @@ impl Read {
         if decoded.contains(|c: char| c.is_control() || c == ' ') {
             relevant |= Self::STRICT_DOTS;
         }
-        (0..=u8::MAX)
+        if decoded.contains(' ') && decoded.contains('.') {
+            relevant |= Self::DOTS_ONLY_TRIM;
+        }
+        (0..=Self::ALL)
             .filter(move |flags| flags & !relevant == 0)
             .map(Self)
     }
 
-    fn has(self, flag: u8) -> bool {
+    fn has(self, flag: u16) -> bool {
         self.0 & flag != 0
     }
 
@@ -367,8 +377,11 @@ fn push_segment(segments: &mut Vec<Option<String>>, raw: &str, read: Read, dots:
         }
         _ => {}
     }
-    // Windows servers drop trailing dots and spaces, in any mix (`admin .` is `admin`).
-    let name = spaced.trim_end_matches(['.', ' ']);
+    let name = if read.has(Read::DOTS_ONLY_TRIM) {
+        spaced.trim_end_matches('.')
+    } else {
+        spaced.trim_end_matches(['.', ' '])
+    };
     if !name.is_empty() {
         segments.push(Some(name.to_owned()));
     } else if read.has(Read::KEEP_EMPTY) {

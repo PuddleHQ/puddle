@@ -693,19 +693,20 @@ fn a_host_with_no_certificate_leaves_the_guest_without_one_and_drops_one_it_had(
 
 // --- Java's cacerts (the plan's java-trust step, through the real boot.sh) -------------------------
 
-/// Stands in for `keytool`: a store is a text file of aliases (the imported certificates are kept
-/// next to it, `<store>.<alias>`), the password is `changeit` unless `<store>.password` says
-/// otherwise, and an import fails while `<store>.failimport` exists. Every call is logged.
+/// Stands in for `keytool`: a store is a text file of aliases (the JKS file of the last import is
+/// kept next to it, `<store>.jks`), the password is `changeit` unless `<store>.password` says
+/// otherwise, an import fails while `<store>.failimport` exists, and reports a refused entry (exit
+/// 0, as the real tool does) while `<store>.refuseentry` exists. Every call is logged.
 const KEYTOOL_STUB: &str = r#"#!/bin/sh
 echo "$*" >>"$PUDDLE_ROOT/keytool.log"
-op= store= pass= alias= file=
+op= store= pass= alias= src=
 while [ $# -gt 0 ]; do
     case $1 in
-    -list | -importcert | -delete) op=$1 ;;
-    -keystore) store=$2; shift ;;
-    -storepass) pass=$2; shift ;;
+    -list | -importkeystore | -delete) op=$1 ;;
+    -keystore | -destkeystore) store=$2; shift ;;
+    -storepass | -deststorepass) pass=$2; shift ;;
+    -srckeystore) src=$2; shift ;;
     -alias) alias=$2; shift ;;
-    -file) file=$2; shift ;;
     esac
     shift
 done
@@ -720,12 +721,15 @@ case $op in
         echo "Certificate fingerprint (SHA-256): AA"
     done <"$store"
     ;;
--importcert)
+-importkeystore)
     [ ! -f "$store.failimport" ] || { echo "keytool error: cannot import" >&2; exit 1; }
-    grep -q -- '-----BEGIN CERTIFICATE-----' "$file" || exit 1
-    echo "$alias" >>"$store"
-    cp "$file" "$store.$alias"
-    echo "Certificate was added to keystore"
+    cp "$src" "$store.jks"
+    if [ -f "$store.refuseentry" ]; then
+        echo "Import command completed:  0 entries successfully imported, 1 entries failed or cancelled"
+        exit 0
+    fi
+    grep -a -o 'puddle-[0-9]*' "$src" | sort -u >>"$store"
+    echo "Import command completed:  $(grep -a -o 'puddle-[0-9]*' "$src" | sort -u | wc -l) entries successfully imported, 0 entries failed or cancelled"
     ;;
 -delete)
     grep -vx "$alias" "$store" >"$store.new"
@@ -733,6 +737,54 @@ case $op in
     ;;
 esac
 "#;
+
+/// The trusted-certificate entries of a JKS file, `(alias, DER)`, after checking its magic,
+/// version and closing digest the way Java's loader does (the SHA-1 of the password in UTF-16BE,
+/// "Mighty Aphrodite" and the body, taken by the system's `sha1sum`).
+fn jks_entries(file: &Path) -> Vec<(String, Vec<u8>)> {
+    let data = std::fs::read(file).unwrap();
+    let (body, digest) = data.split_at(data.len() - 20);
+    let mut check = Vec::new();
+    for c in "changeit".bytes() {
+        check.extend([0, c]);
+    }
+    check.extend(b"Mighty Aphrodite");
+    check.extend(body);
+    let mut child = Command::new("sha1sum")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(&check).unwrap();
+    let sum = String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap();
+    let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    assert!(sum.starts_with(&hex), "digest {hex} against {sum}");
+
+    let be = |at: usize, n: usize| {
+        body[at..at + n]
+            .iter()
+            .fold(0usize, |a, b| a * 256 + usize::from(*b))
+    };
+    assert_eq!(&body[..4], [0xFE, 0xED, 0xFE, 0xED]);
+    assert_eq!(be(4, 4), 2, "version");
+    let count = be(8, 4);
+    let mut at = 12;
+    let mut out = Vec::new();
+    for _ in 0..count {
+        assert_eq!(be(at, 4), 2, "a trusted certificate entry");
+        let n = be(at + 4, 2);
+        let alias = String::from_utf8(body[at + 6..at + 6 + n].to_vec()).unwrap();
+        at += 6 + n + 8;
+        let n = be(at, 2);
+        assert_eq!(&body[at + 2..at + 2 + n], b"X.509");
+        at += 2 + n;
+        let n = be(at, 4);
+        out.push((alias, body[at + 4..at + 4 + n].to_vec()));
+        at += 4 + n;
+    }
+    assert_eq!(at, body.len(), "nothing after the last entry");
+    out
+}
 
 /// Where a fake JDK's `cacerts` is, relative to the guest root, for the layouts that exist.
 const JDK17_STORE: &str = "/usr/lib/jvm/java-17/lib/security/cacerts";
@@ -766,7 +818,7 @@ fn stdout_of(out: &Output) -> String {
 
 #[test]
 fn an_image_with_java_gets_the_extra_cas_in_its_cacerts_next_to_the_distro_entries() {
-    let (corp_der, corp) = root_pem("Corp Root");
+    let (corp_der, _) = root_pem("Corp Root");
     let ca = puddle_ca();
     let t = trust(&[&corp_der], &[&ca]);
     for sh in shells() {
@@ -780,13 +832,20 @@ fn an_image_with_java_gets_the_extra_cas_in_its_cacerts_next_to_the_distro_entri
         assert_eq!(aliases[0], "distro-root", "the image's entries stay");
         assert_eq!(aliases.len(), 3);
         assert!(aliases[1..].iter().all(|a| a.starts_with("puddle-")));
-        // What went in is the certificate itself, whole.
-        let imported: Vec<String> = aliases[1..]
-            .iter()
-            .map(|a| g.read(&format!("{JDK17_STORE}.{a}")))
-            .collect();
-        assert!(imported.iter().any(|p| body(p) == body(ca.pem())));
-        assert!(imported.iter().any(|p| body(p) == body(&corp)));
+        // What went in is the certificate itself, whole, in a JKS file Java would load.
+        let imported = jks_entries(
+            &g.root
+                .join(JDK17_STORE.trim_start_matches('/'))
+                .with_extension("jks"),
+        );
+        assert_eq!(imported.len(), 2);
+        assert!(imported.iter().all(|(alias, _)| aliases.contains(alias)));
+        assert!(
+            imported
+                .iter()
+                .any(|(_, der)| der.as_slice() == ca.der().as_ref())
+        );
+        assert!(imported.iter().any(|(_, der)| der == &corp_der));
     }
 }
 
@@ -818,7 +877,7 @@ fn a_keytool_on_path_behind_a_symlink_finds_a_symlinked_store_and_a_jdk8_layout(
     assert_eq!(g.aliases("/etc/ssl/certs/java/cacerts").len(), 2);
     assert_eq!(g.aliases(JDK8_STORE).len(), 2);
     // The link on PATH and the folder search reach the same store once: two stores, two imports.
-    assert_eq!(g.keytool_calls("-importcert"), 2);
+    assert_eq!(g.keytool_calls("-importkeystore"), 2);
 }
 
 #[test]
@@ -869,7 +928,7 @@ fn jdks_of_version_managers_are_found_and_one_in_an_unlisted_folder_is_the_docum
             ["distro-root"],
             "a JDK in an unlisted folder is left alone (the documented limit)"
         );
-        assert_eq!(g.keytool_calls("-importcert"), found.len() * 2);
+        assert_eq!(g.keytool_calls("-importkeystore"), found.len());
     }
 }
 
@@ -881,7 +940,10 @@ fn an_unchanged_boot_does_not_start_keytool_and_a_rebuilt_cacerts_is_filled_agai
     g.jdk("/usr/lib/jvm/java-17", JDK17_STORE);
     assert!(g.boot(&t).status.success());
     let calls = g.keytool_calls("");
-    assert_eq!(calls, 3, "one list and two imports");
+    assert_eq!(
+        calls, 2,
+        "one list and one import, however many certificates"
+    );
     let out = g.boot(&t);
     assert!(out.status.success(), "{}", show(&out));
     assert!(stdout_of(&out).contains("unchanged"));
@@ -958,4 +1020,48 @@ fn a_failed_import_is_reported_not_recorded_and_retried_at_the_next_boot() {
     assert!(out.status.success(), "{}", show(&out));
     assert!(stdout_of(&out).contains("1 added"));
     assert_eq!(g.aliases(JDK17_STORE).len(), 2);
+}
+
+#[test]
+fn many_certificates_are_one_keytool_import_and_every_one_arrives_whole() {
+    let roots: Vec<(Vec<u8>, String)> = (0..60)
+        .map(|n| root_pem(&format!("Corp Root {n}")))
+        .collect();
+    let ders: Vec<&Vec<u8>> = roots.iter().map(|(d, _)| d).collect();
+    let t = trust(&ders, &[&puddle_ca()]);
+    for sh in shells() {
+        let g = Guest::new(&sh, "", false);
+        g.jdk("/usr/lib/jvm/java-17", JDK17_STORE);
+        let out = g.boot(&t);
+        assert!(out.status.success(), "{}: {}", sh.display(), show(&out));
+        assert!(
+            stdout_of(&out).contains("updated, 61 added, 0 removed"),
+            "{}",
+            stdout_of(&out)
+        );
+        assert_eq!(g.keytool_calls("-importkeystore"), 1);
+        assert_eq!(g.keytool_calls(""), 2, "one list, one import");
+        let imported = jks_entries(
+            &g.root
+                .join(JDK17_STORE.trim_start_matches('/'))
+                .with_extension("jks"),
+        );
+        assert_eq!(imported.len(), 61);
+        for der in &ders {
+            assert!(imported.iter().any(|(_, d)| d == *der));
+        }
+    }
+}
+
+#[test]
+fn an_entry_keytool_refuses_with_exit_zero_is_a_failed_import_retried_at_the_next_boot() {
+    let (corp_der, _) = root_pem("Corp Root");
+    let t = trust(&[&corp_der], &[]);
+    let g = Guest::new(&shells()[0], "", false);
+    g.jdk("/usr/lib/jvm/java-17", JDK17_STORE);
+    g.write(&format!("{JDK17_STORE}.refuseentry"), "");
+    let out = g.boot(&t);
+    assert!(out.status.success(), "{}", show(&out));
+    assert!(stdout_of(&out).contains("some changes failed, will retry at the next boot"));
+    assert!(!g.p("/etc/puddle/java-trust.state").exists());
 }

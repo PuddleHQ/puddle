@@ -13,11 +13,15 @@
 # store that already matches; a Java package update that rebuilds cacerts changes its checksum
 # and the import runs again.
 #
-# The first boot of an image with Java starts keytool (a JVM) once per certificate, a second or so
-# each; later boots skip a store that already matches.
+# keytool imports one certificate per run and a run is a JVM start (about 0.4 s), which made 150
+# corporate roots a 70 s first boot, longer than the boot hook's 60 s. So the missing certificates
+# are written as one JKS file and brought in by a single `keytool -importkeystore`: a first boot
+# runs keytool twice per store (list, import), whatever the certificate count. Later boots skip a
+# store that already matches. A stale entry is still one `keytool -delete` (a JVM start) each; a
+# rotation replaces a handful.
 #
 # This step never fails the boot: a store that is read-only, locked with another password or
-# missing is reported on stdout and skipped. POSIX sh; needs awk and cksum.
+# missing is reported on stdout and skipped. POSIX sh; needs awk, cksum, base64 and sha1sum.
 #
 # PUDDLE_ROOT relocates the fixed paths below, for the unit tests only (boot.sh passes it on empty).
 ROOT=${PUDDLE_ROOT:-}
@@ -36,7 +40,7 @@ say() { printf 'java-trust: %s\n' "$*"; }
     say "no extra CAs, nothing to do"
     exit 0
 }
-for tool in awk cksum readlink; do
+for tool in awk cksum readlink base64 sha1sum wc; do
     command -v "$tool" >/dev/null 2>&1 || {
         say "skipped ($tool is not in this image)"
         exit 0
@@ -105,6 +109,60 @@ kt() { # keytool with the one store and password; $1 is the keytool, then its ar
     "$bin" "$@" -keystore "$store" -storepass "$PASS" -J-Xshare:auto -J-XX:TieredStopAtLevel=1 </dev/null 2>"$tmp/err"
 }
 
+# byte <n>: the one byte n (printf takes it as an octal escape).
+byte() {
+    # shellcheck disable=SC2059 # the format is the escape built here
+    printf "\\$(printf %03o "$1")"
+}
+be16() {
+    byte $(($1 / 256 % 256))
+    byte $(($1 % 256))
+}
+be32() {
+    be16 $(($1 / 65536))
+    be16 $(($1 % 65536))
+}
+
+# write_jks <file> <alias>...: a JKS keystore (the format every keytool reads) holding the
+# certificates $tmp/certs/<alias>.pem as trusted entries: magic, version 2, a count, then per entry
+# tag 2, the alias, a timestamp, "X.509" and the DER; closed by the SHA-1 of the password (UTF-16BE),
+# "Mighty Aphrodite" and everything before it, which Java checks when it loads the file.
+write_jks() {
+    out=$1
+    shift
+    {
+        printf '\376\355\376\355'
+        be32 2
+        be32 $#
+        for a in "$@"; do
+            grep -v -- '-----' "$tmp/certs/$a.pem" | base64 -d >"$tmp/der" || return 1
+            be32 2
+            be16 ${#a}
+            printf %s "$a"
+            printf '\000\000\000\000\000\000\000\000'
+            be16 5
+            printf X.509
+            be32 "$(wc -c <"$tmp/der")"
+            cat "$tmp/der"
+        done
+    } >"$tmp/jks.body" || return 1
+    hex=$(
+        {
+            printf '\000c\000h\000a\000n\000g\000e\000i\000t'
+            printf 'Mighty Aphrodite'
+            cat "$tmp/jks.body"
+        } | sha1sum | cut -d' ' -f1
+    )
+    {
+        cat "$tmp/jks.body"
+        while [ -n "$hex" ]; do
+            pair=${hex%"${hex#??}"}
+            hex=${hex#??}
+            byte "0x$pair"
+        done
+    } >"$out"
+}
+
 : >"$tmp/seen"
 echo "$keytools" | while IFS= read -r keytool; do
     [ -n "$keytool" ] || continue
@@ -145,14 +203,23 @@ echo "$keytools" | while IFS= read -r keytool; do
         grep -qx "$a" "$tmp/wanted" && continue
         if kt "$keytool" -delete -alias "$a" >/dev/null; then removed=$((removed + 1)); else failed=1; fi
     done
+    missing=
     while IFS= read -r a; do
-        echo "$present" | grep -qx "$a" && continue
-        if kt "$keytool" -importcert -noprompt -trustcacerts -alias "$a" -file "$tmp/certs/$a.pem" >/dev/null; then
-            added=$((added + 1))
+        echo "$present" | grep -qx "$a" || missing="$missing $a"
+    done <"$tmp/wanted"
+    if [ -n "$missing" ]; then
+        # shellcheck disable=SC2086 # aliases are digits and a prefix, one word each
+        if write_jks "$tmp/new.jks" $missing &&
+            "$keytool" -importkeystore -noprompt -srckeystore "$tmp/new.jks" -srcstoretype JKS \
+                -srcstorepass "$PASS" -destkeystore "$store" -deststorepass "$PASS" \
+                -J-Xshare:auto -J-XX:TieredStopAtLevel=1 </dev/null >"$tmp/err" 2>&1 &&
+            grep -q ' 0 entries failed' "$tmp/err"; then
+            # shellcheck disable=SC2086
+            added=$(set -- $missing && echo $#)
         else
             failed=1
         fi
-    done <"$tmp/wanted"
+    fi
     if [ "$failed" -ne 0 ]; then
         say "$store: some changes failed, will retry at the next boot: $(tr '\n' ' ' <"$tmp/err")"
         continue

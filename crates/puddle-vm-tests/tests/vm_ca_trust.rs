@@ -29,13 +29,18 @@ use std::time::{Duration, SystemTime};
 use microsandbox::Sandbox;
 use puddle_ca::{CaBuilder, TrustBundle};
 use puddle_certs::{
-    CorporateRoots, GuestTrust, Location, Physical, StoreName, StoreSnapshot, StoreSource,
+    CorporateRoots, GuestTrust, JAVA_STEP_PATH, Location, Physical, StoreName, StoreSnapshot,
+    StoreSource,
 };
 use puddle_vm_tests::{HarnessError, VmEnv, within};
 
 const JAVA_IMAGE: &str = "eclipse-temurin:21-jdk";
 const DENO_IMAGE: &str = "denoland/deno:debian";
 const PIP_IMAGE: &str = "python:3.9-slim";
+/// Roots in the host snapshot of the many-roots test: the large end of a corporate set.
+const ROOTS: usize = 150;
+/// What the Java step may add to a first boot, one JVM start each for list and import.
+const JAVA_STEP_BUDGET: Duration = Duration::from_secs(15);
 const CREATE_BUDGET: Duration = Duration::from_mins(15);
 const EXEC_BUDGET: Duration = Duration::from_mins(3);
 const STOP_BUDGET: Duration = Duration::from_mins(1);
@@ -137,6 +142,11 @@ struct Fixture {
 
 /// Puddle's CA in the trust bundle, as a sandbox has it, and a leaf it signed.
 fn fixture() -> Fixture {
+    fixture_with(0)
+}
+
+/// [`fixture`] with `extra` more unrelated corporate roots in the host snapshot.
+fn fixture_with(extra: usize) -> Fixture {
     let mut ca = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
     ca.distinguished_name
         .push(rcgen::DnType::CommonName, "Puddle proxy CA (VM test)");
@@ -163,8 +173,21 @@ fn fixture() -> Fixture {
         StoreSource::new(Location::CurrentUser, StoreName::Root, Physical::Default),
         ca_cert.der().to_vec(),
     );
+    for n in 0..extra {
+        let mut p = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        p.distinguished_name.push(
+            rcgen::DnType::CommonName,
+            format!("Corporate root {n} (VM test)"),
+        );
+        p.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        let key = rcgen::KeyPair::generate().unwrap();
+        snapshot.add(
+            StoreSource::new(Location::CurrentUser, StoreName::Root, Physical::Default),
+            p.self_signed(&key).unwrap().der().to_vec(),
+        );
+    }
     let corporate = CorporateRoots::select(&snapshot, SystemTime::now());
-    assert_eq!(corporate.certificates().len(), 1);
+    assert_eq!(corporate.certificates().len(), 1 + extra);
     let other = CaBuilder::new("Puddle proxy CA (VM test, other)")
         .build()
         .unwrap();
@@ -204,7 +227,11 @@ fn install(trust: &GuestTrust) -> (Vec<(String, Vec<u8>)>, String) {
     );
     script.push_str("if command -v update-ca-certificates >/dev/null 2>&1; then update-ca-certificates >/dev/null; fi\n");
     for step in trust.boot_steps() {
-        writeln!(script, "echo \"step {step}: $(sh {step})\"").unwrap();
+        writeln!(
+            script,
+            "t0=$(date +%s%N); o=$(sh {step}); t1=$(date +%s%N); echo \"step {step}: $o\"; echo \"step-ms {step} $(( (t1 - t0) / 1000000 ))\""
+        )
+        .unwrap();
     }
     (uploads, script)
 }
@@ -286,6 +313,18 @@ async fn java_run(env: &VmEnv) -> Result<(), HarnessError> {
             steps.contains("java-trust: ") && steps.contains(" unchanged"),
             "{steps}"
         );
+
+        // A rotated set: the old entries leave the real store, the new ones arrive, and Java
+        // trusts the new certificate.
+        let second = fixture_with(1);
+        let script = prepare(&sandbox, &second, ("/tmp/Fetch.java", FETCH_JAVA)).await?;
+        let steps = apply(&sandbox, script).await?;
+        assert!(steps.contains("updated, 3 added, 2 removed"), "{steps}");
+        let listed = "keytool -list -keystore /opt/java/openjdk/lib/security/cacerts -storepass changeit 2>/dev/null | grep -c '^puddle-'";
+        let (_, out) = sh(&sandbox, "list", listed.to_owned()).await?;
+        assert_eq!(out.trim(), "3", "{out}");
+        let (code, out) = sh(&sandbox, "java rotated", run.to_owned()).await?;
+        assert_eq!(code, 0, "Java refused the rotated certificate: {out}");
         finish(&sandbox).await
     }))
     .await
@@ -418,4 +457,51 @@ async fn vm_ca_trust_deno_trusts_the_ca_through_deno_cert() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_ca_trust_pip_trusts_the_ca_through_pip_cert() {
     in_env(|env| Box::pin(pip_run(env))).await;
+}
+
+/// The step's own wall time in milliseconds, as the apply script prints it.
+fn step_ms(out: &str, step: &str) -> u64 {
+    let key = format!("step-ms {step} ");
+    out.lines()
+        .find_map(|l| l.strip_prefix(&key))
+        .and_then(|ms| ms.trim().parse().ok())
+        .unwrap_or_else(|| panic!("no timing for {step} in: {out}"))
+}
+
+/// Many corporate roots (a managed machine) must not make the Java step the slow part of
+/// the first boot: the boot hook gives the whole boot 60 s, and a JVM start per certificate cost
+/// about 0.4 s each. The step is bounded at `JAVA_STEP_BUDGET`.
+async fn java_many_roots_run(env: &VmEnv) -> Result<(), HarnessError> {
+    let first = fixture_with(ROOTS - 1);
+    let builder = env.sandbox("catrust-many", JAVA_IMAGE)?.memory(1024u32);
+    env.scope(Box::pin(async {
+        let sandbox = within("create", CREATE_BUDGET, builder.create()).await??;
+        let script = prepare(&sandbox, &first, ("/tmp/Fetch.java", FETCH_JAVA)).await?;
+        let steps = apply(&sandbox, script).await?;
+        let ms = step_ms(&steps, JAVA_STEP_PATH);
+        eprintln!("java step with {ROOTS} roots + 1 Puddle CA: {ms} ms");
+        assert!(
+            steps.contains(&format!("updated, {} added, 0 removed", ROOTS + 1)),
+            "{steps}"
+        );
+        assert!(
+            ms <= JAVA_STEP_BUDGET.as_millis() as u64,
+            "the Java step took {ms} ms for {ROOTS} roots, budget {JAVA_STEP_BUDGET:?}: {steps}"
+        );
+        let run = "cd /tmp && java Fetch.java 2>&1";
+        let (code, out) = sh(&sandbox, "java after", run.to_owned()).await?;
+        assert_eq!(
+            code, 0,
+            "Java refused the certificate after the import: {out}"
+        );
+        assert!(out.lines().any(|l| l == "java: puddle-ok"), "{out}");
+
+        finish(&sandbox).await
+    }))
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_ca_trust_java_many_roots_are_imported_within_the_budget() {
+    in_env(|env| Box::pin(java_many_roots_run(env))).await;
 }

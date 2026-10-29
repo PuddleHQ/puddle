@@ -704,15 +704,22 @@ async fn read_exchange_answer(
 
 /// Refuses the request when a rule on method and path names it, before anything is sent
 /// upstream, as the HTTP/1.1 path does. Only this stream is refused; the connection goes on.
+/// An extended `CONNECT` is also judged as the `GET` it stands for: an HTTP/1.1 server is sent
+/// that `GET`, and a rule written for a WebSocket upgrade on HTTP/1.1 names it.
 fn refuse_by_rule(shared: &Shared, checked: &Checked, headers: &HeaderMap) -> Result<(), Refusal> {
     let cx = &shared.cx;
     let lines = header_lines(headers, &cx.target.host.to_string());
-    let view = RequestView::new(checked.method.as_str(), &checked.path, &lines);
-    let Some(rule) = cx
-        .termination
-        .request_rules()
-        .refusing(&cx.target.host, &view)
-    else {
+    let rules = cx.termination.request_rules();
+    let mut methods = vec![checked.method.as_str()];
+    if checked.protocol.is_some() {
+        methods.push(Method::GET.as_str());
+    }
+    let Some(rule) = methods.into_iter().find_map(|method| {
+        rules.refusing(
+            &cx.target.host,
+            &RequestView::new(method, &checked.path, &lines),
+        )
+    }) else {
         return Ok(());
     };
     tracing::info!(host = %cx.target.host, %rule, "request refused by a rule on method and path (h2)");

@@ -8,9 +8,7 @@
 //! request that cannot be read cannot be judged: [`RequestRules::hosts`] is added to the hosts a
 //! workspace decrypts.
 
-use puddle_types::{
-    CanonicalPath, Host, Methods, PathPattern, RuleId, percent_decoded, target_path,
-};
+use puddle_types::{CanonicalPath, Host, Methods, PathPattern, RuleId, percent_decoded};
 
 use super::{PatternError, RequestView, TerminationSet};
 use crate::proxy::Refusal;
@@ -105,40 +103,37 @@ impl RequestRules {
 
     /// The rule that refuses `request` to `host`, the lowest id first, or `None` when none does.
     ///
-    /// The path is compared in its canonical form (see [`CanonicalPath`]). The method is the one
-    /// sent and also every method the request asks to be read as: an override header
-    /// (`X-HTTP-Method-Override` and two like it) or a `_method` in the query string. A rule on
-    /// `DELETE` therefore refuses a `POST` that asks to be a `DELETE`.
+    /// The path is compared in every canonical form a server may read it in (see
+    /// [`CanonicalPath::readings`]). The method is the one sent and also every method the
+    /// request asks to be read as: an override header (`X-HTTP-Method-Override` and two like it)
+    /// or a `_method` in the query string, read as PHP reads it (pairs split at `&` or `;`, a `+`
+    /// is a space, `.` and a space in a key are `_`). A rule on `DELETE` therefore refuses a
+    /// `POST` that asks to be a `DELETE`.
     #[must_use]
     pub fn refusing(&self, host: &Host, request: &RequestView<'_>) -> Option<RuleId> {
         if !self.covers(host) {
             return None;
         }
-        let target = request.target();
-        let mut paths = vec![CanonicalPath::new(target_path(target))];
-        if target.contains('#') {
-            // A server that does not treat `#` as the start of a fragment keeps it in the path,
-            // and `/public#/../admin` is then `/admin`: the path is also judged with the `#`
-            // read as an ordinary character.
-            let literal = target
-                .find('?')
-                .map_or(target, |query| target.get(..query).unwrap_or_default())
-                .replace('#', "%23");
-            paths.push(CanonicalPath::new(target_path(&literal)));
-        }
+        let paths = CanonicalPath::readings(request.target());
         let mut methods: Vec<&str> = vec![request.method()];
         for name in METHOD_OVERRIDES {
             for value in request.header_values(name) {
                 methods.extend(value.split(',').map(str::trim));
             }
         }
+        let form = |text: &str| percent_decoded(&text.replace('+', " "));
         let asked: Vec<String> = request
             .query()
             .into_iter()
-            .flat_map(|query| query.split('&'))
+            .flat_map(|query| query.split(['&', ';']))
             .filter_map(|pair| pair.split_once('='))
-            .filter(|(key, _)| percent_decoded(key).eq_ignore_ascii_case("_method"))
-            .map(|(_, value)| percent_decoded(value).trim().to_owned())
+            .filter(|(key, _)| {
+                form(key)
+                    .trim_start()
+                    .replace(['.', ' '], "_")
+                    .eq_ignore_ascii_case("_method")
+            })
+            .map(|(_, value)| form(value).trim().to_owned())
             .collect();
         methods.extend(asked.iter().map(String::as_str));
         self.rules

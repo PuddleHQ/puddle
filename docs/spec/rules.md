@@ -416,7 +416,16 @@ ever refuses, so no rule of this kind can open anything and there is no preceden
   anything is sent to the server and before a credential is added. Because the rule overrides
   the never-decrypt names, a rule whose host one of them names (the global ones, and the
   workspace's own or, for a global rule, any workspace's) carries a `warning` in the API that
-  names them: a tool there that does not trust Puddle's certificate fails on that host.
+  names them: a tool there that does not trust Puddle's certificate fails on that host. A connection Puddle passes
+  through without decrypting it (a never-decrypt name, a learned host, any host without a rule
+  or credential while decrypt-every-host is off) is not read, so a request inside it is never
+  judged, even one for a host with a rule: an HTTP/2 client that reuses such a connection for
+  another name the same server answers, or a guest that names a host with a rule inside a tunnel
+  to another host (domain fronting), reaches that host unchecked. Puddle gives every name its own
+  stand-in address, so a client does not share a connection between two names on its
+  own; one that is told to (an HTTP/2 `ORIGIN` frame) or a hostile guest can. A rule on method and
+  path is a guard against an agent's mistakes, not against a guest that sets out to evade it
+  (R-52).
 - **R-51 A path pattern** starts with `/` and is made of segments: a name, `*` (exactly one
   segment) or, last, `**` (any number of further segments, none included). `/gists` is that path
   alone, `/gists/**` is `/gists` and everything below it, `/**` is every path. `*` or `**` as part
@@ -430,11 +439,22 @@ ever refuses, so no rule of this kind can open anything and there is no preceden
   reads `/public#/../admin` as `/admin`). A pattern is
   written in the same form, so `/Gists/` and `/%67ists` are one pattern. Two paths that differ only
   in such spellings are one path here even where a server would tell them apart: that costs a
-  request a refusal, never a bypass.
+  request a refusal, never a bypass. Where servers disagree, the path is judged in every reading
+  one of them may make, and a rule that names any reading refuses the request: decoded before or
+  after it is split at `/` (a router that matches undecoded segments reads `/repos/a%2fb` as
+  `repos` and `a/b`, so `/repos/*` names it); `;parameters` kept or dropped; `..` counting an
+  empty segment or not; `\` a separator or part of a name; a NUL ending the path or kept; an
+  escaped `.` or `..` resolved or kept as a name; one round of decoding or four; `.` and `..`
+  with trailing spaces or control characters recognised or not; a `?` or `#` that only decoding
+  reveals ending the path; and a leading `//name` read as an authority (`//evil.example/admin` is
+  `/admin` to a server that resolves the target against a base URL).
 - **R-52 A method** is matched ignoring case. A request is also judged as every method it asks
   to be read as: an `X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override` header and a
-  `_method` key in the query string. A rule on `DELETE` therefore refuses a `POST` that asks to be
-  a `DELETE`. Methods are HTTP tokens, at most 16 per rule. A rule cannot see a method carried in
+  `_method` key in the query string, read as PHP reads it (pairs split at `&` or `;`, `+` a space,
+  `.` and a space in a key read as `_`). A rule on `DELETE` therefore refuses a `POST` that asks to
+  be a `DELETE`. An HTTP/2 extended `CONNECT` (a WebSocket over HTTP/2) is also judged as `GET`,
+  the method an HTTP/1.1 server is sent for it, so a rule written for a WebSocket upgrade names
+  it. Methods are HTTP tokens, at most 16 per rule. A rule cannot see a method carried in
   the request body (a `_method` form field that some frameworks honour) and does not decode spellings
   only a server's own decoder understands (overlong UTF-8, look-alike Unicode): both are limits of
   a rule on method and path, so a rule is a guard against an agent's ordinary mistakes and its

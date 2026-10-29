@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # VM tests on Windows WHP (tier W): crate puddle-vm-tests under `nextest --profile vm` on the
 # hosted windows-2025 runner, whose Hyper-V/WHP runs msb microVMs (observed, not promised by
-# GitHub). It runs on every pull request to develop (a required check), on every merge queue run, by
+# GitHub). It runs on every pull request to develop (a required check there) and to main, on every merge queue run, by
 # hand on any branch (`gh workflow run vm-windows.yml --ref <branch>`) and nightly on develop unless it
 # already has a green nightly or manual run on that commit (a merge queue run or a light pull request
 # run never counts, so the soak tests still run). VM tests are never retried; a runner without a usable
 # hypervisor is reported as an infrastructure skip, not a test result, except on a pull request or a
 # merge queue run, where it fails the job (a required check must not pass without running VM tests;
 # same policy as ci/vm-skip-policy.sh).
-# A pull request or merge queue run whose changed files cannot reach a VM test skips every job here
+# A pull request to develop or a merge queue run whose changed files cannot reach a VM test skips every job here
 # (ci/scope.sh, the `scope` job); the result job accepts that skip only when `scope` said so. With the
 # repository variable PUDDLE_QUEUE set to `on`, a pull request to develop skips them too (the light
 # mode) and the merge queue runs them on the commit that lands.
@@ -20,7 +20,7 @@ on:
   schedule:
     - cron: "23 3 * * *"
   pull_request:
-    branches: [develop]
+    branches: [develop, main]
   merge_group:
     types: [checks_requested]
   workflow_dispatch:

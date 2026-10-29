@@ -466,6 +466,11 @@ for wf, (rid, rname, want_specs) in results.items():
     # Every workflow that reports a required check runs on both events, or the check stays pending.
     if "pull_request" not in on:
         bad.append(f"{wf}: no pull_request trigger")
+    # The nightly tier runs on no push trigger; a release PR to main must still reach the VM and Windows jobs.
+    if wf != "ci" and "main" not in (on.get("pull_request") or {}).get("branches", []):
+        bad.append(f"{wf}: pull_request must include branch main (the release PR runs the nightly-tier jobs)")
+    if wf != "ci" and "push" in on:
+        bad.append(f"{wf}: no push trigger (the nightly tier runs nightly and on a PR to main only)")
     mg = on.get("merge_group") if isinstance(on, dict) else None
     if not mg or mg.get("types") != ["checks_requested"]:
         bad.append(f"{wf}: needs `merge_group: types: [checks_requested]`")

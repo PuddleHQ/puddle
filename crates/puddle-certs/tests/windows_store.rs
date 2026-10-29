@@ -785,7 +785,7 @@ fn a_cleanup_that_is_refused_goes_on_to_the_next_store() {
         file: std::env::temp_dir().join("puddle-cleanup-refused-test.cer"),
         thumbprint: "ABCDEF0123".to_owned(),
     };
-    let calls = std::cell::Cell::new(0);
+    let calls = Cell::new(0);
     let refuse = |_: &str| {
         calls.set(calls.get() + 1);
         Err(Failure::Exited("access denied".to_owned()))

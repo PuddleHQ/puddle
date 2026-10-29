@@ -215,11 +215,17 @@ jobs:
         run: cargo build -p puddle-app --all-features --locked
       # Windows runs this one gate of the Linux job too: it proves ci/fetch-gitleaks.sh and the
       # gate work in Git Bash with the Windows release, where developers' pre-push hook runs.
+      - name: gitleaks download cache (the script still checks the pin)
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/gitleaks-cache
+          key: gitleaks-${{ runner.os }}-${{ hashFiles('ci/gitleaks.sha256') }}
       - name: secret scanning (gitleaks, Windows release)
         if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
         shell: bash
         run: |
-          ci/fetch-gitleaks.sh "$HOME/gitleaks-bin"
+          GITLEAKS_CACHE_DIR="$HOME/gitleaks-cache" ci/fetch-gitleaks.sh "$HOME/gitleaks-bin"
           PATH="$HOME/gitleaks-bin:$PATH" scripts/check.sh secrets
       - name: upload test results
         if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}

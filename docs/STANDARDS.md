@@ -85,7 +85,8 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
   `.github/workflows/ci.yml`; use the same or newer locally).
 - **gitleaks** for the `secrets` gate (secret scanning, below): the version is pinned with a SHA-256 per
   platform in `ci/gitleaks.sha256` and the gate refuses any other. `ci/fetch-gitleaks.sh <dir on PATH>`
-  downloads, verifies and installs it (Linux, macOS, Git Bash on Windows). It is a Go binary, not a Cargo
+  downloads, verifies and installs it (Linux, macOS, Git Bash on Windows); it retries a failed download with a growing wait, and
+  reuses a verified archive from `GITLEAKS_CACHE_DIR` (CI caches that folder). It is a Go binary, not a Cargo
   or npm dependency, so `cargo deny` and the notices don't see it; it is MIT-licensed and only run, never shipped.
 - **Node** (22 or newer, CI uses 24) for one gate: `scripts/check.sh openapi` regenerates the API
   contract's TypeScript types with `openapi-typescript` (pinned in

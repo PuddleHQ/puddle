@@ -287,10 +287,16 @@ jobs:
       - name: silent skips (a test that returns early must fail in the job that provides its prerequisite)
         if: ${{ !cancelled() }}
         run: scripts/check.sh silent-skips
+      - name: gitleaks download cache (the script still checks the pin)
+        if: ${{ !cancelled() }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/gitleaks-cache
+          key: gitleaks-${{ runner.os }}-${{ hashFiles('ci/gitleaks.sha256') }}
       - name: secret scanning (gitleaks, pinned and checksummed in ci/gitleaks.sha256)
         if: ${{ !cancelled() }}
         run: |
-          ci/fetch-gitleaks.sh "$HOME/gitleaks-bin"
+          GITLEAKS_CACHE_DIR="$HOME/gitleaks-cache" ci/fetch-gitleaks.sh "$HOME/gitleaks-bin"
           PATH="$HOME/gitleaks-bin:$PATH" scripts/check.sh secrets
       - name: hooks (pre-push hook and runtime fetch tests)
         if: ${{ !cancelled() }}
@@ -485,10 +491,16 @@ jobs:
       - name: quality (every unsafe, suppression and TODO says why)
         if: ${{ !cancelled() }}
         run: scripts/check.sh quality
+      - name: gitleaks download cache (the script still checks the pin)
+        if: ${{ !cancelled() }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/gitleaks-cache
+          key: gitleaks-${{ runner.os }}-${{ hashFiles('ci/gitleaks.sha256') }}
       - name: secret scanning (gitleaks, pinned and checksummed in ci/gitleaks.sha256)
         if: ${{ !cancelled() }}
         run: |
-          ci/fetch-gitleaks.sh "$HOME/gitleaks-bin"
+          GITLEAKS_CACHE_DIR="$HOME/gitleaks-cache" ci/fetch-gitleaks.sh "$HOME/gitleaks-bin"
           PATH="$HOME/gitleaks-bin:$PATH" scripts/check.sh secrets
 
   ui:

@@ -5,6 +5,8 @@
 # the SHA-256 pinned in ci/gitleaks.sha256. Usage: ci/fetch-gitleaks.sh <dest-dir>
 # Works in Linux sh, macOS sh and Git Bash on Windows. Network failures are retried
 # (infrastructure) and each retry is printed; a checksum mismatch never is.
+# GITLEAKS_CACHE_DIR (optional): a folder CI restores between runs. A cached archive is hashed
+# against the pin like a download, so the pin stays the only trust; a bad one is ignored.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -35,18 +37,51 @@ mkdir -p "$dest"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 url="https://github.com/gitleaks/gitleaks/releases/download/v$version/$asset"
-attempt=1
-until curl -fsSL --connect-timeout 20 --max-time 300 -o "$work/$asset" "$url"; do
-    [ "$attempt" -lt 3 ] || { echo "fetch-gitleaks: download failed 3 times: $url" >&2; exit 1; }
-    echo "fetch-gitleaks: download attempt $attempt failed, retrying (infrastructure retry)" >&2
-    attempt=$((attempt + 1))
-    sleep 5
-done
+
 # Hash from stdin: for a path with backslashes, Git Bash's sha256sum puts a backslash before the hash.
-got=$(sha256sum < "$work/$asset" | cut -d' ' -f1)
-if [ "$got" != "$want" ]; then
-    echo "fetch-gitleaks: checksum mismatch for $asset: got $got, pinned $want" >&2
+hash_of() { sha256sum < "$1" | cut -d' ' -f1; }
+# The annotation is what the check page shows; without it the step reads only `exit code 1`.
+fail() {
+    echo "fetch-gitleaks: $1" >&2
+    [ "${GITHUB_ACTIONS:-}" != true ] || echo "::error title=gitleaks fetch::$1"
     exit 1
+}
+
+archive=$work/$asset
+cached=
+if [ -n "${GITLEAKS_CACHE_DIR:-}" ] && [ -f "$GITLEAKS_CACHE_DIR/$asset" ]; then
+    if [ "$(hash_of "$GITLEAKS_CACHE_DIR/$asset")" = "$want" ]; then
+        cp "$GITLEAKS_CACHE_DIR/$asset" "$archive"
+        cached=1
+        echo "fetch-gitleaks: using the cached $asset (checksum matches the pin)" >&2
+    else
+        echo "fetch-gitleaks: ignoring the cached $asset (checksum differs from the pin), downloading" >&2
+    fi
+fi
+
+if [ -z "$cached" ]; then
+    # github.com has refused connections from one runner for over a minute (3 tries, 20 s apiece,
+    # failed a queue run), and a runner that cannot connect now usually can in a few minutes, so
+    # wait longer between tries: 10, 20, 40 and 60 s, about 4 minutes in all with the timeouts.
+    tries=5
+    attempt=1
+    while :; do
+        rc=0
+        curl -fsSL --connect-timeout 20 --max-time 300 -o "$archive" "$url" || rc=$?
+        [ "$rc" -ne 0 ] || break
+        [ "$attempt" -lt "$tries" ] || fail "download failed $tries times (last curl exit code $rc): $url"
+        delay=$((10 * (1 << (attempt - 1))))
+        [ "$delay" -le 60 ] || delay=60
+        echo "fetch-gitleaks: download attempt $attempt failed (curl exit code $rc), retrying in ${delay}s (infrastructure retry)" >&2
+        attempt=$((attempt + 1))
+        sleep "$delay"
+    done
+fi
+got=$(hash_of "$archive")
+[ "$got" = "$want" ] || fail "checksum mismatch for $asset: got $got, pinned $want"
+if [ -z "$cached" ] && [ -n "${GITLEAKS_CACHE_DIR:-}" ]; then
+    mkdir -p "$GITLEAKS_CACHE_DIR"
+    cp "$archive" "$GITLEAKS_CACHE_DIR/$asset"
 fi
 if [ "$ext" = zip ]; then
     # Git for Windows may lack unzip; Windows PowerShell always has Expand-Archive.

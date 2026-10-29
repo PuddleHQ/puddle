@@ -373,8 +373,12 @@ const HOP_BY_HOP: [&str; 8] = [
     "upgrade",
 ];
 
-/// The head sent upstream for a plain-HTTP request. Hop-by-hop and proxy headers are dropped,
-/// `Host` is replaced by the checked target (RFC 9112 §3.2.2: a proxy ignores the client's `Host`
+/// The prefix of the header names Puddle uses between the guest agent and the proxy, and on its
+/// own answers. None of them travels upstream, whoever wrote it.
+const PUDDLE_HEADER_PREFIX: &str = "x-puddle-";
+
+/// The head sent upstream for a plain-HTTP request. Hop-by-hop and proxy headers and Puddle's
+/// own header names are dropped, `Host` is replaced by the checked target (RFC 9112 §3.2.2: a proxy ignores the client's `Host`
 /// for an absolute-form target), and `Connection: close` ends the upstream connection after this
 /// one request, so nothing on it goes unchecked.
 pub(crate) fn upstream_head(
@@ -399,7 +403,8 @@ pub(crate) fn upstream_head(
         let _ = write!(out, "Proxy-Authorization: {value}\r\n");
     }
     for h in &head.headers {
-        if !hop.contains(&header_name(h)) {
+        let name = header_name(h);
+        if !hop.contains(&name) && !name.starts_with(PUDDLE_HEADER_PREFIX) {
             out.push_str(h);
             out.push_str("\r\n");
         }
@@ -661,6 +666,26 @@ mod tests {
         );
         assert!(proxied.starts_with("GET http://allowed.test:80/x HTTP/1.1\r\nHost: allowed.test\r\nProxy-Authorization: Basic YTpi\r\n"));
         assert_eq!(proxied.matches("Proxy-Authorization").count(), 1);
+    }
+
+    #[test]
+    fn upstream_head_drops_puddle_s_own_header_names_whoever_wrote_them() {
+        let head = Head {
+            method: "GET".into(),
+            uri: "http://allowed.test/x".into(),
+            version: "HTTP/1.1".into(),
+            headers: hs(&[
+                "X-Puddle-Origin: container",
+                "x-puddle-protocol: h2",
+                "X-PUDDLE-Anything: 1",
+                "X-Puddled: kept",
+                "Accept: */*",
+            ]),
+        };
+        assert_eq!(
+            upstream_head(&head, "/x", "allowed.test", None),
+            "GET /x HTTP/1.1\r\nHost: allowed.test\r\nX-Puddled: kept\r\nAccept: */*\r\nConnection: close\r\n\r\n"
+        );
     }
 
     proptest! {

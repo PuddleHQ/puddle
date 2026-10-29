@@ -3185,6 +3185,7 @@ plain control-on-the-guests-own-loopback "http://127.0.0.1:$control/"
 /// Not covered here: an extension host running as guest root against the workbench's APIs needs a
 /// browser client driving the editor.
 #[cfg(not(windows))]
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_host_the_browser_editors_front_and_this_computers_loopback_are_out_of_the_guests_reach()
 {

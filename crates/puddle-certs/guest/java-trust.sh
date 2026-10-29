@@ -13,15 +13,14 @@
 # store that already matches; a Java package update that rebuilds cacerts changes its checksum
 # and the import runs again.
 #
-# keytool imports one certificate per run and a run is a JVM start (about 0.4 s), which made 150
-# corporate roots a 70 s first boot, longer than the boot hook's 60 s. So the missing certificates
-# are written as one JKS file and brought in by a single `keytool -importkeystore`: a first boot
-# runs keytool twice per store (list, import), whatever the certificate count. Later boots skip a
-# store that already matches. A stale entry is still one `keytool -delete` (a JVM start) each; a
-# rotation replaces a handful.
+# keytool imports one certificate per run and every run is a JVM start (about 0.4 s), so the
+# missing certificates are written as one JKS file and imported by a single `keytool
+# -importkeystore`: a first boot runs keytool twice per store (list, import), whatever the count.
+# A stale entry is still one `keytool -delete` each; a rotation replaces a handful. A certificate
+# that is not valid X.509 fails the whole import (the extra CAs file is Puddle's own parsed output).
 #
 # This step never fails the boot: a store that is read-only, locked with another password or
-# missing is reported on stdout and skipped. POSIX sh; needs awk, cksum, base64 and sha1sum.
+# missing is reported on stdout and skipped. POSIX sh; needs awk, cksum, readlink, base64, sha1sum and wc.
 #
 # PUDDLE_ROOT relocates the fixed paths below, for the unit tests only (boot.sh passes it on empty).
 ROOT=${PUDDLE_ROOT:-}

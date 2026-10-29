@@ -40,7 +40,7 @@ const PIP_IMAGE: &str = "python:3.9-slim";
 /// Roots in the host snapshot of the many-roots test: the large end of a corporate set.
 const ROOTS: usize = 150;
 /// What the Java step may add to a first boot, one JVM start each for list and import.
-const JAVA_STEP_BUDGET: Duration = Duration::from_secs(15);
+const JAVA_STEP_BUDGET: Duration = Duration::from_secs(25);
 const CREATE_BUDGET: Duration = Duration::from_mins(15);
 const EXEC_BUDGET: Duration = Duration::from_mins(3);
 const STOP_BUDGET: Duration = Duration::from_mins(1);

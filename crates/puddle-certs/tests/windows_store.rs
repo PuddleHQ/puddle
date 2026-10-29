@@ -16,7 +16,7 @@
 )]
 
 use std::fs::File;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -35,21 +35,83 @@ const LM_ROOT_GP: StoreSource = StoreSource::new(
     Physical::GroupPolicy,
 );
 
-/// Adding to `CurrentUser\Root` asks the user to confirm in a dialog on an interactive desktop;
-/// a hung dialog must fail the test, not hang the job.
-const POWERSHELL_LIMIT: Duration = Duration::from_secs(90);
+/// A healthy PowerShell call takes 1 to 3 s. Past this the call is hung (adding to
+/// `CurrentUser\Root` also waits for a confirmation dialog on an interactive desktop), and it must
+/// fail the test with the call named, well inside nextest's 120 s per test.
+const POWERSHELL_LIMIT: Duration = Duration::from_secs(20);
+
+/// How long a test waits for another test's turn at the stores before it fails naming the holder:
+/// a hung holder ends in `POWERSHELL_LIMIT`, so a longer wait is a wedge.
+const LOCK_WAIT: Duration = Duration::from_secs(30);
 
 /// Held for a test's whole run: a test that reads the stores must not see another test's
 /// certificate come and go between two reads. A file lock, so it holds across nextest's test
 /// processes and `cargo test`'s threads alike; the OS releases it when a test process dies.
-fn lock_stores() -> File {
-    let file = File::create(std::env::temp_dir().join("puddle-store-tests.lock")).unwrap();
-    file.lock().unwrap();
-    file
+/// The holder's name goes in a second file: Windows refuses reads of a locked file.
+struct StoreLock {
+    _file: File,
+    holder: PathBuf,
+}
+
+impl Drop for StoreLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.holder);
+    }
+}
+
+fn lock_paths() -> (PathBuf, PathBuf) {
+    let dir = std::env::temp_dir();
+    (
+        dir.join("puddle-store-tests.lock"),
+        dir.join("puddle-store-tests.holder"),
+    )
+}
+
+/// Who this process is, as the next waiter should see it: nextest runs one test per process and
+/// passes its name as an argument, `cargo test` names the thread.
+fn who_am_i() -> String {
+    format!(
+        "pid {}, thread {:?}, arguments {:?}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("unnamed"),
+        std::env::args().skip(1).collect::<Vec<_>>()
+    )
+}
+
+/// Takes the lock at `lock`, polling for `wait`; `Err` names the holder written to `holder`.
+fn acquire(lock: &Path, holder: &Path, wait: Duration) -> Result<StoreLock, String> {
+    let file = File::create(lock).unwrap();
+    let start = Instant::now();
+    loop {
+        match file.try_lock() {
+            Ok(()) => {
+                std::fs::write(holder, who_am_i()).unwrap();
+                return Ok(StoreLock {
+                    _file: file,
+                    holder: holder.to_owned(),
+                });
+            }
+            Err(std::fs::TryLockError::WouldBlock) => {}
+            Err(std::fs::TryLockError::Error(e)) => panic!("locking {}: {e}", lock.display()),
+        }
+        if start.elapsed() >= wait {
+            let who = std::fs::read_to_string(holder)
+                .unwrap_or_else(|_| "unknown (no holder file)".to_owned());
+            return Err(format!(
+                "no turn at the certificate stores after {wait:?}; held by {who} (the stores are wedged or the holder is hung in a PowerShell call: see its output)"
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn lock_stores() -> StoreLock {
+    let (lock, holder) = lock_paths();
+    acquire(&lock, &holder, LOCK_WAIT).unwrap_or_else(|e| panic!("{e}"))
 }
 
 /// The lock when the store tests run here, `None` when they are skipped.
-fn enabled() -> Option<File> {
+fn enabled() -> Option<StoreLock> {
     let on = std::env::var_os("CI").is_some() || std::env::var_os("PUDDLE_STORE_TESTS").is_some();
     if !on {
         // The tests edit the machine's certificate stores, so they run where CI is set or where the
@@ -65,17 +127,47 @@ fn enabled() -> Option<File> {
     Some(lock_stores())
 }
 
-/// Runs a PowerShell script; `Ok(stdout)` on exit 0, `Err(output)` otherwise or on timeout.
-fn powershell(script: &str) -> Result<String, String> {
-    let mut child = Command::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-        ])
-        .arg(script)
+/// Why a child process call failed: a hang is told apart from an exit so a cleanup can stop
+/// calling a store that no longer answers.
+enum Failure {
+    TimedOut(String),
+    Exited(String),
+}
+
+impl Failure {
+    fn into_message(self) -> String {
+        match self {
+            Self::TimedOut(m) | Self::Exited(m) => m,
+        }
+    }
+}
+
+/// `HH:MM:SS` UTC, so the nextest dump of a hung run shows when the last call started.
+fn clock() -> String {
+    let secs = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        % 86_400;
+    format!("{:02}:{:02}:{:02}", secs / 3600, secs / 60 % 60, secs % 60)
+}
+
+/// Kills `child` and everything it started: a PowerShell killed alone leaves its own children
+/// holding the stores for the next test.
+fn kill_tree(child: &mut std::process::Child) {
+    let _ = Command::new("taskkill.exe")
+        .args(["/T", "/F", "/PID", &child.id().to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Runs `command` (`call` names it in messages); `Ok(stdout and stderr)` on exit 0. A call over
+/// `limit` is killed with its whole process tree and reported as hung.
+fn run_bounded(mut command: Command, call: &str, limit: Duration) -> Result<String, Failure> {
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -86,13 +178,11 @@ fn powershell(script: &str) -> Result<String, String> {
         if child.try_wait().unwrap().is_some() {
             break;
         }
-        if start.elapsed() > POWERSHELL_LIMIT {
-            let _ = child.kill();
-            let out = child.wait_with_output().unwrap();
-            return Err(format!(
-                "timed out after {POWERSHELL_LIMIT:?}: {}",
-                String::from_utf8_lossy(&out.stderr)
-            ));
+        if start.elapsed() > limit {
+            kill_tree(&mut child);
+            return Err(Failure::TimedOut(format!(
+                "timed out after {limit:?}, process tree killed: {call}"
+            )));
         }
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -105,8 +195,29 @@ fn powershell(script: &str) -> Result<String, String> {
     if out.status.success() {
         Ok(text)
     } else {
-        Err(text)
+        Err(Failure::Exited(text))
     }
+}
+
+/// Runs a PowerShell script, logging when it starts.
+fn powershell_call(script: &str) -> Result<String, Failure> {
+    let mut command = Command::new("powershell.exe");
+    command
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+        ])
+        .arg(script);
+    eprintln!("{} powershell: {script}", clock());
+    run_bounded(command, script, POWERSHELL_LIMIT)
+}
+
+/// Runs a PowerShell script; `Ok(stdout)` on exit 0, `Err(output)` otherwise or on timeout.
+fn powershell(script: &str) -> Result<String, String> {
+    powershell_call(script).map_err(Failure::into_message)
 }
 
 struct TestCert {
@@ -173,21 +284,38 @@ fn write_registry_blob(cert: &TestCert, key: &str) {
     powershell(&script).unwrap_or_else(|e| panic!("registry write under {key}: {e}"));
 }
 
-/// Removes `cert` from every store path given, ignoring "not there".
-fn remove(cert: &TestCert, stores: &[&str], registry_keys: &[&str]) {
-    for store in stores {
-        let _ = powershell(&format!(
-            "Remove-Item -LiteralPath '{store}\\{}' -ErrorAction SilentlyContinue",
-            cert.thumbprint
-        ));
-    }
-    for key in registry_keys {
-        let _ = powershell(&format!(
-            "Remove-Item -LiteralPath '{key}\\Certificates\\{}' -Recurse -ErrorAction SilentlyContinue",
-            cert.thumbprint
-        ));
+/// Removes `cert` from every store path given, ignoring "not there". A call that hangs ends the
+/// clean-up with `Err` naming the store and thumbprint: the stores are not answering, and each
+/// further call would only wait out its own limit.
+fn remove_with(
+    call: &dyn Fn(&str) -> Result<String, Failure>,
+    cert: &TestCert,
+    stores: &[&str],
+    registry_keys: &[&str],
+) -> Result<(), String> {
+    let targets = stores
+        .iter()
+        .map(|store| (*store, format!("{store}\\{}", cert.thumbprint), ""))
+        .chain(registry_keys.iter().map(|key| {
+            (
+                *key,
+                format!("{key}\\Certificates\\{}", cert.thumbprint),
+                " -Recurse",
+            )
+        }));
+    for (store, path, flags) in targets {
+        let script =
+            format!("Remove-Item -LiteralPath '{path}'{flags} -ErrorAction SilentlyContinue");
+        if let Err(Failure::TimedOut(m)) = call(&script) {
+            let _ = std::fs::remove_file(&cert.file);
+            return Err(format!(
+                "cleanup of store {store}, thumbprint {}: {m}",
+                cert.thumbprint
+            ));
+        }
     }
     let _ = std::fs::remove_file(&cert.file);
+    Ok(())
 }
 
 struct Cleanup<'a>(Vec<(&'a TestCert, Vec<&'static str>, Vec<&'static str>)>);
@@ -195,7 +323,15 @@ struct Cleanup<'a>(Vec<(&'a TestCert, Vec<&'static str>, Vec<&'static str>)>);
 impl Drop for Cleanup<'_> {
     fn drop(&mut self) {
         for (cert, stores, keys) in &self.0 {
-            remove(cert, stores, keys);
+            if let Err(hung) = remove_with(&powershell_call, cert, stores, keys) {
+                // A panic while another panic unwinds aborts the process, hiding both.
+                if std::thread::panicking() {
+                    eprintln!("{hung}; this process holds the store lock ({})", who_am_i());
+                } else {
+                    panic!("{hung}; this process holds the store lock ({})", who_am_i());
+                }
+                return;
+            }
         }
     }
 }
@@ -517,4 +653,122 @@ fn asking_for_trust_ends_in_a_reported_state_never_a_crash() {
         DevCertStatus::Trusted | DevCertStatus::TrustDeclined | DevCertStatus::TrustFailed
     ));
     assert_eq!(report.material.origin, Origin::Generated);
+}
+
+// ---- a hung call fails fast and names itself ---------------------------------------------------
+
+/// A child that outlives its parent: `cmd.exe` runs a long `ping`. A kill of `cmd.exe` alone leaves
+/// the `ping`, which is what a killed `powershell.exe` does to its own children.
+fn hung_command(marker: u32) -> Command {
+    use std::os::windows::process::CommandExt;
+    let mut command = Command::new("cmd.exe");
+    command.raw_arg(format!("/c ping -n {marker} 127.0.0.1 >nul"));
+    command
+}
+
+fn pings_running(marker: u32) -> usize {
+    let listing = powershell(&format!(
+        "@(Get-CimInstance Win32_Process -Filter \"Name='PING.EXE'\" | \
+         Where-Object {{ $_.CommandLine -like '*-n {marker} *' }}).Count"
+    ))
+    .unwrap();
+    listing.trim().parse().unwrap()
+}
+
+#[test]
+fn a_hung_call_is_killed_with_its_children_and_named() {
+    let marker = 3000 + std::process::id() % 5000;
+    let start = Instant::now();
+    let Err(Failure::TimedOut(message)) = run_bounded(
+        hung_command(marker),
+        "Remove-Item the-hung-call",
+        Duration::from_secs(2),
+    ) else {
+        panic!("a call that outlives its limit must be reported as hung");
+    };
+    assert!(
+        start.elapsed() < Duration::from_secs(10),
+        "{:?}",
+        start.elapsed()
+    );
+    assert!(message.contains("Remove-Item the-hung-call"), "{message}");
+    assert_eq!(
+        pings_running(marker),
+        0,
+        "the child of the killed call is still running"
+    );
+}
+
+#[test]
+fn a_cleanup_call_that_hangs_names_its_store_and_thumbprint_and_stops() {
+    let cert = TestCert {
+        der: Vec::new(),
+        file: std::env::temp_dir().join("puddle-cleanup-hang-test.cer"),
+        thumbprint: "ABCDEF0123".to_owned(),
+    };
+    let calls = std::cell::RefCell::new(Vec::new());
+    let hang = |script: &str| {
+        calls.borrow_mut().push(script.to_owned());
+        Err(Failure::TimedOut("timed out".to_owned()))
+    };
+    let err = remove_with(
+        &hang,
+        &cert,
+        &["Cert:\\CurrentUser\\My", "Cert:\\CurrentUser\\CA"],
+        &[],
+    )
+    .unwrap_err();
+    assert!(err.contains("Cert:\\CurrentUser\\My"), "{err}");
+    assert!(err.contains("ABCDEF0123"), "{err}");
+    assert_eq!(
+        calls.borrow().len(),
+        1,
+        "no further call to a store that hung"
+    );
+}
+
+#[test]
+fn a_cleanup_that_is_refused_goes_on_to_the_next_store() {
+    let cert = TestCert {
+        der: Vec::new(),
+        file: std::env::temp_dir().join("puddle-cleanup-refused-test.cer"),
+        thumbprint: "ABCDEF0123".to_owned(),
+    };
+    let calls = std::cell::Cell::new(0);
+    let refuse = |_: &str| {
+        calls.set(calls.get() + 1);
+        Err(Failure::Exited("access denied".to_owned()))
+    };
+    remove_with(
+        &refuse,
+        &cert,
+        &["Cert:\\CurrentUser\\My"],
+        &["HKLM:\\SOFTWARE\\x"],
+    )
+    .unwrap();
+    assert_eq!(calls.get(), 2);
+}
+
+#[test]
+fn waiting_for_the_stores_ends_naming_the_holder() {
+    let dir = tempfile::tempdir().unwrap();
+    let lock = dir.path().join("l.lock");
+    let holder = dir.path().join("l.holder");
+    let first = acquire(&lock, &holder, Duration::from_secs(5)).unwrap();
+    let start = Instant::now();
+    let err = acquire(&lock, &holder, Duration::from_secs(1))
+        .err()
+        .expect("the second turn must not be granted while the first is held");
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        start.elapsed()
+    );
+    assert!(
+        err.contains(&format!("pid {}", std::process::id())),
+        "{err}"
+    );
+    drop(first);
+    assert!(!holder.exists(), "a released lock leaves no holder behind");
+    acquire(&lock, &holder, Duration::from_secs(1)).expect("free again after the release");
 }

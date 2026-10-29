@@ -29,8 +29,8 @@ use std::time::{Duration, SystemTime};
 use microsandbox::Sandbox;
 use puddle_ca::{CaBuilder, TrustBundle};
 use puddle_certs::{
-    CorporateRoots, GuestTrust, JAVA_STEP_PATH, Location, Physical, StoreName, StoreSnapshot,
-    StoreSource,
+    CorporateRoots, EXTRA_CAS_PATH, GuestTrust, JAVA_STEP_PATH, Location, Physical, StoreName,
+    StoreSnapshot, StoreSource,
 };
 use puddle_vm_tests::{HarnessError, VmEnv, within};
 
@@ -138,6 +138,9 @@ struct Fixture {
     trust: GuestTrust,
     leaf_pem: String,
     leaf_key: String,
+    /// Text appended to the extra CAs file the guest gets (a corrupted certificate in the
+    /// host's stores).
+    extra_tail: String,
 }
 
 /// Puddle's CA in the trust bundle, as a sandbox has it, and a leaf it signed.
@@ -196,13 +199,14 @@ fn fixture_with(extra: usize) -> Fixture {
         trust: GuestTrust::new(&corporate, &bundle),
         leaf_pem: leaf_cert.pem(),
         leaf_key: leaf_key.serialize_pem(),
+        extra_tail: String::new(),
     }
 }
 
 /// The uploads (`/tmp/catrust-<n>`, the env file) and the script that does what `boot.sh` does
 /// with this trust: each file with its mode, the env file, `update-ca-certificates` where the
 /// image has it, the plan's steps in order.
-fn install(trust: &GuestTrust) -> (Vec<(String, Vec<u8>)>, String) {
+fn install(trust: &GuestTrust, extra_tail: &str) -> (Vec<(String, Vec<u8>)>, String) {
     let mut uploads = Vec::new();
     let mut script = String::from("set -e\n");
     for (n, f) in trust.guest_files().iter().enumerate() {
@@ -215,7 +219,11 @@ fn install(trust: &GuestTrust) -> (Vec<(String, Vec<u8>)>, String) {
             f.mode()
         )
         .unwrap();
-        uploads.push((tmp, f.contents().to_vec()));
+        let mut contents = f.contents().to_vec();
+        if dest == EXTRA_CAS_PATH {
+            contents.extend(extra_tail.bytes());
+        }
+        uploads.push((tmp, contents));
     }
     let mut env = String::new();
     for (k, v) in trust.env().iter() {
@@ -264,7 +272,7 @@ async fn prepare(
     ] {
         within("write", EXEC_BUDGET, fs.write(path, data)).await??;
     }
-    let (uploads, script) = install(&f.trust);
+    let (uploads, script) = install(&f.trust, &f.extra_tail);
     for (path, data) in uploads {
         within("write", EXEC_BUDGET, fs.write(&path, data)).await??;
     }
@@ -505,4 +513,55 @@ async fn java_many_roots_run(env: &VmEnv) -> Result<(), HarnessError> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_ca_trust_java_many_roots_are_imported_within_the_budget() {
     in_env(|env| Box::pin(java_many_roots_run(env))).await;
+}
+
+/// A PEM block with a valid base64 body that is no certificate, then one that is not base64.
+const BAD_PEMS: &str = "-----BEGIN CERTIFICATE-----\nbm90IGEgY2VydGlmaWNhdGU=\n-----END CERTIFICATE-----\n\
+-----BEGIN CERTIFICATE-----\n!!!! not base64 !!!!\n-----END CERTIFICATE-----\n";
+
+/// Two corrupted certificates among the extra CAs must cost Java nothing but themselves: the
+/// boot step succeeds, names each bad one, and Java trusts the good roots.
+async fn java_bad_roots_run(env: &VmEnv) -> Result<(), HarnessError> {
+    let f = Fixture {
+        extra_tail: BAD_PEMS.to_owned(),
+        ..fixture_with(9)
+    };
+    let builder = env.sandbox("catrust-bad", JAVA_IMAGE)?.memory(1024u32);
+    env.scope(Box::pin(async {
+        let sandbox = within("create", CREATE_BUDGET, builder.create()).await??;
+        let script = prepare(&sandbox, &f, ("/tmp/Fetch.java", FETCH_JAVA)).await?;
+        let steps = apply(&sandbox, script.clone()).await?;
+        eprintln!(
+            "java step with 2 bad certificates among 11: {:?} ms",
+            step_ms(&steps, JAVA_STEP_PATH)
+        );
+        assert!(
+            steps.contains("updated, 11 added, 0 removed, 2 skipped"),
+            "{steps}"
+        );
+        for n in [12, 13] {
+            assert!(
+                steps.contains(&format!("skipped certificate {n} of extra-cas.pem (alias puddle-")),
+                "no warning naming certificate {n}: {steps}"
+            );
+        }
+        let run = "cd /tmp && java Fetch.java 2>&1";
+        let (code, out) = sh(&sandbox, "java after", run.to_owned()).await?;
+        assert_eq!(code, 0, "Java refused the good CA after the import: {out}");
+        assert!(out.lines().any(|l| l == "java: puddle-ok"), "{out}");
+        let listed = "keytool -list -keystore /opt/java/openjdk/lib/security/cacerts -storepass changeit 2>/dev/null | grep -c '^puddle-'";
+        let (_, out) = sh(&sandbox, "list", listed.to_owned()).await?;
+        assert_eq!(out.trim(), "11", "{out}");
+
+        // Recorded: the next boot starts no JVM for it.
+        let steps = apply(&sandbox, script).await?;
+        assert!(steps.contains(" unchanged"), "{steps}");
+        finish(&sandbox).await
+    }))
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_ca_trust_java_skips_corrupted_roots_and_trusts_the_rest() {
+    in_env(|env| Box::pin(java_bad_roots_run(env))).await;
 }

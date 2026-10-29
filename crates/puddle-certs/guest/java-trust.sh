@@ -16,8 +16,14 @@
 # keytool imports one certificate per run and every run is a JVM start (about 0.4 s), so the
 # missing certificates are written as one JKS file and imported by a single `keytool
 # -importkeystore`: a first boot runs keytool twice per store (list, import), whatever the count.
-# A stale entry is still one `keytool -delete` each; a rotation replaces a handful. A certificate
-# that is not valid X.509 fails the whole import (the extra CAs file is Puddle's own parsed output).
+# A stale entry is still one `keytool -delete` each; a rotation replaces a handful.
+#
+# One certificate Java refuses (a corporate root cut short or malformed) fails a whole import, and
+# must cost the other certificates nothing. A failed import is therefore split in halves and each
+# half imported again, down to the single certificate, which is skipped with a line naming it.
+# One bad certificate among 150 takes about 15 imports (a few seconds). The imports are capped at
+# MAX_RUNS per store and boot; what the cap leaves out is retried at the next boot, which starts
+# from what already arrived, so a pathological set still converges and no boot waits for it.
 #
 # This step never fails the boot: a store that is read-only, locked with another password or
 # missing is reported on stdout and skipped. POSIX sh; needs awk, cksum, readlink, base64, sha1sum and wc.
@@ -27,6 +33,7 @@ ROOT=${PUDDLE_ROOT:-}
 EXTRA=$ROOT/etc/puddle/extra-cas.pem
 STATE=$ROOT/etc/puddle/java-trust.state
 PASS=changeit
+MAX_RUNS=40
 
 # keytool prints "Picked up ..." on stderr and might translate its output; neither is wanted.
 unset JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS
@@ -92,12 +99,15 @@ awk -v dir="$tmp/certs" '
     /^-----END CERTIFICATE-----/ { inside = 0; close(file) }
 ' "$EXTRA"
 : >"$tmp/wanted"
+: >"$tmp/order"
 for f in "$tmp"/certs/*.pem; do
     [ -f "$f" ] || continue
     alias=puddle-$(grep -v -- '-----' "$f" | tr -d ' \t\r\n' | cksum | cut -d' ' -f1)
     # The same certificate twice gets one alias.
     grep -qx "$alias" "$tmp/wanted" && continue
     printf '%s\n' "$alias" >>"$tmp/wanted"
+    n=${f##*/}
+    printf '%s %s\n' "$alias" "${n%.pem}" >>"$tmp/order"
     mv "$f" "$tmp/certs/$alias.pem"
 done
 extra_sum=$(cksum <"$EXTRA" | cut -d' ' -f1)
@@ -134,7 +144,7 @@ write_jks() {
         be32 2
         be32 $#
         for a in "$@"; do
-            grep -v -- '-----' "$tmp/certs/$a.pem" | base64 -d >"$tmp/der" || return 1
+            grep -v -- '-----' "$tmp/certs/$a.pem" | base64 -d >"$tmp/der" 2>/dev/null || return 1
             be32 2
             be16 ${#a}
             printf %s "$a"
@@ -160,6 +170,58 @@ write_jks() {
             byte "0x$pair"
         done
     } >"$out"
+}
+
+# import_set <aliases>: one keytool import of the certificates, true when every one arrived.
+import_set() {
+    : >"$tmp/err"
+    # shellcheck disable=SC2086 # aliases are digits and a prefix, one word each
+    write_jks "$tmp/new.jks" $1 || {
+        echo "not valid base64" >"$tmp/err"
+        return 1
+    }
+    "$keytool" -importkeystore -noprompt -srckeystore "$tmp/new.jks" -srcstoretype JKS \
+        -srcstorepass "$PASS" -destkeystore "$store" -deststorepass "$PASS" \
+        -J-Xshare:auto -J-XX:TieredStopAtLevel=1 </dev/null >"$tmp/err" 2>&1 &&
+        grep -q ' 0 entries failed' "$tmp/err"
+}
+
+# add_missing <aliases>: imports them into $store; a failed set goes back on the queue as two
+# halves, a single certificate that fails is skipped. Counts in added/skipped; sets failed when the
+# cap left some out.
+add_missing() {
+    nl='
+'
+    queue=$1
+    runs=0
+    while [ -n "$queue" ]; do
+        cur=${queue%%"$nl"*}
+        case $queue in
+        *"$nl"*) queue=${queue#*"$nl"} ;;
+        *) queue= ;;
+        esac
+        if [ "$runs" -ge "$MAX_RUNS" ]; then
+            failed=1
+            continue
+        fi
+        runs=$((runs + 1))
+        # shellcheck disable=SC2086 # aliases are digits and a prefix, one word each
+        set -- $cur
+        if import_set "$cur"; then
+            added=$((added + $#))
+        elif [ "$#" -eq 1 ]; then
+            skipped=$((skipped + 1))
+            say "$store: skipped certificate $(sed -n "s/^$1 //p" "$tmp/order") of $(basename "$EXTRA") (alias $1), Java refuses it: $(head -n 3 "$tmp/err" | tr '\n' ' ' | cut -c1-200)"
+        else
+            half=$(($# / 2))
+            first=
+            rest=
+            for a in "$@"; do
+                if [ "$half" -gt 0 ]; then first="$first $a"; half=$((half - 1)); else rest="$rest $a"; fi
+            done
+            queue="$first$nl$rest${queue:+$nl$queue}"
+        fi
+    done
 }
 
 : >"$tmp/seen"
@@ -206,18 +268,17 @@ echo "$keytools" | while IFS= read -r keytool; do
     while IFS= read -r a; do
         echo "$present" | grep -qx "$a" || missing="$missing $a"
     done <"$tmp/wanted"
-    if [ -n "$missing" ]; then
-        # shellcheck disable=SC2086 # aliases are digits and a prefix, one word each
-        if write_jks "$tmp/new.jks" $missing &&
-            "$keytool" -importkeystore -noprompt -srckeystore "$tmp/new.jks" -srcstoretype JKS \
-                -srcstorepass "$PASS" -destkeystore "$store" -deststorepass "$PASS" \
-                -J-Xshare:auto -J-XX:TieredStopAtLevel=1 </dev/null >"$tmp/err" 2>&1 &&
-            grep -q ' 0 entries failed' "$tmp/err"; then
-            # shellcheck disable=SC2086 # the same one-word aliases
-            added=$(set -- $missing && echo $#)
-        else
-            failed=1
-        fi
+    skipped=0
+    add_missing "$missing"
+    # Certificates Java refuses are skipped for good (the same file fails the same way), but only
+    # when others made it into this store: a store that took nothing is more likely broken than
+    # every certificate bad, and is tried again at the next boot.
+    if [ "$skipped" -gt 0 ]; then
+        arrived=$added
+        for a in $present; do
+            ! grep -qx "$a" "$tmp/wanted" || arrived=$((arrived + 1))
+        done
+        [ "$arrived" -gt 0 ] || failed=1
     fi
     if [ "$failed" -ne 0 ]; then
         say "$store: some changes failed, will retry at the next boot: $(tr '\n' ' ' <"$tmp/err")"
@@ -230,6 +291,8 @@ echo "$keytools" | while IFS= read -r keytool; do
     } >"$tmp/state.new"
     mkdir -p "$(dirname "$STATE")"
     cat "$tmp/state.new" >"$STATE"
-    say "$store updated, $added added, $removed removed"
+    note=
+    [ "$skipped" -eq 0 ] || note=", $skipped skipped"
+    say "$store updated, $added added, $removed removed$note"
 done
 exit 0

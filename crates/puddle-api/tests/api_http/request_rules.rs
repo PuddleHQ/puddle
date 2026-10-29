@@ -4,6 +4,7 @@
 use serde_json::{Value, json};
 
 use crate::common::start;
+use crate::interception::workspace;
 
 #[tokio::test]
 async fn a_rule_is_made_listed_by_scope_and_deleted() {
@@ -122,4 +123,81 @@ async fn a_rule_that_cannot_work_is_refused_and_nothing_is_made() {
         .get("/api/request-rules?workspace=Not%20A%20Name!")
         .await;
     assert_eq!(bad_query.status, 422, "{}", bad_query.body);
+}
+
+#[tokio::test]
+async fn a_rule_on_a_host_the_never_decrypt_lists_name_says_it_overrides_them() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    workspace(&api, "other").await;
+    for (path, names) in [
+        ("/api/interception/never-decrypt", json!(["*.example.com"])),
+        (
+            "/api/workspaces/shop/interception",
+            json!(["api.example.com"]),
+        ),
+        (
+            "/api/workspaces/other/interception",
+            json!(["web.example.com"]),
+        ),
+    ] {
+        let put = api
+            .send("PUT", path, Some(&json!({"never_decrypt": names})))
+            .await;
+        assert_eq!(put.status, 200, "{}", put.body);
+    }
+    let make = |workspace: Option<&str>, host: &str| json!({"workspace": workspace, "host": host, "methods": ["DELETE"], "path": "/**"});
+
+    let own = api
+        .send(
+            "POST",
+            "/api/request-rules",
+            Some(&make(Some("shop"), "api.example.com")),
+        )
+        .await;
+    assert_eq!(own.status, 201, "{}", own.body);
+    let own = own.json();
+    assert_eq!(
+        own["host"], "api.example.com",
+        "the rule itself is in the answer"
+    );
+    assert_eq!(
+        own["warning"],
+        "api.example.com is decrypted for this rule although the never-decrypt list names it: \
+         *.example.com (every workspace), api.example.com (workspace shop). A tool there that \
+         does not trust Puddle's certificate will fail on it."
+    );
+
+    // A global rule meets every workspace's own names.
+    let global = api
+        .send(
+            "POST",
+            "/api/request-rules",
+            Some(&make(None, "web.example.com")),
+        )
+        .await
+        .json();
+    assert_eq!(
+        global["warning"],
+        "web.example.com is decrypted for this rule although the never-decrypt list names it: \
+         *.example.com (every workspace), web.example.com (workspace other). A tool there that \
+         does not trust Puddle's certificate will fail on it."
+    );
+
+    let free = api
+        .send(
+            "POST",
+            "/api/request-rules",
+            Some(&make(None, "example.org")),
+        )
+        .await
+        .json();
+    assert_eq!(free["warning"], Value::Null, "{free}");
+    let listed = api.get("/api/request-rules").await.json();
+    assert_eq!(
+        listed["rules"][0]["warning"], own["warning"],
+        "listing warns too"
+    );
+    assert_eq!(listed["rules"][1]["warning"], global["warning"]);
+    assert_eq!(listed["rules"][2]["warning"], Value::Null);
 }

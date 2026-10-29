@@ -92,6 +92,26 @@ impl Store {
             .collect::<Result<Vec<_>, _>>()?)
     }
 
+    /// Every never-decrypt name as (workspace, name): the global names (workspace `None`) and
+    /// each workspace's own, ordered global first, then by workspace and name.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn never_decrypt_names(&self) -> Result<Vec<(Option<String>, String)>, StoreError> {
+        let conn = lock(&self.conn);
+        let mut stmt = conn.prepare(
+            "SELECT NULL, pattern FROM never_decrypt_global
+             UNION ALL
+             SELECT workspace_id, pattern FROM never_decrypt
+             ORDER BY 1, 2",
+        )?;
+        Ok(stmt
+            .query_map([], |r| {
+                Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
     /// The time and size the learned pass-through lists use (the built-in values until saved).
     ///
     /// # Errors
@@ -406,5 +426,29 @@ mod tests {
             WorkspaceInterception::default()
         );
         assert_eq!(store.global_never_decrypt().unwrap(), ["g.example"]);
+    }
+
+    #[test]
+    fn every_never_decrypt_name_is_listed_with_its_workspace() {
+        let (store, _) = store();
+        store
+            .set_global_never_decrypt(&strings(&["g.example"]))
+            .unwrap();
+        store
+            .set_never_decrypt(&ws("shop"), &strings(&["*.bank.example"]))
+            .unwrap();
+        store
+            .set_never_decrypt(&ws("other"), &strings(&["o.example"]))
+            .unwrap();
+        let named: Vec<String> = store
+            .never_decrypt_names()
+            .unwrap()
+            .into_iter()
+            .map(|(w, p)| format!("{}:{p}", w.unwrap_or_default()))
+            .collect();
+        assert_eq!(
+            named,
+            [":g.example", "other:o.example", "shop:*.bank.example"]
+        );
     }
 }

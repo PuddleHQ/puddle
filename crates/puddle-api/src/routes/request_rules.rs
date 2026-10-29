@@ -47,15 +47,23 @@ pub(crate) async fn list_request_rules(
             WorkspaceName::new(&raw).map_err(|err| ApiError::invalid(format!("workspace: {err}")))
         })
         .transpose()?;
-    let rules = blocking(move || Ok(state.store.request_rules(workspace.as_ref())?)).await?;
-    Ok(Json(RequestRuleList {
-        rules: rules.into_iter().map(RequestRule::from).collect(),
-    }))
+    let rules = blocking(move || {
+        let never = state.store.never_decrypt_names()?;
+        Ok(state
+            .store
+            .request_rules(workspace.as_ref())?
+            .into_iter()
+            .map(|rule| RequestRule::new(rule, &never))
+            .collect())
+    })
+    .await?;
+    Ok(Json(RequestRuleList { rules }))
 }
 
 /// Makes a rule that refuses the named methods of the named paths on a host. The host is
 /// decrypted from now on whatever the workspace's other settings say, so the rule can read its
-/// requests; a tunnel to another port of the host is refused.
+/// requests; a tunnel to another port of the host is refused. Its `warning` says when that
+/// overrides a never-decrypt name.
 #[utoipa::path(
     post,
     path = "/api/request-rules",
@@ -82,8 +90,12 @@ pub(crate) async fn create_request_rule(
         path,
         created_by: Actor::Api,
     };
-    let rule = blocking(move || Ok(state.store.add_request_rule(&new)?)).await?;
-    Ok((StatusCode::CREATED, Json(rule.into())))
+    let rule = blocking(move || {
+        let rule = state.store.add_request_rule(&new)?;
+        Ok(RequestRule::new(rule, &state.store.never_decrypt_names()?))
+    })
+    .await?;
+    Ok((StatusCode::CREATED, Json(rule)))
 }
 
 /// Deletes a rule on method and path.
@@ -101,6 +113,10 @@ pub(crate) async fn delete_request_rule(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<RequestRule>, ApiError> {
-    let rule = blocking(move || Ok(state.store.delete_request_rule(id, Actor::Api)?)).await?;
-    Ok(Json(rule.into()))
+    let rule = blocking(move || {
+        let rule = state.store.delete_request_rule(id, Actor::Api)?;
+        Ok(RequestRule::new(rule, &state.store.never_decrypt_names()?))
+    })
+    .await?;
+    Ok(Json(rule))
 }

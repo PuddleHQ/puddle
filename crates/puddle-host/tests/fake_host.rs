@@ -6766,12 +6766,29 @@ async fn a_proxy_that_turns_the_sign_in_down_is_one_event_and_a_failed_attempt()
     let _ = api.get("/api/repos").await;
     let _ = api.get("/api/repos").await;
 
+    // The host forwards the failure from its own task, so the event can land after the replies:
+    // wait for the first one, then give a second (which must not come) a moment to show.
     let mut failures = Vec::new();
-    while let Ok(event) = events.try_recv() {
-        if let Event::ProxySignInFailed { proxy, scheme } = event {
-            failures.push((proxy, scheme));
+    let first = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match events.recv().await {
+                Ok(Event::ProxySignInFailed { proxy, scheme }) => return (proxy, scheme),
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(closed) => panic!("the event stream ended: {closed}"),
+            }
         }
-    }
+    })
+    .await
+    .expect("the sign-in failure never reached the event stream");
+    failures.push(first);
+    let _ = tokio::time::timeout(Duration::from_millis(500), async {
+        while let Ok(event) = events.recv().await {
+            if let Event::ProxySignInFailed { proxy, scheme } = event {
+                failures.push((proxy, scheme));
+            }
+        }
+    })
+    .await;
     assert_eq!(
         failures,
         [(proxy.proxy_addr().to_string(), Some("Basic".to_owned()))]

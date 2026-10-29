@@ -9269,7 +9269,7 @@
                   "null"
                 ],
                 "format": "int64",
-                "description": "The rule on method and path that refused the request, when `reason` is\n`request_rule`; `method` and `path` are that request's. Numbered apart from `rule_id`.\nRecords written before it existed read as `null`."
+                "description": "The rule on method and path that refused the request, when `reason` is\n`request_rule`; `method` and `path` are that request's. For a tunnel refused with\n`request_rule_port`, the lowest-numbered rule on the host. Numbered apart from `rule_id`.\nRecords written before it existed read as `null`."
               },
               "resolved_ip": {
                 "type": [

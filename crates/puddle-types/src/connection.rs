@@ -275,8 +275,9 @@ pub struct ConnectionEvent {
     pub rule_id: Option<RuleId>,
     /// The rule set whose entry decided, if one did (R-24).
     pub rule_set: Option<RuleSetId>,
-    /// The rule on method and path that refused a request of the connection, if one did (R-24,
-    /// R-49). Its own numbering, apart from [`Self::rule_id`].
+    /// The rule on method and path that refused a request of the connection, or for a tunnel
+    /// refused because its host has such rules the lowest-numbered of them (R-24, R-49, R-54).
+    /// Its own numbering, apart from [`Self::rule_id`].
     pub request_rule: Option<RuleId>,
     /// The pending row, when pending.
     pub pending_id: Option<PendingId>,

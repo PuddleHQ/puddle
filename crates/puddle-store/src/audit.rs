@@ -74,7 +74,8 @@ pub struct ConnectionRecord {
     #[serde(default)]
     pub rule_set: Option<String>,
     /// The rule on method and path that refused a request of the connection (reason
-    /// `request_rule`); `method` and `path` are that request's. Its own numbering, apart from
+    /// `request_rule`); `method` and `path` are that request's. For a tunnel refused with
+    /// `request_rule_port`, the lowest-numbered rule on the host. Its own numbering, apart from
     /// `rule_id`. Absent in records written before it existed.
     #[serde(default)]
     pub request_rule: Option<i64>,

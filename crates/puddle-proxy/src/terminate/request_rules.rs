@@ -91,7 +91,16 @@ impl RequestRules {
     /// Whether any rule names `host`.
     #[must_use]
     pub fn covers(&self, host: &Host) -> bool {
-        self.rules.iter().any(|rule| rule.hosts.contains(host))
+        self.covering(host).is_some()
+    }
+
+    /// The lowest-numbered rule that names `host`, or `None` when none does.
+    #[must_use]
+    pub fn covering(&self, host: &Host) -> Option<RuleId> {
+        self.rules
+            .iter()
+            .find(|rule| rule.hosts.contains(host))
+            .map(|rule| rule.id)
     }
 
     /// The rule that refuses `request` to `host`, the lowest id first, or `None` when none does.
@@ -204,6 +213,8 @@ mod tests {
         assert_eq!(refusing(&rules, "10.0.0.1", "GET", "/admin"), None);
         assert!(rules.covers(&host("a.example.org")));
         assert!(!rules.covers(&host("example.org")));
+        assert_eq!(rules.covering(&host("a.example.org")), Some(RuleId(2)));
+        assert_eq!(rules.covering(&host("example.org")), None);
         let hosts = rules.hosts();
         assert!(hosts.contains(&host("api.example.com")) && hosts.contains(&host("x.example.org")));
         assert!(!hosts.contains(&host("example.org")));

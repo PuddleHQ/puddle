@@ -782,9 +782,7 @@ fn refuse_by_request_rule(
 ) -> Option<(Refusal, RecordChange)> {
     let termination = proxy.termination_of(request)?;
     let rules = termination.request_rules();
-    if !rules.covers(&request.host) {
-        return None;
-    }
+    let covering = rules.covering(&request.host)?;
     let Some(path) = path else {
         if request.port == terminate::request::HTTPS_PORT {
             return None;
@@ -795,14 +793,16 @@ fn refuse_by_request_rule(
         let refusal = Refusal::new(
             "403 Forbidden",
             format!(
-                "{} has rules on method and path, which Puddle can only apply to HTTPS on port 443 and to plain HTTP: a tunnel to port {} is refused",
+                "{} has rules on method and path (request rule {covering}), which Puddle can only apply to HTTPS on port 443 and to plain HTTP: a tunnel to port {} is refused",
                 request.host, request.port
             ),
         )
-        .coded(code);
+        .coded(code)
+        .header("x-puddle-request-rule", covering.to_string());
         let change: RecordChange = Box::new(move |event| {
             event.decision = ConnectionDecision::Blocked;
             event.reason = ConnectionReason::Refused(code);
+            event.request_rule = Some(covering);
         });
         return Some((refusal, change));
     };

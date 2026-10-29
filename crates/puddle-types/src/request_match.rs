@@ -261,10 +261,10 @@ impl Read {
     /// Recognise `.` and `..` only as written; otherwise also with control characters and
     /// trailing spaces around them (`.. ` is `..` on Windows).
     const STRICT_DOTS: u16 = 128;
-    /// Drop only the trailing dots of a name and keep a space before them, as servers that are
-    /// not Windows do (`/x/ ./y` has three segments there); otherwise trailing dots and spaces go
-    /// in any mix, as on Windows (`admin .` is `admin`).
-    const DOTS_ONLY_TRIM: u16 = 256;
+    /// Drop a name's trailing dots and spaces in any mix, as Windows does (`admin .` is
+    /// `admin`); otherwise only its trailing dots go and a space before them stays, as on servers
+    /// that are not Windows (`/x/ ./y` has three segments there).
+    const WINDOWS_TRIM: u16 = 256;
     /// Every flag above.
     const ALL: u16 = 511;
 
@@ -295,7 +295,7 @@ impl Read {
             relevant |= Self::STRICT_DOTS;
         }
         if decoded.contains(' ') && decoded.contains('.') {
-            relevant |= Self::DOTS_ONLY_TRIM;
+            relevant |= Self::WINDOWS_TRIM;
         }
         (0..=Self::ALL)
             .filter(move |flags| flags & !relevant == 0)
@@ -377,10 +377,10 @@ fn push_segment(segments: &mut Vec<Option<String>>, raw: &str, read: Read, dots:
         }
         _ => {}
     }
-    let name = if read.has(Read::DOTS_ONLY_TRIM) {
-        spaced.trim_end_matches('.')
-    } else {
+    let name = if read.has(Read::WINDOWS_TRIM) {
         spaced.trim_end_matches(['.', ' '])
+    } else {
+        spaced.trim_end_matches('.')
     };
     if !name.is_empty() {
         segments.push(Some(name.to_owned()));
@@ -706,8 +706,6 @@ mod tests {
             "/./././admin",
             "/x/.. /admin",
             "/x/../ /admin",
-            "/admin%20.",
-            "/admin.%20.%20",
         ] {
             assert_eq!(canon(spelling), "admin", "{spelling:?}");
         }

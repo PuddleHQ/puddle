@@ -212,6 +212,10 @@ fn the_readings_cover_the_known_server_disagreements() {
     assert!(named("/x/*/y", "/x/%20./y"));
     assert!(named("/x/*/y", "/x/%20.%20./y"));
     assert!(named("/admin", "/admin%20."));
+    assert!(named("/admin", "/admin.%20.%20"));
+    // A pattern keeps the same space, so it reads as a path read the same way.
+    assert!(named("/x/ ./ ./../y", "/x/%20./y"));
+    assert!(named("/x/ ./y", "/x/%20./q/%20.//../../y"));
     assert!(!named("/admin", "/administrator"));
     assert!(!named("/repos/*", "/repos/a/b"));
 }

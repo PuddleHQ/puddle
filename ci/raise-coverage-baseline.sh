@@ -14,7 +14,7 @@
 #      rebuilt on the checkout as one commit and pushed with a lease, and the pull request is opened (or left open) with
 #      auto-merge armed.
 # The token decides whether the pull request's checks run: a pull request opened or updated with the default GITHUB_TOKEN does
-# not trigger them (GitHub's rule), so the workflow uses the repository secret COVERAGE_BASELINE_TOKEN when it is set (see the
+# not trigger them (GitHub's rule), so the workflow passes the installation token of a GitHub App (see the
 # workflow). When GitHub refuses to open the pull request (the setting "Allow GitHub Actions to create and approve pull
 # requests" is off), the branch stays pushed, a warning says how to open it by hand, and the exit is 0.
 # DRY_RUN=1 reports what would happen and changes nothing remote. Needs GH_TOKEN, GITHUB_REPOSITORY, `actions: read` and,

@@ -18,13 +18,17 @@
 #   defer_vm_windows, defer_win_ui, defer_win_clippy
 #             the nightly tier (below): true only on a merge queue run with PUDDLE_TIER=on whose diff
 #             did not escalate that job; the job then skips and the result job accepts the skip
+#   defer_linux_webkit
+#             the same for the WebKit half of the Linux UI end-to-end tests: the `ui` job runs on
+#             Chromium alone and `full-steps` accepts that; nothing skips, so the verdict is untouched
 #   light     the light pull request mode (below): the Windows and VM jobs skip, and so do the
 #             Linux steps marked for it; true only in that mode, so a lost output runs everything
 #   class     full | docs | ui | rust | mixed (a label for the log and the tests)
 #
 # Nightly tier: with the repository variable PUDDLE_TIER set to `on`, a merge queue run skips the
 # jobs that run nightly and on a pull request to main instead (the WHP VM jobs of vm-windows, the
-# Windows UI job and the native Windows clippy job), unless the group's diff touches a path that
+# Windows UI job and the native Windows clippy job, and the WebKit half of the Linux UI end-to-end
+# tests, which webkit.yml runs nightly), unless the group's diff touches a path that
 # can only break that job, which pulls it back into the queue (`escalates`, below). Unset, any
 # other value, any other event and any doubt run everything, as before. The required check names
 # do not change: the result job's summary says the job ran in the nightly or release tier.
@@ -106,7 +110,7 @@ path_class() {
 }
 
 full_outputs() {
-    printf 'ci_rust=true\nwin_rust=true\nui=true\nvm=true\ndefer_vm_windows=false\ndefer_win_ui=false\ndefer_win_clippy=false\nlight=false\nclass=full\n'
+    printf 'ci_rust=true\nwin_rust=true\nui=true\nvm=true\ndefer_vm_windows=false\ndefer_win_ui=false\ndefer_win_clippy=false\ndefer_linux_webkit=false\nlight=false\nclass=full\n'
 }
 
 # Nightly tier: the repository variable PUDDLE_TIER is exactly `on` and this is a merge queue run.
@@ -117,7 +121,7 @@ tier_mode() {
 
 # Paths that can break a job moved to the nightly tier and are not already `always` paths (the msb
 # SDK pin lives in Cargo.toml, Cargo.lock and ci/msb-*, the shared VM test crate and the workflows
-# are `always`). Prints the jobs it pulls back into the queue: vm, ui, clippy.
+# are `always`). Prints the jobs it pulls back into the queue: vm, ui, clippy, webkit.
 escalates() {
     local lower=${1,,}
     case $1 in
@@ -125,6 +129,13 @@ escalates() {
     crates/puddle-app/*) echo ui ;;
     esac
     case $lower in *windows*) echo vm; echo clippy ;; esac
+    # What a second browser engine can see differently: markup and styles (a component, a stylesheet,
+    # the document shell, static files) and the browser test setup. Plain TypeScript logic is not
+    # listed: the engines share it, and the nightly WebKit run covers the rest.
+    case $1 in
+    ui/*.svelte | ui/*.css | ui/src/app.html | ui/static/* | ui/package.json | ui/playwright.config.ts | \
+        ui/vite.config.ts | ui/e2e/warm-up.ts) echo webkit ;;
+    esac
 }
 
 # Light mode: the repository variable PUDDLE_QUEUE is exactly `on` and this is a pull request to
@@ -159,7 +170,7 @@ classify() {
         full_outputs
         return
     fi
-    local ci_rust=false win_rust=false uib=false vmb=false class d_vm=false d_ui=false d_clip=false
+    local ci_rust=false win_rust=false uib=false vmb=false class d_vm=false d_ui=false d_clip=false d_wk=false
     { [ "$crates" = 1 ] || [ "$fixture" = 1 ] || [ "$gate" = 1 ]; } && ci_rust=true
     { [ "$crates" = 1 ] || [ "$fixture" = 1 ]; } && win_rust=true
     { [ "$ui" = 1 ] || [ "$fixture" = 1 ] || [ "$gate" = 1 ] || [ "$e2e" = 1 ]; } && uib=true
@@ -177,9 +188,10 @@ classify() {
         case "$esc" in *" vm "*) ;; *) d_vm=true ;; esac
         case "$esc" in *" ui "*) ;; *) d_ui=true ;; esac
         case "$esc" in *" clippy "*) ;; *) d_clip=true ;; esac
+        case "$esc" in *" webkit "*) ;; *) d_wk=true ;; esac
     fi
-    printf 'ci_rust=%s\nwin_rust=%s\nui=%s\nvm=%s\ndefer_vm_windows=%s\ndefer_win_ui=%s\ndefer_win_clippy=%s\nlight=false\nclass=%s\n' \
-        "$ci_rust" "$win_rust" "$uib" "$vmb" "$d_vm" "$d_ui" "$d_clip" "$class"
+    printf 'ci_rust=%s\nwin_rust=%s\nui=%s\nvm=%s\ndefer_vm_windows=%s\ndefer_win_ui=%s\ndefer_win_clippy=%s\ndefer_linux_webkit=%s\nlight=false\nclass=%s\n' \
+        "$ci_rust" "$win_rust" "$uib" "$vmb" "$d_vm" "$d_ui" "$d_clip" "$d_wk" "$class"
 }
 
 # The changed paths of this pull request (renames give both names), from the GitHub API. Prints
@@ -330,9 +342,12 @@ verdict() {
 
 # full-steps <step>=<outcome>...: off light mode every named step must have succeeded, and the UI
 # end-to-end tests must not be narrowed to some browsers (PUDDLE_E2E_PROJECTS empty). In light mode
-# they may be skipped. Catches a step that the light mode's condition skipped where it must not.
+# they may be skipped. The one other narrowing is the nightly tier's: a merge queue run with
+# PUDDLE_TIER=on and DEFER_LINUX_WEBKIT=true (scope's output) may run on Chromium alone, and says so
+# in the job summary. Catches a step that the light mode's condition skipped where it must not.
 full_steps() {
-    local spec bad=0
+    local spec bad=0 narrow=0
+    tier_mode && [ "${DEFER_LINUX_WEBKIT:-}" = true ] && narrow=1
     if light_mode; then
         echo "full-steps: light mode, the merge queue runs these steps: $*"
         return 0
@@ -345,8 +360,16 @@ full_steps() {
             bad=1
         fi
     done
-    if [ -n "${PUDDLE_E2E_PROJECTS:-}" ]; then
-        echo "PUDDLE_E2E_PROJECTS=$PUDDLE_E2E_PROJECTS BAD (only the light pull request mode may narrow the browsers)"
+    if [ -z "${PUDDLE_E2E_PROJECTS:-}" ]; then
+        :
+    elif [ "$narrow" = 1 ] && [ "$PUDDLE_E2E_PROJECTS" = chromium ]; then
+        echo "PUDDLE_E2E_PROJECTS=chromium: nightly tier (PUDDLE_TIER=on, no path that WebKit can see differently changed); webkit.yml runs WebKit nightly"
+        [ -z "${GITHUB_STEP_SUMMARY:-}" ] || {
+            echo '### WebKit not run here: nightly and release tier'
+            echo 'The end-to-end tests ran on Chromium only on this merge queue run (PUDDLE_TIER=on, and no markup, style or test-setup path changed). WebKit runs nightly (webkit.yml) and on a pull request to main.'
+        } >>"$GITHUB_STEP_SUMMARY"
+    else
+        echo "PUDDLE_E2E_PROJECTS=$PUDDLE_E2E_PROJECTS BAD (only the light pull request mode and the nightly tier's Chromium run may narrow the browsers)"
         bad=1
     fi
     return "$bad"
@@ -360,9 +383,9 @@ main() {
     full-steps) shift; full_steps "$@" ;;
     "")
         out=$(scope) || out=$(full_outputs)
-        # Anything but the nine keys (or a lost one) means something broke: run everything.
-        out=$(grep -E '^(ci_rust|win_rust|ui|vm|defer_vm_windows|defer_win_ui|defer_win_clippy|light|class)=' <<<"$out")
-        [ "$(grep -c . <<<"$out")" = 9 ] || out=$(full_outputs)
+        # Anything but the ten keys (or a lost one) means something broke: run everything.
+        out=$(grep -E '^(ci_rust|win_rust|ui|vm|defer_vm_windows|defer_win_ui|defer_win_clippy|defer_linux_webkit|light|class)=' <<<"$out")
+        [ "$(grep -c . <<<"$out")" = 10 ] || out=$(full_outputs)
         echo "$out"
         [ -z "${GITHUB_OUTPUT:-}" ] || echo "$out" >>"$GITHUB_OUTPUT"
         [ -z "${GITHUB_STEP_SUMMARY:-}" ] || {

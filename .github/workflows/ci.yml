@@ -12,7 +12,9 @@
 # With the repository variable PUDDLE_QUEUE set to `on`, a pull request to develop runs in the light
 # mode (ci/scope.sh): the `git-env` and `notices` gates skip and the UI end-to-end tests run on
 # Chromium only; the merge queue runs them all on the commit that lands. Unset, every pull request
-# runs the full set. With PUDDLE_QUEUE_SKIP_PUSH set to `on`, a push to develop whose commit a green
+# runs the full set. With PUDDLE_TIER set to `on`, a merge queue run also runs those tests on Chromium
+# only unless the diff touches markup, styles or the browser test setup (webkit.yml runs WebKit nightly;
+# a pull request to main runs both here). With PUDDLE_QUEUE_SKIP_PUSH set to `on`, a push to develop whose commit a green
 # merge queue run of this workflow tested skips the Rust, msvc and UI jobs when their caches exist
 # (the `queue-tested` job); it still runs the advisories.
 # Advisories (RustSec, npm) are not one of those gates: a new advisory fails every pull request at once, whatever
@@ -73,6 +75,7 @@ jobs:
       ci_rust: ${{ steps.scope.outputs.ci_rust }}
       ui: ${{ steps.scope.outputs.ui }}
       light: ${{ steps.scope.outputs.light }}
+      defer_linux_webkit: ${{ steps.scope.outputs.defer_linux_webkit }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -87,6 +90,7 @@ jobs:
           MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
           PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
+          PUDDLE_TIER: ${{ vars.PUDDLE_TIER }}
         run: ci/scope.sh
       - name: Cancel the rest of the merge group
         if: ${{ failure() && github.event_name == 'merge_group' }}
@@ -537,8 +541,10 @@ jobs:
     timeout-minutes: 30
     env:
       # The light pull request mode runs the end-to-end tests on Chromium only (ui/playwright.config.ts);
-      # the merge queue runs both browsers. Empty means every browser.
-      PUDDLE_E2E_PROJECTS: ${{ needs.scope.outputs.light == 'true' && 'chromium' || '' }}
+      # so does a merge queue run with PUDDLE_TIER=on whose diff touches nothing WebKit sees differently
+      # (webkit.yml runs WebKit nightly). Every other run, a pull request to main included, runs both
+      # browsers. Empty means every browser.
+      PUDDLE_E2E_PROJECTS: ${{ (needs.scope.outputs.light == 'true' || needs.scope.outputs.defer_linux_webkit == 'true') && 'chromium' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -562,7 +568,7 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
-      - name: Playwright browsers (Chromium and WebKit, or Chromium alone in the light mode; their system libraries every time)
+      - name: Playwright browsers (Chromium and WebKit, or Chromium alone when narrowed above; their system libraries every time)
         timeout-minutes: 10
         run: |
           ci/apt-setup.sh
@@ -586,7 +592,7 @@ jobs:
       - name: UI licences (npm packages in the bundle)
         if: ${{ !cancelled() }}
         run: scripts/check.sh ui-licences
-      - name: UI end-to-end (Playwright, Chromium and WebKit, axe)
+      - name: UI end-to-end (Playwright, Chromium and WebKit unless narrowed above, axe)
         id: ui-e2e
         if: ${{ !cancelled() }}
         run: scripts/check.sh ui-e2e
@@ -606,6 +612,8 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
+          PUDDLE_TIER: ${{ vars.PUDDLE_TIER }}
+          DEFER_LINUX_WEBKIT: ${{ needs.scope.outputs.defer_linux_webkit }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: ci/scope.sh full-steps ui-e2e=${{ steps.ui-e2e.outcome }}
       - name: Cancel the rest of the merge group

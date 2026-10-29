@@ -178,6 +178,26 @@ jobs:
           # mitmproxy from the step above: the TLS interceptor and the NTLM proxy of the corporate-lab tests.
           PUDDLE_REQUIRE_MITMPROXY: "1"
         run: cargo nextest run --workspace --all-features --locked --profile ci --retries "$RETRIES"
+      # A cert-store call that hangs wedges the machine for the tests behind it. The hang is rare and
+      # the test log alone does not show what held, so a red run records the processes, the
+      # cryptographic service and the CAPI2 and Application events of the last 10 minutes.
+      - name: what held the machine (processes, CryptSvc, CAPI2 events)
+        if: ${{ failure() && steps.changed.outputs.run == 'true' }}
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          Write-Output '--- processes and the busiest ones ---'
+          Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'powershell|pwsh|certutil|puddle|windows_store' } |
+            Select-Object ProcessId, ParentProcessId, Name, CreationDate, CommandLine | Format-List
+          Get-Process | Sort-Object CPU -Descending | Select-Object -First 15 Id, ProcessName, CPU, WorkingSet | Format-Table -AutoSize
+          Write-Output '--- CryptSvc ---'
+          Get-Service CryptSvc | Format-List Name, Status, StartType
+          $since = (Get-Date).AddMinutes(-10)
+          foreach ($log in 'Microsoft-Windows-CAPI2/Operational', 'Application') {
+            Write-Output "--- $log, last 10 minutes ---"
+            Get-WinEvent -FilterHashtable @{ LogName = $log; StartTime = $since } -MaxEvents 200 -ErrorAction SilentlyContinue |
+              ForEach-Object { '{0:s} {1} {2} {3}' -f $_.TimeCreated, $_.Id, $_.LevelDisplayName, (($_.Message -replace '\s+', ' ')[0..300] -join '') }
+          }
       - name: flaky tests (nightly report)
         if: ${{ github.event_name == 'schedule' && steps.changed.outputs.run == 'true' && !cancelled() }}
         shell: bash

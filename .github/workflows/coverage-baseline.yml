@@ -14,7 +14,7 @@ name: coverage-baseline
 
 on:
   schedule:
-    - cron: "20 6 * * *"
+    - cron: "27 6 * * *"
   workflow_dispatch:
     inputs:
       dry_run:

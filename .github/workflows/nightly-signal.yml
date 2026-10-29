@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The red signal for runs no ruleset requires. When a scheduled run (or a manual run on develop) of one of
+# the workflows below ends, ci/nightly-issue.sh opens or rewrites one issue per workflow ("Nightly red:
+# <workflow>") after a failed run and closes it after a green one, so a red nightly is seen the same day.
+# `ci` (its advisories have their own issue), `quality` (a standing report that never fails) and `cache-gc`
+# are left out on purpose; ci/nightly-issue-test.sh fails when a workflow with a schedule is neither here
+# nor in that list. A scheduled run that was cancelled changes nothing.
+name: nightly-signal
+
+on:
+  workflow_run:
+    workflows:
+      - windows
+      - vm-linux
+      - vm-windows
+      - msi
+      - fuzz
+      - perf
+      - mutants
+      - full-test
+      - coverage-baseline
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-signal-${{ github.event.workflow_run.name }}
+  cancel-in-progress: false
+
+jobs:
+  issue:
+    name: issue for ${{ github.event.workflow_run.name }}
+    if: ${{ github.event.workflow_run.event == 'schedule' || (github.event.workflow_run.event == 'workflow_dispatch' && github.event.workflow_run.head_branch == 'develop') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: develop
+      - name: open, update or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW: ${{ github.event.workflow_run.name }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: ci/nightly-issue.sh "$WORKFLOW" "$CONCLUSION" "$RUN_URL" "$HEAD_SHA"

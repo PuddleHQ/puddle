@@ -9,7 +9,7 @@ name: msi
 
 on:
   schedule:
-    - cron: "45 3 * * *"
+    - cron: "47 3 * * *"
   pull_request:
     branches: [develop, main]
     paths:

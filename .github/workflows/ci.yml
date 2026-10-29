@@ -29,7 +29,7 @@ on:
     types: [checks_requested]
   # The nightly runs only the two advisories jobs (every other job skips on this event) and keeps its tracking issue.
   schedule:
-    - cron: "30 5 * * *"
+    - cron: "37 5 * * *"
   workflow_dispatch:
 
 permissions:

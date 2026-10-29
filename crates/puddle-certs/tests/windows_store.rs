@@ -15,6 +15,8 @@
     reason = "test helpers outside #[test] fns: a failed setup fails the test"
 )]
 
+use std::cell::Cell;
+use std::ffi::OsStr;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -35,14 +37,45 @@ const LM_ROOT_GP: StoreSource = StoreSource::new(
     Physical::GroupPolicy,
 );
 
-/// A healthy PowerShell call takes 1 to 3 s. Past this the call is hung (adding to
-/// `CurrentUser\Root` also waits for a confirmation dialog on an interactive desktop), and it must
-/// fail the test with the call named, well inside nextest's 120 s per test.
-const POWERSHELL_LIMIT: Duration = Duration::from_secs(20);
+/// The longest one PowerShell call may take. A call is usually 1 to 3 s (a workstation under heavy
+/// load only reaches 2 to 3 s), but on the hosted runner the first calls of a job sometimes stall,
+/// cause not shown. Of the last 27 runs that printed durations, 4 had a store test over 26 s
+/// (slowest 51 s, all passed), and one had two unrelated first calls (an `X509Certificate2` import
+/// and a `Get-CimInstance` query) run over 20 s. 60 s is above the slowest whole test seen, so a
+/// slow call finishes and a hung one (adding to `CurrentUser\Root` also waits for a confirmation
+/// dialog on an interactive desktop) is still killed and named; [`TEST_BUDGET`] keeps a hang
+/// inside nextest's 120 s.
+const CALL_LIMIT: Duration = Duration::from_secs(60);
 
-/// How long a test waits for another test's turn at the stores before it fails naming the holder:
-/// a hung holder ends in `POWERSHELL_LIMIT`, so a longer wait is a wedge.
-const LOCK_WAIT: Duration = Duration::from_secs(30);
+/// What one test may spend on waiting for its turn at the stores and on its PowerShell calls
+/// together, so that a test with several calls still fails with a named cause before nextest
+/// kills the process at 120 s. A call never gets less than [`MIN_CALL`], so a cleanup after a spent
+/// budget can still try to remove its certificate.
+const TEST_BUDGET: Duration = Duration::from_secs(100);
+
+/// The least a call is given when the test's budget is spent.
+const MIN_CALL: Duration = Duration::from_secs(5);
+
+thread_local! {
+    /// When this test's budget ends; set when it asks for its turn at the stores. A test that
+    /// never takes the lock is bound by [`CALL_LIMIT`] per call only.
+    static DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
+}
+
+/// What the next call may take, and whether the test's budget (not [`CALL_LIMIT`]) set it.
+fn call_limit() -> (Duration, bool) {
+    match DEADLINE.get() {
+        Some(deadline) => {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left < CALL_LIMIT {
+                (left.max(MIN_CALL), true)
+            } else {
+                (CALL_LIMIT, false)
+            }
+        }
+        None => (CALL_LIMIT, false),
+    }
+}
 
 /// Held for a test's whole run: a test that reads the stores must not see another test's
 /// certificate come and go between two reads. A file lock, so it holds across nextest's test
@@ -106,8 +139,9 @@ fn acquire(lock: &Path, holder: &Path, wait: Duration) -> Result<StoreLock, Stri
 }
 
 fn lock_stores() -> StoreLock {
+    DEADLINE.set(Some(Instant::now() + TEST_BUDGET));
     let (lock, holder) = lock_paths();
-    acquire(&lock, &holder, LOCK_WAIT).unwrap_or_else(|e| panic!("{e}"))
+    acquire(&lock, &holder, TEST_BUDGET).unwrap_or_else(|e| panic!("{e}"))
 }
 
 /// The lock when the store tests run here, `None` when they are skipped.
@@ -201,7 +235,12 @@ fn run_bounded(mut command: Command, call: &str, limit: Duration) -> Result<Stri
 
 /// Runs a PowerShell script, logging when it starts.
 fn powershell_call(script: &str) -> Result<String, Failure> {
-    let mut command = Command::new("powershell.exe");
+    powershell_with("powershell.exe", script)
+}
+
+/// [`powershell_call`] with `program` standing in for `powershell.exe`.
+fn powershell_with(program: impl AsRef<OsStr>, script: &str) -> Result<String, Failure> {
+    let mut command = Command::new(program);
     command
         .args([
             "-NoProfile",
@@ -212,7 +251,13 @@ fn powershell_call(script: &str) -> Result<String, Failure> {
         ])
         .arg(script);
     eprintln!("{} powershell: {script}", clock());
-    run_bounded(command, script, POWERSHELL_LIMIT)
+    let (limit, by_budget) = call_limit();
+    run_bounded(command, script, limit).map_err(|failure| match failure {
+        Failure::TimedOut(m) if by_budget => Failure::TimedOut(format!(
+            "{m} (the test's {TEST_BUDGET:?} budget for waiting and calls was spent)"
+        )),
+        other => other,
+    })
 }
 
 /// Runs a PowerShell script; `Ok(stdout)` on exit 0, `Err(output)` otherwise or on timeout.
@@ -771,4 +816,80 @@ fn waiting_for_the_stores_ends_naming_the_holder() {
     drop(first);
     assert!(!holder.exists(), "a released lock leaves no holder behind");
     acquire(&lock, &holder, Duration::from_secs(1)).expect("free again after the release");
+}
+
+// ---- a slow call is not a hung call, and the test's budget bounds the sum ---------------------
+
+/// A stand-in for `powershell.exe` that takes `seconds`, then prints `finished`. `ping -n N` waits
+/// N - 1 seconds.
+fn slow_shim(dir: &Path, seconds: u32) -> PathBuf {
+    let shim = dir.join("slow-powershell.cmd");
+    std::fs::write(
+        &shim,
+        format!(
+            "@echo off\r\nping -n {} 127.0.0.1 >nul\r\necho finished\r\n",
+            seconds + 1
+        ),
+    )
+    .unwrap();
+    shim
+}
+
+/// A runner stalled the first calls of a job for over 20 s and then answered them; failing the
+/// test on that was the regression a 20 s limit caused.
+#[test]
+fn a_call_that_is_slow_but_finishes_does_not_fail_the_test() {
+    let dir = tempfile::tempdir().unwrap();
+    let shim = slow_shim(dir.path(), 25);
+    let start = Instant::now();
+    let out = powershell_with(&shim, "Import-Certificate slow-but-fine")
+        .unwrap_or_else(|f| panic!("a 25 s call must finish: {}", f.into_message()));
+    assert!(out.contains("finished"), "{out}");
+    assert!(
+        start.elapsed() >= Duration::from_secs(24),
+        "{:?}",
+        start.elapsed()
+    );
+}
+
+#[test]
+fn a_call_over_the_limit_is_killed_and_the_spent_budget_is_named() {
+    let dir = tempfile::tempdir().unwrap();
+    let shim = slow_shim(dir.path(), 300);
+    DEADLINE.set(Some(Instant::now()));
+    let start = Instant::now();
+    let Err(Failure::TimedOut(message)) = powershell_with(&shim, "Remove-Item the-spent-budget")
+    else {
+        panic!("a call past the test's budget must be reported as hung");
+    };
+    assert!(
+        start.elapsed() < Duration::from_secs(20),
+        "{:?}",
+        start.elapsed()
+    );
+    assert!(
+        message.contains("Remove-Item the-spent-budget"),
+        "{message}"
+    );
+    assert!(message.contains("budget"), "{message}");
+}
+
+#[test]
+fn a_call_draws_on_what_is_left_of_the_test_budget() {
+    DEADLINE.set(None);
+    assert_eq!(call_limit(), (CALL_LIMIT, false));
+    DEADLINE.set(Some(Instant::now() + TEST_BUDGET));
+    assert_eq!(call_limit(), (CALL_LIMIT, false));
+    DEADLINE.set(Some(Instant::now() + Duration::from_secs(30)));
+    let (limit, by_budget) = call_limit();
+    assert!(
+        by_budget && limit <= Duration::from_secs(30) && limit > MIN_CALL,
+        "{limit:?}"
+    );
+    DEADLINE.set(Some(Instant::now()));
+    assert_eq!(call_limit(), (MIN_CALL, true));
+    assert!(
+        TEST_BUDGET + MIN_CALL < Duration::from_secs(120),
+        "a spent budget plus one more call must still end before nextest's 120 s kill"
+    );
 }

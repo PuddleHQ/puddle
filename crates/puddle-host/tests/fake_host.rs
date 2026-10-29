@@ -23,7 +23,7 @@ use puddle_compute::fake::{ExecContext, FakeRuntime, Fault, Op};
 use puddle_compute::{ExecOutput, ExecRequest, ImageConfig, Runtime};
 use puddle_host::{
     DevCertSource, GuestSettings, Host, HostConfig, HostError, HostPaths, PREPARE_STEPS, Platform,
-    RuntimeFactory, RuntimeInputs, SHUTDOWN_STEPS, START_STEPS, Step, prepare,
+    RewriteGate, RuntimeFactory, RuntimeInputs, SHUTDOWN_STEPS, START_STEPS, Step, prepare,
 };
 use puddle_netpolicy::EndpointKind;
 use puddle_runtime::{RuntimeLayout, RuntimeVersion};
@@ -517,6 +517,8 @@ struct Rig {
     launcher: Arc<RecordingLauncher>,
     /// Where the host keeps the values of secrets: never the machine's own credential store.
     secrets: Arc<MemoryStore>,
+    /// Holds an author rewrite back when it starts, for a test that sets it before the start.
+    rewrite_gate: Mutex<Option<RewriteGate>>,
 }
 
 impl Rig {
@@ -532,6 +534,7 @@ impl Rig {
             guest,
             launcher: Arc::new(RecordingLauncher::default()),
             secrets: Arc::new(MemoryStore::new()),
+            rewrite_gate: Mutex::new(None),
         }
     }
 
@@ -574,6 +577,9 @@ impl Rig {
         let mut options = hermetic_options();
         options.launcher = self.launcher.clone();
         options.secret_store = Some(self.secrets.clone());
+        options
+            .rewrite_gate
+            .clone_from(&self.rewrite_gate.lock().unwrap());
         options.dev_cert = Some(self.dev_cert.clone() as Arc<dyn DevCertSource>);
         // No guest runs here, so nothing may ask the machine's DNS about a name.
         options.resolver = Some(Arc::new(puddle_proxy::testing::StaticResolver::new()));
@@ -5497,6 +5503,94 @@ async fn a_credential_for_a_port_puddle_never_decrypts_is_refused_and_an_old_one
         !has_problem(&host, "git-credentials:acme")
     })
     .await;
+    host.shutdown().await;
+}
+
+/// Holds the next author rewrite that starts back at the host's gate until `release`, and says
+/// when it has ended.
+#[derive(Default)]
+struct HeldRewrite {
+    armed: AtomicBool,
+    arrived: AtomicBool,
+    ended: AtomicBool,
+    release: tokio::sync::Notify,
+}
+
+/// Dropped when the rewrite the gate let on ends; says so if it was the held one.
+struct RewriteEnd(Option<Arc<HeldRewrite>>);
+
+impl Drop for RewriteEnd {
+    fn drop(&mut self) {
+        if let Some(held) = &self.0 {
+            held.ended.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
+impl HeldRewrite {
+    fn gate(self: &Arc<Self>) -> RewriteGate {
+        let held = self.clone();
+        Arc::new(move |_| {
+            let held = held.clone();
+            Box::pin(async move {
+                let this_one = held.armed.swap(false, Ordering::SeqCst);
+                if this_one {
+                    held.arrived.store(true, Ordering::SeqCst);
+                    held.release.notified().await;
+                }
+                Box::new(RewriteEnd(this_one.then_some(held))) as Box<dyn Send>
+            })
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_author_rewrite_that_runs_after_a_newer_change_applies_the_newest_settings() {
+    let rig = Rig::new();
+    let held = Arc::new(HeldRewrite::default());
+    *rig.rewrite_gate.lock().unwrap() = Some(held.gate());
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let booted = rig.guest.boots();
+    let old = host
+        .store()
+        .create_identity(puddle_store::IdentityDraft {
+            label: "Old".to_owned(),
+            author: puddle_store::Author::new("Old", "old@example.org").unwrap(),
+            credentials: vec![old_binding_on_port("ghe.example:8443")],
+        })
+        .unwrap();
+
+    // The store announces each change itself. The rewrite for the attach starts first and waits at the gate.
+    held.armed.store(true, Ordering::SeqCst);
+    host.store()
+        .attach_identity(&name("acme"), old.id, None)
+        .unwrap();
+    eventually("the attach rewrite waits", || {
+        held.arrived.load(Ordering::SeqCst)
+    })
+    .await;
+    // The detach comes after, and its rewrite runs through: nothing is left to rewrite or to say.
+    host.store().detach_identity(&name("acme"), old.id).unwrap();
+    eventually("the detach ends the problem", || {
+        !has_problem(&host, "git-credentials:acme")
+    })
+    .await;
+
+    // The attach rewrite now goes on, last. It must apply the settings as they are now.
+    held.release.notify_one();
+    eventually("the attach rewrite ends", || {
+        held.ended.load(Ordering::SeqCst)
+    })
+    .await;
+    assert!(
+        !has_problem(&host, "git-credentials:acme"),
+        "{:?}",
+        host.problems().list()
+    );
+    assert_eq!(rig.guest.boots(), booted, "the old author was written back");
     host.shutdown().await;
 }
 

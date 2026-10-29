@@ -121,6 +121,13 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
     }
 }
 
+/// Runs when an author rewrite starts, before it waits for its workspace's rewrite lock, and
+/// returns once the rewrite may go on; the value it returns is dropped when the rewrite ends. Tests
+/// use it to hold one rewrite back and see the rewrites of a workspace run out of order. A host
+/// without one lets every rewrite go on at once.
+pub type RewriteGate =
+    Arc<dyn Fn(&WorkspaceName) -> BoxFuture<'static, Box<dyn Send>> + Send + Sync>;
+
 /// What the service is built from.
 pub(crate) struct Parts<R: Runtime + Clone> {
     pub(crate) runtime: R,
@@ -139,6 +146,7 @@ pub(crate) struct Parts<R: Runtime + Clone> {
     /// The guest agents' reports, which a run of a workspace opens and closes.
     pub(crate) reports: Arc<ReportDesk>,
     pub(crate) ports: Ports,
+    pub(crate) rewrite_gate: Option<RewriteGate>,
 }
 
 struct Slot {
@@ -218,6 +226,7 @@ struct Inner<R: Runtime + Clone> {
     problems: Arc<Problems>,
     reports: Arc<ReportDesk>,
     ports: Ports,
+    rewrite_gate: Option<RewriteGate>,
     state: Mutex<State>,
     live: tokio::sync::Mutex<BTreeMap<WorkspaceName, Live<R>>>,
     tasks: tokio::sync::Mutex<JoinSet<()>>,
@@ -430,6 +439,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 problems: parts.problems,
                 reports: parts.reports,
                 ports: parts.ports,
+                rewrite_gate: parts.rewrite_gate,
                 state: Mutex::new(State {
                     slots,
                     closed: false,
@@ -1033,6 +1043,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// leaving the old authors and a problem the newer settings already ended.
     pub(crate) async fn rewrite_authors(&self, name: &WorkspaceName) {
         let inner = &self.inner;
+        let _held = match &inner.rewrite_gate {
+            Some(gate) => Some(gate(name).await),
+            None => None,
+        };
         let rewrite = {
             let live = inner.live.lock().await;
             match live.get(name) {

@@ -8,7 +8,7 @@
     clippy::unwrap_used,
     reason = "a helper outside #[test] fails the test by panicking"
 )]
-mod terminate_support;
+use crate::terminate_support;
 
 use std::sync::Arc;
 

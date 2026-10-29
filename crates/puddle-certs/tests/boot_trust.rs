@@ -747,6 +747,8 @@ case $op in
     ;;
 -importkeystore)
     [ ! -f "$store.failimport" ] || { echo "keytool error: cannot import" >&2; exit 1; }
+    # One failure that passes (memory, a lock): `<store>.flaky` is used up by the import it fails.
+    [ ! -f "$store.flaky" ] || { : >"$store.flaky" && mv "$store.flaky" "$store.flaked"; echo "keytool error: out of memory" >&2; exit 1; }
     # A certificate that is not X.509 makes Java's JKS loader, and so the whole import, fail.
     ! grep -a -q NOTACERT "$src" || { echo "keytool error: java.security.cert.CertificateException: Unable to initialize" >&2; exit 1; }
     cp "$src" "$store.jks"
@@ -1170,6 +1172,30 @@ fn many_refused_certificates_stop_at_the_import_cap_and_the_good_ones_still_arri
     assert!(out.status.success(), "{}", show(&out));
     assert_eq!(g.keytool_calls("-importkeystore"), 40, "the cap");
     assert!(stdout_of(&out).contains("some changes failed, will retry at the next boot"));
+    assert!(
+        stdout_of(&out).contains("import cap of 40 reached, "),
+        "{}",
+        stdout_of(&out)
+    );
     assert!(!g.p("/etc/puddle/java-trust.state").exists());
     assert_eq!(g.aliases(JDK17_STORE).len(), 2, "the good root arrived");
+}
+
+#[test]
+fn a_single_certificate_that_fails_once_for_another_reason_is_tried_again_not_skipped() {
+    let (der, _) = root_pem("Corp Root");
+    let t = trust(&[&der], &[]);
+    let g = Guest::new(&shells()[0], "", false);
+    g.jdk("/usr/lib/jvm/java-17", JDK17_STORE);
+    g.write(&format!("{JDK17_STORE}.flaky"), "");
+    let out = g.boot(&t);
+    assert!(out.status.success(), "{}", show(&out));
+    assert!(
+        stdout_of(&out).contains("updated, 1 added, 0 removed"),
+        "{}",
+        stdout_of(&out)
+    );
+    assert!(!stdout_of(&out).contains("skipped certificate"));
+    assert_eq!(g.keytool_calls("-importkeystore"), 2);
+    assert!(g.p("/etc/puddle/java-trust.state").exists());
 }

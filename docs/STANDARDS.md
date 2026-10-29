@@ -125,8 +125,8 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
 
 ## 3. Workflow for agents and humans
 
-`develop` is the working branch. It takes changes only through pull requests, merged by rebase so its history stays
-linear (no merge commits, no force-pushes, no direct pushes); `main` holds released versions only.
+`develop` is the working branch. It takes changes only through pull requests, merged by squash, so each pull request is one commit
+on a linear history (no merge commits, no force-pushes, no direct pushes); `main` holds released versions only.
 
 1. **Own worktree, own branch.** From the clone:
    `git worktree add ../wt/<task> -b task/<task> origin/develop`. Use your own target dir
@@ -141,19 +141,22 @@ linear (no merge commits, no force-pushes, no direct pushes); `main` holds relea
 4. **Test first where it pays** (risk tests first): write the test that pins the risky
    behaviour, see it fail, then make it pass.
 5. **Open a pull request** to `develop`: `scripts/check.sh pre-push` green → `git fetch origin` →
-   `git rebase origin/develop` → push your branch → open the pull request and turn on auto-merge with
-   rebase (`gh pr merge <n> --auto --rebase`). It needs four checks: `linux (all gates)`,
+   `git merge origin/develop` → push your branch → open the pull request and turn on auto-merge with
+   squash (`gh pr merge <n> --auto --squash`). It needs four checks: `linux (all gates)`,
    `windows-msvc (build, clippy, tests)`, `vm-linux (KVM, msb microVMs)` and `vm-windows (WHP, msb
-   microVMs)`. It need not be up to date with `develop`: GitHub rebases it when it merges, once the
-   checks pass. Rebasing your own branch and pushing it again (`--force-with-lease`) is fine; never
-   `--force` on `develop` or `main`.
+   microVMs)`. It need not be up to date with `develop`: the merge queue builds it on the tip of
+   `develop` and squashes it once the checks pass. The squash commit takes the pull request's title
+   and description, so write both as you would a commit message. Your branch's own history never
+   lands, so merge `develop` into it instead of rebasing, and never force-push `develop` or `main`.
+   If squash merging is ever off, rebase merging is the fallback: the same pull request, merged with
+   rebase (`--rebase`), where each commit then lands as it is.
 6. **A red pull request** is fixed on its branch by whoever opened it; a conflict with `develop` is a
-   rebase and a push. A red run on `develop` itself (two green pull requests that clash, a nightly) is
+   merge of `develop` into the branch and a push. A red run on `develop` itself (two green pull requests that clash, a nightly) is
    fixed before anything else lands on top of it.
 7. **Clean up:** remove the worktree and its target dir when the task is done.
 
 **Releases:** a pull request from `develop` to `main` (this also runs the Windows job), merged by
-the owner, then tagged `vX.Y.Z` on `main`.
+the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
 
 ## 4. Commits and pull requests
 
@@ -163,8 +166,8 @@ the owner, then tagged `vX.Y.Z` on `main`.
   `api`, `agent`, `types`, `cli`, `e2e`), or `ws` for workspace-wide changes.
 - The body says **why**; cite an ADR or spec section when one applies. Never refer to private planning
   notes: no task or decision IDs (the `commit-msg` hook rejects `T-NNN`/`D-NN`).
-- One logical change per commit; code and its tests in the same commit. Every commit on `develop`
-  builds and passes the gates (so `git bisect` works).
+- One logical change per pull request; code and its tests in the same pull request. Every commit on
+  `develop` is one squashed pull request that builds and passes the gates (so `git bisect` works).
 - Author: the project identity (`Tijs van Kampen <puddle@tijsvankampen.be>`). Agent-written
   commits end with a `Co-Authored-By:` trailer naming the model.
 - No secrets, tokens, personal paths or client names in code, tests, fixtures, logs or messages.

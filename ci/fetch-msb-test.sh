@@ -118,3 +118,15 @@ grep -q 'checksum mismatch for v1.0.0-puddle.2 msb-linux-x86_64' "$tmp/out3" || 
     exit 1
 }
 echo "fetch-msb-test: ok (a pinned Linux msb is downloaded and checked, no git)"
+
+# The tag the build is on must pin its release's Linux msb and firmware. Without the msb line
+# fetch-msb.sh falls back to a ten-minute build from source, in the build job and in each of the
+# three test partitions, and only a warning annotation says so.
+tag=$("$here/msb-tag.sh")
+for asset in msb-linux-x86_64 libkrunfw-linux-x86_64.so; do
+    awk -v t="$tag" -v a="$asset" '$1 == t && $2 == a { found = 1 } END { exit !found }' "$here/msb-runtime.sha256" || {
+        echo "fetch-msb-test: $tag has no $asset line in ci/msb-runtime.sha256: every VM job would build msb from source (about 10 minutes); pin the release's asset" >&2
+        exit 1
+    }
+done
+echo "fetch-msb-test: ok ($tag pins its Linux msb and firmware)"

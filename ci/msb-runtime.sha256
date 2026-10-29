@@ -12,6 +12,8 @@
 v0.7.8-puddle.8 msb-windows-x86_64.exe 2e276630066e58b1c916a3f517e1a2ffa478abdf5f47325bc33c115f587a015a
 v0.7.8-puddle.8 libkrunfw-windows-x86_64.dll 375f4455feae83e66a7b7a2c1509796eab1d5b2e802da4b474a2e092869b543c
 v0.7.8-puddle.8 agentd-x86_64 77bbdb1a34b36d01ee72dd38a5c3d62b655d3c1c1142f77b4fb9fda43e83bbc2
+v0.7.8-puddle.8 msb-linux-x86_64 0e658a1e755b59673d00a7f4b05dcf47dbff08c663d7cfd0d7716823dba80757
+v0.7.8-puddle.8 libkrunfw-linux-x86_64.so ce0a915daa6aff403e9a388e161671fbac9b85b0c200a99d7a9fdf0e1c03d668
 v0.7.8-puddle.8 source-commit ba6df6c8e1d49076a7fd15fa400771f8560865f4
 v0.7.8-puddle.8 libkrunfw-linux-version 5.6.1
 v0.7.8-puddle.7 msb-windows-x86_64.exe 690d539eaf85f9f67f4e57ea97be2e7f2a0a39e5be4df2c1321cf7188d72f76a

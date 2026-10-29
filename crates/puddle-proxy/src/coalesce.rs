@@ -157,6 +157,7 @@ mod tests {
         ) -> BoxFuture<'a, io::Result<Vec<SocketAddr>>> {
             Box::pin(async move {
                 let n = self.lookups.fetch_add(1, Ordering::SeqCst) + 1;
+                // Simulated latency of the system resolver.
                 tokio::time::sleep(self.delay).await;
                 if self.fail {
                     return Err(io::Error::new(io::ErrorKind::NotFound, "gone"));
@@ -174,10 +175,8 @@ mod tests {
     }
 
     fn ip(addrs: &[SocketAddr]) -> u8 {
-        match addrs[0].ip() {
-            std::net::IpAddr::V4(v4) => v4.octets()[3],
-            std::net::IpAddr::V6(_) => unreachable!(),
-        }
+        let text = addrs[0].ip().to_string();
+        text.rsplit('.').next().unwrap().parse().unwrap()
     }
 
     #[tokio::test(start_paused = true)]

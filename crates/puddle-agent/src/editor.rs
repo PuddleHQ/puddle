@@ -57,6 +57,10 @@ const HEALTHY: Duration = Duration::from_secs(30);
 const PORT_POLL: Duration = Duration::from_secs(2);
 /// The longest wait between two starts.
 const MAX_WAIT: Duration = Duration::from_secs(30);
+/// The wait after the first refused download of Microsoft's server; each further one doubles it.
+const REFUSED_WAIT: Duration = Duration::from_mins(1);
+/// The longest wait between two downloads of a build that was refused.
+const MAX_REFUSED_WAIT: Duration = Duration::from_hours(1);
 
 /// How long a server is given to accept its first connection before it counts as not started.
 const STARTUP: Duration = Duration::from_secs(120);
@@ -283,6 +287,23 @@ fn withheld(name: &str) -> bool {
     name.starts_with("VSCODE_") || name.starts_with("PUDDLE_AGENT_") || name == "PORT"
 }
 
+/// Why the server could not be made ready.
+struct NotReady {
+    reason: String,
+    /// A download was fetched and refused (a wrong hash, an archive that is not unpacked): the
+    /// build is as wrong the next time, so the retry waits [`wait_after_refusal`].
+    refused: bool,
+}
+
+impl NotReady {
+    fn other(reason: impl ToString) -> Self {
+        Self {
+            reason: reason.to_string(),
+            refused: false,
+        }
+    }
+}
+
 /// What to start: the program, its arguments, and the password for its environment (code-server
 /// reads it there; Microsoft's server reads its token from a file named in the arguments).
 struct Launch {
@@ -320,7 +341,7 @@ async fn launch(
     config: &EditorConfig,
     fetch: &impl Fetch,
     control: &Control,
-) -> Result<Launch, String> {
+) -> Result<Launch, NotReady> {
     let server = &config.server;
     match server.kind {
         ServerKind::CodeServer => Ok(Launch {
@@ -330,20 +351,22 @@ async fn launch(
             build: None,
         }),
         ServerKind::Microsoft { telemetry, .. } => {
-            microsoft::prepare(server).map_err(|e| e.to_string())?;
-            let platform =
-                microsoft::platform(std::env::consts::ARCH).map_err(|e| e.to_string())?;
+            microsoft::prepare(server).map_err(NotReady::other)?;
+            let platform = microsoft::platform(std::env::consts::ARCH).map_err(NotReady::other)?;
             if microsoft::current_build(&control.builds).is_none() {
                 // Not while an update download runs: it may be fetching this very build.
                 let _work = control.work.lock().await;
                 microsoft::ensure_build(fetch, platform, &control.builds)
                     .await
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| NotReady {
+                        refused: e.is_refusal(),
+                        reason: e.to_string(),
+                    })?;
             }
             // The build to run, read together with the restart request it answers.
-            let (build, on_trial) = control
-                .claim()
-                .ok_or("the editor server build vanished from the volume")?;
+            let (build, on_trial) = control.claim().ok_or_else(|| {
+                NotReady::other("the editor server build vanished from the volume")
+            })?;
             let commit = build
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
@@ -369,6 +392,15 @@ pub fn wait_after(quick: u32) -> Duration {
     Duration::from_secs(u64::from(quick.min(30)))
         .max(Duration::from_secs(1))
         .min(MAX_WAIT)
+}
+
+/// The wait before download number `refused` (the number of refused downloads in a row, 1 for the
+/// first): a minute, doubling up to an hour.
+#[must_use]
+pub fn wait_after_refusal(refused: u32) -> Duration {
+    REFUSED_WAIT
+        .saturating_mul(2_u32.saturating_pow(refused.saturating_sub(1).min(16)))
+        .min(MAX_REFUSED_WAIT)
 }
 
 /// Makes the data folders. The server makes the rest.
@@ -444,6 +476,7 @@ async fn serve_forever(config: &EditorConfig, fetch: &impl Fetch, control: &Arc<
         }
     }
     let mut quick = 0_u32;
+    let mut refused = 0_u32;
     loop {
         let launched = launch(config, fetch, control).await;
         let started = Instant::now();
@@ -452,14 +485,27 @@ async fn serve_forever(config: &EditorConfig, fetch: &impl Fetch, control: &Arc<
                 Ok(status) => tracing::warn!(%status, "the editor server exited"),
                 Err(err) => tracing::error!(error = %err, "the editor server could not run"),
             },
+            // A refused download is retried rarely: the build is as wrong next time, and each try
+            // downloads hundreds of MB.
+            Err(NotReady {
+                reason,
+                refused: true,
+            }) => {
+                refused = refused.saturating_add(1);
+                let wait = wait_after_refusal(refused);
+                tracing::error!(%reason, ?wait, refused, "the editor server download was refused; trying again later");
+                tokio::time::sleep(wait).await;
+                continue;
+            }
             // Counted as a quick exit: a missing network must not be retried every second.
-            Err(reason) => {
+            Err(NotReady { reason, .. }) => {
                 tracing::error!(%reason, "the editor server could not be made ready");
                 quick = quick.saturating_add(1);
                 tokio::time::sleep(wait_after(quick)).await;
                 continue;
             }
         }
+        refused = 0;
         quick = if started.elapsed() >= HEALTHY {
             1
         } else {
@@ -856,5 +902,63 @@ mod tests {
             .collect();
         assert_eq!(waits, [1, 2, 3, 10, 30, 30, 30]);
         assert_eq!(wait_after(0).as_secs(), 1);
+    }
+
+    #[test]
+    fn a_refused_download_waits_a_minute_then_doubles_up_to_an_hour() {
+        let waits: Vec<u64> = [0, 1, 2, 3, 6, 7, 8, 1000, u32::MAX]
+            .into_iter()
+            .map(|n| wait_after_refusal(n).as_secs())
+            .collect();
+        assert_eq!(waits, [60, 60, 120, 240, 1920, 3600, 3600, 3600, 3600]);
+    }
+
+    /// An update service that answers every metadata request with one build and a published hash
+    /// that is not the tarball's, and counts the downloads.
+    struct WrongHash {
+        downloads: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Fetch for Arc<WrongHash> {
+        async fn text(&self, url: &str) -> io::Result<String> {
+            let commit = "e".repeat(40);
+            Ok(if url.contains("/api/latest/") {
+                format!(r#"{{"version":"{commit}","productVersion":"1.0.0"}}"#)
+            } else {
+                format!(
+                    r#"{{"version":"{commit}","sha256hash":"{}"}}"#,
+                    "0".repeat(64)
+                )
+            })
+        }
+
+        async fn file(&self, _url: &str, dest: &Path) -> io::Result<()> {
+            self.downloads
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            std::fs::write(dest, b"not the published file")
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_download_with_the_wrong_hash_is_fetched_on_a_slowing_schedule_not_every_30_seconds()
+    {
+        use std::sync::atomic::Ordering::SeqCst;
+        let dir = tempfile::tempdir().unwrap();
+        let mut server = EditorServer::microsoft("/d", "/f", 120, false, false);
+        server.dir = dir.path().join("servers").to_string_lossy().into_owned();
+        server.data = dir.path().join("data").to_string_lossy().into_owned();
+        let config = EditorConfig {
+            server,
+            password_file: dir.path().join("password"),
+        };
+        let service = Arc::new(WrongHash {
+            downloads: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let running = tokio::spawn(run_with(config, Arc::clone(&service)));
+        // Downloads at 0, 1, 3, 7, 15, 31 and 63 minutes; the next is at 123. Every 30 seconds
+        // would be 200.
+        tokio::time::sleep(Duration::from_mins(100)).await;
+        assert_eq!(service.downloads.load(SeqCst), 7);
+        running.abort();
     }
 }

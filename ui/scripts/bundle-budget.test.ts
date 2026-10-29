@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { randomBytes } from "node:crypto";
-import { describe, expect, it } from "vitest";
-import { assetsOf, measure, overBudget } from "./bundle-budget.ts";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
+import { assetsOf, main, measure, overBudget } from "./bundle-budget.ts";
 
 const page = `<link href="/favicon.svg" rel="icon">
 <link href="/_app/immutable/entry/start.A.js" rel="modulepreload">
@@ -48,5 +51,47 @@ describe("bundle budget", () => {
       "  250000 /_app/a.js",
     ]);
     expect(overBudget({ ...sizes, css: 50_001 })[0]).toMatch(/initial css/);
+  });
+});
+
+describe("bundle budget main", () => {
+  const built = (script: Uint8Array) => {
+    const dir = mkdtempSync(join(tmpdir(), "budget-"));
+    mkdirSync(join(dir, "_app"));
+    writeFileSync(
+      join(dir, "index.html"),
+      `<script type="module" src="/_app/app.js"></script>`,
+    );
+    writeFileSync(join(dir, "_app", "app.js"), script);
+    return dir;
+  };
+
+  it("reports the sizes and passes a build under the budget", () => {
+    const dir = built(new TextEncoder().encode("export {};"));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(main(dir)).toBe(true);
+      expect(log.mock.calls[0]?.[0]).toMatch(
+        /^bundle budget: initial js \d+ of 250000/,
+      );
+    } finally {
+      log.mockRestore();
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("prints what is over and fails a build over the budget", () => {
+    const dir = built(randomBytes(300_000));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(main(dir)).toBe(false);
+      expect(String(error.mock.calls[0]?.[0])).toContain("initial js:");
+      expect(String(error.mock.calls[0]?.[0])).toContain("/_app/app.js");
+    } finally {
+      log.mockRestore();
+      error.mockRestore();
+      rmSync(dir, { recursive: true });
+    }
   });
 });

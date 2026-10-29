@@ -93,14 +93,27 @@ fn tick(guard: &Guard, state: &mut State) -> std::io::Result<Option<Why>> {
         (Some((_, kept)), Some(now)) if *kept != now => Why::Edited,
         (Some(_), Some(_)) => return Ok(None),
     };
-    let (plan, fingerprint) = match nft::install(&plan) {
+    apply(guard, &wan, log, plan, state, nft::install)?;
+    Ok(Some(why))
+}
+
+/// Installs `plan` through `install` and remembers what was installed.
+fn apply(
+    guard: &Guard,
+    wan: &str,
+    log: Option<u16>,
+    plan: Plan,
+    state: &mut State,
+    install: impl Fn(&Plan) -> std::io::Result<Option<Fingerprint>>,
+) -> std::io::Result<()> {
+    let (plan, fingerprint) = match install(&plan) {
         Ok(fingerprint) => (plan, fingerprint),
         Err(err) if log.is_some() => {
             // A kernel without the log target refuses the whole batch. Refusing UDP matters more
             // than reporting it, so try again without the logging; if that fails too, the cause
             // was something else and the logging stays.
-            let quiet = Plan::capture(&guard.settings(&wan, None));
-            let fingerprint = nft::install(&quiet).map_err(|_| err)?;
+            let quiet = Plan::capture(&guard.settings(wan, None));
+            let fingerprint = install(&quiet).map_err(|_| err)?;
             tracing::warn!(
                 "the kernel refused the capture rules with UDP logging; installed without it, so refused UDP is no longer reported to the host"
             );
@@ -109,8 +122,11 @@ fn tick(guard: &Guard, state: &mut State) -> std::io::Result<Option<Why>> {
         }
         Err(err) => return Err(err),
     };
+    // A table the guest deleted right after the batch was taken has nothing to compare: the empty
+    // fingerprint makes the next pass see it as missing (or edited, if the guest put one back).
+    let fingerprint = fingerprint.unwrap_or_default();
     state.installed = Some((plan, fingerprint));
-    Ok(Some(why))
+    Ok(())
 }
 
 /// Runs `tick` on a schedule until the agent stops. Failures are logged, told to the host once
@@ -221,6 +237,23 @@ mod tests {
         let mut other = guard();
         other.stub = "10.9.9.9:53".parse().unwrap();
         assert_eq!(other.prefix(), 32);
+    }
+
+    /// The install takes the batch, then the guest deletes the table before it can be read back.
+    #[test]
+    fn a_table_deleted_right_after_the_install_does_not_switch_the_udp_logging_off() {
+        let g = guard();
+        let mut state = State::default();
+        let plan = Plan::capture(&g.settings("eth0", Some(17)));
+        apply(&g, "eth0", Some(17), plan, &mut state, |_| Ok(None)).unwrap();
+        assert!(!state.without_log, "the kernel never refused the logging");
+        let (kept, fingerprint) = state.installed.expect("the install is remembered");
+        assert_eq!(kept, Plan::capture(&g.settings("eth0", Some(17))));
+        assert_eq!(
+            fingerprint,
+            Fingerprint::default(),
+            "so the next pass sees a missing table"
+        );
     }
 
     #[test]

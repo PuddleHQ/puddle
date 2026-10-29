@@ -316,7 +316,17 @@ fn config(socket: &Path, table: &Path) -> Config {
 }
 
 /// Waits until `check` holds.
-async fn until<F: Future<Output = bool>>(what: &str, mut check: impl FnMut() -> F) {
+async fn until<F: Future<Output = bool>>(what: &str, check: impl FnMut() -> F) {
+    until_seeing(what, String::new, check).await;
+}
+
+/// Waits until `check` holds; when it times out the panic also prints `seen()`, so a CI log shows
+/// what the host was told instead of only that it was not told the right thing.
+async fn until_seeing<F: Future<Output = bool>>(
+    what: &str,
+    seen: impl Fn() -> String,
+    mut check: impl FnMut() -> F,
+) {
     let deadline = Instant::now() + Duration::from_secs(15);
     while Instant::now() < deadline {
         if check().await {
@@ -324,7 +334,13 @@ async fn until<F: Future<Output = bool>>(what: &str, mut check: impl FnMut() -> 
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    panic!("timed out waiting for {what}");
+    let seen = seen();
+    let saw = if seen.is_empty() {
+        String::new()
+    } else {
+        format!("; saw {seen}")
+    };
+    panic!("timed out waiting for {what}{saw}");
 }
 
 /// Capture is ready when the table is in and the stub answers.
@@ -649,14 +665,17 @@ async fn a_guest_that_deletes_or_edits_the_table_is_restored_and_reported() {
         .0
     })
     .await;
-    until("the host to be told the table was deleted", || async {
-        w.seen.tampered.lock().unwrap().contains(&true)
-    })
+    until_seeing(
+        "the host to be told the table was deleted",
+        || format!("tampered = {:?}", w.seen.tampered.lock().unwrap()),
+        || async { w.seen.tampered.lock().unwrap().contains(&true) },
+    )
     .await;
 
     ok("nft", &["flush", "chain", "inet", "puddle", "filter_out"]).await;
-    until(
+    until_seeing(
         "the chain to be refilled and reported as edited",
+        || format!("tampered = {:?}", w.seen.tampered.lock().unwrap()),
         || async {
             w.seen.tampered.lock().unwrap().contains(&false)
                 && listing().await.contains("filter_out")

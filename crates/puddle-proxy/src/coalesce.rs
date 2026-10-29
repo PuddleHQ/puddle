@@ -18,11 +18,20 @@ use tokio::sync::OnceCell;
 
 use crate::destination::{BoxFuture, Resolver};
 
+/// The lookup's outcome as every waiter gets it: the error's kind and text, not its source chain.
 type Answer = Result<Vec<SocketAddr>, (io::ErrorKind, String)>;
 type Key = (DomainName, u16);
-type Flights = Mutex<HashMap<Key, Arc<OnceCell<Answer>>>>;
 
-/// `inner`, with concurrent lookups of the same name and port shared.
+/// A lookup in flight and how many callers wait on it.
+struct Flight {
+    cell: Arc<OnceCell<Answer>>,
+    waiters: usize,
+}
+
+type Flights = Mutex<HashMap<Key, Flight>>;
+
+/// `inner`, with concurrent lookups of the same name and port shared. An answer is kept only
+/// until its lookup returns; a user-supplied resolver is not wrapped.
 pub struct Coalescing<R> {
     inner: R,
     flights: Flights,
@@ -38,24 +47,49 @@ impl<R: Resolver> Coalescing<R> {
     }
 }
 
-/// Takes the flight out of the map when its caller is done, so the map never keeps a name whose
-/// lookup finished or whose every caller gave up (the connect's resolve timeout drops it).
-struct Leave<'a> {
+fn lock(flights: &Flights) -> std::sync::MutexGuard<'_, HashMap<Key, Flight>> {
+    flights.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Removes `key`'s flight if it is still `cell`'s (a later caller may have started a new one).
+fn remove_if_ours(map: &mut HashMap<Key, Flight>, key: &Key, cell: &Arc<OnceCell<Answer>>) {
+    if map.get(key).is_some_and(|f| Arc::ptr_eq(&f.cell, cell)) {
+        map.remove(key);
+    }
+}
+
+/// One waiter on a flight. The last waiter to leave takes the flight out of the map, so the map
+/// never keeps a name whose every caller gave up (the connect's resolve timeout drops them).
+struct Waiter<'a> {
     flights: &'a Flights,
     key: Key,
     cell: Arc<OnceCell<Answer>>,
 }
 
-impl Drop for Leave<'_> {
+impl<'a> Waiter<'a> {
+    fn join(flights: &'a Flights, key: Key) -> Self {
+        let mut map = lock(flights);
+        let flight = map.entry(key.clone()).or_insert_with(|| Flight {
+            cell: Arc::default(),
+            waiters: 0,
+        });
+        flight.waiters += 1;
+        let cell = Arc::clone(&flight.cell);
+        drop(map);
+        Self { flights, key, cell }
+    }
+}
+
+impl Drop for Waiter<'_> {
     fn drop(&mut self) {
-        let mut flights = self.flights.lock().unwrap_or_else(PoisonError::into_inner);
-        let ours = flights
-            .get(&self.key)
-            .is_some_and(|c| Arc::ptr_eq(c, &self.cell));
-        // The map and this guard hold it, nobody else is waiting; or it has an answer, so a later
-        // caller must look again.
-        if ours && (self.cell.initialized() || Arc::strong_count(&self.cell) == 2) {
-            flights.remove(&self.key);
+        let mut map = lock(self.flights);
+        if let Some(flight) = map.get_mut(&self.key)
+            && Arc::ptr_eq(&flight.cell, &self.cell)
+        {
+            flight.waiters -= 1;
+            if flight.waiters == 0 {
+                map.remove(&self.key);
+            }
         }
     }
 }
@@ -67,35 +101,18 @@ impl<R: Resolver> Resolver for Coalescing<R> {
         port: u16,
     ) -> BoxFuture<'a, io::Result<Vec<SocketAddr>>> {
         Box::pin(async move {
-            let key = (name.clone(), port);
-            let cell = self
-                .flights
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .entry(key.clone())
-                .or_default()
-                .clone();
-            let leave = Leave {
-                flights: &self.flights,
-                key,
-                cell,
-            };
-            let cell = &leave.cell;
-            let answer = cell
+            let waiter = Waiter::join(&self.flights, (name.clone(), port));
+            let answer = waiter
+                .cell
                 .get_or_init(|| async {
-                    // Out of the map the moment it has an answer, before the waiters wake.
                     let answer = self
                         .inner
                         .resolve(name, port)
                         .await
                         .map_err(|e| (e.kind(), e.to_string()));
-                    let mut flights = self.flights.lock().unwrap_or_else(PoisonError::into_inner);
-                    if flights
-                        .get(&(name.clone(), port))
-                        .is_some_and(|c| Arc::ptr_eq(c, cell))
-                    {
-                        flights.remove(&(name.clone(), port));
-                    }
+                    // Out of the map the moment it has an answer, before the waiters wake, so a
+                    // connect that comes after looks again.
+                    remove_if_ours(&mut lock(&self.flights), &waiter.key, &waiter.cell);
                     answer
                 })
                 .await;
@@ -188,8 +205,8 @@ mod tests {
         let r = Coalescing::new(Slow::new(Duration::from_secs(1)));
         let n = name("a.example");
         assert_eq!(ip(&r.resolve(&n, 443).await.unwrap()), 1);
-        // The clock moves, nothing is cached: the next connect looks again and sees the new answer.
-        tokio::time::advance(Duration::from_millis(1)).await;
+        // The clock moves a long way and nothing is kept: the next connect looks again.
+        tokio::time::advance(Duration::from_secs(3600)).await;
         assert_eq!(ip(&r.resolve(&n, 443).await.unwrap()), 2);
     }
 
@@ -234,10 +251,36 @@ mod tests {
         // The caller that started the lookup gives up (the connect's resolve timeout).
         let impatient = tokio::time::timeout(Duration::from_secs(1), r.resolve(&n, 443)).await;
         assert!(impatient.is_err());
-        assert!(patient.await.unwrap().is_ok());
+        // A third connect, mid-lookup, joins the patient caller's lookup (which took the
+        // abandoned one over) instead of starting a fourth.
+        tokio::time::advance(Duration::from_secs(2)).await;
+        let third = ip(&r.resolve(&n, 443).await.unwrap());
+        assert_eq!(r.inner.lookups.load(Ordering::SeqCst), 2);
+        assert_eq!(ip(&patient.await.unwrap().unwrap()), third);
         assert!(r.flights.lock().unwrap().is_empty());
         // Everyone gave up: nothing is left behind either.
         let _ = tokio::time::timeout(Duration::from_secs(1), r.resolve(&n, 443)).await;
         assert!(r.flights.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn many_callers_cancelled_at_once_leave_the_map_empty() {
+        let r = Arc::new(Coalescing::new(Slow::new(Duration::from_secs(60))));
+        let n = name("a.example");
+        for _ in 0..200 {
+            let tasks: Vec<_> = (0..16)
+                .map(|_| {
+                    let (r, n) = (r.clone(), n.clone());
+                    tokio::spawn(async move {
+                        let _ = tokio::time::timeout(Duration::from_millis(1), r.resolve(&n, 443))
+                            .await;
+                    })
+                })
+                .collect();
+            for t in tasks {
+                t.await.unwrap();
+            }
+            assert!(r.flights.lock().unwrap().is_empty());
+        }
     }
 }

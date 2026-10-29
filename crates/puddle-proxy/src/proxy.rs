@@ -258,8 +258,8 @@ impl std::fmt::Debug for Proxy {
 }
 
 impl Proxy {
-    /// A proxy that asks `policy`, resolves with the OS resolver (concurrent lookups of one name shared), and reports agent events (OOM
-    /// kills) to `sink`. Its address check is a [`NetPolicy`] with every local toggle off and no
+    /// A proxy that asks `policy`, resolves with the OS resolver (concurrent lookups of one name
+    /// are shared), and reports agent events (OOM kills) to `sink`. Its address check is a [`NetPolicy`] with every local toggle off and no
     /// registered endpoints: public addresses only. The host program passes its own
     /// [`NetPolicy`] (settings-backed toggles, Puddle's endpoint registry) with
     /// [`Self::with_address_check`], and its audit (the store) with

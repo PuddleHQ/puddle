@@ -338,8 +338,8 @@ the owner, then tagged `vX.Y.Z` on `main`.
   The owner accepted this allowance on 2026-10-08.
 - **Raising the baseline is nightly, in its own pull request.** A pull request does not raise the baseline, and a local
   `scripts/check.sh coverage` leaves the file alone in CI and rewrites it only on your machine (do not commit that). The
-  `coverage-baseline` workflow reads the coverage the CI gate measured on develop's tip, and when it is above the baseline it
-  opens or updates one pull request, `build: raise the coverage baseline`, that goes through the merge queue like any other
+  `coverage-baseline` workflow reads the coverage the CI gates measured on develop's tip (Rust and UI), and when either is above
+  its baseline (`scripts/coverage-baseline.json`, `ui/coverage-baseline.json`) it opens or updates one pull request, `build: raise the coverage baseline`, that goes through the merge queue like any other
   (`ci/raise-coverage-baseline.sh`, self-test `ci/raise-coverage-baseline-test.sh`). So two pull requests never conflict on the
   file, and a raise comes from a CI measurement, never from a local run (a local run measures more than CI and would fail the
   ratchet there). The ratchet reads two totals: a drop in one crate hidden by a gain elsewhere passes it, which is what the diff
@@ -381,8 +381,9 @@ the owner, then tagged `vX.Y.Z` on `main`.
   statements percentages (rounded down to 0.1); `ui/vite.config.ts` uses them as vitest's thresholds, so
   `npm test` fails under any of them, and `src/lib/**` must keep 100 % of its lines, functions and
   statements. `ui/scripts/ui-coverage-ratchet.ts` (gate `ui`) fails a lowered baseline without the
-  `Owner-OK: coverage-baseline` trailer and, locally, raises it when a run measures higher (commit the file; CI only
-  compares). There is no wobble allowance: v8's counts are the same on every machine for the same code. The
+  `Owner-OK: coverage-baseline` trailer and, locally, raises it when a run measures higher (do not commit that; CI only
+  compares; the nightly `coverage-baseline` workflow raises it in the same pull request as the Rust one, from the `ui` job's
+  `coverage-summary.json`). There is no wobble allowance: v8's counts are the same on every machine for the same code. The
   build tooling in `ui/scripts/` is in the report; only the three files that start a dev server, a
   fixture binary or a browser (`dev-fixture.ts`, `fixture-binary.ts`, `webkit-probe.ts`) are excluded, in
   `ui/vite.config.ts`.

@@ -4,8 +4,9 @@
 // vite.config.ts uses them as vitest's thresholds, so a run below any of them fails in `npm test`.
 // This script is the other half: a change may not lower the committed baseline (unless
 // COVERAGE_BASELINE_LOWER_OK=1, which scripts/check.sh sets only for a commit carrying the trailer
-// `Owner-OK: coverage-baseline`), and when a run measures above it, `--write` raises it for you to commit
-// (CI never writes). v8's counts are the same on every machine for the same code, so unlike the Rust
+// `Owner-OK: coverage-baseline`), and when a run measures above it, `--write` raises it in the file
+// (a local run only: do not commit that, the nightly `coverage-baseline` workflow raises the baseline in its own pull request;
+// CI never writes). v8's counts are the same on every machine for the same code, so unlike the Rust
 // ratchet there is no wobble allowance.
 //
 // Usage: node scripts/ui-coverage-ratchet.ts --summary coverage/coverage-summary.json
@@ -123,11 +124,11 @@ export function main(argv: string[]): number {
     if (argv.includes("--write")) {
       writeFileSync(file, `${JSON.stringify(v.raised, null, 2)}\n`);
       console.log(
-        `ui coverage ratchet: baseline raised to ${shown} in ${file}; commit it`,
+        `ui coverage ratchet: baseline raised to ${shown} in ${file}; do not commit it, the nightly coverage-baseline workflow raises it`,
       );
     } else {
       console.log(
-        `ui coverage ratchet: coverage is above the baseline (would raise it to ${shown}); run \`scripts/check.sh ui\` locally and commit ui/coverage-baseline.json`,
+        `ui coverage ratchet: coverage is above the baseline (would raise it to ${shown}); the nightly coverage-baseline workflow raises it`,
       );
     }
   }

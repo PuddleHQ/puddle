@@ -49,7 +49,7 @@ use crate::injection::{Injection, InjectorFactory, InjectorInputs, forward_sign_
 use crate::learned::HostLearned;
 use crate::ports::{HostPorts, StorePins};
 use crate::ssh_config::SshSetup;
-use crate::workspaces::{Parts, known_ids};
+use crate::workspaces::{Parts, RewriteGate, known_ids};
 use crate::{HostConfig, HostError, HostWorkspaces, Platform, ProxyPasswords, VsCodeLauncher};
 
 /// One step of starting or stopping the host, in the order they ran.
@@ -299,6 +299,9 @@ pub struct HostOptions {
     /// one, the operating system's resolver. Tests give a double, so a name only a fake company
     /// proxy knows is never a question for the machine's real DNS.
     pub resolver: Option<Arc<dyn Resolver>>,
+    /// Holds an author rewrite back when it starts (tests, to make the rewrites of one workspace
+    /// run out of order). Without one, no rewrite waits.
+    pub rewrite_gate: Option<RewriteGate>,
 }
 
 impl Default for HostOptions {
@@ -310,6 +313,7 @@ impl Default for HostOptions {
             secret_store: None,
             dev_cert: None,
             resolver: None,
+            rewrite_gate: None,
         }
     }
 }
@@ -579,6 +583,7 @@ impl<R: Runtime + Clone> Host<R> {
                 problems: problems.clone(),
                 reports,
                 ports: ports.clone(),
+                rewrite_gate: options.rewrite_gate.clone(),
             },
             stored,
             &status,

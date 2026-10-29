@@ -282,7 +282,7 @@ fn encode(plan: &Plan) -> (Vec<u8>, usize) {
 
 /// What the kernel holds for the table, in a form that compares equal when nothing changed.
 /// Rule handles are left out: they differ between installs.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Fingerprint {
     /// `(name, hook and priority and type)` per chain, sorted by name.
     chains: Vec<(String, Vec<u8>)>,
@@ -317,17 +317,18 @@ fn ours(body: &[u8], table_attr: u16) -> Option<Vec<(u16, &[u8])>> {
     (string(table.1) == TABLE).then_some(all)
 }
 
-/// Replaces the table with `plan` in one batch and returns what the kernel then holds.
+/// Replaces the table with `plan` in one batch and returns what the kernel then holds: `None` when
+/// the kernel took the batch and the table was deleted before it could be read back.
 ///
 /// Blocking: call from `spawn_blocking`.
 ///
 /// # Errors
 ///
 /// The kernel refusing the batch (no `CAP_NET_ADMIN`, no `nf_tables`), which leaves the old table.
-pub fn install(plan: &Plan) -> io::Result<Fingerprint> {
+pub fn install(plan: &Plan) -> io::Result<Option<Fingerprint>> {
     let (batch, acks) = encode(plan);
     Socket::netfilter()?.transact(&batch, acks)?;
-    read()?.ok_or_else(|| io::Error::other("the table is not there right after it was installed"))
+    read()
 }
 
 /// The three requests `read` makes, so a test can change the kernel's state between them.

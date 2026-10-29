@@ -6,10 +6,12 @@
 #![expect(
     clippy::unwrap_used,
     clippy::panic,
-    reason = "test helpers outside #[test] fns: a failed setup fails the test"
+    clippy::indexing_slicing,
+    reason = "test helpers outside #[test] fns: a failed setup or a malformed fixture file fails the test"
 )]
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::io::Write as _;
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
@@ -757,7 +759,10 @@ fn jks_entries(file: &Path) -> Vec<(String, Vec<u8>)> {
         .unwrap();
     child.stdin.take().unwrap().write_all(&check).unwrap();
     let sum = String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap();
-    let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    let hex = digest.iter().fold(String::new(), |mut hex, b| {
+        let _ = write!(hex, "{b:02x}");
+        hex
+    });
     assert!(sum.starts_with(&hex), "digest {hex} against {sum}");
 
     let be = |at: usize, n: usize| {

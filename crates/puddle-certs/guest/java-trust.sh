@@ -213,7 +213,7 @@ echo "$keytools" | while IFS= read -r keytool; do
                 -srcstorepass "$PASS" -destkeystore "$store" -deststorepass "$PASS" \
                 -J-Xshare:auto -J-XX:TieredStopAtLevel=1 </dev/null >"$tmp/err" 2>&1 &&
             grep -q ' 0 entries failed' "$tmp/err"; then
-            # shellcheck disable=SC2086
+            # shellcheck disable=SC2086 # the same one-word aliases
             added=$(set -- $missing && echo $#)
         else
             failed=1

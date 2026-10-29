@@ -105,6 +105,53 @@ want "crate in neither" "rust true true false false" crates/xtask/src/main.rs
 want "crate with a README only" "rust true true true true" crates/puddle-host/README.md
 want "rename out of an always-run path" "$FULL" ui/src/a.ts ci/old.sh
 
+# 4b. The nightly tier: which jobs a merge queue run defers (PUDDLE_TIER=on) and which paths pull a
+# job back into the queue. defers <event> <PUDDLE_TIER> <paths...> -> "vm ui clippy", each true
+# (deferred) or false (runs in the queue).
+defers() {
+    local event=$1 tier=$2 out
+    shift 2
+    out=$(printf '%s\n' "$@" | env -u PUDDLE_TIER "PUDDLE_TIER=$tier" GITHUB_EVENT_NAME="$event" "$scope" classify | sort |
+        awk -F= '{v[$1]=$2} END {print v["defer_vm_windows"], v["defer_win_ui"], v["defer_win_clippy"]}')
+    echo "$out"
+}
+tier_want() { # tier_want <label> <expected> <paths...>  (merge_group, PUDDLE_TIER=on)
+    local label=$1 exp=$2 got
+    shift 2
+    got=$(defers merge_group on "$@")
+    [ "$got" = "$exp" ] || bad "tier: $label: got '$got', want '$exp'"
+}
+tier_want "docs only: all three deferred" "true true true" docs/guide.md
+tier_want "a UI-only change" "true true true" ui/src/a.ts
+tier_want "a plain crate" "true true true" crates/puddle-store/src/lib.rs
+tier_want "the msb adapter pulls the VM job back" "false true true" crates/puddle-compute-msb/src/lib.rs
+tier_want "the msb adapter's tests" "false true true" crates/puddle-compute-msb/tests/contract.rs
+tier_want "the desktop shell pulls the UI job back" "true false true" crates/puddle-app/src/main.rs
+tier_want "the shell's capabilities" "true false true" crates/puddle-app/capabilities/default.json
+tier_want "a Windows source file" "false true false" crates/puddle-certs/src/platform/windows.rs
+tier_want "a Windows directory" "false true false" crates/puddle-lifecycle/src/windows/job.rs
+tier_want "a Windows snapshot" "false true false" crates/puddle-doctor/tests/snapshots/windows_edr.snap
+tier_want "a Windows doc, any case" "false true false" docs/Windows-notes.md
+tier_want "a rename out of a Windows path" "false true false" crates/puddle-store/src/lib.rs crates/puddle-fs/src/private/windows.rs
+tier_want "two escalations add up" "false false false" crates/puddle-compute-msb/src/lib.rs crates/puddle-app/src/lib.rs crates/puddle-ipc/src/windows/mod.rs
+# Always-run paths (the msb pin among them, the shared VM test crate, the workflows) pull every moved job back.
+for p in Cargo.lock Cargo.toml ci/msb-runtime.sha256 ci/msb-tag.sh ci/fetch-msb.sh crates/puddle-vm-tests/src/lib.rs \
+    .github/workflows/vm-windows.yml .github/workflows/windows.yml .github/workflows/ci.yml ci/scope.sh scripts/check.sh; do
+    tier_want "always-run path $p" "false false false" docs/guide.md "$p"
+done
+mapfile -t tier_many < <(seq 1 300 | sed 's|^|docs/page-|')
+tier_want "300 files: everything runs" "false false false" "${tier_many[@]}"
+tier_want "an unknown path" "false false false" mystery/file.txt
+[ "$(printf '' | env GITHUB_EVENT_NAME=merge_group PUDDLE_TIER=on "$scope" classify | grep -c '^defer_.*=false$')" = 3 ] ||
+    bad "tier: an empty file list must run everything"
+# Without the variable exactly `on`, or off a merge queue run, nothing is deferred.
+for tier in "" off ON On true 1 yes "on "; do
+    [ "$(defers merge_group "$tier" docs/guide.md)" = "false false false" ] || bad "tier: PUDDLE_TIER='$tier' must not defer"
+done
+for ev in pull_request push schedule workflow_dispatch ""; do
+    [ "$(defers "$ev" on docs/guide.md)" = "false false false" ] || bad "tier: event '$ev' must not defer"
+done
+
 # 5. The whole script with a fake `gh`.
 mkdir "$tmp/bin"
 cat >"$tmp/bin/gh" <<'GH'
@@ -130,7 +177,7 @@ printf 'ui/src/a.ts\nui/src/b.ts\n' >"$tmp/ui.txt"
 MAIN_ENV=()
 run_main() {
     local event=$1 base=$2 mode=$3 files=$4 head=${5:-abc123}
-    env -u PUDDLE_QUEUE PATH="$tmp/bin:$PATH" GITHUB_EVENT_NAME="$event" PR_BASE_REF="$base" PR_NUMBER=7 GITHUB_REPOSITORY=o/r \
+    env -u PUDDLE_QUEUE -u PUDDLE_TIER PATH="$tmp/bin:$PATH" GITHUB_EVENT_NAME="$event" PR_BASE_REF="$base" PR_NUMBER=7 GITHUB_REPOSITORY=o/r \
         PR_HEAD_SHA="$head" FAKE_MODE="$mode" FAKE_FILES="$files" FAKE_HEAD=abc123 GITHUB_OUTPUT="$tmp/out" \
         "${MAIN_ENV[@]}" "$scope" 2>/dev/null
     local rc=$?
@@ -144,7 +191,7 @@ main_case() { # main_case <label> <want class> <args of run_main>
     grep -q "^class=$exp$" <<<"$out" || bad "main: $label: want class $exp, got: $(tr '\n' ' ' <<<"$out")"
     grep -q '^rc=0$' <<<"$out" || bad "main: $label: exit status not 0"
     grep -q "^class=$exp$" "$tmp/out" || bad "main: $label: GITHUB_OUTPUT lacks class=$exp"
-    [ "$(grep -c . "$tmp/out")" = 6 ] || bad "main: $label: GITHUB_OUTPUT has not exactly the six outputs"
+    [ "$(grep -c . "$tmp/out")" = 9 ] || bad "main: $label: GITHUB_OUTPUT has not exactly the nine outputs"
     grep -q "^light=${WANT_LIGHT:-false}$" "$tmp/out" || bad "main: $label: want light=${WANT_LIGHT:-false}, got: $(tr '\n' ' ' <"$tmp/out")"
 }
 main_case "ui-only pull request to develop" ui pull_request develop ok "$tmp/ui.txt"
@@ -201,6 +248,31 @@ done
 MAIN_ENV=()
 main_case "light: PUDDLE_QUEUE unset" ui pull_request develop ok "$tmp/ui.txt"
 
+# The nightly tier through the whole script: only a merge queue run with PUDDLE_TIER=on, and the
+# outputs of the group's diff; any doubt prints the full set with nothing deferred.
+printf 'crates/puddle-app/src/lib.rs\n' >"$tmp/app.txt"
+want_out() { grep -q "^$1\$" "$tmp/out" || bad "main: $2: want $1, got: $(tr '\n' ' ' <"$tmp/out")"; }
+MAIN_ENV=(MERGE_GROUP_BASE_SHA=base1 MERGE_GROUP_HEAD_SHA=head1 PUDDLE_TIER=on)
+main_case "tier: merge group, ui-only diff" ui merge_group "" ok "$tmp/ui.txt"
+want_out defer_vm_windows=true "tier: ui-only diff defers the VM job"
+want_out defer_win_ui=true "tier: ui-only diff defers the UI job"
+want_out defer_win_clippy=true "tier: ui-only diff defers clippy"
+main_case "tier: merge group, desktop shell diff" rust merge_group "" ok "$tmp/app.txt"
+want_out defer_win_ui=false "tier: a puddle-app diff runs the UI job"
+want_out defer_vm_windows=true "tier: a puddle-app diff still defers the VM job"
+main_case "tier: merge group, always-run path" full merge_group "" ok "$tmp/rename.txt"
+want_out defer_vm_windows=false "tier: an always-run path runs the VM job"
+main_case "tier: merge group, compare fails" full merge_group "" error "$tmp/ui.txt"
+want_out defer_win_ui=false "tier: a failed compare runs everything"
+main_case "tier: pull request to develop" ui pull_request develop ok "$tmp/ui.txt"
+want_out defer_vm_windows=false "tier: a pull request defers nothing"
+main_case "tier: push" full push develop ok "$tmp/ui.txt"
+want_out defer_vm_windows=false "tier: a push defers nothing"
+MAIN_ENV=(MERGE_GROUP_BASE_SHA=base1 MERGE_GROUP_HEAD_SHA=head1)
+main_case "tier unset: merge group, ui-only diff" ui merge_group "" ok "$tmp/ui.txt"
+want_out defer_vm_windows=false "tier unset: the queue runs the VM job as today"
+MAIN_ENV=()
+
 # 6. The result job's verdict. needs <scope outputs> <job=result>... -> NEEDS json
 needs() {
     local sc=$1 j
@@ -216,7 +288,8 @@ verdict() { # verdict <event> <want 0|1> <label> <scope json> <specs...> -- <job
     shift 4
     while [ "$1" != -- ]; do specs+=("$1"); shift; done
     shift
-    env -u PUDDLE_QUEUE -u PUDDLE_QUEUE_SKIP_PUSH -u PR_BASE_REF -u GITHUB_REF NEEDS="$(needs "$sc" "$@")" \
+    env -u PUDDLE_QUEUE -u PUDDLE_QUEUE_SKIP_PUSH -u PUDDLE_TIER -u PR_BASE_REF -u GITHUB_REF -u GITHUB_STEP_SUMMARY \
+        NEEDS="$(needs "$sc" "$@")" \
         GITHUB_EVENT_NAME="$event" "${VERDICT_ENV[@]}" "$scope" verdict "${specs[@]}" >/dev/null 2>&1 || rc=$?
     [ "$rc" = "$exp" ] || bad "verdict: $label: exit $rc, want $exp"
 }
@@ -337,7 +410,7 @@ matrix() { # matrix <label> <nightly flag or ""> <outputs: key,key> <job=key[,fl
                     done
                     results+=("queue-tested=${qt%%/*}")
                     rc=0
-                    env -u PUDDLE_QUEUE -u PUDDLE_QUEUE_SKIP_PUSH \
+                    env -u PUDDLE_QUEUE -u PUDDLE_QUEUE_SKIP_PUSH -u PUDDLE_TIER \
                         NEEDS="$(needs "$sc" "${results[@]}" | jq -c --arg s "${qt#*/}" '.["queue-tested"].outputs = {skip: $s}')" \
                         GITHUB_EVENT_NAME="$event" PR_BASE_REF="$base" GITHUB_REF="$ref" \
                         ${q:+PUDDLE_QUEUE=$q} ${sp:+PUDDLE_QUEUE_SKIP_PUSH=$sp} \
@@ -355,8 +428,9 @@ matrix() { # matrix <label> <nightly flag or ""> <outputs: key,key> <job=key[,fl
 matrix_bg() { (fail=0; matrix "$@"; echo "matrix $1: $MATRIX_CASES cases" >&2; exit "$fail") & mpids+=($!); }
 mpids=()
 matrix_bg ci "" ci_rust,ui rust=ci_rust,pushskip msvc=ci_rust,pushskip 'light=!ci_rust' ui=ui,pushskip
-matrix_bg windows "" win_rust,ui clippy=win_rust,queue tests=win_rust,queue ui=ui,queue
+matrix_bg windows "" win_rust,ui clippy=win_rust,queue,defer:defer_win_clippy tests=win_rust,queue ui=ui,queue,defer:defer_win_ui
 matrix_bg vm-linux --nightly-skips vm build=vm,queue tests=vm,queue
+matrix_bg vm-windows --nightly-skips vm build=vm,queue,defer:defer_vm_windows tests=vm,queue,defer:defer_vm_windows
 for p in "${mpids[@]}"; do wait "$p" || fail=1; done
 verdict push 0 "ci push: light skipped because the Rust gates ran" "$CI_FULL" "${ci_specs[@]}" -- rust=success light=skipped ui=success
 verdict schedule 0 "ci nightly: light skipped" "$CI_FULL" "${ci_specs[@]}" -- rust=success light=skipped ui=success
@@ -386,6 +460,48 @@ verdict pull_request 1 "light: PUDDLE_QUEUE unset" "$VM" "${VM_Q[@]}" -- build=s
 verdict merge_group 1 "merge queue: a wrongly skipped vm job" "$VM" "${VM_Q[@]}" -- build=skipped tests=skipped
 verdict merge_group 0 "merge queue: vm scoped out by the group's diff" "$VMF" "${VM_Q[@]}" -- build=skipped tests=skipped
 
+# The nightly tier: the result job accepts the skip of a moved job on a merge queue run only with
+# PUDDLE_TIER=on and scope's defer output true for that job; the summary says so.
+VMT=(--nightly-skips 'build=vm,queue,defer:defer_vm_windows' 'tests=vm,queue,defer:defer_vm_windows')
+WINT=('clippy=win_rust,queue,defer:defer_win_clippy' 'tests=win_rust,queue' 'ui=ui,queue,defer:defer_win_ui')
+VM_D='{"vm":"true","defer_vm_windows":"true"}'
+VM_E='{"vm":"true","defer_vm_windows":"false"}'
+WIN_D='{"win_rust":"true","ui":"true","defer_win_clippy":"true","defer_win_ui":"true"}'
+VERDICT_ENV=(PUDDLE_TIER=on)
+verdict merge_group 0 "tier: vm deferred, both jobs skipped" "$VM_D" "${VMT[@]}" -- build=skipped tests=skipped
+verdict merge_group 0 "tier: vm deferred but it ran anyway" "$VM_D" "${VMT[@]}" -- build=success tests=success
+verdict merge_group 1 "tier: vm escalated and skipped" "$VM_E" "${VMT[@]}" -- build=skipped tests=skipped
+verdict merge_group 0 "tier: vm escalated and ran" "$VM_E" "${VMT[@]}" -- build=success tests=success
+verdict merge_group 1 "tier: vm escalated, a test failed" "$VM_E" "${VMT[@]}" -- build=success tests=failure
+verdict merge_group 1 "tier: vm deferred output lost" "$VM" "${VMT[@]}" -- build=skipped tests=skipped
+verdict merge_group 1 "tier: vm deferred, build cancelled" "$VM_D" "${VMT[@]}" -- build=cancelled tests=skipped
+verdict merge_group 1 "tier: vm deferred, build failed" "$VM_D" "${VMT[@]}" -- build=failure tests=skipped
+verdict merge_group 0 "tier: windows ui and clippy deferred, tests ran" "$WIN_D" "${WINT[@]}" -- clippy=skipped tests=success ui=skipped release=skipped
+verdict merge_group 1 "tier: windows tests are never deferred" "$WIN_D" "${WINT[@]}" -- clippy=skipped tests=skipped ui=skipped release=skipped
+verdict merge_group 1 "tier: ui deferred, clippy escalated and skipped" '{"win_rust":"true","ui":"true","defer_win_clippy":"false","defer_win_ui":"true"}' "${WINT[@]}" -- clippy=skipped tests=success ui=skipped release=skipped
+verdict merge_group 1 "tier: a deferred ui job failed" "$WIN_D" "${WINT[@]}" -- clippy=skipped tests=success ui=failure release=skipped
+for ev in pull_request push schedule workflow_dispatch; do
+    verdict "$ev" 1 "tier: $ev never accepts the deferred skip (ui)" "$WIN_D" "${WINT[@]}" -- clippy=skipped tests=success ui=skipped release=skipped
+done
+verdict pull_request 1 "tier: a pull request to develop never defers (vm)" "$VM_D" "${VMT[@]}" -- build=skipped tests=skipped
+for v in "" off ON On true 1 yes "on "; do
+    VERDICT_ENV=("PUDDLE_TIER=$v")
+    verdict merge_group 1 "tier: PUDDLE_TIER='$v' is not on (vm)" "$VM_D" "${VMT[@]}" -- build=skipped tests=skipped
+    verdict merge_group 1 "tier: PUDDLE_TIER='$v' is not on (windows)" "$WIN_D" "${WINT[@]}" -- clippy=skipped tests=success ui=skipped release=skipped
+done
+# The job summary of a skipped required check says it ran in the nightly or release tier.
+VERDICT_ENV=(PUDDLE_TIER=on)
+: >"$tmp/summary"
+env -u PUDDLE_QUEUE -u PR_BASE_REF NEEDS="$(needs "$VM_D" build=skipped tests=skipped)" GITHUB_EVENT_NAME=merge_group PUDDLE_TIER=on \
+    GITHUB_STEP_SUMMARY="$tmp/summary" "$scope" verdict "${VMT[@]}" >/dev/null 2>&1 || bad "tier: summary case did not pass"
+grep -q 'nightly and release tier' "$tmp/summary" || bad "tier: the summary of a deferred skip must name the nightly and release tier"
+grep -q 'not a test result' "$tmp/summary" || bad "tier: the summary of a deferred skip must say it is not a test result"
+: >"$tmp/summary"
+env -u PUDDLE_QUEUE -u PR_BASE_REF NEEDS="$(needs "$VM_E" build=success tests=success)" GITHUB_EVENT_NAME=merge_group PUDDLE_TIER=on \
+    GITHUB_STEP_SUMMARY="$tmp/summary" "$scope" verdict "${VMT[@]}" >/dev/null 2>&1 || bad "tier: summary case (ran) did not pass"
+[ ! -s "$tmp/summary" ] || bad "tier: a job that ran leaves no deferral note in the summary"
+VERDICT_ENV=()
+
 # A develop push run whose commit a green merge queue run tested: the heavy ci jobs may skip when
 # PUDDLE_QUEUE_SKIP_PUSH=on and the queue-tested job succeeded and said so; anything else runs them.
 CI_P=('rust=ci_rust,pushskip' 'msvc=ci_rust,pushskip' 'light=!ci_rust' 'ui=ui,pushskip')
@@ -394,7 +510,7 @@ needs_tested() { needs "$@" | jq -c '.["queue-tested"].outputs = {skip: "'"${SKI
 push_case() { # push_case <want> <label> <job=result>...
     local exp=$1 label=$2 rc=0
     shift 2
-    env -u PUDDLE_QUEUE -u PUDDLE_QUEUE_SKIP_PUSH NEEDS="$(needs_tested "$CI_FULL" "$@")" GITHUB_EVENT_NAME="${PUSH_EVENT:-push}" \
+    env -u PUDDLE_QUEUE -u PUDDLE_QUEUE_SKIP_PUSH -u PUDDLE_TIER NEEDS="$(needs_tested "$CI_FULL" "$@")" GITHUB_EVENT_NAME="${PUSH_EVENT:-push}" \
         GITHUB_REF="${PUSH_REF:-refs/heads/develop}" "${VERDICT_ENV[@]}" "$scope" verdict "${CI_P[@]}" >/dev/null 2>&1 || rc=$?
     [ "$rc" = "$exp" ] || bad "verdict: tested push: $label: exit $rc, want $exp"
 }
@@ -451,9 +567,9 @@ import re, sys, yaml
 d = sys.argv[1]
 results = {  # workflow: (result job id, required name, verdict specs as the matrix above tests them)
     "ci": ("linux", "linux (all gates)", "rust=ci_rust,pushskip msvc=ci_rust,pushskip light=!ci_rust ui=ui,pushskip"),
-    "windows": ("windows", "windows-msvc (build, clippy, tests)", "clippy=win_rust,queue tests=win_rust,queue ui=ui,queue"),
+    "windows": ("windows", "windows-msvc (build, clippy, tests)", "clippy=win_rust,queue,defer:defer_win_clippy tests=win_rust,queue ui=ui,queue,defer:defer_win_ui"),
     "vm-linux": ("vm-linux", "vm-linux (KVM, msb microVMs)", "--nightly-skips build=vm,queue tests=vm,queue"),
-    "vm-windows": ("vm-windows", "vm-windows (WHP, msb microVMs)", "--nightly-skips build=vm,queue tests=vm,queue"),
+    "vm-windows": ("vm-windows", "vm-windows (WHP, msb microVMs)", "--nightly-skips build=vm,queue,defer:defer_vm_windows tests=vm,queue,defer:defer_vm_windows"),
 }
 LIGHT = "needs.scope.outputs.light != 'true'"
 PUSHSKIP = "needs.queue-tested.outputs.skip != 'true'"
@@ -498,9 +614,12 @@ for wf, (rid, rname, want_specs) in results.items():
             bad.append(f"{wf}: scope step env {k}={scope_env.get(k)!r}, want {v!r}")
     vstep = [s for s in res["steps"] if "run" in s][-1]
     venv = vstep.get("env", {})
+    tiered = "defer:" in want_specs
     for k, v in (("PUDDLE_QUEUE", "${{ vars.PUDDLE_QUEUE }}"), ("PR_BASE_REF", "${{ github.event.pull_request.base.ref }}")):
         if venv.get(k) != v:
             bad.append(f"{wf}: verdict step env {k}={venv.get(k)!r}, want {v!r}")
+    if tiered and (venv.get("PUDDLE_TIER") != "${{ vars.PUDDLE_TIER }}" or scope_env.get("PUDDLE_TIER") != "${{ vars.PUDDLE_TIER }}"):
+        bad.append(f"{wf}: the scope and verdict steps need PUDDLE_TIER from vars")
     if "pushskip" in want_specs and venv.get("PUDDLE_QUEUE_SKIP_PUSH") != "${{ vars.PUDDLE_QUEUE_SKIP_PUSH }}":
         bad.append(f"{wf}: verdict step needs PUDDLE_QUEUE_SKIP_PUSH from vars")
     m = re.search(r"ci/scope\.sh verdict (.*)", vstep["run"])
@@ -534,6 +653,15 @@ for wf, (rid, rname, want_specs) in results.items():
             bad.append(f"{wf}: job {j}: the `pushskip` mark and {PUSHSKIP!r} (needing queue-tested) must go together")
         if key not in sc.get("outputs", {}):
             bad.append(f"{wf}: scope job has no output {key}")
+        # A job moved to the nightly tier skips exactly when scope says `defer_...` is true (and only then).
+        dkeys = [f[6:] for f in flags if f.startswith("defer:")]
+        if not behind and bool(dkeys) != ("outputs.defer_" in cond):
+            bad.append(f"{wf}: job {j}: the `defer:` mark and a defer_ output in its if must go together")
+        for dk in dkeys:
+            if not behind and f"needs.scope.outputs.{dk} != 'true'" not in cond:
+                bad.append(f"{wf}: job {j} if={cond!r} lacks needs.scope.outputs.{dk} != 'true'")
+            if dk not in sc.get("outputs", {}):
+                bad.append(f"{wf}: scope job has no output {dk}")
     for j in needs:
         if j == "scope" or j in specs:
             continue

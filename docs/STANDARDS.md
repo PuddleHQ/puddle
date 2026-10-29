@@ -519,6 +519,16 @@ names report on the queue's commit too. Two repository variables switch the rest
   msvc and UI jobs when their cache entries already exist (job `queue-tested`, `ci/should-run.sh --queue-tested`; specs
   marked `,pushskip`). The advisories still run.
 
+- `PUDDLE_TIER=on`: a merge queue run skips the jobs that run nightly and on a pull request to `main` instead: the VM
+  build and tests of `vm-windows`, the Windows UI job and the native Windows clippy job. `scope` sets `defer_vm_windows`,
+  `defer_win_ui` and `defer_win_clippy` to `true` unless the group's diff pulls that job back into the queue
+  (`escalates` in `ci/scope.sh`: `crates/puddle-compute-msb/`, `crates/puddle-app/` for the UI job, any path with
+  `windows` in its name for the VM and clippy jobs, plus every always-run path, which covers the msb pin in `Cargo.toml`,
+  `Cargo.lock` and `ci/msb-*`, `crates/puddle-vm-tests/` and the workflows). The result jobs keep their names and accept the
+  skip only on a `merge_group` run with the variable exactly `on` and the output `true` (specs marked `,defer:<output>`);
+  their job summary says the check is not a test result for the skipped jobs. Unset or any other value, everything runs in
+  the queue as before. Rollback: `gh variable set PUDDLE_TIER --body off`.
+
 A failed job in a merge queue run cancels the rest of its merge group: every job that does work ends with the
 `cancel-group` step (`ci/cancel-group.sh`, needs `actions: write` on the job), which cancels each run that has not
 completed on that queue branch, in all four workflows. Only a `failure` triggers it, never a skipped or cancelled job, and

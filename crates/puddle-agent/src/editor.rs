@@ -288,20 +288,11 @@ fn withheld(name: &str) -> bool {
 }
 
 /// Why the server could not be made ready.
-struct NotReady {
-    reason: String,
-    /// A download was fetched and refused (a wrong hash, an archive that is not unpacked): the
-    /// build is as wrong the next time, so the retry waits [`wait_after_refusal`].
-    refused: bool,
-}
-
-impl NotReady {
-    fn other(reason: impl ToString) -> Self {
-        Self {
-            reason: reason.to_string(),
-            refused: false,
-        }
-    }
+enum NotReady {
+    /// A download was fetched and refused (usually a wrong hash, or an archive that is not
+    /// unpacked): the build is as wrong the next time, so the retry waits [`wait_after_refusal`].
+    Refused(String),
+    Other(String),
 }
 
 /// What to start: the program, its arguments, and the password for its environment (code-server
@@ -351,21 +342,26 @@ async fn launch(
             build: None,
         }),
         ServerKind::Microsoft { telemetry, .. } => {
-            microsoft::prepare(server).map_err(NotReady::other)?;
-            let platform = microsoft::platform(std::env::consts::ARCH).map_err(NotReady::other)?;
+            microsoft::prepare(server).map_err(|e| NotReady::Other(e.to_string()))?;
+            let platform = microsoft::platform(std::env::consts::ARCH)
+                .map_err(|e| NotReady::Other(e.to_string()))?;
             if microsoft::current_build(&control.builds).is_none() {
                 // Not while an update download runs: it may be fetching this very build.
                 let _work = control.work.lock().await;
                 microsoft::ensure_build(fetch, platform, &control.builds)
                     .await
-                    .map_err(|e| NotReady {
-                        refused: e.is_refusal(),
-                        reason: e.to_string(),
+                    .map_err(|e| {
+                        let reason = e.to_string();
+                        if e.is_refusal() {
+                            NotReady::Refused(reason)
+                        } else {
+                            NotReady::Other(reason)
+                        }
                     })?;
             }
             // The build to run, read together with the restart request it answers.
             let (build, on_trial) = control.claim().ok_or_else(|| {
-                NotReady::other("the editor server build vanished from the volume")
+                NotReady::Other("the editor server build vanished from the volume".to_owned())
             })?;
             let commit = build
                 .file_name()
@@ -441,11 +437,13 @@ async fn update_loop(control: Arc<Control>, fetch: Arc<impl Fetch>) {
         return;
     };
     tokio::time::sleep(control.times.first).await;
+    let mut refused = 0_u32;
     loop {
         let looked = {
             let _work = control.work.lock().await;
             microsoft::stage_update(&*fetch, platform, &control.builds).await
         };
+        let is_ok = looked.is_ok();
         let wait = match looked {
             Ok(microsoft::Update::UpToDate) => {
                 tracing::debug!("the editor server is the newest build");
@@ -455,11 +453,19 @@ async fn update_loop(control: Arc<Control>, fetch: Arc<impl Fetch>) {
                 tracing::info!(%commit, "a newer editor server build is ready for the next quiet moment");
                 control.times.every
             }
+            Err(err) if err.is_refusal() => {
+                refused = refused.saturating_add(1);
+                tracing::warn!(%err, refused, "a newer editor server build was refused");
+                wait_after_refusal(refused).max(control.times.retry)
+            }
             Err(err) => {
                 tracing::warn!(%err, "could not look for a newer editor server build");
                 control.times.retry
             }
         };
+        if is_ok {
+            refused = 0;
+        }
         tokio::time::sleep(wait).await;
     }
 }
@@ -487,18 +493,19 @@ async fn serve_forever(config: &EditorConfig, fetch: &impl Fetch, control: &Arc<
             },
             // A refused download is retried rarely: the build is as wrong next time, and each try
             // downloads hundreds of MB.
-            Err(NotReady {
-                reason,
-                refused: true,
-            }) => {
+            Err(NotReady::Refused(reason)) => {
                 refused = refused.saturating_add(1);
                 let wait = wait_after_refusal(refused);
                 tracing::error!(%reason, ?wait, refused, "the editor server download was refused; trying again later");
-                tokio::time::sleep(wait).await;
+                // A restart request (a build staged and switched to) ends the wait early.
+                tokio::select! {
+                    () = tokio::time::sleep(wait) => {}
+                    () = control.restart.notified() => {}
+                }
                 continue;
             }
             // Counted as a quick exit: a missing network must not be retried every second.
-            Err(NotReady { reason, .. }) => {
+            Err(NotReady::Other(reason)) => {
                 tracing::error!(%reason, "the editor server could not be made ready");
                 quick = quick.saturating_add(1);
                 tokio::time::sleep(wait_after(quick)).await;
@@ -921,6 +928,7 @@ mod tests {
 
     impl Fetch for Arc<WrongHash> {
         async fn text(&self, url: &str) -> io::Result<String> {
+            tokio::task::yield_now().await; // a network answer is not instant
             let commit = "e".repeat(40);
             Ok(if url.contains("/api/latest/") {
                 format!(r#"{{"version":"{commit}","productVersion":"1.0.0"}}"#)
@@ -933,10 +941,26 @@ mod tests {
         }
 
         async fn file(&self, _url: &str, dest: &Path) -> io::Result<()> {
+            tokio::task::yield_now().await; // a download is not instant
             self.downloads
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             std::fs::write(dest, b"not the published file")
         }
+    }
+
+    /// A Microsoft server config on a fresh volume, and the service that refuses every build.
+    fn refusing(dir: &Path, auto_update: bool) -> (EditorConfig, Arc<WrongHash>) {
+        let mut server = EditorServer::microsoft("/d", "/f", 120, false, auto_update);
+        server.dir = dir.join("servers").to_string_lossy().into_owned();
+        server.data = dir.join("data").to_string_lossy().into_owned();
+        let config = EditorConfig {
+            server,
+            password_file: dir.join("password"),
+        };
+        let service = Arc::new(WrongHash {
+            downloads: std::sync::atomic::AtomicUsize::new(0),
+        });
+        (config, service)
     }
 
     #[tokio::test(start_paused = true)]
@@ -944,21 +968,49 @@ mod tests {
     {
         use std::sync::atomic::Ordering::SeqCst;
         let dir = tempfile::tempdir().unwrap();
-        let mut server = EditorServer::microsoft("/d", "/f", 120, false, false);
-        server.dir = dir.path().join("servers").to_string_lossy().into_owned();
-        server.data = dir.path().join("data").to_string_lossy().into_owned();
-        let config = EditorConfig {
-            server,
-            password_file: dir.path().join("password"),
-        };
-        let service = Arc::new(WrongHash {
-            downloads: std::sync::atomic::AtomicUsize::new(0),
-        });
+        let (config, service) = refusing(dir.path(), false);
         let running = tokio::spawn(run_with(config, Arc::clone(&service)));
         // Downloads at 0, 1, 3, 7, 15, 31 and 63 minutes; the next is at 123. Every 30 seconds
         // would be 200.
         tokio::time::sleep(Duration::from_mins(100)).await;
         assert_eq!(service.downloads.load(SeqCst), 7);
         running.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_restart_request_ends_the_wait_after_a_refused_download() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let dir = tempfile::tempdir().unwrap();
+        let (config, service) = refusing(dir.path(), false);
+        let control = Control::new(&config.server);
+        let running = tokio::spawn(run_controlled(
+            config,
+            Arc::clone(&service),
+            Arc::clone(&control),
+        ));
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        assert_eq!(service.downloads.load(SeqCst), 1);
+        control.restart.notify_one();
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        assert_eq!(service.downloads.load(SeqCst), 2, "tried again at once");
+        running.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_refused_update_is_looked_for_on_a_slowing_schedule_too() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let dir = tempfile::tempdir().unwrap();
+        let (config, service) = refusing(dir.path(), true);
+        let times = UpdateTimes {
+            first: Duration::from_secs(1),
+            every: Duration::from_hours(24),
+            retry: Duration::from_mins(1),
+        };
+        let control = Control::with_times(&config.server, times);
+        let looking = tokio::spawn(update_loop(control, Arc::new(Arc::clone(&service))));
+        // Looks at 1 s and then after 1, 2, 4, 8, 16 and 32 minutes (7 in all); every minute would be 100.
+        tokio::time::sleep(Duration::from_mins(100)).await;
+        assert_eq!(service.downloads.load(SeqCst), 7);
+        looking.abort();
     }
 }

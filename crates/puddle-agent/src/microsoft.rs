@@ -101,7 +101,7 @@ pub enum InstallError {
 
 impl InstallError {
     /// Whether a download was fetched and refused (not the published file, or not unpackable): the
-    /// same build is refused again on every try, so retrying it soon is a waste of a download of
+    /// same build is usually refused again on every try, so retrying it soon is a waste of a download of
     /// hundreds of MB. A network that is down or an update service that is unreadable is not one.
     #[must_use]
     pub fn is_refusal(&self) -> bool {

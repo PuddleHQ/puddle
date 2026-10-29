@@ -3174,17 +3174,16 @@ plain front-on-the-guests-own-loopback "http://127.0.0.1:$front/"
 plain control-on-the-guests-own-loopback "http://127.0.0.1:$control/"
 "#;
 
-/// K tier. Isolation of the browser editor from this computer, turned from the trial's network
-/// probe: a root process in the guest cannot reach the front (the listener the window's editor is
+/// K tier. Isolation of the browser editor from this computer: a root process in the guest cannot reach the front (the listener the window's editor is
 /// served through) or this computer's other loopback services. Through Puddle's proxy the front's
 /// address is refused as one of Puddle's own whatever the loopback toggle says (the toggle is on
 /// here, so a plain listener beside it is reachable: that is the control that makes the refusal
-/// mean something), by IP and by name, and a direct connection to the gateway or the guest's own
-/// loopback finds nothing. The front counts every request that reaches it, and the guest's
+/// mean something), by IP and by name, and the guest's own loopback is its own (the guest has no gateway to this
+/// computer: its only route is the agent's catch-all). The front counts every request that reaches it, and the guest's
 /// attempts leave the count at zero while a request from this side raises it.
 ///
-/// Not covered here: the trial's other half, an extension host running as guest root against the
-/// browser's APIs, needs a browser client driving the workbench.
+/// Not covered here: an extension host running as guest root against the workbench's APIs needs a
+/// browser client driving the editor.
 #[cfg(not(windows))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_host_the_browser_editors_front_and_this_computers_loopback_are_out_of_the_guests_reach()

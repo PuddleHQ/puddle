@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeEnvApi, port } from "#lib/testing/fake-environment.ts";
 import { FakeSource } from "#lib/testing/fake-inbox.ts";
 import { WorkspacePortsStore } from "./workspace-ports.svelte.ts";
@@ -13,6 +13,7 @@ beforeEach(() => {
   source = new FakeSource();
   api.ports["web"] = { running: true, ports: [port(3000), port(5432)] };
 });
+afterEach(() => vi.restoreAllMocks());
 
 describe("reading", () => {
   it("lists the ports and whether the workspace runs", async () => {
@@ -38,9 +39,9 @@ describe("reading", () => {
     expect(store.status).toBe("ready");
     const refused = make();
     api.down = false;
-    api.GET = (async () => ({
+    vi.spyOn(api, "GET").mockImplementation((async () => ({
       response: { status: 500 } as Response,
-    })) as never;
+    })) as never);
     await refused.load("web");
     expect(refused.status).toBe("failed");
     await refused.load("web", true);
@@ -51,12 +52,15 @@ describe("reading", () => {
     const store = make();
     const real = api.GET;
     let release: (() => void) | undefined;
-    api.GET = (async (path: string, init: never) => {
+    vi.spyOn(api, "GET").mockImplementation((async (
+      path: string,
+      init: never,
+    ) => {
       if (release === undefined) {
         await new Promise<void>((resolve) => (release = resolve));
       }
       return real(path, init);
-    }) as never;
+    }) as never);
     const slow = store.load("web");
     api.ports["web"] = { running: true, ports: [port(8080)] };
     await store.load("web", true);

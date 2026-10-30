@@ -29,6 +29,9 @@ pub enum HostError {
     /// The image-pull proxy could not listen.
     #[error("cannot start the image-pull proxy: {0}")]
     PullProxy(std::io::Error),
+    /// The browser editor's front could not listen.
+    #[error("cannot start the browser editor's front: {0}")]
+    Front(std::io::Error),
     /// The host's corporate root certificates could not be read.
     #[error("cannot read the host's certificate stores: {0}")]
     Roots(String),

@@ -2285,6 +2285,204 @@ async fn attach_opens_the_desktop_editor_through_the_launcher() {
     host.shutdown().await;
 }
 
+/// A guest agent that runs on this machine with a stand-in for the editor server, connected to
+/// `name`'s route the way the real agent connects from inside the guest. The stand-in counts the
+/// connections it accepts and answers every request with a greeting.
+struct EditorStandIn {
+    accepted: Arc<AtomicUsize>,
+    _agent: puddle_agent::Agent,
+    _dir: tempfile::TempDir,
+}
+
+async fn editor_stand_in(rig: &Rig, name: &str) -> EditorStandIn {
+    use puddle_agent::config::Target;
+    use puddle_agent::editor::EditorConfig;
+    use puddle_agent_proto::editor::EditorServer;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = server.local_addr().unwrap().port();
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let count = Arc::clone(&accepted);
+    tokio::spawn(async move {
+        while let Ok((mut conn, _)) = server.accept().await {
+            count.fetch_add(1, Ordering::SeqCst);
+            tokio::spawn(async move {
+                let mut head = [0_u8; 1024];
+                let _ = conn.read(&mut head).await;
+                let _ = conn
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\ncontent-length: 5\r\nconnection: close\r\n\r\nhello",
+                    )
+                    .await;
+                let _ = conn.shutdown().await;
+            });
+        }
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let password_file = dir.path().join("editor-password");
+    std::fs::write(&password_file, "0".repeat(64)).unwrap();
+    // Its port is taken, so the agent starts no server of its own and the stand-in answers.
+    let mut editor = EditorServer::new("/nonexistent/data", "/nonexistent/work", 120);
+    editor.dir = "/nonexistent/release".into();
+    editor.port = port;
+    let sandbox = WorkspaceName::new(name).unwrap().sandbox_name();
+    let route = rig.runtime.routes(&sandbox).first().unwrap().host.clone();
+    let agent = puddle_agent::Agent::start(puddle_agent::Config {
+        listen: std::net::SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), 0),
+        target: Target::Unix(route),
+        oom: None,
+        ports: None,
+        editor: Some(EditorConfig {
+            server: editor,
+            password_file,
+        }),
+        ..puddle_agent::Config::default()
+    })
+    .await
+    .unwrap();
+    EditorStandIn {
+        accepted,
+        _agent: agent,
+        _dir: dir,
+    }
+}
+
+/// What a window gets for `GET /` at `origin` (`http://<workspace>.localhost:<port>`), without
+/// resolving the name: the connection goes to the loopback and the `Host` header says the rest.
+async fn window_gets(origin: &str) -> String {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let authority = origin.strip_prefix("http://").unwrap();
+    let port: u16 = authority.rsplit(':').next().unwrap().parse().unwrap();
+    let mut conn = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    conn.write_all(
+        format!("GET / HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n\r\n").as_bytes(),
+    )
+    .await
+    .unwrap();
+    let mut answer = Vec::new();
+    conn.read_to_end(&mut answer).await.unwrap();
+    String::from_utf8_lossy(&answer).into_owned()
+}
+
+/// Waits until the front carries a request at `origin` to the editor, and returns the answer.
+async fn served_at(origin: &str) -> String {
+    puddle_test_kit::eventually_async(
+        "the front carries a request to the workspace's editor",
+        Duration::from_secs(20),
+        || async {
+            let answer = window_gets(origin).await;
+            answer.starts_with("HTTP/1.1 200").then_some(answer)
+        },
+    )
+    .await
+}
+
+/// The origin a browser attach answered with, and that it is the answer of an attach that
+/// opened nothing itself.
+async fn browser_origin(api: &Api, workspace: &str) -> String {
+    let reply = api
+        .post(
+            &format!("/api/workspaces/{workspace}/attach"),
+            &json!({"mode": "browser"}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let body = reply.json();
+    assert_eq!(body["opened"], false, "the caller opens the origin: {body}");
+    assert!(
+        body["url"].is_string(),
+        "a browser attach names no origin: {body}"
+    );
+    body["url"].as_str().unwrap().to_owned()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_attach_names_the_fronts_origin_and_the_front_carries_a_request_to_the_editor() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let editor = editor_stand_in(&rig, "acme").await;
+
+    let origin = browser_origin(&api, "acme").await;
+    let front_port: u16 = origin
+        .strip_prefix("http://acme.localhost:")
+        .unwrap_or_else(|| panic!("not the workspace's origin: {origin}"))
+        .parse()
+        .unwrap();
+    assert!(
+        host.endpoints()
+            .list()
+            .iter()
+            .any(|(addr, kind)| addr.port() == front_port && *kind == EndpointKind::BrowserFront),
+        "the origin's port is the host's front, registered as Puddle's own listener"
+    );
+
+    // The agent says hello after the attach asked: wait for the front to find it.
+    let answer = served_at(&origin).await;
+    assert!(answer.ends_with("hello"), "{answer}");
+    assert_eq!(editor.accepted.load(Ordering::SeqCst), 1);
+
+    // A stopped workspace is not served: the front looks at the running workspaces on every request.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let gone = window_gets(&origin).await;
+    assert!(gone.starts_with("HTTP/1.1 404"), "{gone}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_front_serves_the_server_the_workspace_was_started_with_not_what_the_settings_say_now()
+{
+    let rig = Rig::new();
+    let covering = puddle_settings::MICROSOFT_TERMS_VERSION;
+    write_global_settings(&rig, &microsoft_chosen(covering, false));
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let _editor = editor_stand_in(&rig, "acme").await;
+    let origin = browser_origin(&api, "acme").await;
+    let first = served_at(&origin).await;
+    assert!(
+        first.contains("puddle-secret-half="),
+        "Microsoft's server gets the key cookie: {first}"
+    );
+
+    // The consent is withdrawn while the server runs: the running server is still Microsoft's.
+    write_global_settings(&rig, &json!({"schema_version": 2}));
+    let still = window_gets(&origin).await;
+    assert!(
+        still.contains("puddle-secret-half="),
+        "the running server keeps its flavour: {still}"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_front_serves_code_server_without_the_key_cookie_and_closes_with_the_host() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let _editor = editor_stand_in(&rig, "acme").await;
+    let origin = browser_origin(&api, "acme").await;
+    let answer = served_at(&origin).await;
+    assert!(!answer.contains("puddle-secret-half="), "{answer}");
+    host.shutdown().await;
+    let port: u16 = origin.rsplit(':').next().unwrap().parse().unwrap();
+    assert!(
+        tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_err(),
+        "the front's listener is gone after shutdown"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_new_workspace_gets_the_memory_the_settings_name() {
     let rig = Rig::new();

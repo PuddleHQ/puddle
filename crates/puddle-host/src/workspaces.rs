@@ -58,6 +58,7 @@ use tokio::task::JoinSet;
 use crate::HostError;
 use crate::boot::{BootKit, GuestInputs};
 use crate::files::{Stored, WorkspaceBook};
+use crate::front::Flavours;
 use crate::git_hosts::{
     Authors, GitProblem, authors, credentials_problem, left_out_problem, never_decrypted,
     old_git_problem,
@@ -147,6 +148,10 @@ pub(crate) struct Parts<R: Runtime + Clone> {
     pub(crate) reports: Arc<ReportDesk>,
     pub(crate) ports: Ports,
     pub(crate) rewrite_gate: Option<RewriteGate>,
+    /// Which editor server each running guest was started with, for the front.
+    pub(crate) flavours: Arc<Flavours>,
+    /// The port the browser editor's front listens on.
+    pub(crate) front_port: u16,
 }
 
 struct Slot {
@@ -227,6 +232,8 @@ struct Inner<R: Runtime + Clone> {
     reports: Arc<ReportDesk>,
     ports: Ports,
     rewrite_gate: Option<RewriteGate>,
+    flavours: Arc<Flavours>,
+    front_port: u16,
     state: Mutex<State>,
     live: tokio::sync::Mutex<BTreeMap<WorkspaceName, Live<R>>>,
     tasks: tokio::sync::Mutex<JoinSet<()>>,
@@ -453,6 +460,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 problems: parts.problems,
                 reports: parts.reports,
                 ports: parts.ports,
+                flavours: parts.flavours,
+                front_port: parts.front_port,
                 rewrite_gate: parts.rewrite_gate,
                 state: Mutex::new(State {
                     slots,
@@ -913,6 +922,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         {
             Ok(gated) => {
                 attachment.commit();
+                inner.flavours.running(name, guest.editor.as_ref());
                 inner.live.lock().await.insert(
                     name.clone(),
                     Live {
@@ -2024,6 +2034,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.inner.lifecycle.release(&name.sandbox_name());
         // Its forwards close; the pinned ones come back at the next start.
         self.inner.ports.stopped(name).await;
+        self.inner.flavours.stopped(name);
         // The CA belongs to one start: a stopped or failed sandbox decrypts nothing.
         self.inner.injection.end(name);
         self.inner.problems.clear(&problem_key("ssh", name));
@@ -2247,6 +2258,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let started = self.start_planned(record, &plan).await;
         match started {
             Ok(gated) => {
+                inner.flavours.running(name, guest.editor.as_ref());
                 if let Some(live) = inner.live.lock().await.get_mut(name) {
                     live.gated = Some(Arc::new(gated));
                     live.guest = Some(guest);
@@ -2791,9 +2803,10 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             }
             self.refresh_editor_file(&record).await;
             match mode {
-                AttachMode::Browser => Ok(Attached::not_opened(
-                    "the editor in the browser is not available in this build",
-                )),
+                AttachMode::Browser => Ok(Attached::at(puddle_front::origin_of(
+                    self.inner.front_port,
+                    &record.name,
+                ))),
                 AttachMode::Desktop => Ok(match self.desktop_target(&record).await {
                     Err(reason) => Attached::not_opened(reason),
                     Ok(target) => match self.inner.launcher.open_desktop(&record, &target).await {

@@ -56,6 +56,12 @@ impl HostPaths {
         self.data.join("guest-share")
     }
 
+    /// The browser front's secret-key halves, one file per workspace.
+    #[must_use]
+    pub fn front_keys(&self) -> PathBuf {
+        self.data.join("front")
+    }
+
     /// The API's connection file (URL and token), for the CLI and `npm run dev`.
     #[must_use]
     pub fn connection_file(&self) -> PathBuf {
@@ -75,6 +81,7 @@ mod tests {
             paths.settings(),
             paths.workspace_book(),
             paths.guest_share(),
+            paths.front_keys(),
             paths.connection_file(),
         ] {
             assert!(path.starts_with("/data/puddle"), "{path:?}");
@@ -90,6 +97,7 @@ mod tests {
             paths.settings(),
             paths.workspace_book(),
             paths.guest_share(),
+            paths.front_keys(),
             paths.connection_file(),
         ];
         for (i, a) in all.iter().enumerate() {

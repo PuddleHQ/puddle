@@ -271,6 +271,8 @@ mod tests {
             "v0",
             "refresh failed, still in grace"
         );
+        // flake-ok: the cache sends the notice with a synchronous `broadcast::send` before `value` returns,
+        // and `value` was awaited, so a notice would already be in the channel.
         assert!(
             events.try_recv().is_err(),
             "no notice while an old value still works"
@@ -280,6 +282,7 @@ mod tests {
             value(&cache, &gh()).await.unwrap_err(),
             SourceError::NotSignedIn
         );
+        // flake-ok: same as above: the send happened before `value` returned.
         assert_eq!(events.try_recv().unwrap().source, gh());
     }
 

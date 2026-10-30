@@ -996,6 +996,8 @@ async fn trouble_the_stub_logs_is_reported_to_the_host_by_kind() {
     assert_eq!(ask_stub(&stub, "b.example.com", TYPE_A).await.rcode(), 2);
     assert_eq!(ask_stub(&stub, "c.example.com", TYPE_A).await.rcode(), 2);
     let mut got = Vec::new();
+    // flake-ok: `State::trouble` queues a report with `try_send` before the stub answers, and each
+    // `ask_stub` above returned that answer, so the queue already holds every report.
     while let Ok(msg) = rx.try_recv() {
         got.push(msg);
     }

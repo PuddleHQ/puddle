@@ -18,6 +18,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 
 [dev-dependencies]
+puddle-test-kit = { workspace = true }
 tracing-subscriber = { workspace = true }
 puddle-compute = { workspace = true, features = ["fake"] }
 puddle-compute-msb = { workspace = true }

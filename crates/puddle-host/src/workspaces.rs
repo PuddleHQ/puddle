@@ -2379,8 +2379,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     async fn stop_work(&self, record: WorkspaceRecord) -> Result<(), String> {
         let name = &record.name;
-        // The windows go first: the editor disconnects while its guest still runs, so the guest
-        // ends the extension hosts the closing window leaves.
+        // The windows go first, so the editor can disconnect and the guest end its extension hosts
+        // before the stop (best effort: the close is asked for, not waited for).
         self.inner.launcher.close_browser(name).await;
         let gated = self.gated(name).await?;
         self.progress(name, WorkspaceStep::Reclaiming, None);
@@ -2433,11 +2433,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let inner = &self.inner;
         let key = problem_key("browser-data", name);
         let mut failed = Vec::new();
-        if let Err(e) = inner.front_halves.forget(name) {
-            failed.push(format!("the editor's secret key could not be deleted: {e}"));
-        }
+        // The windows first: one still open could mint the key again after it was forgotten.
         if let Err(e) = inner.launcher.forget_browser(name).await {
             failed.push(e.to_string());
+        }
+        if let Err(e) = inner.front_halves.forget(name) {
+            failed.push(format!("the editor's secret key could not be deleted: {e}"));
         }
         if failed.is_empty() {
             inner.problems.clear(&key);

@@ -153,14 +153,25 @@ impl<R: Runtime> Launcher for AppLauncher<R> {
                 windows.forget(workspace);
             }
             let (root, name) = (self.webview_root.clone(), workspace.clone());
-            tokio::task::spawn_blocking(move || sandbox_window::delete_data_folder(&root, &name))
-                .await
-                .map_err(|e| LaunchError::new(e.to_string()))?
-                .map_err(|e| {
-                    LaunchError::new(format!(
-                        "the editor window's browser data could not be removed: {e}"
-                    ))
-                })
+            // The webview's process can outlive its window by a moment and still hold the folder.
+            tokio::task::spawn_blocking(move || {
+                let mut removed = sandbox_window::delete_data_folder(&root, &name);
+                for _ in 0..10 {
+                    if removed.is_ok() {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                    removed = sandbox_window::delete_data_folder(&root, &name);
+                }
+                removed
+            })
+            .await
+            .map_err(|e| LaunchError::new(e.to_string()))?
+            .map_err(|e| {
+                LaunchError::new(format!(
+                    "the editor window's browser data could not be removed: {e}"
+                ))
+            })
         })
     }
 }

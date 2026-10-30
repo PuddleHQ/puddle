@@ -135,6 +135,10 @@ impl Agent {
         };
         if let (Some(editor), Some(control)) = (config.editor.clone(), upstream.editor_control()) {
             tasks.spawn(exthost::sweep_loop(1));
+            tasks.spawn(editor::forward_install_problem(
+                control.install_problem(),
+                tx.clone(),
+            ));
             tasks.spawn(editor::run(editor, control));
         }
         if let Some(watch) = config.entrypoint.clone() {

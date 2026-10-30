@@ -38,9 +38,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::FutureExt as _;
+use puddle_agent_proto::AgentMessage;
 use puddle_agent_proto::editor::{EditorServer, ServerKind};
 use tokio::process::Command;
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex, Notify, mpsc, watch};
 
 use crate::microsoft::{self, Downloader, Fetch};
 
@@ -107,6 +108,9 @@ pub struct Control {
     times: UpdateTimes,
     /// Whether this server updates at all (Microsoft's, with the user's setting on).
     updates: bool,
+    /// Why the server cannot be installed, `None` when it can: every refused download sets it
+    /// again (also to the same text), so a host that missed one hears the next.
+    install_problem: watch::Sender<Option<String>>,
 }
 
 impl Control {
@@ -125,6 +129,7 @@ impl Control {
             restart: Notify::new(),
             pointers: std::sync::Mutex::new(()),
             times,
+            install_problem: watch::channel(None).0,
             updates: matches!(
                 server.kind,
                 ServerKind::Microsoft {
@@ -155,6 +160,27 @@ impl Control {
 }
 
 impl Control {
+    /// Follows why the server cannot be installed ([`forward_install_problem`] sends it to the
+    /// host). Subscribe before the server runs: a receiver sees only what is set after it exists.
+    #[must_use]
+    pub fn install_problem(&self) -> watch::Receiver<Option<String>> {
+        self.install_problem.subscribe()
+    }
+
+    /// A download was fetched and refused: say why, every time.
+    fn install_refused(&self, reason: &str) {
+        self.install_problem.send_replace(Some(reason.to_owned()));
+    }
+
+    /// The server got past its install: ends what [`Control::install_refused`] said, once.
+    fn install_worked(&self) {
+        self.install_problem.send_if_modified(|problem| {
+            let was_set = problem.is_some();
+            *problem = None;
+            was_set
+        });
+    }
+
     fn pointers_lock(&self) -> std::sync::MutexGuard<'_, ()> {
         // Nothing under the lock panics; a poisoned lock is as good as a free one.
         self.pointers
@@ -294,7 +320,12 @@ fn withheld(name: &str) -> bool {
 enum NotReady {
     /// A download was fetched and refused (usually a wrong hash, or an archive that is not
     /// unpacked): the build is as wrong the next time, so the retry waits [`wait_after_refusal`].
-    Refused(String),
+    Refused {
+        /// The error, for the log.
+        reason: String,
+        /// What the user is told ([`microsoft::InstallError::refusal_summary`]).
+        summary: String,
+    },
     Other(String),
 }
 
@@ -356,7 +387,10 @@ async fn launch(
                     .map_err(|e| {
                         let reason = e.to_string();
                         if e.is_refusal() {
-                            NotReady::Refused(reason)
+                            NotReady::Refused {
+                                reason,
+                                summary: e.refusal_summary(),
+                            }
                         } else {
                             NotReady::Other(reason)
                         }
@@ -434,6 +468,20 @@ pub async fn run_controlled(config: EditorConfig, fetch: impl Fetch, control: Ar
     }
 }
 
+/// Sends every change of `problem` (a [`Control::install_problem`]) to the host as an
+/// [`AgentMessage::EditorStatus`]. Returns when `out` closes.
+pub async fn forward_install_problem(
+    mut problem: watch::Receiver<Option<String>>,
+    out: mpsc::Sender<AgentMessage>,
+) {
+    while problem.changed().await.is_ok() {
+        let message = AgentMessage::editor_status(problem.borrow_and_update().as_deref());
+        if out.send(message).await.is_err() {
+            return;
+        }
+    }
+}
+
 /// Looks for a newer build now and then, and stages what it finds. Never returns.
 async fn update_loop(control: Arc<Control>, fetch: Arc<impl Fetch>) {
     let Ok(platform) = microsoft::platform(std::env::consts::ARCH) else {
@@ -490,16 +538,20 @@ async fn serve_forever(config: &EditorConfig, fetch: &impl Fetch, control: &Arc<
         let launched = launch(config, fetch, control).await;
         let started = Instant::now();
         match launched {
-            Ok(launch) => match start_once(config, &launch, control).await {
-                Ok(status) => tracing::warn!(%status, "the editor server exited"),
-                Err(err) => tracing::error!(error = %err, "the editor server could not run"),
-            },
+            Ok(launch) => {
+                control.install_worked();
+                match start_once(config, &launch, control).await {
+                    Ok(status) => tracing::warn!(%status, "the editor server exited"),
+                    Err(err) => tracing::error!(error = %err, "the editor server could not run"),
+                }
+            }
             // A refused download is retried rarely: the build is as wrong next time, and each try
             // downloads hundreds of MB.
-            Err(NotReady::Refused(reason)) => {
+            Err(NotReady::Refused { reason, summary }) => {
                 refused = refused.saturating_add(1);
                 let wait = wait_after_refusal(refused);
                 tracing::error!(%reason, ?wait, refused, "the editor server download was refused; trying again later");
+                control.install_refused(&summary);
                 // A restart request (a build staged and switched to) ends the wait early.
                 tokio::select! {
                     () = tokio::time::sleep(wait) => {}
@@ -1035,6 +1087,48 @@ mod tests {
         tokio::time::sleep(Duration::from_mins(100)).await;
         assert_eq!(service.downloads.load(SeqCst), 7);
         running.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn every_refused_download_is_told_to_the_host_in_words_without_checksums() {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, service) = refusing(dir.path(), false);
+        let control = Control::new(&config.server);
+        let (out, mut host) = mpsc::channel(8);
+        tokio::spawn(forward_install_problem(control.install_problem(), out));
+        let running = tokio::spawn(run_controlled(config, service, Arc::clone(&control)));
+        let wanted = AgentMessage::editor_status(Some(
+            "the download does not match the checksum Microsoft published for it",
+        ));
+        // The first refusal, then the next one a minute later: a host that missed the first
+        // (it restarted) hears the second.
+        assert_eq!(host.recv().await, Some(wanted.clone()));
+        assert_eq!(host.recv().await, Some(wanted));
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn an_install_that_works_ends_the_report_once_and_says_nothing_when_nothing_was_reported()
+    {
+        let control = Control::new(&EditorServer::microsoft("/d", "/f", 120, false, false));
+        let (out, mut host) = mpsc::channel(8);
+        tokio::spawn(forward_install_problem(control.install_problem(), out));
+        control.install_worked();
+        tokio::task::yield_now().await;
+        assert!(
+            host.try_recv().is_err(),
+            "nothing was wrong, nothing to end"
+        );
+        control.install_refused("nope");
+        assert_eq!(
+            host.recv().await,
+            Some(AgentMessage::editor_status(Some("nope")))
+        );
+        control.install_worked();
+        assert_eq!(host.recv().await, Some(AgentMessage::editor_status(None)));
+        control.install_worked();
+        tokio::task::yield_now().await;
+        assert!(host.try_recv().is_err(), "ended once");
     }
 
     #[tokio::test(start_paused = true)]

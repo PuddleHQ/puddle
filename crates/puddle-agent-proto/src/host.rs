@@ -37,7 +37,10 @@ use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tokio_yamux::{Session, StreamHandle};
 
-use crate::control::{self, AgentMessage, MAX_LINE, MAX_PORTS, PROTOCOL_VERSION, StubDnsTrouble};
+use crate::control::{
+    self, AgentMessage, MAX_EDITOR_PROBLEM_CHARS, MAX_LINE, MAX_PORTS, PROTOCOL_VERSION,
+    StubDnsTrouble,
+};
 use crate::forward::GuestLink;
 use crate::kind::{MAX_PREAMBLE, StreamKind, parse_preamble};
 use crate::resolve::{self, ResolveAnswer, ResolveQuery};
@@ -188,6 +191,12 @@ pub enum AgentReport {
         kind: StubDnsTrouble,
         /// How often since the agent's last report of this kind.
         count: u32,
+    },
+    /// The browser editor's server could not be installed, or can be again.
+    EditorStatus {
+        /// Why it cannot be installed, at most [`MAX_EDITOR_PROBLEM_CHARS`] characters, control
+        /// characters replaced by `?`; `None` when it can.
+        problem: Option<String>,
     },
 }
 
@@ -590,6 +599,20 @@ async fn on_message<H: StreamHandler>(msg: AgentMessage, shared: &Shared<H>) {
             shared
                 .handler
                 .agent_report(AgentReport::StubDns { kind, count })
+                .await;
+        }
+        AgentMessage::EditorStatus { problem } => {
+            let problem = problem
+                .map(|p| clean(&p, MAX_EDITOR_PROBLEM_CHARS))
+                .filter(|p| !p.is_empty());
+            if let Some(problem) = &problem {
+                tracing::warn!(%workspace, %problem, "the editor server could not be installed in the guest");
+            } else {
+                tracing::info!(%workspace, "the editor server is installed in the guest");
+            }
+            shared
+                .handler
+                .agent_report(AgentReport::EditorStatus { problem })
                 .await;
         }
         AgentMessage::Unknown => {

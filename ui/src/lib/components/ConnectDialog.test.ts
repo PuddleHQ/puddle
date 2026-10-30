@@ -10,6 +10,7 @@ afterEach(cleanup);
 function open(
   over: Partial<Workspace> = {},
   server: "microsoft" | "code_server" | null = "code_server",
+  editorProblem: { title: string; detail: string } | null = null,
 ) {
   const onBrowser = vi.fn();
   const onDesktop = vi.fn();
@@ -19,6 +20,7 @@ function open(
       open: true,
       workspace: workspace("shop", over),
       server,
+      editorProblem,
       onBrowser,
       onDesktop,
       onDirectSsh,
@@ -46,6 +48,28 @@ describe("the Connect dialog", () => {
       screen.queryByText(/downloaded by Puddle from Microsoft/),
     ).toBeNull();
     expect(screen.getByText(/Keeps the workspace isolated/)).toBeVisible();
+  });
+
+  it("says why the browser editor cannot be installed, and still lets the user try", async () => {
+    const { onBrowser } = open({}, "microsoft", {
+      title:
+        "The browser editor could not be installed in shop: the download does not match",
+      detail: "Puddle tries again.",
+    });
+    const note = await screen.findByRole("alert");
+    expect(note).toHaveTextContent(
+      "The browser editor could not be installed in shop: the download does not match.",
+    );
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Open in the browser" }),
+    );
+    expect(onBrowser).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows no install note while the editor has no problem", async () => {
+    open();
+    await screen.findByRole("dialog");
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("closes when the user follows the link to the settings", async () => {

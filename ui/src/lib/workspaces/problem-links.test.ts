@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 import {
+  editorInstallKey,
+  editorInstallProblemOf,
   problemLink,
   startFolderKey,
   startFolderProblemOf,
@@ -38,5 +40,18 @@ describe("where a problem sends you", () => {
     const list = [problem(startFolderKey("other"), "other")];
     expect(startFolderProblemOf(list, "dev")).toBeUndefined();
     expect(startFolderProblemOf(list, "other")).toBe(list[0]);
+  });
+
+  it("finds the editor install problem of one workspace and no other", () => {
+    const list = [
+      problem(editorInstallKey("other"), "other"),
+      problem(editorInstallKey("dev"), "dev"),
+    ];
+    expect(editorInstallProblemOf(list, "dev")).toBe(list[1]);
+    expect(editorInstallProblemOf(list, "none")).toBeUndefined();
+    expect(problemLink(list[1]!)).toEqual({
+      href: "/workspaces/dev",
+      label: "Open workspace",
+    });
   });
 });

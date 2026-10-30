@@ -302,6 +302,53 @@ async fn entrypoint_and_stub_dns_reports_reach_the_handler_cleaned_and_unknown_k
 }
 
 #[tokio::test]
+async fn an_editor_status_reaches_the_handler_cleaned_and_a_blank_one_means_installed() {
+    let told = Arc::new(Told::default());
+    let mut h = start_handler(
+        Arc::new(Listening(Arc::clone(&told))),
+        HostConfig::default(),
+    );
+    let mut c = h.control_stream().await;
+    send(
+        &mut c,
+        &AgentMessage::editor_status(Some("the download did not match\u{1b}[2J")),
+    )
+    .await;
+    // A line from a hostile guest, longer than the agent would send.
+    let long = format!(
+        "{{\"type\":\"editor_status\",\"problem\":\"{}\"}}\n",
+        "x".repeat(900)
+    );
+    c.write_all(long.as_bytes()).await.unwrap();
+    send(&mut c, &AgentMessage::editor_status(Some(""))).await;
+    send(&mut c, &AgentMessage::editor_status(None)).await;
+    for _ in 0..100 {
+        if told.reports.lock().unwrap().len() == 4 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let reports = told.reports.lock().unwrap().clone();
+    assert_eq!(reports.len(), 4, "{reports:?}");
+    assert_eq!(
+        reports[0],
+        AgentReport::EditorStatus {
+            problem: Some("the download did not match?[2J".into())
+        }
+    );
+    let AgentReport::EditorStatus {
+        problem: Some(text),
+    } = &reports[1]
+    else {
+        panic!("{reports:?}");
+    };
+    assert_eq!(text.chars().count(), MAX_EDITOR_PROBLEM_CHARS);
+    assert_eq!(reports[2], AgentReport::EditorStatus { problem: None });
+    assert_eq!(reports[3], AgentReport::EditorStatus { problem: None });
+    h.close().await.unwrap();
+}
+
+#[tokio::test]
 async fn a_handler_that_takes_no_reports_still_gets_the_events_after_them() {
     let mut h = start();
     let mut c = h.control_stream().await;

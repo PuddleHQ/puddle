@@ -74,10 +74,9 @@ impl<R: Runtime> Launcher for AppLauncher<R> {
         target: &'a BrowserTarget,
     ) -> BoxFuture<'a, Result<(), LaunchError>> {
         Box::pin(async move {
-            let windows = self
-                .windows
-                .get()
-                .ok_or_else(|| LaunchError::new("the editor window is not ready yet"))?;
+            let windows = self.windows.get().ok_or_else(|| {
+                LaunchError::new("the editor window is not ready yet; try again in a moment")
+            })?;
             let origin = Url::parse(&target.origin)
                 .map_err(|e| LaunchError::new(format!("the editor's address is not a URL: {e}")))?;
             let cookie = match &target.login {
@@ -86,7 +85,11 @@ impl<R: Runtime> Launcher for AppLauncher<R> {
                     let session = windows
                         .session(target.front, &workspace.name, &password)
                         .await
-                        .map_err(|e| LaunchError::new(e.to_string()))?;
+                        .map_err(|e| {
+                            LaunchError::new(format!(
+                                "{e}; open it again, or restart the workspace"
+                            ))
+                        })?;
                     Some(session)
                 }
                 None => None,
@@ -309,7 +312,10 @@ mod tests {
             .open_browser(&record("demo"), &target(addr, None))
             .await
             .unwrap_err();
-        assert_eq!(err.to_string(), "the editor window is not ready yet");
+        assert_eq!(
+            err.to_string(),
+            "the editor window is not ready yet; try again in a moment"
+        );
         assert!(app.webview_windows().is_empty());
     }
 }

@@ -2523,12 +2523,19 @@ async fn a_browser_attach_gives_the_window_the_front_the_settings_and_a_way_to_t
 #[tokio::test(flavor = "multi_thread")]
 async fn a_browser_attach_with_unreadable_settings_still_opens_with_the_defaults() {
     let rig = Rig::new();
+    // A global file that is not JSON at all: the read fails, not just an unknown field. The
+    // workspace names its memory, so the damaged file does not refuse the create.
+    damage_global_settings(&rig);
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
-    create(&api, &mut events, "acme").await;
+    let body = json!({"name": "acme", "repositories": [{"url": REPO}], "memory_mib": 4096});
+    assert_eq!(
+        api.post("/api/workspaces", &body.to_string()).await.status,
+        202
+    );
+    events.until(ended("acme"), Duration::from_secs(20)).await;
     let _editor = editor_stand_in(&rig, "acme").await;
-    write_global_settings(&rig, &json!({"zoom_hotkeys": "not a setting"}));
     let target = browser_target(&rig, &api, "acme").await;
     assert!(target.settings.zoom_hotkeys.value, "the default is zoom on");
     host.shutdown().await;

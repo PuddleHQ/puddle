@@ -1248,6 +1248,40 @@ fn fingerprint(check: &DeleteCheck) -> String {
 mod tests {
     use super::*;
 
+    struct SecretLogin(String);
+
+    impl EditorLogin for SecretLogin {
+        fn password(&self) -> BoxFuture<'_, Result<String, LaunchError>> {
+            Box::pin(async move { Ok(self.0.clone()) })
+        }
+    }
+
+    #[test]
+    fn a_browser_target_shows_where_the_editor_is_and_never_the_way_to_its_password() {
+        let secret = "debug-form-secret-value".to_owned();
+        let target = BrowserTarget {
+            origin: "http://demo.localhost:4100".into(),
+            front: "127.0.0.1:4100".parse().unwrap(),
+            settings: puddle_settings::resolve(
+                &puddle_settings::GlobalSettings::default(),
+                None::<&puddle_settings::WorkspaceSettings>,
+            ),
+            login: Some(Arc::new(SecretLogin(secret.clone()))),
+        };
+        let login = target.login.as_ref().unwrap();
+        assert_eq!(
+            futures_util::FutureExt::now_or_never(login.password())
+                .unwrap()
+                .unwrap(),
+            secret
+        );
+        let shown = format!("{target:?}");
+        assert!(shown.contains("http://demo.localhost:4100"), "{shown}");
+        assert!(shown.contains("127.0.0.1:4100"), "{shown}");
+        assert!(!shown.contains(&secret), "{shown}");
+        assert!(!shown.contains("SecretLogin"), "{shown}");
+    }
+
     #[test]
     fn https_urls_pass() {
         for ok in [

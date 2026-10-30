@@ -126,6 +126,7 @@ mod tests {
     use hyper::service::service_fn;
     use hyper_util::rt::TokioIo;
     use puddle_api::EditorLogin;
+    use puddle_types::fixture::password;
     use puddle_types::{WorkspaceId, WorkspaceName};
     use tauri::Manager;
     use tokio::net::TcpListener;
@@ -134,16 +135,20 @@ mod tests {
     use crate::sandbox_window::Hooks;
 
     /// A front that signs in anyone with `password` and counts the logins it answered.
-    async fn front(password: &'static str) -> (SocketAddr, Arc<Mutex<Vec<String>>>) {
+    async fn front(password: &str) -> (SocketAddr, Arc<Mutex<Vec<String>>>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let logins = Arc::new(Mutex::new(Vec::new()));
         let seen = logins.clone();
+        let password = password.to_owned();
         tokio::spawn(async move {
-            while let Ok((stream, _)) = listener.accept().await {
+            loop {
+                let (stream, _) = listener.accept().await.unwrap();
                 let seen = seen.clone();
+                let password = password.clone();
                 let service = service_fn(move |request: Request<hyper::body::Incoming>| {
                     let seen = seen.clone();
+                    let password = password.clone();
                     async move {
                         let body = request.into_body().collect().await.unwrap().to_bytes();
                         let body = String::from_utf8(body.to_vec()).unwrap();
@@ -168,11 +173,11 @@ mod tests {
         (addr, logins)
     }
 
-    struct Password(&'static str);
+    struct Password(String);
 
     impl EditorLogin for Password {
         fn password(&self) -> BoxFuture<'_, Result<String, LaunchError>> {
-            Box::pin(async move { Ok(self.0.to_owned()) })
+            Box::pin(async move { Ok(self.0.clone()) })
         }
     }
 
@@ -210,8 +215,9 @@ mod tests {
         let data = tempfile::tempdir().unwrap();
         let launcher = AppLauncher::new(app.handle().clone(), data.path().join("webview"));
         launcher.install(windows());
-        let (addr, logins) = front("s3cret").await;
-        let target = target(addr, Some(Arc::new(Password("s3cret"))));
+        let secret = password("right");
+        let (addr, logins) = front(&secret).await;
+        let target = target(addr, Some(Arc::new(Password(secret.clone()))));
 
         launcher
             .open_browser(&record("demo"), &target)
@@ -225,8 +231,8 @@ mod tests {
         );
         assert!(data.path().join("webview").join("demo").is_dir());
         // The password reached the front once, in the login's body, and the address has none of it.
-        assert_eq!(*logins.lock().unwrap(), ["password=s3cret"]);
-        assert!(!window.url().unwrap().as_str().contains("s3cret"));
+        assert_eq!(*logins.lock().unwrap(), [format!("password={secret}")]);
+        assert!(!window.url().unwrap().as_str().contains(&secret));
 
         // Again: the same window comes to the front, and the editor is not asked to sign in twice.
         launcher
@@ -243,7 +249,7 @@ mod tests {
         let data = tempfile::tempdir().unwrap();
         let launcher = AppLauncher::new(app.handle().clone(), data.path().join("webview"));
         launcher.install(windows());
-        let (addr, logins) = front("unused").await;
+        let (addr, logins) = front(&password("unused")).await;
         launcher
             .open_browser(&record("demo"), &target(addr, None))
             .await
@@ -258,11 +264,11 @@ mod tests {
         let data = tempfile::tempdir().unwrap();
         let launcher = AppLauncher::new(app.handle().clone(), data.path().join("webview"));
         launcher.install(windows());
-        let (addr, _) = front("right").await;
+        let (addr, _) = front(&password("right")).await;
         let err = launcher
             .open_browser(
                 &record("demo"),
-                &target(addr, Some(Arc::new(Password("wrong")))),
+                &target(addr, Some(Arc::new(Password(password("wrong"))))),
             )
             .await
             .unwrap_err();
@@ -279,7 +285,7 @@ mod tests {
         std::fs::write(&blocked, b"not a folder").unwrap();
         let launcher = AppLauncher::new(app.handle().clone(), blocked);
         launcher.install(windows());
-        let (addr, _) = front("x").await;
+        let (addr, _) = front(&password("x")).await;
         let mut bad = target(addr, None);
         bad.origin = "not a url".into();
         let err = launcher
@@ -307,7 +313,7 @@ mod tests {
     async fn before_the_windows_are_installed_nothing_opens_and_the_user_is_told() {
         let app = tauri::test::mock_app();
         let launcher = AppLauncher::new(app.handle().clone(), "unused".into());
-        let (addr, _) = front("x").await;
+        let (addr, _) = front(&password("x")).await;
         let err = launcher
             .open_browser(&record("demo"), &target(addr, None))
             .await
@@ -317,5 +323,31 @@ mod tests {
             "the editor window is not ready yet; try again in a moment"
         );
         assert!(app.webview_windows().is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_desktop_editor_goes_through_the_code_command_and_opens_no_window() {
+        let app = tauri::test::mock_app();
+        let mut launcher = AppLauncher::new(app.handle().clone(), "unused".into());
+        launcher.desktop = VsCodeLauncher::with_program("puddle-test-no-such-code-command");
+        launcher.install(windows());
+        let target = DesktopTarget {
+            ssh_host: "puddle-demo".into(),
+            path: "/workspace".into(),
+            is_workspace_file: false,
+        };
+        let err = launcher
+            .open_desktop(&record("demo"), &target)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("was not found"), "{err}");
+        assert!(app.webview_windows().is_empty());
+    }
+
+    #[test]
+    fn the_debug_form_names_the_launcher_and_nothing_inside_it() {
+        let app = tauri::test::mock_app();
+        let launcher = AppLauncher::new(app.handle().clone(), "unused".into());
+        assert_eq!(format!("{launcher:?}"), "AppLauncher { .. }");
     }
 }

@@ -463,6 +463,15 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_last_window_closing_is_not_a_problem_for_the_user() {
+        let app = tauri::test::mock_app();
+        let problems = Arc::new(Problems::new(Arc::new(puddle_api::EventHub::default())));
+        let hooks = sandbox_hooks(app.handle(), &problems);
+        (hooks.last_closed)(&WorkspaceName::new("demo").unwrap());
+        assert!(problems.list().is_empty());
+    }
+
+    #[test]
     fn the_probe_window_opens_on_its_page_in_a_data_folder_of_its_own() {
         let app = tauri::test::mock_app();
         let data = tempfile::tempdir().unwrap();

@@ -152,7 +152,7 @@ mod tests {
             "the test's own server can answer there"
         );
         assert!(!accepts(addr), "and be dropped again");
-        let other = ReservedPort::new();
+        let other = ReservedPort::default();
         assert_ne!(other.port(), reserved.port());
     }
 

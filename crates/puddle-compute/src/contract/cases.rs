@@ -74,7 +74,7 @@ cases! {
     second_attach_is_refused_naming_the_holder => "observed on msb 0.7.6 (second attach refused, leaving a Stopped record); holder named by Puddle (ADR 0006 point 8)",
     failed_create_leaves_a_stale_dir_unless_fixed => "observed on msb 0.7.6 (a wrong-size volume error leaves a stale directory)",
     missing_volume_fails_create => "assumed",
-    ssh_server_speaks_first => "observed on msb 0.7.6 (SSH banner); full SSH exec is covered by the VM tests",
+    ssh_server_speaks_first => "observed on msb 0.7.6 (SSH banner); four first connections at once on msb 0.7.8; full SSH exec is covered by the VM tests",
     routes_and_no_network_are_accepted => "observed on msb 0.7.6 (network spec accepted); guest network behaviour is covered by the VM tests",
     memory_change_applies_at_next_start => "the memory setting: modify().memory().next_start() on msb, checked by the VM tests",
     cpus_change_applies_at_next_start => "the cpus setting: modify().cpus().next_start() on msb, checked by the VM tests",
@@ -825,8 +825,8 @@ async fn missing_volume_fails_create<R: Runtime>(c: &Case<'_, R>) -> Outcome {
     Ok(())
 }
 
-async fn ssh_server_speaks_first<R: Runtime>(c: &Case<'_, R>) -> Outcome {
-    let sb = step("create", c.runtime().create(spec(c, &c.sandbox("a")?))).await?;
+/// Serves one SSH connection on an in-memory stream and returns the first line the server sends.
+async fn ssh_banner<S: Sandbox>(sb: &S) -> Vec<u8> {
     let (mut client, server) = tokio::io::duplex(64 * 1024);
     let read_banner = async move {
         let mut line = Vec::new();
@@ -840,15 +840,31 @@ async fn ssh_server_speaks_first<R: Runtime>(c: &Case<'_, R>) -> Outcome {
         drop(client);
         line
     };
-    let both = async { tokio::join!(sb.serve_ssh(server), read_banner) };
-    let Ok((_served, line)) = tokio::time::timeout(Duration::from_secs(30), both).await else {
+    tokio::join!(sb.serve_ssh(server), read_banner).1
+}
+
+async fn ssh_server_speaks_first<R: Runtime>(c: &Case<'_, R>) -> Outcome {
+    let sb = step("create", c.runtime().create(spec(c, &c.sandbox("a")?))).await?;
+    // The first connections to a fresh sandbox arrive together (an editor opens several at
+    // once): each one is served, none fails while another sets the server up.
+    let all = async {
+        tokio::join!(
+            ssh_banner(&sb),
+            ssh_banner(&sb),
+            ssh_banner(&sb),
+            ssh_banner(&sb)
+        )
+    };
+    let Ok((a, b, c2, d)) = tokio::time::timeout(Duration::from_secs(30), all).await else {
         return Err("SSH server didn't answer and finish within 30 s".into());
     };
-    check!(
-        line.starts_with(b"SSH-2.0-"),
-        "first line {:?}",
-        String::from_utf8_lossy(&line)
-    );
+    for (i, line) in [a, b, c2, d].iter().enumerate() {
+        check!(
+            line.starts_with(b"SSH-2.0-"),
+            "connection {i}: first line {:?}",
+            String::from_utf8_lossy(line)
+        );
+    }
     step("stop", sb.stop()).await?;
     let (_client, server) = tokio::io::duplex(1024);
     let err = fails("serve SSH for a stopped sandbox", sb.serve_ssh(server)).await?;

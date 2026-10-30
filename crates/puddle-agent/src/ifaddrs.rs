@@ -65,16 +65,19 @@ mod tests {
         // SAFETY: `cursor` is null or a node of the live list.
         while let Some(e) = unsafe { cursor.as_ref() } {
             cursor = e.ifa_next;
-            // SAFETY: the family field is only read when `ifa_addr` is non-null, so it is readable.
-            let is_ipv4 = !e.ifa_addr.is_null()
-                && libc::c_int::from(unsafe { (*e.ifa_addr).sa_family }) == libc::AF_INET;
-            if !is_ipv4 {
+            // SAFETY: a non-null `ifa_addr` points at a socket address of the live list.
+            let Some(sa) = (unsafe { e.ifa_addr.as_ref() }) else {
+                continue;
+            };
+            if libc::c_int::from(sa.sa_family) != libc::AF_INET {
                 continue;
             }
             // SAFETY: AF_INET addresses are `sockaddr_in`; `ifa_name` is NUL-terminated.
             let (raw, name) = unsafe {
                 (
-                    (*e.ifa_addr.cast::<libc::sockaddr_in>()).sin_addr.s_addr,
+                    (*std::ptr::from_ref(sa).cast::<libc::sockaddr_in>())
+                        .sin_addr
+                        .s_addr,
                     CStr::from_ptr(e.ifa_name),
                 )
             };

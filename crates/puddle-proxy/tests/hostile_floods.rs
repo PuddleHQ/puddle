@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use futures_util::StreamExt;
 use futures_util::stream;
 use hostile_heap::Counting;
-use hostile_support::{Guest, Guests, assert_unharmed, bystander_round, guest_route, rig_with};
+use hostile_support::{Guest, Guests, bystander_round, guest_route, rig_with};
 use puddle_proxy::ProxyConfig;
 use tokio::io::AsyncWriteExt;
 
@@ -29,6 +29,15 @@ const TEST: &str =
 const FLOODING: &str = "guests: flooding";
 /// What the child prints once every flooding stream has its answer.
 const FLOODED: &str = "guests: flooded";
+/// How long the guests may go without printing before the test calls them stalled. They print a
+/// line every `PROGRESS_EVERY` answered streams, so a starved machine that is slow but moving never
+/// trips it: the flood needs about 7 s of CPU time, however long the clock says it took.
+const STALL: Duration = Duration::from_secs(30);
+/// The child prints its running count of answered streams this often.
+const PROGRESS_EVERY: usize = 5_000;
+/// How much slower the bystander's connections may get while the flood runs, over the same
+/// connections without it (measured idle: about 7 times, as the flood shares the proxy's threads).
+const BYSTANDER_SLOWDOWN: u32 = 20;
 const CAP: usize = 1000;
 const FLOOD: usize = 100_000;
 /// Streams in flight at once. With all 100 000 at once about a tenth got no answer within 10 s
@@ -50,9 +59,10 @@ async fn hostile_hg11_a_hundred_thousand_streams_over_the_cap_are_each_refused_a
         .with_max_streams_per_workspace(CAP)
         .with_head_timeout(Duration::from_secs(120));
     let rig = rig_with(&config).await;
-    let quiet = bystander_round(&rig.bystander, rig.echo).await;
+    // The same 64 connections with no flood: what they cost on this machine at this load.
+    let calm = bystander_round(&rig.bystander, rig.echo).await;
     let mut guests = Guests::start(TEST, &rig.attacked);
-    guests.until(FLOODING).await;
+    guests.until(FLOODING, STALL).await;
     let before = HEAP.restart_peak();
     let started = Instant::now();
     let bystander = async {
@@ -60,7 +70,7 @@ async fn hostile_hg11_a_hundred_thousand_streams_over_the_cap_are_each_refused_a
         tokio::time::sleep(Duration::from_millis(500)).await;
         bystander_round(&rig.bystander, rig.echo).await
     };
-    let ((), bystander_took) = tokio::join!(guests.until(FLOODED), bystander);
+    let ((), bystander_took) = tokio::join!(guests.until(FLOODED, STALL), bystander);
     let elapsed = started.elapsed();
     let rose = HEAP.rose_above(before);
     let (ok, said) = guests.finish(Duration::from_secs(60)).await;
@@ -69,12 +79,18 @@ async fn hostile_hg11_a_hundred_thousand_streams_over_the_cap_are_each_refused_a
         rose < HEAP_BAR,
         "the proxy's heap rose by {rose} bytes (bar {HEAP_BAR}); the guests said: {said}"
     );
-    assert_unharmed(
-        bystander_took,
-        quiet,
-        &format!("during the flood ({elapsed:?})"),
+    // The bar follows the machine: a starved CPU slows these connections as it slows everything, so the
+    // fixed 5 s is only the floor. What a proxy that makes them wait for the flood would show is
+    // a time near the flood's own, so they also have to finish in half of it.
+    let bar = (calm * BYSTANDER_SLOWDOWN).max(Duration::from_secs(5));
+    assert!(
+        bystander_took < bar && bystander_took * 2 < elapsed,
+        "the other workspace's 64 connections took {bystander_took:?} during the flood ({elapsed:?}); \
+         without the flood they took {calm:?}, so the bar is {bar:?} and half the flood"
     );
-    eprintln!("the proxy's heap rose by {rose} bytes in {elapsed:?}; the guests said: {said}");
+    eprintln!(
+        "the proxy's heap rose by {rose} bytes in {elapsed:?}; the bystander took {bystander_took:?}; the guests said: {said}"
+    );
     // The held streams were never answered (their heads are unfinished) and held the cap until the
     // child ended; now the workspace connects again.
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -127,6 +143,10 @@ async fn guests(path: &Path) {
             Some(true) => refused += 1,
             Some(false) => other += 1,
             None => unanswered += 1,
+        }
+        let answered = refused + other + unanswered;
+        if answered.is_multiple_of(PROGRESS_EVERY) {
+            println!("guests: {answered} answered so far");
         }
     }
     assert_eq!(

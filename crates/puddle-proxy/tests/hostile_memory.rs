@@ -43,7 +43,7 @@ async fn hostile_hg10_the_heap_does_not_follow_what_a_guest_sends() {
     let before = HEAP.restart_peak();
     let quiet = bystander_round(&rig.bystander, rig.echo).await;
     let mut guests = Guests::start(TEST, &rig.attacked);
-    guests.until(SENDING).await;
+    guests.until(SENDING, Duration::from_secs(30)).await;
     let timed = bystander_round(&rig.bystander, rig.echo).await;
     assert_unharmed(timed, quiet, "while the guests send");
     let (ok, said) = guests.finish(Duration::from_secs(60)).await;

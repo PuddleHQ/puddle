@@ -211,6 +211,47 @@ jobs:
         with:
           name: vm-linux-build
           path: ${{ runner.temp }}/bundle
+      # The browser client (node and Chromium, crates/puddle-vm-tests/src/browser.rs) is installed only on a
+      # partition that runs a `vm_browser_*` test: nextest hashes each test to a partition by its name alone, so
+      # listing the partition's share tells. Chromium is the build the UI jobs use (ui/package-lock.json pins
+      # Playwright), restored from their cache entry and never saved here.
+      - name: does this partition run a browser test?
+        id: browser
+        if: steps.kvm.outputs.ok == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/vmx"
+          listed=$(cargo-nextest nextest list --profile vm \
+            --archive-file "$RUNNER_TEMP/bundle/vm-tests.tar.zst" \
+            --extract-to "$RUNNER_TEMP/vmx" --extract-overwrite --workspace-remap . \
+            --partition hash:${{ matrix.partition }}/4 \
+            -E 'test(/(^|::)vm_browser_/)' --message-format oneline)
+          echo "$listed"
+          if [ -n "$listed" ]; then echo "needed=true" >> "$GITHUB_OUTPUT"; else echo "needed=false" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.browser.outputs.needed == 'true'
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Playwright browsers cache (the UI jobs' entry)
+        id: browsers
+        if: steps.browser.outputs.needed == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
+      - name: browser client (Playwright driver and Chromium)
+        if: steps.browser.outputs.needed == 'true'
+        timeout-minutes: 10
+        run: |
+          ci/apt-setup.sh
+          cd ui
+          npm ci --ignore-scripts --no-audit --no-fund
+          ../ci/apt-retry.sh npx playwright install-deps chromium
+          if [ "${{ steps.browsers.outputs.cache-hit }}" != true ]; then
+            npx playwright install chromium
+          fi
+          echo "PUDDLE_VM_BROWSER_MODULES=$PWD/node_modules" >> "$GITHUB_ENV"
       # Every test on one runner ran 4 to 6 times slower than usual once (a slow host, not a hang): the
       # figures show a slow runner at the top of the log, before the tests it slows down.
       - name: runner speed (evidence, never a gate)

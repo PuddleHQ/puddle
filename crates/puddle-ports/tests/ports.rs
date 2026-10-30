@@ -895,6 +895,7 @@ async fn a_link_asked_for_before_the_agents_hello_arrives_with_the_hello_and_not
             .await
             .map(|_| ())
     });
+    // An absence window: nothing signals that the wait has not ended on its own.
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(!asked.is_finished(), "nothing said hello yet");
     rig.start_agent().await;
@@ -932,6 +933,7 @@ async fn a_link_asked_for_of_a_workspace_that_stops_meanwhile_is_not_running() {
             .await
             .err()
     });
+    // An absence window: nothing signals that the wait has not ended on its own.
     tokio::time::sleep(Duration::from_millis(100)).await;
     rig.ports.stopped(&rig.workspace).await;
     assert_eq!(asked.await.unwrap(), Some(NoLink::NotRunning));

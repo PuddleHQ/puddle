@@ -2532,6 +2532,7 @@ async fn a_window_that_signs_in_before_the_agents_hello_waits_for_it_and_gets_th
     let target = browser_target(&rig, &api, "acme").await;
     let login = target.login.expect("code-server asks for a password");
     let asked = tokio::spawn(async move { login.password().await });
+    // An absence window: nothing is there to signal that the sign-in has not given up.
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(!asked.is_finished(), "the sign-in waits, it does not fail");
     // The hello arrives late.

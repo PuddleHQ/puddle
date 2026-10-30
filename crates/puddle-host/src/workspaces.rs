@@ -417,18 +417,18 @@ fn no_link_message(workspace: &WorkspaceName, why: NoLink) -> String {
 impl EditorLogin for GuestLogin {
     fn password(&self) -> BoxFuture<'_, Result<String, LaunchError>> {
         Box::pin(async move {
-            let target = if let Some(target) = self.guests.target(&self.workspace) {
-                target
-            } else {
-                self.ports
-                    .guest_link_within(&self.workspace, AGENT_HELLO_WAIT)
-                    .await
-                    .map_err(|why| LaunchError::new(no_link_message(&self.workspace, why)))?;
-                self.guests.target(&self.workspace).ok_or_else(|| {
-                    LaunchError::new(no_link_message(&self.workspace, NoLink::NotRunning))
-                })?
-            };
-            target.editor.password().await.map_err(|err| {
+            let editor: Arc<dyn puddle_front::Editor> =
+                if let Some(target) = self.guests.target(&self.workspace) {
+                    target.editor
+                } else {
+                    let link = self
+                        .ports
+                        .guest_link_within(&self.workspace, AGENT_HELLO_WAIT)
+                        .await
+                        .map_err(|why| LaunchError::new(no_link_message(&self.workspace, why)))?;
+                    Arc::new(link)
+                };
+            editor.password().await.map_err(|err| {
                 LaunchError::new(format!(
                     "the editor has no password to sign in with yet: {err}"
                 ))

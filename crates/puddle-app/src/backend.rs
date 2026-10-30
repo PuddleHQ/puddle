@@ -366,7 +366,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn the_fixture_runs_no_workspaces_so_it_has_no_extension_hosts_to_end() {
         let backend = start_fixture(0).await;
-        let demo = puddle_types::WorkspaceName::new("demo").unwrap();
+        let demo = WorkspaceName::new("demo").unwrap();
         let reason = (backend.extension_hosts())(demo).await.unwrap_err();
         assert_eq!(reason, "this backend runs no workspaces");
         backend.shutdown().await;

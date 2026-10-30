@@ -284,7 +284,7 @@ impl fmt::Display for RepoUrl {
     }
 }
 
-/// One repository Puddle manages for a workspace (storage ST-40): the address it is cloned from
+/// One repository Puddle manages for a workspace: the address it is cloned from
 /// and the checkout directly under the volume root it is cloned into. Its identity and its Pull
 /// and Push toggles are not part of it: they are the workspace's Git settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -296,7 +296,7 @@ pub struct Repository {
 }
 
 impl Repository {
-    /// The entry for `url` in the directory `git clone` would pick (storage ST-9).
+    /// The entry for `url` in the directory `git clone` would pick.
     #[must_use]
     pub fn at_default_directory(url: RepoUrl) -> Self {
         let directory = CheckoutDir::from_url(url.as_str());
@@ -312,7 +312,7 @@ pub const MAX_REPOSITORIES: usize = 100;
 pub struct NewRepository {
     /// The entry on the workspace's list.
     pub repository: Repository,
-    /// The identity the user picked for it; `None` lets Puddle choose (storage ST-44).
+    /// The identity the user picked for it; `None` lets Puddle choose.
     pub identity: Option<IdentityId>,
     /// Pull on its new repository table row.
     pub pull: bool,
@@ -335,7 +335,7 @@ pub struct RepositoryDraft {
     pub push: Option<bool>,
 }
 
-/// Checks a create's repository list as a whole (storage ST-43), before anything exists. Each
+/// Checks a create's repository list as a whole, before anything exists. Each
 /// refusal names the entry by its place in the list and its address: an address the create
 /// checks refuse, a bad directory, two entries with one directory (with a free name to use
 /// instead), the same repository twice in the repository table's spelling, an identity
@@ -487,7 +487,7 @@ impl StartFolderChange {
     }
 }
 
-/// A start folder (storage ST-54): a relative path under the volume root, `/` between its
+/// A start folder: a relative path under the volume root, `/` between its
 /// parts, no part empty, `.` or `..`, no control character or `\`, not inside `.puddle` or
 /// `lost+found`, at most [`StartFolder::MAX_BYTES`] bytes.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -590,7 +590,7 @@ impl NewWorkspace {
     }
 }
 
-/// Sets up the Git settings of a new workspace's repositories (storage ST-44). A service calls
+/// Sets up the Git settings of a new workspace's repositories. A service calls
 /// it once a create is accepted (the name is reserved and the workspace list saved) and before
 /// the first clone, so every clone carries its credential. It reports nothing back to the
 /// service: a repository it could not set up is cloned without, and the caller tells the user.
@@ -960,7 +960,7 @@ pub trait WorkspaceService: Send + Sync {
     }
 
     /// The checkouts under the workspace's volume root, each with the list entry that has its
-    /// directory (storage ST-47 to ST-49). A running workspace lists them now (calls at the same
+    /// directory. A running workspace lists them now (calls at the same
     /// moment share one listing); a stopped one answers the last listing this run made, or says
     /// to start it. A listing that cannot be made or read is a [`Checkouts::problem`], not an
     /// error.
@@ -971,7 +971,7 @@ pub trait WorkspaceService: Send + Sync {
         unavailable()
     }
 
-    /// Adds a repository to a running workspace's list (storage ST-50, ST-51). A clone is
+    /// Adds a repository to a running workspace's list. A clone is
     /// accepted like any operation: the record returned is busy `cloning`. Managing a checkout
     /// that is already on the volume answers at once with the changed record. `git` sets up the
     /// repository's identity and table row once the request is accepted and before any clone.
@@ -987,7 +987,7 @@ pub trait WorkspaceService: Send + Sync {
         unavailable()
     }
 
-    /// Clones a list entry whose directory is not on the volume again (storage ST-52). Accepted
+    /// Clones a list entry whose directory is not on the volume again. Accepted
     /// like [`WorkspaceService::add_repository`] with a clone.
     fn clone_again<'a>(
         &'a self,
@@ -998,7 +998,7 @@ pub trait WorkspaceService: Send + Sync {
         unavailable()
     }
 
-    /// Takes an entry off the list and nothing else (storage ST-53): the checkout, the
+    /// Takes an entry off the list and nothing else: the checkout, the
     /// repository table row and the identities stay. [`WorkspaceError::NotFound`] for an unknown
     /// entry; [`WorkspaceError::Conflict`] while the workspace is being created or deleted.
     fn remove_repository<'a>(

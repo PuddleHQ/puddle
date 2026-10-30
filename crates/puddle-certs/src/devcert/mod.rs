@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The localhost development certificate (HS-23..HS-25).
+//! The localhost development certificate.
 //!
 //! A server a developer runs in a workspace over HTTPS reaches the host's browser as raw TCP on
 //! a forwarded port, so the browser accepts the server's certificate only if the host trusts it.

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Nightly fuzzing of what a guest's first bytes reach (fuzz/, HG-10 in docs/arch/threat-model.md):
+# Nightly fuzzing of what a guest's first bytes reach (fuzz/):
 # ten minutes per target on a nightly toolchain, by hand with a different length. It is not a
 # required check and gates nothing; a crash fails the run and uploads the input as an artifact, which
 # is committed under fuzz/corpus/<target>/ as a regression (fuzz/README.md). The checked-in corpus

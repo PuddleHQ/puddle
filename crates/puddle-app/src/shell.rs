@@ -259,7 +259,7 @@ fn sandbox_hooks<R: Runtime>(
 }
 
 /// The hook for a workspace's last window closing: the guest ends the editor's extension hosts and
-/// what they started (AT-37), so a closed window leaves no extension host behind. The window system
+/// what they started, so a closed window leaves no extension host behind. The window system
 /// calls it, so the guest is asked from the async runtime; a workspace that is stopping already
 /// has nothing to end.
 fn ends_extension_hosts(ends: EndExtensionHosts) -> Arc<dyn Fn(&WorkspaceName) + Send + Sync> {

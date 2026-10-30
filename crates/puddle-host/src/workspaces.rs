@@ -1224,7 +1224,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         );
     }
 
-    /// Looks in the guest for the start folder (storage ST-55). A missing one never fails anything:
+    /// Looks in the guest for the start folder. A missing one never fails anything:
     /// terminals and the editor open the volume root, and a problem on the workspace names the
     /// folder and the ways out until it exists or the setting changes. `None` for the volume
     /// root, or when the guest could not be asked (the problem stays as it was).
@@ -1935,7 +1935,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// Asks the launcher to open `record`'s editor in a window of its own. A launcher with no
     /// window (the default, so `puddle serve`) says the editor opens from the desktop app: the
-    /// password is held back from anything but a shell (AT-34).
+    /// password is held back from anything but a shell.
     async fn attach_browser(&self, record: &WorkspaceRecord) -> Attached {
         let name = &record.name;
         let target = BrowserTarget {

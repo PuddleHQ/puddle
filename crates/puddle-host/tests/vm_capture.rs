@@ -244,7 +244,7 @@ async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses
         open_rows(&vm, &workspace)
     );
 
-    // HG-01 rerun: a direct address nothing allows is a deny row, never a way around the proxy.
+    // Rerun of the network case: a direct address nothing allows is a deny row, never a way around the proxy.
     // Approve it, and the retry works with no restart.
     let direct = |label: &str| {
         run(format!(
@@ -341,7 +341,7 @@ async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses
     assert!(down.sandboxes.all_stopped(), "{down:?}");
 }
 
-/// EG-4: capture is not enforcement, so a root process that deletes the rules gets nothing new
+/// Capture is not enforcement, so a root process that deletes the rules gets nothing new
 /// through (the VM has no route of its own), and the agent puts the rules back.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_capture_survives_a_root_that_deletes_the_rules() {

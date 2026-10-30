@@ -589,6 +589,9 @@ fn forward_target(editor: &Target, address: &Url) -> Target {
             },
             ..editor.settings
         },
+        // Its own data folder means its own WebView2 browser process, which cannot open the
+        // DevTools port the editor's process already holds.
+        debug_port: editor.debug_port.and_then(|port| port.checked_add(1)),
         ..editor.clone()
     }
 }
@@ -859,6 +862,16 @@ mod tests {
         assert_ne!(forwarded.data_folder, editor.data_folder);
         assert_eq!(forwarded.data_folder.file_name().unwrap(), "demo.forward");
         assert_eq!(forwarded.data_folder.parent(), editor.data_folder.parent());
+        assert_eq!(forwarded.debug_port, None);
+        let probed = Target {
+            debug_port: Some(9334),
+            ..editor.clone()
+        };
+        assert_eq!(
+            forward_target(&probed, &address).debug_port,
+            Some(9335),
+            "the app's browser process gets a DevTools port of its own"
+        );
     }
 
     #[test]

@@ -69,9 +69,10 @@ async function targets() {
   return list.filter((t) => t.type === "page" && t.url.startsWith(origin));
 }
 
-// The windows on a forwarded port's origin (`<port>.probe.localhost`), which `targets` leaves out.
+// The windows on a forwarded port's origin (`<port>.probe.localhost`). They have a data folder of
+// their own, so a WebView2 browser process of their own, which the shell gives the next DevTools port.
 async function forwardTargets(port) {
-  const list = await (await fetch(`http://127.0.0.1:${cdpPort}/json/list`)).json();
+  const list = await (await fetch(`http://127.0.0.1:${cdpPort + 1}/json/list`)).json();
   return list.filter((t) => t.type === "page" && t.url.startsWith(`http://${port}.probe.localhost:${sitePort}/`));
 }
 
@@ -168,7 +169,7 @@ try {
   await main.evaluate(`window.open("/proxy/5173/app"); true`, true);
   let forwarded = [];
   for (let i = 0; i < 50 && forwarded.length === 0; i++) {
-    forwarded = await forwardTargets(5173);
+    forwarded = await forwardTargets(5173).catch(() => []);
     if (forwarded.length === 0) await sleep(300);
   }
   check("a /proxy/<port>/ link opens a window on the port's own origin", forwarded.length === 1, JSON.stringify(forwarded.map((t) => t.url)));

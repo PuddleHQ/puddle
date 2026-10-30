@@ -1,0 +1,13 @@
+// Original code, kept as it was; ui/e2e/density.spec.ts at 692a2548: two awaited reads asserted once, straight after a change.
+await setDensity(page, "compact");
+await expect(page.locator("html")).toHaveAttribute(
+  "data-density",
+  "compact",
+);
+expect(await spaceFour(page)).toBeLessThan(roomy);
+expect(
+  await page.evaluate(
+    () => (window as unknown as { __kept?: boolean }).__kept,
+  ),
+).toBe(true);
+

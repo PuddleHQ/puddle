@@ -125,8 +125,8 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
 
 ## 3. Workflow for agents and humans
 
-`develop` is the working branch. It takes changes only through pull requests, merged by rebase so its history stays
-linear (no merge commits, no force-pushes, no direct pushes); `main` holds released versions only.
+`develop` is the working branch. It takes changes only through pull requests, merged by squash, so each pull request is one commit
+on a linear history (no merge commits, no force-pushes, no direct pushes); `main` holds released versions only.
 
 1. **Own worktree, own branch.** From the clone:
    `git worktree add ../wt/<task> -b task/<task> origin/develop`. Use your own target dir
@@ -141,19 +141,22 @@ linear (no merge commits, no force-pushes, no direct pushes); `main` holds relea
 4. **Test first where it pays** (risk tests first): write the test that pins the risky
    behaviour, see it fail, then make it pass.
 5. **Open a pull request** to `develop`: `scripts/check.sh pre-push` green → `git fetch origin` →
-   `git rebase origin/develop` → push your branch → open the pull request and turn on auto-merge with
-   rebase (`gh pr merge <n> --auto --rebase`). It needs four checks: `linux (all gates)`,
+   `git merge origin/develop` → push your branch → open the pull request and turn on auto-merge with
+   squash (`gh pr merge <n> --auto --squash`). It needs four checks: `linux (all gates)`,
    `windows-msvc (build, clippy, tests)`, `vm-linux (KVM, msb microVMs)` and `vm-windows (WHP, msb
-   microVMs)`. It need not be up to date with `develop`: GitHub rebases it when it merges, once the
-   checks pass. Rebasing your own branch and pushing it again (`--force-with-lease`) is fine; never
-   `--force` on `develop` or `main`.
+   microVMs)`. It need not be up to date with `develop`: the merge queue builds it on the tip of
+   `develop` and squashes it once the checks pass. The squash commit takes the pull request's title
+   and description, so write both as you would a commit message. Your branch's own history never
+   lands, so merge `develop` into it instead of rebasing, and never force-push `develop` or `main`.
+   If squash merging is ever off, rebase merging is the fallback: the same pull request, merged with
+   rebase (`--rebase`), where each commit then lands as it is.
 6. **A red pull request** is fixed on its branch by whoever opened it; a conflict with `develop` is a
-   rebase and a push. A red run on `develop` itself (two green pull requests that clash, a nightly) is
+   merge of `develop` into the branch and a push. A red run on `develop` itself (two green pull requests that clash, a nightly) is
    fixed before anything else lands on top of it.
 7. **Clean up:** remove the worktree and its target dir when the task is done.
 
 **Releases:** a pull request from `develop` to `main` (this also runs the Windows job), merged by
-the owner, then tagged `vX.Y.Z` on `main`.
+the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
 
 ## 4. Commits and pull requests
 
@@ -163,8 +166,8 @@ the owner, then tagged `vX.Y.Z` on `main`.
   `api`, `agent`, `types`, `cli`, `e2e`), or `ws` for workspace-wide changes.
 - The body says **why**; cite an ADR or spec section when one applies. Never refer to private planning
   notes: no task or decision IDs (the `commit-msg` hook rejects `T-NNN`/`D-NN`).
-- One logical change per commit; code and its tests in the same commit. Every commit on `develop`
-  builds and passes the gates (so `git bisect` works).
+- One logical change per pull request; code and its tests in the same pull request. Every commit on
+  `develop` is one squashed pull request that builds and passes the gates (so `git bisect` works).
 - Author: the project identity (`Tijs van Kampen <puddle@tijsvankampen.be>`). Agent-written
   commits end with a `Co-Authored-By:` trailer naming the model.
 - No secrets, tokens, personal paths or client names in code, tests, fixtures, logs or messages.
@@ -206,6 +209,16 @@ the owner, then tagged `vX.Y.Z` on `main`.
   its truth, so review still reads the reason. `scripts/quality-gate.py --list` prints every site. A daily workflow
   (`quality.yml`, `ci/quality-issue.sh`) keeps one issue with the open code-scanning and Dependabot alerts and the sites
   missing a reason, and what changed since the day before.
+- **Test shapes that raced before** (the `flake-*` kinds of `scripts/quality-gate.py`, `scripts/quality-gate.py --flakes`
+  lists each rule with its count and the fix its error names): a hand-rolled wait helper (the row says whether it lacks a name or a bound), `file.lock()` in a
+  test, `try_recv()`, a port picked and released, a name built from the clock, a wall-clock bar, records matched by
+  position, and an awaited page read asserted once. A site is accepted with `flake-ok: <why>` on its line or within three
+  lines above (in the UI also `eslint-disable-next-line no-restricted-syntax -- <why>`). The kinds are counted, not
+  failing, until their existing sites are fixed or reasoned; a rule then moves into `FLAKE_FAILING` and an unreasoned
+  site fails the `quality` gate like the others. Two rules live in the linters: clippy's `disallowed-methods` names
+  `std::env::temp_dir` (workspace level `allow` until its sites move; `scripts/flake-lints-test.sh` runs it at `warn`),
+  and an ESLint selector flags `expect(await ...)` in `ui/e2e` as a warning. Each rule's self-test replays the original
+  code of a flake it would have caught (`scripts/flake-fixtures/`).
 - **Security-sensitive code** (proxy decisions, credential injection, address classification, API
   auth, pipe/socket permissions, anything parsing guest input): treat all guest input as hostile,
   fail closed (deny on error), and add a hostile-guest test (§8) with the change.
@@ -474,10 +487,11 @@ before pushing a change that touches the UI's behaviour, routes or accessibility
 | `windows.yml` | every PR to `develop` and `main` (a newer push to the PR cancels the run in flight), every merge queue run, nightly 02:37 UTC (a job skips if this workflow already has a green nightly or manual run on that commit; a merge queue run never counts), manual | `windows-2025` | four parallel jobs (clippy; nextest, doc tests, secret scan; UI gates, e2e on Edge and the desktop shell smoke test; release build, MSVC: only on the nightly, on PRs to `main` and on manual runs from `develop`, so PRs to `develop` skip it) plus `windows-msvc (build, clippy, tests)`, the one result that needs them all. The nightly retries each failed test once and lists the flaky ones in the job summary, without failing |
 | `mutants.yml` | every PR that touches `crates/`, the mutants settings or scripts (a newer push cancels the run in flight; not a required check yet), nightly 03:53 UTC, manual | `ubuntu-24.04` | `scripts/check.sh mutants` on a PR (the mutants on the changed lines of the crates in `scripts/mutants-crates.txt`); the nightly sweep, one job per listed crate, uncached on Sundays |
 | `windows-cache.yml` | push to `develop` that changes a `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml` or `.cargo/config.toml`, manual | `windows-2025` | builds the test binaries once (no tests) so the pull requests' `windows.yml` runs restore a current `windows` Rust cache entry instead of an older one; only a run on `develop` saves it |
-| `vm-linux.yml` | every PR to `develop` and to `main` (a newer push to the PR cancels the run in flight), every merge queue run, manual on any branch (`gh workflow run vm-linux.yml --ref <branch>`), nightly 03:07 UTC on `develop` (skipped if it already has a green nightly or manual run on that commit) | `ubuntu-24.04` (KVM) | VM tests, tier K: the test binaries are built once (`cargo nextest archive`) and run in 3 hash partitions on 3 runners; `vm-linux (KVM, msb microVMs)` is the one result. No KVM ⇒ warning, infrastructure skip (on a PR or a merge queue run: failure) |
+| `vm-linux.yml` | every PR to `develop` and to `main` (a newer push to the PR cancels the run in flight), every merge queue run, manual on any branch (`gh workflow run vm-linux.yml --ref <branch>`), nightly 03:07 UTC on `develop` (skipped if it already has a green nightly or manual run on that commit) | `ubuntu-24.04` (KVM) | VM tests, tier K: the test binaries are built once (`cargo nextest archive`) and run in 4 hash partitions on 4 runners; `vm-linux (KVM, msb microVMs)` is the one result. No KVM ⇒ warning, infrastructure skip (on a PR or a merge queue run: failure) |
 | `vm-windows.yml` | every PR to `develop` and to `main` (a newer push to the PR cancels the run in flight), every merge queue run, manual on any branch, nightly 03:23 UTC on `develop` (skipped if it already has a green nightly or manual run on that commit) | `windows-2025` (WHP) | VM tests, tier W: built once and run in 5 hash partitions on 5 runners; `vm-windows (WHP, msb microVMs)` is the one result. No WHP ⇒ warning, infrastructure skip (on a PR or a merge queue run: failure) |
+| `webkit.yml` | nightly 04:53 UTC (skipped if it already has a green run on that commit), manual | `ubuntu-24.04` | the UI end-to-end tests on WebKit alone (`PUDDLE_E2E_PROJECTS=webkit`, `scripts/check.sh ui-e2e`): the half a merge queue run skips with `PUDDLE_TIER=on`. No required check; a red run opens "Nightly red: webkit" |
 | `msi.yml` | PRs to `develop` and `main` that change the installer (the `msi.yml` paths), nightly 03:47 UTC (skipped if it already has a green run on that commit), manual | `windows-2025` | builds the per-user MSI (`ci/build-msi.sh`: runtime folder, code-server, guest agent, release shell, WiX), then `ci/msi-install-test.ps1` installs it silently, starts it, runs the system check, upgrades over an older MSI and uninstalls it; the MSI is kept as an artifact. Not a required check |
-| `nightly-signal.yml` | when a scheduled run (or a manual run on `develop`) of `windows`, `vm-linux`, `vm-windows`, `msi`, `fuzz`, `perf`, `mutants`, `full-test`, `coverage-baseline` or `stress` completes | `ubuntu-24.04` | `ci/nightly-issue.sh`: a failed run opens or rewrites the issue "Nightly red: <workflow>", a green run closes it, a cancelled run changes nothing. None of these runs is a required check, so this issue is how a red nightly gets seen. `ci/bisect-red.sh <workflow>.yml --good <sha> --bad <sha>` runs the workflow on each commit between the last green nightly and the red one (`--cleanup` deletes its branches); `ci/nightly-issue-test.sh` and `ci/bisect-red-test.sh` are the self-tests, and the first fails when a workflow with a schedule is neither watched nor listed as covered otherwise |
+| `nightly-signal.yml` | when a scheduled run (or a manual run on `develop`) of `windows`, `vm-linux`, `vm-windows`, `webkit`, `msi`, `fuzz`, `perf`, `mutants`, `full-test`, `coverage-baseline` or `stress` completes | `ubuntu-24.04` | `ci/nightly-issue.sh`: a failed run opens or rewrites the issue "Nightly red: <workflow>", a green run closes it, a cancelled run changes nothing. None of these runs is a required check, so this issue is how a red nightly gets seen. `ci/bisect-red.sh <workflow>.yml --good <sha> --bad <sha>` runs the workflow on each commit between the last green nightly and the red one (`--cleanup` deletes its branches); `ci/nightly-issue-test.sh` and `ci/bisect-red-test.sh` are the self-tests, and the first fails when a workflow with a schedule is neither watched nor listed as covered otherwise |
 | `cache-gc.yml` | nightly 03:57 UTC, after each `develop` or merge queue run of `ci`, `windows`, `windows-cache` and the VM workflows, manual | `ubuntu-24.04` | deletes superseded rust-cache entries, stale branch caches and every merge queue cache (`ci/cache-gc.sh`) |
 | `stress.yml` | nightly 04:41 UTC, manual | `ubuntu-24.04` | five jobs of three kinds that run the fast suites repeatedly on a starved machine (`ci/stress.sh`, pinned with `taskset` next to busy loops): nextest `--stress-count 20` on `fake_host`, the proxy suites and the agent's capture tests (two halves, one CPU with 6 busy loops); Playwright `--repeat-each 3` on chromium (CDP CPU throttle, `ui/e2e/cpu-throttle.ts`) and on webkit (a job each, 2 CPUs with 2 loops); vitest with shuffled order and `--repeats 5` (2 CPUs with 2 loops). A failing test fails the job, which `nightly-signal` turns into the issue "Nightly red: stress". Each job uploads a row (`stress-yield-<kind>`: failures, how many are in `ci/known-flakes.tsv`, wall time, runner-min); `ci/stress-yield.py report --download 14` adds a fortnight up. Self-test `ci/stress-test.sh` |
 | `perf.yml` | nightly 03:41 UTC, manual | `ubuntu-24.04` | the six `#[ignore]`d `terminate_suite` `perf::` tests in a release build (`--run-ignored only`): each prints its measurement and asserts a ceiling well above a workstation's number. Not a PR check, and nothing is cached |
@@ -522,8 +536,8 @@ names report on the queue's commit too. Two repository variables switch the rest
   msvc and UI jobs when their cache entries already exist (job `queue-tested`, `ci/should-run.sh --queue-tested`; specs
   marked `,pushskip`). The advisories still run.
 
-- `PUDDLE_TIER=on`: a merge queue run skips the jobs that run nightly and on a pull request to `main` instead: the VM
-  build and tests of `vm-windows`, the Windows UI job and the native Windows clippy job. `scope` sets `defer_vm_windows`,
+- `PUDDLE_TIER=on`: a merge queue run skips three jobs that run nightly and on a pull request to `main` instead, and narrows a
+  fourth. The three are the VM build and tests of `vm-windows`, the Windows UI job and the native Windows clippy job. `scope` sets `defer_vm_windows`,
   `defer_win_ui` and `defer_win_clippy` to `true` unless the group's diff pulls that job back into the queue
   (`escalates` in `ci/scope.sh`: `crates/puddle-compute-msb/`, `crates/puddle-app/` for the UI job, any path with
   `windows` in its name for the VM and clippy jobs, plus every always-run path, which covers the msb pin in `Cargo.toml`,
@@ -531,6 +545,12 @@ names report on the queue's commit too. Two repository variables switch the rest
   skip only on a `merge_group` run with the variable exactly `on` and the output `true` (specs marked `,defer:<output>`);
   their job summary says the check is not a test result for the skipped jobs. Unset or any other value, everything runs in
   the queue as before. Rollback: `gh variable set PUDDLE_TIER --body off`.
+  The same variable also narrows the Linux UI job's end-to-end tests to Chromium on a merge queue run (`scope` output
+  `defer_linux_webkit`; nothing skips, so the result job is unchanged and its `full-steps` guard accepts only
+  `chromium`, and only with the variable `on` and the output `true`). A diff that touches markup, styles or the
+  browser test setup (`ui/**/*.svelte`, `*.css`, `ui/src/app.html`, `ui/static/`, `ui/package.json`, the Playwright
+  and Vite configs, the e2e helpers `fixture.ts`, `fixture-build.ts`, `support.ts` and `warm-up.ts`) keeps WebKit in the queue. WebKit runs nightly in `webkit.yml`, and a pull
+  request to `main` runs both browsers in `ci.yml`.
 
 A failed job in a merge queue run cancels the rest of its merge group: every job that does work ends with the
 `cancel-group` step (`ci/cancel-group.sh`, needs `actions: write` on the job), which cancels each run that has not

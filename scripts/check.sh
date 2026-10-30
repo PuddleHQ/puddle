@@ -169,7 +169,7 @@ run_gate() {
         ;;
     hooks)
         scripts/pre-push-test.sh && scripts/mutants-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
-            scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/coverage-cargo-test.sh && scripts/coverage-determinism.sh --self-test &&
+            scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/coverage-cargo-test.sh && scripts/coverage-determinism.sh --self-test && scripts/flake-lints-test.sh &&
             ci/fetch-msb-test.sh && ci/fetch-gitleaks-test.sh && ci/fetch-code-server-test.sh && ci/fetch-tauri-cli-test.sh && ci/check-runtime-layout-test.sh &&
             ci/scope-test.sh && ci/apt-setup-test.sh && ci/advisories-issue-test.sh && ci/quality-issue-test.sh && ci/cache-drop-test.sh &&
             ci/should-run-test.sh && ci/nightly-issue-test.sh && ci/cancel-group-test.sh && ci/bisect-red-test.sh && ci/cache-gc-test.sh && ci/raise-coverage-baseline-test.sh && ci/test-vm-skip-policy.sh && ci/stress-test.sh
@@ -304,7 +304,7 @@ run_gate() {
         # Playwright against the real API serving the built UI. WebKit stands in for WebKitGTK and
         # WKWebView; where it can't start locally (missing system libraries) this runs Chromium
         # only and says so. CI (CI set) never narrows by itself; PUDDLE_E2E_PROJECTS set by the
-        # caller (ci.yml's light pull request mode) narrows anywhere.
+        # caller (ci.yml's light pull request mode, or a merge queue run in the nightly tier) narrows anywhere.
         ui_build
         case "$(uname -s)" in
         MINGW* | MSYS* | CYGWIN*) ;; # Windows runs the installed Edge, not Playwright's browsers

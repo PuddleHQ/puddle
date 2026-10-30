@@ -121,7 +121,7 @@ echo "fetch-msb-test: ok (a pinned Linux msb is downloaded and checked, no git)"
 
 # The tag the build is on must pin its release's Linux msb and firmware. Without the msb line
 # fetch-msb.sh falls back to a ten-minute build from source, in the build job and in each of the
-# three test partitions, and only a warning annotation says so.
+# four test partitions, and only a warning annotation says so.
 tag=$("$here/msb-tag.sh")
 for asset in msb-linux-x86_64 libkrunfw-linux-x86_64.so; do
     awk -v t="$tag" -v a="$asset" '$1 == t && $2 == a { found = 1 } END { exit !found }' "$here/msb-runtime.sha256" || {

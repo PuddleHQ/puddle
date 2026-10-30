@@ -99,6 +99,16 @@ pub enum InstallError {
     Io(#[from] io::Error),
 }
 
+impl InstallError {
+    /// Whether a download was fetched and refused (not the published file, or not unpackable): the
+    /// same build is usually refused again on every try, so retrying it soon is a waste of a download of
+    /// hundreds of MB. A network that is down or an update service that is unreadable is not one.
+    #[must_use]
+    pub fn is_refusal(&self) -> bool {
+        matches!(self, Self::Checksum { .. } | Self::Archive(_))
+    }
+}
+
 /// The build name in the update service's path for a machine of architecture `arch` (the values
 /// of `std::env::consts::ARCH`).
 ///

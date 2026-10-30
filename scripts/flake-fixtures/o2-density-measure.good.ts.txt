@@ -1,0 +1,14 @@
+// Original code, kept as it was; the same helper after the fix (a polling assertion).
+async function required(page: Page, selector: string): Promise<Box> {
+  let box: Box | null = null;
+  await expect
+    .poll(
+      async () => {
+        box = await measure(page, selector);
+        return box !== null;
+      },
+      { message: `${selector} is on the screen` },
+    )
+    .toBe(true);
+  return box as unknown as Box;
+}

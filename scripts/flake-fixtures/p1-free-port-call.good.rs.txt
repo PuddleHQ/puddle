@@ -1,0 +1,22 @@
+// Original code, kept as it was; the same start after the fix (mitmproxy binds port 0 and logs the port it got).
+                confdir.join("mitmproxy-ca.pem"),
+                format!("{}{}", root.key_pem, root.pem),
+            )
+            .unwrap();
+        }
+        let mut command = Command::new(bin);
+        command
+            // The log is read while the proxy runs; Python buffers a redirected stdout.
+            .env("PYTHONUNBUFFERED", "1")
+            // Port 0: mitmproxy binds the port itself and logs the one it got, so no other
+            // process can take it between a pick and the bind.
+            .args(["--listen-host", &LOCAL.to_string(), "--listen-port", "0"])
+            .arg("--set")
+            .arg(format!("confdir={}", confdir.display()))
+            .args(["--set", "flow_detail=1", "--set", "termlog_verbosity=info"])
+            // The origins in tests have certificates of their own roots; the interceptor's
+            // upstream leg does not check them (a client's own check is what a test measures).
+            .args(["--set", "ssl_insecure=true"]);
+        for (n, addon) in addons.iter().enumerate() {
+            let path = dir.path().join(format!("addon{n}.py"));
+            fs::write(&path, addon).unwrap();

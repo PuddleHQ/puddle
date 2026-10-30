@@ -1,0 +1,16 @@
+// Original code, kept as it was; the same loop after the fix (a 1 s backstop): the bar stays, so the rule still wants its written reason.
+        // The best of three, so one scheduler hiccup doesn't trip the backstop.
+        let best = (0..3)
+            .map(|_| {
+                let start = Instant::now();
+                let rows = store.audit_query(&filter, cursor, 100).unwrap();
+                let took = start.elapsed();
+                assert!(rows.len() <= 100);
+                took
+            })
+            .min()
+            .unwrap();
+        eprintln!("audit query {name}: {best:?}");
+        // About 50 times the slowest local scan: it catches a query that went quadratic, not noise.
+        assert!(best < Duration::from_secs(1), "{name} took {best:?}");
+    }

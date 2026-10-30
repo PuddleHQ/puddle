@@ -511,6 +511,9 @@ fn session_cookie(target: &Target, cookie: &SessionCookie) -> Cookie<'static> {
         .domain(format!("{}.localhost", target.workspace))
         .path("/")
         .http_only(true)
+        // Not `Secure`: this is an http loopback origin, and WebKitGTK (2.54, libsoup 3.6) drops a
+        // Secure cookie for `http://<name>.localhost` instead of sending it, which would break
+        // sign-in. HttpOnly and SameSite stay; no network path reaches a loopback origin.
         .same_site(tauri::webview::cookie::SameSite::Lax)
         .build()
 }

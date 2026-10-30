@@ -62,6 +62,12 @@ impl HostPaths {
         self.data.join("front")
     }
 
+    /// The port the browser front last bound, kept so its origin stays the same between runs.
+    #[must_use]
+    pub fn front_port_file(&self) -> PathBuf {
+        self.front_keys().join("port")
+    }
+
     /// The API's connection file (URL and token), for the CLI and `npm run dev`.
     #[must_use]
     pub fn connection_file(&self) -> PathBuf {
@@ -82,6 +88,7 @@ mod tests {
             paths.workspace_book(),
             paths.guest_share(),
             paths.front_keys(),
+            paths.front_port_file(),
             paths.connection_file(),
         ] {
             assert!(path.starts_with("/data/puddle"), "{path:?}");
@@ -98,6 +105,7 @@ mod tests {
             paths.workspace_book(),
             paths.guest_share(),
             paths.front_keys(),
+            paths.front_port_file(),
             paths.connection_file(),
         ];
         for (i, a) in all.iter().enumerate() {

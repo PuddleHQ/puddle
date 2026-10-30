@@ -87,6 +87,20 @@ pub enum HarnessError {
     /// An SDK call failed.
     #[error("msb SDK: {0}")]
     Sdk(#[from] microsandbox::MicrosandboxError),
+    /// The folder named by `PUDDLE_VM_BROWSER_MODULES` holds no `playwright-core`.
+    #[error(
+        "{dir} has no playwright-core: run `npm ci --ignore-scripts` in ui and point PUDDLE_VM_BROWSER_MODULES at ui/node_modules"
+    )]
+    BrowserModules {
+        /// The folder searched.
+        dir: PathBuf,
+    },
+    /// The browser client could not load a page or read its result.
+    #[error("browser client: {detail}")]
+    Browser {
+        /// What went wrong, with the page's console and errors when it got that far.
+        detail: String,
+    },
     /// A step took longer than its budget.
     #[error("{what} took longer than {limit:?}")]
     Timeout {

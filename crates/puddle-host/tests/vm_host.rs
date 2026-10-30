@@ -1334,20 +1334,64 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
     assert!(down.sandboxes.all_stopped(), "{down:?}");
 }
 
+/// The login hosts of the capture test below.
+const LOGIN_HOSTS: [&str; 4] = [
+    "platform.claude.com",
+    "api.anthropic.com",
+    "api.github.com",
+    "github.com",
+];
+
+/// The services behind [`LOGIN_HOSTS`], as far as the test asks them: GitHub's API answers the
+/// rate limit, the Claude token endpoint refuses an unknown refresh token, GitHub's device-code
+/// endpoint hands out a code. The test is about Puddle's decryption, so no real service is called:
+/// a shared runner's address gets refused or throttled by the real ones for reasons of their own.
+fn login_service(seen: &puddle_e2e::lab::Seen) -> Option<puddle_e2e::lab::WebAnswer> {
+    let host = seen
+        .headers_named("host")
+        .first()
+        .map(|h| h.split(':').next().unwrap_or_default().to_ascii_lowercase())
+        .unwrap_or_default();
+    let (status, body) = match (host.as_str(), seen.target.as_str()) {
+        ("api.github.com", "/rate_limit") => (200, r#"{"resources":{}}"#),
+        ("platform.claude.com", "/v1/oauth/token") => (400, r#"{"error":"invalid_grant"}"#),
+        ("github.com", "/login/device/code") => (
+            200,
+            r#"{"device_code":"d","user_code":"WDJB-MJHT","verification_uri":"https://github.com/login/device","expires_in":900,"interval":5}"#,
+        ),
+        _ => return None,
+    };
+    Some(puddle_e2e::lab::WebAnswer {
+        status,
+        content_type: "application/json",
+        body: body.to_owned(),
+    })
+}
+
 /// Login capture on a real guest. With capture on (the default) the hosts of the Claude Code and
 /// GitHub logins are decrypted from the workspace's start: the guest trusts Puddle's certificate
-/// there, a request works over HTTP/2 where the real server speaks it, and a request to a token
-/// endpoint reaches the real server and the server's own error answer comes back untouched, with
+/// there, a request works over HTTP/2 where the server speaks it, and a request to a token
+/// endpoint reaches the server and the server's own error answer comes back untouched, with
 /// no notice (an answer with no token in it is nothing to capture). A workspace that turns capture
-/// off sees the real certificates from its next start.
+/// off sees the certificates of the hosts themselves from its next start.
 ///
-/// No account is used: the real services refuse an unauthenticated request, which is the answer
-/// that proves the exchange path is transparent.
+/// The services are fakes behind the lab's company proxy (`login_service`), so no real account or
+/// third party is involved and the test depends on nothing outside the machine.
 #[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_alone_when_it_is_off()
 {
-    let internet = web_internet(&[SITE], WebOptions::default(), hermetic_options()).await;
+    let mut names = LOGIN_HOSTS.to_vec();
+    names.push(SITE);
+    let internet = web_internet(
+        &names,
+        WebOptions {
+            responder: Some(std::sync::Arc::new(login_service)),
+            ..WebOptions::default()
+        },
+        hermetic_options(),
+    )
+    .await;
     let VmHost {
         host,
         runtime,
@@ -1357,13 +1401,7 @@ async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_al
     } = start_vm_host_platform("login", internet.options, &internet.platform, |_| {}).await;
     let name = format!("{}-login", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
-    for site in [
-        "github.com",
-        "api.github.com",
-        "platform.claude.com",
-        "api.anthropic.com",
-        SITE,
-    ] {
+    for site in names {
         host.store()
             .add_rule(&NewRule {
                 scope: Scope::Workspace(sandbox.clone()),
@@ -1380,7 +1418,7 @@ async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_al
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "repositories": [], "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -1391,7 +1429,7 @@ async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_al
 
     // On by default: the login hosts show Puddle's certificate, every other host its own.
     let ca_name = format!("Puddle CA for {name}");
-    for site in ["platform.claude.com", "api.anthropic.com", "api.github.com"] {
+    for site in LOGIN_HOSTS {
         let issuer = guest(&runtime, &sandbox, &issuer_script(site)).await;
         assert!(issuer.contains(&ca_name), "{site}: {issuer}");
     }
@@ -1399,10 +1437,6 @@ async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_al
     assert!(!example.to_lowercase().contains("puddle"), "{example}");
 
     // An ordinary request on a decrypted login host works, over HTTP/2 where the server speaks it.
-    // `/rate_limit` and not `/zen`: an unauthenticated address gets 60 API calls an hour and a
-    // hosted runner shares its address with other jobs, so `/zen` answers 403 once they used it
-    // up. GitHub does not count `/rate_limit` against that allowance and answers it while the
-    // allowance is spent. The whole answer is in the assert message, so a refusal says why.
     let rate = guest(
         &runtime,
         &sandbox,
@@ -1416,12 +1450,8 @@ async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_al
             .is_some_and(|l| l.starts_with("200 ")),
         "{rate}"
     );
-    eprintln!(
-        "api.github.com through the proxy: {}",
-        rate.trim().lines().last().unwrap_or_default()
-    );
 
-    // A token endpoint: the real server refuses an unknown refresh token with its own error; the
+    // A token endpoint: the fake server refuses an unknown refresh token with its own error; the
     // request body went through the exchange path and the answer is not touched.
     let refused = guest(
         &runtime,
@@ -1439,8 +1469,9 @@ async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_al
         .unwrap_or(0);
     assert!(
         (400..500).contains(&status),
-        "the real token endpoint should refuse it: {refused}"
+        "the token endpoint should refuse it: {refused}"
     );
+    assert!(refused.contains("invalid_grant"), "{refused}");
     // GitHub's device-code request: a form POST that is not a token answer either.
     let device = guest(
         &runtime,
@@ -1478,7 +1509,7 @@ async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_al
         .until(ended(name_static), Duration::from_secs(300))
         .await;
     assert_eq!(end["step"], "done", "{end}");
-    for site in ["platform.claude.com", "api.anthropic.com", "api.github.com"] {
+    for site in LOGIN_HOSTS {
         let issuer = guest(&runtime, &sandbox, &issuer_script(site)).await;
         assert!(
             !issuer.to_lowercase().contains("puddle"),

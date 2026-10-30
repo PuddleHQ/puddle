@@ -105,8 +105,9 @@ impl Server {
     }
 }
 
-/// An editor reached over a plain socket, or one that cannot be reached.
-struct Reach(Option<SocketAddr>);
+/// An editor reached over a plain socket, or one that cannot be reached, and the guest's other
+/// ports that listen (a forwarded port nothing listens on is refused, as the agent does).
+struct Reach(Option<SocketAddr>, HashMap<u16, SocketAddr>);
 
 impl Editor for Reach {
     fn connect(&self) -> puddle_front::editor::BoxFuture<'_, Result<Io, Unreachable>> {
@@ -114,6 +115,18 @@ impl Editor for Reach {
             let addr = self
                 .0
                 .ok_or_else(|| Unreachable("nothing listens in the workspace".into()))?;
+            Ok(Box::new(TcpStream::connect(addr).await.unwrap()) as Io)
+        })
+    }
+
+    fn connect_port(
+        &self,
+        port: u16,
+    ) -> puddle_front::editor::BoxFuture<'_, Result<Io, Unreachable>> {
+        Box::pin(async move {
+            let addr = self.1.get(&port).ok_or_else(|| {
+                Unreachable(format!("nothing in the workspace listens on port {port}"))
+            })?;
             Ok(Box::new(TcpStream::connect(addr).await.unwrap()) as Io)
         })
     }
@@ -128,10 +141,20 @@ struct Running(Mutex<HashMap<String, Target>>);
 
 impl Running {
     fn start(&self, name: &str, addr: Option<SocketAddr>, flavour: Flavour) {
+        self.start_with_ports(name, addr, flavour, &[]);
+    }
+
+    fn start_with_ports(
+        &self,
+        name: &str,
+        addr: Option<SocketAddr>,
+        flavour: Flavour,
+        ports: &[(u16, SocketAddr)],
+    ) {
         self.0.lock().unwrap().insert(
             name.to_owned(),
             Target {
-                editor: Arc::new(Reach(addr)),
+                editor: Arc::new(Reach(addr, ports.iter().copied().collect())),
                 flavour,
             },
         );
@@ -237,6 +260,205 @@ async fn each_workspace_name_reaches_its_own_editor_and_only_its_own() {
     }
     assert_eq!(a.seen.connections.load(Ordering::SeqCst), 2);
     assert_eq!(b.seen.connections.load(Ordering::SeqCst), 1);
+}
+
+fn forward_host(rig: &Rig, port: u16, name: &str) -> String {
+    format!("{port}.{}", host(rig, name))
+}
+
+#[tokio::test]
+async fn a_forwarded_port_s_own_origin_reaches_that_guest_port_and_not_the_editor() {
+    let rig = rig().await;
+    let (editor, app, other) = (
+        Server::start("editor").await,
+        Server::start("app").await,
+        Server::start("other").await,
+    );
+    rig.running.start_with_ports(
+        "a",
+        Some(editor.addr),
+        Flavour::CodeServer,
+        &[(5173, app.addr), (3000, other.addr)],
+    );
+    let one = ask(
+        &rig.front,
+        &get(&rig, &forward_host(&rig, 5173, "a"), "/whoami", ""),
+    )
+    .await;
+    let two = ask(
+        &rig.front,
+        &get(&rig, &forward_host(&rig, 3000, "a"), "/whoami", ""),
+    )
+    .await;
+    assert_eq!((one.status, one.text()), (200, "app".to_owned()));
+    assert_eq!((two.status, two.text()), (200, "other".to_owned()));
+    assert_eq!(editor.seen.connections.load(Ordering::SeqCst), 0);
+    // The app sees the host it was asked for and nothing of the editor's cookie handling.
+    let h = forward_host(&rig, 5173, "a");
+    let head = ask(&rig.front, &get(&rig, &h, "/head", "")).await.text();
+    assert!(
+        head.to_ascii_lowercase().contains(&format!("host: {h}")),
+        "{head}"
+    );
+}
+
+#[tokio::test]
+async fn a_forwarded_port_carries_the_apps_own_headers_and_sets_no_editor_cookie() {
+    let rig = rig().await;
+    let (editor, app) = (Server::start("editor").await, Server::start("app").await);
+    rig.running.start_with_ports(
+        "a",
+        Some(editor.addr),
+        Flavour::Microsoft,
+        &[(5173, app.addr)],
+    );
+    let h = forward_host(&rig, 5173, "a");
+    let answer = ask(&rig.front, &get(&rig, &h, "/csp", "")).await;
+    // The app's policy stands alone: no `frame-ancestors` is added to it.
+    assert_eq!(
+        answer.header("content-security-policy"),
+        ["default-src 'self'"]
+    );
+    assert!(
+        answer.header("x-frame-options").is_empty(),
+        "{}",
+        answer.head
+    );
+    // Microsoft's secret-storage cookie belongs to the editor origin only.
+    assert_eq!(cookie_value(&answer, "puddle-secret-half"), None);
+    assert_eq!(answer.header("set-cookie"), ["server=1"]);
+    // Microsoft's mint path is the app's own path on a forwarded port.
+    let mint = ask(
+        &rig.front,
+        &get(&rig, &h, puddle_front::microsoft::MINT_PATH, ""),
+    )
+    .await;
+    assert_eq!(mint.status, 200);
+    assert_eq!(mint.text(), "app");
+}
+
+#[tokio::test]
+async fn a_forwarded_port_nothing_listens_on_is_a_502_that_says_so_and_the_editor_is_not_asked() {
+    let rig = rig().await;
+    let editor = Server::start("editor").await;
+    rig.running
+        .start("a", Some(editor.addr), Flavour::CodeServer);
+    let h = forward_host(&rig, 9999, "a");
+    let answer = ask(&rig.front, &get(&rig, &h, "/", "")).await;
+    assert_eq!(answer.status, 502);
+    assert!(answer.text().contains("Port 9999"), "{}", answer.text());
+    assert!(answer.text().contains("nothing in the workspace listens"));
+    assert_eq!(editor.seen.connections.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_forwarded_port_of_a_workspace_that_is_not_running_is_a_404_and_other_hosts_are_refused()
+{
+    let rig = rig().await;
+    let app = Server::start("app").await;
+    rig.running
+        .start_with_ports("a", None, Flavour::CodeServer, &[(5173, app.addr)]);
+    let stopped = forward_host(&rig, 5173, "stopped");
+    assert_eq!(
+        ask(&rig.front, &get(&rig, &stopped, "/", "")).await.status,
+        404
+    );
+    let port = rig.front.local_addr().port();
+    for bad in [
+        format!("0.a.localhost:{port}"),
+        format!("05173.a.localhost:{port}"),
+        format!("5173.a.sub.localhost:{port}"),
+        format!("5173.a.localhost:{}", port.wrapping_add(1)),
+        format!("5173.tauri.localhost:{port}"),
+    ] {
+        let answer = ask(&rig.front, &get(&rig, &bad, "/", "")).await;
+        assert!(matches!(answer.status, 421), "{bad}: {}", answer.status);
+    }
+    assert_eq!(app.seen.connections.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_forwarded_port_s_origin_is_its_own_another_origin_may_not_use_it() {
+    let rig = rig().await;
+    let app = Server::start("app").await;
+    rig.running
+        .start_with_ports("a", None, Flavour::CodeServer, &[(5173, app.addr)]);
+    let (forward, editor) = (forward_host(&rig, 5173, "a"), host(&rig, "a"));
+    // The editor's origin is another origin from the app's.
+    let answer = ask(
+        &rig.front,
+        &get(&rig, &forward, "/", &format!("Origin: http://{editor}\r\n")),
+    )
+    .await;
+    assert_eq!(answer.status, 403);
+    let own = ask(
+        &rig.front,
+        &get(
+            &rig,
+            &forward,
+            "/",
+            &format!("Origin: http://{forward}\r\n"),
+        ),
+    )
+    .await;
+    assert_eq!(own.status, 200);
+    assert_eq!(app.seen.connections.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn an_app_s_page_may_call_a_port_beside_it_but_not_another_workspace_or_the_editor() {
+    let rig = rig().await;
+    let (api, editor) = (Server::start("api").await, Server::start("editor").await);
+    rig.running.start_with_ports(
+        "a",
+        Some(editor.addr),
+        Flavour::CodeServer,
+        &[(3000, api.addr)],
+    );
+    let (api_host, port) = (forward_host(&rig, 3000, "a"), rig.front.local_addr().port());
+    let from = |origin: String| get(&rig, &api_host, "/whoami", &format!("Origin: {origin}\r\n"));
+    // The app on 5173 calling its API on 3000, as a dev setup does.
+    let beside = ask(&rig.front, &from(format!("http://5173.a.localhost:{port}"))).await;
+    assert_eq!((beside.status, beside.text()), (200, "api".to_owned()));
+    for origin in [
+        format!("http://a.localhost:{port}"),
+        format!("http://5173.b.localhost:{port}"),
+        format!("http://5173.a.localhost:{}", port.wrapping_add(1)),
+        "https://example.org".to_owned(),
+        format!("http://05173.a.localhost:{port}"),
+    ] {
+        let answer = ask(&rig.front, &from(origin.clone())).await;
+        assert_eq!(answer.status, 403, "{origin}");
+    }
+    // The editor's own origin takes no sibling: only itself.
+    let editor_host = host(&rig, "a");
+    let request = get(
+        &rig,
+        &editor_host,
+        "/",
+        &format!("Origin: http://3000.a.localhost:{port}\r\n"),
+    );
+    assert_eq!(ask(&rig.front, &request).await.status, 403);
+    assert_eq!(api.seen.connections.load(Ordering::SeqCst), 1);
+    assert_eq!(editor.seen.connections.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_forwarded_port_s_websocket_works_and_is_not_an_editor_window() {
+    let rig = rig().await;
+    let app = Server::start("app").await;
+    rig.running
+        .start_with_ports("a", None, Flavour::CodeServer, &[(5173, app.addr)]);
+    let name = WorkspaceName::new("a").unwrap();
+    let h = forward_host(&rig, 5173, "a");
+    let (mut socket, head) = upgrade(&rig, &h, &format!("Origin: http://{h}\r\n")).await;
+    assert!(head.starts_with("HTTP/1.1 101"), "{head}");
+    socket.write_all(b"hmr").await.unwrap();
+    let mut back = [0_u8; 3];
+    socket.read_exact(&mut back).await.unwrap();
+    assert_eq!(&back, b"hmr");
+    // A hot-reload socket must not hold up a server update, which waits for editor windows.
+    assert_eq!(rig.front.connected(&name), 0);
 }
 
 #[tokio::test]

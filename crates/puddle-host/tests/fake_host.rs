@@ -17,7 +17,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use puddle_api::{DesktopTarget, LaunchError, Launcher, UiAssets, UiFile, WorkspaceRecord};
+use puddle_api::{
+    BrowserTarget, DesktopTarget, LaunchError, Launcher, UiAssets, UiFile, WorkspaceRecord,
+};
 use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
 use puddle_compute::fake::{ExecContext, FakeRuntime, Fault, Op};
 use puddle_compute::{ExecOutput, ExecRequest, ImageConfig, Runtime};
@@ -490,6 +492,8 @@ struct RecordingLauncher {
     fail_with: Mutex<Option<String>>,
     opened: Mutex<Vec<String>>,
     targets: Mutex<Vec<DesktopTarget>>,
+    /// What each browser window was asked to open, in order.
+    browser: Mutex<Vec<BrowserTarget>>,
 }
 
 impl Launcher for RecordingLauncher {
@@ -507,6 +511,34 @@ impl Launcher for RecordingLauncher {
             Ok(())
         })
     }
+
+    fn open_browser<'a>(
+        &'a self,
+        _workspace: &'a WorkspaceRecord,
+        target: &'a BrowserTarget,
+    ) -> futures_util::future::BoxFuture<'a, Result<(), LaunchError>> {
+        Box::pin(async move {
+            if let Some(message) = self.fail_with.lock().unwrap().take() {
+                return Err(LaunchError::new(message));
+            }
+            self.browser.lock().unwrap().push(target.clone());
+            Ok(())
+        })
+    }
+}
+
+/// A launcher with no window, as `puddle serve` has: it answers a desktop attach like the
+/// recording one and leaves `open_browser` at the trait's default.
+struct DesktopOnly(Arc<RecordingLauncher>);
+
+impl Launcher for DesktopOnly {
+    fn open_desktop<'a>(
+        &'a self,
+        workspace: &'a WorkspaceRecord,
+        target: &'a DesktopTarget,
+    ) -> futures_util::future::BoxFuture<'a, Result<(), LaunchError>> {
+        self.0.open_desktop(workspace, target)
+    }
 }
 
 struct Rig {
@@ -516,6 +548,8 @@ struct Rig {
     runtime: FakeRuntime,
     guest: Arc<Guest>,
     launcher: Arc<RecordingLauncher>,
+    /// Starts the host with a launcher that has no window ([`DesktopOnly`]).
+    windowless: AtomicBool,
     /// Where the host keeps the values of secrets: never the machine's own credential store.
     secrets: Arc<MemoryStore>,
     /// Holds an author rewrite back when it starts, for a test that sets it before the start.
@@ -534,6 +568,7 @@ impl Rig {
             runtime,
             guest,
             launcher: Arc::new(RecordingLauncher::default()),
+            windowless: AtomicBool::new(false),
             secrets: Arc::new(MemoryStore::new()),
             rewrite_gate: Mutex::new(None),
         }
@@ -576,7 +611,11 @@ impl Rig {
     async fn start_with(&self, config: HostConfig) -> Host<FakeRuntime> {
         let prepared = prepare(config, &FakePlatform::new(&self.log)).unwrap();
         let mut options = hermetic_options();
-        options.launcher = self.launcher.clone();
+        options.launcher = if self.windowless.load(Ordering::SeqCst) {
+            Arc::new(DesktopOnly(self.launcher.clone()))
+        } else {
+            self.launcher.clone()
+        };
         options.secret_store = Some(self.secrets.clone());
         options
             .rewrite_gate
@@ -2281,7 +2320,8 @@ async fn attach_opens_the_desktop_editor_through_the_launcher() {
             &json!({"mode": "browser"}).to_string(),
         )
         .await;
-    assert_eq!(browser.json()["opened"], false);
+    assert_eq!(browser.json()["opened"], true);
+    assert_eq!(rig.launcher.browser.lock().unwrap().len(), 1);
     host.shutdown().await;
 }
 
@@ -2290,6 +2330,8 @@ async fn attach_opens_the_desktop_editor_through_the_launcher() {
 /// connections it accepts and answers every request with a greeting.
 struct EditorStandIn {
     accepted: Arc<AtomicUsize>,
+    /// Where the agent reads the editor's password from; removing it leaves the agent with none.
+    password_file: PathBuf,
     _agent: puddle_agent::Agent,
     _dir: tempfile::TempDir,
 }
@@ -2334,7 +2376,7 @@ async fn editor_stand_in(rig: &Rig, name: &str) -> EditorStandIn {
         ports: None,
         editor: Some(EditorConfig {
             server: editor,
-            password_file,
+            password_file: password_file.clone(),
         }),
         ..puddle_agent::Config::default()
     })
@@ -2342,6 +2384,7 @@ async fn editor_stand_in(rig: &Rig, name: &str) -> EditorStandIn {
     .unwrap();
     EditorStandIn {
         accepted,
+        password_file,
         _agent: agent,
         _dir: dir,
     }
@@ -2379,9 +2422,9 @@ async fn served_at(origin: &str) -> String {
     .await
 }
 
-/// The origin a browser attach answered with, and that it is the answer of an attach that
-/// opened nothing itself.
-async fn browser_origin(api: &Api, workspace: &str) -> String {
+/// The browser editor target the launcher was handed by the last attach, after an attach that
+/// the launcher opened.
+async fn browser_target(rig: &Rig, api: &Api, workspace: &str) -> BrowserTarget {
     let reply = api
         .post(
             &format!("/api/workspaces/{workspace}/attach"),
@@ -2390,16 +2433,21 @@ async fn browser_origin(api: &Api, workspace: &str) -> String {
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
     let body = reply.json();
-    assert_eq!(body["opened"], false, "the caller opens the origin: {body}");
-    assert!(
-        body["url"].is_string(),
-        "a browser attach names no origin: {body}"
+    assert_eq!(
+        body["opened"], true,
+        "the launcher opened the window: {body}"
     );
-    body["url"].as_str().unwrap().to_owned()
+    rig.launcher.browser.lock().unwrap().last().unwrap().clone()
+}
+
+/// The origin the launcher was told to open.
+async fn browser_origin(rig: &Rig, api: &Api, workspace: &str) -> String {
+    browser_target(rig, api, workspace).await.origin
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_browser_attach_names_the_fronts_origin_and_the_front_carries_a_request_to_the_editor() {
+async fn a_browser_attach_hands_the_launcher_the_fronts_origin_and_the_front_carries_a_request_to_the_editor()
+ {
     let rig = Rig::new();
     let host = rig.start().await;
     let api = api(&host);
@@ -2407,7 +2455,7 @@ async fn a_browser_attach_names_the_fronts_origin_and_the_front_carries_a_reques
     create(&api, &mut events, "acme").await;
     let editor = editor_stand_in(&rig, "acme").await;
 
-    let origin = browser_origin(&api, "acme").await;
+    let origin = browser_origin(&rig, &api, "acme").await;
     let front_port: u16 = origin
         .strip_prefix("http://acme.localhost:")
         .unwrap_or_else(|| panic!("not the workspace's origin: {origin}"))
@@ -2431,6 +2479,133 @@ async fn a_browser_attach_names_the_fronts_origin_and_the_front_carries_a_reques
     events.until(ended("acme"), Duration::from_secs(20)).await;
     let gone = window_gets(&origin).await;
     assert!(gone.starts_with("HTTP/1.1 404"), "{gone}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_attach_gives_the_window_the_front_the_settings_and_a_way_to_the_password() {
+    let rig = Rig::new();
+    write_global_settings(
+        &rig,
+        &json!({"schema_version": 2, "workspace_defaults": {"zoom_hotkeys": false}}),
+    );
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let editor = editor_stand_in(&rig, "acme").await;
+
+    let target = browser_target(&rig, &api, "acme").await;
+    assert_eq!(target.front.port(), front_port_of(&host));
+    assert!(target.front.ip().is_loopback());
+    assert_eq!(
+        target.origin,
+        format!("http://acme.localhost:{}", target.front.port())
+    );
+    assert!(
+        !target.settings.zoom_hotkeys.value,
+        "the workspace's own setting reaches the window"
+    );
+    // code-server asks for a password: the window reads it when it signs in, from the guest's file.
+    let login = target.login.expect("code-server asks for a password");
+    assert_eq!(login.password().await.unwrap(), "0".repeat(64));
+    // An agent with no password yet, and a workspace that has stopped, are said in words.
+    std::fs::remove_file(&editor.password_file).unwrap();
+    let err = login.password().await.unwrap_err().to_string();
+    assert!(err.contains("no password to sign in with yet"), "{err}");
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let err = login.password().await.unwrap_err().to_string();
+    assert_eq!(err, "acme is not running; start it first");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_attach_with_unreadable_settings_still_opens_with_the_defaults() {
+    let rig = Rig::new();
+    // A global file that is not JSON at all: the read fails, not just an unknown field. The
+    // workspace names its memory, so the damaged file does not refuse the create.
+    damage_global_settings(&rig);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let body = json!({"name": "acme", "repositories": [{"url": REPO}], "memory_mib": 4096});
+    assert_eq!(
+        api.post("/api/workspaces", &body.to_string()).await.status,
+        202
+    );
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let _editor = editor_stand_in(&rig, "acme").await;
+    let target = browser_target(&rig, &api, "acme").await;
+    assert!(target.settings.zoom_hotkeys.value, "the default is zoom on");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_attach_to_microsoft_s_server_has_no_password_to_read() {
+    let rig = Rig::new();
+    let covering = puddle_settings::MICROSOFT_TERMS_VERSION;
+    write_global_settings(&rig, &microsoft_chosen(covering, false));
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let _editor = editor_stand_in(&rig, "acme").await;
+    let target = browser_target(&rig, &api, "acme").await;
+    assert!(
+        target.login.is_none(),
+        "the front signs Microsoft's server in with its key cookie"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_attach_without_a_window_says_the_editor_opens_from_the_desktop_app() {
+    let rig = Rig::new();
+    rig.windowless.store(true, Ordering::SeqCst);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let _editor = editor_stand_in(&rig, "acme").await;
+    let reply = api
+        .post(
+            "/api/workspaces/acme/attach",
+            &json!({"mode": "browser"}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(
+        reply.json(),
+        json!({
+            "opened": false,
+            "url": null,
+            "message": "the browser editor opens from the desktop app"
+        })
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_window_that_cannot_open_says_why_in_the_browser_attach_answer() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    *rig.launcher.fail_with.lock().unwrap() =
+        Some("the editor gave no session (answer 200)".into());
+    let reply = api
+        .post(
+            "/api/workspaces/acme/attach",
+            &json!({"mode": "browser"}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.json()["opened"], false);
+    assert_eq!(
+        reply.json()["message"],
+        "the editor gave no session (answer 200)"
+    );
     host.shutdown().await;
 }
 
@@ -2528,7 +2703,7 @@ async fn the_front_serves_the_server_the_workspace_was_started_with_not_what_the
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
     let _editor = editor_stand_in(&rig, "acme").await;
-    let origin = browser_origin(&api, "acme").await;
+    let origin = browser_origin(&rig, &api, "acme").await;
     let first = served_at(&origin).await;
     assert!(
         first.contains("puddle-secret-half="),
@@ -2553,7 +2728,7 @@ async fn the_front_serves_code_server_without_the_key_cookie_and_closes_with_the
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
     let _editor = editor_stand_in(&rig, "acme").await;
-    let origin = browser_origin(&api, "acme").await;
+    let origin = browser_origin(&rig, &api, "acme").await;
     let answer = served_at(&origin).await;
     assert!(!answer.contains("puddle-secret-half="), "{answer}");
     host.shutdown().await;

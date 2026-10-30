@@ -30,10 +30,10 @@ use puddle_agent_proto::editor::{EditorServer, ServerKind};
 use puddle_agent_proto::forward::OpenError;
 use puddle_agent_proto::host_control::{HostMessage, HostReply};
 use puddle_api::{
-    AttachMode, Attached, DEFAULT_IMAGE, DeleteCheck, DesktopTarget, DisplayName, GitSetup,
-    KeptLogin, KeptLogins, Launcher, Listing, NewWorkspace, Operation, RepoFindings, Repository,
-    ShellInitCheck, StartFolder, StartFolderChange, WorkspaceError, WorkspaceRecord,
-    WorkspaceService,
+    AttachMode, Attached, BrowserTarget, DEFAULT_IMAGE, DeleteCheck, DesktopTarget, DisplayName,
+    EditorLogin, GitSetup, KeptLogin, KeptLogins, LaunchError, Launcher, Listing, NewWorkspace,
+    Operation, RepoFindings, Repository, ShellInitCheck, StartFolder, StartFolderChange,
+    WorkspaceError, WorkspaceRecord, WorkspaceService,
 };
 use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
@@ -41,7 +41,9 @@ use puddle_compute::{ComputeError, DiskSize, ExecRequest, ImageConfig, Runtime, 
 use puddle_lifecycle::Lifecycle;
 use puddle_ports::Ports;
 use puddle_proxy::Route;
-use puddle_settings::{ReconnectionGrace, ServerChoice, WorkspaceSettings, resolve};
+use puddle_settings::{
+    Effective, GlobalSettings, ReconnectionGrace, ServerChoice, WorkspaceSettings, resolve,
+};
 use puddle_ssh::SshEndpoint;
 use puddle_store::Clock;
 use puddle_types::{
@@ -150,8 +152,10 @@ pub(crate) struct Parts<R: Runtime + Clone> {
     pub(crate) rewrite_gate: Option<RewriteGate>,
     /// Which editor server each running guest was started with, for the front.
     pub(crate) flavours: Arc<Flavours>,
-    /// The port the browser editor's front listens on.
-    pub(crate) front_port: u16,
+    /// Where the browser editor's front listens.
+    pub(crate) front_addr: std::net::SocketAddr,
+    /// The front's lookup of running guests, which the editor's password is asked through.
+    pub(crate) front_guests: Arc<dyn puddle_front::Guests>,
 }
 
 struct Slot {
@@ -233,7 +237,8 @@ struct Inner<R: Runtime + Clone> {
     ports: Ports,
     rewrite_gate: Option<RewriteGate>,
     flavours: Arc<Flavours>,
-    front_port: u16,
+    front_addr: std::net::SocketAddr,
+    front_guests: Arc<dyn puddle_front::Guests>,
     state: Mutex<State>,
     live: tokio::sync::Mutex<BTreeMap<WorkspaceName, Live<R>>>,
     tasks: tokio::sync::Mutex<JoinSet<()>>,
@@ -385,6 +390,28 @@ fn delete_check(report: &puddle_workspace::DeleteReport) -> DeleteCheck {
 /// Holds the count of running operations up for as long as it lives.
 struct Running(watch::Sender<usize>);
 
+/// A window's way to the editor's password: asked of the running guest through the front's own
+/// lookup, so the secret is read only when a shell has a window to sign in.
+struct GuestLogin {
+    guests: Arc<dyn puddle_front::Guests>,
+    workspace: WorkspaceName,
+}
+
+impl EditorLogin for GuestLogin {
+    fn password(&self) -> BoxFuture<'_, Result<String, LaunchError>> {
+        Box::pin(async move {
+            let target = self.guests.target(&self.workspace).ok_or_else(|| {
+                LaunchError::new(format!("{} is not running; start it first", self.workspace))
+            })?;
+            target.editor.password().await.map_err(|err| {
+                LaunchError::new(format!(
+                    "the editor has no password to sign in with yet: {err}"
+                ))
+            })
+        })
+    }
+}
+
 impl Running {
     fn new(sender: &watch::Sender<usize>) -> Self {
         sender.send_modify(|n| *n += 1);
@@ -461,7 +488,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 reports: parts.reports,
                 ports: parts.ports,
                 flavours: parts.flavours,
-                front_port: parts.front_port,
+                front_addr: parts.front_addr,
+                front_guests: parts.front_guests,
                 rewrite_gate: parts.rewrite_gate,
                 state: Mutex::new(State {
                     slots,
@@ -1877,6 +1905,45 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
+    /// Asks the launcher to open `record`'s editor in a window of its own. A launcher with no
+    /// window (the default, so `puddle serve`) says the editor opens from the desktop app: the
+    /// password is held back from anything but a shell (AT-34).
+    async fn attach_browser(&self, record: &WorkspaceRecord) -> Attached {
+        let name = &record.name;
+        let target = BrowserTarget {
+            origin: puddle_front::origin_of(self.inner.front_addr.port(), name),
+            front: self.inner.front_addr,
+            settings: self.window_settings(name),
+            login: match self.inner.flavours.of(name) {
+                Some(puddle_front::Flavour::CodeServer) => Some(Arc::new(GuestLogin {
+                    guests: Arc::clone(&self.inner.front_guests),
+                    workspace: name.clone(),
+                })),
+                // Microsoft's server signs in through the front's key cookie, not a password.
+                Some(_) | None => None,
+            },
+        };
+        match self.inner.launcher.open_browser(record, &target).await {
+            Ok(()) => Attached::opened(),
+            Err(err) => Attached::not_opened(err.to_string()),
+        }
+    }
+
+    /// What `name`'s settings say about its window; the defaults when they cannot be read (the
+    /// window is not worth a failed attach).
+    fn window_settings(&self, name: &WorkspaceName) -> Effective {
+        let settings = self.inner.settings.as_ref();
+        let read = || {
+            let global = crate::settings_read::global(settings)?;
+            let own = crate::settings_read::workspace(settings, name)?;
+            Ok::<_, String>(resolve(&global, Some(&own)))
+        };
+        read().unwrap_or_else(|reason| {
+            tracing::warn!(workspace = %name, %reason, "the window uses the default settings: the settings cannot be read");
+            resolve(&GlobalSettings::default(), None::<&WorkspaceSettings>)
+        })
+    }
+
     fn direct_ssh_setting(&self, name: &WorkspaceName) -> Result<bool, String> {
         let settings = self.inner.settings.as_ref();
         let global = crate::settings_read::global(settings)?;
@@ -2803,10 +2870,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             }
             self.refresh_editor_file(&record).await;
             match mode {
-                AttachMode::Browser => Ok(Attached::at(puddle_front::origin_of(
-                    self.inner.front_port,
-                    &record.name,
-                ))),
+                AttachMode::Browser => Ok(self.attach_browser(&record).await),
                 AttachMode::Desktop => Ok(match self.desktop_target(&record).await {
                     Err(reason) => Attached::not_opened(reason),
                     Ok(target) => match self.inner.launcher.open_desktop(&record, &target).await {

@@ -413,19 +413,25 @@ mod tests {
         let _serial = serial();
         let dir = tempfile::tempdir().unwrap();
         let held = StartSlot::try_take(dir.path(), 1).unwrap().unwrap();
-        let release = std::thread::spawn(move || {
-            // An ordering with no signal: the waiter polls, and the slot must stay held long
-            // enough for it to have polled (a poll is 50 ms) before it is released.
-            std::thread::sleep(Duration::from_millis(300));
-            drop(held);
+        let released = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (waiter_begins, begins) = std::sync::mpsc::channel();
+        let release = std::thread::spawn({
+            let released = released.clone();
+            move || {
+                begins.recv().unwrap();
+                // Only gives the waiter time to poll while the slot is held; nothing asserts
+                // on it, so a stalled runner can't fail the test.
+                std::thread::sleep(Duration::from_millis(200));
+                released.store(true, Ordering::SeqCst);
+                drop(held);
+            }
         });
-        let begun = Instant::now();
+        waiter_begins.send(()).unwrap();
         let slot = StartSlot::take_from(dir.path(), 1, "test");
-        let waited = begun.elapsed();
         assert!(slot.is_some());
         assert!(
-            waited >= Duration::from_millis(250),
-            "took the slot while it was held: {waited:?}"
+            released.load(Ordering::SeqCst),
+            "took the slot while it was held"
         );
         release.join().unwrap();
     }

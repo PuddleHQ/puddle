@@ -11,6 +11,7 @@ function open(
   over: Partial<Workspace> = {},
   server: "microsoft" | "code_server" | null = "code_server",
 ) {
+  const onBrowser = vi.fn();
   const onDesktop = vi.fn();
   const onDirectSsh = vi.fn();
   render(ConnectDialog, {
@@ -18,11 +19,12 @@ function open(
       open: true,
       workspace: workspace("shop", over),
       server,
+      onBrowser,
       onDesktop,
       onDirectSsh,
     },
   } as never);
-  return { onDesktop, onDirectSsh };
+  return { onBrowser, onDesktop, onDirectSsh };
 }
 
 const gone = () =>
@@ -75,6 +77,24 @@ describe("the Connect dialog", () => {
       true,
     );
     expect(box.checked).toBe(false);
+  });
+
+  it("opens the browser editor and closes, with direct SSH off", async () => {
+    const { onBrowser } = open({ direct_ssh: false });
+    await screen.findByRole("dialog");
+    const button = screen.getByRole("button", { name: "Open in the browser" });
+    expect(button).toBeEnabled();
+    await fireEvent.click(button);
+    expect(onBrowser).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "shop" }),
+    );
+    await gone();
+  });
+
+  it("no longer says the browser editor is unavailable", async () => {
+    open();
+    await screen.findByRole("dialog");
+    expect(screen.queryByText(/not available yet/)).toBeNull();
   });
 
   it("opens desktop VS Code and closes once direct SSH is on", async () => {

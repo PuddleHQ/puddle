@@ -12,13 +12,14 @@
   import type { Workspace } from "#lib/workspaces/model.ts";
   import "#lib/theme/controls.css";
 
-  // The one "how do you want to connect" step. The browser editor is on top and keeps the
-  // workspace isolated. Below it is the switch for direct SSH (off by default); desktop VS Code
+  // The one "how do you want to connect" step. The browser editor is on top, opens with no
+  // setting needed and keeps the workspace isolated. Below it is the switch for direct SSH (off by default); desktop VS Code
   // works only once it is on, and turning it on asks for the trust text first (the caller does).
   let {
     open = $bindable(false),
     workspace,
     server,
+    onBrowser,
     onDesktop,
     onDirectSsh,
   }: {
@@ -26,6 +27,8 @@
     workspace: Workspace;
     /** The VS Code server the browser editor uses, once known. */
     server: ServerChoice | null;
+    /** Opens the browser editor's window; it needs no direct SSH. */
+    onBrowser: (w: Workspace) => void;
     onDesktop: (w: Workspace) => void;
     /** The user flipped the switch: turn direct SSH `on` or off for this workspace. */
     onDirectSsh: (w: Workspace, on: boolean) => void;
@@ -45,13 +48,18 @@
         {#if server}{serverNote(server)}{/if}
         <a href="/settings#s-vsc" onclick={() => (open = false)}
           >Change the server in Settings</a
-        >. The browser editor is not available yet.
+        >.
       </p>
       <button
         type="button"
-        class="btn"
-        disabled
+        class="btn primary"
         aria-describedby="connect-browser-desc"
+        onclick={() => {
+          // Closing the step clears its workspace, so take it first.
+          const w = workspace;
+          open = false;
+          onBrowser(w);
+        }}
       >
         <Globe aria-hidden="true" size={16} />Open in the browser
       </button>
@@ -83,7 +91,7 @@
       </p>
       <button
         type="button"
-        class="btn primary"
+        class="btn"
         disabled={!workspace.direct_ssh}
         onclick={() => {
           // Closing the step clears its workspace, so take it first.

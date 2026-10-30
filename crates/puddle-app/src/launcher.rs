@@ -193,6 +193,7 @@ mod tests {
         SandboxWindows::new(Hooks {
             open_external: Arc::new(|_| {}),
             refused: Arc::new(|_| {}),
+            new_window: Arc::new(|_, _| {}),
             last_closed: Arc::new(|_| {}),
         })
     }

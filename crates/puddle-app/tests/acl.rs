@@ -208,6 +208,7 @@ mod sandbox_windows {
         let windows = SandboxWindows::new(Hooks {
             open_external: Arc::new(|_| {}),
             refused: Arc::new(|_| {}),
+            new_window: Arc::new(|_, _| {}),
             last_closed: Arc::new(|_| {}),
         });
         let target = Target {

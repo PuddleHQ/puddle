@@ -469,13 +469,27 @@ test.describe("connecting", () => {
     ]);
     await expect(
       step.getByRole("button", { name: "Open in the browser" }),
-    ).toBeDisabled();
+    ).toBeEnabled();
     await expect(
       step.getByRole("checkbox", { name: "Allow direct SSH" }),
     ).not.toBeChecked();
     await expect(
       step.getByRole("button", { name: "Open in VS Code" }),
     ).toBeDisabled();
+  });
+
+  test("opening in the browser needs no direct SSH and says the window is opening", async ({
+    page,
+    backend,
+  }) => {
+    await openList(page, backend);
+    await card(page, "web-shop")
+      .getByRole("button", { name: "Connect to web-shop" })
+      .click();
+    const step = page.getByRole("dialog", { name: "Connect to web-shop" });
+    await step.getByRole("button", { name: "Open in the browser" }).click();
+    await expect(toast(page, "Opening web-shop in the browser.")).toBeVisible();
+    await expect(step).toHaveCount(0);
   });
 
   test("allowing direct SSH says what it trusts, then marks the workspace trusted", async ({

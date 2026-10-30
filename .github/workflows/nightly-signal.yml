@@ -19,6 +19,7 @@ on:
       - mutants
       - full-test
       - coverage-baseline
+      - stress
     types: [completed]
 
 permissions:

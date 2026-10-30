@@ -6,16 +6,23 @@
 //! a desktop user never sees stderr, so both are raised as a background problem. The page already
 //! lists those as notices (`GET /api/problems`), so this needs no window API and no UI of its own.
 //!
-//! One problem key serves both: the newest failure replaces the one before, and the next link
-//! that opens takes it away.
+//! A window the editor asked for ("New Window") that could not be built is a problem of its own
+//! per workspace: the link was fine, so naming its scheme would mislead.
+//!
+//! One problem key serves the two link cases: the newest failure replaces the one before, and the
+//! next link that opens takes it away. A window's problem goes when a window of that workspace
+//! next opens.
 
 use std::fmt::Display;
 
-use puddle_types::{Problem, Problems};
+use puddle_types::{Problem, Problems, WorkspaceName};
 use url::Url;
 
 /// The key of the problem about a link that went nowhere.
 const PROBLEM_KEY: &str = "app:link";
+
+/// The start of the key of a workspace's problem about a window that could not be built.
+const WINDOW_KEY: &str = "app:window";
 
 /// The problem for a web address the default browser could not be asked to open. Only the host is
 /// named: an address can carry a token in its query.
@@ -43,6 +50,30 @@ pub fn refused(url: &Url) -> Problem {
         format!("Puddle did not follow a link ({}:)", url.scheme()),
         "Puddle only opens web addresses (http or https) from this window, so nothing was opened.",
     )
+}
+
+/// The problem for an editor window ("New Window") that could not be built. It names the
+/// workspace and the reason, not the address: the link was the editor's own and fine.
+#[must_use]
+pub fn window_failed(workspace: &WorkspaceName, reason: &str) -> Problem {
+    Problem::new(
+        format!("{WINDOW_KEY}:{workspace}"),
+        format!("Puddle could not open another editor window for {workspace}"),
+        format!("{reason}. The window you already have still works; try New Window again."),
+    )
+    .about(workspace.clone())
+}
+
+/// Withdraws the notice about `workspace`'s failed window, once one opened.
+pub fn window_opened(problems: &Problems, workspace: &WorkspaceName) {
+    problems.clear(&format!("{WINDOW_KEY}:{workspace}"));
+}
+
+/// Raises the notice for a window that could not be built.
+pub fn report_window_failed(problems: &Problems, workspace: &WorkspaceName, reason: &str) {
+    let problem = window_failed(workspace, reason);
+    problems.clear(&problem.key);
+    problems.raise(problem);
 }
 
 /// The host of `url`, or its scheme when it has none.
@@ -116,6 +147,42 @@ mod tests {
         let p = open_failed(&url("http://[::1]:80/"), "x");
         assert!(p.title.contains("[::1]"), "{}", p.title);
         assert_eq!(where_to(&url("data:text/plain,hi")), "data:");
+    }
+
+    fn workspace(name: &str) -> WorkspaceName {
+        WorkspaceName::new(name).unwrap()
+    }
+
+    #[test]
+    fn a_failed_window_names_the_workspace_and_the_reason_not_a_link() {
+        let p = window_failed(&workspace("demo"), "the webview refused the label");
+        assert_eq!(p.key, "app:window:demo");
+        assert_eq!(p.workspace, Some(workspace("demo")));
+        assert!(p.title.contains("demo"), "{}", p.title);
+        assert!(!p.title.contains("link"), "{}", p.title);
+        assert!(
+            p.detail.starts_with("the webview refused the label."),
+            "{}",
+            p.detail
+        );
+    }
+
+    #[test]
+    fn a_failed_window_is_listed_once_per_workspace_and_a_new_window_withdraws_it() {
+        let (_, problems) = problems();
+        report_window_failed(&problems, &workspace("demo"), "first");
+        report_window_failed(&problems, &workspace("demo"), "second");
+        report_window_failed(&problems, &workspace("other"), "x");
+        let listed = problems.list();
+        assert_eq!(listed.len(), 2);
+        assert!(listed.iter().any(|p| p.detail.starts_with("second.")));
+        window_opened(&problems, &workspace("demo"));
+        assert_eq!(problems.list().len(), 1);
+        // The link problem is a different one and stays.
+        report_refused(&problems, &url("javascript:alert(1)"));
+        window_opened(&problems, &workspace("other"));
+        assert_eq!(problems.list().len(), 1);
+        assert_eq!(problems.list()[0].key, PROBLEM_KEY);
     }
 
     #[test]

@@ -828,7 +828,7 @@ async fn attach_needs_a_running_workspace() {
 }
 
 #[tokio::test]
-async fn browser_attach_returns_the_url_and_opens_nothing() {
+async fn browser_attach_opens_the_window_through_the_launcher_and_returns_no_url() {
     let api = start().await;
     running(&api, "web").await;
     let reply = api
@@ -839,16 +839,14 @@ async fn browser_attach_returns_the_url_and_opens_nothing() {
         )
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
-    let body = reply.json();
-    assert_eq!(body["opened"], false);
-    assert!(
-        body["url"]
-            .as_str()
-            .unwrap()
-            .starts_with("http://127.0.0.1:")
+    assert_eq!(
+        reply.json(),
+        json!({"opened": true, "url": null, "message": null})
     );
-    assert!(body["url"].as_str().unwrap().contains("/web/"));
-    assert_eq!(body["message"], Value::Null);
+    assert_eq!(
+        api.launcher.browsers_opened(),
+        [WorkspaceId::new("web").unwrap()]
+    );
     assert_eq!(api.launcher.opened().len(), 0);
     // A browser attach needs no SSH: it works while direct SSH is off.
     assert_eq!(
@@ -1006,6 +1004,26 @@ async fn a_desktop_that_cannot_open_says_why() {
     assert_eq!(
         reply.json(),
         json!({"opened": false, "url": null, "message": "VS Code is not installed"})
+    );
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_browser_window_that_cannot_open_says_why() {
+    let api = start().await;
+    running(&api, "web").await;
+    api.launcher.fail_next("the editor gave no session");
+    let reply = api
+        .send(
+            "POST",
+            "/api/workspaces/web/attach",
+            Some(&json!({"mode": "browser"})),
+        )
+        .await;
+    assert_eq!(reply.status, 200);
+    assert_eq!(
+        reply.json(),
+        json!({"opened": false, "url": null, "message": "the editor gave no session"})
     );
     api.running.shutdown().await;
 }

@@ -173,9 +173,9 @@ impl Mitm {
             .unwrap();
         let log_path = dir.path().join("mitm.log");
         let port = wait_listening(&mut child, &log_path, READY);
+        drop(slot);
         wait_ready(port, Some(&mut child), READY, || read(&log_path));
         let started = StartCost::measure(&prefix, begun, Some(&child));
-        drop(slot);
         Some(Self {
             child,
             port,

@@ -63,10 +63,12 @@ const READY: Duration = Duration::from_secs(60);
 
 /// How many mitmproxy starts may run at once, across every test process of the machine.
 ///
-/// A start reads thousands of Python files and each read goes through the antivirus; on the
-/// hosted Windows runner (4 vCPUs, nextest running 4 tests at once) a queue run lost two tests
-/// to the 60 s bound when four starts overlapped at a moment the machine was slow (30 s to
-/// over 60 s each, against 1.5 s idle). Running proxies cost nothing, so only the start waits.
+/// A mitigation, not a measured cure: on the hosted Windows runner (4 vCPUs, nextest running 4
+/// tests at once) a queue run lost two tests to the 60 s bound when four starts overlapped at a
+/// moment the whole machine was slow (30 s to over 60 s each, against 1.5 s idle). The stall was
+/// not reproduced; a start is mostly file reads through the antivirus and CPU, which overlapping
+/// starts share, so fewer overlapping starts leave a stall fewer starts to multiply. A running
+/// proxy costs nothing, so only the start waits, and only until the proxy listens.
 const START_SLOTS: usize = 2;
 
 /// A hold on one of the [`START_SLOTS`] start slots: an advisory lock on a file in the temp
@@ -88,40 +90,53 @@ impl StartSlot {
     }
 
     /// A free slot of `slots` in `dir`, or `None` when all are held.
-    fn try_take(dir: &Path, slots: usize) -> Option<Self> {
-        std::fs::create_dir_all(dir).unwrap();
-        (0..slots).find_map(|n| {
+    fn try_take(dir: &Path, slots: usize) -> std::io::Result<Option<Self>> {
+        for n in 0..slots {
             let file = File::options()
                 .create(true)
                 .truncate(false)
                 .write(true)
-                .open(dir.join(format!("slot-{n}")))
-                .unwrap();
+                .open(dir.join(format!("slot-{n}")))?;
             match file.try_lock() {
-                Ok(()) => Some(Self { _file: file }),
-                Err(TryLockError::WouldBlock) => None,
-                Err(TryLockError::Error(e)) => panic!("cannot lock a start slot: {e}"),
+                Ok(()) => return Ok(Some(Self { _file: file })),
+                Err(TryLockError::WouldBlock) => {}
+                Err(TryLockError::Error(e)) => return Err(e),
             }
-        })
+        }
+        Ok(None)
     }
 
-    /// Waits for a free slot. A holder is a start that ends in at most [`READY`] (it succeeds
-    /// or panics), so the wait is bounded by the queue ahead and never by a stuck lock.
-    fn take(what: &str) -> Self {
+    /// Waits for a free slot, or returns `None` when the slot files cannot be used (a folder
+    /// another user made in a shared temp folder): the slots limit load and are not required.
+    /// A holder is a start that ends in at most [`READY`] (it listens or panics), so the wait
+    /// is bounded by the starts ahead and never by a stuck lock.
+    fn take(what: &str) -> Option<Self> {
+        let dir = Self::shared_dir();
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            eprintln!("lab: {what} starts without a start slot ({e})");
+            return None;
+        }
         let begun = Instant::now();
-        let slot = loop {
-            if let Some(slot) = Self::try_take(&Self::shared_dir(), START_SLOTS) {
-                break slot;
+        let mut said = false;
+        loop {
+            match Self::try_take(&dir, START_SLOTS) {
+                Ok(Some(slot)) => {
+                    if said {
+                        eprintln!("lab: {what} got a start slot after {:.1?}", begun.elapsed());
+                    }
+                    return Some(slot);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    eprintln!("lab: {what} starts without a start slot ({e})");
+                    return None;
+                }
+            }
+            if !std::mem::replace(&mut said, true) {
+                eprintln!("lab: {what} waits for a start slot");
             }
             std::thread::sleep(Duration::from_millis(50));
-        };
-        if begun.elapsed() >= Duration::from_secs(1) {
-            eprintln!(
-                "lab: {what} waited {:.1?} for a start slot",
-                begun.elapsed()
-            );
         }
-        slot
     }
 }
 
@@ -377,15 +392,12 @@ mod tests {
     #[test]
     fn only_as_many_starts_hold_a_slot_as_there_are_slots_and_a_dropped_one_frees_its_place() {
         let dir = tempfile::tempdir().unwrap();
-        let first = StartSlot::try_take(dir.path(), 2).unwrap();
-        let second = StartSlot::try_take(dir.path(), 2).unwrap();
-        assert!(
-            StartSlot::try_take(dir.path(), 2).is_none(),
-            "a third start got a slot"
-        );
+        let take = || StartSlot::try_take(dir.path(), 2).unwrap();
+        let first = take().unwrap();
+        let second = take().unwrap();
+        assert!(take().is_none(), "a third start got a slot");
         drop(first);
-        let third = StartSlot::try_take(dir.path(), 2).expect("the freed slot was not offered");
-        assert!(StartSlot::try_take(dir.path(), 2).is_none());
+        let third = take().expect("the freed slot was not offered");
         drop((second, third));
     }
 

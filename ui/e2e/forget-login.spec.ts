@@ -4,7 +4,7 @@
 // dialog. Layout is checked by computed styles and box sizes, never by pictures.
 import type { Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeViolations } from "./support";
+import { expectNoAxeViolations } from "./support";
 
 const notices = (page: Page) => page.getByRole("region", { name: "Notices" });
 const forgetButton = (page: Page) =>
@@ -35,7 +35,7 @@ test("a kept login is forgotten by keyboard, after a confirmation that says what
   backend,
 }) => {
   await open(page, backend);
-  await expect.poll(() => axeViolations(page)).toEqual([]);
+  await expectNoAxeViolations(page);
 
   await forgetButton(page).focus();
   await page.keyboard.press("Enter");
@@ -49,7 +49,7 @@ test("a kept login is forgotten by keyboard, after a confirmation that says what
   await expect(
     dialog(page).getByRole("button", { name: "Cancel" }),
   ).toBeFocused();
-  await expect.poll(() => axeViolations(page)).toEqual([]);
+  await expectNoAxeViolations(page);
   await page.keyboard.press("Tab");
   await expect(
     dialog(page).getByRole("button", { name: "Forget login" }),
@@ -60,7 +60,7 @@ test("a kept login is forgotten by keyboard, after a confirmation that says what
   await expect(notices(page).getByText(/can't be used/)).toHaveCount(0);
   // The notice and its button are gone: the focus is on the page, not lost.
   await expect(page.locator("#main")).toBeFocused();
-  await expect.poll(() => axeViolations(page)).toEqual([]);
+  await expectNoAxeViolations(page);
 });
 
 test("Escape leaves the login and its notice alone", async ({
@@ -93,7 +93,7 @@ test("a store that refuses shows its way out in the dialog and keeps the notice,
   );
   await expect(dialog(page)).toBeVisible();
   await expect(forgetButton(page)).toHaveCount(1);
-  await expect.poll(() => axeViolations(page)).toEqual([]);
+  await expectNoAxeViolations(page);
 
   // Layout: the message has its own border colour next to the dialog's, nothing leaves the
   // dialog, and every button is a target of at least 24 by 24 CSS pixels (WCAG 2.5.8).

@@ -3,7 +3,7 @@
 // any screen, never take focus, and can be dismissed. Waits are on conditions, never on time.
 import type { Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeViolations } from "./support";
+import { expectNoAxeViolations } from "./support";
 
 async function open(page: Page, backend: Backend, path = "/inbox") {
   await backend.control.reset("lived-in");
@@ -48,7 +48,7 @@ test("an out-of-memory kill shows a notice on any screen, without taking focus",
   await expect
     .poll(() => page.evaluate(() => document.activeElement?.tagName))
     .toBe("BODY");
-  await expect.poll(() => axeViolations(page)).toEqual([]);
+  await expectNoAxeViolations(page);
   await notices(page).getByRole("link", { name: "Workspace settings" }).click();
   await expect(page).toHaveURL(/\/workspaces\/web-shop\/settings$/);
 });
@@ -183,7 +183,7 @@ for (const scheme of ["light", "dark"] as const) {
     await notices(page)
       .getByRole("button", { name: /^Show all/ })
       .click();
-    await expect.poll(() => axeViolations(page)).toEqual([]);
+    await expectNoAxeViolations(page);
   });
 }
 
@@ -209,7 +209,7 @@ test("a direct SSH failure shows its cause and a way to the workspace, and ends 
   await expect(
     notices(page).getByText(/The workspace itself keeps running\./),
   ).toBeVisible();
-  await expect.poll(() => axeViolations(page)).toEqual([]);
+  await expectNoAxeViolations(page);
   await notices(page).getByRole("link", { name: "Open workspace" }).click();
   await expect(page).toHaveURL(/\/workspaces\/web-shop$/);
   // The endpoint it reported on is gone once the workspace stops.
@@ -244,7 +244,7 @@ test("an activity log that cannot be written is a notice with the reason, and en
   await expect(notices(page).getByText(/free some space/)).toBeVisible();
   // The reason is text, not markup.
   await expect(notices(page).locator("b")).toHaveCount(0);
-  await expect.poll(() => axeViolations(page)).toEqual([]);
+  await expectNoAxeViolations(page);
   await backend.control.step({ do: "clear_problem", key });
   await expect(
     notices(page).getByText("Puddle could not write to its activity log"),
@@ -326,7 +326,7 @@ for (const scheme of ["light", "dark"] as const) {
       hasText: "Live updates stopped",
     });
     await expect(banner).toBeVisible();
-    await expect.poll(() => axeViolations(page)).toEqual([]);
+    await expectNoAxeViolations(page);
     const box = await banner.evaluate((el) => {
       const style = getComputedStyle(el);
       const probe = document.createElement("span");

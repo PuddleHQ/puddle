@@ -2507,8 +2507,7 @@ async fn a_browser_attach_gives_the_window_the_front_the_settings_and_a_way_to_t
         "the workspace's own setting reaches the window"
     );
     // code-server asks for a password: the window reads it when it signs in, from the guest's file.
-    // The agent says hello after the attach asked: the password is there once the front finds it.
-    served_at(&target.origin).await;
+    // The agent may say hello after the window asked: the sign-in waits for it.
     let login = target.login.expect("code-server asks for a password");
     assert_eq!(login.password().await.unwrap(), "0".repeat(64));
     // An agent with no password yet, and a workspace that has stopped, are said in words.
@@ -2519,6 +2518,26 @@ async fn a_browser_attach_gives_the_window_the_front_the_settings_and_a_way_to_t
     events.until(ended("acme"), Duration::from_secs(20)).await;
     let err = login.password().await.unwrap_err().to_string();
     assert_eq!(err, "acme is not running; start it first");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_window_that_signs_in_before_the_agents_hello_waits_for_it_and_gets_the_password() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    // The workspace reports running and no agent has said hello: the window signs in now.
+    let target = browser_target(&rig, &api, "acme").await;
+    let login = target.login.expect("code-server asks for a password");
+    let asked = tokio::spawn(async move { login.password().await });
+    // An absence window: nothing is there to signal that the sign-in has not given up.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!asked.is_finished(), "the sign-in waits, it does not fail");
+    // The hello arrives late.
+    let _editor = editor_stand_in(&rig, "acme").await;
+    assert_eq!(asked.await.unwrap().unwrap(), "0".repeat(64));
     host.shutdown().await;
 }
 

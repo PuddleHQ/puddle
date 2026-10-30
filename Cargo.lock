@@ -6598,6 +6598,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "puddle-test-kit"
+version = "0.0.0"
+dependencies = [
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "puddle-types"
 version = "0.0.0"
 dependencies = [

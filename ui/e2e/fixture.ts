@@ -10,6 +10,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { loadavg, tmpdir } from "node:os";
 import { join } from "node:path";
+import { throttleCpu } from "./cpu-throttle.ts";
 import { FIXTURE_BIN_ENV } from "./fixture-build.ts";
 
 export interface Control {
@@ -204,6 +205,7 @@ export const test = base.extend<
         `page opened after ${Date.now() - began} ms: ${pageOpenState(browserName)}`,
       );
     }
+    await throttleCpu(page, browserName);
     await use(page);
   },
   baseURL: async ({ workerBackend }, use) => {

@@ -36,11 +36,13 @@ pub struct MsbSandbox {
     boot: Option<i32>,
     /// Set when a stop ended the VM by force.
     forced: AtomicBool,
-    /// The SSH server every connection of this boot is served with, set up by the first one.
-    /// One server per connection would let the first connections of a new sandbox each find no
-    /// host key and race to create it: the SDK's create-if-missing is not atomic, and the
-    /// losers fail with "File exists" or read a half-written key.
-    ssh: OnceCell<SshServer>,
+    /// The SSH server every connection of this boot is served with, set up by the first one:
+    /// the SDK's server is made to be reused. Setting it up loads the sandbox's host key and
+    /// creates it when missing, which the SDK does not do atomically, so a server per
+    /// connection let the first connections of a new sandbox race to create the key and all but
+    /// one fail with "File exists". Boxed: the SDK server is large and the handle lives in
+    /// many futures.
+    ssh: OnceCell<Box<SshServer>>,
 }
 
 impl std::fmt::Debug for MsbSandbox {
@@ -273,6 +275,7 @@ impl Sandbox for MsbSandbox {
                             }
                         }))
                         .await
+                        .map(Box::new)
                 })
                 .await
                 .map_err(|e| runtime("serve ssh", &e))?;

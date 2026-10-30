@@ -2477,6 +2477,11 @@ async fn a_forwarded_port_s_origin_reaches_that_guest_port_through_the_agent() {
         0,
         "the editor was not asked"
     );
+    // The agent's own ports (its proxy) are refused by the agent, as for a forward (AT-43): the
+    // answer says so, where a free port would say that nothing listens.
+    let proxy = window_gets(&origin.replacen("http://", "http://3128.", 1)).await;
+    assert!(proxy.starts_with("HTTP/1.1 502"), "{proxy}");
+    assert!(proxy.contains("belongs to Puddle's agent"), "{proxy}");
     host.shutdown().await;
 }
 

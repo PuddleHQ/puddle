@@ -191,14 +191,12 @@ mod tests {
 
     #[test]
     fn the_defaults_follow_the_data_folder() {
-        let layout = RuntimeLayout::new("/rt".into(), "/data/msb".into()).unwrap_or_else(|_| {
-            // Relative on this platform: the test only needs some layout.
-            RuntimeLayout::new(
-                std::path::absolute("rt").unwrap(),
-                std::path::absolute("h").unwrap(),
-            )
-            .unwrap_or_else(|e| panic!("{e}"))
-        });
+        // Absolute on every platform ("/rt" has no drive on Windows).
+        let layout = RuntimeLayout::new(
+            std::path::absolute("/rt").unwrap(),
+            std::path::absolute("/data/msb").unwrap(),
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
         let config = HostConfig::new(
             HostPaths::new("/data"),
             layout,

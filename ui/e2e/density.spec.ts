@@ -67,12 +67,12 @@ test.describe("the density setting", () => {
       "data-density",
       "compact",
     );
-    expect(await spaceFour(page)).toBeLessThan(roomy);
-    expect(
-      await page.evaluate(
-        () => (window as unknown as { __kept?: boolean }).__kept,
-      ),
-    ).toBe(true);
+    await expect.poll(() => spaceFour(page)).toBeLessThan(roomy);
+    await expect
+      .poll(() =>
+        page.evaluate(() => (window as unknown as { __kept?: boolean }).__kept),
+      )
+      .toBe(true);
 
     // The sidebar links go to another screen without a reload and keep it.
     await page
@@ -110,7 +110,7 @@ test.describe("the density setting", () => {
       "data-density",
       /.*/,
     );
-    expect(await spaceFour(page)).toBe(roomy);
+    await expect.poll(() => spaceFour(page)).toBe(roomy);
   });
 
   test("a compact choice is on the page before its body is, so nothing is styled roomy first", async ({
@@ -210,33 +210,41 @@ test.describe("the density setting", () => {
         await expect(
           page.getByRole("heading", { level: 1, name: heading }),
         ).toBeVisible();
-        expect(await axeViolations(page), path).toEqual([]);
+        await expect
+          .poll(() => axeViolations(page), { message: path })
+          .toEqual([]);
 
-        const small = await page.evaluate(() => {
-          const out: string[] = [];
-          // Native checkboxes are left to axe's spacing rule: they are small in both densities.
-          const sel =
-            "button, select, input:not([type=hidden], [type=checkbox], [type=radio]), [role=radio]";
-          for (const el of document.querySelectorAll(sel)) {
-            const r = el.getBoundingClientRect();
-            if (r.width === 0 || r.height === 0) continue;
-            if (r.height < 24 || r.width < 24)
-              out.push(
-                `${el.tagName} ${el.getAttribute("aria-label") ?? el.id} ${r.width}x${r.height}`,
-              );
-          }
-          return out;
-        });
-        expect(small, `${path} targets under 24px`).toEqual([]);
+        const small = () =>
+          page.evaluate(() => {
+            const out: string[] = [];
+            // Native checkboxes are left to axe's spacing rule: they are small in both densities.
+            const sel =
+              "button, select, input:not([type=hidden], [type=checkbox], [type=radio]), [role=radio]";
+            for (const el of document.querySelectorAll(sel)) {
+              const r = el.getBoundingClientRect();
+              if (r.width === 0 || r.height === 0) continue;
+              if (r.height < 24 || r.width < 24)
+                out.push(
+                  `${el.tagName} ${el.getAttribute("aria-label") ?? el.id} ${r.width}x${r.height}`,
+                );
+            }
+            return out;
+          });
+        await expect
+          .poll(small, { message: `${path} targets under 24px` })
+          .toEqual([]);
       }
 
       // The focus ring is the same two pixels in both densities.
       await page.keyboard.press("Tab");
-      const ring = await page.evaluate(() => {
-        const s = getComputedStyle(document.activeElement as Element);
-        return { width: s.outlineWidth, style: s.outlineStyle };
-      });
-      expect(ring).toEqual({ width: "2px", style: "solid" });
+      await expect
+        .poll(() =>
+          page.evaluate(() => {
+            const s = getComputedStyle(document.activeElement as Element);
+            return { width: s.outlineWidth, style: s.outlineStyle };
+          }),
+        )
+        .toEqual({ width: "2px", style: "solid" });
     });
   }
 });
@@ -400,6 +408,7 @@ test.describe("layout by density", () => {
           .poll(data.reads, { message: "the screen's data read is held" })
           .toBeGreaterThan(0);
         if (layout.selectWaitsForData)
+          // eslint-disable-next-line no-restricted-syntax -- the data read is held (asserted just above), so the controls are absent by construction
           expect(await measure(page, "main select")).toBeNull();
         data.release();
 

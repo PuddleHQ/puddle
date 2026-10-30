@@ -211,6 +211,13 @@ jobs:
         with:
           name: vm-linux-build
           path: ${{ runner.temp }}/bundle
+      # Every test on one runner ran 4 to 6 times slower than usual once (a slow host, not a hang): the
+      # figures show a slow runner at the top of the log, before the tests it slows down.
+      - name: runner speed (evidence, never a gate)
+        if: steps.kvm.outputs.ok == 'true'
+        timeout-minutes: 2
+        continue-on-error: true
+        run: ci/runner-speed.sh | tee "$RUNNER_TEMP/runner-speed.txt"
       - name: VM tests (tier K, partition ${{ matrix.partition }} of 4)
         if: steps.kvm.outputs.ok == 'true'
         timeout-minutes: ${{ contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name) && 52 || 32 }}
@@ -284,6 +291,14 @@ jobs:
               printf 'pid %s ppid %s rss %s MiB age %s s: %s\n' "$pid" "$ppid" "$((rss / 1024))" "$age" "$cmd"
             done
           } 2>&1 | tee "$RUNNER_TEMP/vm-processes.txt"
+      # Names the tests that failed or were stopped as annotations on this job. The merge queue cancels
+      # the run when a job fails, and a cancelled job keeps only its annotations, so this is where the
+      # result job finds the name.
+      - name: name the failed and stopped tests
+        if: ${{ failure() && steps.kvm.outputs.ok == 'true' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        run: ci/vm-tests-report.sh log "$RUNNER_TEMP/vm-tests.log" "${{ matrix.partition }}"
       - name: upload test results and msb logs
         if: ${{ always() && steps.kvm.outputs.ok == 'true' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -295,6 +310,7 @@ jobs:
             ${{ runner.temp }}/vm-tests.log
             ${{ runner.temp }}/run-*.log
             ${{ runner.temp }}/vm-processes.txt
+            ${{ runner.temp }}/runner-speed.txt
             ${{ runner.temp }}/pvm/**/logs/**
           retention-days: 14
           if-no-files-found: ignore
@@ -314,10 +330,22 @@ jobs:
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      checks: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           sparse-checkout: ci
+      # A cancelled partition (the queue cancels the run when one job fails) is only the word `cancelled`
+      # in the verdict below; this prints which test each partition named before it went.
+      - name: which tests failed or were stopped
+        if: ${{ always() && needs.tests.result != 'success' && needs.tests.result != 'skipped' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ci/vm-tests-report.sh run "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
       - name: every needed job passed
         env:
           NEEDS: ${{ toJSON(needs) }}

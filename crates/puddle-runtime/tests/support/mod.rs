@@ -1,35 +1,26 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Fixtures shared by the integration tests: a temp dir per test and fake msb binaries.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use object::write::{Object, StandardSection};
 use object::{Architecture, BinaryFormat, Endianness, SectionKind};
 
-/// A directory removed on drop.
-pub(crate) struct TempDir(PathBuf);
+/// A directory removed on drop, named after `tag` so a leftover one says which test made it.
+pub(crate) struct TempDir(tempfile::TempDir);
 
 impl TempDir {
     pub(crate) fn new(tag: &str) -> Self {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static N: AtomicU64 = AtomicU64::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "puddle-runtime-{tag}-{}-{}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        Self(dir)
+        Self(
+            tempfile::Builder::new()
+                .prefix(&format!("puddle-runtime-{tag}-"))
+                .tempdir()
+                .unwrap(),
+        )
     }
 
     pub(crate) fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        self.0.path()
     }
 }
 

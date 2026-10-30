@@ -193,7 +193,11 @@ fn an_unexecutable_msb_is_a_permissions_finding() {
 
 #[test]
 fn the_machine_probes_answer() {
-    let probe = SystemProbe::new(std::env::temp_dir(), expected(), DevOverride::none());
+    let probe = SystemProbe::new(
+        std::path::absolute("runtime").unwrap(),
+        expected(),
+        DevOverride::none(),
+    );
     assert_eq!(probe.arch(), std::env::consts::ARCH);
     let _hv = probe.hypervisor();
     assert_eq!(probe.code_integrity().is_some(), cfg!(windows));

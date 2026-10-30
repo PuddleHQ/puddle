@@ -6119,6 +6119,7 @@ dependencies = [
  "puddle-types",
  "puddle-vm-tests",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "tracing-subscriber",
@@ -6165,6 +6166,7 @@ name = "puddle-compute"
 version = "0.0.0"
 dependencies = [
  "puddle-types",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
 ]
@@ -6392,6 +6394,7 @@ dependencies = [
  "getrandom 0.4.3",
  "puddle-fs",
  "rustix",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -6457,6 +6460,7 @@ dependencies = [
  "puddle-netpolicy",
  "puddle-test-kit",
  "puddle-types",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -6546,6 +6550,7 @@ dependencies = [
  "object",
  "puddle-fs",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
 ]
 

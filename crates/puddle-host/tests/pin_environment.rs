@@ -16,7 +16,7 @@ use puddle_host::{HostError, Platform, SystemPlatform};
 use puddle_runtime::RuntimeLayout;
 
 fn layout() -> RuntimeLayout {
-    let root = std::env::temp_dir().join("puddle-pin-environment-test");
+    let root = std::path::absolute("puddle-pin-environment-test").expect("a current folder");
     RuntimeLayout::new(root.join("runtime"), root.join("home")).expect("absolute folders")
 }
 

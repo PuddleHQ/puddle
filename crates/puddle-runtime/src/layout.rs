@@ -127,7 +127,7 @@ mod tests {
     use super::*;
 
     fn abs(p: &str) -> PathBuf {
-        std::env::temp_dir().join(p)
+        std::path::absolute(p).unwrap()
     }
 
     #[test]

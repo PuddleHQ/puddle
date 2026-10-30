@@ -51,8 +51,10 @@ test("System managed lists what Puddle allows for the editor, with the reason", 
   await expect(system).toContainText("bundled code-server");
   await expect(system).not.toContainText("marketplace.visualstudio.com");
   await expect(system).toContainText("add a deny rule to block one");
-  expect(await axeViolations(page), "rules with sets").toEqual([]);
-  expect(await csp()).toEqual([]);
+  await expect
+    .poll(() => axeViolations(page), { message: "rules with sets" })
+    .toEqual([]);
+  await expect.poll(() => csp()).toEqual([]);
 });
 
 test("a built-in set ships off, and switches for one workspace", async ({
@@ -78,7 +80,9 @@ test("a built-in set ships off, and switches for one workspace", async ({
   const confirm = page.getByRole("alertdialog", {
     name: "Turn on for every workspace?",
   });
-  expect(await axeViolations(page), "confirm").toEqual([]);
+  await expect
+    .poll(() => axeViolations(page), { message: "confirm" })
+    .toEqual([]);
   await confirm.getByRole("button", { name: "Cancel" }).click();
   await expect(
     github.getByRole("switch", { name: "On for every workspace" }),
@@ -94,7 +98,9 @@ test("a set of your own: make it, then approve a request into it from the inbox"
   await page.getByRole("button", { name: "New rule set" }).click();
   const dialog = page.getByRole("dialog", { name: "New rule set" });
   await dialog.getByLabel("Name").fill("Client X");
-  expect(await axeViolations(page), "new set").toEqual([]);
+  await expect
+    .poll(() => axeViolations(page), { message: "new set" })
+    .toEqual([]);
   await dialog.getByRole("button", { name: "Make rule set" }).click();
   const card = page.getByRole("article", { name: "Client X" });
   await expect(card).toContainText("0 entries");

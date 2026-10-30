@@ -745,15 +745,14 @@ mod tests {
 
     #[test]
     fn log_tails_name_each_file_and_keep_the_end() {
-        let dir = std::env::temp_dir().join(format!("puddle-msb-logtail-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         std::fs::create_dir_all(dir.join("sub")).unwrap();
         std::fs::write(dir.join("b.log"), "0123456789").unwrap();
         std::fs::write(dir.join("a.log"), "hello").unwrap();
         let tail = log_tail(&dir, 4);
         assert_eq!(tail, "--- a.log\nello\n--- b.log\n6789\n");
         assert_eq!(log_tail(&dir.join("missing"), 4), "");
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -801,8 +800,8 @@ mod tests {
         use puddle_compute::{FileMount, SandboxSpec};
         use puddle_types::GuestPath;
 
-        let base = std::env::temp_dir().join(format!("puddle-msb-mounts-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().to_path_buf();
         let share = base.join("home").join("guest-share");
         std::fs::create_dir_all(share.join("tree")).unwrap();
         std::fs::write(share.join("file"), b"x").unwrap();
@@ -837,13 +836,12 @@ mod tests {
         let wrong = refusal(FileMount::read_only(share.join("tree"), guest())).await;
         assert!(wrong.contains("is not a file"), "{wrong}");
         drop(rt);
-        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
     fn the_database_folder_is_listed_with_sizes_and_ages_for_the_evidence_of_a_failed_open() {
-        let dir = std::env::temp_dir().join(format!("puddle-msb-dbfiles-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("db");
         assert!(database_files(&dir, SystemTime::now()).starts_with("cannot be listed"));
         std::fs::create_dir_all(&dir).unwrap();
         assert_eq!(database_files(&dir, SystemTime::now()), "empty");
@@ -857,13 +855,12 @@ mod tests {
             listed.starts_with("msb.db 10 B, 6") && listed.contains("; msb.db-journal 3 B, 6"),
             "{listed}"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
     async fn a_database_that_cannot_open_says_how_long_it_took_and_what_its_folder_holds() {
-        let base = std::env::temp_dir().join(format!("puddle-msb-noopen-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().to_path_buf();
         let home = base.join("home");
         std::fs::create_dir_all(&home).unwrap();
         // A file where msb wants its database folder.
@@ -876,7 +873,6 @@ mod tests {
                 && error.contains("cannot be listed"),
             "{error}"
         );
-        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

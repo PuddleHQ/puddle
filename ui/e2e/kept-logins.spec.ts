@@ -50,7 +50,7 @@ test("the kept logins are listed with names and times, and nothing else", async 
   await expect(rows.nth(1)).toContainText(
     "Kept since a time Puddle did not record.",
   );
-  expect(await axeViolations(page)).toEqual([]);
+  await expect.poll(() => axeViolations(page)).toEqual([]);
 });
 
 test("a kept login is forgotten by keyboard after a confirmation, and focus stays in the section", async ({
@@ -68,7 +68,7 @@ test("a kept login is forgotten by keyboard after a confirmation, and focus stay
   await expect(
     dialog(page).getByRole("button", { name: "Cancel" }),
   ).toBeFocused();
-  expect(await axeViolations(page)).toEqual([]);
+  await expect.poll(() => axeViolations(page)).toEqual([]);
   await page.keyboard.press("Tab");
   await expect(
     dialog(page).getByRole("button", { name: "Forget login" }),
@@ -81,7 +81,7 @@ test("a kept login is forgotten by keyboard after a confirmation, and focus stay
   await expect(
     section(page).getByRole("heading", { name: "Kept logins" }),
   ).toBeFocused();
-  expect(await axeViolations(page)).toEqual([]);
+  await expect.poll(() => axeViolations(page)).toEqual([]);
 
   // The forgotten login stays off the list after a reload: the host agrees.
   await page.reload();
@@ -117,7 +117,7 @@ test("a store that refuses shows its way out in the dialog and keeps the row, an
     "credential store did not delete a saved login; unlock it or start it and ask again",
   );
   await expect(section(page).getByRole("listitem")).toHaveCount(2);
-  expect(await axeViolations(page)).toEqual([]);
+  await expect.poll(() => axeViolations(page)).toEqual([]);
 
   await backend.control.step({ do: "login_store_refuses", refuses: false });
   await dialog(page).getByRole("button", { name: "Forget login" }).focus();
@@ -135,7 +135,7 @@ test("an empty list and an unreadable credential store each say so", async ({
     "Puddle keeps no logins for this workspace.",
   );
   await expect(section(page).getByRole("listitem")).toHaveCount(0);
-  expect(await axeViolations(page)).toEqual([]);
+  await expect.poll(() => axeViolations(page)).toEqual([]);
 
   await open(page, backend, [], false);
   await expect(section(page).getByRole("alert")).toContainText(
@@ -144,7 +144,7 @@ test("an empty list and an unreadable credential store each say so", async ({
   await expect(
     section(page).getByRole("button", { name: "Try again" }),
   ).toBeVisible();
-  expect(await axeViolations(page)).toEqual([]);
+  await expect.poll(() => axeViolations(page)).toEqual([]);
 
   // Trying again after the store answers shows the list.
   await backend.control.step({
@@ -161,6 +161,7 @@ test("a hostile name is text that wraps inside its row, and the buttons are big 
   backend,
 }) => {
   await open(page, backend, [{ service: "claude", name: HOSTILE }]);
+  // eslint-disable-next-line no-restricted-syntax -- absence: the settled state is asserted above, and a poll of a negative passes on its first read too
   expect(await page.title()).not.toBe("owned");
   await expect(section(page).locator("img")).toHaveCount(0);
   await expect(section(page)).toContainText("<img src=x");
@@ -171,9 +172,12 @@ test("a hostile name is text that wraps inside its row, and the buttons are big 
   expect(button.width).toBeGreaterThanOrEqual(24);
   expect(button.height).toBeGreaterThanOrEqual(24);
   expect(button.x + button.width).toBeLessThanOrEqual(edge.x + edge.width + 1);
-  const scroll = await page.evaluate(
-    () => document.documentElement.scrollWidth <= window.innerWidth,
-  );
-  expect(scroll).toBe(true);
-  expect(await axeViolations(page)).toEqual([]);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    )
+    .toBe(true);
+  await expect.poll(() => axeViolations(page)).toEqual([]);
 });

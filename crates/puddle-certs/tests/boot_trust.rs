@@ -16,7 +16,6 @@ use std::io::Write as _;
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use puddle_boot::{BOOT_SH, BootPlan, ENV_FILE_GUEST};
@@ -53,6 +52,7 @@ struct Guest {
     root: PathBuf,
     shell: PathBuf,
     path: String,
+    _dir: tempfile::TempDir,
 }
 
 fn shells() -> Vec<PathBuf> {
@@ -75,16 +75,11 @@ impl Guest {
     /// A fake Debian-like guest whose distro bundle holds `distro`; `update_ca` says whether the
     /// image has `update-ca-certificates`.
     fn new(shell: &Path, distro: &str, update_ca: bool) -> Self {
-        static N: AtomicU32 = AtomicU32::new(0);
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .subsec_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "puddle-certs-test-{}-{}-{nanos}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::Relaxed)
-        ));
+        let dir = tempfile::Builder::new()
+            .prefix("puddle-certs-test-")
+            .tempdir()
+            .unwrap();
+        let root = dir.path().to_path_buf();
         for d in ["proc/sys/fs/inotify", "proc/sys/kernel/random", "etc"] {
             std::fs::create_dir_all(root.join(d)).unwrap();
         }
@@ -105,6 +100,7 @@ impl Guest {
             path: format!("{}:/usr/bin:/bin", stubs.display()),
             root,
             shell: shell.to_owned(),
+            _dir: dir,
         };
         if update_ca {
             write_exec(&stubs.join("update-ca-certificates"), UPDATE_CA_STUB);
@@ -199,12 +195,6 @@ impl Guest {
             .env("PUDDLE_ROOT", &self.root)
             .output()
             .unwrap()
-    }
-}
-
-impl Drop for Guest {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
     }
 }
 

@@ -113,7 +113,9 @@ test.describe("target size", () => {
               "data-density",
               "compact",
             );
-          expect(await smallTargets(page), route).toEqual([]);
+          await expect
+            .poll(() => smallTargets(page), { message: route })
+            .toEqual([]);
         });
       }
     });
@@ -149,10 +151,11 @@ test.describe("target size", () => {
         const dialog = page.locator("[role=dialog], [role=alertdialog]");
         if ((await dialog.count()) === 0) continue;
         opened.push(`${route} ${name}`);
-        expect(
-          await smallTargets(page, "[role=dialog], [role=alertdialog]"),
-          `${route}: ${name}`,
-        ).toEqual([]);
+        await expect
+          .poll(() => smallTargets(page, "[role=dialog], [role=alertdialog]"), {
+            message: `${route}: ${name}`,
+          })
+          .toEqual([]);
         await page.keyboard.press("Escape");
         await expect(dialog).toHaveCount(0);
       }
@@ -200,7 +203,7 @@ test.describe("zoomed to 200 % on a 1280 px window", () => {
   for (const route of ROUTES) {
     test(`${route} has no horizontal scroll bar`, async ({ page, backend }) => {
       await open(page, backend, route);
-      expect(await overflow(page), route).toEqual([]);
+      await expect.poll(() => overflow(page), { message: route }).toEqual([]);
     });
   }
 });
@@ -258,25 +261,29 @@ test.describe("reduced motion", () => {
     for (const route of ["/workspaces", "/inbox", "/rules", "/settings"]) {
       await page.goto(route);
       await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-      expect(await moving(page), route).toEqual([]);
+      await expect.poll(() => moving(page), { message: route }).toEqual([]);
     }
     // A running operation shows a spinner next to its text.
     await page.goto("/workspaces");
     await backend.control.step({ do: "hold_workspaces" });
     await page.getByRole("button", { name: "Start docs-site" }).click();
     await expect(busyStatus(page)).toBeVisible();
-    expect(await moving(page), "while docs-site starts").toEqual([]);
+    await expect
+      .poll(() => moving(page), { message: "while docs-site starts" })
+      .toEqual([]);
     // A short transition may still be finishing; a loop never ends, so only loops count.
-    expect(
-      await page.evaluate(
-        () =>
-          document
-            .getAnimations()
-            .filter(
-              (a) => a.effect?.getComputedTiming().iterations === Infinity,
-            ).length,
-      ),
-    ).toBe(0);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            document
+              .getAnimations()
+              .filter(
+                (a) => a.effect?.getComputedTiming().iterations === Infinity,
+              ).length,
+        ),
+      )
+      .toBe(0);
   });
 
   test("with motion allowed, the same spinner does run (the check can fail)", async ({
@@ -368,14 +375,14 @@ test.describe("an audit record type the app does not know", () => {
     const row = page.locator("tbody tr", { hasText: "quantum_tunnel" });
     await expect(row).toHaveCount(1);
     await expect(row).toContainText("can't describe");
-    expect(await page.locator("tbody tr").count()).toBeGreaterThanOrEqual(
-      before,
-    );
+    await expect
+      .poll(() => page.locator("tbody tr").count())
+      .toBeGreaterThanOrEqual(before);
     // The rest of the page still works: the other rows are there and the new one opens raw.
     await row.getByRole("button").click();
     const raw = page.locator("tbody tr.detail pre");
     expect(JSON.parse((await raw.textContent()) ?? "{}")).toEqual(future);
-    expect(await axeViolations(page)).toEqual([]);
+    await expect.poll(() => axeViolations(page)).toEqual([]);
   });
 });
 
@@ -481,8 +488,9 @@ test.describe("with the keyboard alone", () => {
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/\/inbox$/);
     const rows = page.locator("li.req");
+    // The list renders after the page changes: count only once a row is there.
+    await expect(rows.first()).toBeVisible();
     const count = await rows.count();
-    expect(count).toBeGreaterThan(0);
     const allow = rows
       .first()
       .getByRole("button", { name: /^Allow/ })

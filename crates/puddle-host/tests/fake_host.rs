@@ -2434,6 +2434,89 @@ async fn a_browser_attach_names_the_fronts_origin_and_the_front_carries_a_reques
     host.shutdown().await;
 }
 
+/// The port of the host's front, from the endpoints it registered.
+fn front_port_of(host: &Host<FakeRuntime>) -> u16 {
+    let fronts: Vec<u16> = host
+        .endpoints()
+        .list()
+        .iter()
+        .filter(|(_, kind)| *kind == EndpointKind::BrowserFront)
+        .map(|(addr, _)| addr.port())
+        .collect();
+    assert_eq!(fronts.len(), 1, "one front is registered: {fronts:?}");
+    fronts[0]
+}
+
+fn stored_front_port(rig: &Rig) -> Option<u16> {
+    let file = HostPaths::new(rig.dir.path().join("data")).front_port_file();
+    std::fs::read_to_string(file).ok()?.trim().parse().ok()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_front_keeps_its_port_across_restarts_of_the_host() {
+    let rig = Rig::new();
+    let first = rig.start().await;
+    let port = front_port_of(&first);
+    assert_eq!(stored_front_port(&rig), Some(port), "the port is stored");
+    first.shutdown().await;
+    drop(first); // the next run is a new process: its hold on the data folder ends
+
+    // The same data folder, a new run: the same origin, so the editor's browser storage stays.
+    let second = rig.start().await;
+    assert_eq!(front_port_of(&second), port);
+    second.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_taken_front_port_falls_back_to_another_that_is_then_kept() {
+    let rig = Rig::new();
+    let (held, taken) = puddle_test_kit::bound_port();
+    let file = HostPaths::new(rig.dir.path().join("data")).front_port_file();
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, taken.to_string()).unwrap();
+
+    let first = rig.start().await;
+    let moved = front_port_of(&first);
+    assert_ne!(moved, taken, "the held port cannot be the front's");
+    assert_eq!(
+        stored_front_port(&rig),
+        Some(moved),
+        "the new port is stored"
+    );
+    first.shutdown().await;
+    drop(first);
+
+    // Next run the new port is the usual one, with the old one still taken.
+    let second = rig.start().await;
+    assert_eq!(front_port_of(&second), moved);
+    second.shutdown().await;
+    drop(held);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stored_front_port_that_is_not_a_port_is_replaced() {
+    let rig = Rig::new();
+    let file = HostPaths::new(rig.dir.path().join("data")).front_port_file();
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, "not a port").unwrap();
+    let host = rig.start().await;
+    assert_eq!(stored_front_port(&rig), Some(front_port_of(&host)));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_front_port_that_cannot_be_stored_does_not_stop_the_host() {
+    let rig = Rig::new();
+    // A folder where the file belongs: it cannot be read as a port or replaced by one.
+    let file = HostPaths::new(rig.dir.path().join("data")).front_port_file();
+    std::fs::create_dir_all(&file).unwrap();
+    let host = rig.start().await;
+    let port = front_port_of(&host);
+    assert_ne!(port, 0, "the front still runs");
+    assert_eq!(stored_front_port(&rig), None);
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_front_serves_the_server_the_workspace_was_started_with_not_what_the_settings_say_now()
 {

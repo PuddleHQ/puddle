@@ -5,7 +5,7 @@
 // docs-site is stopped (two variables, a secret and a rule). Waits are on conditions.
 import type { Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeStops, watchCsp } from "./support";
+import { axeStops, watchCsp, staysEmpty } from "./support";
 
 async function open(
   page: Page,
@@ -64,7 +64,7 @@ test.describe("environment", () => {
     ).toBeVisible();
     // eslint-disable-next-line no-restricted-syntax -- absence: the settled state is asserted above, and a poll of a negative passes on its first read too
     expect(await page.content()).not.toContain("npm-seed-value");
-    await expect.poll(() => csp()).toEqual([]);
+    await staysEmpty(page, csp);
   });
 
   test("adds a variable and a secret; the secret's value is never shown and both survive a reload", async ({
@@ -456,7 +456,7 @@ for (const scheme of ["light", "dark"] as const) {
         page.getByRole("table", { name: "Environment of every workspace" }),
       ).toBeVisible();
       await scan(page, "settings environment");
-      await expect.poll(() => csp()).toEqual([]);
+      await staysEmpty(page, csp);
       scan.done();
     });
   }

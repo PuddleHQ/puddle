@@ -6,7 +6,7 @@
 // the first-run flow can be finished from the keyboard alone. Each test has a backend of its own.
 import type { Locator, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeViolations } from "./support";
+import { expectNoAxeViolations, staysEmpty } from "./support";
 
 const ROUTES = [
   "/workspaces",
@@ -113,9 +113,7 @@ test.describe("target size", () => {
               "data-density",
               "compact",
             );
-          await expect
-            .poll(() => smallTargets(page), { message: route })
-            .toEqual([]);
+          await staysEmpty(page, () => smallTargets(page), route);
         });
       }
     });
@@ -151,11 +149,11 @@ test.describe("target size", () => {
         const dialog = page.locator("[role=dialog], [role=alertdialog]");
         if ((await dialog.count()) === 0) continue;
         opened.push(`${route} ${name}`);
-        await expect
-          .poll(() => smallTargets(page, "[role=dialog], [role=alertdialog]"), {
-            message: `${route}: ${name}`,
-          })
-          .toEqual([]);
+        await staysEmpty(
+          page,
+          () => smallTargets(page, "[role=dialog], [role=alertdialog]"),
+          `${route}: ${name}`,
+        );
         await page.keyboard.press("Escape");
         await expect(dialog).toHaveCount(0);
       }
@@ -203,7 +201,7 @@ test.describe("zoomed to 200 % on a 1280 px window", () => {
   for (const route of ROUTES) {
     test(`${route} has no horizontal scroll bar`, async ({ page, backend }) => {
       await open(page, backend, route);
-      await expect.poll(() => overflow(page), { message: route }).toEqual([]);
+      await staysEmpty(page, () => overflow(page), route);
     });
   }
 });
@@ -261,29 +259,28 @@ test.describe("reduced motion", () => {
     for (const route of ["/workspaces", "/inbox", "/rules", "/settings"]) {
       await page.goto(route);
       await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-      await expect.poll(() => moving(page), { message: route }).toEqual([]);
+      await staysEmpty(page, () => moving(page), route);
     }
     // A running operation shows a spinner next to its text.
     await page.goto("/workspaces");
     await backend.control.step({ do: "hold_workspaces" });
     await page.getByRole("button", { name: "Start docs-site" }).click();
     await expect(busyStatus(page)).toBeVisible();
-    await expect
-      .poll(() => moving(page), { message: "while docs-site starts" })
-      .toEqual([]);
+    await staysEmpty(page, () => moving(page), "while docs-site starts");
     // A short transition may still be finishing; a loop never ends, so only loops count.
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () =>
-            document
-              .getAnimations()
-              .filter(
-                (a) => a.effect?.getComputedTiming().iterations === Infinity,
-              ).length,
+    await staysEmpty(
+      page,
+      () =>
+        page.evaluate(() =>
+          document
+            .getAnimations()
+            .filter(
+              (a) => a.effect?.getComputedTiming().iterations === Infinity,
+            )
+            .map((a) => a.constructor.name),
         ),
-      )
-      .toBe(0);
+      "looping animations",
+    );
   });
 
   test("with motion allowed, the same spinner does run (the check can fail)", async ({
@@ -382,7 +379,7 @@ test.describe("an audit record type the app does not know", () => {
     await row.getByRole("button").click();
     const raw = page.locator("tbody tr.detail pre");
     expect(JSON.parse((await raw.textContent()) ?? "{}")).toEqual(future);
-    await expect.poll(() => axeViolations(page)).toEqual([]);
+    await expectNoAxeViolations(page);
   });
 });
 

@@ -46,7 +46,10 @@ docs_only() { # docs_only <older commit>: every file changed from it to HEAD is 
 	grep -qx 'ci_rust=false' <<<"$out" && grep -qx 'ui=false' <<<"$out"
 }
 ui_untouched() { # ui_untouched <older commit>: no file changed from it to HEAD is one the `ui` job runs for
-	classified "$1" | grep -qx 'ui=false'
+	# Captured first: `grep -q` quits at its match, and under pipefail the SIGPIPE that scope.sh then gets fails the pipeline.
+	local out
+	out=$(classified "$1")
+	grep -qx 'ui=false' <<<"$out"
 }
 # find_summary <predicate> <artifact>: the newest green ci run on the tip, or on an older first-parent commit while the predicate
 # holds for it, whose artifact holds a coverage-summary.json. Sets found (the commit) and found_file; both empty when none does.

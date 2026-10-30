@@ -4,7 +4,7 @@
 // layout of each read from computed styles. Waits are on conditions, never on time.
 import type { Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeViolations } from "./support";
+import { expectNoAxeViolations, staysEmpty } from "./support";
 
 const DENSITIES = ["comfortable", "compact"] as const;
 const SCREENS = [
@@ -210,9 +210,7 @@ test.describe("the density setting", () => {
         await expect(
           page.getByRole("heading", { level: 1, name: heading }),
         ).toBeVisible();
-        await expect
-          .poll(() => axeViolations(page), { message: path })
-          .toEqual([]);
+        await expectNoAxeViolations(page, path);
 
         const small = () =>
           page.evaluate(() => {
@@ -230,9 +228,7 @@ test.describe("the density setting", () => {
             }
             return out;
           });
-        await expect
-          .poll(small, { message: `${path} targets under 24px` })
-          .toEqual([]);
+        await staysEmpty(page, small, `${path} targets under 24px`);
       }
 
       // The focus ring is the same two pixels in both densities.

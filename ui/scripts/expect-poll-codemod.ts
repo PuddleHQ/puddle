@@ -5,9 +5,9 @@
 // idle machine fails on a loaded one. `expect.poll` reads again until the matcher holds (or the expect
 // timeout runs out). The ESLint rule in eslint.config.js keeps new ones out; this tool converts the old ones.
 //
-//   node scripts/expect-poll-codemod.ts [--check] [--keep 'pattern=reason']... <spec file>...
+//   node scripts/expect-poll-codemod.ts [--check] [--keep 'text=reason']... <spec file>...
 //
-// A site matching a `--keep` pattern (a regular expression over the whole statement) stays a one-shot, and
+// A site matching a `--keep` text (a literal substring of the statement) stays a one-shot, and
 // gets an `// eslint-disable-next-line no-restricted-syntax -- reason` line above it. A site that already
 // carries such a line is left alone, so a second run changes nothing. `--check` writes nothing and exits 1
 // when a file would change. Run prettier on the files afterwards: the output is not reformatted here.
@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import ts from "typescript";
 
 export interface Keep {
-  pattern: RegExp;
+  text: string;
   reason: string;
 }
 
@@ -93,7 +93,7 @@ export function rewrite(
       awaited.getStart(file),
     ).line;
     if (DISABLE.test(lines[awaitLine - 1] ?? "")) continue;
-    const keep = keeps.find((k) => k.pattern.test(statement.getText(file)));
+    const keep = keeps.find((k) => statement.getText(file).includes(k.text));
     if (keep) {
       const indent = /^\s*/.exec(lines[awaitLine] ?? "")?.[0] ?? "";
       const at = file.getPositionOfLineAndCharacter(awaitLine, 0);
@@ -127,9 +127,9 @@ export function rewrite(
 export function parseKeep(arg: string): Keep {
   const at = arg.lastIndexOf("=");
   if (at < 1 || at === arg.length - 1) {
-    throw new Error(`--keep wants 'pattern=reason', got: ${arg}`);
+    throw new Error(`--keep wants 'text=reason', got: ${arg}`);
   }
-  return { pattern: new RegExp(arg.slice(0, at)), reason: arg.slice(at + 1) };
+  return { text: arg.slice(0, at), reason: arg.slice(at + 1) };
 }
 
 export function run(argv: string[]): number {

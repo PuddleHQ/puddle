@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 use puddle_agent_proto::forward::GuestLink;
 use puddle_agent_proto::host::GuestWatcher;
@@ -101,6 +102,15 @@ fn at(rows: &mut BTreeMap<u16, PortRow>, guest_port: u16) -> &mut PortRow {
         host_port: None,
         problem: None,
     })
+}
+
+/// Why [`Ports::guest_link_within`] has no link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoLink {
+    /// The workspace is stopped or was never started.
+    NotRunning,
+    /// The workspace runs, but its agent has not said hello yet.
+    NotConnected,
 }
 
 /// A pinned forward that could not be put back at the start.
@@ -261,6 +271,33 @@ impl Ports {
     pub fn guest_link(&self, workspace: &WorkspaceName) -> Option<GuestLink> {
         let entries = self.entries();
         entries.get(workspace)?.link.as_ref()?.borrow().clone()
+    }
+
+    /// [`Self::guest_link`], waiting up to `wait` for the agent's hello when the workspace is
+    /// running and the agent has not said it yet (a start reports the workspace running once the
+    /// agent listens, and its hello follows a moment later). It returns as soon as the link
+    /// arrives, and at once when the workspace stops meanwhile.
+    ///
+    /// # Errors
+    ///
+    /// [`NoLink::NotRunning`] when the workspace is stopped or never started,
+    /// [`NoLink::NotConnected`] when it runs and no agent said hello within `wait`.
+    pub async fn guest_link_within(
+        &self,
+        workspace: &WorkspaceName,
+        wait: Duration,
+    ) -> Result<GuestLink, NoLink> {
+        let mut link = {
+            let mut entries = self.entries();
+            let entry = entries.get_mut(workspace).ok_or(NoLink::NotRunning)?;
+            entry.link.get_or_insert_with(link_cell).subscribe()
+        };
+        match tokio::time::timeout(wait, link.wait_for(Option::is_some)).await {
+            Ok(Ok(link)) => link.clone().ok_or(NoLink::NotConnected),
+            // Every sender is gone: `stopped` dropped the entry.
+            Ok(Err(_)) => Err(NoLink::NotRunning),
+            Err(_) => Err(NoLink::NotConnected),
+        }
     }
 
     /// The workspace stopped: its forwards close and what the guest listened on is forgotten. Its

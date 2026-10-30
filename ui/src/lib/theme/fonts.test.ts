@@ -26,12 +26,23 @@ function interRanges(): Array<[number, number]> {
 
 const RANGES = interRanges();
 
+/** `text` with `pattern` replaced until none is left: removing one match can join the halves of another. */
+function stripAll(text: string, pattern: RegExp, replacement: string): string {
+  let current = text;
+  for (let next = current.replace(pattern, replacement); next !== current;) {
+    current = next;
+    next = current.replace(pattern, replacement);
+  }
+  return current;
+}
+
 /** The text a source file can show: comments removed, HTML entities decoded. */
 function shownText(source: string): string {
-  const code = source
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:])\/\/.*$/gm, "$1");
+  const code = stripAll(
+    stripAll(stripAll(source, /<!--[\s\S]*?-->/g, ""), /\/\*[\s\S]*?\*\//g, ""),
+    /(^|[^:])\/\/.*$/gm,
+    "$1",
+  );
   const decoder = document.createElement("textarea");
   return code.replace(/&#?\w+;/g, (entity) => {
     decoder.innerHTML = entity;

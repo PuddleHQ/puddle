@@ -2364,7 +2364,7 @@ async fn refusal_matrix(
     sandbox: &WorkspaceName,
 ) -> (Vec<String>, Vec<String>, Vec<String>) {
     let handle = vm.runtime.get(&sandbox.sandbox_name()).await.unwrap();
-    let (mut lines, mut silent, mut trusted) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut lines, mut silent, mut accepted) = (Vec::new(), Vec::new(), Vec::new());
     for (tool, script) in refusal_probes() {
         let count = |records: &[serde_json::Value]| {
             records
@@ -2412,16 +2412,16 @@ async fn refusal_matrix(
             out.status.code
         ));
         if out.status.success() {
-            trusted.push(format!("{tool}: {said}"));
+            accepted.push(format!("{tool}: {said}"));
         } else if reason == "no connection record" {
-            trusted.push(format!(
+            accepted.push(format!(
                 "{tool}: no connection record, so its refusal is unknown"
             ));
         } else if reason != "guest_tls_rejected" {
             silent.push(tool.to_owned());
         }
     }
-    (lines, silent, trusted)
+    (lines, silent, accepted)
 }
 
 /// The real tools at their widest, cold, through the real proxy and the real agent (the discovery
@@ -2458,9 +2458,9 @@ async fn radar(tag: &str, terminate: bool, no_proxy: bool) {
     };
     eprintln!("{out}");
     let refusals = if terminate {
-        let (lines, silent, trusted) = refusal_matrix(&vm, &sandbox).await;
+        let (lines, silent, accepted) = refusal_matrix(&vm, &sandbox).await;
         eprintln!("refused certificate, by tool:\n{}", lines.join("\n"));
-        Some((silent, trusted))
+        Some((silent, accepted))
     } else {
         None
     };
@@ -2503,10 +2503,10 @@ async fn radar(tag: &str, terminate: bool, no_proxy: bool) {
         failing.is_empty(),
         "steps that failed or retried: {failing:#?}"
     );
-    if let Some((silent, trusted)) = refusals {
+    if let Some((silent, accepted)) = refusals {
         assert!(
-            trusted.is_empty(),
-            "tools that trusted a certificate they should have refused, or left no connection record: {trusted:#?}"
+            accepted.is_empty(),
+            "tools that accepted a certificate they should have refused, or left no connection record: {accepted:#?}"
         );
         assert_eq!(
             silent, SILENT_REFUSALS,

@@ -289,8 +289,8 @@ impl Guest {
 /// attacking, taken in the same test on the same machine.
 pub(crate) fn assert_unharmed(took: Duration, quiet: Duration, what: &str) {
     // flake-ok: relative, not a fixed bar: 5 s plus ten times the quiet round of this very run, so
-    // a loaded machine (the quiet round took 0.3 s idle and 1.5 s on 4 cores under 16 busy loops)
-    // moves both sides; a bystander held up by the attack waits out a 10 s head timeout at least.
+    // a loaded machine moves both sides (the round beside an attack took 0.65 to 3.1 s on 4 cores
+    // under 16 busy loops); a bystander the attack starves waits on the proxy's timeouts instead.
     assert!(
         took < Duration::from_secs(5) + quiet * 10,
         "{what}: the other workspace's 64 connections took {took:?} (quiet: {quiet:?})"

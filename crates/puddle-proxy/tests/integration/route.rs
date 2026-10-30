@@ -305,7 +305,7 @@ async fn round_trip(control: &mut Control, authority: &str, i: usize) -> io::Res
 /// 256 parallel `CONNECT`s over 4 agent sessions on one Unix-socket/pipe
 /// route, 0 failures and none slower than 5 s.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn parallel_connects_256_all_succeed_with_no_stall_over_5_s() {
+async fn parallel_connects_256_all_succeed_with_no_connection_starved() {
     let echo = echo_server().await;
     let rig = Rig::with_resolver(
         &ProxyConfig::default(),
@@ -465,7 +465,7 @@ async fn a_head_that_never_ends_gets_408() {
         .await;
     assert_eq!(code, 408);
     // The 200 ms head deadline is what ended it: not at once (a parse error would be), and not the
-    // default 10 s, which the refusal names in whole seconds ("within 10s"; 200 ms is "within 0s").
+    // default 30 s, which the refusal names in whole seconds ("within 30s"; 200 ms is "within 0s").
     let elapsed = started.elapsed();
     assert!(elapsed >= Duration::from_millis(200), "{elapsed:?}");
     let mut said = String::new();

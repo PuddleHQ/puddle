@@ -3004,7 +3004,8 @@ async fn vm_host_ending_the_extension_hosts_takes_the_debuggees_with_them_and_le
         "{reply:?}"
     );
     // flake-ok: the bar sits between the two ways the agent can end the tree: on TERM (it polls
-    // `/proc` every 50 ms, so well under a second) or on KILL after `TERM_GRACE` (3 s); under 2 s is TERM.
+    // `/proc` every 50 ms; 61 ms for the same call without the VM, `exthost.rs`) or on KILL after
+    // `TERM_GRACE` (3 s); under 2 s is TERM. Not measured through the VM.
     assert!(took < Duration::from_secs(2), "cleanup took {took:?}");
 
     let after = guest(&runtime, &sandbox, COUNT_STANDINS).await;

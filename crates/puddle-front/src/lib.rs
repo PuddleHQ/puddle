@@ -12,6 +12,11 @@
 //!   exactly `<workspace>.localhost:<this port>` is refused ([`host_header`]), as is one whose
 //!   `Origin` is another origin. The desktop shell's names (`tauri`, `ipc`, `asset`) are not
 //!   workspace names, so no origin collides with the shell's.
+//! - **One origin per forwarded port.** `<port>.<workspace>.localhost:<this port>` carries HTTP and
+//!   `WebSockets` to that port on the guest's loopback ([`Editor::connect_port`], the stream the
+//!   Ports tab's forwards use, so the agent's own ports stay refused). It is the editor's
+//!   `/proxy/<port>/` links' target; the editor's session and Microsoft's key cookie are scoped to
+//!   the editor's own host name and never reach it, and no frame header is added to the app's answers.
 //! - **Microsoft's server** loses a thing its launcher does for it: persistent secret storage.
 //!   The front gives it back ([`microsoft`], [`keys`]).
 //! - **Frame headers** (`frame-ancestors 'self'`, `X-Frame-Options: SAMEORIGIN`) are added to every

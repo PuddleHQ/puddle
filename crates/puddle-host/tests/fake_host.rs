@@ -2435,6 +2435,52 @@ async fn a_browser_attach_names_the_fronts_origin_and_the_front_carries_a_reques
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_forwarded_port_s_origin_reaches_that_guest_port_through_the_agent() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let editor = editor_stand_in(&rig, "acme").await;
+    // An app of the workspace on its loopback (the agent stand-in shares this computer's).
+    let app = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let app_port = app.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut conn, _)) = app.accept().await {
+            tokio::spawn(async move {
+                let mut head = [0_u8; 1024];
+                let _ = conn.read(&mut head).await;
+                let _ = conn
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\ncontent-length: 3\r\nconnection: close\r\n\r\napp",
+                    )
+                    .await;
+                let _ = conn.shutdown().await;
+            });
+        }
+    });
+    let origin = browser_origin(&api, "acme").await;
+    let forwarded = origin.replacen("http://", &format!("http://{app_port}."), 1);
+    let answer = puddle_test_kit::eventually_async(
+        "the front carries a request to the app's port",
+        Duration::from_secs(20),
+        || async {
+            let answer = window_gets(&forwarded).await;
+            answer.starts_with("HTTP/1.1 200").then_some(answer)
+        },
+    )
+    .await;
+    assert!(answer.ends_with("app"), "{answer}");
+    assert_eq!(
+        editor.accepted.load(Ordering::SeqCst),
+        0,
+        "the editor was not asked"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_front_serves_the_server_the_workspace_was_started_with_not_what_the_settings_say_now()
 {
     let rig = Rig::new();

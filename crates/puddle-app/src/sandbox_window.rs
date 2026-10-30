@@ -10,8 +10,10 @@
 //!   go to the default browser, called from Rust; everything else is dropped.
 //! * **No pop-up of the webview's own.** The editor's "New Window" gets another guarded window of
 //!   this kind. Everything else a page opens goes to the default browser or is dropped, and the
-//!   editor's `/proxy/<port>/` links go to the default browser. The answer to a new-window request
-//!   is never `Allow`, which would be the webview's own pop-up with none of these guards.
+//!   editor's `/proxy/<port>/` links open a guarded window of this kind on Puddle's own forward of
+//!   that port, `<port>.<workspace>.localhost` ([`forward_url`]), with a data folder of its own: the
+//!   page there is the guest's own app, not the editor. The answer to a new-window request is never
+//!   `Allow`, which would be the webview's own pop-up with none of these guards.
 //! * **A data folder per workspace,** kept between opens and deleted with the workspace.
 //! * **The editor's credential before it navigates:** the window starts on a blank page, gets the
 //!   session cookie from [`signin`] and then navigates; the credential is never in a URL.
@@ -123,25 +125,65 @@ impl From<&Effective> for WindowSettings {
 }
 
 /// What a request for a new window does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NewWindow {
     /// Open another guarded window of this kind (the editor's "New Window").
     Create,
+    /// Open a guarded window on the address, which is Puddle's own forward of a guest port (the
+    /// editor's `/proxy/<port>/` link, rewritten by [`forward_url`]).
+    Forward(Url),
     /// Open the address in the default browser.
     External,
     /// Do nothing; the user is told when it was a link.
     Refuse,
 }
 
+/// The address of Puddle's own forward for an editor link `/proxy/<port>/<rest>` or
+/// `/absproxy/<port>/<rest>`: the same address with the host `<port>.<workspace>.localhost`. The
+/// `/proxy/` prefix goes (code-server's own proxy strips it too); `/absproxy/` keeps its path,
+/// because the app is configured to serve under it. `None` when the link names no port: digits
+/// only, no leading zero, 1 to 65535.
+#[must_use]
+pub fn forward_url(link: &Url) -> Option<Url> {
+    let path = link.path();
+    let (rest, keep_path) = match path.strip_prefix("/proxy/") {
+        Some(rest) => (rest, false),
+        None => (path.strip_prefix("/absproxy/")?, true),
+    };
+    let (port, tail) = rest.split_once('/').unwrap_or((rest, ""));
+    let valid = port.bytes().all(|b| b.is_ascii_digit())
+        && !port.starts_with('0')
+        && port.parse::<u16>().is_ok();
+    if !valid {
+        return None;
+    }
+    let mut url = link.clone();
+    url.set_host(Some(&format!("{port}.{}", link.host_str()?)))
+        .ok()?;
+    if !keep_path {
+        url.set_path(&format!("/{tail}"));
+    }
+    Some(url)
+}
+
 /// Classifies a request for a new window. Only the editor's own pages (same origin, not behind the
-/// guest's port proxy) become windows.
+/// guest's port proxy) become windows; the port proxy's links go to Puddle's own forward.
 #[must_use]
 pub fn classify_new_window(policy: &OriginPolicy, target: &Url) -> NewWindow {
-    let proxied = target.path().starts_with("/proxy/") || target.path().starts_with("/absproxy/");
+    classify(policy, target, true)
+}
+
+/// [`classify_new_window`], where `proxy_links` says whether `/proxy/` paths are the editor's port
+/// proxy. On a forwarded app's origin they are the app's own paths.
+fn classify(policy: &OriginPolicy, target: &Url, proxy_links: bool) -> NewWindow {
+    let proxied = proxy_links
+        && (target.path().starts_with("/proxy/") || target.path().starts_with("/absproxy/"));
     match policy.classify(target) {
         // `about:blank` and `blob:` are "stay" for navigation but are not a workbench page.
         Navigation::Stay if !matches!(target.scheme(), "http" | "https") => NewWindow::Refuse,
-        Navigation::Stay if proxied => NewWindow::External,
+        Navigation::Stay if proxied => {
+            forward_url(target).map_or(NewWindow::External, NewWindow::Forward)
+        }
         Navigation::Stay => NewWindow::Create,
         Navigation::External => NewWindow::External,
         Navigation::Refuse => NewWindow::Refuse,
@@ -450,7 +492,8 @@ impl SandboxWindows {
         features: Option<NewWindowFeatures>,
     ) -> NewWindowResponse<R> {
         let hooks = &self.inner.hooks;
-        match classify_new_window(&OriginPolicy::new(&target.origin, None), url) {
+        let policy = OriginPolicy::new(&target.origin, None);
+        match classify(&policy, url, !is_forward(target)) {
             NewWindow::Create => {
                 let n = self.inner.popups.fetch_add(1, Ordering::Relaxed);
                 let start = WebviewUrl::External(blank(&target.origin));
@@ -470,6 +513,15 @@ impl SandboxWindows {
                     }
                 }
             }
+            NewWindow::Forward(address) => {
+                // Not `Create`: a pop-up would first load the editor's `/proxy/` address, which a
+                // window on the forwarded origin sends to the default browser.
+                if let Err(err) = self.open_forward(app, target, &address) {
+                    tracing::warn!(%err, "a window on a forwarded port could not be built");
+                    (hooks.refused)(url);
+                }
+                NewWindowResponse::Deny
+            }
             NewWindow::External => {
                 (hooks.open_external)(url);
                 NewWindowResponse::Deny
@@ -480,6 +532,46 @@ impl SandboxWindows {
             }
         }
     }
+
+    /// Opens a window on `address`, Puddle's forward of a guest port, with a data folder of its own
+    /// inside the workspace's, so it goes with the workspace.
+    fn open_forward<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        target: &Target,
+        address: &Url,
+    ) -> tauri::Result<()> {
+        let mut origin = address.clone();
+        origin.set_path("/");
+        origin.set_query(None);
+        origin.set_fragment(None);
+        let forwarded = Arc::new(Target {
+            origin,
+            data_folder: target.data_folder.join(FORWARD_FOLDER),
+            cookie: None,
+            ..target.clone()
+        });
+        std::fs::create_dir_all(&forwarded.data_folder)?;
+        let n = self.inner.popups.fetch_add(1, Ordering::Relaxed);
+        let label = popup_label(&target.workspace, n);
+        self.build(
+            app,
+            &forwarded,
+            &label,
+            WebviewUrl::External(address.clone()),
+            None,
+        )?;
+        Ok(())
+    }
+}
+
+/// The folder, inside a workspace's data folder, of the windows on its forwarded ports.
+const FORWARD_FOLDER: &str = "forward";
+
+/// Whether `target` is a window on a forwarded port rather than on the editor: its host has the
+/// port in front of `<workspace>.localhost`.
+fn is_forward(target: &Target) -> bool {
+    target.origin.host_str() != Some(&format!("{}.localhost", target.workspace))
 }
 
 /// The blank page a window starts on before it has anything to show. `fallback` is only there
@@ -627,13 +719,19 @@ mod tests {
             class("http://demo.localhost:4800/?folder=/work"),
             NewWindow::Create
         );
-        // The guest's port proxy: the default browser, never a window of ours.
+        // The guest's port proxy: Puddle's own forward, never the webview's pop-up.
+        let forward = |u: &str| NewWindow::Forward(Url::parse(u).unwrap());
         assert_eq!(
             class("http://demo.localhost:4800/proxy/5173/"),
-            NewWindow::External
+            forward("http://5173.demo.localhost:4800/")
         );
         assert_eq!(
             class("http://demo.localhost:4800/absproxy/5173/x"),
+            forward("http://5173.demo.localhost:4800/absproxy/5173/x")
+        );
+        // A link that names no port stays what it was: the default browser.
+        assert_eq!(
+            class("http://demo.localhost:4800/proxy/web/"),
             NewWindow::External
         );
         // Another origin, even another workspace's.
@@ -654,6 +752,63 @@ mod tests {
         ] {
             assert_eq!(class(refused), NewWindow::Refuse, "{refused}");
         }
+    }
+
+    #[test]
+    fn a_forward_address_keeps_the_rest_of_the_link_and_only_a_real_port_gets_one() {
+        let url = |u: &str| Url::parse(u).unwrap();
+        let rewrite = |u: &str| forward_url(&url(u)).map(String::from);
+        assert_eq!(
+            rewrite("http://demo.localhost:4800/proxy/5173/a%20b/c?x=1&y=%2F#frag").as_deref(),
+            Some("http://5173.demo.localhost:4800/a%20b/c?x=1&y=%2F#frag")
+        );
+        // No slash after the port: the app's root.
+        assert_eq!(
+            rewrite("http://demo.localhost:4800/proxy/80").as_deref(),
+            Some("http://80.demo.localhost:4800/")
+        );
+        assert_eq!(
+            rewrite("http://demo.localhost:4800/absproxy/65535").as_deref(),
+            Some("http://65535.demo.localhost:4800/absproxy/65535")
+        );
+        for bad in [
+            "/proxy/",
+            "/proxy/0/",
+            "/proxy/00080/",
+            "/proxy/65536/",
+            "/proxy/-1/",
+            "/proxy/+80/",
+            "/proxy/80a/",
+            "/proxy/%38%30/",
+            "/absproxy/",
+            "/other/80/",
+            "/",
+        ] {
+            assert_eq!(
+                rewrite(&format!("http://demo.localhost:4800{bad}")),
+                None,
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn on_a_forwarded_app_s_origin_proxy_paths_are_the_app_s_own() {
+        let policy = OriginPolicy::new(
+            &Url::parse("http://5173.demo.localhost:4800/").unwrap(),
+            None,
+        );
+        let class = |u: &str| classify(&policy, &Url::parse(u).unwrap(), false);
+        assert_eq!(
+            class("http://5173.demo.localhost:4800/proxy/80/"),
+            NewWindow::Create
+        );
+        // The editor's origin is another origin from here, and so is another port's.
+        assert_eq!(
+            class("http://demo.localhost:4800/proxy/80/"),
+            NewWindow::External
+        );
+        assert_eq!(class("http://80.demo.localhost:4800/"), NewWindow::External);
     }
 
     #[test]
@@ -886,21 +1041,65 @@ mod tests {
             NewWindowResponse::Deny
         ));
         assert!(matches!(
-            ask("http://demo.localhost:4800/proxy/5173/"),
-            NewWindowResponse::Deny
-        ));
-        assert!(matches!(
             ask("mailto:a@example.org"),
             NewWindowResponse::Deny
         ));
-        assert_eq!(
-            *opened.lock().unwrap(),
-            [
-                "https://example.org/a",
-                "http://demo.localhost:4800/proxy/5173/"
-            ]
-        );
+        assert_eq!(*opened.lock().unwrap(), ["https://example.org/a"]);
         assert_eq!(*refusals.lock().unwrap(), ["mailto:a@example.org"]);
+        assert_eq!(app.webview_windows().len(), 2);
+    }
+
+    #[test]
+    fn a_proxy_link_opens_a_guarded_window_on_the_forwarded_port_s_own_origin() {
+        let app = tauri::test::mock_app();
+        let data = tempfile::tempdir().unwrap();
+        let (open_external, opened) = recorder();
+        let (refused, refusals) = recorder();
+        let windows = SandboxWindows::new(Hooks {
+            open_external,
+            refused,
+            last_closed: Arc::new(|_| {}),
+        });
+        let t = mock_target("demo", data.path());
+        let ask = |url: &str| windows.new_window(app.handle(), &t, &Url::parse(url).unwrap(), None);
+        // The editor's `/proxy/<port>/` link: a window of ours on `<port>.<workspace>.localhost`,
+        // with the path after the port; the default browser hears nothing.
+        assert!(matches!(
+            ask("http://demo.localhost:4800/proxy/5173/app/?a=1#top"),
+            NewWindowResponse::Deny
+        ));
+        let window = app
+            .get_webview_window("vs-demo:0")
+            .expect("a window opened");
+        assert_eq!(
+            window.url().unwrap().as_str(),
+            "http://5173.demo.localhost:4800/app/?a=1#top"
+        );
+        assert_eq!(windows.open_count(&t.workspace), 1);
+        // Its data is not the editor's: the page there is the guest's own app.
+        assert!(t.data_folder.join("forward").is_dir());
+        // `/absproxy/` keeps its path: the app is told to serve under it.
+        ask("http://demo.localhost:4800/absproxy/3000/x");
+        assert_eq!(
+            app.get_webview_window("vs-demo:1")
+                .unwrap()
+                .url()
+                .unwrap()
+                .as_str(),
+            "http://3000.demo.localhost:4800/absproxy/3000/x"
+        );
+        // Not a port: the old answer, the default browser.
+        for bad in [
+            "proxy/0/",
+            "proxy/65536/",
+            "proxy/abc/",
+            "proxy/",
+            "proxy/05173/",
+        ] {
+            ask(&format!("http://demo.localhost:4800/{bad}"));
+        }
+        assert_eq!(opened.lock().unwrap().len(), 5);
+        assert!(refusals.lock().unwrap().is_empty());
         assert_eq!(app.webview_windows().len(), 2);
     }
 

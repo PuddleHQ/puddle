@@ -31,6 +31,10 @@ pub trait Editor: Send + Sync {
     /// Opens a connection to the server.
     fn connect(&self) -> BoxFuture<'_, Result<Io, Unreachable>>;
 
+    /// Opens a connection to `port` on the guest's loopback: Puddle's forward of that port. The
+    /// way in is the one the Ports tab's forwards use, so the agent's own ports are refused there.
+    fn connect_port(&self, port: u16) -> BoxFuture<'_, Result<Io, Unreachable>>;
+
     /// The server's password for this boot of the sandbox.
     fn password(&self) -> BoxFuture<'_, Result<String, Unreachable>>;
 }
@@ -45,6 +49,10 @@ impl From<OpenError> for Unreachable {
 impl Editor for GuestLink {
     fn connect(&self) -> BoxFuture<'_, Result<Io, Unreachable>> {
         Box::pin(async move { Ok(Box::new(self.open_editor().await?) as Io) })
+    }
+
+    fn connect_port(&self, port: u16) -> BoxFuture<'_, Result<Io, Unreachable>> {
+        Box::pin(async move { Ok(Box::new(self.open_forward(port).await?) as Io) })
     }
 
     fn password(&self) -> BoxFuture<'_, Result<String, Unreachable>> {

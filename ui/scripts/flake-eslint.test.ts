@@ -22,7 +22,9 @@ async function lint(source: string) {
   return result?.messages ?? [];
 }
 
-describe("the e2e rule against a read asserted once", () => {
+// The first lint builds the whole type-aware ESLint program, which took over the 5 s default
+// on a loaded host; each test is one cold lint, so they get a budget that fits it.
+describe("the e2e rule against a read asserted once", { timeout: 60_000 }, () => {
   it("flags both awaited reads of the original code and names the fix", async () => {
     const found = (await lint(original)).filter(
       (m) => m.ruleId === "no-restricted-syntax",

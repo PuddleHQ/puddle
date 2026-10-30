@@ -162,6 +162,59 @@ export async function axeViolations(page: Page) {
 }
 
 /**
+ * Waits, with positive signals, for the page to stop changing on its own: fonts loaded and every
+ * finite animation or transition finished (a looping one never ends, so it is left alone). Call it
+ * after the wait for the thing under test, before a read of what must be absent.
+ */
+export async function settled(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await Promise.all(
+      document
+        .getAnimations()
+        .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
+        .map((a) => a.finished.catch(() => undefined)),
+    );
+  });
+}
+
+const EMPTY_READS = 5;
+const EMPTY_GAP_MS = 100;
+
+/**
+ * Asserts that a read of what must be absent (CSP reports, overflow, moving elements, small
+ * targets) stays `[]` over several reads once the page has settled. `expect.poll(...).toEqual([])`
+ * passes on its first empty read, which is one read, and a violation that shows a moment later is
+ * missed; this fails on the first non-empty read of the window instead.
+ */
+export async function staysEmpty(
+  page: Page,
+  read: () => Promise<readonly string[]>,
+  message?: string,
+): Promise<void> {
+  await settled(page);
+  for (let i = 0; i < EMPTY_READS; i++) {
+    if (i > 0) await new Promise((r) => setTimeout(r, EMPTY_GAP_MS));
+    // eslint-disable-next-line no-restricted-syntax -- absence read over a window of reads on a settled page, not a poll that ends at its first empty read
+    expect(await read(), message).toEqual([]);
+  }
+}
+
+/**
+ * `axeViolations` once, on a page that has settled. A scan is a check of one state and costs
+ * seconds on a loaded host, so it is not repeated; the caller waits for the state first (a
+ * heading, a dialog) and `settled` waits for fonts and animations.
+ */
+export async function expectNoAxeViolations(
+  page: Page,
+  message?: string,
+): Promise<void> {
+  await settled(page);
+  // eslint-disable-next-line no-restricted-syntax -- absence: one scan of a settled state; a poll of a negative passes on its first read too
+  expect(await axeViolations(page), message).toEqual([]);
+}
+
+/**
  * A walk through states with a scan at some of them, one test for each group of stops.
  *
  * A scan costs seconds on a loaded host, so a test that scans five states runs out of its 30 s
@@ -181,9 +234,7 @@ export function axeStops(groups: readonly (readonly string[])[]) {
           throw new Error(`the stop "${stop}" is in no axeStops group`);
         if (!group.includes(stop)) return;
         seen.add(stop);
-        await expect
-          .poll(() => axeViolations(page), { message: stop })
-          .toEqual([]);
+        await expectNoAxeViolations(page, stop);
       };
       scan.done = (): void => {
         expect([...seen].sort(), "the stops the walk reached").toEqual(

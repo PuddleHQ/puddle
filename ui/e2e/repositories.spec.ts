@@ -69,12 +69,14 @@ test.describe("the checkouts on the disk", () => {
     await expect(
       rowOf(page, "broken").locator("b", { hasText: "dubious" }),
     ).toHaveCount(0);
-    expect(
-      await page.evaluate(
-        () => (window as unknown as { __owned?: boolean }).__owned,
-      ),
-    ).toBeUndefined();
-    expect(await csp()).toEqual([]);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => (window as unknown as { __owned?: boolean }).__owned,
+        ),
+      )
+      .toBeUndefined();
+    await expect.poll(() => csp()).toEqual([]);
   });
 
   test("keyboard only: Manage this puts a checkout on the list and focus stays on the section", async ({
@@ -254,7 +256,7 @@ for (const scheme of ["light", "dark"] as const) {
       await open(page, backend, "dev", "/settings");
       await expect(folder(page)).toBeVisible();
       await scan(page, "the start folder");
-      expect(await csp()).toEqual([]);
+      await expect.poll(() => csp()).toEqual([]);
       scan.done();
     });
   }

@@ -80,7 +80,7 @@ test("is a tab of the workspace page and shows identities, switches and the tabl
   await expect(
     page.getByText("Opening the workspace in desktop VS Code is different"),
   ).toBeVisible();
-  expect(await csp()).toEqual([]);
+  await expect.poll(() => csp()).toEqual([]);
 });
 
 test("a toggle and a switch are saved at once and survive a reload", async ({
@@ -506,7 +506,7 @@ for (const scheme of ["light", "dark"] as const) {
       await open(page, backend, "data-tools");
       await expect(page.getByText(/No identity yet/)).toBeVisible();
       await scan(page, "no identities");
-      expect(await csp()).toEqual([]);
+      await expect.poll(() => csp()).toEqual([]);
       scan.done();
     });
   }

@@ -67,7 +67,7 @@ test("lists the identities with author, credentials, default and use; the sideba
   await expect(personal).not.toContainText("Default");
   await expect(personal).toContainText("the rest of github.com");
   await expect(page).toHaveTitle("Identities - Puddle");
-  expect(await csp()).toEqual([]);
+  await expect.poll(() => csp()).toEqual([]);
 });
 
 test("Settings points to the Identities section", async ({ page, backend }) => {
@@ -84,6 +84,7 @@ test("Test all reads each credential and shows who needs to sign in, never a val
   await page.getByRole("button", { name: "Test all" }).click();
   await expect(row(page, "Personal")).toContainText("OK");
   await expect(row(page, "Work")).toContainText("Sign in needed");
+  // eslint-disable-next-line no-restricted-syntax -- absence: the settled state is asserted above, and a poll of a negative passes on its first read too
   expect(await page.content()).not.toMatch(/ghp_|token=/);
 });
 
@@ -179,6 +180,7 @@ test("a pasted token is write-only: it is kept by id and never appears in any an
   const text = await answer.text();
   expect(text).toContain('"kind":"stored"');
   expect(text).not.toContain(secret);
+  // eslint-disable-next-line no-restricted-syntax -- absence: the settled state is asserted above, and a poll of a negative passes on its first read too
   expect(await page.content()).not.toContain(secret);
 });
 
@@ -357,7 +359,7 @@ for (const scheme of ["light", "dark"] as const) {
 
       await raise(backend, page, SIGN_IN_NEEDED, "Sign-in needed");
       await scan(page, "with the sign-in notice");
-      expect(await csp()).toEqual([]);
+      await expect.poll(() => csp()).toEqual([]);
       scan.done();
     });
   }

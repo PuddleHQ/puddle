@@ -181,7 +181,9 @@ export function axeStops(groups: readonly (readonly string[])[]) {
           throw new Error(`the stop "${stop}" is in no axeStops group`);
         if (!group.includes(stop)) return;
         seen.add(stop);
-        expect(await axeViolations(page), stop).toEqual([]);
+        await expect
+          .poll(() => axeViolations(page), { message: stop })
+          .toEqual([]);
       };
       scan.done = (): void => {
         expect([...seen].sort(), "the stops the walk reached").toEqual(

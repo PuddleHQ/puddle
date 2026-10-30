@@ -89,8 +89,9 @@ impl StartSlot {
         std::env::temp_dir().join("puddle-lab-start-slots")
     }
 
-    /// A free slot of `slots` in `dir`, or `None` when all are held.
+    /// A free slot of `slots` in `dir` (made if missing), or `None` when all are held.
     fn try_take(dir: &Path, slots: usize) -> std::io::Result<Option<Self>> {
+        std::fs::create_dir_all(dir)?;
         for n in 0..slots {
             let file = File::options()
                 .create(true)
@@ -106,22 +107,17 @@ impl StartSlot {
         Ok(None)
     }
 
-    /// Waits for a free slot, or returns `None` when the slot files cannot be used (a folder
-    /// another user made in a shared temp folder): the slots limit load and are not required.
-    /// A holder is a start that ends in at most [`READY`] (it listens or panics), so the wait
-    /// is bounded by the starts ahead and never by a stuck lock.
-    fn take(what: &str) -> Option<Self> {
-        let dir = Self::shared_dir();
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            eprintln!("lab: {what} starts without a start slot ({e})");
-            return None;
-        }
+    /// Waits for a free slot of `slots` in `dir`, or returns `None` when the slot files cannot
+    /// be used (a folder another user made in a shared temp folder): the slots limit load and
+    /// are not required. A holder is a start that ends in at most [`READY`] (it listens or
+    /// panics), so the wait is bounded by the starts ahead and never by a stuck lock.
+    fn take_from(dir: &Path, slots: usize, what: &str) -> Option<Self> {
         let begun = Instant::now();
-        let mut said = false;
+        let mut waiting = false;
         loop {
-            match Self::try_take(&dir, START_SLOTS) {
+            match Self::try_take(dir, slots) {
                 Ok(Some(slot)) => {
-                    if said {
+                    if waiting {
                         eprintln!("lab: {what} got a start slot after {:.1?}", begun.elapsed());
                     }
                     return Some(slot);
@@ -132,11 +128,17 @@ impl StartSlot {
                     return None;
                 }
             }
-            if !std::mem::replace(&mut said, true) {
+            if !waiting {
                 eprintln!("lab: {what} waits for a start slot");
+                waiting = true;
             }
             std::thread::sleep(Duration::from_millis(50));
         }
+    }
+
+    /// [`Self::take_from`] the shared folder with [`START_SLOTS`] slots.
+    fn take(what: &str) -> Option<Self> {
+        Self::take_from(&Self::shared_dir(), START_SLOTS, what)
     }
 }
 
@@ -399,6 +401,34 @@ mod tests {
         drop(first);
         let third = take().expect("the freed slot was not offered");
         drop((second, third));
+    }
+
+    #[test]
+    fn a_start_with_no_free_slot_waits_for_one_and_then_gets_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let held = StartSlot::try_take(dir.path(), 1).unwrap().unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            drop(held);
+        });
+        let begun = Instant::now();
+        let slot = StartSlot::take_from(dir.path(), 1, "test");
+        assert!(slot.is_some());
+        assert!(
+            begun.elapsed() >= Duration::from_millis(250),
+            "took the slot while it was held: {:?}",
+            begun.elapsed()
+        );
+        release.join().unwrap();
+    }
+
+    #[test]
+    fn slot_files_that_cannot_be_used_mean_no_slot_and_not_a_failed_start() {
+        let dir = tempfile::tempdir().unwrap();
+        // A folder where the slot file should be: opening it for writing fails.
+        std::fs::create_dir(dir.path().join("slot-0")).unwrap();
+        assert!(StartSlot::try_take(dir.path(), 1).is_err());
+        assert!(StartSlot::take_from(dir.path(), 1, "test").is_none());
     }
 
     /// A port that refuses connections and that no other process can take while the socket

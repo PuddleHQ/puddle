@@ -704,6 +704,46 @@ async fn vm_trim_returns_deleted_space_to_the_host_image() {
     rt.remove_volume(&id.volume_name()).await.unwrap();
 }
 
+/// The stop-time `fstrim -a` also reaches the root disk: 512 MiB written to `/` (an overlay whose
+/// upper layer is the sandbox's `upper.ext4`) and deleted come back to the host image. `fstrim /`
+/// itself is refused by overlayfs; the fork exposes the upper layer at `/.msb/rootfs/upperfs`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_trim_returns_deleted_root_disk_space_to_the_host_image() {
+    let (rt, settings) = runtime().await;
+    let rt = &rt;
+    let (_, name) = names(&settings, "roottrim");
+    let image = settings
+        .home()
+        .join("sandboxes")
+        .join(name.as_str())
+        .join("upper.ext4");
+    let sb = rt
+        .create(base_spec(&name))
+        .await
+        .unwrap_or_else(|e| panic!("create: {e}"));
+    assert!(image.is_file(), "no root disk image at {}", image.display());
+    sh_ok(
+        &sb,
+        "dd if=/dev/urandom of=/root-trim-big bs=1M count=512 status=none && sync",
+    )
+    .await;
+    let full = allocated(&image);
+    sh_ok(&sb, "rm /root-trim-big && sync").await;
+    let out = sh(&sb, "fstrim -a -v").await;
+    eprintln!("fstrim -a: {}{}", out.stdout_text(), out.stderr_text());
+    let after = allocated(&image);
+    let reclaimed = full.saturating_sub(after);
+    eprintln!("root disk: {full} bytes after the write, {after} after the trim");
+    assert!(
+        reclaimed * 10 > 512 * 1024 * 1024 * 8,
+        "only {reclaimed} bytes of a deleted 512 MiB returned from the root disk (fstrim exit {})",
+        out.status.code
+    );
+    sb.stop().await.unwrap();
+    drop(sb);
+    rt.remove(&name).await.unwrap();
+}
+
 /// Kills the VM of `name` hard, waits until msb sees it down, and starts it again through the
 /// boot hook.
 async fn kill_and_restart(

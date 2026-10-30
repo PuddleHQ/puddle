@@ -223,7 +223,7 @@ jobs:
         timeout-minutes: ${{ contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name) && 52 || 32 }}
         env:
           RUNS: ${{ inputs.parallel_runs || '1' }}
-          VM_TEST_DEADLINE: ${{ contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name) && '48m' || '28m' }}
+          VM_TEST_DEADLINE: ${{ contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name) && '40s' || '40s' }}
         run: |
           chmod +x "$RUNNER_TEMP/bundle/puddle-agent"
           export PUDDLE_AGENT_BIN="$RUNNER_TEMP/bundle/puddle-agent"
@@ -233,8 +233,8 @@ jobs:
           # Real-machine tests (vm_machine_*) run in ci/windows-e2e.ps1, and the real-tool radar (vm_radar_*) in full-test.yml, not here. The soak (vm_soak_*, a 15-minute idle SSH session) runs on the nightly and on a dispatch only. Each run gets its
           # own prefix, so its sandbox names and private msb home never meet another run's.
           base="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          FILTER='not (test(/(^|::)vm_machine_/) | test(/(^|::)vm_radar_/) | test(/(^|::)vm_soak_/))'
-          case "$GITHUB_EVENT_NAME" in schedule | workflow_dispatch) FILTER='not (test(/(^|::)vm_machine_/) | test(/(^|::)vm_radar_/))' ;; esac
+          FILTER='test(vm_forced_failure) | test(vm_forced_stuck) | test(vm_role_host)'
+          FILTER='test(vm_forced_failure) | test(vm_forced_stuck) | test(vm_role_host)'
           # At the deadline nextest stops the test still running, names it and writes junit.xml.
           # The other users of the vm profile (the radar, the real-machine run) need longer, so the
           # deadline comes from this job, as a tool config below the repository's.

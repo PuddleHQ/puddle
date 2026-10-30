@@ -6,7 +6,7 @@
 // backend of its own, reset before it. Waits are on conditions, never on time.
 import type { Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeStops, watchCsp } from "./support";
+import { axeStops, watchCsp, staysEmpty } from "./support";
 
 async function open(page: Page, backend: Backend, path = "/identities") {
   await backend.control.reset("git-identities");
@@ -67,7 +67,7 @@ test("lists the identities with author, credentials, default and use; the sideba
   await expect(personal).not.toContainText("Default");
   await expect(personal).toContainText("the rest of github.com");
   await expect(page).toHaveTitle("Identities - Puddle");
-  await expect.poll(() => csp()).toEqual([]);
+  await staysEmpty(page, csp);
 });
 
 test("Settings points to the Identities section", async ({ page, backend }) => {
@@ -359,7 +359,7 @@ for (const scheme of ["light", "dark"] as const) {
 
       await raise(backend, page, SIGN_IN_NEEDED, "Sign-in needed");
       await scan(page, "with the sign-in notice");
-      await expect.poll(() => csp()).toEqual([]);
+      await staysEmpty(page, csp);
       scan.done();
     });
   }

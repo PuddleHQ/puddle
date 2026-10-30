@@ -4,7 +4,7 @@
 // registry.example.org) on its worker's own backend, so a test may decide anything it likes.
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeStops, watchCsp } from "./support";
+import { axeStops, watchCsp, staysEmpty } from "./support";
 
 interface Rule {
   id: number;
@@ -724,7 +724,7 @@ test.describe("accessibility", () => {
           .click();
         await expect(page.getByRole("status")).toContainText("Denied");
         await scan(page, "toast and decided list");
-        await expect.poll(() => csp()).toEqual([]);
+        await staysEmpty(page, csp);
 
         await backend.control.reset("empty");
         await page.reload();

@@ -10,9 +10,9 @@
 //! so a real token that reaches the guest, or a stand-in that is swapped where it must not be, shows
 //! at once. The host's credential store is an in-memory one: no real store is touched.
 //!
-//! One test for each of the hostile cases: (a stand-in sent where it is not for, a body that
-//! is not a token message, a body over the cap), (another spelling of the token endpoint)
-//! and (a stand-in used from another workspace).
+//! One test for each of the hostile cases: a stand-in sent where it is not for, a body that
+//! is not a token message, a body over the cap, another spelling of the token endpoint,
+//! and a stand-in used from another workspace.
 #![expect(
     clippy::unwrap_used,
     clippy::indexing_slicing,

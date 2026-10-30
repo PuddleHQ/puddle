@@ -2556,7 +2556,7 @@ async fn a_browser_attach_with_unreadable_global_settings_opens_no_window_and_sa
     let message = body["message"].as_str().unwrap();
     assert!(
         message.contains("the global settings cannot be read")
-            && message.contains("fix or delete the settings file"),
+            && message.contains("fix the settings file, or delete it"),
         "{message}"
     );
     assert!(rig.launcher.browser.lock().unwrap().is_empty());

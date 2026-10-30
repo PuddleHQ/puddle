@@ -1915,7 +1915,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             Err(reason) => {
                 tracing::warn!(workspace = %name, %reason, "no window opens: the settings cannot be read");
                 return Attached::not_opened(format!(
-                    "the editor window did not open: {reason}; fix or delete the settings file, then open it again"
+                    "the editor window did not open because of this: {reason}; fix the settings file, or delete it to go back to the defaults, then open the editor again"
                 ));
             }
         };

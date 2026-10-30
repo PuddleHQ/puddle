@@ -49,7 +49,7 @@ impl Settings {
     /// [`HarnessError::InvalidLogLevel`] for a bad `PUDDLE_VM_MSB_LOG_LEVEL`.
     #[expect(
         clippy::disallowed_methods,
-        reason = "the default root of a run whose prefix keeps its names apart; VM_TESTS_ROOT overrides it"
+        reason = "a fixed default root `pvm`; each run's folders inside it are named by the prefix, and the root variable overrides it"
     )]
     pub fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, HarnessError> {
         let get = |var: &str| lookup(var).filter(|value| !value.is_empty());

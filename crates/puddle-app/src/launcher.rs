@@ -10,14 +10,20 @@
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use puddle_api::{BrowserTarget, DesktopTarget, LaunchError, Launcher, WorkspaceRecord};
 use puddle_host::VsCodeLauncher;
+use puddle_types::WorkspaceName;
 use tauri::{AppHandle, Runtime};
 use url::Url;
 
 use crate::sandbox_window::{self, SandboxWindows, Target, WindowSettings};
+
+/// How long a delete waits for a closing editor window to let go of its data folder. A window
+/// asked to close can take a moment (the editor saves what it holds first).
+const CLOSE_WAIT: Duration = Duration::from_secs(5);
 
 /// Opens a workspace's editors for the desktop app.
 pub struct AppLauncher<R: Runtime> {
@@ -26,6 +32,7 @@ pub struct AppLauncher<R: Runtime> {
     webview_root: PathBuf,
     desktop: VsCodeLauncher,
     windows: OnceLock<SandboxWindows>,
+    close_wait: Duration,
 }
 
 impl<R: Runtime> std::fmt::Debug for AppLauncher<R> {
@@ -44,7 +51,16 @@ impl<R: Runtime> AppLauncher<R> {
             webview_root,
             desktop: VsCodeLauncher::new(),
             windows: OnceLock::new(),
+            close_wait: CLOSE_WAIT,
         }
+    }
+
+    /// The same launcher waiting at most `wait` for windows to close before a delete removes
+    /// their data.
+    #[must_use]
+    pub fn with_close_wait(mut self, wait: Duration) -> Self {
+        self.close_wait = wait;
+        self
     }
 
     /// Gives the launcher the windows it opens into. The first call counts; a second changes
@@ -110,6 +126,41 @@ impl<R: Runtime> Launcher for AppLauncher<R> {
                 .map_err(not_opened)?
                 .map(drop)
                 .map_err(not_opened)
+        })
+    }
+
+    fn close_browser<'a>(&'a self, workspace: &'a WorkspaceName) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            if let Some(windows) = self.windows.get() {
+                let asked = windows.close(&self.app, workspace);
+                tracing::debug!(%workspace, asked, "editor windows asked to close");
+            }
+        })
+    }
+
+    fn forget_browser<'a>(
+        &'a self,
+        workspace: &'a WorkspaceName,
+    ) -> BoxFuture<'a, Result<(), LaunchError>> {
+        Box::pin(async move {
+            if let Some(windows) = self.windows.get() {
+                // A window that is still open holds its data folder (Windows refuses to delete it).
+                windows.close(&self.app, workspace);
+                let deadline = tokio::time::Instant::now() + self.close_wait;
+                while windows.open_count(workspace) > 0 && tokio::time::Instant::now() < deadline {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                windows.forget(workspace);
+            }
+            let (root, name) = (self.webview_root.clone(), workspace.clone());
+            tokio::task::spawn_blocking(move || sandbox_window::delete_data_folder(&root, &name))
+                .await
+                .map_err(|e| LaunchError::new(e.to_string()))?
+                .map_err(|e| {
+                    LaunchError::new(format!(
+                        "the editor window's browser data could not be removed: {e}"
+                    ))
+                })
         })
     }
 }
@@ -241,6 +292,108 @@ mod tests {
             .unwrap();
         assert_eq!(app.webview_windows().len(), 1);
         assert_eq!(logins.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn forgetting_waits_for_the_closing_window_then_removes_its_data_and_session() {
+        let app = tauri::test::mock_app();
+        let data = tempfile::tempdir().unwrap();
+        let launcher = AppLauncher::new(app.handle().clone(), data.path().join("webview"));
+        let windows = windows();
+        launcher.install(windows.clone());
+        let secret = password("right");
+        let (addr, logins) = front(&secret).await;
+        let with_login = target(addr, Some(Arc::new(Password(secret.clone()))));
+        launcher
+            .open_browser(&record("demo"), &with_login)
+            .await
+            .unwrap();
+        let name = WorkspaceName::new("demo").unwrap();
+        let folder = data.path().join("webview").join("demo");
+        assert!(folder.is_dir());
+
+        // The window ends a moment after it was asked to close: the data goes after that, not before.
+        let ending = windows.on_event(name.clone());
+        let closing = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            ending(&tauri::WindowEvent::Destroyed);
+        });
+        let started = tokio::time::Instant::now();
+        launcher.forget_browser(&name).await.unwrap();
+        assert!(started.elapsed() >= Duration::from_millis(100));
+        closing.await.unwrap();
+        assert_eq!(windows.open_count(&name), 0);
+        assert!(!folder.exists());
+
+        // The session went too: a workspace of the same name signs in again (the mock keeps its window).
+        launcher
+            .open_browser(&record("demo"), &with_login)
+            .await
+            .unwrap();
+        assert_eq!(logins.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn forgetting_does_not_wait_for_ever_for_a_window_that_stays() {
+        let app = tauri::test::mock_app();
+        let data = tempfile::tempdir().unwrap();
+        let launcher = AppLauncher::new(app.handle().clone(), data.path().join("webview"))
+            .with_close_wait(Duration::from_millis(50));
+        launcher.install(windows());
+        let (addr, _) = front(&password("x")).await;
+        launcher
+            .open_browser(&record("demo"), &target(addr, None))
+            .await
+            .unwrap();
+        launcher
+            .forget_browser(&WorkspaceName::new("demo").unwrap())
+            .await
+            .unwrap();
+        assert!(!data.path().join("webview").join("demo").exists());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn forgetting_without_windows_removes_the_data_an_earlier_run_left() {
+        let app = tauri::test::mock_app();
+        let data = tempfile::tempdir().unwrap();
+        let root = data.path().join("webview");
+        let launcher = AppLauncher::new(app.handle().clone(), root.clone());
+        let name = WorkspaceName::new("demo").unwrap();
+        std::fs::create_dir_all(root.join("demo")).unwrap();
+        std::fs::create_dir_all(root.join("other")).unwrap();
+        // Not installed yet, nothing to close; nothing there is also fine.
+        launcher.close_browser(&name).await;
+        launcher.forget_browser(&name).await.unwrap();
+        launcher.forget_browser(&name).await.unwrap();
+        assert!(!root.join("demo").exists());
+        assert!(
+            root.join("other").is_dir(),
+            "another workspace's data stays"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn data_that_cannot_be_removed_is_said_in_words() {
+        let app = tauri::test::mock_app();
+        let data = tempfile::tempdir().unwrap();
+        let root = data.path().join("webview");
+        std::fs::create_dir_all(&root).unwrap();
+        // A file where the workspace's folder belongs: it cannot be removed as a folder.
+        std::fs::write(root.join("demo"), b"x").unwrap();
+        let launcher = AppLauncher::new(app.handle().clone(), root);
+        launcher.install(windows());
+        launcher
+            .close_browser(&WorkspaceName::new("demo").unwrap())
+            .await;
+        let err = launcher
+            .forget_browser(&WorkspaceName::new("demo").unwrap())
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .starts_with("the editor window's browser data could not be removed"),
+            "{err}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

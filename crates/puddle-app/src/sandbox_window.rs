@@ -241,7 +241,7 @@ impl SandboxWindows {
             .unwrap_or(0)
     }
 
-    fn opened(&self, workspace: &WorkspaceName) {
+    pub(crate) fn opened(&self, workspace: &WorkspaceName) {
         *self
             .inner
             .open
@@ -369,12 +369,19 @@ impl SandboxWindows {
     }
 
     /// Closes every window of `workspace` the way a user would, so the editor disconnects cleanly.
-    /// The close is asked for, not waited for; the last window's end runs the hook.
-    pub fn close<R: Runtime, M: Manager<R>>(&self, manager: &M, workspace: &WorkspaceName) {
-        for window in Self::windows_of(manager, workspace) {
+    /// The close is asked for, not waited for; the last window's end runs the hook. Says how many
+    /// windows were asked.
+    pub fn close<R: Runtime, M: Manager<R>>(
+        &self,
+        manager: &M,
+        workspace: &WorkspaceName,
+    ) -> usize {
+        let windows = Self::windows_of(manager, workspace);
+        for window in &windows {
             // A window that is already going away can't be closed again.
             let _ = window.close();
         }
+        windows.len()
     }
 
     /// Builds one window: the first of a workspace, or one the editor asked for (`features` set).
@@ -431,7 +438,10 @@ impl SandboxWindows {
     }
 
     /// What a window of `workspace` does with its events: the end of the window is counted.
-    fn on_event(&self, workspace: WorkspaceName) -> impl Fn(&WindowEvent) + Send + 'static {
+    pub(crate) fn on_event(
+        &self,
+        workspace: WorkspaceName,
+    ) -> impl Fn(&WindowEvent) + Send + 'static {
         let this = self.clone();
         move |event| {
             if matches!(event, WindowEvent::Destroyed) {
@@ -847,8 +857,8 @@ mod tests {
             0
         );
         // The mock window system never acts on a close request, so only that it is asked shows here.
-        windows.close(&app, &a.workspace);
-        windows.close(&app, &workspace("nothing-open"));
+        assert_eq!(windows.close(&app, &a.workspace), 1);
+        assert_eq!(windows.close(&app, &workspace("nothing-open")), 0);
     }
 
     fn mock_target(name: &str, data: &Path) -> Arc<Target> {

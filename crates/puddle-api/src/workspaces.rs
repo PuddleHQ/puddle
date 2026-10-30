@@ -1059,6 +1059,27 @@ pub trait Launcher: Send + Sync {
             ))
         })
     }
+
+    /// Closes the workspace's editor windows the way a user would, because its guest is about to
+    /// stop or go. Asks and returns: a window that is slow to close is not waited for. The default
+    /// has no window.
+    fn close_browser<'a>(&'a self, _workspace: &'a WorkspaceName) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
+
+    /// Removes what the shell kept for a workspace that is deleted: its windows' browser data and
+    /// sign-in. A workspace made later under the same name must start with none of it.
+    ///
+    /// # Errors
+    ///
+    /// [`LaunchError`] with a message for the user when something could not be removed (a window
+    /// still holds it).
+    fn forget_browser<'a>(
+        &'a self,
+        _workspace: &'a WorkspaceName,
+    ) -> BoxFuture<'a, Result<(), LaunchError>> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 /// What a browser editor window needs: where the editor is and how to sign in to it.
@@ -1254,6 +1275,27 @@ mod tests {
         fn password(&self) -> BoxFuture<'_, Result<String, LaunchError>> {
             Box::pin(async move { Ok(self.0.clone()) })
         }
+    }
+
+    struct NoWindow;
+
+    impl Launcher for NoWindow {
+        fn open_desktop<'a>(
+            &'a self,
+            _: &'a WorkspaceRecord,
+            _: &'a DesktopTarget,
+        ) -> BoxFuture<'a, Result<(), LaunchError>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[test]
+    fn a_launcher_with_no_window_has_nothing_to_close_and_nothing_to_forget() {
+        let name = WorkspaceName::new("demo").unwrap();
+        futures_util::FutureExt::now_or_never(NoWindow.close_browser(&name)).unwrap();
+        futures_util::FutureExt::now_or_never(NoWindow.forget_browser(&name))
+            .unwrap()
+            .unwrap();
     }
 
     #[test]

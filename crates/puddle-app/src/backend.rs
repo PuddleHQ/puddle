@@ -12,13 +12,14 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use futures_util::future::BoxFuture;
 use puddle_api::{ConnectionFileError, ConnectionInfo, EventHub, ServeError, SettingsRepo};
 use puddle_host::{
     Host, HostConfig, HostError, HostOptions, HostShutdown, MsbFactory, Platform, Prepared,
     RuntimeFactory, prepare,
 };
 use puddle_store::Store;
-use puddle_types::Problems;
+use puddle_types::{Problems, WorkspaceName};
 use tokio::sync::Mutex;
 use url::Url;
 
@@ -140,6 +141,11 @@ fn host_config(options: &Options) -> Result<HostConfig, HostError> {
 /// Stops what the backend runs; the report says what the shutdown did.
 type Stop = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = HostShutdown> + Send>> + Send>;
 
+/// Asks a workspace's guest to end its editor's extension hosts (the editor window closed). The
+/// error says why it did not reach the guest, for a log: a stopped workspace has none to end.
+pub type EndExtensionHosts =
+    Arc<dyn Fn(WorkspaceName) -> BoxFuture<'static, Result<(), String>> + Send + Sync>;
+
 /// A running in-process backend.
 pub struct Backend {
     info: ConnectionInfo,
@@ -148,6 +154,7 @@ pub struct Backend {
     problems: Arc<Problems>,
     store: Arc<Store>,
     settings: Arc<dyn SettingsRepo>,
+    extension_hosts: EndExtensionHosts,
     stop: Mutex<Option<Stop>>,
 }
 
@@ -175,8 +182,18 @@ impl Backend {
             problems,
             store,
             settings,
+            extension_hosts: Arc::new(|_| {
+                Box::pin(async { Err("this backend runs no workspaces".to_owned()) })
+            }),
             stop: Mutex::new(Some(stop)),
         })
+    }
+
+    /// The same backend with `ends` as its way to end a guest's extension hosts.
+    #[must_use]
+    fn with_extension_hosts(mut self, ends: EndExtensionHosts) -> Self {
+        self.extension_hosts = ends;
+        self
     }
 
     /// The backend over a started host. The host (and with it the data folder's lock) lives until
@@ -192,14 +209,38 @@ impl Backend {
             host.settings().clone(),
         );
         let host = Arc::new(host);
-        Self::new(
+        // Weak: the windows (which hold this handle) live in the host's launcher, and a strong
+        // reference would keep the host, and its data folder's lock, alive after the shutdown.
+        let weak = Arc::downgrade(&host);
+        let ends: EndExtensionHosts = Arc::new(move |workspace| {
+            let weak = weak.clone();
+            Box::pin(async move {
+                let host = weak
+                    .upgrade()
+                    .ok_or_else(|| "the host has stopped".to_owned())?;
+                host.workspaces()
+                    .end_extension_hosts(&workspace)
+                    .await
+                    .map(drop)
+                    .map_err(|e| e.to_string())
+            })
+        });
+        let backend = Self::new(
             info,
             events,
             problems,
             store,
             settings,
             Box::new(move || Box::pin(async move { host.shutdown().await })),
-        )
+        )?;
+        Ok(backend.with_extension_hosts(ends))
+    }
+
+    /// The way to ask a workspace's guest to end its editor's extension hosts, for the windows'
+    /// last-closed hook to hold.
+    #[must_use]
+    pub fn extension_hosts(&self) -> EndExtensionHosts {
+        Arc::clone(&self.extension_hosts)
     }
 
     /// The API's origin, `http://127.0.0.1:<port>/`: the address of the main window.
@@ -319,6 +360,15 @@ pub(crate) mod tests {
         let reply = get(&backend, "/api/first-run", Some(backend.token())).await;
         assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
         assert!(reply.contains("\"completed\":false"), "{reply}");
+        backend.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn the_fixture_runs_no_workspaces_so_it_has_no_extension_hosts_to_end() {
+        let backend = start_fixture(0).await;
+        let demo = puddle_types::WorkspaceName::new("demo").unwrap();
+        let reason = (backend.extension_hosts())(demo).await.unwrap_err();
+        assert_eq!(reason, "this backend runs no workspaces");
         backend.shutdown().await;
     }
 

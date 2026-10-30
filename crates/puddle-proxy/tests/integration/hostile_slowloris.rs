@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::Duration;
 
-use hostile_support::{Guest, bystander_round, rig_with};
+use hostile_support::{Guest, assert_unharmed, bystander_round, rig_with};
 use puddle_proxy::ProxyConfig;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;
@@ -44,6 +44,7 @@ async fn hostile_hg11_ten_thousand_stalled_heads_are_cut_off_at_the_deadline_and
         .with_max_streams_per_workspace(CAP)
         .with_head_timeout(DEADLINE);
     let rig = rig_with(&config).await;
+    let quiet = bystander_round(&rig.bystander, rig.echo).await;
     let mut guests = Vec::new();
     for _ in 0..SESSIONS {
         guests.push(Guest::connect(&rig.attacked).await);
@@ -118,6 +119,8 @@ async fn hostile_hg11_ten_thousand_stalled_heads_are_cut_off_at_the_deadline_and
         other.iter().take(3).collect::<Vec<_>>()
     );
     // The deadline is what ended them: not at once, and nowhere near the 30 s default.
+    // flake-ok: `took` is a tokio instant difference on the paused clock that `frozen` holds still,
+    // so it is the 3 s `advance` above, not machine time (a stalled machine does not move it).
     assert!(
         answered
             .iter()
@@ -126,10 +129,7 @@ async fn hostile_hg11_ten_thousand_stalled_heads_are_cut_off_at_the_deadline_and
         answered.iter().min(),
         answered.iter().max()
     );
-    assert!(
-        bystander_took < Duration::from_secs(5),
-        "the other workspace's 64 connections took {bystander_took:?}"
-    );
+    assert_unharmed(bystander_took, quiet, "while the streams are held");
 }
 
 /// How many streams the proxy has refused at the cap, counted from the warning it logs as it

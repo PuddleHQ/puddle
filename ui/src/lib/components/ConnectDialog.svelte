@@ -12,9 +12,10 @@
   import type { Workspace } from "#lib/workspaces/model.ts";
   import "#lib/theme/controls.css";
 
-  // The one "how do you want to connect" step. The browser editor is on top, opens with no
-  // setting needed and keeps the workspace isolated. Below it is the switch for direct SSH (off by default); desktop VS Code
-  // works only once it is on, and turning it on asks for the trust text first (the caller does).
+  // The one "how do you want to connect" step. The browser editor is on top, needs no setting
+  // and keeps the workspace isolated. Below it is the switch for direct SSH (off by default);
+  // desktop VS Code works only once it is on, and turning it on asks for the trust text first
+  // (the caller does).
   let {
     open = $bindable(false),
     workspace,

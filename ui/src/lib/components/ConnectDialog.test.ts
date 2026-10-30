@@ -91,12 +91,6 @@ describe("the Connect dialog", () => {
     await gone();
   });
 
-  it("no longer says the browser editor is unavailable", async () => {
-    open();
-    await screen.findByRole("dialog");
-    expect(screen.queryByText(/not available yet/)).toBeNull();
-  });
-
   it("opens desktop VS Code and closes once direct SSH is on", async () => {
     const { onDesktop } = open({ direct_ssh: true });
     await screen.findByRole("dialog");

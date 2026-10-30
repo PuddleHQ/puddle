@@ -262,10 +262,64 @@ impl Rig {
     }
 }
 
-/// A free port on this computer's loopback, held by nobody when it returns.
-async fn free_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    listener.local_addr().unwrap().port()
+/// A port of this computer's loopback that refuses connections and that no other program can
+/// take while the socket lives (bound, never listening).
+fn unlistening() -> (tokio::net::TcpSocket, u16) {
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let port = socket.local_addr().unwrap().port();
+    (socket, port)
+}
+
+/// How many ports [`on_ports`] tries before it gives up.
+const PORT_ATTEMPTS: u32 = 5;
+
+/// A loopback port nobody held a moment ago.
+// flake-ok: `Ports::forward` binds the number itself and a pin keeps it across a restart, so no
+// listener can be handed over; `on_ports` retries when the number was taken first.
+fn pick_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+/// Runs `attempt` on a port from `pick` and returns the port with the result. A result of
+/// `Taken` on that port means another program bound it between the pick and the attempt, so the
+/// attempt runs again on a fresh port, up to [`PORT_ATTEMPTS`] times; every other result is
+/// returned as it is.
+async fn on_ports<T>(
+    mut pick: impl FnMut() -> u16,
+    mut attempt: impl AsyncFnMut(u16) -> Result<T, PortsError>,
+) -> (u16, Result<T, PortsError>) {
+    let mut last = (0, Err(PortsError::BadPort));
+    for _ in 0..PORT_ATTEMPTS {
+        let port = pick();
+        let result = attempt(port).await;
+        if !matches!(&result, Err(PortsError::Taken { host_port, .. }) if *host_port == port) {
+            return (port, result);
+        }
+        last = (port, result);
+    }
+    last
+}
+
+/// [`on_ports`] on a port picked free just now.
+async fn on_free_port<T>(
+    attempt: impl AsyncFnMut(u16) -> Result<T, PortsError>,
+) -> (u16, Result<T, PortsError>) {
+    on_ports(pick_port, attempt).await
+}
+
+/// Forwards `guest` to a host port that was free a moment ago; returns that port and the result.
+async fn forward_free(
+    ports: &Ports,
+    workspace: &WorkspaceName,
+    guest: u16,
+    pin: bool,
+) -> (u16, Result<PortRow, PortsError>) {
+    on_free_port(async |host| ports.forward(workspace, guest, Some(host), pin).await).await
 }
 
 /// An echo server on the "guest's" loopback; the port it listens on.
@@ -331,12 +385,8 @@ async fn a_forward_carries_bytes_to_the_guest_and_is_one_of_puddles_own_listener
     let rig = rig("carry").await;
     rig.started().await;
     let guest = echo().await;
-    let host = free_port().await;
-    let row = rig
-        .ports
-        .forward(&rig.workspace, guest, Some(host), false)
-        .await
-        .unwrap();
+    let (host, forwarded) = forward_free(&rig.ports, &rig.workspace, guest, false).await;
+    let row = forwarded.unwrap();
     assert_eq!(
         row,
         PortRow {
@@ -379,16 +429,10 @@ async fn a_forward_defaults_to_the_same_port_number_and_moves_when_asked_for_ano
     let rig = rig("move").await;
     rig.started().await;
     let guest = echo().await;
-    let (first, second) = (free_port().await, free_port().await);
-    rig.ports
-        .forward(&rig.workspace, guest, Some(first), true)
-        .await
-        .unwrap();
-    let moved = rig
-        .ports
-        .forward(&rig.workspace, guest, Some(second), true)
-        .await
-        .unwrap();
+    let (first, forwarded) = forward_free(&rig.ports, &rig.workspace, guest, true).await;
+    forwarded.unwrap();
+    let (second, moved) = forward_free(&rig.ports, &rig.workspace, guest, true).await;
+    let moved = moved.unwrap();
     assert_eq!(moved.host_port, Some(second));
     assert!(
         TcpStream::connect(("127.0.0.1", first)).await.is_err(),
@@ -402,17 +446,12 @@ async fn a_forward_defaults_to_the_same_port_number_and_moves_when_asked_for_ano
             host_port: second
         }]
     );
-    // No host port named: the guest's own number. It is free here only by luck, so use a guest
-    // port that is also free on this side by forwarding to it from a fresh rig port.
-    let same = free_port().await;
-    // The echo server above is not on `same`, but a forward to a port nothing listens on is
-    // still opened: connections to it fail and the row says why.
-    let row = rig
-        .ports
-        .forward(&rig.workspace, same, None, false)
-        .await
-        .unwrap();
-    assert_eq!(row.host_port, Some(same));
+    // No host port named: the guest's own number. It is free here only by luck, so forward a guest
+    // port that was just free on this side. The echo server above is not on it, but a forward to
+    // a port nothing listens on is still opened: connections to it fail and the row says why.
+    let (same, row) =
+        on_free_port(async |same| rig.ports.forward(&rig.workspace, same, None, false).await).await;
+    assert_eq!(row.unwrap().host_port, Some(same));
 }
 
 #[tokio::test]
@@ -420,11 +459,8 @@ async fn a_pinned_forward_survives_a_stop_and_comes_back_at_the_next_start() {
     let rig = rig("pinned").await;
     rig.started().await;
     let guest = echo().await;
-    let host = free_port().await;
-    rig.ports
-        .forward(&rig.workspace, guest, Some(host), true)
-        .await
-        .unwrap();
+    let (host, forwarded) = forward_free(&rig.ports, &rig.workspace, guest, true).await;
+    forwarded.unwrap();
     rig.ports.stopped(&rig.workspace).await;
     assert!(TcpStream::connect(("127.0.0.1", host)).await.is_err());
     // Stopped: the pin is listed, nothing runs.
@@ -481,7 +517,8 @@ async fn a_port_of_this_computer_that_is_taken_is_refused_naming_who_has_it() {
         )
     );
     // Puddle's own listener.
-    let own = free_port().await;
+    // Only the registry names this one, so the number is held and never bound by the forward.
+    let (_own_held, own) = unlistening();
     let _api = rig
         .endpoints
         .register(SocketAddr::from(([127, 0, 0, 1], own)), EndpointKind::Api);
@@ -496,11 +533,8 @@ async fn a_port_of_this_computer_that_is_taken_is_refused_naming_who_has_it() {
         }
     );
     // Another forward of this or another workspace's.
-    let host = free_port().await;
-    rig.ports
-        .forward(&rig.workspace, guest, Some(host), false)
-        .await
-        .unwrap();
+    let (host, forwarded) = forward_free(&rig.ports, &rig.workspace, guest, false).await;
+    forwarded.unwrap();
     assert_eq!(
         rig.ports
             .forward(&rig.workspace, guest + 1, Some(host), false)
@@ -515,7 +549,7 @@ async fn a_port_of_this_computer_that_is_taken_is_refused_naming_who_has_it() {
         }
     );
     // A pin of a workspace that does not run keeps its port.
-    let pinned = free_port().await;
+    let (_pinned_held, pinned) = unlistening();
     rig.pins
         .pin(
             &name("blog"),
@@ -582,14 +616,11 @@ async fn a_pinned_forward_that_cannot_be_restored_is_announced_listed_and_kept()
     assert!(row.pinned && !row.forwarded && row.host_port == Some(port));
     assert_eq!(row.problem.as_deref(), Some(failed.2.as_str()));
     // The user picks another port: the pin moves and the problem is gone.
-    let other = free_port().await;
     let guest = echo().await;
     rig.pins.unpin(&rig.workspace, 8080).unwrap();
     rig.ports.release(&rig.workspace, 8080).await.unwrap();
-    rig.ports
-        .forward(&rig.workspace, guest, Some(other), true)
-        .await
-        .unwrap();
+    let (other, forwarded) = forward_free(&rig.ports, &rig.workspace, guest, true).await;
+    forwarded.unwrap();
     assert_eq!(through(other, b"ok").await.unwrap(), b"ok");
     drop(busy);
 }
@@ -598,15 +629,14 @@ async fn a_pinned_forward_that_cannot_be_restored_is_announced_listed_and_kept()
 async fn a_forward_to_a_port_nothing_listens_on_resets_the_connection_and_says_why() {
     let rig = rig("nothing").await;
     rig.started().await;
-    // Bound and never listening: connections to it are refused and no other test can take it.
-    let unlistening = tokio::net::TcpSocket::new_v4().unwrap();
-    unlistening.bind("127.0.0.1:0".parse().unwrap()).unwrap();
-    let closed = unlistening.local_addr().unwrap().port();
-    let host = free_port().await;
-    rig.ports
-        .forward(&rig.workspace, closed, Some(host), false)
-        .await
-        .unwrap();
+    let (_held, closed) = unlistening();
+    let (host, forwarded) = on_free_port(async |host| {
+        rig.ports
+            .forward(&rig.workspace, closed, Some(host), false)
+            .await
+    })
+    .await;
+    forwarded.unwrap();
     let back = through(host, b"x").await;
     assert!(back.is_err() || back.unwrap().is_empty());
     let row = rig.row(closed, |r| r.problem.is_some()).await;
@@ -617,11 +647,8 @@ async fn a_forward_to_a_port_nothing_listens_on_resets_the_connection_and_says_w
     );
     // The next connection that works clears the problem.
     let guest = echo().await;
-    let host2 = free_port().await;
-    rig.ports
-        .forward(&rig.workspace, guest, Some(host2), false)
-        .await
-        .unwrap();
+    let (host2, forwarded) = forward_free(&rig.ports, &rig.workspace, guest, false).await;
+    forwarded.unwrap();
     through(host2, b"fine").await.unwrap();
     assert_eq!(rig.row(guest, |_| true).await.problem, None);
 }
@@ -631,11 +658,8 @@ async fn a_restarted_agent_gives_a_new_link_and_forwards_carry_on_through_it() {
     let mut rig = rig("restart").await;
     rig.started().await;
     let guest = echo().await;
-    let host = free_port().await;
-    rig.ports
-        .forward(&rig.workspace, guest, Some(host), false)
-        .await
-        .unwrap();
+    let (host, forwarded) = forward_free(&rig.ports, &rig.workspace, guest, false).await;
+    forwarded.unwrap();
     assert_eq!(through(host, b"one").await.unwrap(), b"one");
     // The agent goes away, as when the guest restarts in place; connections fail until it is back.
     rig.agent = None;
@@ -668,11 +692,8 @@ async fn a_guest_that_opens_more_connections_than_the_limit_is_reset_not_served(
             keep.lock().unwrap().push(conn);
         }
     });
-    let host = free_port().await;
-    rig.ports
-        .forward(&rig.workspace, guest, Some(host), false)
-        .await
-        .unwrap();
+    let (host, forwarded) = forward_free(&rig.ports, &rig.workspace, guest, false).await;
+    forwarded.unwrap();
     let mut clients = Vec::new();
     for _ in 0..2 {
         let mut c = TcpStream::connect(("127.0.0.1", host)).await.unwrap();
@@ -724,15 +745,13 @@ async fn a_bad_port_a_stopped_workspace_and_a_broken_store_are_refused_in_words(
     );
     rig.started().await;
     let guest = echo().await;
-    let host = free_port().await;
     // A pin that cannot be saved closes the forward again, and so does an unpin that cannot.
     *rig.pins.read_only.lock().unwrap() = true;
-    let err = rig
-        .ports
-        .forward(&rig.workspace, guest, Some(host), true)
-        .await
-        .unwrap_err();
-    assert_eq!(err, PortsError::Pins("the database is read-only".into()));
+    let (host, refused) = forward_free(&rig.ports, &rig.workspace, guest, true).await;
+    assert_eq!(
+        refused,
+        Err(PortsError::Pins("the database is read-only".into()))
+    );
     assert!(
         TcpStream::connect(("127.0.0.1", host)).await.is_err(),
         "the forward was closed again"
@@ -742,10 +761,8 @@ async fn a_bad_port_a_stopped_workspace_and_a_broken_store_are_refused_in_words(
         Vec::<PortRow>::new()
     );
     *rig.pins.read_only.lock().unwrap() = false;
-    rig.ports
-        .forward(&rig.workspace, guest, Some(host), true)
-        .await
-        .unwrap();
+    let (host, forwarded) = forward_free(&rig.ports, &rig.workspace, guest, true).await;
+    forwarded.unwrap();
     *rig.pins.read_only.lock().unwrap() = true;
     assert_eq!(
         rig.ports
@@ -799,11 +816,8 @@ async fn a_forward_whose_workspace_has_no_agent_link_resets_and_says_the_agent_i
     );
     let workspace = name("shop");
     ports.started(&workspace).await;
-    let host = free_port().await;
-    ports
-        .forward(&workspace, 3000, Some(host), false)
-        .await
-        .unwrap();
+    let (host, forwarded) = forward_free(&ports, &workspace, 3000, false).await;
+    forwarded.unwrap();
     let back = through(host, b"x").await;
     assert!(back.is_err() || back.unwrap().is_empty());
     let problem = ports.view(&workspace).unwrap().ports[0]
@@ -811,4 +825,52 @@ async fn a_forward_whose_workspace_has_no_agent_link_resets_and_says_the_agent_i
         .clone()
         .unwrap();
     assert!(problem.contains("agent is not connected"), "{problem}");
+}
+
+#[tokio::test]
+async fn a_forward_on_a_port_another_program_bound_first_is_tried_again_on_a_fresh_one() {
+    let rig = rig("collision").await;
+    rig.started().await;
+    let guest = echo().await;
+    // The other program holds the port the first pick returned.
+    let squatter = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let taken = squatter.local_addr().unwrap().port();
+    let mut picks = vec![taken].into_iter();
+    let mut tried = Vec::new();
+    let (port, forwarded) = on_ports(
+        || picks.next().unwrap_or_else(pick_port),
+        async |host| {
+            tried.push(host);
+            rig.ports
+                .forward(&rig.workspace, guest, Some(host), false)
+                .await
+        },
+    )
+    .await;
+    assert_eq!(forwarded.unwrap().host_port, Some(port));
+    assert_eq!(tried, [taken, port]);
+    assert_eq!(through(port, b"again").await.unwrap(), b"again");
+}
+
+#[tokio::test]
+async fn a_port_that_stays_taken_gives_up_after_five_tries_with_the_refusal() {
+    let rig = rig("stays").await;
+    rig.started().await;
+    let guest = echo().await;
+    let squatter = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let taken = squatter.local_addr().unwrap().port();
+    let mut tries = 0;
+    let (port, forwarded) = on_ports(
+        || taken,
+        async |host| {
+            tries += 1;
+            rig.ports
+                .forward(&rig.workspace, guest, Some(host), false)
+                .await
+        },
+    )
+    .await;
+    assert_eq!(tries, PORT_ATTEMPTS);
+    assert_eq!(port, taken);
+    assert!(matches!(forwarded, Err(PortsError::Taken { .. })));
 }

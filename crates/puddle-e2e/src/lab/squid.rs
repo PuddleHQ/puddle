@@ -371,7 +371,8 @@ mod tests {
     /// A `Squid` around a process that is not Squid, in an empty directory.
     fn stand_in(command: &mut Command) -> Squid {
         Squid {
-            port: free_port(),
+            // Nothing binds or connects to this port: it only names the shared memory the drop removes.
+            port: 0,
             prefix: Prefix::new("squid"),
             dir: tempfile::tempdir().unwrap(),
             stop: Stop::Process(command.stdout(Stdio::null()).spawn().unwrap()),

@@ -116,7 +116,7 @@ impl Guests {
             );
         };
         let said = format!(
-            "exit status {status}; stdout: {:?}{rest:?}; stderr: {stderr:?}",
+            "exit status {status}\n--- stdout ---\n{}{rest}\n--- stderr ---\n{stderr}",
             self.said
         );
         (status.success(), said)

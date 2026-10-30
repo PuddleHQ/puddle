@@ -154,6 +154,7 @@ pub(crate) struct Parts<R: Runtime + Clone> {
     pub(crate) front_addr: std::net::SocketAddr,
     /// The front's lookup of running guests, which the editor's password is asked through.
     pub(crate) front_guests: Arc<dyn puddle_front::Guests>,
+    pub(crate) front_halves: Arc<dyn puddle_front::ServerHalves>,
 }
 
 struct Slot {
@@ -237,6 +238,7 @@ struct Inner<R: Runtime + Clone> {
     flavours: Arc<Flavours>,
     front_addr: std::net::SocketAddr,
     front_guests: Arc<dyn puddle_front::Guests>,
+    front_halves: Arc<dyn puddle_front::ServerHalves>,
     state: Mutex<State>,
     live: tokio::sync::Mutex<BTreeMap<WorkspaceName, Live<R>>>,
     tasks: tokio::sync::Mutex<JoinSet<()>>,
@@ -513,6 +515,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 flavours: parts.flavours,
                 front_addr: parts.front_addr,
                 front_guests: parts.front_guests,
+                front_halves: parts.front_halves,
                 rewrite_gate: parts.rewrite_gate,
                 state: Mutex::new(State {
                     slots,
@@ -2404,6 +2407,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     async fn stop_work(&self, record: WorkspaceRecord) -> Result<(), String> {
         let name = &record.name;
+        // The windows go first, so the editor can disconnect and the guest end its extension hosts
+        // before the stop (best effort: the close is asked for, not waited for).
+        self.inner.launcher.close_browser(name).await;
         let gated = self.gated(name).await?;
         self.progress(name, WorkspaceStep::Reclaiming, None);
         // A failed trim only costs disk space; the VM still stops, and the user is told.
@@ -2448,6 +2454,36 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Ok(())
     }
 
+    /// Deletes what the browser editor kept for a deleted workspace, so one made later under the
+    /// same name starts clean: the front's half of Microsoft's secret key and the windows' browser
+    /// data. A failure is a notice (the data stays and the name would inherit it).
+    async fn forget_browser_state(&self, name: &WorkspaceName) {
+        let inner = &self.inner;
+        let key = problem_key("browser-data", name);
+        let mut failed = Vec::new();
+        // The windows first: one still open could mint the key again after it was forgotten.
+        if let Err(e) = inner.launcher.forget_browser(name).await {
+            failed.push(e.to_string());
+        }
+        if let Err(e) = inner.front_halves.forget(name) {
+            failed.push(format!("the editor's secret key could not be deleted: {e}"));
+        }
+        if failed.is_empty() {
+            inner.problems.clear(&key);
+        } else {
+            inner.problems.raise(Problem::new(
+                key,
+                format!("{name}'s browser editor data was not deleted"),
+                format!(
+                    "{}. A workspace made later with the name {name} would find it; close the \
+                     editor windows and delete its folders under webview and front in Puddle's \
+                     data folder.",
+                    failed.join("; ")
+                ),
+            ));
+        }
+    }
+
     async fn delete_work(
         &self,
         record: WorkspaceRecord,
@@ -2455,6 +2491,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     ) -> Result<(), String> {
         let inner = &self.inner;
         self.progress(&record.name, WorkspaceStep::Checking, None);
+        inner.launcher.close_browser(&record.name).await;
         self.progress(&record.name, WorkspaceStep::Removing, None);
         inner
             .workspaces
@@ -2470,6 +2507,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         inner
             .problems
             .clear_prefix(&format!("{}:", problem_key("clone", &record.name)));
+        self.forget_browser_state(&record.name).await;
         Ok(())
     }
 }

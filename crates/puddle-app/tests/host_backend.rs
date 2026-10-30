@@ -227,6 +227,27 @@ fn quitting_stops_the_host_in_order_and_frees_its_data_folder() {
     start(&options, &Machine::default()).unwrap();
 }
 
+#[test]
+fn the_backend_asks_a_workspace_s_guest_to_end_its_extension_hosts_while_the_host_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = options_in(dir.path());
+    let backend = start(&options, &Machine::default()).unwrap();
+    let ends = backend.extension_hosts();
+    let demo = puddle_types::WorkspaceName::new("demo").unwrap();
+
+    // No workspace of that name runs: the host says so, in words.
+    let reason = tauri::async_runtime::block_on(ends(demo.clone())).unwrap_err();
+    assert_eq!(reason, "the workspace is not running");
+
+    // After the shutdown the host is gone and the handle, which does not keep it alive, says so.
+    tauri::async_runtime::block_on(backend.shutdown()).unwrap();
+    let reason = tauri::async_runtime::block_on(ends(demo)).unwrap_err();
+    assert_eq!(reason, "the host has stopped");
+    drop(backend);
+    // The handle kept nothing: the data folder is free for the next start.
+    start(&options, &Machine::default()).unwrap();
+}
+
 /// Windows gives a program's main thread 1 MiB of stack by default; `build.rs` links the program
 /// with 8 MiB because the host's start-up, unoptimised, outgrows 1 MiB (the setup hook and the exit
 /// hook run on that thread). This test only shows the work fits a 1 MiB thread where frames are

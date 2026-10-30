@@ -42,10 +42,15 @@ pub(crate) async fn ask_once(builds: &impl Builds, windows: &Windows) {
         }
         match builds.switch(&workspace, connected).await {
             Ok(true) => tracing::info!(%workspace, "the editor server runs a newer build"),
-            Ok(false) => {}
-            // Stopped between the list and the ask, or an agent that did not answer: the next
-            // round asks again.
-            Err(error) => tracing::debug!(%workspace, %error, "the editor server was not switched"),
+            // Nothing staged, or stopped between the list and the ask: nothing to switch.
+            Ok(false)
+            | Err(
+                SwitchEditorBuildError::NotRunning | SwitchEditorBuildError::WindowsConnected(_),
+            ) => {}
+            // The agent is there but failed; the next round asks again.
+            Err(error @ SwitchEditorBuildError::Agent(_)) => {
+                tracing::warn!(%workspace, %error, "the editor server was not switched");
+            }
         }
     }
 }
@@ -73,6 +78,7 @@ mod tests {
     struct Recorded {
         workspaces: Vec<WorkspaceName>,
         asked: Mutex<Vec<(WorkspaceName, usize)>>,
+        agent_fails: bool,
     }
 
     impl Builds for Arc<Recorded> {
@@ -89,7 +95,11 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((workspace.clone(), connected_windows));
-            std::future::ready(Err(SwitchEditorBuildError::NotRunning))
+            std::future::ready(Err(if self.agent_fails {
+                SwitchEditorBuildError::Agent(puddle_agent_proto::forward::OpenError::Disconnected)
+            } else {
+                SwitchEditorBuildError::NotRunning
+            }))
         }
     }
 
@@ -101,6 +111,7 @@ mod tests {
         Arc::new(Recorded {
             workspaces: names.iter().map(|n| name(n)).collect(),
             asked: Mutex::default(),
+            agent_fails: false,
         })
     }
 
@@ -127,6 +138,14 @@ mod tests {
             *builds.asked.lock().unwrap(),
             [(name("b"), 0), (name("c"), 0)]
         );
+    }
+
+    #[tokio::test]
+    async fn a_failing_agent_does_not_stop_the_round() {
+        let mut builds = recorded(&["a", "b"]);
+        Arc::get_mut(&mut builds).unwrap().agent_fails = true;
+        ask_once(&builds, &Windows::default()).await;
+        assert_eq!(builds.asked.lock().unwrap().len(), 2);
     }
 
     #[tokio::test]

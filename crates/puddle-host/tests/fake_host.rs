@@ -2522,12 +2522,9 @@ async fn a_browser_attach_gives_the_window_the_front_the_settings_and_a_way_to_t
     host.shutdown().await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_browser_attach_with_unreadable_settings_still_opens_with_the_defaults() {
-    let rig = Rig::new();
-    // A global file that is not JSON at all: the read fails, not just an unknown field. The
-    // workspace names its memory, so the damaged file does not refuse the create.
-    damage_global_settings(&rig);
+/// Creates `acme` while the settings are damaged (the workspace names its memory, so the damage
+/// does not refuse the create), then attaches in a browser window; returns the reply body.
+async fn browser_attach_over_damaged_settings(rig: &Rig) -> (Host<FakeRuntime>, serde_json::Value) {
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2537,9 +2534,70 @@ async fn a_browser_attach_with_unreadable_settings_still_opens_with_the_defaults
         202
     );
     events.until(ended("acme"), Duration::from_secs(20)).await;
-    let _editor = editor_stand_in(&rig, "acme").await;
+    let _editor = editor_stand_in(rig, "acme").await;
+    let reply = api
+        .post(
+            "/api/workspaces/acme/attach",
+            &json!({"mode": "browser"}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    (host, reply.json())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_attach_with_unreadable_global_settings_opens_no_window_and_says_why() {
+    let rig = Rig::new();
+    // A user who turned the clipboard prompt off must never get a window that asks: with the
+    // settings unreadable no window opens at all.
+    let file = damage_global_settings(&rig);
+    let (host, body) = browser_attach_over_damaged_settings(&rig).await;
+    assert_eq!(body["opened"], false, "{body}");
+    let message = body["message"].as_str().unwrap();
+    assert!(
+        message.contains("the global settings cannot be read")
+            && message.contains("fix or delete the settings file"),
+        "{message}"
+    );
+    assert!(rig.launcher.browser.lock().unwrap().is_empty());
+    // The user's fix works: with the file mended the same attach opens the window.
+    std::fs::write(
+        &file,
+        br#"{"schema_version": 2, "workspace_defaults": {"clipboard_read": "deny"}}"#,
+    )
+    .unwrap();
+    let api = api(&host);
     let target = browser_target(&rig, &api, "acme").await;
-    assert!(target.settings.zoom_hotkeys.value, "the default is zoom on");
+    assert_eq!(
+        target.settings.clipboard_read.value,
+        puddle_settings::ClipboardRead::Deny
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_attach_with_an_unreadable_workspace_settings_file_opens_no_window() {
+    let rig = Rig::new();
+    write_global_settings(
+        &rig,
+        &json!({"schema_version": 2, "workspace_defaults": {"clipboard_read": "deny"}}),
+    );
+    let dir = rig
+        .dir
+        .path()
+        .join("data")
+        .join("settings")
+        .join("workspaces");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("acme.json"), b"{ not json").unwrap();
+    let (host, body) = browser_attach_over_damaged_settings(&rig).await;
+    assert_eq!(body["opened"], false, "{body}");
+    let message = body["message"].as_str().unwrap();
+    assert!(
+        message.contains("the settings of workspace acme cannot be read"),
+        "{message}"
+    );
+    assert!(rig.launcher.browser.lock().unwrap().is_empty());
     host.shutdown().await;
 }
 

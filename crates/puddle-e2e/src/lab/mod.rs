@@ -32,8 +32,9 @@ mod pac;
 mod squid;
 mod web_host;
 
+use std::fs::{File, TryLockError};
 use std::net::{Ipv4Addr, SocketAddr};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Child;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
@@ -59,6 +60,87 @@ pub fn basic_password() -> String {
 
 /// How long a fixture may take to accept connections before its start fails the test.
 const READY: Duration = Duration::from_secs(60);
+
+/// How many mitmproxy starts may run at once, across every test process of the machine.
+///
+/// A mitigation, not a measured cure: on the hosted Windows runner (4 vCPUs, nextest running 4
+/// tests at once) a queue run lost two tests to the 60 s bound when four starts overlapped at a
+/// moment the whole machine was slow (30 s to over 60 s each, against 1.5 s idle). The stall was
+/// not reproduced; a start is mostly file reads through the antivirus and CPU, which overlapping
+/// starts share, so fewer overlapping starts leave a stall fewer starts to multiply. A running
+/// proxy costs nothing, so only the start waits, and only until the proxy listens.
+const START_SLOTS: usize = 2;
+
+/// A hold on one of the [`START_SLOTS`] start slots: an advisory lock on a file in the temp
+/// folder, which the operating system releases when the holder ends, a crash included.
+#[derive(Debug)]
+struct StartSlot {
+    // Held for its lock: closing the file releases it.
+    _file: File,
+}
+
+impl StartSlot {
+    /// The folder of the slot files, shared by every test process of the user.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the slots exist to be shared: a per-process temp folder would give every test process its own"
+    )]
+    fn shared_dir() -> PathBuf {
+        std::env::temp_dir().join("puddle-lab-start-slots")
+    }
+
+    /// A free slot of `slots` in `dir` (made if missing), or `None` when all are held.
+    fn try_take(dir: &Path, slots: usize) -> std::io::Result<Option<Self>> {
+        std::fs::create_dir_all(dir)?;
+        for n in 0..slots {
+            let file = File::options()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(dir.join(format!("slot-{n}")))?;
+            match file.try_lock() {
+                Ok(()) => return Ok(Some(Self { _file: file })),
+                Err(TryLockError::WouldBlock) => {}
+                Err(TryLockError::Error(e)) => return Err(e),
+            }
+        }
+        Ok(None)
+    }
+
+    /// Waits for a free slot of `slots` in `dir`, or returns `None` when the slot files cannot
+    /// be used (a folder another user made in a shared temp folder): the slots limit load and
+    /// are not required. A holder is a start that ends in at most [`READY`] (it listens or
+    /// panics), so the wait is bounded by the starts ahead and never by a stuck lock.
+    fn take_from(dir: &Path, slots: usize, what: &str) -> Option<Self> {
+        let begun = Instant::now();
+        let mut waiting = false;
+        loop {
+            match Self::try_take(dir, slots) {
+                Ok(Some(slot)) => {
+                    if waiting {
+                        eprintln!("lab: {what} got a start slot after {:.1?}", begun.elapsed());
+                    }
+                    return Some(slot);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    eprintln!("lab: {what} starts without a start slot ({e})");
+                    return None;
+                }
+            }
+            if !waiting {
+                eprintln!("lab: {what} waits for a start slot");
+                waiting = true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    /// [`Self::take_from`] the shared folder with [`START_SLOTS`] slots.
+    fn take(what: &str) -> Option<Self> {
+        Self::take_from(&Self::shared_dir(), START_SLOTS, what)
+    }
+}
 
 /// A name unique to one fixture in one run (process id and a counter), used in directory,
 /// process and container names so concurrent runs and tests never collide.
@@ -308,6 +390,48 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
     use std::process::Command;
+
+    #[test]
+    fn only_as_many_starts_hold_a_slot_as_there_are_slots_and_a_dropped_one_frees_its_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let take = || StartSlot::try_take(dir.path(), 2).unwrap();
+        let first = take().unwrap();
+        let second = take().unwrap();
+        assert!(take().is_none(), "a third start got a slot");
+        drop(first);
+        let third = take().expect("the freed slot was not offered");
+        drop((second, third));
+    }
+
+    #[test]
+    fn a_start_with_no_free_slot_waits_for_one_and_then_gets_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let held = StartSlot::try_take(dir.path(), 1).unwrap().unwrap();
+        let release = std::thread::spawn(move || {
+            // An ordering with no signal: the waiter polls, and the slot must stay held long
+            // enough for it to have polled (a poll is 50 ms) before it is released.
+            std::thread::sleep(Duration::from_millis(300));
+            drop(held);
+        });
+        let begun = Instant::now();
+        let slot = StartSlot::take_from(dir.path(), 1, "test");
+        let waited = begun.elapsed();
+        assert!(slot.is_some());
+        assert!(
+            waited >= Duration::from_millis(250),
+            "took the slot while it was held: {waited:?}"
+        );
+        release.join().unwrap();
+    }
+
+    #[test]
+    fn slot_files_that_cannot_be_used_mean_no_slot_and_not_a_failed_start() {
+        let dir = tempfile::tempdir().unwrap();
+        // A folder where the slot file should be: opening it for writing fails.
+        std::fs::create_dir(dir.path().join("slot-0")).unwrap();
+        assert!(StartSlot::try_take(dir.path(), 1).is_err());
+        assert!(StartSlot::take_from(dir.path(), 1, "test").is_none());
+    }
 
     /// A port that refuses connections and that no other process can take while the socket
     /// lives (bound, never listening).

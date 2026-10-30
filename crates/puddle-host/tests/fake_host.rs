@@ -2507,6 +2507,8 @@ async fn a_browser_attach_gives_the_window_the_front_the_settings_and_a_way_to_t
         "the workspace's own setting reaches the window"
     );
     // code-server asks for a password: the window reads it when it signs in, from the guest's file.
+    // The agent says hello after the attach asked: the password is there once the front finds it.
+    served_at(&target.origin).await;
     let login = target.login.expect("code-server asks for a password");
     assert_eq!(login.password().await.unwrap(), "0".repeat(64));
     // An agent with no password yet, and a workspace that has stopped, are said in words.

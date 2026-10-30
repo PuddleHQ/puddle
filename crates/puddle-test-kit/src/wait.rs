@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Bounded, named polling.
 
+use std::fmt::Display;
 use std::future::Future;
 use std::time::Duration;
 
@@ -11,31 +12,57 @@ use tokio::time::Instant;
 /// names itself.
 pub const MAX_WAIT: Duration = Duration::from_secs(100);
 
-/// First pause between two probes; it doubles up to [`MAX_PAUSE`], so a condition that is
+/// First pause between two probes; it doubles up to [`MAX_PAUSE`] (the shortest pause any of the hand-rolled
+/// helpers it replaced used, so no wait takes longer to notice), so a condition that is
 /// true within a few milliseconds costs a few milliseconds.
 const FIRST_PAUSE: Duration = Duration::from_millis(1);
-const MAX_PAUSE: Duration = Duration::from_millis(25);
+const MAX_PAUSE: Duration = Duration::from_millis(10);
 
-/// What a probe returns: a `bool` (the wait ends on `true`, with `()`) or an `Option<T>` (it ends on
-/// `Some`, with the `T`).
+/// What one probe found: the wait is over, or it goes on (with what the probe saw, when it says).
+#[derive(Debug)]
+pub enum Step<T> {
+    /// The condition holds.
+    Done(T),
+    /// Not yet; the text, if any, is shown when the wait runs out.
+    Wait(Option<String>),
+}
+
+/// What a probe returns: a `bool` (the wait ends on `true`, with `()`), an `Option<T>` (it ends on
+/// `Some`, with the `T`) or a `Result<T, E>` (it ends on `Ok`, with the `T`; the last `Err` is shown
+/// when the wait runs out, so a CI log says what the code under test did instead of only that it
+/// did not do the right thing).
 pub trait Outcome {
     /// What the wait returns.
     type Found;
-    /// `Some` once the condition holds.
-    fn found(self) -> Option<Self::Found>;
+    /// Whether the condition holds.
+    fn step(self) -> Step<Self::Found>;
 }
 
 impl Outcome for bool {
     type Found = ();
-    fn found(self) -> Option<()> {
-        self.then_some(())
+    fn step(self) -> Step<()> {
+        if self {
+            Step::Done(())
+        } else {
+            Step::Wait(None)
+        }
     }
 }
 
 impl<T> Outcome for Option<T> {
     type Found = T;
-    fn found(self) -> Option<T> {
-        self
+    fn step(self) -> Step<T> {
+        self.map_or(Step::Wait(None), Step::Done)
+    }
+}
+
+impl<T, E: Display> Outcome for Result<T, E> {
+    type Found = T;
+    fn step(self) -> Step<T> {
+        match self {
+            Ok(found) => Step::Done(found),
+            Err(seen) => Step::Wait(Some(seen.to_string())),
+        }
     }
 }
 
@@ -46,13 +73,14 @@ fn check_bound(what: &str, within: Duration) {
     );
 }
 
-fn give_up(what: &str, within: Duration) -> ! {
-    panic!("{what}: not true within {within:?}")
+fn give_up(what: &str, within: Duration, seen: Option<&str>) -> ! {
+    let saw = seen.map_or_else(String::new, |s| format!("; last seen: {s}"));
+    panic!("{what}: not true within {within:?}{saw}")
 }
 
-/// Waits until `probe` says the condition holds (`true`, or `Some(value)`) and returns what it found.
-/// The probe runs once at once and then after a short, growing pause. After `within` it panics with
-/// `what`. Under tokio's paused clock the pauses are virtual.
+/// Waits until `probe` says the condition holds (`true`, `Some(value)` or `Ok(value)`) and returns what
+/// it found. The probe runs once at once and then after a short, growing pause. After `within` it
+/// panics with `what`. Under tokio's paused clock the pauses are virtual.
 pub async fn eventually<O: Outcome>(
     what: &str,
     within: Duration,
@@ -70,18 +98,18 @@ pub async fn eventually_async<O: Outcome, F: Future<Output = O>>(
     check_bound(what, within);
     let deadline = Instant::now() + within;
     let mut pause = FIRST_PAUSE;
+    let mut seen = None;
     loop {
         match tokio::time::timeout_at(deadline, probe()).await {
-            Ok(outcome) => {
-                if let Some(found) = outcome.found() {
-                    return found;
-                }
-            }
-            Err(_) => give_up(what, within),
+            Ok(outcome) => match outcome.step() {
+                Step::Done(found) => return found,
+                Step::Wait(detail) => seen = detail.or(seen),
+            },
+            Err(_elapsed) => give_up(what, within, seen.as_deref()),
         }
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
-            give_up(what, within);
+            give_up(what, within, seen.as_deref());
         }
         tokio::time::sleep(pause.min(left)).await;
         pause = (pause * 2).min(MAX_PAUSE);
@@ -97,13 +125,15 @@ pub fn eventually_blocking<O: Outcome>(
     check_bound(what, within);
     let deadline = std::time::Instant::now() + within;
     let mut pause = FIRST_PAUSE;
+    let mut seen = None;
     loop {
-        if let Some(found) = probe().found() {
-            return found;
+        match probe().step() {
+            Step::Done(found) => return found,
+            Step::Wait(detail) => seen = detail.or(seen),
         }
         let left = deadline.saturating_duration_since(std::time::Instant::now());
         if left.is_zero() {
-            give_up(what, within);
+            give_up(what, within, seen.as_deref());
         }
         std::thread::sleep(pause.min(left));
         pause = (pause * 2).min(MAX_PAUSE);
@@ -136,9 +166,35 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn an_ok_ends_the_wait_with_its_value() {
+        let calls = Cell::new(0);
+        let got = eventually("the second look", Duration::from_secs(5), || {
+            calls.set(calls.get() + 1);
+            if calls.get() == 2 {
+                Ok(calls.get())
+            } else {
+                Err("not yet")
+            }
+        })
+        .await;
+        assert_eq!(got, 2);
+    }
+
+    #[tokio::test(start_paused = true)]
     #[should_panic(expected = "the kettle boils: not true within 2s")]
     async fn a_wait_that_runs_out_names_itself() {
         eventually("the kettle boils", Duration::from_secs(2), || false).await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    #[should_panic(expected = "the table: not true within 1s; last seen: 2 rows")]
+    async fn a_wait_that_runs_out_shows_the_last_thing_the_probe_saw() {
+        let calls = Cell::new(0);
+        eventually("the table", Duration::from_secs(1), || {
+            calls.set(calls.get() + 1);
+            Err::<(), _>(format!("{} rows", calls.get().min(2)))
+        })
+        .await;
     }
 
     #[tokio::test(start_paused = true)]
@@ -192,5 +248,13 @@ mod tests {
     #[should_panic(expected = "never ready: not true within 30ms")]
     fn a_blocking_wait_that_runs_out_names_itself() {
         eventually_blocking("never ready", Duration::from_millis(30), || false);
+    }
+
+    #[test]
+    #[should_panic(expected = "never ready: not true within 30ms; last seen: 3 files")]
+    fn a_blocking_wait_shows_what_the_probe_saw() {
+        eventually_blocking("never ready", Duration::from_millis(30), || {
+            Err::<(), _>("3 files")
+        });
     }
 }

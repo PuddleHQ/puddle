@@ -16,6 +16,7 @@ use puddle_secrets::{
     AccountName, HostName, OrgName, SignInError, SignInStart, SignIns, SourceError, SourceSpec,
     StoredId, TokenScope, Tool, ToolPaths, UrlPath,
 };
+use puddle_test_kit::eventually;
 
 fn gh_spec() -> SourceSpec {
     SourceSpec::Gh {
@@ -35,14 +36,19 @@ fn git_spec() -> SourceSpec {
 const GH_PROMPT: &str = "! First copy your one-time code: ABCD-1234\\nOpen this URL to continue in your web browser: https://github.com/login/device\\n";
 
 async fn wait_for(log: &Path, needle: &str) -> String {
-    for _ in 0..100 {
-        let text = Fakes::log(log);
-        if text.contains(needle) {
-            return text;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    Fakes::log(log)
+    eventually(
+        &format!("{needle:?} in the fake tool's log"),
+        Duration::from_secs(5),
+        || {
+            let text = Fakes::log(log);
+            if text.contains(needle) {
+                Ok(text)
+            } else {
+                Err(text)
+            }
+        },
+    )
+    .await
 }
 
 /// Asks again until the sign-in for `spec` has ended (an open one answers without starting a

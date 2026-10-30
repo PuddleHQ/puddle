@@ -9,13 +9,14 @@
     reason = "helpers outside #[test] fns run only in tests"
 )]
 
+use puddle_test_kit::eventually;
 use std::collections::BTreeMap;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
@@ -638,14 +639,6 @@ fn recording_service(out: &Path) -> &'static Service {
     leak(Service::honest(server_tarball(out, COMMIT, false)))
 }
 
-async fn until(what: &str, mut ready: impl FnMut() -> bool) {
-    let deadline = Instant::now() + WAIT;
-    while !ready() {
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
-
 fn read(out: &Path, name: &str) -> String {
     std::fs::read_to_string(out.join(name)).unwrap()
 }
@@ -663,7 +656,7 @@ async fn the_agent_fetches_the_server_and_starts_it_with_a_token_the_terms_and_n
     let f = fixture(false);
     let service = recording_service(&f.out);
     let task = tokio::spawn(editor::run_with(f.config.clone(), service));
-    until("the first start", || f.out.join("1.pid").exists()).await;
+    eventually("the first start", WAIT, || f.out.join("1.pid").exists()).await;
 
     let server = &f.config.server;
     let args = read(&f.out, "1.args");
@@ -706,7 +699,7 @@ async fn the_agent_fetches_the_server_and_starts_it_with_a_token_the_terms_and_n
     // A killed server is started again from the build on the volume with the same token: no
     // second download, and a window that was signed in stays signed in.
     kill(&read(&f.out, "1.pid"));
-    until("the restart", || f.out.join("2.pid").exists()).await;
+    eventually("the restart", WAIT, || f.out.join("2.pid").exists()).await;
     assert_eq!(read(&f.out, "2.token"), token);
     assert_eq!(service.downloads.load(Ordering::SeqCst), 1);
     // Ending the task drops the child, which kills the fake server (`kill_on_drop`).
@@ -718,7 +711,7 @@ async fn telemetry_is_left_on_only_when_the_user_ticked_the_box() {
     let f = fixture(true);
     let service = recording_service(&f.out);
     let task = tokio::spawn(editor::run_with(f.config.clone(), service));
-    until("the first start", || f.out.join("1.pid").exists()).await;
+    eventually("the first start", WAIT, || f.out.join("1.pid").exists()).await;
     let args = read(&f.out, "1.args");
     assert!(!args.contains("--disable-telemetry"), "{args}");
     assert!(args.contains("--accept-server-license-terms"), "{args}");
@@ -731,7 +724,7 @@ async fn no_network_is_retried_and_the_server_starts_once_the_update_service_ans
     let service = recording_service(&f.out);
     service.failing.store(2, Ordering::SeqCst);
     let task = tokio::spawn(editor::run_with(f.config.clone(), service));
-    until("the first start", || f.out.join("1.pid").exists()).await;
+    eventually("the first start", WAIT, || f.out.join("1.pid").exists()).await;
     // Two failed attempts, then the three requests of a good one.
     assert_eq!(service.requests(), 2 + 3);
     task.abort();
@@ -793,7 +786,7 @@ async fn running(f: Fixture, first_server_crashes: bool) -> Running {
         service,
         control.clone(),
     ));
-    until("the first start", || f.out.join("1.pid").exists()).await;
+    eventually("the first start", WAIT, || f.out.join("1.pid").exists()).await;
     Running {
         f,
         service,
@@ -807,7 +800,7 @@ impl Running {
     /// The first build has started and accepted a connection; returns what stands in for it.
     async fn confirmed(&self) -> std::net::TcpListener {
         let listener = accepting(self.f.config.server.port);
-        until("the first build to be confirmed", || {
+        eventually("the first build to be confirmed", WAIT, || {
             pointer(&self.builds, "confirmed").as_deref() == Some(COMMIT)
         })
         .await;
@@ -834,7 +827,7 @@ async fn a_newer_build_is_staged_beside_the_running_one_and_runs_only_after_the_
     let listener = r.confirmed().await;
     let first_pid = read(&r.f.out, "1.pid");
     r.publish_newer(false);
-    until("the newer build to be staged", || {
+    eventually("the newer build to be staged", WAIT, || {
         pointer(&r.builds, "staged").as_deref() == Some(NEWER)
     })
     .await;
@@ -851,7 +844,7 @@ async fn a_newer_build_is_staged_beside_the_running_one_and_runs_only_after_the_
     // The switch: the old server is ended, the new build is the one that starts.
     assert_eq!(r.control.switch().unwrap().as_deref(), Some(NEWER));
     drop(listener);
-    until("the newer build to start", || {
+    eventually("the newer build to start", WAIT, || {
         r.f.out.join("2.pid").exists()
     })
     .await;
@@ -865,7 +858,7 @@ async fn a_newer_build_is_staged_beside_the_running_one_and_runs_only_after_the_
     assert_eq!(read(&r.f.out, "2.token"), read(&r.f.out, "1.token"));
 
     let _listener = accepting(r.f.config.server.port);
-    until("the previous build to be removed", || {
+    eventually("the previous build to be removed", WAIT, || {
         !r.builds.join(COMMIT).exists()
     })
     .await;
@@ -881,14 +874,14 @@ async fn a_new_build_that_exits_before_it_started_is_dropped_for_the_previous_on
     let r = running(fixture(false), false).await;
     let listener = r.confirmed().await;
     r.publish_newer(true);
-    until("the newer build to be staged", || {
+    eventually("the newer build to be staged", WAIT, || {
         pointer(&r.builds, "staged").is_some()
     })
     .await;
     assert!(r.control.switch().unwrap().is_some());
     drop(listener);
     // The newer build starts, exits at once, and the first build is started again.
-    until("the first build to run again", || {
+    eventually("the first build to run again", WAIT, || {
         r.f.out.join("3.pid").exists()
     })
     .await;
@@ -930,7 +923,7 @@ async fn a_failed_look_is_retried_and_the_build_is_staged_when_the_service_answe
     let _listener = r.confirmed().await;
     r.service.failing.store(3, Ordering::SeqCst);
     r.publish_newer(false);
-    until("the newer build to be staged after failures", || {
+    eventually("the newer build to be staged after failures", WAIT, || {
         pointer(&r.builds, "staged").as_deref() == Some(NEWER)
     })
     .await;

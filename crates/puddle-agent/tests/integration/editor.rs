@@ -8,9 +8,10 @@
     reason = "helpers outside #[test] fns run only in tests"
 )]
 
+use puddle_test_kit::eventually;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use puddle_agent::config::Target;
 use puddle_agent::editor::EditorConfig;
@@ -79,14 +80,6 @@ fn fixture() -> Fixture {
     }
 }
 
-async fn until(what: &str, mut ready: impl FnMut() -> bool) {
-    let deadline = Instant::now() + WAIT;
-    while !ready() {
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
-
 fn read(out: &Path, name: &str) -> String {
     std::fs::read_to_string(out.join(name)).unwrap()
 }
@@ -103,7 +96,7 @@ fn kill(pid: &str) {
 async fn the_agent_starts_the_server_with_a_password_only_the_server_and_a_private_file_hold() {
     let f = fixture();
     let _agent = Agent::start(f.config.clone()).await.unwrap();
-    until("the first start", || f.out.join("1.pid").exists()).await;
+    eventually("the first start", WAIT, || f.out.join("1.pid").exists()).await;
 
     let server = &f.config.editor.as_ref().unwrap().server;
     let args = read(&f.out, "1.args");
@@ -136,10 +129,10 @@ async fn the_agent_starts_the_server_with_a_password_only_the_server_and_a_priva
 async fn a_server_that_dies_is_started_again_with_the_same_password() {
     let f = fixture();
     let _agent = Agent::start(f.config.clone()).await.unwrap();
-    until("the first start", || f.out.join("1.pid").exists()).await;
+    eventually("the first start", WAIT, || f.out.join("1.pid").exists()).await;
     let first = read(&f.out, "1.password");
     kill(&read(&f.out, "1.pid"));
-    until("the second start", || f.out.join("2.pid").exists()).await;
+    eventually("the second start", WAIT, || f.out.join("2.pid").exists()).await;
     // A window signed in with the first password stays signed in.
     assert_eq!(read(&f.out, "2.password"), first);
     assert_eq!(std::fs::read_to_string(&f.password_file).unwrap(), first);
@@ -156,7 +149,7 @@ async fn a_restarted_server_opens_the_multi_root_file_that_an_attach_wrote_meanw
         .with_workspace_file(file.to_string_lossy());
     let folder = editor.server.folder.clone();
     let _agent = Agent::start(f.config.clone()).await.unwrap();
-    until("the first start", || f.out.join("1.pid").exists()).await;
+    eventually("the first start", WAIT, || f.out.join("1.pid").exists()).await;
     // Before any attach there is no file: the folder opens.
     assert!(read(&f.out, "1.args").trim_end().ends_with(&folder));
     std::fs::create_dir_all(&folder).unwrap();
@@ -166,7 +159,7 @@ async fn a_restarted_server_opens_the_multi_root_file_that_an_attach_wrote_meanw
     )
     .unwrap();
     kill(&read(&f.out, "1.pid"));
-    until("the second start", || f.out.join("2.pid").exists()).await;
+    eventually("the second start", WAIT, || f.out.join("2.pid").exists()).await;
     let args = read(&f.out, "2.args");
     assert!(
         args.trim_end().ends_with(&*file.to_string_lossy()),
@@ -184,7 +177,7 @@ async fn a_new_agent_leaves_a_running_server_alone_and_takes_over_when_it_is_gon
     occupant.set_nonblocking(true).unwrap();
     let _agent = Agent::start(f.config.clone()).await.unwrap();
     // The agent's own look at the port is the signal to wait for.
-    until("the agent to look at the port", || {
+    eventually("the agent to look at the port", WAIT, || {
         occupant.accept().is_ok()
     })
     .await;
@@ -196,7 +189,7 @@ async fn a_new_agent_leaves_a_running_server_alone_and_takes_over_when_it_is_gon
         "a second server must not start on a taken port"
     );
     drop(occupant);
-    until("the start once the port is free", || {
+    eventually("the start once the port is free", WAIT, || {
         f.out.join("1.pid").exists()
     })
     .await;

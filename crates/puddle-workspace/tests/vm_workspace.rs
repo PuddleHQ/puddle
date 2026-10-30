@@ -465,6 +465,9 @@ async fn wait_down(rt: &MsbRuntime, name: &SandboxName) {
 
 /// Waits until the repo at `repo` has `target` commits; on a stall, fails with the leftover git
 /// locks and the commit loop's log.
+// flake-ok: when it runs out it reads a diagnosis from the VM (leftover git locks, the commit loop's
+// log) that a kit panic cannot run, and its 120 s is over the kit's 100 s cap because a VM test runs
+// under the vm profile (slow-timeout 120 s, six periods); it is bounded and its panic names the round.
 async fn wait_for_commits<S: Sandbox>(sb: &S, repo: &str, round: usize, target: u64) {
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {

@@ -1,0 +1,6 @@
+# Flakes that were fixed in a past commit, so the nightly stress job (ci/stress.sh) can be proved to see one:
+# run it on the commit before the fix. `substring of the failing test name<TAB>the fixing commit and what it was`.
+# ci/stress-yield.py counts a failure that matches as "known fixed"; every other failure is a new finding.
+a_proxy_that_turns_the_sign_in_down_is_one_event_and_a_failed_attempt	a7c3f3de (PR 345, base 9f11a68a): the test read the event stream once; the host forwards the failure from its own task; a window of microseconds, 0 of 100 under load, so stress will not see it again
+hostile_hg11_ten_thousand_stalled_heads	11403e5b (PR 139): the test moved the clock before all 10 000 streams were in; fails 5 of 5 on one CPU with 6 busy loops
+the_commit_authors_in_the_running_guest_follow_the_identities	dec3bff5 (PR 94): two back-to-back deletes both read the final state; 2 in 4000 runs on two cores

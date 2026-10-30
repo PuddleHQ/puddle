@@ -79,6 +79,7 @@ const shrinkSlices = () => Object.assign(slices, { first: 3, next: 4 });
 
 beforeEach(reset);
 afterEach(() => {
+  vi.restoreAllMocks();
   Object.assign(slices, realSlices);
   cleanup();
   vi.useRealTimers();
@@ -378,16 +379,15 @@ describe("deciding with the buttons", () => {
     await fireEvent.click(
       screen.getByRole("button", { name: "Allow a.example.com for demo" }),
     );
-    inbox.DELETE = (async () => ({
+    vi.spyOn(inbox, "DELETE").mockResolvedValue({
       response: { status: 500, ok: false },
-    })) as never;
+    } as never);
     await fireEvent.click(
       await screen.findByRole("button", { name: /^Undo: / }),
     );
     expect(
       await screen.findByText("Puddle couldn't undo that."),
     ).toBeInTheDocument();
-    reset();
   });
 
   it("puts the rule into one of your sets that is on for the workspace", async () => {

@@ -1,0 +1,180 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The nightly stress job (docs/STANDARDS.md, "Flaky tests"): the fast suites run many times on a starved
+# machine, so a test that fails only under load fails here, a day after it merged, instead of in a merge
+# queue group. Not a required check; it runs only on the schedule and by hand.
+#  - rust: nextest --stress-count 20 on fake_host, the proxy suites and the agent's capture tests, pinned to
+#    one CPU with 6 busy loops, in two halves (ci/stress.sh).
+#  - playwright: --repeat-each 3 on chromium (CDP CPU throttle, ui/e2e/cpu-throttle.ts) and on webkit, a job
+#    each. The ask was 10: one repeat of the 990 tests took about 45 minutes starved (measured), so 3 is about
+#    an hour a job; raise STRESS_COUNT in ci/stress.sh once the yield says it pays.
+#  - vitest: shuffled order (the seed is in the row) and every test repeated 5 times.
+# A failing test fails the job, which opens "Nightly red: stress" through nightly-signal.yml. Each job also
+# uploads one row (ci/stress-yield.py: failures, whether each is a known fixed flake, wall time, runner
+# minutes) as the artifact stress-yield-<kind>; `ci/stress-yield.py report --download 14` adds a fortnight
+# up, which is how the yield is read.
+name: stress
+
+on:
+  schedule:
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stress-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  rust:
+    name: stress (rust ${{ matrix.part }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ["1/2", "2/2"]
+    env:
+      STRESS_PARTITION: ${{ matrix.part }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: job start
+        run: echo "STRESS_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+      - name: Rust toolchain
+        run: rustup toolchain install && rustc --version
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-nextest@0.9.146
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: stress
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
+      - name: nextest --stress-count 20, pinned to one CPU with 6 busy loops
+        env:
+          # A test whose prerequisite is missing fails here instead of skipping.
+          PUDDLE_REQUIRE_TOOLS: "1"
+        run: ci/stress.sh rust
+      - name: record the night
+        if: ${{ always() }}
+        run: ci/stress-record.sh rust
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ always() }}
+        with:
+          name: stress-yield-rust-${{ strategy.job-index }}
+          path: target/stress/yield.tsv
+          retention-days: 90
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ failure() }}
+        with:
+          name: stress-rust-report-${{ strategy.job-index }}
+          path: target/stress/rust/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  playwright:
+    name: stress (playwright ${{ matrix.project }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [chromium, webkit]
+    env:
+      STRESS_PROJECTS: ${{ matrix.project }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: job start
+        run: echo "STRESS_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+      - name: Toolchain (the end-to-end tests build the API fixture server)
+        run: rustup toolchain install && rustc --version
+      - name: Node for the UI
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Playwright browsers cache
+        id: browsers
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
+      - name: Playwright browser and its system libraries
+        timeout-minutes: 10
+        run: |
+          ci/apt-setup.sh
+          cd ui
+          npm ci --ignore-scripts --no-audit --no-fund
+          ../ci/apt-retry.sh npx playwright install-deps "$STRESS_PROJECTS"
+          if [ "${{ steps.browsers.outputs.cache-hit }}" != true ]; then
+            npx playwright install "$STRESS_PROJECTS"
+          fi
+      # The fixture server embeds the built UI, and the starved run must not spend its time compiling.
+      - name: build the UI and the fixture server before the starved run
+        run: |
+          (cd ui && npm run build)
+          cargo build --quiet --locked -p puddle-e2e --features embedded-ui --bin puddle-ui-fixture
+      - name: Playwright --repeat-each 3, pinned to 2 CPUs with busy loops, chromium throttled 4x
+        run: ci/stress.sh playwright
+      - name: record the night
+        if: ${{ always() }}
+        run: ci/stress-record.sh playwright
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ always() }}
+        with:
+          name: stress-yield-playwright-${{ matrix.project }}
+          path: target/stress/yield.tsv
+          retention-days: 90
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ failure() }}
+        with:
+          name: stress-playwright-report-${{ matrix.project }}
+          path: |
+            target/stress/playwright/
+            ui/test-results
+          retention-days: 14
+          if-no-files-found: ignore
+
+  vitest:
+    name: stress (vitest)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: job start
+        run: echo "STRESS_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+      - name: Node for the UI
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: ui
+      - name: vitest --sequence.shuffle --repeats 5, pinned to 2 CPUs with busy loops
+        run: ci/stress.sh vitest
+      - name: record the night
+        if: ${{ always() }}
+        run: ci/stress-record.sh vitest
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ always() }}
+        with:
+          name: stress-yield-vitest
+          path: target/stress/yield.tsv
+          retention-days: 90
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ failure() }}
+        with:
+          name: stress-vitest-report
+          path: target/stress/vitest/
+          retention-days: 14
+          if-no-files-found: ignore

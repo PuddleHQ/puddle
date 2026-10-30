@@ -135,6 +135,8 @@ async fn every_fixture_starts_in_under_ten_seconds_on_its_own_free_port_with_a_r
     let mut prefixes = Vec::new();
     for (port, prefix, cost) in started.into_iter().flatten() {
         // CPU time, not wall time: see `StartCost`. A start that never completes fails at `READY`.
+        // flake-ok: `bounded()` is the fixture child's CPU time (the CI runner starts Squid from a
+        // binary, so it has one); load stretches the wall clock, not the CPU a start spends.
         assert!(
             cost.bounded() < Duration::from_secs(10),
             "{} took {cost:?}",

@@ -119,6 +119,8 @@ async fn an_unreachable_pac_is_an_error_not_a_hang() {
         err,
         PacError::Unavailable(_) | PacError::Timeout | PacError::Failed(_)
     ));
+    // flake-ok: the query's own timeout is 20 s, so 25 s fails only a resolve that ignored it; a
+    // closed port is refused at once. Windows only, so not measured on the Linux lanes.
     assert!(started.elapsed() < Duration::from_secs(25));
 }
 
@@ -141,6 +143,9 @@ async fn a_pac_server_that_never_answers_times_out_at_the_query_timeout() {
         matches!(err, PacError::Timeout | PacError::Unavailable(_)),
         "{err}"
     );
+    // flake-ok: the query timeout here is 2 s and the server never answers, so a resolve that
+    // ignored it waits for WinHTTP's own (far longer) default; 20 s is 10x the limit. Windows only,
+    // so not measured on the Linux lanes.
     assert!(
         started.elapsed() < Duration::from_secs(20),
         "{:?}",

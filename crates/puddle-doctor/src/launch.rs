@@ -207,6 +207,8 @@ mod tests {
                 after: Duration::from_millis(300)
             }
         );
+        // flake-ok: the shell's `sleep` runs 30 s, so a run that waited for it (or for its pipes)
+        // ends at 30 s; one killed at the limit takes 0.3 s (0.34 s measured under load).
         assert!(start.elapsed() < Duration::from_secs(10));
     }
 

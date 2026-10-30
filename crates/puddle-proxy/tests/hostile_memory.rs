@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use hostile_heap::Counting;
-use hostile_support::{Guest, Guests, bystander_round, guest_route, rig};
+use hostile_support::{Guest, Guests, assert_unharmed, bystander_round, guest_route, rig};
 
 #[global_allocator]
 static HEAP: Counting = Counting::new();
@@ -41,10 +41,11 @@ async fn hostile_hg10_the_heap_does_not_follow_what_a_guest_sends() {
     drop(held);
 
     let before = HEAP.restart_peak();
+    let quiet = bystander_round(&rig.bystander, rig.echo).await;
     let mut guests = Guests::start(TEST, &rig.attacked);
     guests.until(SENDING, Duration::from_secs(30)).await;
     let timed = bystander_round(&rig.bystander, rig.echo).await;
-    assert!(timed < Duration::from_secs(5), "{timed:?}");
+    assert_unharmed(timed, quiet, "while the guests send");
     let (ok, said) = guests.finish(Duration::from_secs(60)).await;
     let grew = HEAP.rose_above(before);
     assert!(
@@ -54,8 +55,8 @@ async fn hostile_hg10_the_heap_does_not_follow_what_a_guest_sends() {
     assert!(ok, "guests failed: {said}");
     assert_eq!(
         rig.policy.decisions(),
-        64,
-        "only the bystander reached the rules"
+        128,
+        "only the bystander (its quiet round and the one beside the attack) reached the rules"
     );
     eprintln!("the proxy's heap grew by {grew} bytes; the guests said: {said}");
 }

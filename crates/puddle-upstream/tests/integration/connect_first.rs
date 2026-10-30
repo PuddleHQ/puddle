@@ -61,5 +61,7 @@ async fn an_address_that_never_answers_fails_after_its_own_timeout() {
         ),
         "{err:?}"
     );
+    // flake-ok: a connect nobody answers waits for the kernel's own timeout (75 s on macOS, 127 s on
+    // Linux), so 5 s tells that from the 300 ms limit; 0.31 s measured under load, 16x under the bar.
     assert!(started.elapsed() < Duration::from_secs(5));
 }

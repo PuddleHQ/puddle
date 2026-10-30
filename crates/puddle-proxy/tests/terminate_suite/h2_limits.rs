@@ -386,6 +386,8 @@ async fn a_stream_queued_behind_the_servers_stream_limit_is_answered_after_the_h
         got.text().contains("did not take up the request within 1s"),
         "{got:?}"
     );
+    // flake-ok: `asked` is a tokio instant and the wait ran inside `paused`, so the 1 s queue wait
+    // is a virtual sleep and `elapsed` is virtual time (1 s); no machine speed enters the sum.
     assert!(
         asked.elapsed() < Duration::from_secs(8),
         "{:?}",
@@ -460,6 +462,8 @@ async fn streams_asking_for_a_dead_server_share_one_attempt() {
     let asked = tokio::time::Instant::now();
     let statuses = paused(concurrent_gets(&client, 5)).await;
     assert_eq!(statuses, [504; 5]);
+    // flake-ok: virtual time, as above: one 1 s attempt answers all five streams (1 s), five attempts
+    // one after the other would be 5 s; the paused clock moves only by the sleeps, never by load.
     assert!(
         asked.elapsed() < Duration::from_millis(3500),
         "five streams cost {:?}, not one attempt's time",
@@ -520,6 +524,8 @@ async fn a_stream_waiting_for_another_streams_attempt_gives_up_after_the_head_ti
     // One stream takes the handshake's failure, one makes the attempt (3 s), one waits for it.
     let asked = tokio::time::Instant::now();
     assert_eq!(paused(concurrent_gets(&client, 3)).await, [503, 504, 504]);
+    // flake-ok: virtual time, as above: the attempt takes 3 s and the waiting stream gives up at the
+    // 1 s head timeout, so the sum is 3 s on a paused clock whatever the load.
     assert!(
         asked.elapsed() < Duration::from_secs(8),
         "{:?}",

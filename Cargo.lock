@@ -6327,6 +6327,7 @@ dependencies = [
  "puddle-doctor",
  "puddle-e2e",
  "puddle-fd-limit",
+ "puddle-front",
  "puddle-fs",
  "puddle-guest-env",
  "puddle-inject",

@@ -378,7 +378,9 @@ done
 ENTRY_WRAP='run=$1 boot=$2
 shift 2
 code=0
+: >"$run/entrypoint.began"
 "$@" || code=$?
+: >"$run/entrypoint.ended"
 tail=$(tail -n 3 "$run/entrypoint.log" 2>/dev/null | tr "\n\t" "  " | cut -c1-300)
 while case $tail in *" ") true ;; *) false ;; esac; do tail=${tail% }; done
 printf "%s %s %s\n" "$boot" "$code" "$tail" >"$run/entrypoint.exit.new" &&
@@ -388,7 +390,7 @@ if [ "$#" -gt 0 ]; then
     if alive "$RUN/entrypoint.pid"; then
         say "entrypoint already running"
     else
-        rm -f "$RUN/entrypoint.exit"
+        rm -f "$RUN/entrypoint.exit" "$RUN/entrypoint.began" "$RUN/entrypoint.ended"
         (
             if [ -f "$RUN/entry-env" ]; then
                 while IFS= read -r f; do
@@ -408,9 +410,22 @@ if [ "$#" -gt 0 ]; then
         say "entrypoint chained: $1"
         # One second to fail at once (a missing program, a bad directory, a crash): that is the
         # failure the user can still fix. Exit 0 is an entrypoint that did its job; one that fails
-        # later is the agent's to report, from entrypoint.exit.
+        # later is the agent's to report, from entrypoint.exit. The one second runs from the moment the
+        # wrapper starts the program and judges only the program's own run: a host too busy to start
+        # the wrapper, or to finish its bookkeeping after the program ended, never turns a failure
+        # at once into a late one. Each extra wait stops at 10 s so a wedged wrapper cannot hold the boot.
+        i=0
+        while [ ! -e "$RUN/entrypoint.began" ] && [ "$i" -lt $((10 * TICKS_PER_S)) ] && ! gone "$entry_pid"; do
+            i=$((i + 1))
+            sleep "$TICK"
+        done
         i=0
         while [ "$i" -lt "$TICKS_PER_S" ] && ! gone "$entry_pid"; do
+            i=$((i + 1))
+            sleep "$TICK"
+        done
+        i=0
+        while [ -e "$RUN/entrypoint.ended" ] && [ "$i" -lt $((10 * TICKS_PER_S)) ] && ! gone "$entry_pid"; do
             i=$((i + 1))
             sleep "$TICK"
         done

@@ -93,6 +93,8 @@ pub async fn watch(watch: EntrypointWatch, out: mpsc::Sender<AgentMessage>) {
 mod tests {
     use std::time::Duration;
 
+    use puddle_test_kit::no_event_for;
+
     use super::*;
 
     #[test]
@@ -153,8 +155,12 @@ mod tests {
             ))
         );
         // The same exit read again is not sent again; a new one is.
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert!(rx.try_recv().is_err());
+        no_event_for(
+            "a second report of the same exit",
+            Duration::from_millis(50),
+            &mut rx,
+        )
+        .await;
         std::fs::write(&exit_file, "b1 0 \n").unwrap();
         let got = tokio::time::timeout(Duration::from_secs(5), rx.recv())
             .await

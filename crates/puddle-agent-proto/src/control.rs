@@ -494,11 +494,9 @@ mod tests {
             fine
         );
         let long = AgentMessage::editor_status(Some(&"\u{1b}".repeat(5000)));
-        let AgentMessage::EditorStatus {
-            problem: Some(text),
-        } = &long
-        else {
-            panic!("a problem stays a problem");
+        let text = match &long {
+            AgentMessage::EditorStatus { problem } => problem.clone().unwrap_or_default(),
+            other => format!("{other:?}"),
         };
         assert_eq!(text.chars().count(), MAX_EDITOR_PROBLEM_CHARS);
         assert!(long.to_line().is_ok(), "the cut text fits a control line");

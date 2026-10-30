@@ -56,7 +56,7 @@ export default ts.config(
           selector:
             "CallExpression[callee.name='expect'] > AwaitExpression.arguments",
           message:
-            "expect(await ...) reads the page once, before it settles. Use a web-first assertion (await expect(locator).toHaveText(...)) or await expect.poll(() => read). A deliberate one-shot (data held, absence)? eslint-disable-next-line no-restricted-syntax -- <why>",
+            "expect(await ...) reads the page once, before it settles. Use a web-first assertion (await expect(locator).toHaveText(...)) or await expect.poll(() => read). For something that must be absent, expect.poll passes on its first empty read too: use staysEmpty(page, read) or expectNoAxeViolations(page) from support.ts. A deliberate one-shot (data held)? eslint-disable-next-line no-restricted-syntax -- <why>",
         },
       ],
     },

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { expect, signIn, test, watchCsp } from "./support";
+import { expect, signIn, test, watchCsp, staysEmpty } from "./support";
 
 // Computed-style and box-size checks of the visual identity, in place of screenshot baselines.
 
@@ -35,7 +35,7 @@ test.describe("the visual identity, served by the real API", () => {
     expect(used.body).toMatch(/^"?Inter Variable"?,/);
     expect(fontFiles.length).toBeGreaterThan(0);
     expect(new Set(fontFiles)).toEqual(new Set([new URL(page.url()).origin]));
-    await expect.poll(() => violations()).toEqual([]);
+    await staysEmpty(page, violations);
   });
 
   test("the duck is the mark in the sidebar, at its box size, and the tab icon is the duck", async ({

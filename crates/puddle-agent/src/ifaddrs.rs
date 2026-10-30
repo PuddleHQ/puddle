@@ -62,9 +62,8 @@ mod tests {
         assert_eq!(unsafe { libc::getifaddrs(&raw mut head) }, 0);
         let mut out = Vec::new();
         let mut cursor = head;
-        while !cursor.is_null() {
-            // SAFETY: `cursor` is a node of the live list.
-            let e = unsafe { &*cursor };
+        // SAFETY: `cursor` is null or a node of the live list.
+        while let Some(e) = unsafe { cursor.as_ref() } {
             cursor = e.ifa_next;
             // SAFETY: the family field is only read when `ifa_addr` is non-null, so it is readable.
             let is_ipv4 = !e.ifa_addr.is_null()

@@ -39,7 +39,7 @@ use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
 use puddle_compute::{ComputeError, DiskSize, ExecRequest, ImageConfig, Runtime, Sandbox as _};
 use puddle_lifecycle::Lifecycle;
-use puddle_ports::Ports;
+use puddle_ports::{NoLink, Ports};
 use puddle_proxy::Route;
 use puddle_settings::{
     Effective, GlobalSettings, ReconnectionGrace, ServerChoice, WorkspaceSettings, resolve,
@@ -392,20 +392,45 @@ fn delete_check(report: &puddle_workspace::DeleteReport) -> DeleteCheck {
 /// Holds the count of running operations up for as long as it lives.
 struct Running(watch::Sender<usize>);
 
+/// How long a window's sign-in waits for the agent of a workspace that runs but has not said
+/// hello yet. The hello normally follows the start within a moment; the agent retries a failed
+/// connection every few seconds, so this covers a few tries.
+const AGENT_HELLO_WAIT: Duration = Duration::from_secs(15);
+
 /// A window's way to the editor's password: asked of the running guest through the front's own
 /// lookup, so the secret is read only when a shell has a window to sign in.
 struct GuestLogin {
     guests: Arc<dyn puddle_front::Guests>,
+    ports: Ports,
     workspace: WorkspaceName,
+}
+
+/// What the user is told when `workspace` has no agent link to sign in through.
+fn no_link_message(workspace: &WorkspaceName, why: NoLink) -> String {
+    match why {
+        NoLink::NotRunning => format!("{workspace} is not running; start it first"),
+        NoLink::NotConnected => format!(
+            "{workspace} is running, but its editor has not connected to Puddle yet. Puddle keeps \
+             trying; open the editor again in a moment"
+        ),
+    }
 }
 
 impl EditorLogin for GuestLogin {
     fn password(&self) -> BoxFuture<'_, Result<String, LaunchError>> {
         Box::pin(async move {
-            let target = self.guests.target(&self.workspace).ok_or_else(|| {
-                LaunchError::new(format!("{} is not running; start it first", self.workspace))
-            })?;
-            target.editor.password().await.map_err(|err| {
+            let editor: Arc<dyn puddle_front::Editor> =
+                if let Some(target) = self.guests.target(&self.workspace) {
+                    target.editor
+                } else {
+                    let link = self
+                        .ports
+                        .guest_link_within(&self.workspace, AGENT_HELLO_WAIT)
+                        .await
+                        .map_err(|why| LaunchError::new(no_link_message(&self.workspace, why)))?;
+                    Arc::new(link)
+                };
+            editor.password().await.map_err(|err| {
                 LaunchError::new(format!(
                     "the editor has no password to sign in with yet: {err}"
                 ))
@@ -1920,6 +1945,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             login: match self.inner.flavours.of(name) {
                 Some(puddle_front::Flavour::CodeServer) => Some(Arc::new(GuestLogin {
                     guests: Arc::clone(&self.inner.front_guests),
+                    ports: self.inner.ports.clone(),
                     workspace: name.clone(),
                 })),
                 // Microsoft's server signs in through the front's key cookie, not a password.
@@ -3064,5 +3090,22 @@ mod kept_login_rows {
                 since: Some(1_761_480_000_000),
             }
         );
+    }
+}
+
+#[cfg(test)]
+mod no_link_words {
+    use super::*;
+
+    #[test]
+    fn a_running_workspace_whose_agent_is_late_is_not_called_stopped_and_the_user_is_not_blamed() {
+        let acme = WorkspaceName::new("acme").unwrap();
+        assert_eq!(
+            no_link_message(&acme, NoLink::NotRunning),
+            "acme is not running; start it first"
+        );
+        let late = no_link_message(&acme, NoLink::NotConnected);
+        assert!(late.starts_with("acme is running"), "{late}");
+        assert!(late.contains("open the editor again in a moment"), "{late}");
     }
 }

@@ -5,7 +5,7 @@
 import { readFileSync } from "node:fs";
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeStops, watchCsp } from "./support";
+import { axeStops, watchCsp, staysEmpty } from "./support";
 
 test.beforeEach(async ({ backend }) => {
   await backend.control.reset("lived-in");
@@ -794,7 +794,7 @@ test.describe("accessibility", () => {
           page.getByRole("heading", { name: "No records match" }),
         ).toBeVisible();
         await scan(page, "no match");
-        await expect.poll(() => csp()).toEqual([]);
+        await staysEmpty(page, csp);
         scan.done();
       });
     }

@@ -521,6 +521,9 @@ fn session_cookie(target: &Target, cookie: &SessionCookie) -> Cookie<'static> {
         .domain(format!("{}.localhost", target.workspace))
         .path("/")
         .http_only(true)
+        // Not `Secure`: this is an http loopback origin, and WebKitGTK (2.54, libsoup 3.6) drops a
+        // Secure cookie for `http://<name>.localhost` instead of sending it, which would break
+        // sign-in. HttpOnly and SameSite stay; no network path reaches a loopback origin.
         .same_site(tauri::webview::cookie::SameSite::Lax)
         .build()
 }
@@ -573,6 +576,8 @@ mod accelerators {
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
+
+    use puddle_types::fixture;
 
     use super::*;
 
@@ -1075,14 +1080,15 @@ mod tests {
         let Fixture { windows, .. } = fixture();
         let (addr, logins) = counting_editor().await;
         let demo = workspace("demo");
-        let first = windows.session(addr, &demo, "one").await.unwrap();
-        let second = windows.session(addr, &demo, "one").await.unwrap();
+        let (one, two) = (fixture::password("one"), fixture::password("two"));
+        let first = windows.session(addr, &demo, &one).await.unwrap();
+        let second = windows.session(addr, &demo, &one).await.unwrap();
         assert_eq!(first, second);
         assert_eq!(logins.load(Ordering::SeqCst), 1);
-        windows.session(addr, &demo, "two").await.unwrap();
+        windows.session(addr, &demo, &two).await.unwrap();
         assert_eq!(logins.load(Ordering::SeqCst), 2);
         windows.forget(&demo);
-        windows.session(addr, &demo, "two").await.unwrap();
+        windows.session(addr, &demo, &two).await.unwrap();
         assert_eq!(logins.load(Ordering::SeqCst), 3);
     }
 
@@ -1094,7 +1100,7 @@ mod tests {
         drop(free);
         assert!(
             windows
-                .session(addr, &workspace("demo"), "x")
+                .session(addr, &workspace("demo"), &fixture::password("unused"))
                 .await
                 .is_err()
         );

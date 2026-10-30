@@ -66,7 +66,6 @@ puddle-agent = { workspace = true }
 puddle-e2e = { workspace = true }
 puddle-compute = { workspace = true, features = ["fake"] }
 puddle-repos = { workspace = true, features = ["testing"] }
-puddle-test-kit = { workspace = true }
 puddle-upstream = { workspace = true, features = ["testing"] }
 puddle-vm-tests = { workspace = true }
 rcgen = { workspace = true }

@@ -9,7 +9,8 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use super::{
-    LOCAL, Prefix, READY, StartCost, configured_or_skip, read, require_file, stop, wait_ready,
+    LOCAL, Prefix, READY, StartCost, StartSlot, configured_or_skip, read, require_file, stop,
+    wait_ready,
 };
 
 /// The test root of one interceptor: made before the proxy starts and handed to it, so a test
@@ -126,8 +127,10 @@ impl Mitm {
         .then_some(())?;
         let bin = bin.unwrap();
         require_file(&bin, "PUDDLE_MITMDUMP_BIN");
-        let begun = Instant::now();
         let prefix = Prefix::new(kind);
+        // Held until the proxy listens; the wait for it is not part of the start's cost.
+        let slot = StartSlot::take(prefix.as_str());
+        let begun = Instant::now();
         let dir = tempfile::Builder::new()
             .prefix(prefix.as_str())
             .tempdir()
@@ -170,6 +173,7 @@ impl Mitm {
             .unwrap();
         let log_path = dir.path().join("mitm.log");
         let port = wait_listening(&mut child, &log_path, READY);
+        drop(slot);
         wait_ready(port, Some(&mut child), READY, || read(&log_path));
         let started = StartCost::measure(&prefix, begun, Some(&child));
         Some(Self {

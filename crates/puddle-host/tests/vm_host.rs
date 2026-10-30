@@ -3131,6 +3131,232 @@ async fn vm_host_the_editor_server_opens_a_window_with_every_checkout() {
     host.shutdown().await;
 }
 
+/// What the browser editor's front sees: every lookup of a workspace's editor is counted, and none
+/// is ever served, so a request that reaches the front at all shows in the count.
+#[cfg(not(windows))]
+struct CountingGuests(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+#[cfg(not(windows))]
+impl puddle_front::Guests for CountingGuests {
+    fn target(&self, _: &WorkspaceName) -> Option<puddle_front::Target> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        None
+    }
+}
+
+/// What a client of the guest tries against this computer, from the guest as root. `$1` is the
+/// front's port, `$2` the control listener's, `$3` the workspace's name. Each line is
+/// `<label> <status> reason=<x-puddle-blocked> body=<text>` for a request through the proxy, and
+/// `<label> <status>` for one without it (`000`: no answer).
+#[cfg(not(windows))]
+const REACH_THIS_COMPUTER: &str = r#"
+front=$1; control=$2; ws=$3
+via() { # label, Host header, url
+  out=$(curl -s -i --max-time 10 -x http://127.0.0.1:3128 --noproxy '' -H "Host: $2" "$3" | tr -d '\r' | awk 'NR==1{s=$2} tolower($1)=="x-puddle-blocked:"{r=$2} /^$/{body=1; next} body{b=b $0} END{print s, "reason=" r, "body=" substr(b,1,120)}')
+  echo "$1 $out"
+}
+direct() { # label, address
+  timeout 4 bash -c "echo > /dev/tcp/${2%:*}/${2#*:}" 2>/dev/null && echo "$1 open" || echo "$1 closed"
+}
+via control-by-ip "127.0.0.1:$control" "http://127.0.0.1:$control/"
+via front-by-ip "$ws.localhost:$front" "http://127.0.0.1:$front/"
+via front-by-name "$ws.localhost:$front" "http://$ws.localhost:$front/"
+via front-by-localhost "$ws.localhost:$front" "http://localhost:$front/"
+via front-by-docker-name "$ws.localhost:$front" "http://host.docker.internal:$front/"
+via control-by-docker-name "host.docker.internal:$control" "http://host.docker.internal:$control/"
+# Without the proxy setting a dial to any address "opens" at the agent's catch-all, so only a
+# request that gets an answer says anything: the guest's 127.0.0.1 is the guest's own.
+plain() { # label, url
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 --noproxy '*' "$2")
+  echo "$1 $code"
+}
+plain front-on-the-guests-own-loopback "http://127.0.0.1:$front/"
+plain control-on-the-guests-own-loopback "http://127.0.0.1:$control/"
+"#;
+
+/// K tier. Isolation of the browser editor from this computer: a root process in the guest cannot reach the front (the listener the window's editor is
+/// served through) or this computer's other loopback services. Through Puddle's proxy the front's
+/// address is refused as one of Puddle's own whatever the loopback toggle says (the toggle is on
+/// here, so a plain listener beside it is reachable: that is the control that makes the refusal
+/// mean something), by IP and by name, and the guest's own loopback is its own (the guest has no gateway to this
+/// computer: its only route is the agent's catch-all). The front counts every request that reaches it, and the guest's
+/// attempts leave the count at zero while a request from this side raises it.
+///
+/// Not covered here: an extension host running as guest root against the workbench's APIs needs a
+/// browser client driving the editor.
+#[cfg(not(windows))]
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_the_browser_editors_front_and_this_computers_loopback_are_out_of_the_guests_reach()
+{
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let release = std::path::PathBuf::from(std::env::var_os("PUDDLE_CODE_SERVER_DIR").expect(
+        "PUDDLE_CODE_SERVER_DIR: the unpacked code-server release (ci/fetch-code-server.sh)",
+    ));
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host_config("reach", hermetic_options(), |config| {
+        config.guest.code_server = Some(release);
+    })
+    .await;
+    let name = format!("{}-reach", settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    // The rules allow every name the guest tries, so a refusal below is the address guard's and
+    // not a missing rule.
+    for site in ["127.0.0.1", "localhost", "host.docker.internal"]
+        .into_iter()
+        .map(str::to_owned)
+        .chain([format!("{name}.localhost")])
+    {
+        host.store()
+            .add_rule(&NewRule {
+                scope: Scope::Workspace(sandbox.clone()),
+                pattern: Pattern::parse(&site).unwrap(),
+                effect: Effect::Allow,
+                expires_at: None,
+                created_by: Actor::Cli,
+            })
+            .unwrap();
+    }
+
+    // The front, as the host will run it: bound on the loopback and entered in the host's registry.
+    let lookups = Arc::new(AtomicUsize::new(0));
+    let dir = tempfile::tempdir().unwrap();
+    let front = puddle_front::Front::bind(
+        None,
+        host.endpoints(),
+        Arc::new(CountingGuests(Arc::clone(&lookups))),
+        Arc::new(puddle_front::FileHalves::new(dir.path().join("front"))),
+    )
+    .await
+    .unwrap();
+    let front_port = front.local_addr().port();
+    // The control: a plain loopback listener that counts what connects and answers a greeting.
+    let control = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let control_port = control.local_addr().unwrap().port();
+    let control_seen = Arc::new(AtomicUsize::new(0));
+    let count = Arc::clone(&control_seen);
+    tokio::spawn(async move {
+        while let Ok((mut conn, _)) = control.accept().await {
+            count.fetch_add(1, Ordering::SeqCst);
+            tokio::spawn(async move {
+                let mut head = [0_u8; 1024];
+                let _ = conn.read(&mut head).await;
+                let _ = conn
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok",
+                    )
+                    .await;
+                let _ = conn.shutdown().await;
+            });
+        }
+    });
+
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "repositories": [], "memory_mib": 2048}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    editor_up(&runtime, &sandbox).await;
+    // The host's loopback is a local destination: off by default, one toggle per workspace.
+    let toggle = api
+        .put(
+            &format!("/api/settings/workspaces/{name}"),
+            &json!({"overrides": {"local_toggles": {"loopback": true}}}).to_string(),
+        )
+        .await;
+    assert_eq!(toggle.status, 200, "{}", toggle.body);
+
+    // The positive control from this side: the front answers a request for a workspace's origin
+    // (it has no editor to give, so it is a 404) and counts the lookup.
+    let mut conn = tokio::net::TcpStream::connect(front.local_addr())
+        .await
+        .unwrap();
+    conn.write_all(
+        format!(
+            "GET / HTTP/1.1\r\nHost: {name}.localhost:{front_port}\r\nConnection: close\r\n\r\n"
+        )
+        .as_bytes(),
+    )
+    .await
+    .unwrap();
+    let mut answer = String::new();
+    conn.read_to_string(&mut answer).await.unwrap();
+    assert!(answer.starts_with("HTTP/1.1 404"), "{answer}");
+    assert_eq!(lookups.load(Ordering::SeqCst), 1, "the front never ran");
+
+    let out = guest(
+        &runtime,
+        &sandbox,
+        &format!(
+            "bash -s {front_port} {control_port} {name} <<'PUDDLE_EOF'\n{REACH_THIS_COMPUTER}\nPUDDLE_EOF"
+        ),
+    )
+    .await;
+    let line = |label: &str| -> String {
+        out.lines()
+            .find_map(|l| {
+                l.strip_prefix(label)
+                    .and_then(|rest| rest.strip_prefix(' '))
+            })
+            .unwrap_or_else(|| panic!("no {label} line in {out}"))
+            .to_owned()
+    };
+    // The control: with the rule and the toggle, a plain listener on this computer's loopback is
+    // reached, so the refusals below are the front's own and not a closed door everywhere.
+    assert!(line("control-by-ip").starts_with("200 "), "{out}");
+    assert_eq!(control_seen.load(Ordering::SeqCst), 1, "{out}");
+    // The front is one of Puddle's own endpoints, by address and by every name that leads there.
+    for label in ["front-by-ip", "front-by-name", "front-by-localhost"] {
+        let got = line(label);
+        assert!(
+            got.starts_with("403 reason=puddle_endpoint ")
+                && got.contains("Puddle's own endpoints"),
+            "{label}: {got}"
+        );
+    }
+    // The Docker host name leads nowhere from here: the same answer for the front and the control.
+    for label in ["front-by-docker-name", "control-by-docker-name"] {
+        let got = line(label);
+        assert!(
+            got.starts_with("502 ") && got.contains("could not connect"),
+            "{label}: {got}"
+        );
+    }
+    // The guest's own loopback is its own.
+    for label in [
+        "front-on-the-guests-own-loopback",
+        "control-on-the-guests-own-loopback",
+    ] {
+        assert_eq!(line(label), "000", "{label}");
+    }
+    // None of it reached the front or the control again.
+    assert_eq!(
+        lookups.load(Ordering::SeqCst),
+        1,
+        "a request reached the front: {out}"
+    );
+    assert_eq!(control_seen.load(Ordering::SeqCst), 1, "{out}");
+
+    front.close().await;
+    host.shutdown().await;
+}
+
 /// A workspace's shell init on a real guest: the script is checked in a throwaway shell before it
 /// is saved, a login shell sources it from a read-only mount, the guest cannot change it, and a
 /// start that finds the file that loads it replaced says so and puts it back.

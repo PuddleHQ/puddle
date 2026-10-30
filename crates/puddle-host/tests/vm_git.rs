@@ -33,7 +33,7 @@ use serde_json::json;
 use support::{Api, ended};
 use vm_support::{
     HarnessPlatform, VmHost, guest, guest_within, platform_trusting, start_vm_host_platform,
-    through_company_proxy,
+    through_company_proxy, with_fake_names,
 };
 
 const NAME: &str = "bound.invalid";
@@ -53,7 +53,10 @@ fn internet(hosts: &[(&str, &GitHost)]) -> Internet {
     let names: Vec<(&str, std::net::SocketAddr)> =
         hosts.iter().map(|(n, h)| (*n, h.addr())).collect();
     let proxy = tokio::task::block_in_place(|| rt.block_on(NameProxy::start(&names)));
-    let options = through_company_proxy(support::hermetic_options(), &proxy);
+    let options = with_fake_names(
+        through_company_proxy(support::hermetic_options(), &proxy),
+        hosts.iter().map(|(n, _)| *n),
+    );
     let platform = platform_trusting(hosts.iter().map(|(_, h)| h.root()));
     Internet {
         proxy,

@@ -112,6 +112,24 @@ impl Resolver for FakeNames {
     }
 }
 
+/// `options` with the names in `names` that have a real name (`github.com`) as fake sites (see
+/// [`FakeNames`]): the host never asks the real DNS about them. A name under `.invalid` is left
+/// out, because the proxy never looks it up. [`web_internet`] does this for its names.
+pub(crate) fn with_fake_names<'a>(
+    mut options: HostOptions,
+    names: impl IntoIterator<Item = &'a str>,
+) -> HostOptions {
+    let real_names: Vec<String> = names
+        .into_iter()
+        .filter(|n| !n.to_ascii_lowercase().ends_with(".invalid"))
+        .map(str::to_owned)
+        .collect();
+    if !real_names.is_empty() {
+        options.resolver = Some(Arc::new(FakeNames { names: real_names }));
+    }
+    options
+}
+
 /// `options` with the host's upstream route set to the company proxy `proxy` (the only thing that
 /// knows the fake hosts' names).
 pub(crate) fn through_company_proxy(mut options: HostOptions, proxy: &NameProxy) -> HostOptions {
@@ -167,15 +185,10 @@ pub(crate) async fn web_internet(
     let web = WebHost::start(names, web_options).await;
     let proxy = NameProxy::start(&[]).await;
     web.register(&proxy, names);
-    let mut options = through_company_proxy(options, &proxy);
-    let real_names: Vec<String> = names
-        .iter()
-        .filter(|n| !n.to_ascii_lowercase().ends_with(".invalid"))
-        .map(|n| (*n).to_owned())
-        .collect();
-    if !real_names.is_empty() {
-        options.resolver = Some(Arc::new(FakeNames { names: real_names }));
-    }
+    let options = with_fake_names(
+        through_company_proxy(options, &proxy),
+        names.iter().copied(),
+    );
     let platform = platform_trusting([web.root()]);
     WebInternet {
         web,

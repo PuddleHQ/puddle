@@ -13,7 +13,6 @@ use std::io::Write as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::time::{Duration, Instant};
 
 use puddle_boot::{AGENT_SUPERVISE_SH, BOOT_SH, BootPlan};
 
@@ -221,18 +220,6 @@ impl FakeRoot {
     pub(crate) fn recorded_pid(&self, name: &str) -> Option<u32> {
         let text = std::fs::read_to_string(self.path(&format!("/run/puddle/{name}"))).ok()?;
         text.split_whitespace().nth(1)?.parse().ok()
-    }
-
-    /// Waits until `cond` holds, polling every 20 ms, up to `limit`.
-    pub(crate) fn wait_for(limit: Duration, mut cond: impl FnMut() -> bool) -> Option<Duration> {
-        let start = Instant::now();
-        while start.elapsed() < limit {
-            if cond() {
-                return Some(start.elapsed());
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        None
     }
 }
 

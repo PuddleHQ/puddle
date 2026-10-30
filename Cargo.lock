@@ -5983,6 +5983,7 @@ dependencies = [
  "puddle-guest-env",
  "puddle-ipc",
  "puddle-proxy",
+ "puddle-test-kit",
  "puddle-types",
  "rustix",
  "serde",
@@ -6003,6 +6004,7 @@ version = "0.0.0"
 dependencies = [
  "futures-util",
  "proptest",
+ "puddle-test-kit",
  "puddle-types",
  "serde",
  "serde_json",
@@ -6075,6 +6077,7 @@ dependencies = [
  "puddle-secrets",
  "puddle-settings",
  "puddle-store",
+ "puddle-test-kit",
  "puddle-types",
  "puddle-upstream",
  "serde_json",
@@ -6112,6 +6115,7 @@ dependencies = [
  "puddle-compute",
  "puddle-compute-msb",
  "puddle-guest-env",
+ "puddle-test-kit",
  "puddle-types",
  "puddle-vm-tests",
  "serde_json",
@@ -6239,6 +6243,7 @@ dependencies = [
  "puddle-secrets",
  "puddle-settings",
  "puddle-store",
+ "puddle-test-kit",
  "puddle-types",
  "puddle-upstream",
  "puddle-vm-tests",
@@ -6279,6 +6284,7 @@ dependencies = [
  "puddle-fs",
  "puddle-netpolicy",
  "puddle-ports",
+ "puddle-test-kit",
  "puddle-types",
  "sha2 0.11.1",
  "tempfile",
@@ -6343,6 +6349,7 @@ dependencies = [
  "puddle-settings",
  "puddle-ssh",
  "puddle-store",
+ "puddle-test-kit",
  "puddle-types",
  "puddle-upstream",
  "puddle-vm-tests",
@@ -6487,6 +6494,7 @@ dependencies = [
  "puddle-proxy",
  "puddle-secrets",
  "puddle-store",
+ "puddle-test-kit",
  "puddle-types",
  "puddle-upstream",
  "rcgen",
@@ -6550,6 +6558,7 @@ version = "0.0.0"
 dependencies = [
  "getrandom 0.4.3",
  "keyring",
+ "puddle-test-kit",
  "serde",
  "serde_json",
  "tempfile",
@@ -6592,6 +6601,7 @@ dependencies = [
  "proptest",
  "psl",
  "puddle-secrets",
+ "puddle-test-kit",
  "puddle-types",
  "rusqlite",
  "serde",
@@ -6600,6 +6610,14 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "puddle-test-kit"
+version = "0.0.0"
+dependencies = [
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

@@ -606,6 +606,7 @@ jobs:
             ui/playwright-report
             ui/test-results
             ui/coverage/lcov.info
+            ui/coverage/coverage-summary.json
           retention-days: 14
           if-no-files-found: ignore
       # Off the light mode (worked out again from the event) both browsers must have run, except on a merge queue

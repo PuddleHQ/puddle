@@ -151,6 +151,8 @@ mod tests {
     use std::fmt::Write as _;
     use std::time::Duration;
 
+    use puddle_test_kit::no_event_for;
+
     use super::*;
 
     const HEADER: &str = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
@@ -266,16 +268,24 @@ mod tests {
         ));
         assert_eq!(rx.recv().await, Some(AgentMessage::ports([])));
         // Nothing changes: nothing is sent.
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        assert!(rx.try_recv().is_err());
+        no_event_for(
+            "a report while nothing changes",
+            Duration::from_millis(500),
+            &mut rx,
+        )
+        .await;
         write(&[8080, 3000]);
         assert_eq!(rx.recv().await, Some(AgentMessage::ports([3000, 8080])));
         write(&[3000]);
         assert_eq!(rx.recv().await, Some(AgentMessage::ports([3000])));
         // Unreadable tables say nothing and the watch carries on when they come back.
         std::fs::remove_file(dir.join("tcp")).unwrap();
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        assert!(rx.try_recv().is_err());
+        no_event_for(
+            "a report while the table is unreadable",
+            Duration::from_millis(300),
+            &mut rx,
+        )
+        .await;
         write(&[3000, 5000]);
         assert_eq!(rx.recv().await, Some(AgentMessage::ports([3000, 5000])));
         drop(rx);

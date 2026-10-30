@@ -20,6 +20,7 @@ use puddle_boot::{
     start_folder_file,
 };
 use puddle_compute::ImageConfig;
+use puddle_test_kit::eventually_blocking;
 use puddle_types::{GuestEnv, GuestFile, GuestPath, MergeEntry, MergeFormat, MergeSpec};
 
 const IMAGE_PATH: &str = "/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin";
@@ -287,13 +288,17 @@ fn agent_is_back_within_a_second_after_kill_9() {
     assert!(fr.run(&full_plan("CA\n")).status.success());
     let first = fr.agent_pids()[0];
     kill9(first);
-    let back = FakeRoot::wait_for(Duration::from_secs(1), || {
-        fr.agent_pids().len() == 2 && alive(fr.agent_pids()[1])
-    });
-    assert!(
-        back.is_some(),
-        "agent not restarted within 1 s: {:?}",
-        fr.agent_pids()
+    eventually_blocking(
+        "the supervisor restarts the agent",
+        Duration::from_secs(1),
+        || {
+            let pids = fr.agent_pids();
+            if pids.len() == 2 && alive(pids[1]) {
+                Ok(())
+            } else {
+                Err(format!("pids {pids:?}"))
+            }
+        },
     );
 }
 
@@ -313,8 +318,18 @@ fn the_agent_starts_with_the_plans_settings_and_a_restarted_one_has_the_latest()
     // A second boot while the supervisor runs changes what the next start sees.
     assert!(fr.run(&plan("second")).status.success());
     kill9(fr.agent_pids()[0]);
-    let back = FakeRoot::wait_for(Duration::from_secs(3), || fr.agent_saw().len() == 2);
-    assert!(back.is_some(), "agent not restarted: {:?}", fr.agent_saw());
+    eventually_blocking(
+        "the agent restarts with the new environment",
+        Duration::from_secs(3),
+        || {
+            let saw = fr.agent_saw();
+            if saw.len() == 2 {
+                Ok(())
+            } else {
+                Err(format!("starts {saw:?}"))
+            }
+        },
+    );
     assert_eq!(fr.agent_saw(), [odd, "second"]);
     assert!(!fr.path("/run/puddle/agent.env.new").exists());
     // A plan without settings clears them.
@@ -324,8 +339,18 @@ fn the_agent_starts_with_the_plans_settings_and_a_restarted_one_has_the_latest()
             .success()
     );
     kill9(fr.agent_pids()[1]);
-    let back = FakeRoot::wait_for(Duration::from_secs(3), || fr.agent_saw().len() == 3);
-    assert!(back.is_some());
+    eventually_blocking(
+        "the agent restarts a third time",
+        Duration::from_secs(3),
+        || {
+            let saw = fr.agent_saw();
+            if saw.len() == 3 {
+                Ok(())
+            } else {
+                Err(format!("starts {saw:?}"))
+            }
+        },
+    );
     assert_eq!(fr.agent_saw().last().map(String::as_str), Some("unset"));
 }
 
@@ -348,8 +373,11 @@ fn entrypoint_is_chained_once_with_puddle_env_and_workdir() {
         let out = fr.run(&plan);
         assert!(out.status.success(), "{}", show(&out));
         let pid = fr.recorded_pid("entrypoint.pid").unwrap();
-        let line = FakeRoot::wait_for(Duration::from_secs(5), || fr.path("/entry.out").exists());
-        assert!(line.is_some());
+        eventually_blocking(
+            "the entrypoint writes its output",
+            Duration::from_secs(5),
+            || fr.path("/entry.out").exists(),
+        );
         assert_eq!(
             fr.read("/entry.out"),
             format!(
@@ -432,10 +460,17 @@ fn exit_line(sh: &std::path::Path, script: &str) -> (String, String) {
         .unwrap();
     let out = fr.run(&plan);
     assert!(out.status.success(), "{}", show(&out));
-    let written = FakeRoot::wait_for(Duration::from_secs(10), || {
-        fr.path("/run/puddle/entrypoint.exit").exists()
-    });
-    assert!(written.is_some(), "no exit line:\n{}", show(&out));
+    eventually_blocking(
+        "the entrypoint's exit line",
+        Duration::from_secs(10),
+        || {
+            if fr.path("/run/puddle/entrypoint.exit").exists() {
+                Ok(())
+            } else {
+                Err(format!("boot output:\n{}", show(&out)))
+            }
+        },
+    );
     let boot_id = fr.read("/proc/sys/kernel/random/boot_id").trim().to_owned();
     (fr.read("/run/puddle/entrypoint.exit"), boot_id)
 }

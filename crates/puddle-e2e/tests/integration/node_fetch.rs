@@ -16,7 +16,7 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::process::Command;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use puddle_agent::config::Target;
 use puddle_agent::{Agent, Config};
@@ -24,6 +24,7 @@ use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{AnyAddress, StaticResolver};
 use puddle_proxy::{Proxy, Route};
 use puddle_store::{Actor, Effect, Limits, NewRule, Pattern, Scope, Store, SystemClock};
+use puddle_test_kit::eventually;
 use puddle_types::{NullSink, WorkspaceName};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -158,27 +159,28 @@ async fn http_server() -> (SocketAddr, mpsc::UnboundedReceiver<String>) {
 
 /// The `connection` audit records, waiting up to 5 s for at least `count`.
 async fn connection_records(store: &Store, count: usize) -> Vec<Value> {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let records: Vec<Value> = store
-            .audit_lines(0, 100_000)
-            .unwrap()
-            .into_iter()
-            .map(|(_, line)| {
-                assert!(!line.contains(CANARY), "query string in the audit: {line}");
-                serde_json::from_str::<Value>(&line).unwrap()
-            })
-            .filter(|v| v["type"] == "connection")
-            .collect();
-        if records.len() >= count || Instant::now() >= deadline {
-            assert!(
-                records.len() >= count,
-                "{count} records expected: {records:?}"
-            );
-            return records;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    eventually(
+        &format!("{count} connection records"),
+        Duration::from_secs(5),
+        || {
+            let records: Vec<Value> = store
+                .audit_lines(0, 100_000)
+                .unwrap()
+                .into_iter()
+                .map(|(_, line)| {
+                    assert!(!line.contains(CANARY), "query string in the audit: {line}");
+                    serde_json::from_str::<Value>(&line).unwrap()
+                })
+                .filter(|v| v["type"] == "connection")
+                .collect();
+            if records.len() >= count {
+                Ok(records)
+            } else {
+                Err(format!("{records:?}"))
+            }
+        },
+    )
+    .await
 }
 
 #[tokio::test]
@@ -210,6 +212,8 @@ async fn node_fetch_of_plain_http_is_pending_then_allowed_and_audited_with_metho
         ),
         "{records:?}"
     );
+    // flake-ok: `node_fetch` returned after the proxy refused its CONNECT, so no request was ever sent
+    // through; `heads` gets one entry per request the server parses, so nothing can still be on its way.
     assert!(heads.try_recv().is_err(), "the server was reached");
 
     // Allowed: the request reaches the server unchanged and is audited with method and path.

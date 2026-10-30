@@ -181,6 +181,8 @@ impl Events {
     }
 
     /// Reads events until one satisfies `pred`; returns it. Every event read is kept in `seen`.
+    // flake-ok: reads the server-sent event stream (it consumes input, so a re-run probe cannot do it);
+    // bounded by `within`, and the panic lists every event seen.
     pub(crate) async fn until(&mut self, pred: impl Fn(&Value) -> bool, within: Duration) -> Value {
         let deadline = Instant::now() + within;
         loop {

@@ -42,6 +42,7 @@ different crates and rarely collides.
 | `crates/puddle` | bin + lib | Host program `puddle(.exe)`: CLI (`doctor`, `ssh-bridge`, `serve` around `puddle-host`) |
 | `crates/xtask` | bin (dev) | `cargo xtask runtime` (the OS's runtime folder: the fork release's msb (Linux: `--msb` for a tag whose release has none) plus the firmware, on Linux under both names it needs; checksums, `licenses/`), `cargo xtask notices` (third-party notices; `--check` is a gate); never shipped |
 | `crates/puddle-fs` | lib | Per-OS file-system seams: `data_dir()` (the `dirs` crate: `%LOCALAPPDATA%\puddle`, `$XDG_DATA_HOME/puddle`, `~/Library/Application Support/puddle`) and `private` (owner-only files and folders: `0600`/`0700` on Unix; on Windows a protected ACL with one entry for the current user, set at creation). Its `unsafe` (Win32 security calls) is in one module, `win`, which `puddle-ipc` shares for its pipe descriptor. Own crate because both the API and the runtime layout need it and neither may depend on the other |
+| `crates/puddle-test-kit` | lib (dev) | Shared test helpers, a dev-dependency only (`scripts/quality-gate.py` fails a product crate that lists it under `[dependencies]` or `[build-dependencies]`): `eventually` (a named wait, bounded below nextest's slow-timeout), `next_event_within`, `next_event_matching`, `no_event_for` and `no_event_matching` (channel reads), `bound_port` (a listener that stays bound), `TestDir` (a unique temporary folder) |
 | `crates/puddle-fd-limit` | lib | The open-file limit: `raise_open_file_limit` lifts the soft `RLIMIT_NOFILE` to the hard limit once at start (the guest agent also tries to lift the hard limit, as root in the guest) and `OpenFileLimit::log` says what the process got, warning when it is below what a busy workspace needs. Safe `rustix` calls on Unix; nothing to do on Windows, which has no per-process descriptor cap. Used by `puddle-agent` and `puddle-host` |
 | `crates/puddle-ipc` | lib | Per-workspace host endpoints (named pipe / Unix socket) only the current user can open: owner-only DACL, first-instance check, random names, `0600` sockets in a `0700` dir. Its only `unsafe` is creating a pipe with a security descriptor (`windows/security.rs`); the descriptor helpers come from `puddle-fs` |
 | `crates/puddle-ports` | lib | A workspace's ports: what listens in the guest, forwards from the guest to the host's loopback (listeners registered as Puddle's own), pinned forwards kept through a `Pins` store, who holds a port |
@@ -215,10 +216,13 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   position, and an awaited page read asserted once. A site is accepted with `flake-ok: <why>` on its line or within three
   lines above (in the UI also `eslint-disable-next-line no-restricted-syntax -- <why>`). The kinds are counted, not
   failing, until their existing sites are fixed or reasoned; a rule then moves into `FLAKE_FAILING` and an unreasoned
-  site fails the `quality` gate like the others. Two rules live in the linters: clippy's `disallowed-methods` names
+  site fails the `quality` gate like the others (`flake-n1`, `flake-w1`, `flake-w2` and `flake-o1` already do). Two rules live in the linters: clippy's `disallowed-methods` names
   `std::env::temp_dir` (workspace level `deny`; a site that must keep it says why in `#[expect(clippy::disallowed_methods, reason = ...)]`; `scripts/flake-lints-test.sh` runs the rule at `warn`),
   and an ESLint selector flags `expect(await ...)` in `ui/e2e` as a warning. Each rule's self-test replays the original
-  code of a flake it would have caught (`scripts/flake-fixtures/`).
+  code of a flake it would have caught (`scripts/flake-fixtures/`). A wait in a test goes through `puddle-test-kit`
+  (`eventually(what, within, probe)`; a wait that runs out panics with its `what`, at most 100 s in, before nextest
+  ends the test); an event is read with `next_event_within` or `next_event_matching`, silence shown with
+  `no_event_for`. A helper that only fills in a kit wait's probe is fine; one that waits by itself needs its reason.
 - **Security-sensitive code** (proxy decisions, credential injection, address classification, API
   auth, pipe/socket permissions, anything parsing guest input): treat all guest input as hostile,
   fail closed (deny on error), and add a hostile-guest test (§8) with the change.
@@ -302,6 +306,8 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
 - **Flaky tests:** nextest never retries (`retries = 0`); only the Windows nightly retries once, to list flakes. A test that fails without a code change
   is fixed or quarantined within a day (still runs, doesn't gate, linked issue, max 14 days).
   Proxy, transparency and security tests can't be quarantined: a flaky one is the bug.
+  The nightly `stress` workflow (`ci/stress.sh`) runs the fast suites repeatedly on a starved machine to find a load-only
+  failure a day after merge; add each flake that is fixed to `ci/known-flakes.tsv`, so the yield report can tell a rediscovery from a new one.
 - **Skipped tests:** a test that returns early because something is missing passes without testing
   anything (the old second-user test did so on every run, unseen). A missing prerequisite takes one of
   three forms, and `scripts/check.sh silent-skips` fails the rest:
@@ -351,8 +357,8 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   The owner accepted this allowance on 2026-10-08.
 - **Raising the baseline is nightly, in its own pull request.** A pull request does not raise the baseline, and a local
   `scripts/check.sh coverage` leaves the file alone in CI and rewrites it only on your machine (do not commit that). The
-  `coverage-baseline` workflow reads the coverage the CI gate measured on develop's tip, and when it is above the baseline it
-  opens or updates one pull request, `build: raise the coverage baseline`, that goes through the merge queue like any other
+  `coverage-baseline` workflow reads the coverage the CI gates measured on develop's tip (Rust and UI), and when either is above
+  its baseline (`scripts/coverage-baseline.json`, `ui/coverage-baseline.json`) it opens or updates one pull request, `build: raise the coverage baseline`, that goes through the merge queue like any other
   (`ci/raise-coverage-baseline.sh`, self-test `ci/raise-coverage-baseline-test.sh`). So two pull requests never conflict on the
   file, and a raise comes from a CI measurement, never from a local run (a local run measures more than CI and would fail the
   ratchet there). The ratchet reads two totals: a drop in one crate hidden by a gain elsewhere passes it, which is what the diff
@@ -394,8 +400,9 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   statements percentages (rounded down to 0.1); `ui/vite.config.ts` uses them as vitest's thresholds, so
   `npm test` fails under any of them, and `src/lib/**` must keep 100 % of its lines, functions and
   statements. `ui/scripts/ui-coverage-ratchet.ts` (gate `ui`) fails a lowered baseline without the
-  `Owner-OK: coverage-baseline` trailer and, locally, raises it when a run measures higher (commit the file; CI only
-  compares). There is no wobble allowance: v8's counts are the same on every machine for the same code. The
+  `Owner-OK: coverage-baseline` trailer and, locally, raises it when a run measures higher (do not commit that; CI only
+  compares; the nightly `coverage-baseline` workflow raises it in the same pull request as the Rust one, from the `ui` job's
+  `coverage-summary.json`). There is no wobble allowance: v8's counts are the same on every machine for the same code. The
   build tooling in `ui/scripts/` is in the report; only the three files that start a dev server, a
   fixture binary or a browser (`dev-fixture.ts`, `fixture-binary.ts`, `webkit-probe.ts`) are excluded, in
   `ui/vite.config.ts`.
@@ -489,8 +496,9 @@ before pushing a change that touches the UI's behaviour, routes or accessibility
 | `vm-windows.yml` | every PR to `develop` and to `main` (a newer push to the PR cancels the run in flight), every merge queue run, manual on any branch, nightly 03:23 UTC on `develop` (skipped if it already has a green nightly or manual run on that commit) | `windows-2025` (WHP) | VM tests, tier W: built once and run in 5 hash partitions on 5 runners; `vm-windows (WHP, msb microVMs)` is the one result. No WHP ⇒ warning, infrastructure skip (on a PR or a merge queue run: failure) |
 | `webkit.yml` | nightly 04:53 UTC (skipped if it already has a green run on that commit), manual | `ubuntu-24.04` | the UI end-to-end tests on WebKit alone (`PUDDLE_E2E_PROJECTS=webkit`, `scripts/check.sh ui-e2e`): the half a merge queue run skips with `PUDDLE_TIER=on`. No required check; a red run opens "Nightly red: webkit" |
 | `msi.yml` | PRs to `develop` and `main` that change the installer (the `msi.yml` paths), nightly 03:47 UTC (skipped if it already has a green run on that commit), manual | `windows-2025` | builds the per-user MSI (`ci/build-msi.sh`: runtime folder, code-server, guest agent, release shell, WiX), then `ci/msi-install-test.ps1` installs it silently, starts it, runs the system check, upgrades over an older MSI and uninstalls it; the MSI is kept as an artifact. Not a required check |
-| `nightly-signal.yml` | when a scheduled run (or a manual run on `develop`) of `windows`, `vm-linux`, `vm-windows`, `webkit`, `msi`, `fuzz`, `perf`, `mutants`, `full-test` or `coverage-baseline` completes | `ubuntu-24.04` | `ci/nightly-issue.sh`: a failed run opens or rewrites the issue "Nightly red: <workflow>", a green run closes it, a cancelled run changes nothing. None of these runs is a required check, so this issue is how a red nightly gets seen. `ci/bisect-red.sh <workflow>.yml --good <sha> --bad <sha>` runs the workflow on each commit between the last green nightly and the red one (`--cleanup` deletes its branches); `ci/nightly-issue-test.sh` and `ci/bisect-red-test.sh` are the self-tests, and the first fails when a workflow with a schedule is neither watched nor listed as covered otherwise |
+| `nightly-signal.yml` | when a scheduled run (or a manual run on `develop`) of `windows`, `vm-linux`, `vm-windows`, `webkit`, `msi`, `fuzz`, `perf`, `mutants`, `full-test`, `coverage-baseline` or `stress` completes | `ubuntu-24.04` | `ci/nightly-issue.sh`: a failed run opens or rewrites the issue "Nightly red: <workflow>", a green run closes it, a cancelled run changes nothing. None of these runs is a required check, so this issue is how a red nightly gets seen. `ci/bisect-red.sh <workflow>.yml --good <sha> --bad <sha>` runs the workflow on each commit between the last green nightly and the red one (`--cleanup` deletes its branches); `ci/nightly-issue-test.sh` and `ci/bisect-red-test.sh` are the self-tests, and the first fails when a workflow with a schedule is neither watched nor listed as covered otherwise |
 | `cache-gc.yml` | nightly 03:57 UTC, after each `develop` or merge queue run of `ci`, `windows`, `windows-cache` and the VM workflows, manual | `ubuntu-24.04` | deletes superseded rust-cache entries, stale branch caches and every merge queue cache (`ci/cache-gc.sh`) |
+| `stress.yml` | nightly 04:41 UTC, manual | `ubuntu-24.04` | five jobs of three kinds that run the fast suites repeatedly on a starved machine (`ci/stress.sh`, pinned with `taskset` next to busy loops): nextest `--stress-count 20` on `fake_host`, the proxy suites and the agent's capture tests (two halves, one CPU with 6 busy loops); Playwright `--repeat-each 3` on chromium (CDP CPU throttle, `ui/e2e/cpu-throttle.ts`) and on webkit (a job each, 2 CPUs with 2 loops); vitest with shuffled order and `--repeats 5` (2 CPUs with 2 loops). A failing test fails the job, which `nightly-signal` turns into the issue "Nightly red: stress". Each job uploads a row (`stress-yield-<kind>`: failures, how many are in `ci/known-flakes.tsv`, wall time, runner-min); `ci/stress-yield.py report --download 14` adds a fortnight up. Self-test `ci/stress-test.sh` |
 | `perf.yml` | nightly 03:41 UTC, manual | `ubuntu-24.04` | the six `#[ignore]`d `terminate_suite` `perf::` tests in a release build (`--run-ignored only`): each prints its measurement and asserts a ceiling well above a workstation's number. Not a PR check, and nothing is cached |
 | Dependabot | weekly, grouped | — | opens PRs to `develop`; its `/ci/login-tools` entry bumps the Claude Code and Copilot CLI versions the login tests run against (`ci/login-tools/package.json` and lockfile), and the bump PR's `linux` job runs those tests against the new release; its `/ci/lab` entry (the `uv` ecosystem, which keeps the universal uv-compiled file intact) bumps the mitmproxy the corporate-lab fixtures (`crates/puddle-e2e/src/lab`) run as the TLS interceptor and the NTLM proxy (`ci/lab/requirements.in`, compiled with hashes into `requirements.txt`) |
 

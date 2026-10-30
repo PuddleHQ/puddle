@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use puddle_e2e::lab::{NtlmLeg, NtlmProxy, Squid, SquidOptions};
 use puddle_proxy::testing::StaticResolver;
+use puddle_test_kit::eventually;
 use puddle_upstream::{
     BasicAuth, Config, Discovery, FakeOs, Hop, NegotiateAuth, ProxyAddr, ProxyAuth, ProxyConfig,
 };
@@ -150,16 +151,19 @@ async fn a_tunnel_through_squid_is_closed_when_the_machine_goes_direct_and_new_o
 
 /// Waits until Squid has logged `count` finished tunnels (it logs a tunnel when it ends).
 async fn wait_for_tunnels(squid: &Squid, count: usize) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while squid.access_log().matches("TCP_TUNNEL/200").count() < count && Instant::now() < deadline
-    {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    let log = squid.access_log();
-    assert!(
-        log.matches("TCP_TUNNEL/200").count() >= count,
-        "{count} tunnels expected:\n{log}"
-    );
+    eventually(
+        &format!("{count} tunnels in Squid's log"),
+        Duration::from_secs(5),
+        || {
+            let log = squid.access_log();
+            if log.matches("TCP_TUNNEL/200").count() >= count {
+                Ok(())
+            } else {
+                Err(format!("\n{log}"))
+            }
+        },
+    )
+    .await;
 }
 
 /// One small echo on a tunnel that stays open for the test.

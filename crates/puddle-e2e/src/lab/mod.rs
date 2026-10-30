@@ -408,6 +408,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let held = StartSlot::try_take(dir.path(), 1).unwrap().unwrap();
         let release = std::thread::spawn(move || {
+            // An ordering with no signal: the waiter polls, and the slot must stay held long
+            // enough for it to have polled (a poll is 50 ms) before it is released.
             std::thread::sleep(Duration::from_millis(300));
             drop(held);
         });

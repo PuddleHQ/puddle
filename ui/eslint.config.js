@@ -45,13 +45,13 @@ export default ts.config(
     rules: { "svelte/no-navigation-without-resolve": "off" },
   },
   {
-    // Counted, not failing yet (the e2e specs still have a few hundred sites): `expect(await read)` asserts a
-    // page value once, before the page has settled, which is how a spec passes on an idle machine and fails
-    // on a loaded one. ui/scripts/flake-eslint.test.ts proves the selector fires on the original code.
+    // `expect(await read)` asserts a page value once, before the page has settled, which is how a spec
+    // passes on an idle machine and fails on a loaded one. ui/scripts/flake-eslint.test.ts proves the
+    // selector fires on the original code; ui/scripts/expect-poll-codemod.ts converts a site.
     files: ["e2e/**/*.ts"],
     rules: {
       "no-restricted-syntax": [
-        "warn",
+        "error",
         {
           selector:
             "CallExpression[callee.name='expect'] > AwaitExpression.arguments",

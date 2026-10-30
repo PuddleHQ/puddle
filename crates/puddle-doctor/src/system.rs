@@ -67,6 +67,10 @@ impl SystemProbe {
         ))
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the home is never read or written here; it only has to be an absolute folder"
+    )]
     fn layout(&self) -> Result<RuntimeLayout, RuntimeError> {
         // The home is unused here: `--version` doesn't touch it and the test boot brings its own.
         RuntimeLayout::new(self.runtime_dir.clone(), std::env::temp_dir())

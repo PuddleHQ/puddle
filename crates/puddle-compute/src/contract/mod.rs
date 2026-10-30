@@ -65,6 +65,10 @@ impl<R: Runtime> ContractEnv<R> {
     /// An environment with a fresh [`unique_prefix`] and a host directory under the system temp
     /// dir.
     #[must_use]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the folder is named by the run's unique prefix, and a caller that needs another one replaces `host_dir`"
+    )]
     pub fn new(runtime: R, image: ImageRef) -> Self {
         let prefix = unique_prefix();
         let host_dir = std::env::temp_dir().join(format!("puddle-contract-{prefix}"));

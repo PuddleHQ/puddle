@@ -25,6 +25,7 @@ puddle-compute-msb = { workspace = true }
 puddle-guest-env = { workspace = true }
 puddle-vm-tests = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "rt", "rt-multi-thread", "sync", "test-util", "time"] }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

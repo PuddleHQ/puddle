@@ -84,23 +84,10 @@ mod tests {
     }
 
     fn read(bytes: &[u8]) -> Result<Option<String>, String> {
-        let dir = std::env::temp_dir().join(format!(
-            "puddle-runtime-msbver-{}-{}",
-            std::process::id(),
-            unique()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("msb");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("msb");
         std::fs::write(&path, bytes).unwrap();
-        let got = read_embedded_version(&path);
-        std::fs::remove_dir_all(&dir).unwrap();
-        got
-    }
-
-    fn unique() -> u64 {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static N: AtomicU64 = AtomicU64::new(0);
-        N.fetch_add(1, Ordering::Relaxed)
+        read_embedded_version(&path)
     }
 
     #[test]

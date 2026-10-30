@@ -89,7 +89,7 @@ mod tests {
 
     #[test]
     fn apply_refuses_once_threads_have_started() {
-        let root = std::env::temp_dir().join("puddle-process-env-test");
+        let root = std::path::absolute("puddle-process-env-test").expect("a current folder");
         let layout =
             RuntimeLayout::new(root.join("runtime"), root.join("home")).expect("absolute folders");
         let plan = RuntimeEnv::plan(&layout, std::iter::empty::<(std::ffi::OsString, _)>());

@@ -91,17 +91,15 @@ fn listening_port(log: &str) -> Option<u16> {
 /// # Panics
 /// When the child exits first or logs nothing within `within`.
 fn wait_listening(child: &mut Child, log_path: &Path, within: Duration) -> u16 {
-    let deadline = Instant::now() + within;
-    while Instant::now() < deadline {
+    puddle_test_kit::eventually_blocking("mitmproxy did not log its port", within, || {
         if let Some(port) = listening_port(&read(log_path)) {
-            return port;
+            return Ok(port);
         }
         if let Ok(Some(status)) = child.try_wait() {
             panic!("mitmproxy exited early ({status})\n{}", read(log_path));
         }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    panic!("mitmproxy did not log its port\n{}", read(log_path));
+        Err(format!("no port logged yet\n{}", read(log_path)))
+    })
 }
 
 /// A running `mitmdump`; stopped on drop.

@@ -17,6 +17,7 @@ use puddle_store::{
     PatternChoice, PatternError, PendingState, Resolution, Scope, ScopeChoice, Store, StoreError,
     Sweeper,
 };
+use puddle_test_kit::eventually;
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin,
     ConnectionReason, Decision, EgressRequest, Host, HttpRequestLine, PatternKind, PendingId,
@@ -948,13 +949,12 @@ async fn sweeper_task_sweeps_at_start_and_shuts_down() {
     clock.advance(1);
     let store = Arc::new(store);
     let sweeper = Sweeper::spawn(Arc::clone(&store), Duration::from_secs(3600));
-    let swept = tokio::time::timeout(Duration::from_secs(10), async {
-        while !store.rules().is_empty() {
-            tokio::task::yield_now().await;
-        }
-    })
+    eventually(
+        "sweeper didn't run its first pass",
+        Duration::from_secs(10),
+        || store.rules().is_empty(),
+    )
     .await;
-    assert!(swept.is_ok(), "sweeper didn't run its first pass");
     sweeper.shutdown().await;
 }
 

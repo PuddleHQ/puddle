@@ -345,22 +345,23 @@ pub(crate) async fn kill_vm(runtime: &MsbRuntime, settings: &Settings, sandbox: 
             .status()
     };
     assert!(status.unwrap().success(), "killing VM process {pid}");
-    let deadline = std::time::Instant::now() + Duration::from_secs(60);
-    loop {
-        let status = runtime
-            .list()
-            .await
-            .unwrap()
-            .into_iter()
-            .find(|s| s.name == sandbox.as_str())
-            .map(|s| s.status);
-        if status.is_some_and(puddle_types::WorkspaceStatus::is_down) {
-            return;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "still {status:?} 60 s after the kill"
-        );
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
+    puddle_test_kit::eventually_async(
+        "the VM down after the kill",
+        Duration::from_secs(60),
+        || async {
+            let status = runtime
+                .list()
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|s| s.name == sandbox.as_str())
+                .map(|s| s.status);
+            if status.is_some_and(puddle_types::WorkspaceStatus::is_down) {
+                Ok(())
+            } else {
+                Err(format!("still {status:?}"))
+            }
+        },
+    )
+    .await;
 }

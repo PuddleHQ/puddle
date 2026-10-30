@@ -12,7 +12,7 @@
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use puddle_agent::config::Target;
 use puddle_agent::{Agent, Config};
@@ -88,27 +88,27 @@ async fn connect_via(agent: SocketAddr, authority: &[u8]) -> io::Result<(u16, St
 
 /// Every audit line, parsed, waiting up to 5 s until `connections` of them are connection records.
 fn audit(store: &Store, connections: usize) -> Vec<(String, Value)> {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let lines = store.audit_lines(0, 100_000).unwrap();
-        let parsed: Vec<(String, Value)> = lines
-            .into_iter()
-            .map(|(_, line)| {
-                let value = serde_json::from_str::<Value>(&line)
-                    .map_err(|e| format!("an audit line that is not JSON ({e}): {line:?}"))
-                    .unwrap();
-                (line, value)
-            })
-            .collect();
-        let seen = parsed
-            .iter()
-            .filter(|(_, v)| v["type"] == "connection")
-            .count();
-        if seen >= connections || Instant::now() >= deadline {
-            return parsed;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    puddle_test_kit::eventually_blocking(
+        &format!("{connections} connection audit records"),
+        Duration::from_secs(5),
+        || {
+            let lines = store.audit_lines(0, 100_000).unwrap();
+            let parsed: Vec<(String, Value)> = lines
+                .into_iter()
+                .map(|(_, line)| {
+                    let value = serde_json::from_str::<Value>(&line)
+                        .map_err(|e| format!("an audit line that is not JSON ({e}): {line:?}"))
+                        .unwrap();
+                    (line, value)
+                })
+                .collect();
+            let seen = parsed
+                .iter()
+                .filter(|(_, v)| v["type"] == "connection")
+                .count();
+            (seen >= connections).then_some(parsed)
+        },
+    )
 }
 
 /// (what the guest sent, the answer's status, text the answer says, the row's host if any)

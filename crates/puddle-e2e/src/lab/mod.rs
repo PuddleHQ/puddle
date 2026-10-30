@@ -114,26 +114,28 @@ impl StartSlot {
     fn take_from(dir: &Path, slots: usize, what: &str) -> Option<Self> {
         let begun = Instant::now();
         let mut waiting = false;
-        loop {
-            match Self::try_take(dir, slots) {
-                Ok(Some(slot)) => {
-                    if waiting {
-                        eprintln!("lab: {what} got a start slot after {:.1?}", begun.elapsed());
+        let slot = puddle_test_kit::eventually_blocking(
+            &format!("{what} gets a start slot"),
+            puddle_test_kit::MAX_WAIT,
+            || match Self::try_take(dir, slots) {
+                Ok(Some(slot)) => Some(Some(slot)),
+                Ok(None) => {
+                    if !waiting {
+                        eprintln!("lab: {what} waits for a start slot");
+                        waiting = true;
                     }
-                    return Some(slot);
+                    None
                 }
-                Ok(None) => {}
                 Err(e) => {
                     eprintln!("lab: {what} starts without a start slot ({e})");
-                    return None;
+                    Some(None)
                 }
-            }
-            if !waiting {
-                eprintln!("lab: {what} waits for a start slot");
-                waiting = true;
-            }
-            std::thread::sleep(Duration::from_millis(50));
+            },
+        );
+        if slot.is_some() && waiting {
+            eprintln!("lab: {what} got a start slot after {:.1?}", begun.elapsed());
         }
+        slot
     }
 
     /// [`Self::take_from`] the shared folder with [`START_SLOTS`] slots.
@@ -323,6 +325,7 @@ fn try_ready(
 ) -> Result<(), String> {
     let deadline = Instant::now() + ready;
     let mut child = child;
+    // flake-ok: a timeout must come back as `Err` for the caller (squid retries on it); the kit's waits panic.
     while Instant::now() < deadline {
         let exited = child.as_deref_mut().map(Child::try_wait);
         if let Some(Ok(Some(status))) = exited {
@@ -380,12 +383,13 @@ fn stop(child: &mut Child) {
 mod tests {
     use super::*;
 
-    /// Tests that hold a port, or rely on one being closed, run one at a time: a test that
-    /// binds port 0 can be handed the port another test just closed.
-    static PORTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    /// Tests that bind port 0, hand out a port they dropped, or spawn a child run one at a time. A
+    /// test that binds port 0 can be handed the port another test just closed, and a child
+    /// forked while a start-slot lock is held keeps that lock until it execs.
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    fn ports() -> std::sync::MutexGuard<'static, ()> {
-        PORTS
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        SERIAL
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -393,6 +397,7 @@ mod tests {
 
     #[test]
     fn only_as_many_starts_hold_a_slot_as_there_are_slots_and_a_dropped_one_frees_its_place() {
+        let _serial = serial();
         let dir = tempfile::tempdir().unwrap();
         let take = || StartSlot::try_take(dir.path(), 2).unwrap();
         let first = take().unwrap();
@@ -405,6 +410,7 @@ mod tests {
 
     #[test]
     fn a_start_with_no_free_slot_waits_for_one_and_then_gets_it() {
+        let _serial = serial();
         let dir = tempfile::tempdir().unwrap();
         let held = StartSlot::try_take(dir.path(), 1).unwrap().unwrap();
         let release = std::thread::spawn(move || {
@@ -476,6 +482,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_port_taken_between_the_pick_and_the_bind_is_retried_on_another() {
+        let _serial = serial();
         // The neighbour that wins the race in CI: it binds the picked port before the program does.
         let neighbour = std::net::TcpListener::bind((LOCAL, 0)).unwrap();
         let taken = neighbour.local_addr().unwrap().port();
@@ -521,7 +528,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "the fixture exited early")]
     fn a_fixture_that_dies_while_another_process_answers_on_its_port_is_not_ready() {
-        let _ports = ports();
+        let _serial = serial();
         // Another process holds the port, so connecting works; the fixture itself has exited.
         let neighbour = std::net::TcpListener::bind((LOCAL, 0)).unwrap();
         let port = neighbour.local_addr().unwrap().port();
@@ -538,7 +545,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "the fixture exited early")]
     fn a_fixture_that_dies_just_after_the_port_answers_is_not_ready() {
-        let _ports = ports();
+        let _serial = serial();
         let neighbour = std::net::TcpListener::bind((LOCAL, 0)).unwrap();
         let port = neighbour.local_addr().unwrap().port();
         let mut child = Command::new("sleep").arg("0.08").spawn().unwrap();
@@ -547,7 +554,7 @@ mod tests {
 
     #[test]
     fn a_listening_port_is_ready() {
-        let _ports = ports();
+        let _serial = serial();
         let listener = std::net::TcpListener::bind((LOCAL, 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         wait_ready(port, None, Duration::from_secs(5), || unreachable!());
@@ -556,7 +563,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "the fixture did not accept connections\nlog text")]
     fn a_port_nobody_listens_on_times_out_with_the_diagnostics() {
-        let _ports = ports();
+        let _serial = serial();
         let (_held, port) = unlistening();
         wait_ready(port, None, Duration::from_millis(100), || "log text".into());
     }
@@ -564,7 +571,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "the fixture exited early")]
     fn a_fixture_that_exits_is_reported_at_once() {
-        let _ports = ports();
+        let _serial = serial();
         let (_held, port) = unlistening();
         let mut child = Command::new(std::env::current_exe().unwrap())
             .arg("--list")
@@ -586,17 +593,18 @@ mod tests {
     #[test]
     #[cfg(target_os = "linux")]
     fn a_busy_process_reports_more_cpu_time_than_an_idle_one() {
+        let _serial = serial();
         let mut idle = Command::new("sleep").arg("30").spawn().unwrap();
         let mut busy = Command::new("sh")
             .args(["-c", "while :; do :; done"])
             .spawn()
             .unwrap();
         // A loaded host may give the loop its first 100 ms late, so wait for them.
-        let deadline = Instant::now() + Duration::from_secs(60);
-        while cpu_time(busy.id()).unwrap() < Duration::from_millis(100) {
-            assert!(Instant::now() < deadline, "the busy loop never got a CPU");
-            std::thread::sleep(Duration::from_millis(50));
-        }
+        puddle_test_kit::eventually_blocking(
+            "the busy loop gets a CPU",
+            Duration::from_secs(60),
+            || cpu_time(busy.id()).unwrap() >= Duration::from_millis(100),
+        );
         let idle_cpu = cpu_time(idle.id()).unwrap();
         stop(&mut idle);
         stop(&mut busy);

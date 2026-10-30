@@ -440,27 +440,28 @@ fn kill_hard(pid: u32) {
     assert!(status.unwrap().success(), "killing VM process {pid}");
 }
 
-/// Polls every millisecond: a restart right after the status turns down must find the dying
+/// Polls every few milliseconds: a restart right after the status turns down must find the dying
 /// runtime already gone, and a slow poll would hide a gap between the two.
 async fn wait_down(rt: &MsbRuntime, name: &SandboxName) {
-    let deadline = Instant::now() + Duration::from_secs(60);
-    loop {
-        let status = rt
-            .list()
-            .await
-            .unwrap()
-            .into_iter()
-            .find(|s| s.name == name.as_str())
-            .map(|s| s.status);
-        if status.is_some_and(puddle_types::WorkspaceStatus::is_down) {
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "still {status:?} 60 s after the kill"
-        );
-        tokio::time::sleep(Duration::from_millis(1)).await;
-    }
+    puddle_test_kit::eventually_async(
+        "the VM down after the kill",
+        Duration::from_secs(60),
+        || async {
+            let status = rt
+                .list()
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|s| s.name == name.as_str())
+                .map(|s| s.status);
+            if status.is_some_and(puddle_types::WorkspaceStatus::is_down) {
+                Ok(())
+            } else {
+                Err(format!("still {status:?}"))
+            }
+        },
+    )
+    .await;
 }
 
 /// Waits until the repo at `repo` has `target` commits; on a stall, fails with the leftover git

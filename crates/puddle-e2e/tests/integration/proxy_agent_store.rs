@@ -79,17 +79,22 @@ async fn parallel_connects_256_through_agent_proxy_and_store() {
 
     // Every connection is in the audit: written, or counted in a `suppressed` summary once its
     // second is over (200 records per workspace per second, R-26).
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let accounted = loop {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        rig.store.sweep().unwrap();
-        let records = connection_records(&rig.store);
-        let written = records.iter().filter(|r| r["reason"] == "rule").count() as u64;
-        let summarised: u64 = records.iter().filter_map(|r| r["count"].as_u64()).sum();
-        if written + summarised >= 256 || Instant::now() >= deadline {
-            break written + summarised;
-        }
-    };
+    let accounted = puddle_test_kit::eventually(
+        "all 256 connections are accounted for in the audit",
+        Duration::from_secs(10),
+        || {
+            rig.store.sweep().unwrap();
+            let records = connection_records(&rig.store);
+            let written = records.iter().filter(|r| r["reason"] == "rule").count() as u64;
+            let summarised: u64 = records.iter().filter_map(|r| r["count"].as_u64()).sum();
+            if written + summarised >= 256 {
+                Ok(written + summarised)
+            } else {
+                Err(format!("{} accounted", written + summarised))
+            }
+        },
+    )
+    .await;
     assert_eq!(accounted, 256);
 }
 

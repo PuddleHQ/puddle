@@ -749,6 +749,7 @@ async fn a_lookup_that_waits_a_whole_lookup_time_for_a_slot_is_unavailable() {
         policy.allow(&host(name));
     }
     let mut set = tokio::task::JoinSet::new();
+    // flake-ok: staggers the starts on the paused clock to fix the queue order, not a wait for a condition.
     for name in ["a.example", "b.example", "c.example"] {
         let handler = handler.clone();
         set.spawn(async move { handler.resolve_name(a(name)).await });

@@ -16,7 +16,7 @@ use puddle_secrets::{
     AccountName, HostName, OrgName, SignInError, SignInStart, SignIns, SourceError, SourceSpec,
     StoredId, TokenScope, Tool, ToolPaths, UrlPath,
 };
-use puddle_test_kit::eventually;
+use puddle_test_kit::{eventually, eventually_async};
 
 fn gh_spec() -> SourceSpec {
     SourceSpec::Gh {
@@ -54,18 +54,15 @@ async fn wait_for(log: &Path, needle: &str) -> String {
 /// Asks again until the sign-in for `spec` has ended (an open one answers without starting a
 /// tool), which is when a tool has been started once more; fails after 20 s of real time.
 async fn ask_until_it_starts_again(signin: &SignIns, spec: &SourceSpec, log: &Path, starts: usize) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(20);
-    loop {
-        let _ = signin.begin(spec).await;
-        if Fakes::log(log).matches("ARGS ").count() >= starts {
-            return;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the sign-in never closed"
-        );
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+    eventually_async(
+        "the sign-in never closed",
+        Duration::from_secs(20),
+        || async {
+            let _ = signin.begin(spec).await;
+            Fakes::log(log).matches("ARGS ").count() >= starts
+        },
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -238,14 +235,12 @@ async fn git_sign_in_does_not_keep_an_answer_for_another_target_and_says_so() {
     );
     // The sign-in stays open until its task has ended, and the task would run any `credential
     // approve` before then: asking again returns the old answer until it has, and starts again after.
-    let deadline = std::time::Instant::now() + Duration::from_secs(20);
-    while signin.begin(&git_spec()).await.is_ok() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the sign-in never closed"
-        );
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+    eventually_async(
+        "the sign-in never closed",
+        Duration::from_secs(20),
+        || async { signin.begin(&git_spec()).await.is_err() },
+    )
+    .await;
     let log = Fakes::log(&git);
     assert_eq!(log.matches("credential fill").count(), 2, "{log}");
     assert!(!log.contains("credential approve"), "{log}");

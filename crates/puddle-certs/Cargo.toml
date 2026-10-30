@@ -26,6 +26,7 @@ zeroize = { workspace = true }
 windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
 
 [dev-dependencies]
+puddle-test-kit = { workspace = true }
 proptest = { workspace = true }
 puddle-boot = { workspace = true }
 puddle-compute = { workspace = true }

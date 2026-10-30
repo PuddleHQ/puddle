@@ -24,7 +24,7 @@ node_modules/, fuzz/corpus and build output. `vendor/` is third-party code we pa
 
 Flake rules (`flake-<id>` kinds; `--flakes` lists them with the fix each names) count test shapes that
 raced in the past: a hand-rolled wait helper (every one outside the shared test kit counts; the row says
-whether it lacks a name or a bound), `file.lock()`, `try_recv()`, a port picked
+whether it lacks a name or a bound), a hand-rolled wait loop (a `for`, `while` or `loop` in a test that sleeps or yields between looks), `file.lock()`, `try_recv()`, a port picked
 and dropped, a name built from the clock, a wall-clock bar, records matched by position, an awaited page read
 asserted once, a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the resolver. A site is reasoned by `flake-ok: <why>` on the line or within three lines above. A rule is
 counted (`flake-<id>`, `flake-<id>-unreasoned`) until its sites are fixed or reasoned, then it is added to
@@ -499,7 +499,7 @@ def kit_dependency_rows(texts, add):
 # gate fail on it; flipping a rule from counted to failing is adding its id there, once its sites are fixed
 # or reasoned. The scan reads shapes, not truth: a reason is read by a reviewer, and a shape it cannot see
 # (a producer that is synchronous, a wait anchored on something already true) needs a run under load.
-FLAKE_FAILING = {"a1", "n1", "o1", "o2", "p1", "t1", "w1", "w2"}
+FLAKE_FAILING = {"a1", "n1", "o1", "o2", "p1", "t1", "w1", "w2", "w3"}
 FLAKE_OK = re.compile(r"flake-ok:\s*\S")
 FLAKE_FIX = {
     "w1": "a wait helper outside the shared test kit: use `eventually(what, within, probe)` (it names the wait and bounds it below nextest's slow-timeout), or `flake-ok: <why>`",
@@ -510,12 +510,15 @@ FLAKE_FIX = {
     "t1": "a test that asserts real time stayed under a fixed Duration fails on a loaded machine: assert on virtual time, CPU time or a measured margin, or `flake-ok: <what the bar measures and why it holds under load>`",
     "a1": "records matched to expectations by position depend on an order the contract does not promise: find each record by its key, or `flake-ok: <why the order is promised>`",
     "d1": "a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the machine's resolver asks the real DNS and waits when it stalls: use a `.invalid` name (the proxy answers it at once, RFC 6761), or `flake-ok: <why this name must go to the resolver>`",
+    "w3": "a hand-rolled wait loop (a `for`, `while` or `loop` that sleeps or yields between looks): use `eventually(what, within, probe)` (it names the wait and bounds it below nextest's slow-timeout), or `flake-ok: <why this loop is not a wait for a condition>`",
     "o2": "an awaited page read asserted once runs before the page settles: use a web-first assertion (`await expect(locator).toHaveText(...)`) or `await expect.poll(() => read)`; for a read of something that must be absent a poll ends at its first empty read, so use `staysEmpty(page, read)` or `expectNoAxeViolations(page)` from e2e/support.ts; or `flake-ok: <why a one-shot read is meant>`",
 }
 FLAKE_WAIT_NAME = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(until\w*|eventually\w*|wait_for\w*|wait_until\w*|poll_until\w*)\b")
 FLAKE_WAIT_HOME = "crates/puddle-test-kit/"  # the kit's own helpers (the crate is that path) are the target, not a hit
 FLAKE_RESERVED = re.compile(r'"[^"]*(?<![@\w.-])(?:[a-z0-9-]+\.)*(?:[a-z0-9-]+\.(?:test|example)|example\.(?:com|net|org))(?![\w-])', re.I)
 FLAKE_REAL_DNS = re.compile(r"\b(?:web_internet|through_company_proxy|SystemResolver)\b")  # a test file where a connect can reach the OS resolver
+FLAKE_LOOP_HEAD = re.compile(r"^\s*(?:'\w+:\s*)?(?:(?:let\b[^=]*=\s*|break\s+)?loop\b|for\b.*\bin\b|while\b)")
+FLAKE_PAUSE = re.compile(r"\bsleep\(|\byield_now\(\)|\.tick\(\)")
 FLAKE_KIT_CALL = re.compile(r"\b(?:eventually\w*|next_event_\w+|no_event_\w+)\s*\(")
 FLAKE_CLOCK = re.compile(r"SystemTime::now\(\)|UNIX_EPOCH|as_nanos\(\)|subsec_nanos\(\)|\{nanos\}|\bnanos\b")
 FLAKE_PAGE_READ = re.compile(r"\.(evaluate|evaluateAll|boundingBox|textContent|innerText|innerHTML|getAttribute|isVisible|isHidden|isChecked|isEnabled|isDisabled|isEditable|count|inputValue|allTextContents|allInnerTexts|all)\(|\b\w+\(\s*page\b")
@@ -536,6 +539,20 @@ def flake_rust(f, raw, code, com, test, rows_add):
 
     def hit(rule, i, detail=None):
         flake_row(rows_add, rule, i, (detail if detail is not None else raw[i]).strip(), reasoned(i))
+
+    # Rule w3: a loop that pauses between looks is a wait written by hand, whatever it is called. Only the
+    # innermost loop of a nest counts, and a loop on tokio's paused clock (`advance`) steps virtual time.
+    loops = []
+    wait_fns = [(i, item_end(code, i)[0]) for i, line in enumerate(code) if FLAKE_WAIT_NAME.match(line)]  # rule w1 owns these
+    for i, line in enumerate(code):
+        if test[i] and not f.startswith(FLAKE_WAIT_HOME) and FLAKE_LOOP_HEAD.match(line) and not any(a < i <= b for a, b in wait_fns):
+            end, _ = item_end(code, i)
+            body = code[i:end + 1]
+            if any(FLAKE_PAUSE.search(b) for b in body) and not any(re.search(r"\badvance\(", b) for b in body):
+                loops.append((i, end))
+    for i, end in loops:
+        if not any(i < j and e <= end for j, e in loops):
+            hit("w3", i)
 
     pickers = {}
     real_dns = f.startswith("crates/puddle-vm-tests/") or (("/tests/" in f or f.startswith("tests/")) and any(FLAKE_REAL_DNS.search(c) for c in code))
@@ -702,6 +719,7 @@ mod tests {
     }
     #[tokio::test]
     async fn polled_sleep() {
+        // flake-ok: the fixture of a polled sleep
         while !ids.iter().all(|p| {
             seen(p)
         }) {
@@ -807,6 +825,16 @@ def flake_self_test():
     case("w1 delegates to the kit", "w1", {FLAKE_HOST: kit_wait}, 0, 0)
     case("w1 names the kit only in a comment", "w1", {FLAKE_HOST: kit_wait.replace("    eventually(", "    // eventually(\n    loop_until(")}, 1, 1)
     case("w1 in the kit", "w1", {"crates/puddle-test-kit/tests/wait.rs": read("w1-wait-helper.bad.rs.txt")}, 0, 0)
+    spin = "async fn t() {\n    for _ in 0..100 {\n        if ready() {\n            break;\n        }\n        tokio::time::sleep(Duration::from_millis(10)).await;\n    }\n}\n"
+    case("w3 original", "w3", {FLAKE_HOST: spin}, 1, 1)
+    case("w3 reasoned", "w3", {FLAKE_HOST: reasoned(spin, "for _ in")}, 1, 0)
+    case("w3 in production code", "w3", {"crates/x/src/lib.rs": spin}, 0, 0)
+    case("w3 in the kit", "w3", {"crates/puddle-test-kit/src/wait.rs": spin}, 0, 0)
+    case("w3 a loop that never pauses", "w3", {FLAKE_HOST: spin.replace("tokio::time::sleep(Duration::from_millis(10)).await;", "step();")}, 0, 0)
+    case("w3 a while loop that yields", "w3", {FLAKE_HOST: "async fn t() {\n    while !done() {\n        tokio::task::yield_now().await;\n    }\n}\n"}, 1, 1)
+    case("w3 virtual time", "w3", {FLAKE_HOST: spin.replace("tokio::time::sleep(Duration::from_millis(10))", "tokio::time::advance(STEP)")}, 0, 0)
+    case("w3 a loop that yields a value", "w3", {FLAKE_HOST: "async fn t() {\n    let link = loop {\n        if let Some(l) = get() {\n            break l;\n        }\n        sleep(D).await;\n    };\n}\n"}, 1, 1)
+    case("w3 only the inner loop counts", "w3", {FLAKE_HOST: "async fn t() {\n    for _ in 0..3 {\n        loop {\n            sleep(D).await;\n        }\n    }\n}\n"}, 1, 1)
     case("w2 original", "w2", {FLAKE_STORE: read("w2-store-lock.bad.rs.txt")}, 1, 1)
     case("w2 fix", "w2", {FLAKE_STORE: read("w2-store-lock.good.rs.txt")}, 0, 0)
     case("n1 original", "n1", {FLAKE_STORE: read("n1-clock-name.bad.rs.txt")}, 2, 2)
@@ -850,6 +878,7 @@ def flake_self_test():
         "o1": {FLAKE_HOST: read("o1-sign-in-event.bad.rs.txt")},
         "w1": {FLAKE_HOST: read("w1-wait-helper.bad.rs.txt")},
         "w2": {FLAKE_STORE: read("w2-store-lock.bad.rs.txt")},
+        "w3": {FLAKE_HOST: spin},
         "n1": {FLAKE_STORE: read("n1-clock-name.bad.rs.txt")},
         "p1": {mod_rs: read("p1-free-port.bad.rs.txt")},
         "a1": {"crates/puddle-e2e/tests/proxy_agent_store.rs": read("a1-positional-zip.bad.rs.txt")},
@@ -862,11 +891,11 @@ def flake_self_test():
     for rule, files in bad.items():
         was_failing = rule in FLAKE_FAILING
         FLAKE_FAILING.discard(rule)
-        if any(r[0] == "noreason" for r in run(files)):
+        if any(r[0] == "noreason" and r[3].startswith(f"flake-{rule}:") for r in run(files)):
             failures.append(f"{rule}: a counted rule must not add a noreason row")
         FLAKE_FAILING.add(rule)
         try:
-            miss = [r for r in run(files) if r[0] == "noreason"]
+            miss = [r for r in run(files) if r[0] == "noreason" and r[3].startswith(f"flake-{rule}:")]
         finally:
             if not was_failing:
                 FLAKE_FAILING.discard(rule)
@@ -906,6 +935,7 @@ def self_test():
         "test-no-assert.test": 1, "marker-todo.any": 1, "marker-fixme.any": 1, "marker-hack.any": 1,
         "noreason.prod": 3,
         "sleep.test": 5, "sleep-fixed.test": 3, "sleep-fixed-uncommented.test": 2, "noreason.test": 2,
+        "flake-w3.test": 1,
     }
     bad = {k: (got.get(k), v) for k, v in want.items() if got.get(k) != v}
     extra = {k: v for k, v in got.items() if k not in want}

@@ -5,7 +5,6 @@
 //! host and its pty host.
 #![cfg(target_os = "linux")]
 #![expect(
-    clippy::panic,
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
@@ -15,7 +14,7 @@ use crate::common;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use puddle_agent::config::Target;
 use puddle_agent::editor::EditorConfig;
@@ -24,6 +23,7 @@ use puddle_agent_proto::editor::EditorServer;
 use puddle_agent_proto::forward::GuestLink;
 use puddle_agent_proto::host::{GuestStream, HostConfig, StreamHandler, serve_session};
 use puddle_agent_proto::host_control::{HostMessage, HostReply};
+use puddle_test_kit::eventually;
 use tokio::net::UnixListener;
 use tokio::process::{Child, Command};
 
@@ -130,13 +130,12 @@ async fn start_agent(dir: &tempfile::TempDir, mut server: EditorServer) -> (Host
 
 impl Rig {
     async fn link(&self) -> GuestLink {
-        for _ in 0..1000 {
-            if let Some(link) = self.host.0.lock().unwrap().clone() {
-                return link;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        panic!("the agent never said hello");
+        eventually(
+            "the agent never said hello",
+            Duration::from_secs(10),
+            || self.host.0.lock().unwrap().clone(),
+        )
+        .await
     }
 
     /// Starts one of the fake server's own processes, through `sh` (a script another test just
@@ -186,11 +185,12 @@ async fn the_hosts_message_ends_the_extension_host_and_its_debuggee_and_leaves_t
     let link = rig.link().await;
     let ext = rig.start("ext", "--type=extensionHost");
     let pty = rig.start("pty", "--type=ptyHost");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while rig.debuggees() < 1 {
-        assert!(Instant::now() < deadline, "the fake host did not start");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    eventually(
+        "the fake host did not start",
+        Duration::from_secs(10),
+        || rig.debuggees() >= 1,
+    )
+    .await;
     let (ext_id, pty_id) = (ext.id().unwrap(), pty.id().unwrap());
 
     let reply = link.send(&HostMessage::EndExtensionHosts).await.unwrap();
@@ -281,21 +281,23 @@ async fn the_hosts_message_runs_the_staged_build_and_a_second_message_has_nothin
     );
     server.dir = builds.to_string_lossy().into_owned();
     let (host, _agent) = start_agent(&dir, server).await;
-    let link = loop {
-        if let Some(link) = host.0.lock().unwrap().clone() {
-            break link;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    };
+    let link = eventually("the agent says hello", Duration::from_secs(30), || {
+        host.0.lock().unwrap().clone()
+    })
+    .await;
     let logged = || std::fs::read_to_string(&log).unwrap_or_default();
     let until = |what: &'static str, want: &'static str| {
         let logged = &logged;
         async move {
-            let deadline = Instant::now() + Duration::from_secs(30);
-            while logged() != want {
-                assert!(Instant::now() < deadline, "{what}: log is {:?}", logged());
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
+            eventually(what, Duration::from_secs(30), || {
+                let log = logged();
+                if log == want {
+                    Ok(())
+                } else {
+                    Err(format!("log is {log:?}"))
+                }
+            })
+            .await;
         }
     };
     until("the first build to start", "first\n").await;

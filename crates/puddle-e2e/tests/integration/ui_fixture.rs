@@ -425,13 +425,7 @@ async fn a_dropped_file_makes_requests_arrive_in_the_old_serve_ui_format() {
     )
     .unwrap();
     std::fs::rename(dir.path().join("a.tmp"), &file).unwrap();
-    tokio::time::timeout(STEP, async {
-        while file.exists() {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("the file was taken");
+    puddle_test_kit::eventually("the drop file was taken", STEP, || !file.exists()).await;
     assert_eq!(run.state().await["pending"], 4);
     let rows = run.get("/api/pending").await.json();
     let attempts: Vec<i64> = rows["requests"]

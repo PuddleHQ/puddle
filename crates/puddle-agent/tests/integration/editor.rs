@@ -13,12 +13,12 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tokio::net::TcpSocket;
-
 use puddle_agent::config::Target;
 use puddle_agent::editor::EditorConfig;
 use puddle_agent::{Agent, Config};
 use puddle_agent_proto::editor::EditorServer;
+
+use crate::common::ReservedPort;
 
 const WAIT: Duration = Duration::from_secs(20);
 
@@ -38,25 +38,10 @@ exec sleep 600
 
 struct Fixture {
     _dir: tempfile::TempDir,
+    _port: ReservedPort,
     out: PathBuf,
     config: Config,
     password_file: PathBuf,
-    /// Keeps the editor port to this test (see [`reserve_port`]).
-    _port_hold: TcpSocket,
-}
-
-/// A loopback port nothing listens on and nothing else on the machine can take: the socket is
-/// bound and never listens, so a connection to it is refused (the agent sees a free port) while
-/// another test's `bind` to this port fails and one to port 0 goes elsewhere. Dropping a
-/// listener to "find a free port" lets a test running at the same time take it, and the server
-/// then never starts. The socket allows sharing of the port (`SO_REUSEPORT`) only so that a test
-/// can put a listener beside it.
-fn reserve_port() -> (TcpSocket, u16) {
-    let socket = TcpSocket::new_v4().unwrap();
-    socket.set_reuseport(true).unwrap();
-    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
-    let port = socket.local_addr().unwrap().port();
-    (socket, port)
 }
 
 fn fixture() -> Fixture {
@@ -74,8 +59,8 @@ fn fixture() -> Fixture {
         120,
     );
     server.dir = release.to_string_lossy().into_owned();
-    let (held, port) = reserve_port();
-    server.port = port;
+    let reserved = ReservedPort::new();
+    server.port = reserved.port();
     let password_file = dir.path().join("run/editor-password");
     let config = Config {
         listen: "127.0.0.1:0".parse().unwrap(),
@@ -90,10 +75,10 @@ fn fixture() -> Fixture {
     };
     Fixture {
         _dir: dir,
+        _port: reserved,
         out,
         config,
         password_file,
-        _port_hold: held,
     }
 }
 
@@ -190,13 +175,8 @@ async fn a_new_agent_leaves_a_running_server_alone_and_takes_over_when_it_is_gon
     let f = fixture();
     let port = f.config.editor.as_ref().unwrap().server.port;
     // Something answers on the port: the server an earlier agent left behind.
-    // A second socket on the port, listening; the fixture's own stays bound beside it (both
-    // allow sharing), so the port is never free for anyone else, and is refused once this one
-    // is dropped.
-    let socket = TcpSocket::new_v4().unwrap();
-    socket.set_reuseport(true).unwrap();
-    socket.bind(([127, 0, 0, 1], port).into()).unwrap();
-    let occupant = socket.listen(1).unwrap().into_std().unwrap();
+    let occupant = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+    occupant.set_nonblocking(true).unwrap();
     let _agent = Agent::start(f.config.clone()).await.unwrap();
     // The agent's own look at the port is the signal to wait for.
     eventually("the agent to look at the port", WAIT, || {
@@ -211,7 +191,6 @@ async fn a_new_agent_leaves_a_running_server_alone_and_takes_over_when_it_is_gon
         "a second server must not start on a taken port"
     );
     drop(occupant);
-    // The fixture's socket still holds the port, so nothing else can take it while it is free.
     eventually("the start once the port is free", WAIT, || {
         f.out.join("1.pid").exists()
     })
@@ -227,20 +206,4 @@ async fn without_the_hosts_request_no_server_starts() {
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(!f.out.join("1.pid").exists());
     assert!(!f.password_file.exists());
-}
-
-#[tokio::test]
-async fn the_reserved_editor_port_is_refused_to_the_agent_and_closed_to_everyone_else() {
-    let f = fixture();
-    let port = f.config.editor.as_ref().unwrap().server.port;
-    // What the agent's look at the port sees: nothing answers. (A blocking connect: tokio's can
-    // report a refused attempt as made.)
-    assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err());
-    // What another test sees: it cannot listen there, as the same call that took the old
-    // free-port trick's port could.
-    assert!(
-        tokio::net::TcpListener::bind(("127.0.0.1", port))
-            .await
-            .is_err()
-    );
 }

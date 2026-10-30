@@ -21,7 +21,7 @@ struct Hook {
 
 impl Hook {
     fn take() -> Self {
-        // A test that failed while holding the lock leaves nothing behind but this poison.
+        // Poison from a failed test is irrelevant: the guard resets the hook.
         Hook {
             _lock: HOOK_LOCK
                 .lock()
@@ -32,7 +32,10 @@ impl Hook {
 
 impl Drop for Hook {
     fn drop(&mut self) {
-        drop(panic::take_hook());
+        // take_hook panics on a panicking thread; a failed assert must report, not abort.
+        if !std::thread::panicking() {
+            drop(panic::take_hook());
+        }
     }
 }
 

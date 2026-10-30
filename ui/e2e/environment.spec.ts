@@ -62,8 +62,9 @@ test.describe("environment", () => {
     await expect(
       page.getByText(/Plain variables apply at the next start/),
     ).toBeVisible();
+    // eslint-disable-next-line no-restricted-syntax -- absence: the settled state is asserted above, and a poll of a negative passes on its first read too
     expect(await page.content()).not.toContain("npm-seed-value");
-    expect(await csp()).toEqual([]);
+    await expect.poll(() => csp()).toEqual([]);
   });
 
   test("adds a variable and a secret; the secret's value is never shown and both survive a reload", async ({
@@ -94,11 +95,13 @@ test.describe("environment", () => {
     await dialog.getByRole("button", { name: "Add" }).click();
     const row = table(page).getByRole("row", { name: /API_KEY/ });
     await expect(row).toContainText("Stored in Puddle, never shown");
+    // eslint-disable-next-line no-restricted-syntax -- absence: the settled state is asserted above, and a poll of a negative passes on its first read too
     expect(await page.content()).not.toContain("sk-typed-once");
 
     await page.reload();
     await expect(table(page)).toContainText("LOG_LEVEL");
     await expect(table(page)).toContainText("API_KEY");
+    // eslint-disable-next-line no-restricted-syntax -- absence: the settled state is asserted above, and a poll of a negative passes on its first read too
     expect(await page.content()).not.toContain("sk-typed-once");
   });
 
@@ -215,6 +218,7 @@ test.describe("environment", () => {
     });
     await expect(global).toContainText("EDITOR");
     await expect(global).toContainText("GHE_TOKEN");
+    // eslint-disable-next-line no-restricted-syntax -- absence: the settled state is asserted above, and a poll of a negative passes on its first read too
     expect(await page.content()).not.toContain("ghe-global-value");
     await page.getByRole("button", { name: "Edit EDITOR" }).click();
     const dialog = page.getByRole("dialog", { name: "Edit EDITOR" });
@@ -452,7 +456,7 @@ for (const scheme of ["light", "dark"] as const) {
         page.getByRole("table", { name: "Environment of every workspace" }),
       ).toBeVisible();
       await scan(page, "settings environment");
-      expect(await csp()).toEqual([]);
+      await expect.poll(() => csp()).toEqual([]);
       scan.done();
     });
   }

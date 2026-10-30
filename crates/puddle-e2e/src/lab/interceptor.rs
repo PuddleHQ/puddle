@@ -101,6 +101,9 @@ fn wait_listening(child: &mut Child, log_path: &Path, within: Duration) -> u16 {
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+    // A child that never logged its port would outlive the panic and keep the runner's pipes open.
+    drop(child.kill());
+    drop(child.wait());
     panic!("mitmproxy did not log its port\n{}", read(log_path));
 }
 
@@ -423,13 +426,18 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    #[should_panic(expected = "mitmproxy did not log its port")]
     fn a_mitmproxy_that_logs_no_port_in_time_is_reported() {
         let dir = tempfile::tempdir().unwrap();
         let log = dir.path().join("log");
-        // The panic skips any cleanup; the child ends by itself after a second.
-        let mut child = Command::new("sleep").arg("1").spawn().unwrap();
-        wait_listening(&mut child, &log, Duration::from_millis(200));
+        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            wait_listening(&mut child, &log, Duration::from_millis(200));
+        }));
+        assert!(outcome.is_err());
+        assert!(
+            child.try_wait().unwrap().is_some(),
+            "the child that never logged is stopped, not left running"
+        );
     }
 
     #[test]

@@ -111,6 +111,19 @@ impl Resolver for FakeNames {
     }
 }
 
+/// `options` with `names` as fake sites (see [`FakeNames`]): the host never asks the real DNS
+/// about them. [`web_internet`] does this for its names; a test that builds its own fake
+/// internet calls it with its own.
+pub(crate) fn with_fake_names<'a>(
+    mut options: HostOptions,
+    names: impl IntoIterator<Item = &'a str>,
+) -> HostOptions {
+    options.resolver = Some(Arc::new(FakeNames {
+        names: names.into_iter().map(str::to_owned).collect(),
+    }));
+    options
+}
+
 /// `options` with the host's upstream route set to the company proxy `proxy` (the only thing that
 /// knows the fake hosts' names).
 pub(crate) fn through_company_proxy(mut options: HostOptions, proxy: &NameProxy) -> HostOptions {
@@ -164,10 +177,10 @@ pub(crate) async fn web_internet(
     let web = WebHost::start(names, web_options).await;
     let proxy = NameProxy::start(&[]).await;
     web.register(&proxy, names);
-    let mut options = through_company_proxy(options, &proxy);
-    options.resolver = Some(Arc::new(FakeNames {
-        names: names.iter().map(|n| (*n).to_owned()).collect(),
-    }));
+    let options = with_fake_names(
+        through_company_proxy(options, &proxy),
+        names.iter().copied(),
+    );
     let platform = platform_trusting([web.root()]);
     WebInternet {
         web,

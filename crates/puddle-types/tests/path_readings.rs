@@ -207,6 +207,10 @@ fn the_readings_cover_the_known_server_disagreements() {
     assert!(named("/admin", "/admin%3fx=1"));
     assert!(named("/admin", "//evil.example/admin"));
     assert!(named("/admin", "/public#/../admin"));
+    // The authority goes before anything is decoded, so an escaped `/` after it stays inside one
+    // name there (`//admin/admin%2fadmin` is the one segment `admin/admin`).
+    assert!(named("/*", "//admin/admin%2fadmin"));
+    assert!(named("/admin/*", "//host/admin/a%2fb"));
     // A space before trailing dots keeps the segment for a server that is not Windows, so a
     // `*` still takes it there.
     assert!(named("/x/*/y", "/x/%20./y"));

@@ -2505,6 +2505,19 @@ async fn a_stored_front_port_that_is_not_a_port_is_replaced() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_front_port_that_cannot_be_stored_does_not_stop_the_host() {
+    let rig = Rig::new();
+    // A folder where the file belongs: it cannot be read as a port or replaced by one.
+    let file = HostPaths::new(rig.dir.path().join("data")).front_port_file();
+    std::fs::create_dir_all(&file).unwrap();
+    let host = rig.start().await;
+    let port = front_port_of(&host);
+    assert_ne!(port, 0, "the front still runs");
+    assert_eq!(stored_front_port(&rig), None);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_front_serves_the_server_the_workspace_was_started_with_not_what_the_settings_say_now()
 {
     let rig = Rig::new();

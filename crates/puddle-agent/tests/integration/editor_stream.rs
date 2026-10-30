@@ -216,6 +216,6 @@ async fn the_front_reaches_the_editor_through_the_link_and_hears_why_when_it_can
     let link = none.link().await;
     let connect = Editor::connect(&link).await.err().unwrap();
     assert!(connect.0.contains("no editor server"), "{connect}");
-    let password = Editor::password(&link).await.unwrap_err();
-    assert!(password.0.contains("no editor server"), "{password}");
+    let refusal = Editor::password(&link).await.unwrap_err();
+    assert!(refusal.0.contains("no editor server"), "{refusal}");
 }

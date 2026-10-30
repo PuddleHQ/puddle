@@ -6,7 +6,13 @@
 // host showing an old list). Waits are on conditions, never on time.
 import type { Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeStops, expectFocused, watchCsp, watchFocus } from "./support";
+import {
+  axeStops,
+  expectFocused,
+  watchCsp,
+  watchFocus,
+  staysEmpty,
+} from "./support";
 
 const WORK = 1;
 const PERSONAL = 2;
@@ -64,7 +70,7 @@ test("lists what the identity reaches on every host, with role and traits, and s
   await expect(sources).toContainText("gh · tijs-work on github.com");
   await expect(sources).toContainText("dev.azure.com/contoso");
   await expect(sources).toContainText(/6 repositories, read [23] minutes ago/);
-  await expect.poll(() => csp()).toEqual([]);
+  await staysEmpty(page, csp);
 });
 
 test("a slow list shows progress, then the repositories when the host answers", async ({

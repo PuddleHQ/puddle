@@ -6,7 +6,7 @@
 // dev's start folder does not exist.
 import type { Locator, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeStops, watchCsp } from "./support";
+import { axeStops, watchCsp, staysEmpty } from "./support";
 
 async function open(page: Page, backend: Backend, name = "dev", tab = "") {
   await backend.installClock(page);
@@ -69,14 +69,14 @@ test.describe("the checkouts on the disk", () => {
     await expect(
       rowOf(page, "broken").locator("b", { hasText: "dubious" }),
     ).toHaveCount(0);
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () => (window as unknown as { __owned?: boolean }).__owned,
-        ),
-      )
-      .toBeUndefined();
-    await expect.poll(() => csp()).toEqual([]);
+    await staysEmpty(page, async () =>
+      (await page.evaluate(
+        () => (window as unknown as { __owned?: boolean }).__owned,
+      )) === undefined
+        ? []
+        : ["the guest's script ran"],
+    );
+    await staysEmpty(page, csp);
   });
 
   test("keyboard only: Manage this puts a checkout on the list and focus stays on the section", async ({
@@ -256,7 +256,7 @@ for (const scheme of ["light", "dark"] as const) {
       await open(page, backend, "dev", "/settings");
       await expect(folder(page)).toBeVisible();
       await scan(page, "the start folder");
-      await expect.poll(() => csp()).toEqual([]);
+      await staysEmpty(page, csp);
       scan.done();
     });
   }

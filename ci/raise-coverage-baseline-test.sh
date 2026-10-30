@@ -211,6 +211,16 @@ fresh; urun "$(tip)" 21 99.84 91.25 99.6 99.6
 go env; rc=$?
 [ $rc = 0 ] && [ "$(remote_ubl)" = '{"lines":99.8,"branches":91.2,"functions":99.6,"statements":99.6}' ] || bad "16: ui-untouched tip did not use the parent's UI run (rc $rc): $(cat "$tmp/out")"
 
+# 16b. the same, with a scope.sh that is still writing when grep -q has its match: an early-exiting reader must not fail the lookup (SIGPIPE under pipefail).
+mkdir -p "$tmp/slow/ci" && cp "$here/raise-coverage-baseline.sh" "$tmp/slow/ci/" && mkdir -p "$tmp/slow/ui" && cp -r "$here/../ui/scripts" "$tmp/slow/ui/"
+printf '#!/usr/bin/env bash\ncat >/dev/null\nprintf "ci_rust=false\\nui=false\\n"\nsleep 0.3\nprintf "win_rust=false\\nvm=false\\n"\n' >"$tmp/slow/ci/scope.sh"
+chmod +x "$tmp/slow/ci/scope.sh"
+fresh; urun "$(tip)" 21 99.84 91.25 99.6 99.6
+( cd "$tmp/wt" && mkdir -p crates/xtask/src && echo 'fn a() {}' >crates/xtask/src/lib.rs && G add . && G commit -qm "xtask" && G push -q origin develop )
+script="$tmp/slow/ci/raise-coverage-baseline.sh" go env; rc=$?
+script="$here/raise-coverage-baseline.sh"
+[ $rc = 0 ] && [ "$(remote_ubl)" = '{"lines":99.8,"branches":91.2,"functions":99.6,"statements":99.6}' ] || bad "16b: a scope.sh that writes after the match broke the parent lookup (rc $rc): $(cat "$tmp/out")"
+
 # 17. the UI run is on the parent but the tip changed ui/: that commit has no UI measurement, nothing is raised.
 fresh; urun "$(tip)" 21 99.84 91.25 99.6 99.6
 ( cd "$tmp/wt" && mkdir -p ui/src && echo 'export {};' >ui/src/a.ts && G add . && G commit -qm "ui change" && G push -q origin develop )

@@ -562,7 +562,7 @@ impl<R: Runtime + Clone> Host<R> {
         // The browser editor's front: a listener on this computer's loopback that reaches each
         // running workspace's editor through its agent link, so a window can open it by origin.
         let flavours = Arc::new(Flavours::default());
-        let (front, front_guests) =
+        let (front, front_guests, front_halves) =
             crate::front::serve(&config.paths, &endpoints, ports.clone(), flavours.clone()).await?;
         let front_addr = front.local_addr();
         steps.push(Step::BackgroundStarted);
@@ -588,6 +588,7 @@ impl<R: Runtime + Clone> Host<R> {
                 flavours,
                 front_addr,
                 front_guests,
+                front_halves,
             },
             stored,
             &status,

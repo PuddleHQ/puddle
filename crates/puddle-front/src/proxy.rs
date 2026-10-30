@@ -18,7 +18,7 @@ use puddle_types::WorkspaceName;
 use tokio::sync::watch;
 
 use crate::editor::{Flavour, Guests, Target};
-use crate::host_header::{Refusal, origin_of, workspace_of};
+use crate::host_header::{Refusal, Route, origin_of, route_of};
 use crate::keys::ServerHalves;
 use crate::microsoft;
 use crate::windows::Windows;
@@ -97,8 +97,11 @@ async fn respond(shared: &Shared, request: Request<Incoming>) -> Response<Body> 
         .get(HOST)
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
-    let workspace = match workspace_of(host.as_deref(), shared.port) {
-        Ok(workspace) => workspace,
+    let Route {
+        workspace,
+        guest_port,
+    } = match route_of(host.as_deref(), shared.port) {
+        Ok(route) => route,
         Err(Refusal::Missing) => {
             return text(StatusCode::BAD_REQUEST, "The request names no host.");
         }
@@ -110,7 +113,14 @@ async fn respond(shared: &Shared, request: Request<Incoming>) -> Response<Body> 
         }
     };
     let own_origin = origin_of(host.as_deref().unwrap_or_default());
-    if let Some(wrong) = misdirected(&request, host.as_deref().unwrap_or_default(), &own_origin) {
+    let asked = Asked {
+        host: host.as_deref().unwrap_or_default(),
+        own_origin: &own_origin,
+        workspace: &workspace,
+        forwarded: guest_port.is_some(),
+        front_port: shared.port,
+    };
+    if let Some(wrong) = misdirected(&request, &asked) {
         return wrong;
     }
     let Some(target) = shared.guests.target(&workspace) else {
@@ -122,23 +132,48 @@ async fn respond(shared: &Shared, request: Request<Incoming>) -> Response<Body> 
     if request.method() == Method::CONNECT {
         return text(StatusCode::METHOD_NOT_ALLOWED, "CONNECT is not served.");
     }
-    if target.flavour == Flavour::Microsoft && request.uri().path() == microsoft::MINT_PATH {
+    if guest_port.is_none()
+        && target.flavour == Flavour::Microsoft
+        && request.uri().path() == microsoft::MINT_PATH
+    {
         return mint(shared, &workspace, request.method(), request.headers()).await;
     }
-    forward(shared, &workspace, &target, request).await
+    forward(shared, &workspace, &target, guest_port, request).await
+}
+
+/// Who a request was addressed to, for [`misdirected`].
+struct Asked<'a> {
+    host: &'a str,
+    own_origin: &'a str,
+    workspace: &'a WorkspaceName,
+    /// The `Host` is a forwarded port's, not the editor's.
+    forwarded: bool,
+    front_port: u16,
+}
+
+impl Asked<'_> {
+    /// Whether a request from the page at `origin` may use this address: its own origin, and, on a
+    /// forwarded port, the origin of another forwarded port of the same workspace (an app's page
+    /// calls its API on a port beside it). Never the editor's origin, which holds the sign-in.
+    fn allows(&self, origin: &str) -> bool {
+        if origin == self.own_origin {
+            return true;
+        }
+        let sibling = origin
+            .strip_prefix("http://")
+            .and_then(|host| route_of(Some(host), self.front_port).ok());
+        self.forwarded
+            && sibling.is_some_and(|r| r.guest_port.is_some() && &r.workspace == self.workspace)
+    }
 }
 
 /// A refusal for a request that names another origin than the page's own, or another authority in
 /// its target than in its `Host`.
-fn misdirected(
-    request: &Request<Incoming>,
-    host: &str,
-    own_origin: &str,
-) -> Option<Response<Body>> {
+fn misdirected(request: &Request<Incoming>, asked: &Asked<'_>) -> Option<Response<Body>> {
     let target_differs = request
         .uri()
         .authority()
-        .is_some_and(|a| !a.as_str().eq_ignore_ascii_case(host));
+        .is_some_and(|a| !a.as_str().eq_ignore_ascii_case(asked.host));
     if target_differs {
         return Some(text(
             StatusCode::MISDIRECTED_REQUEST,
@@ -146,7 +181,7 @@ fn misdirected(
         ));
     }
     let origin = request.headers().get(ORIGIN)?;
-    (origin.to_str().ok() != Some(own_origin)).then(|| {
+    (!origin.to_str().is_ok_and(|origin| asked.allows(origin))).then(|| {
         text(
             StatusCode::FORBIDDEN,
             "Another origin may not use this editor.",
@@ -232,10 +267,11 @@ fn is_upgrade(headers: &HeaderMap) -> bool {
     wants(&CONNECTION, "upgrade") && wants(&UPGRADE, "websocket")
 }
 
-fn bad_gateway(workspace: &WorkspaceName, why: &str) -> Response<Body> {
+fn bad_gateway(workspace: &WorkspaceName, guest_port: Option<u16>, why: &str) -> Response<Body> {
+    let what = guest_port.map_or_else(|| "The editor".to_owned(), |p| format!("Port {p}"));
     text(
         StatusCode::BAD_GATEWAY,
-        format!("The editor of workspace {workspace} is not reachable: {why}"),
+        format!("{what} of workspace {workspace} is not reachable: {why}"),
     )
 }
 
@@ -243,25 +279,30 @@ async fn forward(
     shared: &Shared,
     workspace: &WorkspaceName,
     target: &Target,
+    guest_port: Option<u16>,
     mut request: Request<Incoming>,
 ) -> Response<Body> {
     let upgrade = is_upgrade(request.headers());
     let socket = if upgrade {
         match Arc::clone(&shared.sockets).try_acquire_owned() {
             Ok(permit) => Some(permit),
-            Err(_) => return bad_gateway(workspace, "too many editor sockets are open"),
+            Err(_) => return bad_gateway(workspace, guest_port, "too many sockets are open"),
         }
     } else {
         None
     };
-    let io = match target.editor.connect().await {
+    let connected = match guest_port {
+        Some(port) => target.editor.connect_port(port).await,
+        None => target.editor.connect().await,
+    };
+    let io = match connected {
         Ok(io) => io,
-        Err(why) => return bad_gateway(workspace, &why.0),
+        Err(why) => return bad_gateway(workspace, guest_port, &why.0),
     };
     let (mut sender, connection) =
         match hyper::client::conn::http1::handshake(TokioIo::new(io)).await {
             Ok(pair) => pair,
-            Err(err) => return bad_gateway(workspace, &err.to_string()),
+            Err(err) => return bad_gateway(workspace, guest_port, &err.to_string()),
         };
     tokio::spawn(async move {
         if let Err(err) = connection.with_upgrades().await {
@@ -269,7 +310,10 @@ async fn forward(
         }
     });
 
-    let microsoft = target.flavour == Flavour::Microsoft;
+    // A forwarded port is the guest's own app: no secret-storage cookie, no frame headers (its
+    // own policy stands), and its sockets are not editor windows that hold up a server update.
+    let editor = guest_port.is_none();
+    let microsoft = editor && target.flavour == Flavour::Microsoft;
     let client_half = if microsoft {
         microsoft::client_half(request.headers())
     } else {
@@ -280,14 +324,16 @@ async fn forward(
     let mut response =
         match tokio::time::timeout(ANSWER_TIMEOUT, sender.send_request(request)).await {
             Ok(Ok(response)) => response,
-            Ok(Err(err)) => return bad_gateway(workspace, &format!("it did not answer ({err})")),
-            Err(_) => return bad_gateway(workspace, "it did not answer in time"),
+            Ok(Err(err)) => {
+                return bad_gateway(workspace, guest_port, &format!("it did not answer ({err})"));
+            }
+            Err(_) => return bad_gateway(workspace, guest_port, "it did not answer in time"),
         };
 
     if upgrade && response.status() == StatusCode::SWITCHING_PROTOCOLS {
         if let Some(client_upgrade) = client_upgrade {
             let server_upgrade = hyper::upgrade::on(&mut response);
-            let open = shared.windows.open(workspace);
+            let open = editor.then(|| shared.windows.open(workspace));
             let mut stop = shared.stop.clone();
             tokio::spawn(async move {
                 let _open = open;
@@ -311,7 +357,9 @@ async fn forward(
 
     let headers = response.headers_mut();
     remove_hop_by_hop(headers, false);
-    add_frame_headers(headers);
+    if editor {
+        add_frame_headers(headers);
+    }
     if microsoft {
         let client = match client_half {
             Some(half) => half,

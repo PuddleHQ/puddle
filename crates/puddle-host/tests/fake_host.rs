@@ -490,6 +490,12 @@ struct RecordingLauncher {
     targets: Mutex<Vec<DesktopTarget>>,
     /// What each browser window was asked to open, in order.
     browser: Mutex<Vec<BrowserTarget>>,
+    /// The workspaces whose windows were asked to close, in order.
+    closed: Mutex<Vec<String>>,
+    /// The workspaces whose browser data was asked to go, in order.
+    forgotten: Mutex<Vec<String>>,
+    /// Makes every forget fail with this message.
+    forget_fails_with: Mutex<Option<String>>,
 }
 
 impl Launcher for RecordingLauncher {
@@ -519,6 +525,26 @@ impl Launcher for RecordingLauncher {
             }
             self.browser.lock().unwrap().push(target.clone());
             Ok(())
+        })
+    }
+
+    fn close_browser<'a>(
+        &'a self,
+        workspace: &'a WorkspaceName,
+    ) -> futures_util::future::BoxFuture<'a, ()> {
+        Box::pin(async move { self.closed.lock().unwrap().push(workspace.to_string()) })
+    }
+
+    fn forget_browser<'a>(
+        &'a self,
+        workspace: &'a WorkspaceName,
+    ) -> futures_util::future::BoxFuture<'a, Result<(), LaunchError>> {
+        Box::pin(async move {
+            self.forgotten.lock().unwrap().push(workspace.to_string());
+            match self.forget_fails_with.lock().unwrap().clone() {
+                Some(message) => Err(LaunchError::new(message)),
+                None => Ok(()),
+            }
         })
     }
 }
@@ -2384,6 +2410,11 @@ async fn editor_stand_in(rig: &Rig, name: &str) -> EditorStandIn {
 /// What a window gets for `GET /` at `origin` (`http://<workspace>.localhost:<port>`), without
 /// resolving the name: the connection goes to the loopback and the `Host` header says the rest.
 async fn window_gets(origin: &str) -> String {
+    window_sends(origin, "GET", "/").await
+}
+
+/// The raw answer to one request a window sends to the front at `origin`.
+async fn window_sends(origin: &str, method: &str, path: &str) -> String {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     let authority = origin.strip_prefix("http://").unwrap();
     let port: u16 = authority.rsplit(':').next().unwrap().parse().unwrap();
@@ -2391,7 +2422,10 @@ async fn window_gets(origin: &str) -> String {
         .await
         .unwrap();
     conn.write_all(
-        format!("GET / HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n\r\n").as_bytes(),
+        format!(
+            "{method} {path} HTTP/1.1\r\nHost: {authority}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        )
+        .as_bytes(),
     )
     .await
     .unwrap();
@@ -2621,6 +2655,141 @@ async fn a_window_that_cannot_open_says_why_in_the_browser_attach_answer() {
     host.shutdown().await;
 }
 
+/// Has the front mint Microsoft's editor key, which stores the workspace's half of it.
+async fn mint_key(origin: &str) {
+    let answer = window_sends(origin, "POST", puddle_front::microsoft::MINT_PATH).await;
+    assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+}
+
+/// Stops `workspace` and waits for it to end.
+async fn stop_and_wait(api: &Api, events: &mut support::Events, workspace: &'static str) {
+    api.post(&format!("/api/workspaces/{workspace}/stop"), "")
+        .await;
+    events
+        .until(ended(workspace), Duration::from_secs(20))
+        .await;
+}
+
+/// Deletes the stopped, clean `workspace` and waits for it to end.
+async fn delete_and_wait(api: &Api, events: &mut support::Events, workspace: &'static str) {
+    let gone = api
+        .delete(
+            &format!("/api/workspaces/{workspace}"),
+            Some(&json!({"confirm": true}).to_string()),
+        )
+        .await;
+    assert_eq!(gone.status, 202, "{}", gone.body);
+    let end = events
+        .until(ended(workspace), Duration::from_secs(20))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_a_workspace_closes_its_editor_windows() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let _editor = editor_stand_in(&rig, "acme").await;
+    browser_target(&rig, &api, "acme").await;
+    assert!(rig.launcher.closed.lock().unwrap().is_empty());
+
+    stop_and_wait(&api, &mut events, "acme").await;
+    assert_eq!(*rig.launcher.closed.lock().unwrap(), ["acme"]);
+    assert!(
+        rig.launcher.forgotten.lock().unwrap().is_empty(),
+        "a stop keeps the windows' data: the workspace comes back"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_headless_host_stops_and_deletes_with_no_window_to_close() {
+    // `puddle serve` has no window: stopping and deleting work as they did.
+    let headless = Rig::new();
+    headless.windowless.store(true, Ordering::SeqCst);
+    let host = headless.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    stop_and_wait(&api, &mut events, "acme").await;
+    delete_and_wait(&api, &mut events, "acme").await;
+    assert!(!has_problem(&host, "browser-data:acme"));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn deleting_a_workspace_deletes_the_editor_s_secret_key_and_the_windows_data() {
+    let rig = Rig::new();
+    let covering = puddle_settings::MICROSOFT_TERMS_VERSION;
+    write_global_settings(&rig, &microsoft_chosen(covering, false));
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let _editor = editor_stand_in(&rig, "acme").await;
+    let origin = browser_origin(&rig, &api, "acme").await;
+    served_at(&origin).await;
+    mint_key(&origin).await;
+    let key = HostPaths::new(rig.dir.path().join("data"))
+        .front_keys()
+        .join("acme.key");
+    let first = std::fs::read_to_string(&key).expect("the front stored Microsoft's key half");
+
+    stop_and_wait(&api, &mut events, "acme").await;
+    assert!(
+        key.exists(),
+        "a stop keeps the key: the workspace comes back"
+    );
+    delete_and_wait(&api, &mut events, "acme").await;
+    assert!(!key.exists(), "a delete removes the key");
+    assert_eq!(*rig.launcher.forgotten.lock().unwrap(), ["acme"]);
+    assert_eq!(
+        *rig.launcher.closed.lock().unwrap(),
+        ["acme", "acme"],
+        "a stop and a delete each close the windows first"
+    );
+    assert!(!has_problem(&host, "browser-data:acme"));
+
+    // A workspace of the same name does not inherit the old key.
+    create(&api, &mut events, "acme").await;
+    let _editor = editor_stand_in(&rig, "acme").await;
+    let origin = browser_origin(&rig, &api, "acme").await;
+    served_at(&origin).await;
+    mint_key(&origin).await;
+    assert_ne!(std::fs::read_to_string(&key).unwrap(), first);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delete_that_cannot_remove_the_editor_s_data_says_so_and_still_deletes() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    stop_and_wait(&api, &mut events, "acme").await;
+    // A folder where the key file would be: removing it as a file fails.
+    let key = HostPaths::new(rig.dir.path().join("data"))
+        .front_keys()
+        .join("acme.key");
+    std::fs::create_dir_all(&key).unwrap();
+    *rig.launcher.forget_fails_with.lock().unwrap() = Some("a window still holds it".into());
+
+    delete_and_wait(&api, &mut events, "acme").await;
+    let problem = problem_of(&host, "browser-data:acme");
+    assert_eq!(problem.title, "acme's browser editor data was not deleted");
+    assert!(
+        problem.detail.contains("secret key could not be deleted")
+            && problem.detail.contains("a window still holds it"),
+        "both failures are named: {}",
+        problem.detail
+    );
+    host.shutdown().await;
+}
+
 /// The port of the host's front, from the endpoints it registered.
 fn front_port_of(host: &Host<FakeRuntime>) -> u16 {
     let fronts: Vec<u16> = host
@@ -2701,6 +2870,57 @@ async fn a_front_port_that_cannot_be_stored_does_not_stop_the_host() {
     let port = front_port_of(&host);
     assert_ne!(port, 0, "the front still runs");
     assert_eq!(stored_front_port(&rig), None);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_forwarded_port_s_origin_reaches_that_guest_port_through_the_agent() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let editor = editor_stand_in(&rig, "acme").await;
+    // An app of the workspace on its loopback (the agent stand-in shares this computer's).
+    let app = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let app_port = app.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut conn, _)) = app.accept().await {
+            tokio::spawn(async move {
+                let mut head = [0_u8; 1024];
+                let _ = conn.read(&mut head).await;
+                let _ = conn
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\ncontent-length: 3\r\nconnection: close\r\n\r\napp",
+                    )
+                    .await;
+                let _ = conn.shutdown().await;
+            });
+        }
+    });
+    let origin = browser_origin(&rig, &api, "acme").await;
+    let forwarded = origin.replacen("http://", &format!("http://{app_port}."), 1);
+    let answer = puddle_test_kit::eventually_async(
+        "the front carries a request to the app's port",
+        Duration::from_secs(20),
+        || async {
+            let answer = window_gets(&forwarded).await;
+            answer.starts_with("HTTP/1.1 200").then_some(answer)
+        },
+    )
+    .await;
+    assert!(answer.ends_with("app"), "{answer}");
+    assert_eq!(
+        editor.accepted.load(Ordering::SeqCst),
+        0,
+        "the editor was not asked"
+    );
+    // The agent's own ports (its proxy) are refused by the agent, as for a forward (AT-43): the
+    // answer says so, where a free port would say that nothing listens.
+    let proxy = window_gets(&origin.replacen("http://", "http://3128.", 1)).await;
+    assert!(proxy.starts_with("HTTP/1.1 502"), "{proxy}");
+    assert!(proxy.contains("belongs to Puddle's agent"), "{proxy}");
     host.shutdown().await;
 }
 

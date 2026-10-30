@@ -23,14 +23,16 @@ use crate::common::ReservedPort;
 const WAIT: Duration = Duration::from_secs(20);
 
 /// Records its arguments, its `PASSWORD` and the number of `VSCODE_` variables it was started
-/// with in `OUT/<start number>.*` (`OUT` is filled in), then waits to be killed.
+/// with in `OUT/<start number>.*` (`OUT` is filled in), then waits to be killed. The pid file
+/// comes last and appears whole (a rename), so a test that sees it may read the others and it.
 const FAKE: &str = r#"#!/bin/sh
 n=1
 while [ -e "OUT/$n.pid" ]; do n=$((n + 1)); done
 printf '%s\n' "$@" >"OUT/$n.args"
 printf '%s' "$PASSWORD" >"OUT/$n.password"
 env | grep -c '^VSCODE_' >"OUT/$n.vscode" || true
-echo $$ >"OUT/$n.pid"
+echo $$ >"OUT/$n.pid.tmp"
+mv "OUT/$n.pid.tmp" "OUT/$n.pid"
 exec sleep 600
 "#;
 

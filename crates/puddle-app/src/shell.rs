@@ -540,12 +540,8 @@ pub(crate) mod tests {
         report(&demo, Err("the window system said no"));
         let listed = window_problems();
         assert_eq!(listed.len(), 1);
-        assert!(listed[0].title.contains("demo"), "{}", listed[0].title);
-        assert!(
-            listed[0].detail.contains("the window system said no"),
-            "{}",
-            listed[0].detail
-        );
+        assert!(listed[0].title.contains("demo"));
+        assert!(listed[0].detail.contains("the window system said no"));
         report(&demo, Ok(()));
         assert_eq!(window_problems(), []);
     }

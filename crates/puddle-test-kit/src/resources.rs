@@ -147,10 +147,22 @@ mod tests {
         // dropped listener leaves open.
         let squatter = tokio::net::TcpSocket::new_v4().unwrap();
         assert!(squatter.bind(addr).is_err(), "a plain bind took the port");
-        assert!(
-            TcpListener::bind(addr).is_ok(),
-            "the test's own server can answer there"
-        );
+        // The test's own server binds with SO_REUSEADDR like a real one (serve.rs). std's plain
+        // bind would be refused on Windows, where only two sockets that both set it can share.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let server = rt.block_on(async {
+            let socket = tokio::net::TcpSocket::new_v4().unwrap();
+            socket.set_reuseaddr(true).unwrap();
+            socket
+                .bind(addr)
+                .expect("the test's own server can answer there");
+            socket.listen(8).unwrap()
+        });
+        assert!(accepts(addr), "the test's own server answers");
+        drop(server);
         assert!(!accepts(addr), "and be dropped again");
         let other = ReservedPort::default();
         assert_ne!(other.port(), reserved.port());

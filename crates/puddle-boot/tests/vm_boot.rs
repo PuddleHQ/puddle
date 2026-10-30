@@ -12,7 +12,7 @@
 )]
 
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use puddle_boot::{
     BootError, BootFailure, BootHook, BootPlan, Gate, GatedSandbox, GitIdentity, with_boot_mounts,
@@ -22,6 +22,7 @@ use puddle_compute::fake::FakeRuntime;
 use puddle_compute::{ExecRequest, Runtime, Sandbox, SandboxSpec};
 use puddle_compute_msb::{MsbConfig, MsbRuntime};
 use puddle_guest_env::{ProxySettings, guest_proxy_config};
+use puddle_test_kit::eventually_async;
 use puddle_types::{GuestEnv, GuestFile, GuestPath, ImageRef, SandboxName};
 use puddle_vm_tests::Settings;
 
@@ -199,13 +200,12 @@ done
 kill -9 ${agent:?no puddle-agent process}"#;
     let (code, out) = sh(sb, kill).await;
     assert_eq!(code, 0, "{boot}: {out}");
-    let start = Instant::now();
-    while sh(sb, "grep -q ' 0100007F:0C38 ' /proc/net/tcp").await.0 != 0 {
-        assert!(
-            start.elapsed() < Duration::from_secs(1),
-            "{boot}: agent not back within 1 s"
-        );
-    }
+    eventually_async(
+        &format!("{boot}: the agent is back"),
+        Duration::from_secs(1),
+        || async { sh(sb, "grep -q ' 0100007F:0C38 ' /proc/net/tcp").await.0 == 0 },
+    )
+    .await;
 }
 
 /// `docker:dind`: the ENTRYPOINT is chained and dockerd runs with the proxy env. Images without
@@ -218,7 +218,6 @@ async fn check_entrypoint<S: Sandbox>(sb: &GatedSandbox<S>, config: &puddle_comp
     }
     let env = wait_for_environ(
         || sh(sb, "tr '\\0' '\\n' </proc/$(pidof dockerd)/environ"),
-        Duration::from_millis(200),
         Duration::from_secs(30),
     )
     .await;
@@ -233,24 +232,23 @@ async fn check_entrypoint<S: Sandbox>(sb: &GatedSandbox<S>, config: &puddle_comp
 /// exec'd already answers to its new name while the kernel has not yet set up its environment:
 /// `/proc/<pid>/environ` then reads as empty with exit 0 (loaded host, big binary), so an empty
 /// answer means "not yet", never "no proxy".
-async fn wait_for_environ<F, Fut>(mut read: F, every: Duration, within: Duration) -> String
+async fn wait_for_environ<F, Fut>(mut read: F, within: Duration) -> String
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = (i32, String)>,
 {
-    let start = Instant::now();
-    loop {
-        let (code, env) = read().await;
-        if code == 0 && !env.is_empty() {
-            return env;
+    eventually_async("dockerd to be up with an environment", within, || {
+        let answer = read();
+        async move {
+            let (code, env) = answer.await;
+            if code == 0 && !env.is_empty() {
+                Ok(env)
+            } else {
+                Err(format!("exit {code}, {} bytes", env.len()))
+            }
         }
-        assert!(
-            start.elapsed() < within,
-            "dockerd not up with an environment (last answer: exit {code}, {} bytes)",
-            env.len()
-        );
-        tokio::time::sleep(every).await;
-    }
+    })
+    .await
 }
 
 #[tokio::test]
@@ -264,7 +262,6 @@ async fn an_environ_that_reads_empty_mid_exec_is_not_the_answer() {
     .into_iter();
     let env = wait_for_environ(
         || std::future::ready(answers.next().unwrap()),
-        Duration::from_millis(1),
         Duration::from_secs(5),
     )
     .await;

@@ -56,6 +56,7 @@ puddle-ipc = { workspace = true }
 puddle-netpolicy = { workspace = true }
 puddle-ports = { workspace = true }
 puddle-proxy = { workspace = true, features = ["testing"] }
+puddle-test-kit = { workspace = true }
 puddle-upstream = { workspace = true, features = ["testing"] }
 puddle-vm-tests = { workspace = true }
 futures-util = { workspace = true }

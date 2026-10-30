@@ -35,7 +35,7 @@ test.describe("the visual identity, served by the real API", () => {
     expect(used.body).toMatch(/^"?Inter Variable"?,/);
     expect(fontFiles.length).toBeGreaterThan(0);
     expect(new Set(fontFiles)).toEqual(new Set([new URL(page.url()).origin]));
-    expect(await violations()).toEqual([]);
+    await expect.poll(() => violations()).toEqual([]);
   });
 
   test("the duck is the mark in the sidebar, at its box size, and the tab icon is the duck", async ({
@@ -55,6 +55,7 @@ test.describe("the visual identity, served by the real API", () => {
       (await icon.getAttribute("href")) as string,
     );
     expect(response.ok()).toBe(true);
+    // eslint-disable-next-line no-restricted-syntax -- the response is complete and already received, so nothing can still move
     expect(await response.text()).toContain("<svg");
   });
 

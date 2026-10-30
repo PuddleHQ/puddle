@@ -13,7 +13,8 @@
 #               one branch, so no other group and no pull request run is ever cancelled
 #   run-id      github.run_id; its run is cancelled last, after the others
 # env: GH_TOKEN with `actions: write`, GITHUB_REPOSITORY. DRY_RUN=1 lists and prints, cancels nothing.
-# Best effort: always exits 0 (a failed cancel only leaves the old, slower behaviour). Safe to run from two
+# Before cancelling it annotates the calling job with the failed job and step names (the cancel turns the job into
+# `cancelled`, which hides them). Best effort: always exits 0 (a failed cancel only leaves the old, slower behaviour). Safe to run from two
 # failed jobs at once: a run that completed or was cancelled meanwhile is skipped, a lost race is ignored.
 set -uo pipefail
 
@@ -33,6 +34,12 @@ list() {
     gh run list --repo "$repo" --branch "$branch" --limit 100 --json databaseId,status \
         --jq '.[] | select(.status != "completed") | .databaseId'
 }
+
+# The cancel ends this job as `cancelled` and the group's result checks report only that word, so say here, in an
+# annotation (it outlives the cancel), which job and step failed. Best effort like everything below.
+named=$(gh api "repos/$repo/actions/runs/$own/jobs?per_page=100" \
+    --jq '[.jobs[] | select(any(.steps[]?; .conclusion == "failure")) | "\(.name): \([.steps[] | select(.conclusion == "failure") | .name] | join(", "))"] | join("; ")' 2>/dev/null) || named=""
+echo "::error title=merge group cancelled: this job failed first::${named:-no failed step could be read} (run $own)"
 
 ids=$(list) || { echo "cancel-group: could not list the runs of $branch" >&2; exit 0; }
 [ -n "$ids" ] || { echo "cancel-group: no run of $branch is still active"; exit 0; }

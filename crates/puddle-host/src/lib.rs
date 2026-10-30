@@ -35,6 +35,7 @@ mod editor_file;
 mod environment;
 mod error;
 mod files;
+mod front;
 mod git_hosts;
 mod host;
 mod injection;

@@ -13,8 +13,6 @@ use std::io::Write as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use puddle_boot::{AGENT_SUPERVISE_SH, BOOT_SH, BootPlan};
 
@@ -64,6 +62,8 @@ pub(crate) struct FakeRoot {
     pub(crate) root: PathBuf,
     pub(crate) shell: PathBuf,
     stubs: PathBuf,
+    /// Owns the folder `root` names; removed after `Drop` has killed the stub processes.
+    _dir: tempfile::TempDir,
 }
 
 /// The POSIX shells on this host to run the hook with (dash and bash). Not busybox: Ubuntu's
@@ -87,16 +87,11 @@ fn write_exec(path: &Path, text: &str) {
 impl FakeRoot {
     /// A fresh root, run with `shell`.
     pub(crate) fn new(shell: &Path) -> Self {
-        static N: AtomicU32 = AtomicU32::new(0);
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .subsec_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "puddle-boot-test-{}-{}-{nanos}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::Relaxed)
-        ));
+        let dir = tempfile::Builder::new()
+            .prefix("puddle-boot-test-")
+            .tempdir()
+            .unwrap();
+        let root = dir.path().to_path_buf();
         for d in [
             "puddle",
             "stubs",
@@ -130,6 +125,7 @@ impl FakeRoot {
             root,
             shell: shell.to_owned(),
             stubs,
+            _dir: dir,
         }
     }
 
@@ -225,18 +221,6 @@ impl FakeRoot {
         let text = std::fs::read_to_string(self.path(&format!("/run/puddle/{name}"))).ok()?;
         text.split_whitespace().nth(1)?.parse().ok()
     }
-
-    /// Waits until `cond` holds, polling every 20 ms, up to `limit`.
-    pub(crate) fn wait_for(limit: Duration, mut cond: impl FnMut() -> bool) -> Option<Duration> {
-        let start = Instant::now();
-        while start.elapsed() < limit {
-            if cond() {
-                return Some(start.elapsed());
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        None
-    }
 }
 
 /// Whether process `pid` is alive (and not a zombie).
@@ -261,7 +245,6 @@ impl Drop for FakeRoot {
         for pid in self.agent_pids() {
             kill9(pid);
         }
-        let _ = std::fs::remove_dir_all(&self.root);
     }
 }
 

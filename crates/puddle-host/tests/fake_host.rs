@@ -28,6 +28,7 @@ use puddle_host::{
 use puddle_netpolicy::EndpointKind;
 use puddle_runtime::{RuntimeLayout, RuntimeVersion};
 use puddle_secrets::{MemoryStore, SecretStore as _};
+use puddle_test_kit::{eventually, next_event_matching, no_event_matching};
 use puddle_types::fixture;
 use puddle_types::{
     Event, EventSink, GuestEnv, GuestPath, ImageRef, SandboxName, WorkspaceId, WorkspaceName,
@@ -1744,6 +1745,9 @@ async fn a_stopped_workspace_lists_the_checkouts_it_had_and_refuses_an_add() {
 
 /// Holds the calling guest command until the test sends or 20 seconds pass, without keeping the
 /// runtime's thread from running the rest of the test.
+// flake-ok: a fake guest command that blocks until the test releases it, not a test waiting for a
+// condition (nothing is polled); the 20 s cap is below nextest's kill, so a test that never sends fails
+// here instead of hanging.
 fn wait_for(hold: &std::sync::mpsc::Receiver<()>) {
     tokio::task::block_in_place(|| {
         let _ = hold.recv_timeout(Duration::from_secs(20));
@@ -1754,13 +1758,10 @@ fn wait_for(hold: &std::sync::mpsc::Receiver<()>) {
 /// command, and the fake counts a command before it answers, so a fault armed after this returns
 /// can only meet the test's own commands.
 async fn after_boot_listing(rig: &Rig) {
-    for _ in 0..500 {
-        if !rig.guest.listings.lock().unwrap().is_empty() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    unreachable!("no listing after the boot");
+    eventually("a listing after the boot", APPLY, || {
+        !rig.guest.listings.lock().unwrap().is_empty()
+    })
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2282,6 +2283,287 @@ async fn attach_opens_the_desktop_editor_through_the_launcher() {
         .await;
     assert_eq!(browser.json()["opened"], false);
     host.shutdown().await;
+}
+
+/// A guest agent that runs on this machine with a stand-in for the editor server, connected to
+/// `name`'s route the way the real agent connects from inside the guest. The stand-in counts the
+/// connections it accepts and answers every request with a greeting.
+struct EditorStandIn {
+    accepted: Arc<AtomicUsize>,
+    _agent: puddle_agent::Agent,
+    _dir: tempfile::TempDir,
+}
+
+async fn editor_stand_in(rig: &Rig, name: &str) -> EditorStandIn {
+    use puddle_agent::config::Target;
+    use puddle_agent::editor::EditorConfig;
+    use puddle_agent_proto::editor::EditorServer;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = server.local_addr().unwrap().port();
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let count = Arc::clone(&accepted);
+    tokio::spawn(async move {
+        while let Ok((mut conn, _)) = server.accept().await {
+            count.fetch_add(1, Ordering::SeqCst);
+            tokio::spawn(async move {
+                let mut head = [0_u8; 1024];
+                let _ = conn.read(&mut head).await;
+                let _ = conn
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\ncontent-length: 5\r\nconnection: close\r\n\r\nhello",
+                    )
+                    .await;
+                let _ = conn.shutdown().await;
+            });
+        }
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let password_file = dir.path().join("editor-password");
+    std::fs::write(&password_file, "0".repeat(64)).unwrap();
+    // Its port is taken, so the agent starts no server of its own and the stand-in answers.
+    let mut editor = EditorServer::new("/nonexistent/data", "/nonexistent/work", 120);
+    editor.dir = "/nonexistent/release".into();
+    editor.port = port;
+    let sandbox = WorkspaceName::new(name).unwrap().sandbox_name();
+    let route = rig.runtime.routes(&sandbox).first().unwrap().host.clone();
+    let agent = puddle_agent::Agent::start(puddle_agent::Config {
+        listen: std::net::SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), 0),
+        target: Target::Unix(route),
+        oom: None,
+        ports: None,
+        editor: Some(EditorConfig {
+            server: editor,
+            password_file,
+        }),
+        ..puddle_agent::Config::default()
+    })
+    .await
+    .unwrap();
+    EditorStandIn {
+        accepted,
+        _agent: agent,
+        _dir: dir,
+    }
+}
+
+/// What a window gets for `GET /` at `origin` (`http://<workspace>.localhost:<port>`), without
+/// resolving the name: the connection goes to the loopback and the `Host` header says the rest.
+async fn window_gets(origin: &str) -> String {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let authority = origin.strip_prefix("http://").unwrap();
+    let port: u16 = authority.rsplit(':').next().unwrap().parse().unwrap();
+    let mut conn = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    conn.write_all(
+        format!("GET / HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n\r\n").as_bytes(),
+    )
+    .await
+    .unwrap();
+    let mut answer = Vec::new();
+    conn.read_to_end(&mut answer).await.unwrap();
+    String::from_utf8_lossy(&answer).into_owned()
+}
+
+/// Waits until the front carries a request at `origin` to the editor, and returns the answer.
+async fn served_at(origin: &str) -> String {
+    puddle_test_kit::eventually_async(
+        "the front carries a request to the workspace's editor",
+        Duration::from_secs(20),
+        || async {
+            let answer = window_gets(origin).await;
+            answer.starts_with("HTTP/1.1 200").then_some(answer)
+        },
+    )
+    .await
+}
+
+/// The origin a browser attach answered with, and that it is the answer of an attach that
+/// opened nothing itself.
+async fn browser_origin(api: &Api, workspace: &str) -> String {
+    let reply = api
+        .post(
+            &format!("/api/workspaces/{workspace}/attach"),
+            &json!({"mode": "browser"}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let body = reply.json();
+    assert_eq!(body["opened"], false, "the caller opens the origin: {body}");
+    assert!(
+        body["url"].is_string(),
+        "a browser attach names no origin: {body}"
+    );
+    body["url"].as_str().unwrap().to_owned()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_attach_names_the_fronts_origin_and_the_front_carries_a_request_to_the_editor() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let editor = editor_stand_in(&rig, "acme").await;
+
+    let origin = browser_origin(&api, "acme").await;
+    let front_port: u16 = origin
+        .strip_prefix("http://acme.localhost:")
+        .unwrap_or_else(|| panic!("not the workspace's origin: {origin}"))
+        .parse()
+        .unwrap();
+    assert!(
+        host.endpoints()
+            .list()
+            .iter()
+            .any(|(addr, kind)| addr.port() == front_port && *kind == EndpointKind::BrowserFront),
+        "the origin's port is the host's front, registered as Puddle's own listener"
+    );
+
+    // The agent says hello after the attach asked: wait for the front to find it.
+    let answer = served_at(&origin).await;
+    assert!(answer.ends_with("hello"), "{answer}");
+    assert_eq!(editor.accepted.load(Ordering::SeqCst), 1);
+
+    // A stopped workspace is not served: the front looks at the running workspaces on every request.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let gone = window_gets(&origin).await;
+    assert!(gone.starts_with("HTTP/1.1 404"), "{gone}");
+    host.shutdown().await;
+}
+
+/// The port of the host's front, from the endpoints it registered.
+fn front_port_of(host: &Host<FakeRuntime>) -> u16 {
+    let fronts: Vec<u16> = host
+        .endpoints()
+        .list()
+        .iter()
+        .filter(|(_, kind)| *kind == EndpointKind::BrowserFront)
+        .map(|(addr, _)| addr.port())
+        .collect();
+    assert_eq!(fronts.len(), 1, "one front is registered: {fronts:?}");
+    fronts[0]
+}
+
+fn stored_front_port(rig: &Rig) -> Option<u16> {
+    let file = HostPaths::new(rig.dir.path().join("data")).front_port_file();
+    std::fs::read_to_string(file).ok()?.trim().parse().ok()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_front_keeps_its_port_across_restarts_of_the_host() {
+    let rig = Rig::new();
+    let first = rig.start().await;
+    let port = front_port_of(&first);
+    assert_eq!(stored_front_port(&rig), Some(port), "the port is stored");
+    first.shutdown().await;
+    drop(first); // the next run is a new process: its hold on the data folder ends
+
+    // The same data folder, a new run: the same origin, so the editor's browser storage stays.
+    let second = rig.start().await;
+    assert_eq!(front_port_of(&second), port);
+    second.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_taken_front_port_falls_back_to_another_that_is_then_kept() {
+    let rig = Rig::new();
+    let (held, taken) = puddle_test_kit::bound_port();
+    let file = HostPaths::new(rig.dir.path().join("data")).front_port_file();
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, taken.to_string()).unwrap();
+
+    let first = rig.start().await;
+    let moved = front_port_of(&first);
+    assert_ne!(moved, taken, "the held port cannot be the front's");
+    assert_eq!(
+        stored_front_port(&rig),
+        Some(moved),
+        "the new port is stored"
+    );
+    first.shutdown().await;
+    drop(first);
+
+    // Next run the new port is the usual one, with the old one still taken.
+    let second = rig.start().await;
+    assert_eq!(front_port_of(&second), moved);
+    second.shutdown().await;
+    drop(held);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stored_front_port_that_is_not_a_port_is_replaced() {
+    let rig = Rig::new();
+    let file = HostPaths::new(rig.dir.path().join("data")).front_port_file();
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, "not a port").unwrap();
+    let host = rig.start().await;
+    assert_eq!(stored_front_port(&rig), Some(front_port_of(&host)));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_front_port_that_cannot_be_stored_does_not_stop_the_host() {
+    let rig = Rig::new();
+    // A folder where the file belongs: it cannot be read as a port or replaced by one.
+    let file = HostPaths::new(rig.dir.path().join("data")).front_port_file();
+    std::fs::create_dir_all(&file).unwrap();
+    let host = rig.start().await;
+    let port = front_port_of(&host);
+    assert_ne!(port, 0, "the front still runs");
+    assert_eq!(stored_front_port(&rig), None);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_front_serves_the_server_the_workspace_was_started_with_not_what_the_settings_say_now()
+{
+    let rig = Rig::new();
+    let covering = puddle_settings::MICROSOFT_TERMS_VERSION;
+    write_global_settings(&rig, &microsoft_chosen(covering, false));
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let _editor = editor_stand_in(&rig, "acme").await;
+    let origin = browser_origin(&api, "acme").await;
+    let first = served_at(&origin).await;
+    assert!(
+        first.contains("puddle-secret-half="),
+        "Microsoft's server gets the key cookie: {first}"
+    );
+
+    // The consent is withdrawn while the server runs: the running server is still Microsoft's.
+    write_global_settings(&rig, &json!({"schema_version": 2}));
+    let still = window_gets(&origin).await;
+    assert!(
+        still.contains("puddle-secret-half="),
+        "the running server keeps its flavour: {still}"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_front_serves_code_server_without_the_key_cookie_and_closes_with_the_host() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let _editor = editor_stand_in(&rig, "acme").await;
+    let origin = browser_origin(&api, "acme").await;
+    let answer = served_at(&origin).await;
+    assert!(!answer.contains("puddle-secret-half="), "{answer}");
+    host.shutdown().await;
+    let port: u16 = origin.rsplit(':').next().unwrap().parse().unwrap();
+    assert!(
+        tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_err(),
+        "the front's listener is gone after shutdown"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -3683,7 +3965,7 @@ async fn an_entry_that_cannot_be_taken_out_is_a_problem_until_the_file_can_be_wr
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
     allow_direct_ssh(&api, "acme", true).await;
-    eventually("the entry", || {
+    eventually("the entry", APPLY, || {
         std::fs::read_to_string(rig.puddle_ssh_config()).is_ok_and(|t| t.contains("puddle-acme"))
     })
     .await;
@@ -4246,16 +4528,8 @@ fn decrypts(host: &Host<FakeRuntime>, workspace: &str, site: &str) -> bool {
         })
 }
 
-/// Waits for `condition` to hold (a change applies when the host has handled its event).
-async fn eventually(what: &str, condition: impl Fn() -> bool) {
-    for _ in 0..500 {
-        if condition() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert!(condition(), "never became true: {what}");
-}
+/// How long a change may take to apply once the host has its event.
+const APPLY: Duration = Duration::from_secs(10);
 
 fn calls_of(rig: &Rig, op: &str) -> usize {
     rig.runtime
@@ -4349,14 +4623,14 @@ async fn a_credential_for_any_host_applies_to_the_running_workspace_with_no_rest
     // A host the workspace has never used, on a host Puddle's default list does not have.
     let gitlab = make_identity(&api, "Ada", "gitlab.com", &[]).await;
     attach(&api, "acme", gitlab).await;
-    eventually("gitlab.com decrypted", || {
+    eventually("gitlab.com decrypted", APPLY, || {
         decrypts(&host, "acme", "gitlab.com")
     })
     .await;
     // A second one, on Azure DevOps: both of its names.
     let azure = make_identity(&api, "Bob", "dev.azure.com", &["contoso"]).await;
     attach(&api, "acme", azure).await;
-    eventually("azure decrypted", || {
+    eventually("azure decrypted", APPLY, || {
         decrypts(&host, "acme", "contoso.visualstudio.com")
     })
     .await;
@@ -4381,7 +4655,7 @@ async fn a_credential_for_any_host_applies_to_the_running_workspace_with_no_rest
         .delete(&format!("/api/workspaces/acme/identities/{gitlab}"), None)
         .await;
     assert_eq!(gone.status, 200, "{}", gone.body);
-    eventually("gitlab.com no longer decrypted", || {
+    eventually("gitlab.com no longer decrypted", APPLY, || {
         !decrypts(&host, "acme", "gitlab.com")
     })
     .await;
@@ -4817,7 +5091,7 @@ async fn no_file_in_the_data_folder_holds_a_key_or_the_ca_whether_the_workspace_
     create(&api, &mut events, "acme").await;
     let identity = make_identity(&api, "Ada", "github.com", &[]).await;
     attach(&api, "acme", identity).await;
-    eventually("decrypted", || decrypts(&host, "acme", "github.com")).await;
+    eventually("decrypted", APPLY, || decrypts(&host, "acme", "github.com")).await;
     let ca = host
         .workspaces()
         .termination(&name("acme"))
@@ -5064,7 +5338,7 @@ async fn git_settings_the_host_cannot_read_stop_a_start_and_change_nothing_while
     // beta runs; its settings are damaged after the start: what it decrypts stays as it was.
     let identity = make_identity(&api, "Ada", "github.com", &[]).await;
     attach(&api, "beta", identity).await;
-    eventually("github.com decrypted", || {
+    eventually("github.com decrypted", APPLY, || {
         decrypts(&host, "beta", "github.com")
     })
     .await;
@@ -5078,7 +5352,7 @@ async fn git_settings_the_host_cannot_read_stop_a_start_and_change_nothing_while
         workspace: name("beta"),
     });
     // The user is told: the old set stays and the next change tries again.
-    eventually("the failed update is a problem", || {
+    eventually("the failed update is a problem", APPLY, || {
         has_problem(&host, "git-decrypt:beta")
     })
     .await;
@@ -5100,7 +5374,7 @@ async fn git_settings_the_host_cannot_read_stop_a_start_and_change_nothing_while
     host.events().emit(Event::WorkspaceGitChanged {
         workspace: name("beta"),
     });
-    eventually("the problem ends", || {
+    eventually("the problem ends", APPLY, || {
         !has_problem(&host, "git-decrypt:beta")
     })
     .await;
@@ -5124,7 +5398,7 @@ async fn a_rule_on_method_and_path_reaches_the_running_workspaces_and_decrypts_i
         )
         .await;
     assert_eq!(made.status, 201, "{}", made.body);
-    eventually("the rule's host is decrypted", || {
+    eventually("the rule's host is decrypted", APPLY, || {
         decrypts(&host, "acme", "api.example.com")
     })
     .await;
@@ -5132,7 +5406,7 @@ async fn a_rule_on_method_and_path_reaches_the_running_workspaces_and_decrypts_i
     // Deleting it takes the host out of the set again.
     let gone = api.delete("/api/request-rules/1", None).await;
     assert_eq!(gone.status, 200, "{}", gone.body);
-    eventually("the host is no longer decrypted", || {
+    eventually("the host is no longer decrypted", APPLY, || {
         !decrypts(&host, "acme", "api.example.com")
     })
     .await;
@@ -5294,12 +5568,12 @@ async fn a_guest_that_cannot_take_new_authors_keeps_the_old_ones_and_the_next_ch
     attach(&api, "acme", ada).await;
     rig.guest.boots_reach(booted + 1).await;
     // What is decrypted followed anyway: only the guest's files could not be written.
-    eventually("github.com decrypted", || {
+    eventually("github.com decrypted", APPLY, || {
         decrypts(&host, "acme", "github.com")
     })
     .await;
     // The user is told, with the guest's reason.
-    eventually("the failed rewrite is a problem", || {
+    eventually("the failed rewrite is a problem", APPLY, || {
         has_problem(&host, "git-authors:acme")
     })
     .await;
@@ -5317,7 +5591,7 @@ async fn a_guest_that_cannot_take_new_authors_keeps_the_old_ones_and_the_next_ch
     rig.guest.fail_boot.store(false, Ordering::SeqCst);
     attach(&api, "acme", bob).await;
     rig.guest.boots_reach(booted + 2).await;
-    eventually("the retry takes the problem away", || {
+    eventually("the retry takes the problem away", APPLY, || {
         !has_problem(&host, "git-authors:acme")
     })
     .await;
@@ -5350,7 +5624,7 @@ async fn settings_that_go_unreadable_while_a_rewrite_waits_are_a_problem_the_nex
     attach(&api, "acme", ada).await;
     rig.guest.boots_reach(booted + 1).await;
     attach(&api, "acme", bob).await;
-    eventually("gitlab.com decrypted", || {
+    eventually("gitlab.com decrypted", APPLY, || {
         decrypts(&host, "acme", "gitlab.com")
     })
     .await;
@@ -5358,7 +5632,7 @@ async fn settings_that_go_unreadable_while_a_rewrite_waits_are_a_problem_the_nex
     // The settings go bad before Bob's rewrite can read them.
     damage_database(&rig, &UNREADABLE_GIT_ROW.replace("{}", "acme"));
     release.send(()).unwrap();
-    eventually("the failed rewrite is a problem", || {
+    eventually("the failed rewrite is a problem", APPLY, || {
         has_problem(&host, "git-authors:acme")
     })
     .await;
@@ -5384,7 +5658,7 @@ async fn settings_that_go_unreadable_while_a_rewrite_waits_are_a_problem_the_nex
     host.events().emit(Event::WorkspaceGitChanged {
         workspace: name("acme"),
     });
-    eventually("the retry takes the problem away", || {
+    eventually("the retry takes the problem away", APPLY, || {
         !has_problem(&host, "git-authors:acme")
     })
     .await;
@@ -5408,7 +5682,7 @@ async fn a_git_too_old_for_the_author_rules_is_a_problem_until_it_is_updated() {
     *rig.guest.boot_says.lock().unwrap() = "puddle-boot: git version 2.34.1\n".to_owned();
     attach(&api, "acme", ada).await;
     rig.guest.boots_reach(booted + 1).await;
-    eventually("the old git is a problem", || {
+    eventually("the old git is a problem", APPLY, || {
         has_problem(&host, "git-old:acme")
     })
     .await;
@@ -5427,7 +5701,10 @@ async fn a_git_too_old_for_the_author_rules_is_a_problem_until_it_is_updated() {
     *rig.guest.boot_says.lock().unwrap() = "puddle-boot: git version 2.39.5\n".to_owned();
     attach(&api, "acme", bob).await;
     rig.guest.boots_reach(booted + 2).await;
-    eventually("the problem ends", || !has_problem(&host, "git-old:acme")).await;
+    eventually("the problem ends", APPLY, || {
+        !has_problem(&host, "git-old:acme")
+    })
+    .await;
 
     // And a stopped workspace has none.
     *rig.guest.boot_says.lock().unwrap() = "puddle-boot: git version 2.30.2\n".to_owned();
@@ -5514,7 +5791,7 @@ async fn a_credential_for_a_port_puddle_never_decrypts_is_refused_and_an_old_one
     host.events().emit(Event::WorkspaceGitChanged {
         workspace: name("acme"),
     });
-    eventually("the useless credential is a problem", || {
+    eventually("the useless credential is a problem", APPLY, || {
         has_problem(&host, "git-credentials:acme")
     })
     .await;
@@ -5532,7 +5809,7 @@ async fn a_credential_for_a_port_puddle_never_decrypts_is_refused_and_an_old_one
     host.events().emit(Event::WorkspaceGitChanged {
         workspace: name("acme"),
     });
-    eventually("the problem ends", || {
+    eventually("the problem ends", APPLY, || {
         !has_problem(&host, "git-credentials:acme")
     })
     .await;
@@ -5601,20 +5878,20 @@ async fn an_author_rewrite_that_runs_after_a_newer_change_applies_the_newest_set
     host.store()
         .attach_identity(&name("acme"), old.id, None)
         .unwrap();
-    eventually("the attach rewrite waits", || {
+    eventually("the attach rewrite waits", APPLY, || {
         held.arrived.load(Ordering::SeqCst)
     })
     .await;
     // The detach comes after, and its rewrite runs through: nothing is left to rewrite or to say.
     host.store().detach_identity(&name("acme"), old.id).unwrap();
-    eventually("the detach ends the problem", || {
+    eventually("the detach ends the problem", APPLY, || {
         !has_problem(&host, "git-credentials:acme")
     })
     .await;
 
     // The attach rewrite now goes on, last. It must apply the settings as they are now.
     held.release.notify_one();
-    eventually("the attach rewrite ends", || {
+    eventually("the attach rewrite ends", APPLY, || {
         held.ended.load(Ordering::SeqCst)
     })
     .await;
@@ -5646,7 +5923,10 @@ async fn missed_events_are_made_up_for_by_looking_at_every_running_workspace_aga
     for _ in 0..4096 {
         host.events().emit(Event::RulesChanged {});
     }
-    eventually("the set follows", || decrypts(&host, "acme", "github.com")).await;
+    eventually("the set follows", APPLY, || {
+        decrypts(&host, "acme", "github.com")
+    })
+    .await;
     rig.guest.boots_reach(before + 1).await;
     host.shutdown().await;
 }
@@ -5817,7 +6097,7 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
         secret_body(Some(REAL), &["api.example.org"]),
     )
     .await;
-    eventually("the secret's host is decrypted", || {
+    eventually("the secret's host is decrypted", APPLY, || {
         decrypts(&host, "acme", "api.example.org")
     })
     .await;
@@ -5857,7 +6137,7 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
     )
     .await;
     for workspace in ["acme", "beta"] {
-        eventually("the global secret's host is decrypted", || {
+        eventually("the global secret's host is decrypted", APPLY, || {
             decrypts(&host, workspace, "shared.example.org")
         })
         .await;
@@ -5875,7 +6155,7 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
         secret_body(None, &["other.example.org"]),
     )
     .await;
-    eventually("the hosts moved", || {
+    eventually("the hosts moved", APPLY, || {
         decrypts(&host, "acme", "other.example.org") && !decrypts(&host, "acme", "api.example.org")
     })
     .await;
@@ -5886,7 +6166,7 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
         204
     );
     assert_eq!(api.delete("/api/env/SHARED", None).await.status, 204);
-    eventually("removed secrets are not decrypted", || {
+    eventually("removed secrets are not decrypted", APPLY, || {
         !decrypts(&host, "acme", "other.example.org")
             && !decrypts(&host, "acme", "shared.example.org")
             && !decrypts(&host, "beta", "shared.example.org")
@@ -6178,7 +6458,7 @@ async fn deleting_a_workspace_removes_its_variables_rules_and_the_values_of_its_
     events.until(ended("acme"), Duration::from_secs(20)).await;
 
     // The workspace's own secret is gone from the credential store, the global one stays.
-    eventually("the workspace's value is removed", || {
+    eventually("the workspace's value is removed", APPLY, || {
         rig.secrets.ids().len() == 1
     })
     .await;
@@ -6768,26 +7048,24 @@ async fn a_proxy_that_turns_the_sign_in_down_is_one_event_and_a_failed_attempt()
 
     // The host forwards the failure from its own task, so the event can land after the replies:
     // wait for the first one, then give a second (which must not come) a moment to show.
-    let mut failures = Vec::new();
-    let first = tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            match events.recv().await {
-                Ok(Event::ProxySignInFailed { proxy, scheme }) => return (proxy, scheme),
-                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                Err(closed) => panic!("the event stream ended: {closed}"),
-            }
-        }
-    })
-    .await
-    .expect("the sign-in failure never reached the event stream");
-    failures.push(first);
-    let _ = tokio::time::timeout(Duration::from_millis(500), async {
-        while let Ok(event) = events.recv().await {
-            if let Event::ProxySignInFailed { proxy, scheme } = event {
-                failures.push((proxy, scheme));
-            }
-        }
-    })
+    let sign_in_failure = |event| match event {
+        Event::ProxySignInFailed { proxy, scheme } => Some((proxy, scheme)),
+        _ => None,
+    };
+    let first = next_event_matching(
+        "the sign-in failure on the event stream",
+        Duration::from_secs(10),
+        &mut events,
+        sign_in_failure,
+    )
+    .await;
+    let failures = vec![first];
+    no_event_matching(
+        "a second sign-in failure in the same episode",
+        Duration::from_millis(500),
+        &mut events,
+        sign_in_failure,
+    )
     .await;
     assert_eq!(
         failures,
@@ -6892,7 +7170,7 @@ async fn a_saved_shell_init_reaches_a_running_workspace_read_only_and_through_a_
             Duration::from_secs(20),
         )
         .await;
-    eventually("the folder holds the saved text", || {
+    eventually("the folder holds the saved text", APPLY, || {
         std::fs::read_to_string(shell_init_folder(&rig, "acme").join("init.sh")).ok()
             == Some("export EDITOR=vim\n".to_owned())
     })
@@ -6912,7 +7190,7 @@ async fn a_saved_shell_init_reaches_a_running_workspace_read_only_and_through_a_
             .status,
         204
     );
-    eventually("the folder is empty again", || {
+    eventually("the folder is empty again", APPLY, || {
         std::fs::read_to_string(shell_init_folder(&rig, "acme").join("init.sh")).ok()
             == Some(String::new())
     })
@@ -7035,7 +7313,7 @@ async fn a_start_that_finds_the_shell_init_changed_from_inside_puts_it_back_and_
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
     put_shell_init(&api, "acme", "export A=1\n").await;
-    eventually("published", || {
+    eventually("published", APPLY, || {
         std::fs::read_to_string(shell_init_folder(&rig, "acme").join("init.sh")).ok()
             == Some("export A=1\n".to_owned())
     })
@@ -7948,18 +8226,10 @@ async fn agent_says(
 }
 
 async fn wait_for_problem(host: &Host<FakeRuntime>, key: &str) -> puddle_types::Problem {
-    for _ in 0..500 {
-        if let Some(p) = host.problems().list().into_iter().find(|p| p.key == key) {
-            return p;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    // It never came: fail here.
-    host.problems()
-        .list()
-        .into_iter()
-        .find(|p| p.key == key)
-        .unwrap()
+    eventually(&format!("the problem {key}"), APPLY, || {
+        host.problems().list().into_iter().find(|p| p.key == key)
+    })
+    .await
 }
 
 #[tokio::test(flavor = "multi_thread")]

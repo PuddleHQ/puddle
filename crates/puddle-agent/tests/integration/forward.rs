@@ -4,13 +4,13 @@
 //! "the guest" (this machine's loopback), and the bytes go through both ways.
 #![cfg(unix)]
 #![expect(
-    clippy::panic,
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
 
 use crate::common;
 
+use puddle_test_kit::eventually;
 use std::fmt::Write as _;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -51,15 +51,7 @@ struct Rig {
     _dir: common::TempDir,
 }
 
-async fn until<T>(mut look: impl FnMut() -> Option<T>) -> T {
-    for _ in 0..600 {
-        if let Some(found) = look() {
-            return found;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("not seen in time");
-}
+const WAIT: Duration = Duration::from_secs(6);
 
 async fn rig(tag: &str) -> Rig {
     let dir = common::TempDir::new(tag);
@@ -107,7 +99,10 @@ async fn rig(tag: &str) -> Rig {
 
 impl Rig {
     async fn link(&self) -> GuestLink {
-        until(|| self.told.link.lock().unwrap().clone()).await
+        eventually("the agent's link", WAIT, || {
+            self.told.link.lock().unwrap().clone()
+        })
+        .await
     }
 
     /// Writes the kernel's socket table with a wildcard listener on each of `ports`.
@@ -228,12 +223,20 @@ async fn a_guest_server_that_resets_the_connection_resets_the_forward() {
 async fn the_agent_reports_the_listening_ports_at_start_and_on_every_change() {
     let rig = rig("ports").await;
     rig.listening(&[]);
-    until(|| rig.told.ports.lock().unwrap().last().cloned()).await;
+    eventually("the first ports report", WAIT, || {
+        rig.told.ports.lock().unwrap().last().cloned()
+    })
+    .await;
     rig.listening(&[8080, 3000]);
-    until(|| (rig.told.ports.lock().unwrap().last() == Some(&vec![3000, 8080])).then_some(()))
-        .await;
+    eventually("the report of ports 3000 and 8080", WAIT, || {
+        rig.told.ports.lock().unwrap().last() == Some(&vec![3000, 8080])
+    })
+    .await;
     // The agent's own proxy port is never listed, even when the table has it.
     let own = rig.agent.local_addr().port();
     rig.listening(&[own, 5000]);
-    until(|| (rig.told.ports.lock().unwrap().last() == Some(&vec![5000])).then_some(())).await;
+    eventually("the report of port 5000 only", WAIT, || {
+        rig.told.ports.lock().unwrap().last() == Some(&vec![5000])
+    })
+    .await;
 }

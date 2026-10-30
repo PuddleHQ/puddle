@@ -37,5 +37,5 @@ pub mod windows;
 
 pub use editor::{Duplex, Editor, Flavour, Guests, Io, PortsGuests, Target, Unreachable};
 pub use keys::{FileHalves, ServerHalves};
-pub use server::{Front, MAX_CONNECTIONS};
+pub use server::{Front, MAX_CONNECTIONS, origin_of};
 pub use windows::Windows;

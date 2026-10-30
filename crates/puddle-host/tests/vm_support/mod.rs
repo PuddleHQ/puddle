@@ -81,10 +81,11 @@ impl RuntimeFactory for HarnessFactory {
     }
 }
 
-/// The host's resolver for a test with fake sites: their names do not exist here (only the fake
-/// company proxy knows them), and every other name goes to the system resolver. Without this the
-/// proxy asks the machine's real DNS about the fake names on every connect, and a runner whose
-/// resolver stalls for a few seconds stalls every connect with it.
+/// The host's resolver for a fake site that has a real name (`github.com`): the name does not
+/// exist here (only the fake company proxy knows it), and every other name goes to the system
+/// resolver. Without this the proxy asks the machine's real DNS about the fake site on every
+/// connect, and a runner whose resolver stalls for a few seconds stalls every connect with it.
+/// A fake site under `.invalid` needs none of this: the proxy never looks that name up.
 struct FakeNames {
     names: Vec<String>,
 }
@@ -111,16 +112,21 @@ impl Resolver for FakeNames {
     }
 }
 
-/// `options` with `names` as fake sites (see [`FakeNames`]): the host never asks the real DNS
-/// about them. [`web_internet`] does this for its names; a test that builds its own fake
-/// internet calls it with its own.
+/// `options` with the names in `names` that have a real name (`github.com`) as fake sites (see
+/// [`FakeNames`]): the host never asks the real DNS about them. A name under `.invalid` is left
+/// out, because the proxy never looks it up. [`web_internet`] does this for its names.
 pub(crate) fn with_fake_names<'a>(
     mut options: HostOptions,
     names: impl IntoIterator<Item = &'a str>,
 ) -> HostOptions {
-    options.resolver = Some(Arc::new(FakeNames {
-        names: names.into_iter().map(str::to_owned).collect(),
-    }));
+    let real_names: Vec<String> = names
+        .into_iter()
+        .filter(|n| !n.to_ascii_lowercase().ends_with(".invalid"))
+        .map(str::to_owned)
+        .collect();
+    if !real_names.is_empty() {
+        options.resolver = Some(Arc::new(FakeNames { names: real_names }));
+    }
     options
 }
 
@@ -168,7 +174,9 @@ pub(crate) struct WebInternet {
     pub(crate) platform: HarnessPlatform,
 }
 
-/// Starts the fake website for `names` and the company proxy that holds them.
+/// Starts the fake website for `names` and the company proxy that holds them. A name that is not
+/// a real service's takes the `.invalid` zone, which the proxy answers "no such name" without a
+/// lookup (RFC 6761); a real service's name (`github.com`) is made unresolvable by [`FakeNames`].
 pub(crate) async fn web_internet(
     names: &[&str],
     web_options: WebOptions,

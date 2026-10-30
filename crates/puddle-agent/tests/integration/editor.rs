@@ -8,43 +8,40 @@
     reason = "helpers outside #[test] fns run only in tests"
 )]
 
+use puddle_test_kit::eventually;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use puddle_agent::config::Target;
 use puddle_agent::editor::EditorConfig;
 use puddle_agent::{Agent, Config};
 use puddle_agent_proto::editor::EditorServer;
 
+use crate::common::ReservedPort;
+
 const WAIT: Duration = Duration::from_secs(20);
 
 /// Records its arguments, its `PASSWORD` and the number of `VSCODE_` variables it was started
-/// with in `OUT/<start number>.*` (`OUT` is filled in), then waits to be killed.
+/// with in `OUT/<start number>.*` (`OUT` is filled in), then waits to be killed. The pid file
+/// comes last and appears whole (a rename), so a test that sees it may read the others and it.
 const FAKE: &str = r#"#!/bin/sh
 n=1
 while [ -e "OUT/$n.pid" ]; do n=$((n + 1)); done
 printf '%s\n' "$@" >"OUT/$n.args"
 printf '%s' "$PASSWORD" >"OUT/$n.password"
 env | grep -c '^VSCODE_' >"OUT/$n.vscode" || true
-echo $$ >"OUT/$n.pid"
+echo $$ >"OUT/$n.pid.tmp"
+mv "OUT/$n.pid.tmp" "OUT/$n.pid"
 exec sleep 600
 "#;
 
 struct Fixture {
     _dir: tempfile::TempDir,
+    _port: ReservedPort,
     out: PathBuf,
     config: Config,
     password_file: PathBuf,
-}
-
-/// A port nothing listens on now.
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
 }
 
 fn fixture() -> Fixture {
@@ -62,7 +59,8 @@ fn fixture() -> Fixture {
         120,
     );
     server.dir = release.to_string_lossy().into_owned();
-    server.port = free_port();
+    let reserved = ReservedPort::new();
+    server.port = reserved.port();
     let password_file = dir.path().join("run/editor-password");
     let config = Config {
         listen: "127.0.0.1:0".parse().unwrap(),
@@ -77,17 +75,10 @@ fn fixture() -> Fixture {
     };
     Fixture {
         _dir: dir,
+        _port: reserved,
         out,
         config,
         password_file,
-    }
-}
-
-async fn until(what: &str, mut ready: impl FnMut() -> bool) {
-    let deadline = Instant::now() + WAIT;
-    while !ready() {
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
 
@@ -107,7 +98,7 @@ fn kill(pid: &str) {
 async fn the_agent_starts_the_server_with_a_password_only_the_server_and_a_private_file_hold() {
     let f = fixture();
     let _agent = Agent::start(f.config.clone()).await.unwrap();
-    until("the first start", || f.out.join("1.pid").exists()).await;
+    eventually("the first start", WAIT, || f.out.join("1.pid").exists()).await;
 
     let server = &f.config.editor.as_ref().unwrap().server;
     let args = read(&f.out, "1.args");
@@ -140,10 +131,10 @@ async fn the_agent_starts_the_server_with_a_password_only_the_server_and_a_priva
 async fn a_server_that_dies_is_started_again_with_the_same_password() {
     let f = fixture();
     let _agent = Agent::start(f.config.clone()).await.unwrap();
-    until("the first start", || f.out.join("1.pid").exists()).await;
+    eventually("the first start", WAIT, || f.out.join("1.pid").exists()).await;
     let first = read(&f.out, "1.password");
     kill(&read(&f.out, "1.pid"));
-    until("the second start", || f.out.join("2.pid").exists()).await;
+    eventually("the second start", WAIT, || f.out.join("2.pid").exists()).await;
     // A window signed in with the first password stays signed in.
     assert_eq!(read(&f.out, "2.password"), first);
     assert_eq!(std::fs::read_to_string(&f.password_file).unwrap(), first);
@@ -160,7 +151,7 @@ async fn a_restarted_server_opens_the_multi_root_file_that_an_attach_wrote_meanw
         .with_workspace_file(file.to_string_lossy());
     let folder = editor.server.folder.clone();
     let _agent = Agent::start(f.config.clone()).await.unwrap();
-    until("the first start", || f.out.join("1.pid").exists()).await;
+    eventually("the first start", WAIT, || f.out.join("1.pid").exists()).await;
     // Before any attach there is no file: the folder opens.
     assert!(read(&f.out, "1.args").trim_end().ends_with(&folder));
     std::fs::create_dir_all(&folder).unwrap();
@@ -170,7 +161,7 @@ async fn a_restarted_server_opens_the_multi_root_file_that_an_attach_wrote_meanw
     )
     .unwrap();
     kill(&read(&f.out, "1.pid"));
-    until("the second start", || f.out.join("2.pid").exists()).await;
+    eventually("the second start", WAIT, || f.out.join("2.pid").exists()).await;
     let args = read(&f.out, "2.args");
     assert!(
         args.trim_end().ends_with(&*file.to_string_lossy()),
@@ -188,7 +179,7 @@ async fn a_new_agent_leaves_a_running_server_alone_and_takes_over_when_it_is_gon
     occupant.set_nonblocking(true).unwrap();
     let _agent = Agent::start(f.config.clone()).await.unwrap();
     // The agent's own look at the port is the signal to wait for.
-    until("the agent to look at the port", || {
+    eventually("the agent to look at the port", WAIT, || {
         occupant.accept().is_ok()
     })
     .await;
@@ -200,7 +191,7 @@ async fn a_new_agent_leaves_a_running_server_alone_and_takes_over_when_it_is_gon
         "a second server must not start on a taken port"
     );
     drop(occupant);
-    until("the start once the port is free", || {
+    eventually("the start once the port is free", WAIT, || {
         f.out.join("1.pid").exists()
     })
     .await;

@@ -99,6 +99,10 @@ pub(crate) enum Prompts {
 
 /// A command with the environment every fixed invocation gets: no console window and, unless the
 /// user is present, no prompt of any kind.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the working folder only has to exist and be neutral; no file is made in it"
+)]
 pub(crate) fn command(program: &Path, prompts: Prompts) -> Command {
     let mut cmd = Command::new(program);
     cmd.current_dir(std::env::temp_dir())

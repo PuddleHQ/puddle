@@ -4,7 +4,7 @@
 //!
 //! The guest's proxy listener is played by a fixture in the guest on the agent's address
 //! (127.0.0.1:3128): it logs every request line and answers with a fixed response (or 502 to a
-//! CONNECT). Every probe targets a name under `.test`, which never resolves, so a tool that
+//! CONNECT). Every probe targets a name under `.invalid`, which never resolves, so a tool that
 //! ignores the config fails instead of reaching the fixture another way. The VM keeps msb's
 //! default network only for installing the tools first.
 //!
@@ -230,86 +230,86 @@ fn probes() -> Vec<Probe> {
     vec![
         probe(
             "curl http",
-            &["curl.fixture.test"],
-            "curl -sS -m 20 http://curl.fixture.test/a",
+            &["curl.fixture.invalid"],
+            "curl -sS -m 20 http://curl.fixture.invalid/a",
         ),
         probe(
             "curl https",
-            &["curl-tls.fixture.test"],
-            "curl -sS -m 20 https://curl-tls.fixture.test/a",
+            &["curl-tls.fixture.invalid"],
+            "curl -sS -m 20 https://curl-tls.fixture.invalid/a",
         ),
         probe(
             "wget http",
-            &["wget.fixture.test"],
-            "wget -q -O- -T 20 -t 1 http://wget.fixture.test/a",
+            &["wget.fixture.invalid"],
+            "wget -q -O- -T 20 -t 1 http://wget.fixture.invalid/a",
         ),
         probe(
             "wget https",
-            &["wget-tls.fixture.test"],
-            "wget -q -O- -T 20 -t 1 https://wget-tls.fixture.test/a",
+            &["wget-tls.fixture.invalid"],
+            "wget -q -O- -T 20 -t 1 https://wget-tls.fixture.invalid/a",
         ),
         probe(
             "git http",
-            &["git.fixture.test"],
-            "git ls-remote http://git.fixture.test/r.git",
+            &["git.fixture.invalid"],
+            "git ls-remote http://git.fixture.invalid/r.git",
         ),
         probe(
             "git https",
-            &["git-tls.fixture.test"],
-            "git ls-remote https://git-tls.fixture.test/r.git",
+            &["git-tls.fixture.invalid"],
+            "git ls-remote https://git-tls.fixture.invalid/r.git",
         ),
         probe(
             "apt http (file only)",
-            &["apt.fixture.test"],
-            &apt_update("deb http://apt.fixture.test/debian trixie main"),
+            &["apt.fixture.invalid"],
+            &apt_update("deb http://apt.fixture.invalid/debian trixie main"),
         ),
         probe(
             "apt https (file only)",
-            &["apt-tls.fixture.test"],
-            &apt_update("deb https://apt-tls.fixture.test/debian trixie main"),
+            &["apt-tls.fixture.invalid"],
+            &apt_update("deb https://apt-tls.fixture.invalid/debian trixie main"),
         ),
         probe(
             "npm http",
-            &["npm.fixture.test"],
-            "npm view left-pad --registry=http://npm.fixture.test/ --fetch-retries=0",
+            &["npm.fixture.invalid"],
+            "npm view left-pad --registry=http://npm.fixture.invalid/ --fetch-retries=0",
         ),
         probe(
             "npm https",
-            &["npm-tls.fixture.test"],
-            "npm view left-pad --registry=https://npm-tls.fixture.test/ --fetch-retries=0",
+            &["npm-tls.fixture.invalid"],
+            "npm view left-pad --registry=https://npm-tls.fixture.invalid/ --fetch-retries=0",
         ),
         probe(
             "pnpm http",
-            &["pnpm.fixture.test"],
+            &["pnpm.fixture.invalid"],
             &format!(
-                "{} && pnpm install --registry=http://pnpm.fixture.test/ --fetch-retries=0",
+                "{} && pnpm install --registry=http://pnpm.fixture.invalid/ --fetch-retries=0",
                 node_project("/tmp/pnpm-a", "")
             ),
         ),
         probe(
             "pnpm https",
-            &["pnpm-tls.fixture.test"],
+            &["pnpm-tls.fixture.invalid"],
             &format!(
-                "{} && pnpm install --registry=https://pnpm-tls.fixture.test/ --fetch-retries=0",
+                "{} && pnpm install --registry=https://pnpm-tls.fixture.invalid/ --fetch-retries=0",
                 node_project("/tmp/pnpm-b", "")
             ),
         ),
         probe(
             "yarn 1 http",
-            &["yarn.fixture.test"],
-            "cd /tmp && yarn info left-pad --registry http://yarn.fixture.test/ --non-interactive",
+            &["yarn.fixture.invalid"],
+            "cd /tmp && yarn info left-pad --registry http://yarn.fixture.invalid/ --non-interactive",
         ),
         probe(
             "yarn 1 https",
-            &["yarn-tls.fixture.test"],
-            "cd /tmp && yarn info left-pad --registry https://yarn-tls.fixture.test/ --non-interactive",
+            &["yarn-tls.fixture.invalid"],
+            "cd /tmp && yarn info left-pad --registry https://yarn-tls.fixture.invalid/ --non-interactive",
         ),
         probe(
             "yarn berry http",
-            &["berry.fixture.test"],
+            &["berry.fixture.invalid"],
             &format!(
-                "{} && touch yarn.lock && YARN_NPM_REGISTRY_SERVER=http://berry.fixture.test \
-             YARN_UNSAFE_HTTP_WHITELIST=berry.fixture.test YARN_ENABLE_IMMUTABLE_INSTALLS=false \
+                "{} && touch yarn.lock && YARN_NPM_REGISTRY_SERVER=http://berry.fixture.invalid \
+             YARN_UNSAFE_HTTP_WHITELIST=berry.fixture.invalid YARN_ENABLE_IMMUTABLE_INSTALLS=false \
              COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack yarn install",
                 node_project(
                     "/tmp/berry-a",
@@ -319,9 +319,9 @@ fn probes() -> Vec<Probe> {
         ),
         probe(
             "yarn berry https",
-            &["berry-tls.fixture.test"],
+            &["berry-tls.fixture.invalid"],
             &format!(
-                "{} && touch yarn.lock && YARN_NPM_REGISTRY_SERVER=https://berry-tls.fixture.test \
+                "{} && touch yarn.lock && YARN_NPM_REGISTRY_SERVER=https://berry-tls.fixture.invalid \
              YARN_ENABLE_IMMUTABLE_INSTALLS=false COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack yarn install",
                 node_project(
                     "/tmp/berry-b",
@@ -331,92 +331,92 @@ fn probes() -> Vec<Probe> {
         ),
         probe(
             "pip http",
-            &["pip.fixture.test"],
+            &["pip.fixture.invalid"],
             "python3 -m pip download --no-deps --retries 0 --timeout 20 -d /tmp/pipd \
-            --index-url http://pip.fixture.test/simple --trusted-host pip.fixture.test left-pad",
+            --index-url http://pip.fixture.invalid/simple --trusted-host pip.fixture.invalid left-pad",
         ),
         probe(
             "pip https",
-            &["pip-tls.fixture.test"],
+            &["pip-tls.fixture.invalid"],
             "python3 -m pip download --no-deps --retries 0 --timeout 20 -d /tmp/pipd \
-            --index-url https://pip-tls.fixture.test/simple left-pad",
+            --index-url https://pip-tls.fixture.invalid/simple left-pad",
         ),
         probe(
             "maven",
-            &["repo.maven.apache.org", "mvn-tls.fixture.test"],
-            &maven_project("/tmp/mvn-a", "https://mvn-tls.fixture.test/m2"),
+            &["repo.maven.apache.org", "mvn-tls.fixture.invalid"],
+            &maven_project("/tmp/mvn-a", "https://mvn-tls.fixture.invalid/m2"),
         ),
         probe(
             "maven (settings file only)",
-            &["repo.maven.apache.org", "mvn2-tls.fixture.test"],
+            &["repo.maven.apache.org", "mvn2-tls.fixture.invalid"],
             &format!(
                 "unset JAVA_TOOL_OPTIONS && {}",
-                maven_project("/tmp/mvn-b", "https://mvn2-tls.fixture.test/m2")
+                maven_project("/tmp/mvn-b", "https://mvn2-tls.fixture.invalid/m2")
             ),
         ),
         probe(
             "gradle",
-            &["gradle-tls.fixture.test"],
-            &gradle_project("/tmp/gradle-a", "https://gradle-tls.fixture.test/m2"),
+            &["gradle-tls.fixture.invalid"],
+            &gradle_project("/tmp/gradle-a", "https://gradle-tls.fixture.invalid/m2"),
         ),
         probe(
             "gradle (init script only)",
-            &["gradle2-tls.fixture.test"],
+            &["gradle2-tls.fixture.invalid"],
             &format!(
                 "unset JAVA_TOOL_OPTIONS && {}",
-                gradle_project("/tmp/gradle-b", "https://gradle2-tls.fixture.test/m2")
+                gradle_project("/tmp/gradle-b", "https://gradle2-tls.fixture.invalid/m2")
             ),
         ),
         probe(
             "node fetch http",
-            &["node.fixture.test"],
-            &node_fetch("http://node.fixture.test/a"),
+            &["node.fixture.invalid"],
+            &node_fetch("http://node.fixture.invalid/a"),
         ),
         probe(
             "node fetch https",
-            &["node-tls.fixture.test"],
-            &node_fetch("https://node-tls.fixture.test/a"),
+            &["node-tls.fixture.invalid"],
+            &node_fetch("https://node-tls.fixture.invalid/a"),
         ),
         probe(
             "java HttpURLConnection http",
-            &["java.fixture.test"],
-            "java /tmp/Fetch.java http://java.fixture.test/a url",
+            &["java.fixture.invalid"],
+            "java /tmp/Fetch.java http://java.fixture.invalid/a url",
         ),
         probe(
             "java HttpURLConnection https",
-            &["java-tls.fixture.test"],
-            "java /tmp/Fetch.java https://java-tls.fixture.test/a url",
+            &["java-tls.fixture.invalid"],
+            "java /tmp/Fetch.java https://java-tls.fixture.invalid/a url",
         ),
         probe(
             "java HttpClient https",
-            &["javahc-tls.fixture.test"],
-            "java /tmp/Fetch.java https://javahc-tls.fixture.test/a client",
+            &["javahc-tls.fixture.invalid"],
+            "java /tmp/Fetch.java https://javahc-tls.fixture.invalid/a client",
         ),
         // SSH is not supported yet: `ssh` runs the agent as its ProxyCommand (the drop-in), which
         // announces the SSH banner to the proxy and prints the refusal it gets back.
         probe_printing(
             "ssh refused with a message",
-            &["ssh.fixture.test:22 HTTP/1.1 host=ssh.fixture.test:22 protocol=ssh"],
-            "ssh -T -o StrictHostKeyChecking=no -o BatchMode=yes git@ssh.fixture.test true",
+            &["ssh.fixture.invalid:22 HTTP/1.1 host=ssh.fixture.invalid:22 protocol=ssh"],
+            "ssh -T -o StrictHostKeyChecking=no -o BatchMode=yes git@ssh.fixture.invalid true",
             "puddle: SSH is not supported yet",
         ),
         probe_printing(
             "git over ssh refused with a message",
-            &["ssh-git.fixture.test:22 HTTP/1.1 host=ssh-git.fixture.test:22 protocol=ssh"],
-            "git ls-remote git@ssh-git.fixture.test:owner/repo.git",
+            &["ssh-git.fixture.invalid:22 HTTP/1.1 host=ssh-git.fixture.invalid:22 protocol=ssh"],
+            "git ls-remote git@ssh-git.fixture.invalid:owner/repo.git",
             "puddle: SSH is not supported yet",
         ),
         probe(
             "sudo keeps the vars (curl)",
-            &["sudo.fixture.test"],
-            "sudo -u node curl -sS -m 20 http://sudo.fixture.test/a",
+            &["sudo.fixture.invalid"],
+            "sudo -u node curl -sS -m 20 http://sudo.fixture.invalid/a",
         ),
         probe(
             "sudo keeps the vars (node fetch)",
-            &["sudo-node.fixture.test"],
+            &["sudo-node.fixture.invalid"],
             &format!(
                 "sudo -u node {}",
-                node_fetch("https://sudo-node.fixture.test/a")
+                node_fetch("https://sudo-node.fixture.invalid/a")
             ),
         ),
     ]
@@ -498,7 +498,11 @@ async fn check_ssh_config_include(sb: &Sandbox, before: &str) {
     )
     .await;
     assert_eq!(again.trim(), "unchanged\nsame", "{again}");
-    let (_, proxy) = root_shell(sb, "ssh -G git@ssh.fixture.test | grep -i '^proxycommand'").await;
+    let (_, proxy) = root_shell(
+        sb,
+        "ssh -G git@ssh.fixture.invalid | grep -i '^proxycommand'",
+    )
+    .await;
     assert!(
         proxy.contains("connect"),
         "ssh does not read the drop-in: {proxy:?}"

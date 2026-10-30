@@ -290,7 +290,7 @@ mod tests {
     fn generator_failures_surface() {
         let g = NodeGenerator {
             dir: PathBuf::from("/nonexistent/puddle-openapi"),
-            work: std::env::temp_dir().join("xtask-openapi-test"),
+            work: std::path::absolute("xtask-openapi-test").unwrap(),
         };
         if g.available() {
             assert!(g.generate("{}").is_err());

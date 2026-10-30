@@ -311,7 +311,8 @@ mod unix {
     #[tokio::test]
     async fn the_mode_holds_under_a_permissive_umask_and_parent() {
         // A world-writable parent (like /tmp without the sticky bit) doesn't widen anything.
-        let parent = IpcRoot::new_in(&std::env::temp_dir()).unwrap();
+        let base = tempfile::tempdir().unwrap();
+        let parent = IpcRoot::new_in(base.path()).unwrap();
         std::fs::set_permissions(parent.dir(), std::fs::Permissions::from_mode(0o777)).unwrap();
         let root = IpcRoot::new_in(parent.dir()).unwrap();
         let listener = root.listen().unwrap();
@@ -346,9 +347,9 @@ mod unix {
     #[tokio::test]
     async fn too_long_a_parent_is_refused_with_the_limit() {
         // Deep enough that <parent>/puddle-<32>/<32>.sock passes the sun_path limit.
-        let mut parent = std::env::temp_dir();
-        let base = IpcRoot::new_in(&parent).unwrap();
-        parent = base.dir().join("d".repeat(60));
+        let tmp = tempfile::tempdir().unwrap();
+        let base = IpcRoot::new_in(tmp.path()).unwrap();
+        let parent = base.dir().join("d".repeat(60));
         std::fs::create_dir(&parent).unwrap();
         let root = IpcRoot::new_in(&parent).unwrap();
         let err = root.listen().unwrap_err();

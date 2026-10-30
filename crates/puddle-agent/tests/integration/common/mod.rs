@@ -20,6 +20,33 @@ use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+/// A loopback port that stays this test's until the value is dropped, for a config that must name
+/// its port before anything listens on it (the editor server's `--port`). The socket is bound and
+/// never listens, so connecting to the port is refused, as on a free one, while another process's
+/// port 0 or plain bind cannot take it. `SO_REUSEADDR` lets the test's own listener (the server
+/// that "answers") bind the same number and be dropped again, as many times as the test needs.
+pub struct ReservedPort {
+    _socket: tokio::net::TcpSocket,
+    port: u16,
+}
+
+impl ReservedPort {
+    pub fn new() -> Self {
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.set_reuseaddr(true).unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let port = socket.local_addr().unwrap().port();
+        Self {
+            _socket: socket,
+            port,
+        }
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+}
+
 pub struct ChanSink(pub mpsc::UnboundedSender<Event>);
 
 impl EventSink for ChanSink {
@@ -33,14 +60,13 @@ pub struct TempDir(pub PathBuf);
 
 impl TempDir {
     pub fn new(tag: &str) -> Self {
-        static N: AtomicUsize = AtomicUsize::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "pa-{tag}-{}-{}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        Self(dir)
+        Self(
+            tempfile::Builder::new()
+                .prefix(&format!("pa-{tag}-"))
+                .tempdir()
+                .unwrap()
+                .keep(),
+        )
     }
 }
 
@@ -59,6 +85,8 @@ pub struct Rig {
     pub events: mpsc::UnboundedReceiver<Event>,
     pub sink: Arc<dyn EventSink>,
     pub host: JoinHandle<()>,
+    /// How many sessions the current host still holds open (see [`start_counted_host`]).
+    sessions: Arc<AtomicUsize>,
     pub dir: TempDir,
 }
 
@@ -74,11 +102,24 @@ impl Rig {
     }
 
     /// Stops the host (every session to the agent dies) and starts a fresh one on the same path.
+    ///
+    /// Returns once the old host's sessions are closed, not only told to stop: an aborted task
+    /// keeps its socket until the runtime next runs it, and a connection the agent accepts in
+    /// that gap opens its stream on a session that is about to die and gets an empty answer.
     pub async fn restart_host(&mut self) {
         self.host.abort();
         let _ = (&mut self.host).await;
+        let closed = tokio::time::timeout(Duration::from_secs(10), async {
+            while self.sessions.load(Ordering::SeqCst) > 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        assert!(closed.is_ok(), "the old host's sessions did not close");
         std::fs::remove_file(self.socket()).unwrap();
-        self.host = start_host(&self.socket(), Arc::clone(&self.sink));
+        let (host, sessions) = start_counted_host(&self.socket(), Arc::clone(&self.sink));
+        self.host = host;
+        self.sessions = sessions;
     }
 }
 
@@ -103,14 +144,56 @@ fn enough_open_files() {
 }
 
 pub fn start_host(socket: &Path, sink: Arc<dyn EventSink>) -> JoinHandle<()> {
+    start_counted_host(socket, sink).0
+}
+
+/// One session of a host: counted while its task exists, and cut at both ends when that ends.
+///
+/// Dropping a socket only closes this process's descriptor. Tests that share one process (plain
+/// `cargo test`) start child processes meanwhile, and a child between `fork` and `exec` holds a
+/// copy of every descriptor, so the peer would see no end of stream until the child execs. The
+/// `shutdown` ends the connection for every copy at once.
+struct Open {
+    count: Arc<AtomicUsize>,
+    socket: std::os::unix::net::UnixStream,
+}
+
+impl Open {
+    fn new(count: &Arc<AtomicUsize>, socket: std::os::unix::net::UnixStream) -> Self {
+        count.fetch_add(1, Ordering::SeqCst);
+        Self {
+            count: Arc::clone(count),
+            socket,
+        }
+    }
+}
+
+impl Drop for Open {
+    fn drop(&mut self) {
+        let _ = self.socket.shutdown(std::net::Shutdown::Both);
+        self.count.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// [`start_host`], and how many of its sessions are still open.
+fn start_counted_host(
+    socket: &Path,
+    sink: Arc<dyn EventSink>,
+) -> (JoinHandle<()>, Arc<AtomicUsize>) {
     enough_open_files();
     let listener = UnixListener::bind(socket).unwrap();
-    tokio::spawn(async move {
+    let open = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&open);
+    let host = tokio::spawn(async move {
         let mut sessions = tokio::task::JoinSet::new();
         loop {
             let (conn, _) = listener.accept().await.unwrap();
             let sink = Arc::clone(&sink);
+            let conn = conn.into_std().unwrap();
+            let open = Open::new(&counted, conn.try_clone().unwrap());
+            let conn = tokio::net::UnixStream::from_std(conn).unwrap();
             sessions.spawn(async move {
+                let _open = open;
                 // A session ends with an error when the agent side goes away mid-frame; fine here.
                 let _ = serve_session(
                     conn,
@@ -122,7 +205,8 @@ pub fn start_host(socket: &Path, sink: Arc<dyn EventSink>) -> JoinHandle<()> {
                 .await;
             });
         }
-    })
+    });
+    (host, open)
 }
 
 /// Starts a host on a Unix socket and an agent on 127.0.0.1:0 pointed at it.
@@ -152,7 +236,7 @@ pub async fn rig_with(
     let socket = dir.0.join("route.sock");
     let (tx, events) = mpsc::unbounded_channel();
     let sink: Arc<dyn EventSink> = Arc::new(ChanSink(tx));
-    let host = start_host(&socket, Arc::clone(&sink));
+    let (host, sessions) = start_counted_host(&socket, Arc::clone(&sink));
     let mut config = Config {
         listen: "127.0.0.1:0".parse().unwrap(),
         target: Target::Unix(socket),
@@ -166,6 +250,7 @@ pub async fn rig_with(
         events,
         sink,
         host,
+        sessions,
         dir,
     }
 }
@@ -175,4 +260,28 @@ pub async fn next_event(
     within: Duration,
 ) -> Option<Event> {
     tokio::time::timeout(within, rx.recv()).await.ok().flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ReservedPort;
+
+    #[tokio::test]
+    async fn a_reserved_port_refuses_connections_and_other_binds_but_takes_a_reusing_listener() {
+        let reserved = ReservedPort::new();
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], reserved.port()));
+        assert!(
+            tokio::net::TcpStream::connect(addr).await.is_err(),
+            "nothing listens on a reserved port"
+        );
+        // Another process picking by number, without SO_REUSEADDR, is turned away: the collision
+        // a dropped listener leaves open.
+        let squatter = tokio::net::TcpSocket::new_v4().unwrap();
+        assert!(squatter.bind(addr).is_err(), "a plain bind took the port");
+        // The test's own stand-in server binds it, answers, and goes away again.
+        let listener = std::net::TcpListener::bind(addr).unwrap();
+        assert!(tokio::net::TcpStream::connect(addr).await.is_ok());
+        drop(listener);
+        assert!(std::net::TcpListener::bind(addr).is_ok());
+    }
 }

@@ -466,8 +466,8 @@ mod tests {
     #[test]
     fn the_command_runs_the_probe_with_a_private_home() {
         let layout = RuntimeLayout::new(
-            std::env::temp_dir().join("rt"),
-            std::env::temp_dir().join("h"),
+            std::path::absolute("rt").unwrap(),
+            std::path::absolute("h").unwrap(),
         )
         .unwrap();
         let cmd = command(&layout, Path::new("/r"));

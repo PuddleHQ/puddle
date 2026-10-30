@@ -214,11 +214,13 @@ mod tests {
 
     impl Dir {
         fn new(tag: &str) -> Self {
-            let path = std::env::temp_dir()
-                .join(format!("puddle-msb-config-{}-{tag}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&path);
-            std::fs::create_dir_all(&path).unwrap();
-            Self(path)
+            Self(
+                tempfile::Builder::new()
+                    .prefix(&format!("puddle-msb-config-{tag}-"))
+                    .tempdir()
+                    .unwrap()
+                    .keep(),
+            )
         }
     }
 

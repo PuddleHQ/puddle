@@ -137,6 +137,9 @@ fn response(status: u16, headers: &[(&str, String)]) -> http::Response<()> {
     builder.body(()).unwrap()
 }
 
+// flake-ok: runs in the fake registry, where giving up at `deadline` is a decision (cancel the held layer,
+// or send the last byte anyway), not a test failure, so a kit wait that panics cannot replace it; it is
+// bounded by `deadline`.
 async fn wait_until(deadline: Duration, done: impl Fn() -> bool) -> bool {
     let start = Instant::now();
     while !done() {

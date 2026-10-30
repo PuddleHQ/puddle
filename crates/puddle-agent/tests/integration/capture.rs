@@ -28,6 +28,7 @@ use puddle_agent::config::{CaptureConfig, DnsConfig, Target};
 use puddle_agent::{Agent, Config};
 use puddle_agent_proto::host::{GuestStream, HostConfig, StreamHandler, UdpRefusal, serve_session};
 use puddle_agent_proto::resolve::{RecordType, ResolveAnswer, ResolveQuery, StandInReason};
+use puddle_test_kit::eventually_async;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, UnixListener};
 use tokio::process::Command;
@@ -335,37 +336,12 @@ fn config(socket: &Path, table: &Path) -> Config {
     }
 }
 
-/// Waits until `check` holds.
-async fn until<F: Future<Output = bool>>(what: &str, check: impl FnMut() -> F) {
-    until_seeing(what, String::new, check).await;
-}
-
-/// Waits until `check` holds; when it times out the panic also prints `seen()`, so a CI log shows
-/// what the host was told instead of only that it was not told the right thing.
-async fn until_seeing<F: Future<Output = bool>>(
-    what: &str,
-    seen: impl Fn() -> String,
-    mut check: impl FnMut() -> F,
-) {
-    let deadline = Instant::now() + Duration::from_secs(15);
-    while Instant::now() < deadline {
-        if check().await {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    let seen = seen();
-    let saw = if seen.is_empty() {
-        String::new()
-    } else {
-        format!("; saw {seen}")
-    };
-    panic!("timed out waiting for {what}{saw}");
-}
+/// How long a capture test waits for the host or the table to settle.
+const WAIT: Duration = Duration::from_secs(15);
 
 /// Capture is ready when the table is in and the stub answers.
 async fn ready() {
-    until("the capture table and the stub", || async {
+    eventually_async("the capture table and the stub", WAIT, || async {
         let (_, text) = run(
             "dig",
             &["+short", "+time=1", "+tries=1", "@198.18.0.1", "ready.test"],
@@ -594,7 +570,7 @@ except OSError as e:
     let (success, _) = bash("exec 3<>/dev/tcp/2001:db8::9/443").await;
     assert!(!success);
 
-    until("the host to hear about the refused UDP", || async {
+    eventually_async("the host to hear about the refused UDP", WAIT, || async {
         let udp = w.seen.udp.lock().unwrap();
         udp.iter()
             .any(|u| u.address == "192.0.2.9" && u.port == 9999 && u.count >= 1)
@@ -635,7 +611,7 @@ for port in range(20000, 20300):
     // The first datagram of a destination is never lost to the rate limit's fairness: a later
     // quiet destination still gets through.
     ok("python3", &["-c", probe, "192.0.2.77", "7777"]).await;
-    until("a later destination's report", || async {
+    eventually_async("a later destination's report", WAIT, || async {
         w.seen
             .udp
             .lock()
@@ -668,7 +644,7 @@ async fn a_guest_that_deletes_or_edits_the_table_is_restored_and_reported() {
     }
 
     ok("nft", &["delete", "table", "inet", "puddle"]).await;
-    until("the table to come back", || async {
+    eventually_async("the table to come back", WAIT, || async {
         run(
             "nft",
             &["list", "table", "inet", "puddle"],
@@ -678,20 +654,29 @@ async fn a_guest_that_deletes_or_edits_the_table_is_restored_and_reported() {
         .0
     })
     .await;
-    until_seeing(
+    eventually_async(
         "the host to be told the table was deleted",
-        || format!("tampered = {:?}", w.seen.tampered.lock().unwrap()),
-        || async { w.seen.tampered.lock().unwrap().contains(&true) },
+        WAIT,
+        || async {
+            let told = w.seen.tampered.lock().unwrap().clone();
+            told.contains(&true)
+                .then_some(())
+                .ok_or(format!("tampered = {told:?}"))
+        },
     )
     .await;
 
     ok("nft", &["flush", "chain", "inet", "puddle", "filter_out"]).await;
-    until_seeing(
+    eventually_async(
         "the chain to be refilled and reported as edited",
-        || format!("tampered = {:?}", w.seen.tampered.lock().unwrap()),
+        WAIT,
         || async {
-            w.seen.tampered.lock().unwrap().contains(&false)
-                && listing().await.contains("filter_out")
+            let told = w.seen.tampered.lock().unwrap().clone();
+            if told.contains(&false) && listing().await.contains("filter_out") {
+                Ok(())
+            } else {
+                Err(format!("tampered = {told:?}"))
+            }
         },
     )
     .await;
@@ -770,7 +755,7 @@ async fn the_rules_outlive_the_agent_and_come_back_with_the_same_stand_ins() {
     );
 
     let mut agent = start();
-    until("the restarted agent to answer", || async {
+    eventually_async("the restarted agent to answer", WAIT, || async {
         run(
             "dig",
             &["+short", "+time=1", "+tries=1", "@198.18.0.1", "db.test"],
@@ -891,7 +876,7 @@ async fn capture_leaves_dockers_own_tables_alone_whichever_starts_first() {
     // And capture rewritten (as after a restart) leaves theirs as they were.
     let theirs_now = theirs().await;
     ok("nft", &["delete", "table", "inet", "puddle"]).await;
-    until("the table to come back", || async {
+    eventually_async("the table to come back", WAIT, || async {
         run(
             "nft",
             &["list", "table", "inet", "puddle"],
@@ -969,7 +954,7 @@ async fn a_default_route_that_moves_gets_the_rules_rewritten_for_the_new_interfa
     ] {
         ok("ip", args).await;
     }
-    until("the rules to follow the default route", || async {
+    eventually_async("the rules to follow the default route", WAIT, || async {
         let (_, text) = run(
             "nft",
             &["list", "table", "inet", "puddle"],
@@ -1037,7 +1022,7 @@ async fn with_the_host_down_a_captured_connection_is_reset_not_hung() {
     let _agent = Agent::start(config(&dir.0.join("nobody.sock"), &dir.0.join("table")))
         .await
         .unwrap();
-    until("the capture table", || async {
+    eventually_async("the capture table", WAIT, || async {
         puddle_agent::capture::nft::read().is_ok_and(|t| t.is_some())
     })
     .await;

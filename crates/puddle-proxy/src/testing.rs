@@ -219,6 +219,9 @@ impl CollectingConnectionLog {
 
     /// Waits up to `limit` until at least `count` events are in, and returns them all. A
     /// connection is recorded when it ends, after the guest has its answer.
+    // flake-ok: part of the `testing` feature's API, which puddle-proxy offers to other crates' tests, so
+    // it cannot use the kit (a dev-dependency only); it hands back what arrived at `limit` and each
+    // caller asserts on the events it gets back.
     pub async fn wait_for(&self, count: usize, limit: Duration) -> Vec<ConnectionEvent> {
         let deadline = tokio::time::Instant::now() + limit;
         loop {

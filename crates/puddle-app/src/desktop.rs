@@ -595,6 +595,7 @@ mod behaviour_tests {
     use std::sync::Mutex;
     use std::sync::atomic::AtomicUsize;
 
+    use puddle_test_kit::eventually_blocking;
     use puddle_types::{EventSink, PendingEnd, PendingSummary, WorkspaceName, WorkspaceStatus};
     use serde_json::json;
     use tauri::test::{MockRuntime, mock_builder};
@@ -705,7 +706,9 @@ mod behaviour_tests {
     /// Emits `event` and waits until `done` holds (the loop runs on its own task).
     fn emit_until(rig: &Rig, event: Event, done: impl Fn(&Recorded) -> bool) {
         rig.backend.events().emit(event);
-        wait_for("the event had no effect", || done(&rig.recorded));
+        eventually_blocking("the event had no effect", Duration::from_secs(5), || {
+            done(&rig.recorded)
+        });
     }
 
     #[test]
@@ -777,9 +780,11 @@ mod behaviour_tests {
         rig.backend.events().emit(event);
         let probe = opened(10_000 + i64::try_from(before).unwrap());
         rig.backend.events().emit(probe);
-        wait_for("the loop did not get past the event", || {
-            rig.recorded.badges().len() > before
-        });
+        eventually_blocking(
+            "the loop did not get past the event",
+            Duration::from_secs(5),
+            || rig.recorded.badges().len() > before,
+        );
     }
 
     #[test]
@@ -870,15 +875,6 @@ mod behaviour_tests {
         tauri::async_runtime::spawn(state.run(stream));
     }
 
-    fn wait_for(what: &str, done: impl Fn() -> bool) {
-        let mut waited = 0;
-        while !done() && waited < 200 {
-            std::thread::sleep(Duration::from_millis(25));
-            waited += 1;
-        }
-        assert!(done(), "{what}: not within 5 s");
-    }
-
     #[test]
     fn events_the_stream_dropped_are_made_up_by_counting_the_store_again() {
         let rig = rig(TrayState::Shown);
@@ -901,7 +897,9 @@ mod behaviour_tests {
         };
         tauri::async_runtime::spawn(state.run(stream));
         // The rig's own start-up showed (1, true); the recount shows it again after the loss.
-        wait_for("the recount", || rig.recorded.badges().len() == 2);
+        eventually_blocking("the recount", Duration::from_secs(5), || {
+            rig.recorded.badges().len() == 2
+        });
         assert_eq!(rig.recorded.badges().last(), Some(&(1, true)));
     }
 
@@ -917,7 +915,9 @@ mod behaviour_tests {
         );
         hub.emit(opened(910));
         hub.emit(opened(911));
-        wait_for("the summary", || rig.recorded.notices().len() == 2);
+        eventually_blocking("the summary", Duration::from_secs(5), || {
+            rig.recorded.notices().len() == 2
+        });
         let notices = rig.recorded.notices();
         assert_eq!(notices[0].0.request, Some(910));
         assert_eq!(notices[1].0.title, "demo is asking for 1 more");
@@ -930,7 +930,7 @@ mod behaviour_tests {
         let hub = Arc::new(puddle_api::EventHub::default());
         start_loop(&rig, &hub, Notifier::default(), Duration::from_millis(50));
         save(&rig, &json!({"badge": false}));
-        wait_for("the badge going off", || {
+        eventually_blocking("the badge going off", Duration::from_secs(5), || {
             rig.recorded.badges().last() == Some(&(1, false))
         });
     }
@@ -957,12 +957,12 @@ mod behaviour_tests {
         let hub = Arc::new(puddle_api::EventHub::default());
         start_loop(&rig, &hub, Notifier::default(), Duration::from_millis(50));
         save(&rig, &json!({"app_icon": "duck_night"}));
-        wait_for("the night duck", || {
+        eventually_blocking("the night duck", Duration::from_secs(5), || {
             rig.recorded.icons().last() == Some(&drawn(DuckNight))
         });
         // An event reads the settings too, so the next choice shows on it, not only on the poll.
         save(&rig, &json!({"app_icon": "duck_sun"}));
-        wait_for("the sun duck", || {
+        eventually_blocking("the sun duck", Duration::from_secs(5), || {
             rig.recorded.icons().last() == Some(&drawn(DuckSun))
         });
     }
@@ -982,18 +982,18 @@ mod behaviour_tests {
         let settings = rig.backend.settings();
         settings.save_app_icon(&red.to_png().unwrap()).unwrap();
         save(&rig, &json!({"app_icon": "custom"}));
-        wait_for("the red image", || {
+        eventually_blocking("the red image", Duration::from_secs(5), || {
             rig.recorded.icons().last() == Some(&red)
         });
 
         settings.save_app_icon(&blue.to_png().unwrap()).unwrap();
-        wait_for("the blue image", || {
+        eventually_blocking("the blue image", Duration::from_secs(5), || {
             rig.recorded.icons().last() == Some(&blue)
         });
 
         // The file went away behind our back: the window keeps an icon.
         settings.delete_app_icon().unwrap();
-        wait_for("the duck again", || {
+        eventually_blocking("the duck again", Duration::from_secs(5), || {
             rig.recorded.icons().last() == Some(&drawn(Duck))
         });
     }
@@ -1005,12 +1005,16 @@ mod behaviour_tests {
         let hub = Arc::new(puddle_api::EventHub::default());
         start_loop(&rig, &hub, Notifier::default(), Duration::from_secs(60));
         hub.emit(opened(920));
-        wait_for("the first notice", || rig.recorded.notices().len() == 1);
+        eventually_blocking("the first notice", Duration::from_secs(5), || {
+            rig.recorded.notices().len() == 1
+        });
         assert!(rig.recorded.notices()[0].1, "sound is on");
         // Now the document is damaged: the next event is still handled, with the last good ones.
         save(&rig, &json!({"close_behaviour": "explode"}));
         hub.emit(Event::oom_kill(workspace(), 3, "node"));
-        wait_for("the second notice", || rig.recorded.notices().len() == 2);
+        eventually_blocking("the second notice", Duration::from_secs(5), || {
+            rig.recorded.notices().len() == 2
+        });
         assert!(rig.recorded.notices()[1].1, "the sound switch stayed on");
     }
 

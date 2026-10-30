@@ -74,6 +74,7 @@ puddle-certs = { workspace = true }
 puddle-compute = { workspace = true, features = ["fake"] }
 puddle-runtime = { workspace = true }
 puddle-secrets = { workspace = true }
+puddle-test-kit = { workspace = true }
 puddle-upstream = { workspace = true, features = ["testing"] }
 tauri = { workspace = true, features = ["test"] }
 tempfile = { workspace = true }

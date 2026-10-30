@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use puddle_proxy::ProxyConfig;
+use puddle_test_kit::eventually;
 use puddle_types::{ConnectionEvent, ConnectionReason};
 use terminate_support::h2_rig::{
     H2Server, Handler, Script, WsServer, ack_server_settings, frame, frames_until_end, full,
@@ -70,14 +71,6 @@ fn open_body_reply()
     .boxed_unsync()
 }
 
-async fn until(what: &str, mut done: impl FnMut() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !done() {
-        assert!(Instant::now() < deadline, "gave up waiting for {what}");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
-
 /// A timeout for a hang inside a [`paused`] window: virtual, so it costs nothing, and far longer
 /// than any limit under test, so a jump of the clock cannot reach it before the limit does.
 const FAR: Duration = Duration::from_secs(600);
@@ -131,9 +124,11 @@ async fn a_stream_over_the_workspace_budget_is_refused_and_a_finished_one_gives_
             let _ = sender.send_request(request).await;
         }));
     }
-    until("both streams to reach the server", || {
-        held.load(Ordering::SeqCst) == 2
-    })
+    eventually(
+        "both streams to reach the server",
+        Duration::from_secs(10),
+        || held.load(Ordering::SeqCst) == 2,
+    )
     .await;
     let refused = client.get("bound.test", "/other").await;
     assert_eq!(refused.status, 503);
@@ -204,9 +199,11 @@ async fn sockets_of_the_http11_pool_count_against_the_workspace_connection_limit
         }));
         // One at a time, so each finds the others' sockets busy and wants one of its own.
         let wanted = slow.len();
-        until("the server to see the request", || {
-            server.recorded().len() == wanted
-        })
+        eventually(
+            "the server to see the request",
+            Duration::from_secs(10),
+            || server.recorded().len() == wanted,
+        )
         .await;
     }
     assert_eq!(server.accepted(), 3, "the first socket and two more");
@@ -370,9 +367,11 @@ async fn a_stream_queued_behind_the_servers_stream_limit_is_answered_after_the_h
         let _answer = first.send_request(request).await;
         std::future::pending::<()>().await;
     });
-    until("the first stream to hold the server's only slot", || {
-        held.load(Ordering::SeqCst) == 1
-    })
+    eventually(
+        "the first stream to hold the server's only slot",
+        Duration::from_secs(10),
+        || held.load(Ordering::SeqCst) == 1,
+    )
     .await;
     // The second stream has a body that is still being sent, so only its start can be waited for.
     let asked = tokio::time::Instant::now();

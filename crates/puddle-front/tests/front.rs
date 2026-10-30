@@ -653,10 +653,9 @@ async fn the_front_and_its_targets_print_without_leaking_what_they_hold() {
     let rig = rig().await;
     rig.running.start("a", None, Flavour::CodeServer);
     let shown = format!("{:?}", rig.front);
-    assert!(
-        shown.contains("Guests") && shown.contains("ServerHalves"),
-        "{shown}"
-    );
+    assert!(shown.contains("Guests"), "{shown}");
+    let halves: Arc<dyn ServerHalves> = Arc::new(FileHalves::new(rig.dir.path()));
+    assert_eq!(format!("{halves:?}"), "ServerHalves");
     let target = format!("{:?}", rig.running.0.lock().unwrap().get("a").unwrap());
     assert!(
         target.contains("CodeServer") && !target.contains("sekrit"),

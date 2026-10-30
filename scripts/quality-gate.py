@@ -499,7 +499,7 @@ def kit_dependency_rows(texts, add):
 # gate fail on it; flipping a rule from counted to failing is adding its id there, once its sites are fixed
 # or reasoned. The scan reads shapes, not truth: a reason is read by a reviewer, and a shape it cannot see
 # (a producer that is synchronous, a wait anchored on something already true) needs a run under load.
-FLAKE_FAILING = set()
+FLAKE_FAILING = {"a1", "t1"}
 FLAKE_OK = re.compile(r"flake-ok:\s*\S")
 FLAKE_FIX = {
     "w1": "a wait helper outside the shared test kit: use `eventually(what, within, probe)` (it names the wait and bounds it below nextest's slow-timeout), or `flake-ok: <why>`",
@@ -820,13 +820,16 @@ def flake_self_test():
     if sorted(bad) != sorted(FLAKE_FIX):
         failures.append(f"every rule needs a failing-flip case: {sorted(set(FLAKE_FIX) ^ set(bad))}")
     for rule, files in bad.items():
+        was_failing = rule in FLAKE_FAILING
+        FLAKE_FAILING.discard(rule)
         if any(r[0] == "noreason" for r in run(files)):
             failures.append(f"{rule}: a counted rule must not add a noreason row")
         FLAKE_FAILING.add(rule)
         try:
             miss = [r for r in run(files) if r[0] == "noreason"]
         finally:
-            FLAKE_FAILING.discard(rule)
+            if not was_failing:
+                FLAKE_FAILING.discard(rule)
         if not miss or not all(r[3].startswith(f"flake-{rule}: {FLAKE_FIX[rule]} | ") for r in miss):
             failures.append(f"{rule}: a failing rule adds noreason rows that open with the whole fix text: {miss}")
     return failures

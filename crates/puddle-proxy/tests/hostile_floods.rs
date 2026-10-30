@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use futures_util::StreamExt;
 use futures_util::stream;
 use hostile_heap::Counting;
-use hostile_support::{Guest, Guests, bystander_round, guest_route, rig_with};
+use hostile_support::{Guest, Guests, assert_unharmed, bystander_round, guest_route, rig_with};
 use puddle_proxy::ProxyConfig;
 use tokio::io::AsyncWriteExt;
 
@@ -50,6 +50,7 @@ async fn hostile_hg11_a_hundred_thousand_streams_over_the_cap_are_each_refused_a
         .with_max_streams_per_workspace(CAP)
         .with_head_timeout(Duration::from_secs(120));
     let rig = rig_with(&config).await;
+    let quiet = bystander_round(&rig.bystander, rig.echo).await;
     let mut guests = Guests::start(TEST, &rig.attacked);
     guests.until(FLOODING).await;
     let before = HEAP.restart_peak();
@@ -68,9 +69,10 @@ async fn hostile_hg11_a_hundred_thousand_streams_over_the_cap_are_each_refused_a
         rose < HEAP_BAR,
         "the proxy's heap rose by {rose} bytes (bar {HEAP_BAR}); the guests said: {said}"
     );
-    assert!(
-        bystander_took < Duration::from_secs(5),
-        "the other workspace's 64 connections took {bystander_took:?} during the flood ({elapsed:?})"
+    assert_unharmed(
+        bystander_took,
+        quiet,
+        &format!("during the flood ({elapsed:?})"),
     );
     eprintln!("the proxy's heap rose by {rose} bytes in {elapsed:?}; the guests said: {said}");
     // The held streams were never answered (their heads are unfinished) and held the cap until the

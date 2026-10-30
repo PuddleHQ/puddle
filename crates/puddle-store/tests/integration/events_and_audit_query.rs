@@ -871,7 +871,9 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
             .min()
             .unwrap();
         eprintln!("audit query {name}: {best:?}");
-        // About 50 times the slowest local scan: it catches a query that went quadratic, not noise.
+        // flake-ok: best of three, so a stall must hit all three runs; it catches a query that went
+        // quadratic, not noise. The slowest case (a full scan) took 0.2 s under 16 busy loops on 4
+        // cores (5x under the bar), the indexed ones 0.1 ms.
         assert!(best < Duration::from_secs(1), "{name} took {best:?}");
     }
     // The filtered results are right, not just fast.

@@ -465,6 +465,8 @@ mod tests {
         let idle_cpu = cpu_time(idle.id()).unwrap();
         stop(&mut idle);
         stop(&mut busy);
+        // flake-ok: CPU time (user plus system ticks from `/proc`), not wall time: a `sleep` spends
+        // none while it waits, whatever the load (0 ns measured under 16 busy loops on 4 cores).
         assert!(idle_cpu < Duration::from_millis(100), "{idle_cpu:?}");
     }
 

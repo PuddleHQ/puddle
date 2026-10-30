@@ -125,6 +125,8 @@ async fn the_extension_host_and_everything_below_it_end_in_under_a_second_and_th
     let ended = exthost::end_extension_hosts(&server.folders()).await;
     let took = started.elapsed();
 
+    // flake-ok: the bar sits between ending on `TERM` (the agent polls `/proc` every 50 ms: 61 ms
+    // measured under 16 busy loops on 4 cores) and the 3 s `TERM_GRACE` a `KILL` escalation waits.
     assert!(took < Duration::from_secs(1), "took {took:?}");
     assert_eq!(ended.hosts, 1);
     assert!(ended.processes >= 2, "{ended:?}");

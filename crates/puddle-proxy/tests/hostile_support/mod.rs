@@ -285,6 +285,18 @@ impl Guest {
     }
 }
 
+/// Holds a [`bystander_round`] that ran beside an attack to the round `quiet` that ran with nobody
+/// attacking, taken in the same test on the same machine.
+pub(crate) fn assert_unharmed(took: Duration, quiet: Duration, what: &str) {
+    // flake-ok: relative, not a fixed bar: 5 s plus ten times the quiet round of this very run, so
+    // a loaded machine (the quiet round took 0.3 s idle and 1.5 s on 4 cores under 16 busy loops)
+    // moves both sides; a bystander held up by the attack waits out a 10 s head timeout at least.
+    assert!(
+        took < Duration::from_secs(5) + quiet * 10,
+        "{what}: the other workspace's 64 connections took {took:?} (quiet: {quiet:?})"
+    );
+}
+
 /// 64 CONNECT requests through the bystander's route, each with an echo round trip; returns how long.
 pub(crate) async fn bystander_round(route: &Route, echo: SocketAddr) -> Duration {
     let started = Instant::now();

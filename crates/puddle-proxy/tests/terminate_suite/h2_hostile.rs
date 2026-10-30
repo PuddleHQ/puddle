@@ -172,6 +172,8 @@ async fn a_header_block_left_open_is_cut_off_after_the_head_timeout() {
     assert!(closed);
     // The cut-off is the proxy's own deadline (the head timeout of one second), not a protocol
     // error the HTTP/2 library raises at once.
+    // flake-ok: the upper bar separates the 1 s head timeout from the default 10 s; the cut-off is
+    // timer-driven, so load adds little to it (1.003 s measured under load, 4 s of slack).
     assert!(
         started.elapsed() >= Duration::from_millis(900)
             && started.elapsed() < Duration::from_secs(5),

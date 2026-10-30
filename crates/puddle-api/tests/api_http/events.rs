@@ -143,6 +143,8 @@ async fn shutdown_ends_open_streams_promptly() {
         .await
         .expect("stream closed")
         .unwrap();
+    // flake-ok: the bar is `SHUTDOWN_GRACE` (5 s): a stream closed by the shutdown signal takes
+    // well under a millisecond (0.3 ms measured under load), one closed by the grace expiring 5 s.
     assert!(
         started.elapsed() < Duration::from_secs(5),
         "{:?}",

@@ -2674,6 +2674,8 @@ async fn shutdown_ends_an_operation_that_outlasts_the_grace_period() {
         .await;
     let started = std::time::Instant::now();
     let down = host.shutdown().await;
+    // flake-ok: the pull sleeps 30 s and the grace is 50 ms, so a shutdown that waited for the
+    // operation takes 30 s and one that ended it takes about 0.06 s (64 ms measured under load).
     assert!(
         started.elapsed() < Duration::from_secs(10),
         "{:?}",

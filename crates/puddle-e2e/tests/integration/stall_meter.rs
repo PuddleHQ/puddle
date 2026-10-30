@@ -182,6 +182,9 @@ async fn a_reader_that_stops_reading_is_still_a_stall() {
         worst.own() >= BOUND,
         "a reader that paused for {PAUSE:?} passed the bar: {worst:?}"
     );
+    // flake-ok: `kernel` is the part of the pause the meter put down to retransmission backoff, read
+    // from the `/proc/net/tcp` timers, not a stopwatch: a closed window has none (0 ns measured
+    // under 16 busy loops on 4 cores); a load delay moves the raw gap, not this part.
     assert!(
         worst.kernel < Duration::from_millis(300),
         "a closed window was taken for backoff: {worst:?}"

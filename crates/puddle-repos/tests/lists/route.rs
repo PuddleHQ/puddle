@@ -681,6 +681,8 @@ async fn a_host_that_never_answers_times_out() {
         .unwrap_err();
 
     assert_eq!(err, TransportError::Timeout(1));
+    // flake-ok: the host never answers, so without the 300 ms timeout the call would not return
+    // at all; the bar only names that failure (0.49 s measured under load, 10x under the bar).
     assert!(started.elapsed() < Duration::from_secs(5));
 }
 

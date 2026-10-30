@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "puddle-test-kit"
+description = "Shared helpers for tests: bounded, named waits, event reads, bound ports and temporary folders; dev-dependency only, never part of the product"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "sync", "test-util", "time"] }
+
+[lints]
+workspace = true

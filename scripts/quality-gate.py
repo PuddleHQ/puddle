@@ -33,7 +33,7 @@ fixed flakes from `scripts/flake-fixtures/`.
 
 Context per Rust line: `test` (under tests/, benches/, examples/; in a `#[cfg(test)]` or
 `#[cfg(any(test, feature = "testing"))]` item or a file module so declared; or in the test-only
-crates puddle-e2e and puddle-vm-tests), else `prod`. Rows: kind, context, file:line, detail.
+crates puddle-e2e, puddle-vm-tests and puddle-test-kit), else `prod`. Rows: kind, context, file:line, detail.
 
 It is a lexer-free scanner (strings and comments are blanked by a small state machine), so it
 can miss or misplace a hit in macro-generated or very unusual code: a count is a safety net, the
@@ -47,11 +47,12 @@ import json
 import os
 import re
 import sys
+import tomllib
 from collections import Counter
 
 SKIP_DIRS = {"target", "node_modules", ".git", ".svelte-kit", "build", "corpus", "dist", "test-results",
              "playwright-report", ".scratch"}
-TEST_CRATES = ("crates/puddle-e2e/", "crates/puddle-vm-tests/")
+TEST_CRATES = ("crates/puddle-e2e/", "crates/puddle-vm-tests/", "crates/puddle-test-kit/")
 TEST_CFG = re.compile(r"#\[cfg\((?:test|all\(test\b[^\]]*|any\(test\b[^\]]*|any\([^\]]*feature\s*=\s*\"testing\"[^\]]*|feature\s*=\s*\"testing\")\)\]")
 TEST_ATTR = re.compile(r"#\[(?:tokio::|rstest|test_case|test_log::)?test\b[^\]]*\]|#\[tokio::test\b")
 TEXT_EXT = {".rs", ".ts", ".js", ".svelte", ".sh", ".ps1", ".py", ".toml", ".yml", ".yaml", ".mjs", ".cjs"}
@@ -463,7 +464,32 @@ def scan(root):
     for i, line in enumerate(lines_of("Cargo.toml")):
         if re.match(r"\s*[\w:]+\s*=\s*(\"allow\"|\{\s*level\s*=\s*\"allow\")", line):
             add("cargo-lint-allow", "config", "Cargo.toml", i, line)
+    kit_dependency_rows(texts, add)
     return rows
+
+
+# The shared test kit (crates/puddle-test-kit) is a dev-dependency only: a product crate that lists it under
+# [dependencies] or [build-dependencies] (also per target, or renamed) would ship test helpers. The test-only
+# crates (TEST_CRATES) may list it as a normal dependency, since they are not product code.
+TEST_KIT = "puddle-test-kit"
+
+
+def kit_dependency_rows(texts, add):
+    for f, lines in texts.items():
+        if not (f.startswith("crates/") and f.endswith("/Cargo.toml")) or f.startswith(TEST_CRATES):
+            continue
+        try:
+            doc = tomllib.loads("\n".join(lines))
+        except tomllib.TOMLDecodeError:
+            continue
+        tables = [doc, *(t for t in doc.get("target", {}).values() if isinstance(t, dict))]
+        for table in tables:
+            for kind in ("dependencies", "build-dependencies"):
+                for name, spec in table.get(kind, {}).items():
+                    if TEST_KIT in (name, spec.get("package") if isinstance(spec, dict) else None):
+                        at = next((i for i, line in enumerate(lines) if re.match(rf"\s*{re.escape(name)}\b", line)), 0)
+                        add("noreason", "config", f, at,
+                            f"{TEST_KIT} in [{kind}]: the shared test kit is a dev-dependency only; move it to [dev-dependencies] | {lines[at]}")
 
 
 # Flake-prone test shapes (counted, never failing yet). Each rule has two kinds: `flake-<id>` for every
@@ -473,7 +499,7 @@ def scan(root):
 # gate fail on it; flipping a rule from counted to failing is adding its id there, once its sites are fixed
 # or reasoned. The scan reads shapes, not truth: a reason is read by a reviewer, and a shape it cannot see
 # (a producer that is synchronous, a wait anchored on something already true) needs a run under load.
-FLAKE_FAILING = {"o2"}
+FLAKE_FAILING = {"o1", "w1", "w2", "o2"}
 FLAKE_OK = re.compile(r"flake-ok:\s*\S")
 FLAKE_FIX = {
     "w1": "a wait helper outside the shared test kit: use `eventually(what, within, probe)` (it names the wait and bounds it below nextest's slow-timeout), or `flake-ok: <why>`",
@@ -486,7 +512,8 @@ FLAKE_FIX = {
     "o2": "an awaited page read asserted once runs before the page settles: use a web-first assertion (`await expect(locator).toHaveText(...)`) or `await expect.poll(() => read)`, or `flake-ok: <why a one-shot read is meant>`",
 }
 FLAKE_WAIT_NAME = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(until\w*|eventually\w*|wait_for\w*|wait_until\w*|poll_until\w*)\b")
-FLAKE_WAIT_HOME = "crates/puddle-test-kit/"  # the shared kit's own helpers are the target, not a hit
+FLAKE_WAIT_HOME = "crates/puddle-test-kit/"  # the kit's own helpers (the crate is that path) are the target, not a hit
+FLAKE_KIT_CALL = re.compile(r"\b(?:eventually\w*|next_event_\w+|no_event_\w+)\s*\(")
 FLAKE_CLOCK = re.compile(r"SystemTime::now\(\)|UNIX_EPOCH|as_nanos\(\)|subsec_nanos\(\)|\{nanos\}|\bnanos\b")
 FLAKE_PAGE_READ = re.compile(r"\.(evaluate|evaluateAll|boundingBox|textContent|innerText|innerHTML|getAttribute|isVisible|isHidden|isChecked|isEnabled|isDisabled|isEditable|count|inputValue|allTextContents|allInnerTexts|all)\(|\b\w+\(\s*page\b")
 
@@ -524,6 +551,8 @@ def flake_rust(f, raw, code, com, test, rows_add):
         if t and re.search(r"\b\w*file\w*\.lock(?:_exclusive|_shared)?\(\)", line, re.I):
             hit("w2", i)
         m = FLAKE_WAIT_NAME.match(line)
+        if m and t and not f.startswith(FLAKE_WAIT_HOME) and FLAKE_KIT_CALL.search("\n".join(code[i:item_end(code, i)[0] + 1]).partition("{")[2]):
+            m = None  # a helper that only fills in the probe of a kit wait is named and bounded by the kit
         if t and m and not f.startswith(FLAKE_WAIT_HOME):
             sig, k = line, i
             while "{" not in sig and k + 1 < len(code) and k < i + 6:
@@ -700,6 +729,27 @@ FLAKE_LAB = "crates/puddle-e2e/src/lab/"
 FLAKE_SPEC = "ui/e2e/x.spec.ts"
 
 
+def kit_self_test():
+    """The kit may be a dev-dependency (also per target) and a normal dependency of a test-only crate; a
+    product crate listing it under [dependencies] or [build-dependencies], renamed or per target, fails."""
+    import tempfile
+    manifests = {
+        "crates/dev/Cargo.toml": '[dev-dependencies]\npuddle-test-kit = { workspace = true }\n[target.\'cfg(unix)\'.dev-dependencies]\npuddle-test-kit = { workspace = true }\n',
+        "crates/puddle-e2e/Cargo.toml": '[dependencies]\npuddle-test-kit = { workspace = true }\n',
+        "crates/prod/Cargo.toml": '[dependencies]\npuddle-test-kit = { workspace = true }\n',
+        "crates/buildscript/Cargo.toml": '[build-dependencies]\nkit = { package = "puddle-test-kit", path = "../x" }\n',
+        "crates/pertarget/Cargo.toml": '[target.\'cfg(windows)\'.dependencies]\npuddle-test-kit = { workspace = true }\n',
+    }
+    with tempfile.TemporaryDirectory() as d:
+        for name, text in manifests.items():
+            os.makedirs(os.path.dirname(os.path.join(d, name)))
+            with open(os.path.join(d, name), "w", encoding="utf-8") as h:
+                h.write(text)
+        flagged = sorted(r[2].split(":")[0] for r in scan(d) if r[0] == "noreason")
+    want = ["crates/buildscript/Cargo.toml", "crates/pertarget/Cargo.toml", "crates/prod/Cargo.toml"]
+    return [] if flagged == want else [f"flagged {flagged}, wanted {want}"]
+
+
 def flake_self_test():
     """Replay the original code of fixed flakes (scripts/flake-fixtures/, `.txt` so no gate scans them as
     code): each rule must flag the code that flaked, pass the fix where the fix leaves the shape
@@ -746,6 +796,10 @@ def flake_self_test():
     case("w1 not a wait name", "w1", {FLAKE_HOST: "async fn settle(what: &str, within: Duration) {}\n"}, 0, 0)
     case("w1 in production code", "w1", {"crates/x/src/lib.rs": read("w1-wait-helper.bad.rs.txt")}, 0, 0)
     case("w1 reasoned", "w1", {FLAKE_HOST: reasoned(read("w1-wait-helper.bad.rs.txt"), "async fn eventually")}, 1, 0)
+    kit_wait = ("async fn wait_for_rows(store: &Store, count: usize) -> Vec<Row> {\n"
+                "    eventually(\"rows\", Duration::from_secs(5), || store.rows().filter(|r| r.len() >= count)).await\n}\n")
+    case("w1 delegates to the kit", "w1", {FLAKE_HOST: kit_wait}, 0, 0)
+    case("w1 names the kit only in a comment", "w1", {FLAKE_HOST: kit_wait.replace("    eventually(", "    // eventually(\n    loop_until(")}, 1, 1)
     case("w1 in the kit", "w1", {"crates/puddle-test-kit/tests/wait.rs": read("w1-wait-helper.bad.rs.txt")}, 0, 0)
     case("w2 original", "w2", {FLAKE_STORE: read("w2-store-lock.bad.rs.txt")}, 1, 1)
     case("w2 fix", "w2", {FLAKE_STORE: read("w2-store-lock.good.rs.txt")}, 0, 0)
@@ -789,18 +843,16 @@ def flake_self_test():
     if sorted(bad) != sorted(FLAKE_FIX):
         failures.append(f"every rule needs a failing-flip case: {sorted(set(FLAKE_FIX) ^ set(bad))}")
     for rule, files in bad.items():
-        live = rule in FLAKE_FAILING  # a rule already flipped stays flipped once its case is done
+        was_failing = rule in FLAKE_FAILING
         FLAKE_FAILING.discard(rule)
+        if any(r[0] == "noreason" for r in run(files)):
+            failures.append(f"{rule}: a counted rule must not add a noreason row")
+        FLAKE_FAILING.add(rule)
         try:
-            if any(r[0] == "noreason" for r in run(files)):
-                failures.append(f"{rule}: a counted rule must not add a noreason row")
-            FLAKE_FAILING.add(rule)
             miss = [r for r in run(files) if r[0] == "noreason"]
         finally:
-            if not live:
+            if not was_failing:
                 FLAKE_FAILING.discard(rule)
-            else:
-                FLAKE_FAILING.add(rule)
         if not miss or not all(r[3].startswith(f"flake-{rule}: {FLAKE_FIX[rule]} | ") for r in miss):
             failures.append(f"{rule}: a failing rule adds noreason rows that open with the whole fix text: {miss}")
     return failures
@@ -822,6 +874,10 @@ def self_test():
         if flagged != [".github/workflows/ci.yml:11"]:
             print("self-test FAIL workflow noreason rows", flagged)
             return 1
+    bad_kit = kit_self_test()
+    if bad_kit:
+        print("self-test FAIL test kit dependency:\n  " + "\n  ".join(bad_kit))
+        return 1
     bad_flake = flake_self_test()
     if bad_flake:
         print("self-test FAIL flake rules:\n  " + "\n  ".join(bad_flake))

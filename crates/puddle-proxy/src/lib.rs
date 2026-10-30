@@ -57,6 +57,7 @@
 //!   invariants (`fuzzing`), for the cargo-fuzz targets. Never use it in product code.
 #![forbid(unsafe_code)]
 
+mod coalesce;
 mod counted;
 mod destination;
 #[cfg(feature = "fuzzing")]
@@ -75,6 +76,7 @@ pub mod terminate;
 pub mod testing;
 mod upstream;
 
+pub use coalesce::Coalescing;
 pub use destination::{AddressCheck, AddressVerdict, BoxFuture, Resolver, SystemResolver};
 pub use proxy::{Proxy, ProxyConfig, WorkspaceHandler};
 pub use pull::{ProxyUrl, PullProxy, PullRoute, PullToken, default_pull_access};

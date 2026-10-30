@@ -55,6 +55,7 @@ use tokio::sync::Semaphore;
 use tokio::task::{JoinHandle, JoinSet};
 use tracing::Instrument;
 
+use crate::coalesce::Coalescing;
 use crate::counted::Counted;
 use crate::destination::{Resolver, SystemResolver};
 use crate::http::{self, Head};
@@ -211,7 +212,7 @@ impl PullProxy {
             token,
             guard: NetPolicy::new(Arc::new(access)).with_endpoints(endpoints.clone()),
             access,
-            resolver: Arc::new(SystemResolver),
+            resolver: Arc::new(Coalescing::new(SystemResolver)),
             config: ProxyConfig::default(),
             upstream: None,
             log: Arc::new(NullConnectionLog),

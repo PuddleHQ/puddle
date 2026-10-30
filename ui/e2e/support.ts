@@ -7,6 +7,7 @@ import {
   type Page,
 } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { throttleCpu } from "./cpu-throttle.ts";
 
 function connection(): { url: string; token: string } {
   const file = process.env["PUDDLE_E2E_CONNECTION"];
@@ -194,5 +195,10 @@ export function axeStops(groups: readonly (readonly string[])[]) {
   };
 }
 
-export const test = base;
+export const test = base.extend({
+  page: async ({ page, browserName }, use) => {
+    await throttleCpu(page, browserName);
+    await use(page);
+  },
+});
 export { expect };

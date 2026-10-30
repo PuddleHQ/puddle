@@ -4,3 +4,4 @@
 a_proxy_that_turns_the_sign_in_down_is_one_event_and_a_failed_attempt	a7c3f3de (PR 345, base 9f11a68a): the test read the event stream once; the host forwards the failure from its own task; a window of microseconds, 0 of 100 under load, so stress will not see it again
 hostile_hg11_ten_thousand_stalled_heads	11403e5b (PR 139): the test moved the clock before all 10 000 streams were in; fails 5 of 5 on one CPU with 6 busy loops
 the_commit_authors_in_the_running_guest_follow_the_identities	dec3bff5 (PR 94): two back-to-back deletes both read the final state; 2 in 4000 runs on two cores
+hostile_hg11_a_hundred_thousand_streams_over_the_cap	the nightly stress of 2026-10-30 (run 41005460713): the guests wait was 30 s of wall clock over about 7 s of CPU work, and the bystander bar a fixed 5 s; both failed on one CPU with 12 busy loops (6 on a slower runner); the waits now follow the guests' progress and the machine

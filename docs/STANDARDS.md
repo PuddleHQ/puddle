@@ -564,9 +564,20 @@ pull request and push runs are untouched. The result jobs still run `if: always(
 another job is cancelled with the rest and shows on the requeue. `actions: write` is job-wide, so on a pull request from
 this repository (not a fork) the build code of those jobs holds a token that can cancel runs; it cannot write code.
 
+The `cancel-group` step first annotates the calling job with the failed job and step names (`merge group cancelled:
+this job failed first`), in every workflow, because the cancel ends that job as `cancelled` and the group's result checks
+say only that (PR 376's group on 2026-10-30 was a compile error that showed as five cancelled runs).
+A cancelled job keeps only its annotations, so a `vm-linux` partition that fails writes one `::error` per failed or stopped
+test and one for the run deadline before the cancel (`ci/vm-tests-report.sh log`, with the slowest passing tests and
+`ci/runner-speed.sh`'s figures in the job summary), and the result job prints them back (`ci/vm-tests-report.sh run`),
+so a red `vm-linux (KVM, msb microVMs)` names the test instead of saying `cancelled`. Every VM test also has its own
+12-minute cap and the whole run a deadline (`VM_TEST_DEADLINE`, 28 minutes in the queue), so a hang ends with a name.
+A run where every test is several times slower than usual is a slow runner, not a hang: the deadline names the test it
+cut, and the slowest-tests list and the runner figures show the cause.
+
 The VM no-hypervisor policy fails a merge queue run like a PR, and `verdict --nightly-skips` accepts a skip only on a
 scheduled run. Self-tests: `ci/scope-test.sh` (light mode and merge queue cases, a verdict matrix over every event and
-variable, the workflow wiring), `ci/should-run-test.sh`, `ci/cancel-group-test.sh`, `ci/cache-gc-test.sh`, `ci/raise-coverage-baseline-test.sh`, `ci/test-vm-skip-policy.sh`, all in the
+variable, the workflow wiring), `ci/should-run-test.sh`, `ci/cancel-group-test.sh`, `ci/cache-gc-test.sh`, `ci/raise-coverage-baseline-test.sh`, `ci/test-vm-skip-policy.sh`, `ci/vm-tests-report-test.sh`, all in the
 `hooks` gate.
 Actions are pinned to commit SHAs and must be GitHub-owned or on the repo's allow-list (selected
 actions, SHA pinning required; an unpinned `uses:` ends as a `startup_failure` with no jobs).

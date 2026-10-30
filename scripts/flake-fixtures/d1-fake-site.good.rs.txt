@@ -1,0 +1,9 @@
+// The fix: a `.invalid` name, which the proxy answers "no such name" without a lookup.
+use vm_support::{VmHost, web_internet};
+
+const SITE: &str = "site.invalid";
+
+async fn fetches() {
+    let net = web_internet(&[SITE], WebOptions::default(), hermetic_options()).await;
+    let _ = net;
+}

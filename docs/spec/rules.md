@@ -276,6 +276,9 @@ store.
   `SERVFAIL` and the host logs why, never a cached "no such name". If every address it resolves to is refused by R-14, the guest still gets a stand-in:
   the connection says which toggle would allow it. The addresses never reach the guest, and the
   lookup does not constrain the connection, which resolves and checks again (R-14, R-27).
+  A name under `.invalid` (or the bare `invalid`) is never looked up: the host answers "no such name"
+  at once, as RFC 6761 allows, even where a private DNS would resolve it. It is treated like any
+  other name that does not exist, so R-33 still applies.
 - **R-33 A name the host can't resolve goes to the company proxy by name, when one is in the
   route.** If an upstream proxy is in the route and sending unresolvable names to it is on (the
   default), an allowed name the host can't resolve, or whose lookup fails or times out, gets a

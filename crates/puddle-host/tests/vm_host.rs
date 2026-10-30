@@ -2911,8 +2911,9 @@ async fn end_hosts_when_connected(
 }
 
 /// K tier. The window of a sandbox closes: the host tells the agent to end the editor's extension
-/// hosts. 20 stand-in extension hosts, each with a debuggee, end together within a second, and so
-/// does a debuggee orphaned long ago; the pty host with its terminal job and the editor server stay.
+/// hosts. 20 stand-in extension hosts, each with a debuggee, end together on `TERM`, long before
+/// the agent's 3 s grace, and so does a debuggee orphaned long ago; the pty host with its terminal
+/// job and the editor server stay.
 /// (Real extension hosts need a browser client; the stand-ins are node from the real release with
 /// the same marks. The processes it picks are tested with the real ones' shape in the agent's own
 /// tests.)
@@ -3002,7 +3003,10 @@ async fn vm_host_ending_the_extension_hosts_takes_the_debuggees_with_them_and_le
         ),
         "{reply:?}"
     );
-    assert!(took < Duration::from_secs(1), "cleanup took {took:?}");
+    // flake-ok: the bar sits between the two ways the agent can end the tree: on TERM (it polls
+    // `/proc` every 50 ms; 61 ms for the same call without the VM, `exthost.rs`) or on KILL after
+    // `TERM_GRACE` (3 s); under 2 s is TERM. Not measured through the VM.
+    assert!(took < Duration::from_secs(2), "cleanup took {took:?}");
 
     let after = guest(&runtime, &sandbox, COUNT_STANDINS).await;
     assert!(
@@ -3879,6 +3883,8 @@ async fn vm_host_ports_are_listed_forwarded_and_pinned_across_a_restart() {
         if ports.contains(&8000) && ports.contains(&8001) {
             break view;
         }
+        // flake-ok: a poll deadline, not a bar: the loop ends the first time both listeners are
+        // reported (the agent polls every 100 ms) and the 60 s only ends a report that never comes.
         assert!(
             started.elapsed() < Duration::from_secs(60),
             "the guest's listeners were not reported: {view}"

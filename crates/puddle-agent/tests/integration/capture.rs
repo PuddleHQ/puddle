@@ -22,7 +22,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use puddle_agent::config::{CaptureConfig, DnsConfig, Target};
 use puddle_agent::{Agent, Config};
@@ -241,6 +241,12 @@ fn start_host(socket: &Path, seen: &Arc<Seen>) {
 
 /// Runs a command, returning its status and what it printed (stdout then stderr), within `limit`.
 async fn run(program: &str, args: &[&str], limit: Duration) -> (bool, String) {
+    let (code, text) = run_code(program, args, limit).await;
+    (code == Some(0), text)
+}
+
+/// [`run`] with the exit status (`None` when a signal ended the program).
+async fn run_code(program: &str, args: &[&str], limit: Duration) -> (Option<i32>, String) {
     let output = tokio::time::timeout(
         limit,
         Command::new(program)
@@ -253,7 +259,7 @@ async fn run(program: &str, args: &[&str], limit: Duration) -> (bool, String) {
     .unwrap_or_else(|_| panic!("{program} {args:?} did not finish in {limit:?}"))
     .unwrap_or_else(|e| panic!("{program}: {e}"));
     (
-        output.status.success(),
+        output.status.code(),
         format!(
             "{}{}",
             String::from_utf8_lossy(&output.stdout),
@@ -270,6 +276,20 @@ async fn ok(program: &str, args: &[&str]) -> String {
 
 async fn bash(script: &str) -> (bool, String) {
     run("bash", &["-c", script], Duration::from_secs(20)).await
+}
+
+/// Runs `script` and panics when it ended by waiting out a `read -t` it holds on a connection: a
+/// reset or a refusal ends the read at once (status 1), a connection nobody answers ends it with
+/// bash's timeout status (over 128). A connect that is never answered has no read to time out:
+/// [`run`]'s own limit names it. This tells a hang from a reset by what the shell saw, not by how
+/// long the machine took.
+async fn bash_not_hung(script: &str) -> String {
+    let (code, text) = run_code("bash", &["-c", script], Duration::from_secs(20)).await;
+    assert!(
+        code.is_some_and(|c| c <= 128),
+        "the connection hung until the read timed out (status {code:?}): {script}\n{text}"
+    );
+    text
 }
 
 /// The network the VM runtime gives a guest, as a dummy device: an address, a default route.
@@ -470,17 +490,11 @@ async fn tools_with_no_proxy_settings_reach_the_proxy_by_name_and_by_address() {
     assert_eq!(w.authorities().len(), before);
 
     // A stand-in nobody handed out has no name to ask for: reset, nothing asked of the host.
-    let started = Instant::now();
-    let (success, _) = bash("exec 3<>/dev/tcp/198.18.200.1/80; read -t 3 l <&3").await;
-    assert!(
-        !success || started.elapsed() < Duration::from_secs(2),
-        "an unknown stand-in hung"
-    );
+    bash_not_hung("exec 3<>/dev/tcp/198.18.200.1/80; read -t 3 l <&3").await;
     assert_eq!(w.authorities().len(), before);
 
     // A refusal is a reset, soon, never a hang.
-    let started = Instant::now();
-    let (success, text) = run(
+    let (code, text) = run_code(
         "env",
         &[
             "-i",
@@ -493,10 +507,8 @@ async fn tools_with_no_proxy_settings_reach_the_proxy_by_name_and_by_address() {
         Duration::from_secs(10),
     )
     .await;
-    assert!(
-        !success && started.elapsed() < Duration::from_secs(3),
-        "{text}"
-    );
+    // curl's own `--max-time` ends a hang with status 28; a refusal ends it with another one.
+    assert!(code.is_some_and(|c| c != 0 && c != 28), "{code:?} {text}");
     assert!(w.authorities().contains(&"x.deny.test:8080".to_owned()));
 
     // A raw SSH client that never read ssh_config: recognised from its first bytes, refused with
@@ -553,9 +565,10 @@ except OSError as e:
         assert!(ms < 50.0, "{host} took {ms} ms: {text}");
     }
     // IPv6 TCP: no capture for it, fails fast instead of timing out.
-    let started = Instant::now();
+    // A connect nobody answers would wait for the kernel's own timeout, far past `run`'s limit,
+    // which names it; so a failure here is the fast one.
     let (success, _) = bash("exec 3<>/dev/tcp/2001:db8::9/443").await;
-    assert!(!success && started.elapsed() < Duration::from_secs(1));
+    assert!(!success);
 
     eventually_async("the host to hear about the refused UDP", WAIT, || async {
         let udp = w.seen.udp.lock().unwrap();
@@ -727,9 +740,9 @@ async fn the_rules_outlive_the_agent_and_come_back_with_the_same_stand_ins() {
     agent.kill().await.unwrap();
     agent.wait().await.unwrap();
     // Nobody is listening now, yet nothing escapes: a captured connect is refused at once.
-    let started = Instant::now();
+    // The connect is refused at once; one nobody answers would outlast `run`'s limit, which names it.
     let (success, _) = bash("exec 3<>/dev/tcp/192.0.2.7/5432").await;
-    assert!(!success && started.elapsed() < Duration::from_secs(2));
+    assert!(!success);
     assert!(
         run(
             "nft",
@@ -1013,11 +1026,38 @@ async fn with_the_host_down_a_captured_connection_is_reset_not_hung() {
         puddle_agent::capture::nft::read().is_ok_and(|t| t.is_some())
     })
     .await;
-    let started = Instant::now();
-    let (success, _) = bash("exec 3<>/dev/tcp/192.0.2.7/5432; read -t 5 l <&3").await;
-    assert!(
-        !success || started.elapsed() < Duration::from_secs(3),
-        "the connection hung for {:?}",
-        started.elapsed()
-    );
+    bash_not_hung("exec 3<>/dev/tcp/192.0.2.7/5432; read -t 5 l <&3").await;
+}
+
+/// The check the three "reset, not hung" cases above rely on: a peer that holds the connection and
+/// never answers ends the shell's read with its timeout status, a peer that resets or closes does
+/// not. (The old check, `!success || took < N`, passed for the hung peer: `read -t` failing is
+/// `!success`.)
+#[tokio::test]
+async fn a_read_that_waits_out_its_timeout_is_told_from_a_reset() {
+    let silent = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let silent_port = silent.local_addr().unwrap().port();
+    let _held = tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((stream, _)) = silent.accept().await {
+            held.push(stream);
+        }
+    });
+    let closing = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let closing_port = closing.local_addr().unwrap().port();
+    let _closer = tokio::spawn(async move {
+        while let Ok((stream, _)) = closing.accept().await {
+            drop(stream);
+        }
+    });
+    let read = |port: u16| format!("exec 3<>/dev/tcp/127.0.0.1/{port}; read -t 1 l <&3");
+    bash_not_hung(&read(closing_port)).await;
+    let hung = tokio::spawn(async move { bash_not_hung(&read(silent_port)).await }).await;
+    let panic = hung.expect_err("a peer that never answers must fail the check");
+    let text = panic
+        .into_panic()
+        .downcast::<String>()
+        .map(|t| *t)
+        .unwrap_or_default();
+    assert!(text.contains("hung until the read timed out"), "{text}");
 }

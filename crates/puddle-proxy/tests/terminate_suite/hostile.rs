@@ -715,6 +715,9 @@ async fn hostile_hg29_a_slow_upstream_hits_its_limits_without_slowing_anyone_els
     let started = std::time::Instant::now();
     let mut healthy = guest.tls("bound.test:443", None).await.unwrap();
     assert_eq!(healthy.get("bound.test", "/ok").await.text(), "fine");
+    // flake-ok: the bar is pinned to the 600 ms limits of `quick()`: a connection queued behind the
+    // silent one would be served only after its 504 at 600 ms. 25 ms measured under 16 busy loops
+    // on 4 cores (20x under the bar).
     assert!(started.elapsed() < Duration::from_millis(500));
     // The silent upstream: 504 once the head limit passes.
     assert_eq!(silent.response("GET").await.status, 504);

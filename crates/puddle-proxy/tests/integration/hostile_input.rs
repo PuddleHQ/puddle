@@ -6,9 +6,7 @@
 //! getting through while the attack runs.
 use crate::hostile_support;
 
-use std::time::Duration;
-
-use hostile_support::{Guest, bystander_round, rig};
+use hostile_support::{Guest, assert_unharmed, bystander_round, rig};
 
 /// What a guest may send that is not a head: what it is, the bytes, the status and the reason the
 /// refusal gives.
@@ -104,6 +102,7 @@ fn malformed_heads() -> Vec<(&'static str, Vec<u8>, u16, &'static str)> {
 #[tokio::test]
 async fn hostile_hg10_malformed_heads_are_refused_for_their_own_reason() {
     let rig = rig().await;
+    let quiet = bystander_round(&rig.bystander, rig.echo).await;
     let mut guest = Guest::connect(&rig.attacked).await;
     let cases = malformed_heads();
     let attack = async {
@@ -117,16 +116,13 @@ async fn hostile_hg10_malformed_heads_are_refused_for_their_own_reason() {
         }
     };
     let (timed, ()) = tokio::join!(bystander_round(&rig.bystander, rig.echo), attack);
-    assert!(
-        timed < Duration::from_secs(5),
-        "the bystander's 64 connections took {timed:?} while the other workspace was attacked"
-    );
+    assert_unharmed(timed, quiet, "while the other workspace was attacked");
     assert_eq!(
         rig.policy.decisions(),
-        64,
+        128,
         "only the bystander's connections reached the rules"
     );
     // The attacked workspace still works too: the refusals did not poison its session.
     let still = bystander_round(&rig.attacked, rig.echo).await;
-    assert!(still < Duration::from_secs(5), "{still:?}");
+    assert_unharmed(still, quiet, "on the attacked workspace afterwards");
 }

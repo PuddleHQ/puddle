@@ -14,9 +14,9 @@ secs() { # <command...>: wall seconds, to one decimal
     awk -v a="$t0" -v b="$t1" 'BEGIN { printf "%.1f", b - a }'
 }
 
-# shellcheck disable=SC2329 # run through secs
+# shellcheck disable=SC2329 # why: called by name through secs
 hash_zeroes() { head -c 1073741824 /dev/zero | sha256sum; }
-# shellcheck disable=SC2329
+# shellcheck disable=SC2329 # why: called by name through secs
 write_file() { dd if=/dev/zero of="$1" bs=1M count=256 conv=fsync; }
 
 scratch="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/runner-speed.disk"

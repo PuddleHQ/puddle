@@ -59,7 +59,7 @@ report "$tmp/fail.log" 3
 has "$tmp/out" '::error title=vm-linux partition 3: FAIL::nx vm_fails ended FAIL after 0.002s' "failed test is named"
 has "$tmp/out" '::error title=vm-linux partition 3: TIMEOUT::nx vm_hangs ended TIMEOUT after 3.005s' "timed-out test is named"
 hasnt "$tmp/out" 'DEADLINE' "no deadline in this run"
-# shellcheck disable=SC2016 # backticks are literal Markdown
+# shellcheck disable=SC2016 # why: the backticks are literal Markdown
 has "$tmp/sum" '| TIMEOUT | 3.005 | `nx vm_hangs` |' "summary row"
 has "$tmp/sum" 'vm-linux partition 3' "summary names the partition"
 
@@ -93,7 +93,7 @@ report "$tmp/deadline.log"
 has "$tmp/out" 'puddle-vm-tests::vm_dev_cert vm_dev_cert_dotnet ended SIGTERM after 206.237s' "the test running at the deadline is named"
 has "$tmp/out" 'stopped at the run deadline::Cancelling due to global timeout: 1 test still running; warning: 1/27 tests were not run' "the deadline is named with the count not run"
 hasnt "$tmp/out" 'vm_ca_trust_java' "a slow test that passed is not an error"
-# shellcheck disable=SC2016
+# shellcheck disable=SC2016 # why: the backticks are literal Markdown
 has "$tmp/sum" '- 224.377s `puddle-vm-tests::vm_ca_trust vm_ca_trust_java`' "the slowest passing test is listed"
 has "$tmp/sum" 'Runner speed before the tests: runner speed: sha256 of 1 GiB 0.5s' "the runner figures are appended"
 rm -f "$tmp/rt/runner-speed.txt"

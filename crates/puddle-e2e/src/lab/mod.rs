@@ -415,11 +415,11 @@ mod tests {
         });
         let begun = Instant::now();
         let slot = StartSlot::take_from(dir.path(), 1, "test");
+        let waited = begun.elapsed();
         assert!(slot.is_some());
         assert!(
-            begun.elapsed() >= Duration::from_millis(250),
-            "took the slot while it was held: {:?}",
-            begun.elapsed()
+            waited >= Duration::from_millis(250),
+            "took the slot while it was held: {waited:?}"
         );
         release.join().unwrap();
     }

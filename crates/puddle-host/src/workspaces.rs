@@ -1908,9 +1908,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// password is held back from anything but a shell (AT-34).
     async fn attach_browser(&self, record: &WorkspaceRecord) -> Attached {
         let name = &record.name;
-        // No window opens on settings that cannot be read: the window carries settings that
-        // can only loosen (the clipboard prompt, the zoom keys), and "the defaults" would undo
-        // what the user turned off.
+        // No window opens on settings that cannot be read: the user may have tightened what the
+        // window does (no clipboard prompt, no zoom keys), and the defaults would undo that.
         let settings = match self.window_settings(name) {
             Ok(settings) => settings,
             Err(reason) => {

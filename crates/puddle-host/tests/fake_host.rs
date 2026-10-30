@@ -28,6 +28,7 @@ use puddle_host::{
 use puddle_netpolicy::EndpointKind;
 use puddle_runtime::{RuntimeLayout, RuntimeVersion};
 use puddle_secrets::{MemoryStore, SecretStore as _};
+use puddle_test_kit::{eventually, next_event_matching, no_event_matching};
 use puddle_types::fixture;
 use puddle_types::{
     Event, EventSink, GuestEnv, GuestPath, ImageRef, SandboxName, WorkspaceId, WorkspaceName,
@@ -1744,6 +1745,9 @@ async fn a_stopped_workspace_lists_the_checkouts_it_had_and_refuses_an_add() {
 
 /// Holds the calling guest command until the test sends or 20 seconds pass, without keeping the
 /// runtime's thread from running the rest of the test.
+// flake-ok: a fake guest command that blocks until the test releases it, not a test waiting for a
+// condition (nothing is polled); the 20 s cap is below nextest's kill, so a test that never sends fails
+// here instead of hanging.
 fn wait_for(hold: &std::sync::mpsc::Receiver<()>) {
     tokio::task::block_in_place(|| {
         let _ = hold.recv_timeout(Duration::from_secs(20));
@@ -1754,13 +1758,10 @@ fn wait_for(hold: &std::sync::mpsc::Receiver<()>) {
 /// command, and the fake counts a command before it answers, so a fault armed after this returns
 /// can only meet the test's own commands.
 async fn after_boot_listing(rig: &Rig) {
-    for _ in 0..500 {
-        if !rig.guest.listings.lock().unwrap().is_empty() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    unreachable!("no listing after the boot");
+    eventually("a listing after the boot", APPLY, || {
+        !rig.guest.listings.lock().unwrap().is_empty()
+    })
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -3881,7 +3882,7 @@ async fn an_entry_that_cannot_be_taken_out_is_a_problem_until_the_file_can_be_wr
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
     allow_direct_ssh(&api, "acme", true).await;
-    eventually("the entry", || {
+    eventually("the entry", APPLY, || {
         std::fs::read_to_string(rig.puddle_ssh_config()).is_ok_and(|t| t.contains("puddle-acme"))
     })
     .await;
@@ -4444,16 +4445,8 @@ fn decrypts(host: &Host<FakeRuntime>, workspace: &str, site: &str) -> bool {
         })
 }
 
-/// Waits for `condition` to hold (a change applies when the host has handled its event).
-async fn eventually(what: &str, condition: impl Fn() -> bool) {
-    for _ in 0..500 {
-        if condition() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert!(condition(), "never became true: {what}");
-}
+/// How long a change may take to apply once the host has its event.
+const APPLY: Duration = Duration::from_secs(10);
 
 fn calls_of(rig: &Rig, op: &str) -> usize {
     rig.runtime
@@ -4547,14 +4540,14 @@ async fn a_credential_for_any_host_applies_to_the_running_workspace_with_no_rest
     // A host the workspace has never used, on a host Puddle's default list does not have.
     let gitlab = make_identity(&api, "Ada", "gitlab.com", &[]).await;
     attach(&api, "acme", gitlab).await;
-    eventually("gitlab.com decrypted", || {
+    eventually("gitlab.com decrypted", APPLY, || {
         decrypts(&host, "acme", "gitlab.com")
     })
     .await;
     // A second one, on Azure DevOps: both of its names.
     let azure = make_identity(&api, "Bob", "dev.azure.com", &["contoso"]).await;
     attach(&api, "acme", azure).await;
-    eventually("azure decrypted", || {
+    eventually("azure decrypted", APPLY, || {
         decrypts(&host, "acme", "contoso.visualstudio.com")
     })
     .await;
@@ -4579,7 +4572,7 @@ async fn a_credential_for_any_host_applies_to_the_running_workspace_with_no_rest
         .delete(&format!("/api/workspaces/acme/identities/{gitlab}"), None)
         .await;
     assert_eq!(gone.status, 200, "{}", gone.body);
-    eventually("gitlab.com no longer decrypted", || {
+    eventually("gitlab.com no longer decrypted", APPLY, || {
         !decrypts(&host, "acme", "gitlab.com")
     })
     .await;
@@ -5015,7 +5008,7 @@ async fn no_file_in_the_data_folder_holds_a_key_or_the_ca_whether_the_workspace_
     create(&api, &mut events, "acme").await;
     let identity = make_identity(&api, "Ada", "github.com", &[]).await;
     attach(&api, "acme", identity).await;
-    eventually("decrypted", || decrypts(&host, "acme", "github.com")).await;
+    eventually("decrypted", APPLY, || decrypts(&host, "acme", "github.com")).await;
     let ca = host
         .workspaces()
         .termination(&name("acme"))
@@ -5262,7 +5255,7 @@ async fn git_settings_the_host_cannot_read_stop_a_start_and_change_nothing_while
     // beta runs; its settings are damaged after the start: what it decrypts stays as it was.
     let identity = make_identity(&api, "Ada", "github.com", &[]).await;
     attach(&api, "beta", identity).await;
-    eventually("github.com decrypted", || {
+    eventually("github.com decrypted", APPLY, || {
         decrypts(&host, "beta", "github.com")
     })
     .await;
@@ -5276,7 +5269,7 @@ async fn git_settings_the_host_cannot_read_stop_a_start_and_change_nothing_while
         workspace: name("beta"),
     });
     // The user is told: the old set stays and the next change tries again.
-    eventually("the failed update is a problem", || {
+    eventually("the failed update is a problem", APPLY, || {
         has_problem(&host, "git-decrypt:beta")
     })
     .await;
@@ -5298,7 +5291,7 @@ async fn git_settings_the_host_cannot_read_stop_a_start_and_change_nothing_while
     host.events().emit(Event::WorkspaceGitChanged {
         workspace: name("beta"),
     });
-    eventually("the problem ends", || {
+    eventually("the problem ends", APPLY, || {
         !has_problem(&host, "git-decrypt:beta")
     })
     .await;
@@ -5322,7 +5315,7 @@ async fn a_rule_on_method_and_path_reaches_the_running_workspaces_and_decrypts_i
         )
         .await;
     assert_eq!(made.status, 201, "{}", made.body);
-    eventually("the rule's host is decrypted", || {
+    eventually("the rule's host is decrypted", APPLY, || {
         decrypts(&host, "acme", "api.example.com")
     })
     .await;
@@ -5330,7 +5323,7 @@ async fn a_rule_on_method_and_path_reaches_the_running_workspaces_and_decrypts_i
     // Deleting it takes the host out of the set again.
     let gone = api.delete("/api/request-rules/1", None).await;
     assert_eq!(gone.status, 200, "{}", gone.body);
-    eventually("the host is no longer decrypted", || {
+    eventually("the host is no longer decrypted", APPLY, || {
         !decrypts(&host, "acme", "api.example.com")
     })
     .await;
@@ -5492,12 +5485,12 @@ async fn a_guest_that_cannot_take_new_authors_keeps_the_old_ones_and_the_next_ch
     attach(&api, "acme", ada).await;
     rig.guest.boots_reach(booted + 1).await;
     // What is decrypted followed anyway: only the guest's files could not be written.
-    eventually("github.com decrypted", || {
+    eventually("github.com decrypted", APPLY, || {
         decrypts(&host, "acme", "github.com")
     })
     .await;
     // The user is told, with the guest's reason.
-    eventually("the failed rewrite is a problem", || {
+    eventually("the failed rewrite is a problem", APPLY, || {
         has_problem(&host, "git-authors:acme")
     })
     .await;
@@ -5515,7 +5508,7 @@ async fn a_guest_that_cannot_take_new_authors_keeps_the_old_ones_and_the_next_ch
     rig.guest.fail_boot.store(false, Ordering::SeqCst);
     attach(&api, "acme", bob).await;
     rig.guest.boots_reach(booted + 2).await;
-    eventually("the retry takes the problem away", || {
+    eventually("the retry takes the problem away", APPLY, || {
         !has_problem(&host, "git-authors:acme")
     })
     .await;
@@ -5548,7 +5541,7 @@ async fn settings_that_go_unreadable_while_a_rewrite_waits_are_a_problem_the_nex
     attach(&api, "acme", ada).await;
     rig.guest.boots_reach(booted + 1).await;
     attach(&api, "acme", bob).await;
-    eventually("gitlab.com decrypted", || {
+    eventually("gitlab.com decrypted", APPLY, || {
         decrypts(&host, "acme", "gitlab.com")
     })
     .await;
@@ -5556,7 +5549,7 @@ async fn settings_that_go_unreadable_while_a_rewrite_waits_are_a_problem_the_nex
     // The settings go bad before Bob's rewrite can read them.
     damage_database(&rig, &UNREADABLE_GIT_ROW.replace("{}", "acme"));
     release.send(()).unwrap();
-    eventually("the failed rewrite is a problem", || {
+    eventually("the failed rewrite is a problem", APPLY, || {
         has_problem(&host, "git-authors:acme")
     })
     .await;
@@ -5582,7 +5575,7 @@ async fn settings_that_go_unreadable_while_a_rewrite_waits_are_a_problem_the_nex
     host.events().emit(Event::WorkspaceGitChanged {
         workspace: name("acme"),
     });
-    eventually("the retry takes the problem away", || {
+    eventually("the retry takes the problem away", APPLY, || {
         !has_problem(&host, "git-authors:acme")
     })
     .await;
@@ -5606,7 +5599,7 @@ async fn a_git_too_old_for_the_author_rules_is_a_problem_until_it_is_updated() {
     *rig.guest.boot_says.lock().unwrap() = "puddle-boot: git version 2.34.1\n".to_owned();
     attach(&api, "acme", ada).await;
     rig.guest.boots_reach(booted + 1).await;
-    eventually("the old git is a problem", || {
+    eventually("the old git is a problem", APPLY, || {
         has_problem(&host, "git-old:acme")
     })
     .await;
@@ -5625,7 +5618,10 @@ async fn a_git_too_old_for_the_author_rules_is_a_problem_until_it_is_updated() {
     *rig.guest.boot_says.lock().unwrap() = "puddle-boot: git version 2.39.5\n".to_owned();
     attach(&api, "acme", bob).await;
     rig.guest.boots_reach(booted + 2).await;
-    eventually("the problem ends", || !has_problem(&host, "git-old:acme")).await;
+    eventually("the problem ends", APPLY, || {
+        !has_problem(&host, "git-old:acme")
+    })
+    .await;
 
     // And a stopped workspace has none.
     *rig.guest.boot_says.lock().unwrap() = "puddle-boot: git version 2.30.2\n".to_owned();
@@ -5712,7 +5708,7 @@ async fn a_credential_for_a_port_puddle_never_decrypts_is_refused_and_an_old_one
     host.events().emit(Event::WorkspaceGitChanged {
         workspace: name("acme"),
     });
-    eventually("the useless credential is a problem", || {
+    eventually("the useless credential is a problem", APPLY, || {
         has_problem(&host, "git-credentials:acme")
     })
     .await;
@@ -5730,7 +5726,7 @@ async fn a_credential_for_a_port_puddle_never_decrypts_is_refused_and_an_old_one
     host.events().emit(Event::WorkspaceGitChanged {
         workspace: name("acme"),
     });
-    eventually("the problem ends", || {
+    eventually("the problem ends", APPLY, || {
         !has_problem(&host, "git-credentials:acme")
     })
     .await;
@@ -5799,20 +5795,20 @@ async fn an_author_rewrite_that_runs_after_a_newer_change_applies_the_newest_set
     host.store()
         .attach_identity(&name("acme"), old.id, None)
         .unwrap();
-    eventually("the attach rewrite waits", || {
+    eventually("the attach rewrite waits", APPLY, || {
         held.arrived.load(Ordering::SeqCst)
     })
     .await;
     // The detach comes after, and its rewrite runs through: nothing is left to rewrite or to say.
     host.store().detach_identity(&name("acme"), old.id).unwrap();
-    eventually("the detach ends the problem", || {
+    eventually("the detach ends the problem", APPLY, || {
         !has_problem(&host, "git-credentials:acme")
     })
     .await;
 
     // The attach rewrite now goes on, last. It must apply the settings as they are now.
     held.release.notify_one();
-    eventually("the attach rewrite ends", || {
+    eventually("the attach rewrite ends", APPLY, || {
         held.ended.load(Ordering::SeqCst)
     })
     .await;
@@ -5844,7 +5840,10 @@ async fn missed_events_are_made_up_for_by_looking_at_every_running_workspace_aga
     for _ in 0..4096 {
         host.events().emit(Event::RulesChanged {});
     }
-    eventually("the set follows", || decrypts(&host, "acme", "github.com")).await;
+    eventually("the set follows", APPLY, || {
+        decrypts(&host, "acme", "github.com")
+    })
+    .await;
     rig.guest.boots_reach(before + 1).await;
     host.shutdown().await;
 }
@@ -6015,7 +6014,7 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
         secret_body(Some(REAL), &["api.example.org"]),
     )
     .await;
-    eventually("the secret's host is decrypted", || {
+    eventually("the secret's host is decrypted", APPLY, || {
         decrypts(&host, "acme", "api.example.org")
     })
     .await;
@@ -6055,7 +6054,7 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
     )
     .await;
     for workspace in ["acme", "beta"] {
-        eventually("the global secret's host is decrypted", || {
+        eventually("the global secret's host is decrypted", APPLY, || {
             decrypts(&host, workspace, "shared.example.org")
         })
         .await;
@@ -6073,7 +6072,7 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
         secret_body(None, &["other.example.org"]),
     )
     .await;
-    eventually("the hosts moved", || {
+    eventually("the hosts moved", APPLY, || {
         decrypts(&host, "acme", "other.example.org") && !decrypts(&host, "acme", "api.example.org")
     })
     .await;
@@ -6084,7 +6083,7 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
         204
     );
     assert_eq!(api.delete("/api/env/SHARED", None).await.status, 204);
-    eventually("removed secrets are not decrypted", || {
+    eventually("removed secrets are not decrypted", APPLY, || {
         !decrypts(&host, "acme", "other.example.org")
             && !decrypts(&host, "acme", "shared.example.org")
             && !decrypts(&host, "beta", "shared.example.org")
@@ -6376,7 +6375,7 @@ async fn deleting_a_workspace_removes_its_variables_rules_and_the_values_of_its_
     events.until(ended("acme"), Duration::from_secs(20)).await;
 
     // The workspace's own secret is gone from the credential store, the global one stays.
-    eventually("the workspace's value is removed", || {
+    eventually("the workspace's value is removed", APPLY, || {
         rig.secrets.ids().len() == 1
     })
     .await;
@@ -6966,26 +6965,24 @@ async fn a_proxy_that_turns_the_sign_in_down_is_one_event_and_a_failed_attempt()
 
     // The host forwards the failure from its own task, so the event can land after the replies:
     // wait for the first one, then give a second (which must not come) a moment to show.
-    let mut failures = Vec::new();
-    let first = tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            match events.recv().await {
-                Ok(Event::ProxySignInFailed { proxy, scheme }) => return (proxy, scheme),
-                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                Err(closed) => panic!("the event stream ended: {closed}"),
-            }
-        }
-    })
-    .await
-    .expect("the sign-in failure never reached the event stream");
-    failures.push(first);
-    let _ = tokio::time::timeout(Duration::from_millis(500), async {
-        while let Ok(event) = events.recv().await {
-            if let Event::ProxySignInFailed { proxy, scheme } = event {
-                failures.push((proxy, scheme));
-            }
-        }
-    })
+    let sign_in_failure = |event| match event {
+        Event::ProxySignInFailed { proxy, scheme } => Some((proxy, scheme)),
+        _ => None,
+    };
+    let first = next_event_matching(
+        "the sign-in failure on the event stream",
+        Duration::from_secs(10),
+        &mut events,
+        sign_in_failure,
+    )
+    .await;
+    let failures = vec![first];
+    no_event_matching(
+        "a second sign-in failure in the same episode",
+        Duration::from_millis(500),
+        &mut events,
+        sign_in_failure,
+    )
     .await;
     assert_eq!(
         failures,
@@ -7090,7 +7087,7 @@ async fn a_saved_shell_init_reaches_a_running_workspace_read_only_and_through_a_
             Duration::from_secs(20),
         )
         .await;
-    eventually("the folder holds the saved text", || {
+    eventually("the folder holds the saved text", APPLY, || {
         std::fs::read_to_string(shell_init_folder(&rig, "acme").join("init.sh")).ok()
             == Some("export EDITOR=vim\n".to_owned())
     })
@@ -7110,7 +7107,7 @@ async fn a_saved_shell_init_reaches_a_running_workspace_read_only_and_through_a_
             .status,
         204
     );
-    eventually("the folder is empty again", || {
+    eventually("the folder is empty again", APPLY, || {
         std::fs::read_to_string(shell_init_folder(&rig, "acme").join("init.sh")).ok()
             == Some(String::new())
     })
@@ -7233,7 +7230,7 @@ async fn a_start_that_finds_the_shell_init_changed_from_inside_puts_it_back_and_
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
     put_shell_init(&api, "acme", "export A=1\n").await;
-    eventually("published", || {
+    eventually("published", APPLY, || {
         std::fs::read_to_string(shell_init_folder(&rig, "acme").join("init.sh")).ok()
             == Some("export A=1\n".to_owned())
     })
@@ -8146,18 +8143,10 @@ async fn agent_says(
 }
 
 async fn wait_for_problem(host: &Host<FakeRuntime>, key: &str) -> puddle_types::Problem {
-    for _ in 0..500 {
-        if let Some(p) = host.problems().list().into_iter().find(|p| p.key == key) {
-            return p;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    // It never came: fail here.
-    host.problems()
-        .list()
-        .into_iter()
-        .find(|p| p.key == key)
-        .unwrap()
+    eventually(&format!("the problem {key}"), APPLY, || {
+        host.problems().list().into_iter().find(|p| p.key == key)
+    })
+    .await
 }
 
 #[tokio::test(flavor = "multi_thread")]

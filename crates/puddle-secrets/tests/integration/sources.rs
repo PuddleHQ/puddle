@@ -245,6 +245,8 @@ async fn a_failed_read_that_needs_the_user_raises_a_sign_in_notice() {
         cache.get(&gh_spec()).await.unwrap_err(),
         SourceError::NotSignedIn
     );
+    // flake-ok: the cache sends the notice with a synchronous `broadcast::send` before `get` returns,
+    // and `get` was awaited, so the notice is already in the channel.
     assert_eq!(
         events.try_recv().unwrap(),
         SignInNeeded { source: gh_spec() }

@@ -62,6 +62,13 @@ impl Drop for Front {
     }
 }
 
+/// The origin of `workspace`'s editor on a front that listens on `port`, for a caller that knows the
+/// port and holds no [`Front`].
+#[must_use]
+pub fn origin_of(port: u16, workspace: &WorkspaceName) -> String {
+    format!("http://{workspace}.localhost:{port}")
+}
+
 impl Front {
     /// Binds `127.0.0.1` and starts serving. A workspace's origin includes the port, and a browser
     /// keeps the editor's storage per origin, so the port should stay the same between runs:
@@ -127,7 +134,7 @@ impl Front {
     /// The origin of `workspace`'s editor: where a window opens it.
     #[must_use]
     pub fn origin(&self, workspace: &WorkspaceName) -> String {
-        format!("http://{workspace}.localhost:{}", self.addr.port())
+        origin_of(self.addr.port(), workspace)
     }
 
     /// The editor connections `workspace` has open now (see [`Windows`]).

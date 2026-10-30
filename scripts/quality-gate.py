@@ -26,7 +26,7 @@ Flake rules (`flake-<id>` kinds; `--flakes` lists them with the fix each names) 
 raced in the past: a hand-rolled wait helper (every one outside the shared test kit counts; the row says
 whether it lacks a name or a bound), `file.lock()`, `try_recv()`, a port picked
 and dropped, a name built from the clock, a wall-clock bar, records matched by position, an awaited page read
-asserted once. A site is reasoned by `flake-ok: <why>` on the line or within three lines above. A rule is
+asserted once, a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the resolver. A site is reasoned by `flake-ok: <why>` on the line or within three lines above. A rule is
 counted (`flake-<id>`, `flake-<id>-unreasoned`) until its sites are fixed or reasoned, then it is added to
 FLAKE_FAILING and an unreasoned site becomes a `noreason` row. Their self-test replays the original code of
 fixed flakes from `scripts/flake-fixtures/`.
@@ -509,10 +509,13 @@ FLAKE_FIX = {
     "n1": "a name built from the clock or the pid collides across parallel runs: create the file or folder with `tempfile`, or `flake-ok: <why>`",
     "t1": "a test that asserts real time stayed under a fixed Duration fails on a loaded machine: assert on virtual time, CPU time or a measured margin, or `flake-ok: <what the bar measures and why it holds under load>`",
     "a1": "records matched to expectations by position depend on an order the contract does not promise: find each record by its key, or `flake-ok: <why the order is promised>`",
+    "d1": "a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the machine's resolver asks the real DNS and waits when it stalls: use a `.invalid` name (the proxy answers it at once, RFC 6761), or `flake-ok: <why this name must go to the resolver>`",
     "o2": "an awaited page read asserted once runs before the page settles: use a web-first assertion (`await expect(locator).toHaveText(...)`) or `await expect.poll(() => read)`, or `flake-ok: <why a one-shot read is meant>`",
 }
 FLAKE_WAIT_NAME = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(until\w*|eventually\w*|wait_for\w*|wait_until\w*|poll_until\w*)\b")
 FLAKE_WAIT_HOME = "crates/puddle-test-kit/"  # the kit's own helpers (the crate is that path) are the target, not a hit
+FLAKE_RESERVED = re.compile(r'"[^"]*(?<![@\w.-])(?:[a-z0-9-]+\.)*(?:[a-z0-9-]+\.(?:test|example)|example\.(?:com|net|org))(?![\w-])', re.I)
+FLAKE_REAL_DNS = re.compile(r"\b(?:web_internet|through_company_proxy|SystemResolver)\b")  # a test file where a connect can reach the OS resolver
 FLAKE_KIT_CALL = re.compile(r"\b(?:eventually\w*|next_event_\w+|no_event_\w+)\s*\(")
 FLAKE_CLOCK = re.compile(r"SystemTime::now\(\)|UNIX_EPOCH|as_nanos\(\)|subsec_nanos\(\)|\{nanos\}|\bnanos\b")
 FLAKE_PAGE_READ = re.compile(r"\.(evaluate|evaluateAll|boundingBox|textContent|innerText|innerHTML|getAttribute|isVisible|isHidden|isChecked|isEnabled|isDisabled|isEditable|count|inputValue|allTextContents|allInnerTexts|all)\(|\b\w+\(\s*page\b")
@@ -535,8 +538,11 @@ def flake_rust(f, raw, code, com, test, rows_add):
         flake_row(rows_add, rule, i, (detail if detail is not None else raw[i]).strip(), reasoned(i))
 
     pickers = {}
+    real_dns = f.startswith("crates/puddle-vm-tests/") or (("/tests/" in f or f.startswith("tests/")) and any(FLAKE_REAL_DNS.search(c) for c in code))
     for i, line in enumerate(code):
         t = test[i]
+        if t and real_dns and FLAKE_RESERVED.search(raw[i]) and not raw[i].lstrip().startswith("//"):
+            hit("d1", i)
         if t and re.search(r"\.try_recv\(\)", line):
             hit("o1", i)
         m = re.search(r"\bfn\s+(\w+)[^{;]*->\s*u16\b", line)
@@ -806,6 +812,14 @@ def flake_self_test():
     case("t1 fix keeps the bar", "t1", {store: read("t1-wall-clock-bar.good.rs.txt")}, 1, 1)
     case("t1 a deadline loop is not a bar", "t1", {store: "fn t() { assert!(start.elapsed() < Duration::from_secs(1) || Instant::now() < deadline, \"late\"); }\n"}, 0, 0)
     case("t1 reasoned", "t1", {store: reasoned(read("t1-wall-clock-bar.good.rs.txt"), "assert!(best")}, 1, 0)
+    vm_test = "crates/puddle-host/tests/vm_x.rs"
+    case("d1 original", "d1", {vm_test: read("d1-fake-site.bad.rs.txt")}, 1, 1)
+    case("d1 fix", "d1", {vm_test: read("d1-fake-site.good.rs.txt")}, 0, 0)
+    case("d1 reasoned", "d1", {vm_test: reasoned(read("d1-fake-site.bad.rs.txt"), "const SITE")}, 1, 0)
+    case("d1 example.com", "d1", {vm_test: 'use vm_support::web_internet;\nfn t() { run("curl https://api.example.com/"); }\n'}, 1, 1)
+    case("d1 not a reserved name", "d1", {vm_test: 'use vm_support::web_internet;\nfn t() { run("curl https://notexample.com/ https://contest.org/ me@example.org"); }\n'}, 0, 0)
+    case("d1 a test with a fake resolver", "d1", {"crates/puddle-proxy/tests/x.rs": 'fn t() { let n = "site.test"; }\n'}, 0, 0)
+    case("d1 in production code", "d1", {"crates/x/src/lib.rs": 'use SystemResolver;\nconst DOC: &str = "site.test";\n'}, 0, 0)
     case("o2 variable", "o2", {FLAKE_SPEC: read("o2-density-measure.bad.ts.txt")}, 1, 1)
     case("o2 poll", "o2", {FLAKE_SPEC: read("o2-density-measure.good.ts.txt")}, 0, 0)
     case("o2 focus", "o2", {FLAKE_SPEC: read("o2-focus-read.bad.ts.txt")}, 1, 1)
@@ -825,6 +839,7 @@ def flake_self_test():
         "a1": {"crates/puddle-e2e/tests/proxy_agent_store.rs": read("a1-positional-zip.bad.rs.txt")},
         "t1": {store: read("t1-wall-clock-bar.bad.rs.txt")},
         "o2": {FLAKE_SPEC: read("o2-density-measure.bad.ts.txt")},
+        "d1": {vm_test: read("d1-fake-site.bad.rs.txt")},
     }
     if sorted(bad) != sorted(FLAKE_FIX):
         failures.append(f"every rule needs a failing-flip case: {sorted(set(FLAKE_FIX) ^ set(bad))}")

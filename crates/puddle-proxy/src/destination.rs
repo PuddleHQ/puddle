@@ -76,7 +76,10 @@ pub trait Resolver: Send + Sync {
     ) -> BoxFuture<'a, io::Result<Vec<SocketAddr>>>;
 }
 
-/// The OS resolver (`getaddrinfo` on a blocking thread, through tokio).
+/// The OS resolver (`getaddrinfo` on a blocking thread, through tokio). A name under `.invalid`
+/// (and the bare `invalid`) is answered "no such name" at once without asking the OS: RFC 6761
+/// section 6.4 reserves it as never existing, and lets software say so itself. A private DNS that
+/// would resolve such a name is not asked either.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SystemResolver;
 
@@ -87,12 +90,26 @@ impl Resolver for SystemResolver {
         port: u16,
     ) -> BoxFuture<'a, io::Result<Vec<SocketAddr>>> {
         Box::pin(async move {
+            if is_invalid_name(name.as_str()) {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "the name is under .invalid, which never exists (RFC 6761)",
+                ));
+            }
             let host = name.as_str().to_owned();
             tokio::task::spawn_blocking(move || lookup(&host, port))
                 .await
                 .map_err(io::Error::other)?
         })
     }
+}
+
+/// Whether `host` is `invalid` or ends in `.invalid`, the label compared whole (`notinvalid.com`
+/// and `invalid.example.com` are ordinary names) and ignoring case and a trailing root dot.
+fn is_invalid_name(host: &str) -> bool {
+    let host = host.strip_suffix('.').unwrap_or(host);
+    let last = host.rsplit('.').next().unwrap_or(host);
+    last.eq_ignore_ascii_case("invalid")
 }
 
 /// One blocking `getaddrinfo` for stream sockets, like `std`'s own lookup but with the error
@@ -167,6 +184,42 @@ mod tests {
             assert_eq!(err.kind() == io::ErrorKind::NotFound, missing, "{label}");
             // The system's own text stays, whichever way it was classified.
             assert!(!err.to_string().is_empty(), "{label}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_name_under_invalid_is_no_such_name_without_a_lookup() {
+        for host in [
+            "invalid",
+            "site.invalid",
+            "a.b.invalid",
+            "SITE.Invalid",
+            "site.invalid.",
+        ] {
+            let Ok(name) = DomainName::parse_normalised(host) else {
+                // A form the type refuses never reaches the resolver; the helper still decides it.
+                assert!(is_invalid_name(host), "{host}");
+                continue;
+            };
+            let err = SystemResolver.resolve(&name, 443).await.unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::NotFound, "{host}");
+            assert!(err.to_string().contains(".invalid"), "{host}: {err}");
+        }
+    }
+
+    #[test]
+    fn only_the_last_label_makes_a_name_invalid() {
+        for host in [
+            "notinvalid.com",
+            "invalid.example.com",
+            "invalid.com",
+            "my-invalid",
+            "xinvalid",
+            "invalid.test",
+            "localhost",
+            "",
+        ] {
+            assert!(!is_invalid_name(host), "{host}");
         }
     }
 

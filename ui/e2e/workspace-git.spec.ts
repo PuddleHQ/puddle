@@ -4,7 +4,7 @@
 // Personal and Work and the push list off, data-tools has nothing. Waits are on conditions.
 import type { Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeStops, watchCsp } from "./support";
+import { axeStops, watchCsp, staysEmpty } from "./support";
 
 async function open(page: Page, backend: Backend, workspace = "web-shop") {
   await backend.control.reset("git-identities");
@@ -80,7 +80,7 @@ test("is a tab of the workspace page and shows identities, switches and the tabl
   await expect(
     page.getByText("Opening the workspace in desktop VS Code is different"),
   ).toBeVisible();
-  await expect.poll(() => csp()).toEqual([]);
+  await staysEmpty(page, csp);
 });
 
 test("a toggle and a switch are saved at once and survive a reload", async ({
@@ -506,7 +506,7 @@ for (const scheme of ["light", "dark"] as const) {
       await open(page, backend, "data-tools");
       await expect(page.getByText(/No identity yet/)).toBeVisible();
       await scan(page, "no identities");
-      await expect.poll(() => csp()).toEqual([]);
+      await staysEmpty(page, csp);
       scan.done();
     });
   }

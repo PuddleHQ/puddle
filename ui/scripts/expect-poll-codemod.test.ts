@@ -56,7 +56,7 @@ describe("rewrite", () => {
   });
 
   it("keeps a matching site as a one-shot under a written reason, once", () => {
-    const keeps = [parseKeep("response\\.text\\(\\)=the body is complete")];
+    const keeps = [parseKeep("response.text()=the body is complete")];
     const first = go(
       `  expect(await response.text()).toContain("<svg");`,
       keeps,
@@ -79,15 +79,15 @@ describe("rewrite", () => {
 });
 
 describe("parseKeep", () => {
-  it("splits the pattern from the reason at the last equals sign", () => {
+  it("splits the text from the reason at the last equals sign", () => {
     expect(parseKeep("a=b=why")).toMatchObject({
-      pattern: /a=b/,
+      text: "a=b",
       reason: "why",
     });
   });
 
-  it.each(["nothing", "=reason", "pattern="])("refuses %j", (arg) => {
-    expect(() => parseKeep(arg)).toThrow(/pattern=reason/);
+  it.each(["nothing", "=reason", "text="])("refuses %j", (arg) => {
+    expect(() => parseKeep(arg)).toThrow(/text=reason/);
   });
 });
 

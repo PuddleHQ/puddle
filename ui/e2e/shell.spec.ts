@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { test as isolated } from "./fixture";
-import { axeViolations, expect, signIn, test, watchCsp } from "./support";
+import {
+  expect,
+  expectNoAxeViolations,
+  signIn,
+  staysEmpty,
+  test,
+  watchCsp,
+} from "./support";
 
 const sections = [
   { path: "/workspaces", name: "Workspaces" },
@@ -28,7 +35,7 @@ test.describe("the app shell, served by the real API", () => {
     await expect(page.getByTestId("pending-badge")).toContainText("1 pending");
     await expect(page).toHaveTitle("Workspaces - Puddle");
     await expect(page.getByText("1 request waiting.")).toBeVisible();
-    await expect.poll(() => violations()).toEqual([]);
+    await staysEmpty(page, violations);
   });
 
   test("all six sections are reachable from the sidebar, and the current one is marked", async ({
@@ -112,18 +119,14 @@ test.describe("the app shell, served by the real API", () => {
         await page.emulateMedia({ colorScheme: scheme });
         await page.goto(path);
         await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-        await expect
-          .poll(() => axeViolations(page), { message: `${path} (${scheme})` })
-          .toEqual([]);
+        await expectNoAxeViolations(page, `${path} (${scheme})`);
       });
     }
     test(`axe finds nothing on the 404 page in ${scheme}`, async ({ page }) => {
       await page.emulateMedia({ colorScheme: scheme });
       await page.goto("/no-such-page");
       await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-      await expect
-        .poll(() => axeViolations(page), { message: `404 (${scheme})` })
-        .toEqual([]);
+      await expectNoAxeViolations(page, `404 (${scheme})`);
     });
   }
 });
@@ -151,7 +154,7 @@ test.describe("the origin and the token", () => {
     await expect(
       page.getByRole("heading", { level: 1, name: "Inbox" }),
     ).toBeVisible();
-    await expect.poll(() => axeViolations(page)).toEqual([]);
+    await expectNoAxeViolations(page);
   });
 });
 
@@ -199,9 +202,7 @@ isolated.describe("the theme choice is kept by Puddle, not by the page", () => {
       await page.goto("/settings");
       for (const choice of ["Light", "Dark"]) {
         await page.getByRole("radio", { name: choice }).click();
-        await expect
-          .poll(() => axeViolations(page), { message: choice })
-          .toEqual([]);
+        await expectNoAxeViolations(page, choice);
       }
     },
   );

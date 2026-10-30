@@ -38,7 +38,6 @@ pub struct Front {
     taken: bool,
     windows: Windows,
     guests: Arc<dyn Guests>,
-    halves: Arc<dyn ServerHalves>,
     task: JoinHandle<()>,
     _stop: watch::Sender<bool>,
     _registration: Registration,
@@ -100,7 +99,7 @@ impl Front {
         let (stop_tx, stop) = watch::channel(false);
         let shared = Arc::new(Shared {
             guests: Arc::clone(&guests),
-            halves: Arc::clone(&halves),
+            halves,
             windows: windows.clone(),
             port: addr.port(),
             stop,
@@ -112,7 +111,6 @@ impl Front {
             taken,
             windows,
             guests,
-            halves,
             task,
             _stop: stop_tx,
             _registration: registration,

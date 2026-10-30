@@ -32,6 +32,7 @@ use tracing::Instrument;
 
 use puddle_netpolicy::{LocalAccess, LocalCategory, NetPolicy, block_message, normalise_host};
 
+use crate::coalesce::Coalescing;
 use crate::counted::Counted;
 use crate::destination::{AddressCheck, AddressVerdict, Resolver, SystemResolver};
 use crate::http::{self, Body, Head, HeadError, RawTarget};
@@ -257,8 +258,8 @@ impl std::fmt::Debug for Proxy {
 }
 
 impl Proxy {
-    /// A proxy that asks `policy`, resolves with the OS resolver, and reports agent events (OOM
-    /// kills) to `sink`. Its address check is a [`NetPolicy`] with every local toggle off and no
+    /// A proxy that asks `policy`, resolves with the OS resolver (concurrent lookups of one name
+    /// are shared), and reports agent events (OOM kills) to `sink`. Its address check is a [`NetPolicy`] with every local toggle off and no
     /// registered endpoints: public addresses only. The host program passes its own
     /// [`NetPolicy`] (settings-backed toggles, Puddle's endpoint registry) with
     /// [`Self::with_address_check`], and its audit (the store) with
@@ -267,7 +268,7 @@ impl Proxy {
     pub fn new(policy: Arc<dyn Policy>, sink: Arc<dyn EventSink>) -> Self {
         Self {
             policy,
-            resolver: Arc::new(SystemResolver),
+            resolver: Arc::new(Coalescing::new(SystemResolver)),
             records: Arc::new(SystemRecords),
             addresses: Arc::new(NetPolicy::new(Arc::new(LocalAccess::NONE))),
             log: Arc::new(NullConnectionLog),

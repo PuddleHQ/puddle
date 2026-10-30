@@ -54,7 +54,7 @@ test.describe("the palette setting", () => {
       "data-palette",
       "meadow",
     );
-    expect(await accent(page)).not.toBe(pond);
+    await expect.poll(() => accent(page)).not.toBe(pond);
     await save(page);
 
     const view = await request.get("/api/settings", {
@@ -81,8 +81,8 @@ test.describe("the palette setting", () => {
       "data-palette",
       /.*/,
     );
-    expect(await accent(page)).toBe(pond);
-    expect(await csp()).toEqual([]);
+    await expect.poll(() => accent(page)).toBe(pond);
+    await expect.poll(() => csp()).toEqual([]);
   });
 
   test("Custom takes the user's accent, keeps it, and warns when a pick is hard to read", async ({
@@ -126,8 +126,8 @@ test.describe("the palette setting", () => {
     await page.evaluate(() => localStorage.clear());
     await page.goto("/settings");
     await expect(page.locator("#set-colour-accent")).toHaveValue("#7a1fa2");
-    expect(await accent(page)).toContain("#7a1fa2");
-    expect(await csp()).toEqual([]);
+    await expect.poll(() => accent(page)).toContain("#7a1fa2");
+    await expect.poll(() => csp()).toEqual([]);
   });
 
   for (const palette of [...PALETTES, "custom"] as const) {
@@ -151,7 +151,9 @@ test.describe("the palette setting", () => {
           await expect(page.getByText(/hard to read/)).toBeHidden();
         }
         await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
-        expect(await axeViolations(page), `${palette} ${theme}`).toEqual([]);
+        await expect
+          .poll(() => axeViolations(page), { message: `${palette} ${theme}` })
+          .toEqual([]);
       });
     }
   }

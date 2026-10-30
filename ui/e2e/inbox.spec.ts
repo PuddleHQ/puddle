@@ -724,7 +724,7 @@ test.describe("accessibility", () => {
           .click();
         await expect(page.getByRole("status")).toContainText("Denied");
         await scan(page, "toast and decided list");
-        expect(await csp()).toEqual([]);
+        await expect.poll(() => csp()).toEqual([]);
 
         await backend.control.reset("empty");
         await page.reload();
@@ -762,8 +762,8 @@ test.describe("accessibility", () => {
     await openInbox(page, backend);
     const row = rowFor(page, "registry.example.org");
     await expect(row).toBeVisible();
+    await expect(row.getByRole("button")).toHaveCount(3);
     const buttons = await row.getByRole("button").all();
-    expect(buttons).toHaveLength(3);
     for (const button of buttons) {
       const box = await button.boundingBox();
       expect(box?.width ?? 0).toBeGreaterThanOrEqual(24);

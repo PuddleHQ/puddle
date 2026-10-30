@@ -136,7 +136,7 @@ test("a fresh install is led through every step and then opens on the workspaces
   await page.goto("/");
   await expect(page).toHaveURL(/\/workspaces$/);
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  expect(await csp()).toEqual([]);
+  await expect.poll(() => csp()).toEqual([]);
 });
 
 test("a blocking finding stops the flow until it is fixed, and the report can be copied", async ({
@@ -285,7 +285,9 @@ for (const scheme of ["light", "dark"] as const) {
           page.getByRole("radio", { name: /code-server/ }),
         ).toBeVisible();
       }
-      expect(await axeViolations(page), path).toEqual([]);
+      await expect
+        .poll(() => axeViolations(page), { message: path })
+        .toEqual([]);
     });
   }
 }
@@ -312,12 +314,12 @@ test("the blocked system check and the form dialog pass the accessibility scan",
   await page.goto("/welcome/check");
   await expect(page.getByText(/1 problem to fix/)).toBeVisible();
   await page.getByText("Technical details").click();
-  expect(await axeViolations(page)).toEqual([]);
+  await expect.poll(() => axeViolations(page)).toEqual([]);
 
   await page.goto("/welcome/workspace");
   await page.getByRole("button", { name: "Create a workspace" }).click();
   await expect(
     page.getByRole("dialog", { name: "New workspace" }),
   ).toBeVisible();
-  expect(await axeViolations(page)).toEqual([]);
+  await expect.poll(() => axeViolations(page)).toEqual([]);
 });

@@ -28,7 +28,7 @@ test.describe("the app shell, served by the real API", () => {
     await expect(page.getByTestId("pending-badge")).toContainText("1 pending");
     await expect(page).toHaveTitle("Workspaces - Puddle");
     await expect(page.getByText("1 request waiting.")).toBeVisible();
-    expect(await violations()).toEqual([]);
+    await expect.poll(() => violations()).toEqual([]);
   });
 
   test("all six sections are reachable from the sidebar, and the current one is marked", async ({
@@ -112,14 +112,18 @@ test.describe("the app shell, served by the real API", () => {
         await page.emulateMedia({ colorScheme: scheme });
         await page.goto(path);
         await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-        expect(await axeViolations(page), `${path} (${scheme})`).toEqual([]);
+        await expect
+          .poll(() => axeViolations(page), { message: `${path} (${scheme})` })
+          .toEqual([]);
       });
     }
     test(`axe finds nothing on the 404 page in ${scheme}`, async ({ page }) => {
       await page.emulateMedia({ colorScheme: scheme });
       await page.goto("/no-such-page");
       await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-      expect(await axeViolations(page), `404 (${scheme})`).toEqual([]);
+      await expect
+        .poll(() => axeViolations(page), { message: `404 (${scheme})` })
+        .toEqual([]);
     });
   }
 });
@@ -147,7 +151,7 @@ test.describe("the origin and the token", () => {
     await expect(
       page.getByRole("heading", { level: 1, name: "Inbox" }),
     ).toBeVisible();
-    expect(await axeViolations(page)).toEqual([]);
+    await expect.poll(() => axeViolations(page)).toEqual([]);
   });
 });
 
@@ -162,7 +166,7 @@ isolated.describe("the theme choice is kept by Puddle, not by the page", () => {
         page.evaluate(
           () => getComputedStyle(document.documentElement).colorScheme,
         );
-      expect(await scheme()).toBe("light dark");
+      await expect.poll(() => scheme()).toBe("light dark");
       const bg = () =>
         page.evaluate(() => getComputedStyle(document.body).backgroundColor);
       const darkBg = await bg();
@@ -184,7 +188,7 @@ isolated.describe("the theme choice is kept by Puddle, not by the page", () => {
         "data-theme",
         /.*/,
       );
-      expect(await bg()).toBe(darkBg);
+      await expect.poll(() => bg()).toBe(darkBg);
     },
   );
 
@@ -195,7 +199,9 @@ isolated.describe("the theme choice is kept by Puddle, not by the page", () => {
       await page.goto("/settings");
       for (const choice of ["Light", "Dark"]) {
         await page.getByRole("radio", { name: choice }).click();
-        expect(await axeViolations(page), choice).toEqual([]);
+        await expect
+          .poll(() => axeViolations(page), { message: choice })
+          .toEqual([]);
       }
     },
   );

@@ -439,6 +439,39 @@ fn an_entrypoint_that_cannot_start_says_so() {
     }
 }
 
+/// A command that takes `secs` before it runs, standing for a process spawn on a host with no CPU to spare.
+const SLOW_STUB: &str = "#!/bin/sh\nPATH=/usr/bin:/bin\nsleep SECS\nexec NAME \"$@\"\n";
+
+fn slow(name: &str, secs: &str) -> String {
+    SLOW_STUB.replace("SECS", secs).replace("NAME", name)
+}
+
+#[test]
+fn a_failure_at_once_is_reported_however_slow_the_host_runs_the_wrapper() {
+    for ((stub, secs), sh) in [("tail", "2"), ("setsid", "2")]
+        .into_iter()
+        .flat_map(|c| shells().into_iter().map(move |sh| (c, sh)))
+    {
+        let fr = FakeRoot::new(&sh);
+        fr.stub(stub, &slow(stub, secs));
+        let entry = fr.path("/entry.sh");
+        std::fs::write(&entry, "#!/nonexistent/interpreter\n").unwrap();
+        std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut img = image(&[entry.display().to_string()], &[]);
+        // The wrapper reads its commands from the image's PATH; the hook's own from the stubs.
+        img.env = vec![(
+            "PATH".into(),
+            format!("{}:{IMAGE_PATH}", fr.path("/stubs").display()),
+        )];
+        let plan = BootPlan::builder(&img).build().unwrap();
+        let said = String::from_utf8_lossy(&fr.run(&plan).stdout).into_owned();
+        assert!(
+            said.contains("puddle-boot: entrypoint exited with status 127:"),
+            "slow {stub}: {said}"
+        );
+    }
+}
+
 #[test]
 fn an_entrypoint_that_finishes_cleanly_or_keeps_running_is_not_reported() {
     for sh in shells() {

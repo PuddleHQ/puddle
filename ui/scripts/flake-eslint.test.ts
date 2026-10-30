@@ -27,7 +27,7 @@ describe("the e2e rule against a read asserted once", () => {
     const found = (await lint(original)).filter(
       (m) => m.ruleId === "no-restricted-syntax",
     );
-    expect(found.map((m) => m.severity)).toEqual([1, 1]); // counted: warnings
+    expect(found.map((m) => m.severity)).toEqual([2, 2]); // errors: `npm run lint` fails
     expect(found[0]?.message).toContain("expect.poll");
     expect(found[0]?.message).toContain("web-first assertion");
   });

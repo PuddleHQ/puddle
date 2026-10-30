@@ -467,7 +467,9 @@ test.describe("live", () => {
     await page.getByRole("button", { name: /2 new\s+records: show/ }).click();
     await expect(rows(page).first()).toContainText("fresher.example.org");
     await expect(rows(page).nth(1)).toContainText("fresh.example.org");
-    expect(await region(page).evaluate((el) => el.scrollTop)).toBe(0);
+    await expect
+      .poll(() => region(page).evaluate((el) => el.scrollTop))
+      .toBe(0);
     await expect(show).toHaveCount(0);
   });
 
@@ -575,6 +577,7 @@ test.describe("export", () => {
       .length;
     await backend.control.step({ do: "history", count: 1300 });
     await openActivity(page, backend, "?type=connection&range=all");
+    // flake-ok: `download` returns once the saved file is complete, so the lines cannot still grow
     const lines = await download(page);
     expect(lines).toHaveLength(before + 1300);
     // The same lines the API holds, in the same order, across three pages of 500.
@@ -659,7 +662,7 @@ test.describe("a long log", () => {
       const last = attempts[attempts.length - 1]!;
       expect(last.top).toBeGreaterThanOrEqual(target);
       // Without a clock: the table never holds more rows than a screen and its overscan.
-      expect(await rows(page).count()).toBeLessThan(60);
+      await expect.poll(() => rows(page).count()).toBeLessThan(60);
       if (Math.max(0, ...last.long) < LONG_TASK_TARGET_MS * 4) break;
     }
     const worsts = attempts.map((p) => Math.max(0, ...p.long));
@@ -791,7 +794,7 @@ test.describe("accessibility", () => {
           page.getByRole("heading", { name: "No records match" }),
         ).toBeVisible();
         await scan(page, "no match");
-        expect(await csp()).toEqual([]);
+        await expect.poll(() => csp()).toEqual([]);
         scan.done();
       });
     }

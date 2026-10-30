@@ -42,6 +42,7 @@ different crates and rarely collides.
 | `crates/puddle` | bin + lib | Host program `puddle(.exe)`: CLI (`doctor`, `ssh-bridge`, `serve` around `puddle-host`) |
 | `crates/xtask` | bin (dev) | `cargo xtask runtime` (the OS's runtime folder: the fork release's msb (Linux: `--msb` for a tag whose release has none) plus the firmware, on Linux under both names it needs; checksums, `licenses/`), `cargo xtask notices` (third-party notices; `--check` is a gate); never shipped |
 | `crates/puddle-fs` | lib | Per-OS file-system seams: `data_dir()` (the `dirs` crate: `%LOCALAPPDATA%\puddle`, `$XDG_DATA_HOME/puddle`, `~/Library/Application Support/puddle`) and `private` (owner-only files and folders: `0600`/`0700` on Unix; on Windows a protected ACL with one entry for the current user, set at creation). Its `unsafe` (Win32 security calls) is in one module, `win`, which `puddle-ipc` shares for its pipe descriptor. Own crate because both the API and the runtime layout need it and neither may depend on the other |
+| `crates/puddle-test-kit` | lib (dev) | Shared test helpers, a dev-dependency only (`scripts/quality-gate.py` fails a product crate that lists it under `[dependencies]` or `[build-dependencies]`): `eventually` (a named wait, bounded below nextest's slow-timeout), `next_event_within` and `no_event_for` (channel reads), `bound_port` (a listener that stays bound), `TestDir` (a unique temporary folder) |
 | `crates/puddle-fd-limit` | lib | The open-file limit: `raise_open_file_limit` lifts the soft `RLIMIT_NOFILE` to the hard limit once at start (the guest agent also tries to lift the hard limit, as root in the guest) and `OpenFileLimit::log` says what the process got, warning when it is below what a busy workspace needs. Safe `rustix` calls on Unix; nothing to do on Windows, which has no per-process descriptor cap. Used by `puddle-agent` and `puddle-host` |
 | `crates/puddle-ipc` | lib | Per-workspace host endpoints (named pipe / Unix socket) only the current user can open: owner-only DACL, first-instance check, random names, `0600` sockets in a `0700` dir. Its only `unsafe` is creating a pipe with a security descriptor (`windows/security.rs`); the descriptor helpers come from `puddle-fs` |
 | `crates/puddle-ports` | lib | A workspace's ports: what listens in the guest, forwards from the guest to the host's loopback (listeners registered as Puddle's own), pinned forwards kept through a `Pins` store, who holds a port |
@@ -218,7 +219,8 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   site fails the `quality` gate like the others. Two rules live in the linters: clippy's `disallowed-methods` names
   `std::env::temp_dir` (workspace level `allow` until its sites move; `scripts/flake-lints-test.sh` runs it at `warn`),
   and an ESLint selector flags `expect(await ...)` in `ui/e2e` as a warning. Each rule's self-test replays the original
-  code of a flake it would have caught (`scripts/flake-fixtures/`).
+  code of a flake it would have caught (`scripts/flake-fixtures/`). A wait in a test goes through `puddle-test-kit`
+  (`eventually(what, within, probe)`; a wait that runs out panics with its `what`).
 - **Security-sensitive code** (proxy decisions, credential injection, address classification, API
   auth, pipe/socket permissions, anything parsing guest input): treat all guest input as hostile,
   fail closed (deny on error), and add a hostile-guest test (§8) with the change.

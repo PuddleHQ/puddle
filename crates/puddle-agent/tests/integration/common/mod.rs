@@ -20,6 +20,33 @@ use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+/// A loopback port that stays this test's until the value is dropped, for a config that must name
+/// its port before anything listens on it (the editor server's `--port`). The socket is bound and
+/// never listens, so connecting to the port is refused, as on a free one, while another process's
+/// port 0 or plain bind cannot take it. `SO_REUSEADDR` lets the test's own listener (the server
+/// that "answers") bind the same number and be dropped again, as many times as the test needs.
+pub struct ReservedPort {
+    _socket: tokio::net::TcpSocket,
+    port: u16,
+}
+
+impl ReservedPort {
+    pub fn new() -> Self {
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.set_reuseaddr(true).unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let port = socket.local_addr().unwrap().port();
+        Self {
+            _socket: socket,
+            port,
+        }
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+}
+
 pub struct ChanSink(pub mpsc::UnboundedSender<Event>);
 
 impl EventSink for ChanSink {
@@ -175,4 +202,28 @@ pub async fn next_event(
     within: Duration,
 ) -> Option<Event> {
     tokio::time::timeout(within, rx.recv()).await.ok().flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ReservedPort;
+
+    #[tokio::test]
+    async fn a_reserved_port_refuses_connections_and_other_binds_but_takes_a_reusing_listener() {
+        let reserved = ReservedPort::new();
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], reserved.port()));
+        assert!(
+            tokio::net::TcpStream::connect(addr).await.is_err(),
+            "nothing listens on a reserved port"
+        );
+        // Another process picking by number, without SO_REUSEADDR, is turned away: the collision
+        // a dropped listener leaves open.
+        let squatter = tokio::net::TcpSocket::new_v4().unwrap();
+        assert!(squatter.bind(addr).is_err(), "a plain bind took the port");
+        // The test's own stand-in server binds it, answers, and goes away again.
+        let listener = std::net::TcpListener::bind(addr).unwrap();
+        assert!(tokio::net::TcpStream::connect(addr).await.is_ok());
+        drop(listener);
+        assert!(std::net::TcpListener::bind(addr).is_ok());
+    }
 }

@@ -466,14 +466,14 @@ def scan(root):
     return rows
 
 
-# Flake-prone test shapes (counted, never failing yet). Each rule has two kinds: `flake-<id>` for every
+# Flake-prone test shapes (counted; failing once the rule is in FLAKE_FAILING). Each rule has two kinds: `flake-<id>` for every
 # site and `flake-<id>-unreasoned` for the sites with no `flake-ok: <why>` comment on the line or within
 # three lines above (a UI line may carry `eslint-disable-next-line no-restricted-syntax -- <why>` instead).
 # A rule in FLAKE_FAILING also adds a `noreason` row per unreasoned site, so `--missing` and the `quality`
 # gate fail on it; flipping a rule from counted to failing is adding its id there, once its sites are fixed
 # or reasoned. The scan reads shapes, not truth: a reason is read by a reviewer, and a shape it cannot see
 # (a producer that is synchronous, a wait anchored on something already true) needs a run under load.
-FLAKE_FAILING = set()
+FLAKE_FAILING = {"p1"}
 FLAKE_OK = re.compile(r"flake-ok:\s*\S")
 FLAKE_FIX = {
     "w1": "a wait helper outside the shared test kit: use `eventually(what, within, probe)` (it names the wait and bounds it below nextest's slow-timeout), or `flake-ok: <why>`",
@@ -743,6 +743,8 @@ def flake_self_test():
     mod_rs, call_bad, call_good = FLAKE_LAB + "mod.rs", FLAKE_LAB + "interceptor.rs", FLAKE_LAB + "interceptor.rs"
     case("p1 original", "p1", {mod_rs: read("p1-free-port.bad.rs.txt"), call_bad: read("p1-free-port-call.bad.rs.txt")}, 2, 2)
     case("p1 fix", "p1", {mod_rs: reasoned(read("p1-free-port.bad.rs.txt"), "pub fn free_port"), call_good: read("p1-free-port-call.good.rs.txt")}, 1, 0)
+    case("p1 a picker that keeps its listener is not one", "p1", {mod_rs: "pub fn serve() -> u16 {\n    let l = TcpListener::bind((LOCAL, 0)).unwrap();\n    let port = l.local_addr().unwrap().port();\n    tokio::spawn(async move { l.accept().await });\n    port\n}\n"}, 0, 0)
+    case("p1 a held listener is not one", "p1", {mod_rs: "fn t() { let listener = TcpListener::bind((LOCAL, 0)).unwrap(); let port = listener.local_addr().unwrap().port(); }\n"}, 0, 0)
     case("a1 original", "a1", {"crates/puddle-e2e/tests/proxy_agent_store.rs": read("a1-positional-zip.bad.rs.txt")}, 1, 1)
     case("a1 fix", "a1", {"crates/puddle-e2e/tests/proxy_agent_store.rs": read("a1-positional-zip.good.rs.txt")}, 0, 0)
     store = "crates/puddle-store/tests/events_and_audit_query.rs"
@@ -773,13 +775,15 @@ def flake_self_test():
     if sorted(bad) != sorted(FLAKE_FIX):
         failures.append(f"every rule needs a failing-flip case: {sorted(set(FLAKE_FIX) ^ set(bad))}")
     for rule, files in bad.items():
-        if any(r[0] == "noreason" for r in run(files)):
+        failing_now = rule in FLAKE_FAILING
+        if not failing_now and any(r[0] == "noreason" for r in run(files)):
             failures.append(f"{rule}: a counted rule must not add a noreason row")
         FLAKE_FAILING.add(rule)
         try:
             miss = [r for r in run(files) if r[0] == "noreason"]
         finally:
-            FLAKE_FAILING.discard(rule)
+            if not failing_now:
+                FLAKE_FAILING.discard(rule)
         if not miss or not all(r[3].startswith(f"flake-{rule}: {FLAKE_FIX[rule]} | ") for r in miss):
             failures.append(f"{rule}: a failing rule adds noreason rows that open with the whole fix text: {miss}")
     return failures

@@ -64,6 +64,12 @@ export function settledMessage(settled: Settled): string {
   );
 }
 
+/** How each way of opening is named in a toast. */
+const EDITOR_WORDS = {
+  browser: { where: "the browser", what: "the browser editor" },
+  desktop: { where: "VS Code", what: "VS Code" },
+} as const;
+
 export class WorkspaceActions {
   createOpen = $state(false);
   /** The workspace the connect step is open for (a snapshot: read live data by its id). */
@@ -200,27 +206,29 @@ export class WorkspaceActions {
     );
   }
 
-  /** Opens desktop VS Code; the connect step only offers it while direct SSH is on. */
-  openDesktop = (w: Workspace): void => {
-    void this.#openDesktop(w);
+  /** Opens the browser editor's window; it needs no direct SSH. */
+  openBrowser = (w: Workspace): void => {
+    void this.#open(w, "browser");
   };
 
-  async #openDesktop(w: Workspace): Promise<void> {
-    const result = await this.#store.attach(w.id, "desktop");
+  /** Opens desktop VS Code; the connect step only offers it while direct SSH is on. */
+  openDesktop = (w: Workspace): void => {
+    void this.#open(w, "desktop");
+  };
+
+  async #open(w: Workspace, mode: "browser" | "desktop"): Promise<void> {
+    const words = EDITOR_WORDS[mode];
+    const result = await this.#store.attach(w.id, mode);
     if (!result.ok) {
       this.#fail(result.message);
       return;
     }
     const { opened, message } = result.value;
     if (opened) {
-      this.#toasts.push(`Opening ${w.display_name} in VS Code.`);
+      this.#toasts.push(`Opening ${w.display_name} in ${words.where}.`);
     } else {
-      this.#toasts.push(
-        message ?? `Puddle couldn't open VS Code for ${w.display_name}.`,
-        {
-          tone: "error",
-          ms: 8000,
-        },
+      this.#fail(
+        message ?? `Puddle couldn't open ${words.what} for ${w.display_name}.`,
       );
     }
   }

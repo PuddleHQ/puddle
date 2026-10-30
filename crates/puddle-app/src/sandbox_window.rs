@@ -226,6 +226,9 @@ pub struct Target {
     pub debug_port: Option<u16>,
 }
 
+/// Reports the end of a request for another window of a workspace (see [`Hooks::new_window`]).
+pub type NewWindowReport = Arc<dyn Fn(&WorkspaceName, Result<(), &str>) + Send + Sync>;
+
 /// What the windows ask of the shell.
 #[derive(Clone)]
 pub struct Hooks {
@@ -233,6 +236,9 @@ pub struct Hooks {
     pub open_external: OpenExternal,
     /// Tells the user a link was refused.
     pub refused: Refused,
+    /// Tells the user how a request for another window of a workspace ended: `Err` carries why
+    /// nothing opened, `Ok` withdraws an earlier notice.
+    pub new_window: NewWindowReport,
     /// Called when a workspace's last window is gone, so the guest can end the editor's extension
     /// hosts. Called from the window system's thread: it must not wait.
     pub last_closed: Arc<dyn Fn(&WorkspaceName) + Send + Sync>,
@@ -518,11 +524,14 @@ impl SandboxWindows {
                     start,
                     features,
                 ) {
-                    Ok(window) => NewWindowResponse::Create { window },
+                    Ok(window) => {
+                        (hooks.new_window)(&target.workspace, Ok(()));
+                        NewWindowResponse::Create { window }
+                    }
                     Err(err) => {
                         tracing::warn!(%err, "a new editor window could not be built");
-                        // The user clicked New Window: say that nothing opened.
-                        (hooks.refused)(url);
+                        // The user clicked New Window: say that nothing opened, and why.
+                        (hooks.new_window)(&target.workspace, Err(&err.to_string()));
                         NewWindowResponse::Deny
                     }
                 }
@@ -1000,6 +1009,21 @@ mod tests {
         )
     }
 
+    /// A `new_window` hook that writes `<workspace>:ok` or `<workspace>:err:<reason>`.
+    fn window_recorder() -> (NewWindowReport, Arc<Mutex<Vec<String>>>) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        (
+            Arc::new(move |w: &WorkspaceName, end: Result<(), &str>| {
+                sink.lock().unwrap().push(match end {
+                    Ok(()) => format!("{w}:ok"),
+                    Err(reason) => format!("{w}:err:{reason}"),
+                });
+            }),
+            seen,
+        )
+    }
+
     struct Fixture {
         windows: SandboxWindows,
         ended: Arc<Mutex<Vec<String>>>,
@@ -1013,6 +1037,7 @@ mod tests {
         let windows = SandboxWindows::new(Hooks {
             open_external,
             refused,
+            new_window: Arc::new(|_, _| {}),
             last_closed: Arc::new(move |w| sink.lock().unwrap().push(w.to_string())),
         });
         Fixture { windows, ended }
@@ -1136,9 +1161,11 @@ mod tests {
         let data = tempfile::tempdir().unwrap();
         let (open_external, opened) = recorder();
         let (refused, refusals) = recorder();
+        let (new_window, ends) = window_recorder();
         let windows = SandboxWindows::new(Hooks {
             open_external,
             refused,
+            new_window,
             last_closed: Arc::new(|_| {}),
         });
         let t = mock_target("demo", data.path());
@@ -1166,6 +1193,8 @@ mod tests {
         ));
         assert_eq!(*opened.lock().unwrap(), ["https://example.org/a"]);
         assert_eq!(*refusals.lock().unwrap(), ["mailto:a@example.org"]);
+        // Only a built window is reported, and as a success.
+        assert_eq!(*ends.lock().unwrap(), ["demo:ok", "demo:ok"]);
         assert_eq!(app.webview_windows().len(), 2);
     }
 
@@ -1231,9 +1260,11 @@ mod tests {
         let data = tempfile::tempdir().unwrap();
         let (open_external, _) = recorder();
         let (refused, refusals) = recorder();
+        let (new_window, ends) = window_recorder();
         let windows = SandboxWindows::new(Hooks {
             open_external,
             refused,
+            new_window,
             last_closed: Arc::new(|_| {}),
         });
         let t = mock_target("demo", data.path());
@@ -1251,7 +1282,12 @@ mod tests {
         let url = Url::parse("http://demo.localhost:4800/").unwrap();
         let answer = windows.new_window(app.handle(), &t, &url, None);
         assert!(matches!(answer, NewWindowResponse::Deny));
-        assert_eq!(*refusals.lock().unwrap(), [url.to_string()]);
+        // Not a refused link: the window's own failure, with the build error's words.
+        assert!(refusals.lock().unwrap().is_empty());
+        let ends = ends.lock().unwrap();
+        assert_eq!(ends.len(), 1, "{ends:?}");
+        assert!(ends[0].starts_with("demo:err:"), "{ends:?}");
+        assert!(ends[0].len() > "demo:err:".len(), "no reason: {ends:?}");
         assert_eq!(windows.open_count(&t.workspace), 1);
     }
 

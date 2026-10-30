@@ -7,6 +7,7 @@
 //! the end with [`FakeWorkspaces::idle`], and can make the next operation fail.
 
 use std::collections::BTreeMap;
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -17,10 +18,10 @@ use tokio::sync::watch;
 
 use crate::checkouts::{AddRepository, Checkouts, FoundList, check_addition, checkouts_view};
 use crate::workspaces::{
-    AttachMode, Attached, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DeleteCheck, DesktopTarget, DisplayName,
-    GitSetup, KeptLogins, LaunchError, Launcher, Listing, NewRepository, NewWorkspace, Operation,
-    RepoFindings, ShellInitCheck, StartFolder, StartFolderChange, WorkspaceError, WorkspaceRecord,
-    WorkspaceService,
+    AttachMode, Attached, BrowserTarget, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DeleteCheck,
+    DesktopTarget, DisplayName, GitSetup, KeptLogins, LaunchError, Launcher, Listing,
+    NewRepository, NewWorkspace, Operation, RepoFindings, ShellInitCheck, StartFolder,
+    StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService,
 };
 
 /// One step an operation reports: the step, its detail, and the checkout a cloning step is about.
@@ -30,6 +31,7 @@ type Step = (WorkspaceStep, Option<String>, Option<CheckoutDir>);
 #[derive(Debug, Default)]
 pub struct FakeLauncher {
     opened: Mutex<Vec<WorkspaceId>>,
+    browsers: Mutex<Vec<WorkspaceId>>,
     fail_with: Mutex<Option<String>>,
 }
 
@@ -45,10 +47,16 @@ impl FakeLauncher {
         *lock(&self.fail_with) = Some(message.into());
     }
 
-    /// The workspaces opened so far, in order.
+    /// The workspaces opened in desktop VS Code so far, in order.
     #[must_use]
     pub fn opened(&self) -> Vec<WorkspaceId> {
         lock(&self.opened).clone()
+    }
+
+    /// The workspaces whose browser editor window was opened so far, in order.
+    #[must_use]
+    pub fn browsers_opened(&self) -> Vec<WorkspaceId> {
+        lock(&self.browsers).clone()
     }
 }
 
@@ -63,6 +71,20 @@ impl Launcher for FakeLauncher {
                 return Err(LaunchError::new(message));
             }
             lock(&self.opened).push(workspace.id.clone());
+            Ok(())
+        })
+    }
+
+    fn open_browser<'a>(
+        &'a self,
+        workspace: &'a WorkspaceRecord,
+        _target: &'a BrowserTarget,
+    ) -> BoxFuture<'a, Result<(), LaunchError>> {
+        Box::pin(async move {
+            if let Some(message) = lock(&self.fail_with).take() {
+                return Err(LaunchError::new(message));
+            }
+            lock(&self.browsers).push(workspace.id.clone());
             Ok(())
         })
     }
@@ -109,7 +131,7 @@ struct Inner {
     clock: Arc<dyn Clock>,
     launcher: Arc<dyn Launcher>,
     step_delay: Duration,
-    browser_base: String,
+    front: SocketAddr,
     in_flight: watch::Sender<usize>,
     /// Operations wait here while it is `true`.
     held: watch::Sender<bool>,
@@ -168,7 +190,7 @@ impl FakeWorkspaces {
                 clock,
                 launcher,
                 step_delay,
-                browser_base: "http://127.0.0.1:18080".to_owned(),
+                front: SocketAddr::from(([127, 0, 0, 1], 18080)),
                 in_flight: watch::channel(0).0,
                 held: watch::channel(false).0,
                 settings_changes: std::sync::atomic::AtomicUsize::new(0),
@@ -955,10 +977,28 @@ impl WorkspaceService for FakeWorkspaces {
                 )));
             }
             match mode {
-                AttachMode::Browser => Ok(Attached::at(format!(
-                    "{}/workspaces/{}/",
-                    self.inner.browser_base, record.id
-                ))),
+                AttachMode::Browser => {
+                    let target = BrowserTarget {
+                        origin: format!(
+                            "http://{}.localhost:{}",
+                            record.name,
+                            self.inner.front.port()
+                        ),
+                        front: self.inner.front,
+                        settings: puddle_settings::resolve(
+                            &puddle_settings::GlobalSettings::default(),
+                            None::<&puddle_settings::WorkspaceSettings>,
+                        ),
+                        login: None,
+                    };
+                    // The answer the host gives: the launcher opens a window or says why not.
+                    Ok(
+                        match self.inner.launcher.open_browser(&record, &target).await {
+                            Ok(()) => Attached::opened(),
+                            Err(err) => Attached::not_opened(err.to_string()),
+                        },
+                    )
+                }
                 AttachMode::Desktop => match self
                     .inner
                     .launcher
@@ -1356,5 +1396,32 @@ mod tests {
         );
         launcher.open_desktop(&record, &target).await.unwrap();
         assert_eq!(launcher.opened(), [id("w"), id("w")]);
+    }
+
+    #[tokio::test]
+    async fn the_launcher_records_the_browser_windows_it_opened_and_can_fail_one() {
+        let launcher = FakeLauncher::new();
+        let record = WorkspaceRecord::new(id("w"), WorkspaceName::new("w").unwrap(), Vec::new());
+        let target = BrowserTarget {
+            origin: "http://w.localhost:18080".into(),
+            front: SocketAddr::from(([127, 0, 0, 1], 18080)),
+            settings: puddle_settings::resolve(
+                &puddle_settings::GlobalSettings::default(),
+                None::<&puddle_settings::WorkspaceSettings>,
+            ),
+            login: None,
+        };
+        launcher.fail_next("no window");
+        assert_eq!(
+            launcher
+                .open_browser(&record, &target)
+                .await
+                .unwrap_err()
+                .to_string(),
+            "no window"
+        );
+        launcher.open_browser(&record, &target).await.unwrap();
+        assert_eq!(launcher.browsers_opened(), [id("w")]);
+        assert_eq!(launcher.opened(), []);
     }
 }

@@ -16,7 +16,7 @@ use crate::launcher::AppLauncher;
 use puddle_settings::ClipboardRead;
 use puddle_types::WorkspaceName;
 
-use crate::sandbox_window::{self, Hooks, SandboxWindows, Target, WindowSettings};
+use crate::sandbox_window::{self, Hooks, NewWindowReport, SandboxWindows, Target, WindowSettings};
 use crate::window::{MAIN_LABEL, OpenExternal, Refused, open_main};
 use crate::{crash, desktop, links};
 
@@ -179,6 +179,17 @@ fn refuser(problems: &Arc<Problems>) -> Refused {
     Arc::new(move |url: &Url| links::report_refused(&problems, url))
 }
 
+/// Tells the page how a request for another editor window ended.
+fn window_reporter(problems: &Arc<Problems>) -> NewWindowReport {
+    let problems = problems.clone();
+    Arc::new(
+        move |workspace: &WorkspaceName, end: Result<(), &str>| match end {
+            Ok(()) => links::window_opened(&problems, workspace),
+            Err(reason) => links::report_window_failed(&problems, workspace, reason),
+        },
+    )
+}
+
 /// Starts the backend `source` names and opens the main window on it.
 ///
 /// # Errors
@@ -234,6 +245,7 @@ fn sandbox_hooks<R: Runtime>(app: &AppHandle<R>, problems: &Arc<Problems>) -> Ho
     Hooks {
         open_external: opener(app, problems),
         refused: refuser(problems),
+        new_window: window_reporter(problems),
         last_closed: Arc::new(|workspace| {
             tracing::debug!(%workspace, "last editor window closed");
         }),
@@ -282,6 +294,9 @@ fn probe_hooks() -> Hooks {
             |url| tracing::info!(%url, "sandbox window: opened in the browser"),
         ),
         refused: Arc::new(|url| tracing::info!(%url, "sandbox window: link refused")),
+        new_window: Arc::new(|workspace, end| {
+            tracing::info!(%workspace, ?end, "sandbox window: new window");
+        }),
         last_closed: Arc::new(|workspace| {
             tracing::info!(%workspace, "sandbox window: last window closed");
         }),
@@ -506,7 +521,29 @@ pub(crate) mod tests {
         let url = Url::parse("https://example.org/x").unwrap();
         (hooks.open_external)(&url);
         (hooks.refused)(&url);
+        (hooks.new_window)(&WorkspaceName::new("probe").unwrap(), Err("no room"));
         (hooks.last_closed)(&WorkspaceName::new("probe").unwrap());
+    }
+
+    #[test]
+    fn a_failed_new_window_reaches_the_pages_problem_list_and_a_later_one_withdraws_it() {
+        let problems = Arc::new(Problems::new(Arc::new(puddle_api::EventHub::default())));
+        let demo = WorkspaceName::new("demo").unwrap();
+        let report = window_reporter(&problems);
+        let window_problems = || {
+            problems
+                .list()
+                .into_iter()
+                .filter(|p| p.key.starts_with("app:window"))
+                .collect::<Vec<_>>()
+        };
+        report(&demo, Err("the window system said no"));
+        let listed = window_problems();
+        assert_eq!(listed.len(), 1);
+        assert!(listed[0].title.contains("demo"));
+        assert!(listed[0].detail.contains("the window system said no"));
+        report(&demo, Ok(()));
+        assert_eq!(window_problems(), []);
     }
 
     #[test]

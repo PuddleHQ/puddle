@@ -42,6 +42,7 @@
     bind:open={actions.connectOpen}
     workspace={connecting}
     {server}
+    onBrowser={actions.openBrowser}
     onDesktop={actions.openDesktop}
     onDirectSsh={(w, on) => actions.requestDirectSsh(w, on, true)}
   />

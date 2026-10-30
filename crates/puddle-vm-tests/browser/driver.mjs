@@ -6,7 +6,7 @@
 //   {"ok":true,"result":<value>,"console":[...],"pageErrors":[...]}
 //   {"ok":false,"error":"...","console":[...],"pageErrors":[...]}
 // Playwright comes from the UI's lockfile (the same pin and browser build the UI jobs use);
-// PUDDLE_VM_BROWSER_MODULES names the node_modules folder that holds `playwright-core`.
+// PUDDLE_VM_BROWSER_MODULES names the node_modules folder that holds `playwright-core` (a folder named node_modules).
 import { createRequire } from "node:module";
 import { join } from "node:path";
 
@@ -26,7 +26,7 @@ let browser;
 try {
   const modules = process.env.PUDDLE_VM_BROWSER_MODULES;
   if (!modules) throw new Error("PUDDLE_VM_BROWSER_MODULES is not set");
-  const { chromium } = createRequire(join(modules, "x.js"))("playwright-core");
+  const { chromium } = createRequire(join(modules, "..", "x.js"))("playwright-core");
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ ignoreHTTPSErrors: request.ignoreHttpsErrors === true });
   const page = await context.newPage();

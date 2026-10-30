@@ -100,20 +100,17 @@ impl Node {
         let mut child = command
             .spawn()
             .map_err(|source| HarnessError::io("start node", &program, source))?;
-        let mut pipe = child.stdin.take().ok_or_else(|| {
-            HarnessError::io(
-                "open node's stdin",
-                &program,
-                std::io::Error::other("no stdin pipe"),
-            )
-        })?;
-        let input = stdin.to_owned();
         // A script that never reads its input closes the pipe early: that is not this call's error.
-        let feed = tokio::spawn(async move {
-            let _ = pipe.write_all(input.as_bytes()).await;
+        let feed = child.stdin.take().map(|mut pipe| {
+            let input = stdin.to_owned();
+            tokio::spawn(async move {
+                let _ = pipe.write_all(input.as_bytes()).await;
+            })
         });
         let waited = tokio::time::timeout(budget, child.wait_with_output()).await;
-        feed.abort();
+        if let Some(feed) = feed {
+            feed.abort();
+        }
         let output = waited
             .map_err(|_| HarnessError::Timeout {
                 what: "node process",
@@ -212,11 +209,19 @@ impl BrowserClient {
     /// [`HarnessError::MissingVar`] when the modules folder is not named,
     /// [`HarnessError::BrowserModules`] when it holds no `playwright-core`.
     pub fn from_env() -> Result<Self, HarnessError> {
-        let modules = std::env::var_os(BROWSER_MODULES_VAR).ok_or(HarnessError::MissingVar {
+        Self::from_vars(
+            std::env::var_os(NODE_VAR),
+            std::env::var_os(BROWSER_MODULES_VAR),
+        )
+    }
+
+    fn from_vars(node: Option<OsString>, modules: Option<OsString>) -> Result<Self, HarnessError> {
+        let modules = modules.ok_or(HarnessError::MissingVar {
             var: BROWSER_MODULES_VAR,
             hint: "ui/node_modules after `npm ci --ignore-scripts` in ui",
         })?;
-        Self::new(Node::from_env(), PathBuf::from(modules))
+        let node = node.map_or_else(Node::from_env, Node::new);
+        Self::new(node, PathBuf::from(modules))
     }
 
     /// A client over a node binary and a `node_modules` folder.
@@ -415,5 +420,78 @@ mod tests {
             .await
             .expect_err("no binary");
         assert!(err.to_string().contains("node-probe"), "{err}");
+    }
+
+    /// A `playwright-core` that drives no browser: `launch` returns a page whose answers the
+    /// request's own expressions select, so the driver's flow runs without Chromium.
+    fn stub_modules() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let core = dir.path().join("node_modules").join("playwright-core");
+        std::fs::create_dir_all(&core).expect("mkdir");
+        std::fs::write(core.join("package.json"), "{\"main\":\"index.js\"}").expect("package");
+        std::fs::write(
+            core.join("index.js"),
+            "exports.chromium = { launch: async () => ({
+               newContext: async (o) => ({ newPage: async () => {
+                 const h = {};
+                 return {
+                   on: (e, f) => { h[e] = f; },
+                   goto: async (u) => { h.console({ type: () => 'log', text: () => 'at ' + u }); },
+                   waitForFunction: async (e) => { if (e === 'never') throw new Error('timed out'); },
+                   evaluate: async (e) => ({ evaluated: e, strict: o.ignoreHTTPSErrors }),
+                 };
+               } }),
+               close: async () => {},
+             }) };",
+        )
+        .expect("index");
+        dir
+    }
+
+    #[tokio::test]
+    async fn the_driver_opens_the_page_waits_and_returns_the_result_with_the_console() {
+        let modules = stub_modules();
+        let client = BrowserClient::new(Node::from_env(), modules.path().join("node_modules"))
+            .expect("client");
+        let request = PageRequest::new("http://x.localhost:9/", "ready")
+            .result("answer")
+            .ignore_https_errors();
+        let outcome = client.open(&request).await.expect("opened");
+        assert_eq!(
+            outcome.result,
+            json!({"evaluated": "answer", "strict": true})
+        );
+        assert_eq!(outcome.console, ["log: at http://x.localhost:9/"]);
+    }
+
+    #[tokio::test]
+    async fn the_driver_reports_a_page_that_never_becomes_ready() {
+        let modules = stub_modules();
+        let client = BrowserClient::new(Node::from_env(), modules.path().join("node_modules"))
+            .expect("client");
+        let err = client
+            .open(&PageRequest::new("http://x.localhost:9/", "never"))
+            .await
+            .expect_err("not ready");
+        let text = err.to_string();
+        assert!(text.contains("timed out"), "{text}");
+        assert!(text.contains("at http://x.localhost:9/"), "{text}");
+    }
+
+    #[test]
+    fn the_client_needs_the_modules_variable_and_takes_a_node_override() {
+        let missing = BrowserClient::from_vars(None, None).expect_err("no modules");
+        assert!(
+            missing.to_string().contains(BROWSER_MODULES_VAR),
+            "{missing}"
+        );
+        let modules = stub_modules();
+        BrowserClient::from_vars(
+            Some("some-node".into()),
+            Some(modules.path().join("node_modules").into_os_string()),
+        )
+        .expect("with a node override");
+        // The process's own environment: either answer is right, the line must run.
+        let _ = BrowserClient::from_env();
     }
 }

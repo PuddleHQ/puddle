@@ -515,14 +515,52 @@ pub(crate) mod tests {
         assert!(SandboxProbe::from_env().is_none());
     }
 
+    /// Runs `act` under a subscriber that keeps what it logs.
+    fn logged(act: impl FnOnce()) -> String {
+        use std::sync::Mutex;
+
+        #[derive(Clone, Default)]
+        struct Capture(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Capture {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let capture = Capture::default();
+        let writer = capture.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, act);
+        let bytes = capture.0.lock().unwrap().clone();
+        String::from_utf8(bytes).unwrap()
+    }
+
     #[test]
-    fn the_probe_window_logs_its_links_and_asks_nothing_of_the_browser() {
+    fn the_probe_window_logs_each_of_its_links_and_events() {
         let hooks = probe_hooks();
         let url = Url::parse("https://example.org/x").unwrap();
-        (hooks.open_external)(&url);
-        (hooks.refused)(&url);
-        (hooks.new_window)(&WorkspaceName::new("probe").unwrap(), Err("no room"));
-        (hooks.last_closed)(&WorkspaceName::new("probe").unwrap());
+        let probe = WorkspaceName::new("probe").unwrap();
+        let log = logged(|| {
+            (hooks.open_external)(&url);
+            (hooks.refused)(&url);
+            (hooks.new_window)(&probe, Err("no room"));
+            (hooks.last_closed)(&probe);
+        });
+        for line in [
+            "sandbox window: opened in the browser url=https://example.org/x",
+            "sandbox window: link refused url=https://example.org/x",
+            "sandbox window: new window workspace=probe end=Err(\"no room\")",
+            "sandbox window: last window closed workspace=probe",
+        ] {
+            assert!(log.contains(line), "missing {line:?} in {log}");
+        }
     }
 
     #[test]

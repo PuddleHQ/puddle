@@ -33,13 +33,16 @@ pub(crate) trait Builds: Send + Sync + 'static {
     ) -> impl Future<Output = Result<bool, SwitchEditorBuildError>> + Send;
 }
 
-/// One round: asks every Microsoft-server workspace that has no window connected.
-pub(crate) async fn ask_once(builds: &impl Builds, windows: &Windows) {
+/// One round: asks every Microsoft-server workspace that has no window connected, and says how
+/// many it asked.
+pub(crate) async fn ask_once(builds: &impl Builds, windows: &Windows) -> usize {
+    let mut asked = 0;
     for workspace in builds.on_microsoft_server() {
         let connected = windows.connected(&workspace);
         if connected > 0 {
             continue;
         }
+        asked += 1;
         match builds.switch(&workspace, connected).await {
             Ok(true) => tracing::info!(%workspace, "the editor server runs a newer build"),
             // Nothing staged, or stopped between the list and the ask: nothing to switch.
@@ -53,6 +56,7 @@ pub(crate) async fn ask_once(builds: &impl Builds, windows: &Windows) {
             }
         }
     }
+    asked
 }
 
 /// Asks every [`ASK_PERIOD`] until the returned task is aborted.

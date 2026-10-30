@@ -1006,6 +1006,28 @@ async fn switching_an_editor_build_needs_no_connected_window_and_a_running_agent
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_round_of_build_switches_asks_only_microsoft_workspaces_without_a_window() {
+    let rig = Rig::new();
+    let covering = puddle_settings::MICROSOFT_TERMS_VERSION;
+    write_global_settings(&rig, &microsoft_chosen(covering, false));
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let windows = puddle_front::Windows::default();
+    let workspaces = host.workspaces();
+    assert_eq!(workspaces.switch_idle_editor_builds(&windows).await, 0);
+    create(&api, &mut events, "ms").await;
+    assert_eq!(workspaces.switch_idle_editor_builds(&windows).await, 1);
+    let window = windows.open(&WorkspaceName::new("ms").unwrap());
+    assert_eq!(workspaces.switch_idle_editor_builds(&windows).await, 0);
+    drop(window);
+    api.post("/api/workspaces/ms/stop", "").await;
+    events.until(ended("ms"), Duration::from_secs(20)).await;
+    assert_eq!(workspaces.switch_idle_editor_builds(&windows).await, 0);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_api_and_the_pull_proxy_are_each_registered_once_in_the_one_registry() {
     let rig = Rig::new();
     let host = rig.start().await;

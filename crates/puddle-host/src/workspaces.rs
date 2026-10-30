@@ -728,6 +728,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Ok(agent_reply == HostReply::EditorBuild { switched: true })
     }
 
+    /// Asks each running workspace on Microsoft's server that `windows` counts no window on to
+    /// switch to a newer build, and says how many it asked. The host does this every few minutes;
+    /// this is one round of it.
+    pub async fn switch_idle_editor_builds(&self, windows: &puddle_front::Windows) -> usize {
+        crate::editor_updates::ask_once(self, windows).await
+    }
+
     /// The SSH endpoint of a running workspace's sandbox.
     pub async fn ssh_endpoint(&self, workspace: &WorkspaceName) -> Option<std::path::PathBuf> {
         let live = self.inner.live.lock().await;

@@ -542,7 +542,7 @@ mod tests {
         );
     }
 
-    /// An ACCESS_ALLOWED_ACE in a `u32` buffer (the ACE alignment): `claimed_size` in the header and
+    /// An `ACCESS_ALLOWED_ACE` in a `u32` buffer (the ACE alignment): `claimed_size` in the header and
     /// a SID of `sub_authorities` sub-authorities from byte 8 on, as far as `bytes` reaches.
     fn ace_bytes(claimed_size: u16, sub_authorities: u8, bytes: usize) -> Vec<u32> {
         let mut buffer = vec![0u32; bytes.div_ceil(4)];

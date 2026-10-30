@@ -1243,6 +1243,38 @@ mod tests {
     }
 
     #[test]
+    fn an_app_window_that_cannot_be_built_says_so_and_opens_nothing_in_the_browser() {
+        let app = tauri::test::mock_app();
+        let data = tempfile::tempdir().unwrap();
+        let (open_external, opened) = recorder();
+        let (refused, refusals) = recorder();
+        let windows = SandboxWindows::new(Hooks {
+            open_external,
+            refused,
+            last_closed: Arc::new(|_| {}),
+        });
+        let t = mock_target("demo", data.path());
+        // The label the window would take is already in use.
+        windows
+            .build(
+                app.handle(),
+                &t,
+                "vs-demo:0",
+                WebviewUrl::External(t.origin.clone()),
+                None,
+            )
+            .unwrap();
+        let link = Url::parse("http://demo.localhost:4800/proxy/5173/").unwrap();
+        assert!(matches!(
+            windows.new_window(app.handle(), &t, &link, None),
+            NewWindowResponse::Deny
+        ));
+        assert_eq!(*refusals.lock().unwrap(), [link.to_string()]);
+        assert!(opened.lock().unwrap().is_empty());
+        assert_eq!(app.webview_windows().len(), 1);
+    }
+
+    #[test]
     fn a_window_s_end_is_counted_and_nothing_else_is() {
         let Fixture { windows, ended } = fixture();
         let w = workspace("demo");

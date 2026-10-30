@@ -14,10 +14,10 @@ use windows_sys::Win32::Networking::WinHttp::{
     WINHTTP_AUTO_DETECT_TYPE_DHCP, WINHTTP_AUTO_DETECT_TYPE_DNS_A, WINHTTP_AUTOPROXY_AUTO_DETECT,
     WINHTTP_AUTOPROXY_CONFIG_URL, WINHTTP_AUTOPROXY_OPTIONS,
     WINHTTP_CALLBACK_FLAG_GETPROXYFORURL_COMPLETE, WINHTTP_CALLBACK_FLAG_REQUEST_ERROR,
-    WINHTTP_CALLBACK_STATUS_GETPROXYFORURL_COMPLETE, WINHTTP_CALLBACK_STATUS_REQUEST_ERROR,
-    WINHTTP_FLAG_ASYNC, WINHTTP_INTERNET_SCHEME_HTTP, WINHTTP_PROXY_RESULT, WinHttpCloseHandle,
-    WinHttpCreateProxyResolver, WinHttpFreeProxyResult, WinHttpGetProxyForUrlEx,
-    WinHttpGetProxyResult, WinHttpOpen, WinHttpSetStatusCallback,
+    WINHTTP_CALLBACK_STATUS_GETPROXYFORURL_COMPLETE, WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING,
+    WINHTTP_CALLBACK_STATUS_REQUEST_ERROR, WINHTTP_FLAG_ASYNC, WINHTTP_INTERNET_SCHEME_HTTP,
+    WINHTTP_PROXY_RESULT, WinHttpCloseHandle, WinHttpCreateProxyResolver, WinHttpFreeProxyResult,
+    WinHttpGetProxyForUrlEx, WinHttpGetProxyResult, WinHttpOpen, WinHttpSetStatusCallback,
 };
 
 use super::{read_wide, wide};
@@ -25,6 +25,11 @@ use crate::hop::{Hop, ProxyAddr};
 use crate::os::{PacError, PacQuery};
 
 const ERROR_IO_PENDING: u32 = 997;
+/// `WINHTTP_CALLBACK_FLAG_HANDLES` is the two handle statuses; the closing one has the same value
+/// as its flag.
+const CALLBACK_FLAG_HANDLE_CLOSING: u32 = WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING;
+/// How long a cancelled request may take to let go of its buffers before they are leaked instead.
+const CLOSE_WAIT: Duration = Duration::from_secs(10);
 const ERROR_WINHTTP_TIMEOUT: u32 = 12002;
 const ERROR_WINHTTP_OPERATION_CANCELLED: u32 = 12017;
 
@@ -33,6 +38,9 @@ const ERROR_WINHTTP_OPERATION_CANCELLED: u32 = 12017;
 struct Slot {
     outcome: Mutex<Option<Result<(), u32>>>,
     ready: Condvar,
+    /// Set by the `HANDLE_CLOSING` status: WinHTTP uses nothing of the request after it.
+    closed: Mutex<bool>,
+    closed_signal: Condvar,
 }
 
 impl Slot {
@@ -41,6 +49,21 @@ impl Slot {
         *guard = Some(outcome);
         // Notified while the lock is held, so a waiter that sees the outcome cannot run ahead of this call.
         self.ready.notify_all();
+    }
+
+    fn close(&self) {
+        *self.closed.lock().unwrap_or_else(PoisonError::into_inner) = true;
+        self.closed_signal.notify_all();
+    }
+
+    /// Whether the handle's closing was reported within `timeout`.
+    fn wait_closed(&self, timeout: Duration) -> bool {
+        let guard = self.closed.lock().unwrap_or_else(PoisonError::into_inner);
+        *self
+            .closed_signal
+            .wait_timeout_while(guard, timeout, |closed| !*closed)
+            .unwrap_or_else(PoisonError::into_inner)
+            .0
     }
 
     fn wait(&self, timeout: Duration) -> Option<Result<(), u32>> {
@@ -62,9 +85,8 @@ impl Slot {
 
 /// The slots of the PAC resolutions in flight, by resolution id. The id travels through WinHTTP as
 /// the request context and is never dereferenced, so a resolution allocates nothing that outlives
-/// it. WinHTTP can call back after `WinHttpCloseHandle` returns, until a `HANDLE_CLOSING` status
-/// that this code does not ask for, so a late call must be harmless: it finds no entry for its id
-/// and does nothing.
+/// it. WinHTTP can call back after `WinHttpCloseHandle` returns, until its `HANDLE_CLOSING`
+/// status, so a late call must be harmless: it finds no entry for its id and does nothing.
 struct Pending(Mutex<Vec<(usize, Arc<Slot>)>>);
 
 impl Pending {
@@ -141,6 +163,7 @@ unsafe extern "system" fn callback(
     };
     match status {
         WINHTTP_CALLBACK_STATUS_GETPROXYFORURL_COMPLETE => slot.finish(Ok(())),
+        WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING => slot.close(),
         WINHTTP_CALLBACK_STATUS_REQUEST_ERROR if !info.is_null() => {
             // SAFETY: for this status `info` points at a WINHTTP_ASYNC_RESULT.
             slot.finish(Err(unsafe {
@@ -216,12 +239,14 @@ fn resolve_once(query: &PacQuery, auto_logon: bool) -> Result<Vec<Hop>, PacError
     // Dropped before `resolver` on the paths that return with it live: a late callback in between
     // finds no entry and does nothing.
     let registration = Registration::new(&slot);
-    // SAFETY: `callback` matches WINHTTP_STATUS_CALLBACK; flags name only the two statuses it handles.
+    // SAFETY: `callback` matches WINHTTP_STATUS_CALLBACK; flags name only the three statuses it handles.
     unsafe {
         WinHttpSetStatusCallback(
             resolver.0,
             Some(callback),
-            WINHTTP_CALLBACK_FLAG_REQUEST_ERROR | WINHTTP_CALLBACK_FLAG_GETPROXYFORURL_COMPLETE,
+            WINHTTP_CALLBACK_FLAG_REQUEST_ERROR
+                | WINHTTP_CALLBACK_FLAG_GETPROXYFORURL_COMPLETE
+                | CALLBACK_FLAG_HANDLE_CLOSING,
             0,
         );
     }
@@ -247,8 +272,11 @@ fn resolve_once(query: &PacQuery, auto_logon: bool) -> Result<Vec<Hop>, PacError
         fAutoLogonIfChallenged: i32::from(auto_logon),
     };
     let url = wide(&query.url);
-    // SAFETY: the resolver is live; `url` and `options` (and the PAC URL it points at) outlive the
-    // call, and WinHTTP copies them before returning ERROR_IO_PENDING.
+    // SAFETY: the resolver is live. Microsoft's page for the call
+    // (https://learn.microsoft.com/windows/win32/api/winhttp/nf-winhttp-winhttpgetproxyforurlex)
+    // does not say WinHTTP copies `url` or `options`, so they are treated as in use until the
+    // request is over: until the callback reports the outcome, or on a timeout until the closing of
+    // the resolver is reported (below). Both outlive the call.
     let code = unsafe {
         WinHttpGetProxyForUrlEx(resolver.0, url.as_ptr(), &raw const options, registration.0)
     };
@@ -258,9 +286,15 @@ fn resolve_once(query: &PacQuery, auto_logon: bool) -> Result<Vec<Hop>, PacError
         other => Some(Err(other)),
     };
     let Some(outcome) = outcome else {
-        // Timed out: closing the resolver cancels the request. A callback may still arrive after
-        // that; the registration is removed on return, and a late call finds no entry.
+        // Timed out: closing the resolver cancels the request, which may still read `url` and
+        // `options` until WinHTTP reports `HANDLE_CLOSING`; wait for that (the registration is
+        // still filed) before the buffers go out of scope. If it never comes, leak them: a leak
+        // is harmless, a read of freed memory is not.
         drop(resolver);
+        if !slot.wait_closed(CLOSE_WAIT) {
+            std::mem::forget(url);
+            std::mem::forget(pac_url);
+        }
         return Err(PacError::Timeout);
     };
     if let Err(code) = outcome {
@@ -343,6 +377,22 @@ mod tests {
     }
 
     #[test]
+    fn the_closing_status_releases_a_wait_for_the_handle_to_close() {
+        let _serial = COUNTING.lock().unwrap_or_else(PoisonError::into_inner);
+        let slot = Arc::new(Slot::default());
+        let registration = Registration::new(&slot);
+        assert!(!slot.wait_closed(Duration::from_millis(10)));
+        call(
+            registration.0,
+            WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING,
+            std::ptr::null_mut(),
+        );
+        assert!(slot.wait_closed(Duration::from_secs(1)));
+        // A closing is not an outcome.
+        assert_eq!(slot.wait(Duration::from_millis(10)), None);
+    }
+
+    #[test]
     fn a_callback_after_the_resolution_ended_does_nothing() {
         let _serial = COUNTING.lock().unwrap_or_else(PoisonError::into_inner);
         let slot = Arc::new(Slot::default());
@@ -380,6 +430,32 @@ mod tests {
         assert_eq!(live(), before);
         // The table's own clones are gone with the entries.
         assert_eq!(Arc::strong_count(&slot), 1);
+    }
+
+    #[test]
+    fn a_timed_out_resolution_waits_for_the_close_and_ends_as_a_timeout() {
+        let _serial = COUNTING.lock().unwrap_or_else(PoisonError::into_inner);
+        let before = live();
+        // A zero timeout expires before any answer can come, so this takes the timeout path.
+        let query = PacQuery {
+            pac_url: Some("http://127.0.0.1:1/proxy.pac".to_owned()),
+            auto_detect: false,
+            url: "http://example.test/".to_owned(),
+            timeout: Duration::ZERO,
+        };
+        let started = Instant::now();
+        for _ in 0..5 {
+            let result = resolve(&query);
+            assert!(
+                matches!(
+                    result,
+                    Err(PacError::Timeout | PacError::Failed(_) | PacError::Unavailable(_))
+                ),
+                "{result:?}"
+            );
+            assert_eq!(live(), before);
+        }
+        assert!(started.elapsed() < CLOSE_WAIT, "a close was never reported");
     }
 
     #[test]

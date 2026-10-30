@@ -103,6 +103,8 @@ getrandom = "0.4"
 ed25519-dalek = { version = "3", default-features = false, features = ["zeroize"] }
 # Fast substring search for the proxy's stand-in swap (already in the tree through regex and axum).
 memchr = "2.8"
+# Per-thread CPU time for the test kit's `cpu_time` (CLOCK_THREAD_CPUTIME_ID, GetThreadTimes).
+cpu-time = "1.0"
 # The per-user data folder per OS; no own per-OS code for it.
 dirs = "7"
 windows-sys = "0.61"

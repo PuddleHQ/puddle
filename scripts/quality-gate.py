@@ -585,7 +585,9 @@ def flake_rust(f, raw, code, com, test, rows_add):
                 k += 1
                 stmt += code[k]
             if (re.search(r"<=?\s*Duration::from_|elapsed\(\)\s*<|Duration::from_\w+\([^)]*\)\s*>=?", stmt)
-                    and not re.search(r"Instant::now\(\)\s*<=?\s*\w*deadline|now\(\)\s*<\s*\w+", stmt)):
+                    and not re.search(r"Instant::now\(\)\s*<=?\s*\w*deadline|now\(\)\s*<\s*\w+", stmt)
+                    and not (re.search(r"\b\w*cpu\w*\s*<=?\s*Duration::from_", stmt) and not re.search(r"elapsed\(\)|Instant", stmt)
+                             and any("cpu_time(" in c for c in code[max(0, i - 15):i]))):  # a bar on `puddle_test_kit::cpu_time`
                 hit("t1", i)
         if t and re.search(r"\b\w*(record|event|row|entr|audit|line)\w*\.(?:iter\(\)\.)?zip\(", line, re.I):
             hit("a1", i)
@@ -822,6 +824,10 @@ def flake_self_test():
     case("t1 original", "t1", {store: read("t1-wall-clock-bar.bad.rs.txt")}, 1, 1)
     case("t1 fix keeps the bar", "t1", {store: read("t1-wall-clock-bar.good.rs.txt")}, 1, 1)
     case("t1 a deadline loop is not a bar", "t1", {store: "fn t() { assert!(start.elapsed() < Duration::from_secs(1) || Instant::now() < deadline, \"late\"); }\n"}, 0, 0)
+    case("t1 a CPU-time bar is not a wall-clock bar", "t1", {store: "fn t() { let (_, cpu) = cpu_time(|| work());\nassert!(cpu < Duration::from_millis(100), \"{cpu:?}\"); }\n"}, 0, 0)
+    case("t1 a cpu-named variable not from cpu_time stays", "t1", {store: "fn t() { let cpu = start.elapsed(); assert!(cpu < Duration::from_millis(100), \"{cpu:?}\"); }\n"}, 1, 1)
+    case("t1 a cpu bar does not excuse a wall-clock half", "t1", {store: "fn t() { let ((), cpu) = cpu_time(|| w()); assert!(start.elapsed() < Duration::from_secs(1) && cpu < Duration::from_millis(100)); }\n"}, 1, 1)
+    case("t1 a bar on a variable not named cpu stays", "t1", {store: "fn t() { let took = start.elapsed(); assert!(took < Duration::from_millis(100), \"{took:?}\"); }\n"}, 1, 1)
     case("t1 reasoned", "t1", {store: reasoned(read("t1-wall-clock-bar.good.rs.txt"), "assert!(best")}, 1, 0)
     vm_test = "crates/puddle-host/tests/vm_x.rs"
     case("d1 original", "d1", {vm_test: read("d1-fake-site.bad.rs.txt")}, 1, 1)

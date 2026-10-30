@@ -806,18 +806,21 @@ mod tests {
         let base = tmp.path().to_path_buf();
         let config = MsbConfig::new(
             base.join("home"),
-            "/no/msb",
-            "/no/libkrunfw",
+            base.join("no-msb"),
+            base.join("no-libkrunfw"),
             base.join("s"),
         );
         let rt = MsbRuntime::open(config).await.unwrap();
 
         let resolved = rt.inner.local.config();
         assert_eq!(resolved.home(), base.join("home"));
-        assert_eq!(resolved.paths.msb.as_deref(), Some(Path::new("/no/msb")));
+        assert_eq!(
+            resolved.paths.msb.as_deref(),
+            Some(base.join("no-msb").as_path())
+        );
         assert_eq!(
             resolved.paths.libkrunfw.as_deref(),
-            Some(Path::new("/no/libkrunfw"))
+            Some(base.join("no-libkrunfw").as_path())
         );
     }
 

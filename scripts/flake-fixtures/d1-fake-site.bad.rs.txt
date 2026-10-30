@@ -1,0 +1,10 @@
+// Original shape of a flake: a fake site under `.test` behind the real resolver. Every
+// connect asked the runner's DNS about it, and a stalled resolver stalled the connects.
+use vm_support::{VmHost, web_internet};
+
+const SITE: &str = "site.test";
+
+async fn fetches() {
+    let net = web_internet(&[SITE], WebOptions::default(), hermetic_options()).await;
+    let _ = net;
+}

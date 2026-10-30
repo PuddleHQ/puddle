@@ -40,8 +40,8 @@ use vm_support::{
 
 /// The fake website's names (see `web_internet`) for the hosts a test only needs to reach, one
 /// that no identity names and one an identity names later.
-const SITE: &str = "site.test";
-const SECOND: &str = "second.test";
+const SITE: &str = "site.invalid";
+const SECOND: &str = "second.invalid";
 
 /// A small public repository on a host the test allows.
 const REPO_HOST: &str = "github.com";
@@ -609,8 +609,8 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
         .expect("a CA while it runs");
     let ca_name = format!("Puddle CA for {name}");
 
-    // github.com is decrypted and the guest trusts its certificate; site.test is spliced and
-    // shows its real issuer; second.test has no identity yet, so it is spliced too.
+    // github.com is decrypted and the guest trusts its certificate; site.invalid is spliced and
+    // shows its real issuer; second.invalid has no identity yet, so it is spliced too.
     let github = guest(&runtime, &sandbox, &issuer_script("github.com")).await;
     assert!(github.contains(&ca_name), "{github}");
     for site in [SITE, SECOND] {
@@ -659,7 +659,7 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
         "work@example.org"
     );
 
-    // A second identity attached to the running workspace: second.test is decrypted on the next
+    // A second identity attached to the running workspace: second.invalid is decrypted on the next
     // connection with the CA the guest already had, and its remotes get its author.
     let lab = host
         .store()
@@ -681,7 +681,7 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert!(decrypted, "second.test never joined the decrypt set");
+    assert!(decrypted, "second.invalid never joined the decrypt set");
     assert_eq!(
         host.workspaces()
             .termination(&sandbox)
@@ -697,7 +697,7 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
         author = guest(
             &runtime,
             &sandbox,
-            &email("https://second.test/lab/project"),
+            &email("https://second.invalid/lab/project"),
         )
         .await;
         if author.trim() == "lab@example.org" {
@@ -706,7 +706,7 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
     assert_eq!(author.trim(), "lab@example.org");
-    // Work's remotes keep Work's author; site.test is still spliced.
+    // Work's remotes keep Work's author; site.invalid is still spliced.
     assert_eq!(
         guest(
             &runtime,
@@ -735,7 +735,7 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
 
 /// A site that offers HTTP/3 (it answers `alt-svc: h3=":443"`) next to HTTP/2 over TCP: the fake
 /// website, which sends the header. The guest cannot send UDP, so the offer is never taken up.
-const H3_HOST: &str = "h3.test";
+const H3_HOST: &str = "h3.invalid";
 const H3_ALT_SVC: &str = "h3=\":443\"; ma=86400";
 
 /// Sends one datagram to port 443 of four addresses from bash (a connected socket) and of two
@@ -762,8 +762,8 @@ perl -MSocket -MTime::HiRes=time -e '
 /// nothing here depends on a name or on the internet.
 const DIRECT_HTTP3_SCRIPT: &str = r#"
 start=${EPOCHREALTIME/[.,]/}
-curl --noproxy '*' --http3-only --resolve h3.test:443:192.0.2.1 -sS -o /dev/null \
-  --max-time 20 https://h3.test/ </dev/null 2>&1
+curl --noproxy '*' --http3-only --resolve h3.invalid:443:192.0.2.1 -sS -o /dev/null \
+  --max-time 20 https://h3.invalid/ </dev/null 2>&1
 echo "exit=$?"
 end=${EPOCHREALTIME/[.,]/}
 echo "direct-http3 $(( (end - start) / 1000 )) ms"
@@ -904,7 +904,7 @@ async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
 
     // The same curl with no proxy at all: its name resolves to a stand-in through the stub, the
     // QUIC attempt to it is refused at once, and the TCP fallback is redirected to the proxy and
-    // sent as `CONNECT h3.test:443`, which the host allows: a second connection record.
+    // sent as `CONNECT h3.invalid:443`, which the host allows: a second connection record.
     let captured = guest(
         &runtime,
         &sandbox,
@@ -926,7 +926,7 @@ async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
     );
     // The guest connected to a stand-in address, not a real one: its answer came from the stub.
     assert!(
-        captured.contains("Connected to h3.test (198.1"),
+        captured.contains("Connected to h3.invalid (198.1"),
         "{captured}"
     );
     let mut after = recorded;
@@ -976,9 +976,9 @@ async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
 
 /// The fake website's names for the secrets' hosts: the first two are decrypted from the start,
 /// the third is made one while the workspace runs.
-const ALPHA: &str = "alpha.test";
-const BETA: &str = "beta.test";
-const GAMMA: &str = "gamma.test";
+const ALPHA: &str = "alpha.invalid";
+const BETA: &str = "beta.invalid";
+const GAMMA: &str = "gamma.invalid";
 
 /// The values the real secrets hold in the credential store. Written in the guest scripts as two
 /// quoted halves, so the script's own text is not what a search for the value finds.
@@ -1287,7 +1287,7 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert!(decrypted, "gamma.test never joined the decrypt set");
+    assert!(decrypted, "gamma.invalid never joined the decrypt set");
     assert_eq!(
         host.workspaces()
             .termination(&sandbox)
@@ -1319,7 +1319,7 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert!(spliced, "gamma.test stayed in the decrypt set");
+    assert!(spliced, "gamma.invalid stayed in the decrypt set");
     assert_eq!(secrets.ids().len(), 2);
     let net = guest(&runtime, &sandbox, &issuer_script(GAMMA)).await;
     assert!(!net.to_lowercase().contains("puddle"), "{net}");

@@ -38,7 +38,7 @@ use vm_support::{VmHost, guest, start_vm_host, start_vm_host_platform, web_inter
 
 /// The fake website's name (it answers plain HTTP and HTTPS), and a small public repository to
 /// create the workspace from.
-const SITE: &str = "site.test";
+const SITE: &str = "site.invalid";
 const REPO_HOST: &str = "github.com";
 const REPO: &str = "https://github.com/octocat/Hello-World.git";
 
@@ -223,6 +223,7 @@ async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses
     ))
     .await;
     assert_eq!(field(&proxied, "http="), "200", "{proxied}");
+    // flake-ok: no rule allows this name, so the host never looks it up (the stub answers at once)
     let denied_name = run("getent hosts puddle-nothing-allows-this.example.net".into()).await;
     eprintln!("{denied_name}");
     assert!(denied_name.starts_with("198.1"), "{denied_name}");

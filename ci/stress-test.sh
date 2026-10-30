@@ -7,6 +7,8 @@
 # nextest, Playwright and vitest (the commit that added this file ran the real nextest against the commit before a slowloris fix), and GitHub.
 set -euo pipefail
 command -v taskset >/dev/null || { echo "stress-test: skipped, taskset is Linux only (the stress job runs on ubuntu)"; exit 0; }
+# The CPUs the test may pin to are the ones this process may use (a CI lane is not allowed all of them).
+cpu=$(taskset -cp $$ | sed 's/.*: //; s/[-,].*//')
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/stress-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
@@ -90,8 +92,8 @@ STUB
 chmod +x "$tmp/bin/cargo"
 export STUB_DIR="$tmp" PATH="$tmp/bin:$PATH"
 cp "$tmp/nextest.xml" "$tmp/report.xml"
-(cd "$tmp/repo" && STRESS_CPUS=0-1 STRESS_BUSY=2 STRESS_COUNT=3 STUB_EXIT=100 STUB_EXPECT=2 ci/stress.sh rust) && fail "the tool's failing status must be the script's"
-[ "$(wc -l <"$tmp/busy.pids")" = 2 ] || fail "two busy loops (one per pinned CPU) must run during the tool: $(cat "$tmp/busy.pids")"
+(cd "$tmp/repo" && STRESS_CPUS=$cpu STRESS_BUSY=2 STRESS_COUNT=3 STUB_EXIT=100 STUB_EXPECT=2 ci/stress.sh rust) && fail "the tool's failing status must be the script's"
+[ "$(wc -l <"$tmp/busy.pids")" = 2 ] || fail "two busy loops (STRESS_BUSY) must run during the tool: $(cat "$tmp/busy.pids")"
 # kill is asynchronous: give a loop up to 5 s to go before calling it a leak.
 while read -r pid; do
     for _ in $(seq 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
@@ -109,16 +111,16 @@ taskset -cp $$ >"$STUB_DIR/npx.affinity"
 exit 0
 STUB
 chmod +x "$tmp/bin/npx"
-(cd "$tmp/repo" && STRESS_CPUS=1 STRESS_BUSY=1 STRESS_PROJECTS=webkit ci/stress.sh playwright)
+(cd "$tmp/repo" && STRESS_CPUS=$cpu STRESS_BUSY=1 STRESS_PROJECTS=webkit ci/stress.sh playwright)
 for want in '--repeat-each 3' '--project webkit'; do grep -q -- "$want" "$tmp/npx.args" || fail "playwright args lack $want: $(cat "$tmp/npx.args")"; done
 grep -q '^PLAYWRIGHT_JSON_OUTPUT_NAME=.*/stress/playwright/report.json$' "$tmp/npx.env" || fail "playwright json report path"
 grep -q '^PUDDLE_E2E_CPU_THROTTLE=4$' "$tmp/npx.env" || fail "playwright throttle"
-grep -q 'affinity list: 1$' "$tmp/npx.affinity" || fail "playwright must run pinned to STRESS_CPUS: $(cat "$tmp/npx.affinity")"
-(cd "$tmp/repo" && STRESS_CPUS=1 STRESS_BUSY=1 ci/stress.sh vitest)
+grep -q "affinity list: $cpu\$" "$tmp/npx.affinity" || fail "playwright must run pinned to STRESS_CPUS: $(cat "$tmp/npx.affinity")"
+(cd "$tmp/repo" && STRESS_CPUS=$cpu STRESS_BUSY=1 ci/stress.sh vitest)
 for want in '--sequence.shuffle' '--repeats 5' '--outputFile.junit=.*/stress/vitest/report.xml'; do grep -q -- "$want" "$tmp/npx.args" || fail "vitest args lack $want: $(cat "$tmp/npx.args")"; done
-grep -q 'affinity list: 1$' "$tmp/npx.affinity" || fail "vitest must run pinned"
+grep -q "affinity list: $cpu\$" "$tmp/npx.affinity" || fail "vitest must run pinned"
 # The rust default is one CPU with 6 busy loops, and a partition reaches nextest.
-(cd "$tmp/repo" && STRESS_PARTITION=2/3 STUB_EXPECT=6 ci/stress.sh rust) || fail "a passing tool must pass the script"
+(cd "$tmp/repo" && STRESS_CPUS=$cpu STRESS_PARTITION=2/3 STUB_EXPECT=6 ci/stress.sh rust) || fail "a passing tool must pass the script"
 [ "$(wc -l <"$tmp/busy.pids")" = 6 ] || fail "the rust default is 6 busy loops: $(cat "$tmp/busy.pids")"
 grep -q -- '--partition count:2/3' "$tmp/cargo.args" || fail "partition not passed: $(cat "$tmp/cargo.args")"
 (cd "$tmp/repo" && ci/stress.sh nonsense 2>/dev/null) && fail "an unknown kind must fail"

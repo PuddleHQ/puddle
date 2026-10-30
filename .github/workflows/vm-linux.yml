@@ -11,8 +11,8 @@
 # (ci/scope.sh, the `scope` job); the result job accepts that skip only when `scope` said so. With the
 # repository variable PUDDLE_QUEUE set to `on`, a pull request to develop skips them too (the light
 # mode) and the merge queue runs them on the commit that lands.
-# The test binaries are built once (`cargo nextest archive`) and the tests run in three partitions
-# on three runners at once; `vm-linux (KVM, msb microVMs)` is the one result of all of them.
+# The test binaries are built once (`cargo nextest archive`) and the tests run in four partitions
+# on four runners at once; `vm-linux (KVM, msb microVMs)` is the one result of all of them.
 name: vm-linux
 
 on:
@@ -149,14 +149,15 @@ jobs:
         uses: ./.github/actions/cancel-group
 
   tests:
-    name: vm-linux tests (partition ${{ matrix.partition }} of 3)
+    name: vm-linux tests (partition ${{ matrix.partition }} of 4)
     needs: build
     if: needs.build.outputs.run == 'true'
     permissions:
       contents: read
       actions: write
     runs-on: ubuntu-24.04
-    # ~67 VM tests in all, each partition a third of them; every test has its own 12-minute cap.
+    # ~67 VM tests in all, each partition a hash-quarter of them (the longest of three took 11.8 minutes, of four 10.0,
+    # paired on one build); every test has its own 12-minute cap.
     # Three limits, each inside the next, so a hang ends in a named failure with its log uploaded
     # instead of the job's timeout (a cancelled job skips the steps that would keep the evidence):
     # nextest's deadline for the whole run (VM_TEST_DEADLINE), the test step's own limit as the
@@ -166,7 +167,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [1, 2, 3]
+        partition: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: KVM preflight (infrastructure)
@@ -210,7 +211,7 @@ jobs:
         with:
           name: vm-linux-build
           path: ${{ runner.temp }}/bundle
-      - name: VM tests (tier K, partition ${{ matrix.partition }} of 3)
+      - name: VM tests (tier K, partition ${{ matrix.partition }} of 4)
         if: steps.kvm.outputs.ok == 'true'
         timeout-minutes: ${{ contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name) && 52 || 32 }}
         env:
@@ -236,7 +237,7 @@ jobs:
               --tool-config-file "vm-deadline:$RUNNER_TEMP/vm-deadline.toml" \
               --archive-file "$RUNNER_TEMP/bundle/vm-tests.tar.zst" \
               --extract-to "$RUNNER_TEMP/vmx" --extract-overwrite --workspace-remap . \
-              --partition hash:${{ matrix.partition }}/3 \
+              --partition hash:${{ matrix.partition }}/4 \
               -E "$FILTER"
           }
           if [ "$RUNS" = "1" ]; then

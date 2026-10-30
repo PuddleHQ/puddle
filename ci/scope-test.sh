@@ -106,13 +106,13 @@ want "crate with a README only" "rust true true true true" crates/puddle-host/RE
 want "rename out of an always-run path" "$FULL" ui/src/a.ts ci/old.sh
 
 # 4b. The nightly tier: which jobs a merge queue run defers (PUDDLE_TIER=on) and which paths pull a
-# job back into the queue. defers <event> <PUDDLE_TIER> <paths...> -> "vm ui clippy", each true
+# job back into the queue. defers <event> <PUDDLE_TIER> <paths...> -> "vm ui clippy webkit", each true
 # (deferred) or false (runs in the queue).
 defers() {
     local event=$1 tier=$2 out
     shift 2
     out=$(printf '%s\n' "$@" | env -u PUDDLE_TIER "PUDDLE_TIER=$tier" GITHUB_EVENT_NAME="$event" "$scope" classify | sort |
-        awk -F= '{v[$1]=$2} END {print v["defer_vm_windows"], v["defer_win_ui"], v["defer_win_clippy"]}')
+        awk -F= '{v[$1]=$2} END {print v["defer_vm_windows"], v["defer_win_ui"], v["defer_win_clippy"], v["defer_linux_webkit"]}')
     echo "$out"
 }
 tier_want() { # tier_want <label> <expected> <paths...>  (merge_group, PUDDLE_TIER=on)
@@ -121,35 +121,52 @@ tier_want() { # tier_want <label> <expected> <paths...>  (merge_group, PUDDLE_TI
     got=$(defers merge_group on "$@")
     [ "$got" = "$exp" ] || bad "tier: $label: got '$got', want '$exp'"
 }
-tier_want "docs only: all three deferred" "true true true" docs/guide.md
-tier_want "a UI-only change" "true true true" ui/src/a.ts
-tier_want "a plain crate" "true true true" crates/puddle-store/src/lib.rs
-tier_want "the msb adapter pulls the VM job back" "false true true" crates/puddle-compute-msb/src/lib.rs
-tier_want "the msb adapter's tests" "false true true" crates/puddle-compute-msb/tests/contract.rs
-tier_want "the desktop shell pulls the UI job back" "true false true" crates/puddle-app/src/main.rs
-tier_want "the shell's capabilities" "true false true" crates/puddle-app/capabilities/default.json
-tier_want "a Windows source file" "false true false" crates/puddle-certs/src/platform/windows.rs
-tier_want "a Windows directory" "false true false" crates/puddle-lifecycle/src/windows/job.rs
-tier_want "a Windows snapshot" "false true false" crates/puddle-doctor/tests/snapshots/windows_edr.snap
-tier_want "a Windows doc, any case" "false true false" docs/Windows-notes.md
-tier_want "a rename out of a Windows path" "false true false" crates/puddle-store/src/lib.rs crates/puddle-fs/src/private/windows.rs
-tier_want "two escalations add up" "false false false" crates/puddle-compute-msb/src/lib.rs crates/puddle-app/src/lib.rs crates/puddle-ipc/src/windows/mod.rs
+tier_want "docs only: all four deferred" "true true true true" docs/guide.md
+tier_want "a UI-only change" "true true true true" ui/src/a.ts
+tier_want "a plain crate" "true true true true" crates/puddle-store/src/lib.rs
+tier_want "the msb adapter pulls the VM job back" "false true true true" crates/puddle-compute-msb/src/lib.rs
+tier_want "the msb adapter's tests" "false true true true" crates/puddle-compute-msb/tests/contract.rs
+tier_want "the desktop shell pulls the UI job back" "true false true true" crates/puddle-app/src/main.rs
+tier_want "the shell's capabilities" "true false true true" crates/puddle-app/capabilities/default.json
+tier_want "a Windows source file" "false true false true" crates/puddle-certs/src/platform/windows.rs
+tier_want "a Windows directory" "false true false true" crates/puddle-lifecycle/src/windows/job.rs
+tier_want "a Windows snapshot" "false true false true" crates/puddle-doctor/tests/snapshots/windows_edr.snap
+tier_want "a Windows doc, any case" "false true false true" docs/Windows-notes.md
+tier_want "a rename out of a Windows path" "false true false true" crates/puddle-store/src/lib.rs crates/puddle-fs/src/private/windows.rs
+# The WebKit half of the Linux UI tests: markup, styles and the browser test setup keep it in the queue;
+# plain TypeScript, the e2e specs and Rust do not (the engines share them, and webkit.yml runs it nightly).
+tier_want "a component pulls WebKit back" "true true true false" ui/src/lib/components/RequestRow.svelte
+tier_want "a stylesheet pulls WebKit back" "true true true false" ui/src/lib/theme/base.css
+tier_want "the document shell pulls WebKit back" "true true true false" ui/src/app.html
+tier_want "a static file pulls WebKit back" "true true true false" ui/static/favicon.svg
+tier_want "the ui manifest pulls WebKit back" "true true true false" ui/package.json
+tier_want "the Playwright config pulls WebKit back" "true true true false" ui/playwright.config.ts
+tier_want "the Vite config pulls WebKit back" "true true true false" ui/vite.config.ts
+tier_want "the browser warm-up pulls WebKit back" "true true true false" ui/e2e/warm-up.ts
+tier_want "a shared e2e helper pulls WebKit back" "true true true false" ui/e2e/support.ts
+tier_want "the e2e fixture setup pulls WebKit back" "true true true false" ui/e2e/fixture.ts
+tier_want "a rename out of a component" "true true true false" ui/src/a.ts ui/src/lib/old.svelte
+tier_want "an e2e spec leaves WebKit to the nightly" "true true true true" ui/e2e/rules.spec.ts
+tier_want "a store module leaves WebKit to the nightly" "true true true true" ui/src/lib/stores/theme.ts
+tier_want "a fixture leaves WebKit to the nightly" "true true true true" ui/e2e/fixtures/rules.json
+tier_want "a component beside a Rust change" "true true true false" crates/puddle-store/src/lib.rs ui/src/routes/inbox/+page.svelte
+tier_want "two escalations add up" "false false false true" crates/puddle-compute-msb/src/lib.rs crates/puddle-app/src/lib.rs crates/puddle-ipc/src/windows/mod.rs
 # Always-run paths (the msb pin among them, the shared VM test crate, the workflows) pull every moved job back.
 for p in Cargo.lock Cargo.toml ci/msb-runtime.sha256 ci/msb-tag.sh ci/fetch-msb.sh crates/puddle-vm-tests/src/lib.rs \
     .github/workflows/vm-windows.yml .github/workflows/windows.yml .github/workflows/ci.yml ci/scope.sh scripts/check.sh; do
-    tier_want "always-run path $p" "false false false" docs/guide.md "$p"
+    tier_want "always-run path $p" "false false false false" docs/guide.md "$p"
 done
 mapfile -t tier_many < <(seq 1 300 | sed 's|^|docs/page-|')
-tier_want "300 files: everything runs" "false false false" "${tier_many[@]}"
-tier_want "an unknown path" "false false false" mystery/file.txt
-[ "$(printf '' | env GITHUB_EVENT_NAME=merge_group PUDDLE_TIER=on "$scope" classify | grep -c '^defer_.*=false$')" = 3 ] ||
+tier_want "300 files: everything runs" "false false false false" "${tier_many[@]}"
+tier_want "an unknown path" "false false false false" mystery/file.txt
+[ "$(printf '' | env GITHUB_EVENT_NAME=merge_group PUDDLE_TIER=on "$scope" classify | grep -c '^defer_.*=false$')" = 4 ] ||
     bad "tier: an empty file list must run everything"
 # Without the variable exactly `on`, or off a merge queue run, nothing is deferred.
 for tier in "" off ON On true 1 yes "on "; do
-    [ "$(defers merge_group "$tier" docs/guide.md)" = "false false false" ] || bad "tier: PUDDLE_TIER='$tier' must not defer"
+    [ "$(defers merge_group "$tier" docs/guide.md)" = "false false false false" ] || bad "tier: PUDDLE_TIER='$tier' must not defer"
 done
 for ev in pull_request push schedule workflow_dispatch ""; do
-    [ "$(defers "$ev" on docs/guide.md)" = "false false false" ] || bad "tier: event '$ev' must not defer"
+    [ "$(defers "$ev" on docs/guide.md)" = "false false false false" ] || bad "tier: event '$ev' must not defer"
 done
 
 # 5. The whole script with a fake `gh`.
@@ -191,7 +208,7 @@ main_case() { # main_case <label> <want class> <args of run_main>
     grep -q "^class=$exp$" <<<"$out" || bad "main: $label: want class $exp, got: $(tr '\n' ' ' <<<"$out")"
     grep -q '^rc=0$' <<<"$out" || bad "main: $label: exit status not 0"
     grep -q "^class=$exp$" "$tmp/out" || bad "main: $label: GITHUB_OUTPUT lacks class=$exp"
-    [ "$(grep -c . "$tmp/out")" = 9 ] || bad "main: $label: GITHUB_OUTPUT has not exactly the nine outputs"
+    [ "$(grep -c . "$tmp/out")" = 10 ] || bad "main: $label: GITHUB_OUTPUT has not exactly the ten outputs"
     grep -q "^light=${WANT_LIGHT:-false}$" "$tmp/out" || bad "main: $label: want light=${WANT_LIGHT:-false}, got: $(tr '\n' ' ' <"$tmp/out")"
 }
 main_case "ui-only pull request to develop" ui pull_request develop ok "$tmp/ui.txt"
@@ -251,26 +268,36 @@ main_case "light: PUDDLE_QUEUE unset" ui pull_request develop ok "$tmp/ui.txt"
 # The nightly tier through the whole script: only a merge queue run with PUDDLE_TIER=on, and the
 # outputs of the group's diff; any doubt prints the full set with nothing deferred.
 printf 'crates/puddle-app/src/lib.rs\n' >"$tmp/app.txt"
+printf 'ui/src/lib/components/RequestRow.svelte\n' >"$tmp/component.txt"
 want_out() { grep -q "^$1\$" "$tmp/out" || bad "main: $2: want $1, got: $(tr '\n' ' ' <"$tmp/out")"; }
 MAIN_ENV=(MERGE_GROUP_BASE_SHA=base1 MERGE_GROUP_HEAD_SHA=head1 PUDDLE_TIER=on)
 main_case "tier: merge group, ui-only diff" ui merge_group "" ok "$tmp/ui.txt"
 want_out defer_vm_windows=true "tier: ui-only diff defers the VM job"
 want_out defer_win_ui=true "tier: ui-only diff defers the UI job"
 want_out defer_win_clippy=true "tier: ui-only diff defers clippy"
+want_out defer_linux_webkit=true "tier: a logic-only UI diff leaves WebKit to the nightly"
 main_case "tier: merge group, desktop shell diff" rust merge_group "" ok "$tmp/app.txt"
 want_out defer_win_ui=false "tier: a puddle-app diff runs the UI job"
 want_out defer_vm_windows=true "tier: a puddle-app diff still defers the VM job"
+main_case "tier: merge group, a component" ui merge_group "" ok "$tmp/component.txt"
+want_out defer_linux_webkit=false "tier: a component keeps WebKit in the queue"
+want_out defer_vm_windows=true "tier: a component still defers the VM job"
 main_case "tier: merge group, always-run path" full merge_group "" ok "$tmp/rename.txt"
 want_out defer_vm_windows=false "tier: an always-run path runs the VM job"
+want_out defer_linux_webkit=false "tier: an always-run path keeps WebKit in the queue"
 main_case "tier: merge group, compare fails" full merge_group "" error "$tmp/ui.txt"
 want_out defer_win_ui=false "tier: a failed compare runs everything"
+want_out defer_linux_webkit=false "tier: a failed compare keeps WebKit in the queue"
 main_case "tier: pull request to develop" ui pull_request develop ok "$tmp/ui.txt"
 want_out defer_vm_windows=false "tier: a pull request defers nothing"
+want_out defer_linux_webkit=false "tier: a pull request keeps WebKit"
 main_case "tier: push" full push develop ok "$tmp/ui.txt"
 want_out defer_vm_windows=false "tier: a push defers nothing"
+want_out defer_linux_webkit=false "tier: a push keeps WebKit"
 MAIN_ENV=(MERGE_GROUP_BASE_SHA=base1 MERGE_GROUP_HEAD_SHA=head1)
 main_case "tier unset: merge group, ui-only diff" ui merge_group "" ok "$tmp/ui.txt"
 want_out defer_vm_windows=false "tier unset: the queue runs the VM job as today"
+want_out defer_linux_webkit=false "tier unset: the queue runs WebKit as today"
 MAIN_ENV=()
 
 # 6. The result job's verdict. needs <scope outputs> <job=result>... -> NEEDS json
@@ -558,6 +585,34 @@ for ev in push schedule workflow_dispatch merge_group pull_request; do
 done
 STEPS_ENV=(GITHUB_EVENT_NAME=pull_request PR_BASE_REF=main PUDDLE_QUEUE=on)
 steps_case 1 "pull request to main with PUDDLE_QUEUE=on: one skipped" git-env=skipped
+# The nightly tier narrows the browsers to Chromium on a merge queue run when scope said so, and nowhere else.
+tier_steps=(PUDDLE_TIER=on DEFER_LINUX_WEBKIT=true PUDDLE_E2E_PROJECTS=chromium)
+STEPS_ENV=(GITHUB_EVENT_NAME=merge_group "${tier_steps[@]}")
+steps_case 0 "tier: chromium on a merge queue run" ui-e2e=success
+steps_case 1 "tier: chromium, the e2e step failed" ui-e2e=failure
+steps_case 1 "tier: chromium, the e2e step skipped" ui-e2e=skipped
+STEPS_ENV=(GITHUB_EVENT_NAME=merge_group PUDDLE_TIER=on DEFER_LINUX_WEBKIT=true PUDDLE_E2E_PROJECTS=webkit)
+steps_case 1 "tier: only chromium may narrow" ui-e2e=success
+STEPS_ENV=(GITHUB_EVENT_NAME=merge_group PUDDLE_TIER=on DEFER_LINUX_WEBKIT=true "PUDDLE_E2E_PROJECTS=chromium,webkit")
+steps_case 1 "tier: a list is not chromium" ui-e2e=success
+STEPS_ENV=(GITHUB_EVENT_NAME=merge_group PUDDLE_TIER=on DEFER_LINUX_WEBKIT=true)
+steps_case 0 "tier: both browsers ran although WebKit was deferred" ui-e2e=success
+STEPS_ENV=(GITHUB_EVENT_NAME=merge_group PUDDLE_TIER=on DEFER_LINUX_WEBKIT=false PUDDLE_E2E_PROJECTS=chromium)
+steps_case 1 "tier: chromium although scope kept WebKit" ui-e2e=success
+STEPS_ENV=(GITHUB_EVENT_NAME=merge_group PUDDLE_TIER=on PUDDLE_E2E_PROJECTS=chromium)
+steps_case 1 "tier: chromium with scope's output lost" ui-e2e=success
+for v in "" off ON "on "; do
+    STEPS_ENV=(GITHUB_EVENT_NAME=merge_group "PUDDLE_TIER=$v" DEFER_LINUX_WEBKIT=true PUDDLE_E2E_PROJECTS=chromium)
+    steps_case 1 "tier: PUDDLE_TIER='$v' is not on" ui-e2e=success
+done
+for ev in push schedule workflow_dispatch pull_request; do
+    STEPS_ENV=("GITHUB_EVENT_NAME=$ev" PR_BASE_REF=main "${tier_steps[@]}")
+    steps_case 1 "tier: $ev never narrows" ui-e2e=success
+done
+# The note a narrowed run leaves in the job summary.
+env -u PUDDLE_QUEUE -u PR_BASE_REF GITHUB_EVENT_NAME=merge_group "${tier_steps[@]}" GITHUB_STEP_SUMMARY="$tmp/summary-wk" \
+    "$scope" full-steps ui-e2e=success >/dev/null 2>&1 || bad "tier: summary case did not pass"
+grep -q 'WebKit not run here' "$tmp/summary-wk" || bad "tier: a Chromium-only run must say in its summary that WebKit did not run"
 [ "$(NEEDS='' GITHUB_EVENT_NAME=pull_request "$scope" verdict x=y >/dev/null 2>&1; echo $?)" = 1 ] || bad "verdict: empty NEEDS must fail"
 
 # 7. The workflows are wired to match their result job's verdict (needs PyYAML).
@@ -716,6 +771,15 @@ for wf, (rid, rname, want_specs) in results.items():
                 bad.append(f"{wf}: job {j}: step {s.get('name')!r} skips in the light mode but the guard does not check it")
         if narrows and "PUDDLE_E2E_PROJECTS" not in str(spec.get("env", "")):
             bad.append(f"{wf}: job {j} narrows something other than PUDDLE_E2E_PROJECTS, which the guard cannot see")
+        # The nightly tier's Chromium-only run: the guard must see the variable and scope's output, and the
+        # scope job must pass both through.
+        if "outputs.defer_linux_webkit" in str(spec.get("env", "")):
+            if genv.get("PUDDLE_TIER") != "${{ vars.PUDDLE_TIER }}" or genv.get("DEFER_LINUX_WEBKIT") != "${{ needs.scope.outputs.defer_linux_webkit }}":
+                bad.append(f"{wf}: job {j}: the full-steps guard needs PUDDLE_TIER and DEFER_LINUX_WEBKIT from scope's output")
+            if "defer_linux_webkit" not in sc.get("outputs", {}):
+                bad.append(f"{wf}: scope job has no output defer_linux_webkit")
+            if scope_env.get("PUDDLE_TIER") != "${{ vars.PUDDLE_TIER }}":
+                bad.append(f"{wf}: the scope step needs PUDDLE_TIER from vars")
 # The nightly gates of the VM jobs, Windows UI and clippy count only nightly and manual runs: a merge
 # queue run on develop's commit must not skip the soak tests or the nightly UI run.
 for wf in ("windows", "vm-linux", "vm-windows"):
@@ -726,6 +790,26 @@ for wf in ("windows", "vm-linux", "vm-windows"):
         if g.strip() != "--events schedule,workflow_dispatch":
             bad.append(f"{wf}: nightly gate {g.strip()!r} must be exactly '--events schedule,workflow_dispatch'")
 
+# The WebKit nightly (webkit.yml) is what the queue's Chromium-only run leans on: it must exist, run on a
+# schedule, never be narrowed, never save the shared browser cache (a WebKit-only entry would starve the
+# Chromium job that restores it) and be watched by the red-signal workflow.
+wk = yaml.safe_load(open(f"{d}/webkit.yml"))
+won = wk.get("on", wk.get(True)) or {}
+if sorted(won) != ["schedule", "workflow_dispatch"]:
+    bad.append(f"webkit: triggers {sorted(won)}, want exactly schedule and workflow_dispatch (a pull request to main runs both browsers in ci.yml)")
+wtext = open(f"{d}/webkit.yml").read()
+if "run: ci/should-run.sh webkit.yml\n" not in wtext:
+    bad.append("webkit: the nightly gate must be `ci/should-run.sh webkit.yml`")
+if "actions/cache/save" in wtext:
+    bad.append("webkit: must not save the Playwright cache (the key is shared with ci.yml's both-browser entry)")
+for j, spec in wk["jobs"].items():
+    if (spec.get("env") or {}).get("PUDDLE_E2E_PROJECTS") != "webkit":
+        bad.append(f"webkit: job {j} must run PUDDLE_E2E_PROJECTS=webkit")
+    if not any("scripts/check.sh ui-e2e" in str(x.get("run", "")) for x in spec.get("steps", [])):
+        bad.append(f"webkit: job {j} does not run scripts/check.sh ui-e2e")
+ns = yaml.safe_load(open(f"{d}/nightly-signal.yml"))
+if "webkit" not in ((ns.get("on", ns.get(True)) or {}).get("workflow_run") or {}).get("workflows", []):
+    bad.append("nightly-signal: webkit is not watched")
 # Fail fast in the merge queue (ci/cancel-group.sh): every job that does work ends with the cancel-group step,
 # guarded by failure() on a merge_group event and best effort, and has `actions: write`; the result jobs, the
 # queue-tested lookup and the advisories checks (which skip on a merge queue run) do not.

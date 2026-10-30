@@ -18,6 +18,7 @@ use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{AnyAddress, StaticResolver};
 use puddle_proxy::{Proxy, Route};
 use puddle_store::{Actor, Effect, Limits, NewRule, Pattern, Scope, Store, SystemClock};
+use puddle_test_kit::eventually;
 use puddle_types::{NullSink, WorkspaceName};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -112,18 +113,19 @@ pub(crate) fn connection_records(store: &Store) -> Vec<Value> {
 /// Waits up to 5 s for at least `count` `connection` records (one is written when its
 /// connection ends, after the guest has its answer).
 pub(crate) async fn wait_for_records(store: &Store, count: usize) -> Vec<Value> {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let records = connection_records(store);
-        if records.len() >= count || Instant::now() >= deadline {
-            assert!(
-                records.len() >= count,
-                "{count} records expected: {records:?}"
-            );
-            return records;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    eventually(
+        &format!("{count} connection records"),
+        Duration::from_secs(5),
+        || {
+            let records = connection_records(store);
+            if records.len() >= count {
+                Ok(records)
+            } else {
+                Err(format!("{records:?}"))
+            }
+        },
+    )
+    .await
 }
 
 /// An echo server: sends back everything, then closes after the client's FIN.

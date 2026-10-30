@@ -33,6 +33,7 @@ nix = { workspace = true }
 rustix = { workspace = true, features = ["net"] }
 
 [dev-dependencies]
+puddle-test-kit = { workspace = true }
 puddle-types = { workspace = true, features = ["testing"] }
 proptest = { workspace = true }
 rustix = { workspace = true }

@@ -88,6 +88,7 @@ mod tests {
     use super::*;
     use crate::clock::ManualClock;
     use crate::{Actor, Effect, Limits, NewRule, Pattern, Scope};
+    use puddle_test_kit::eventually;
 
     /// A rule that has expired, so the next pass has to write a `rule_expired` record.
     fn store_with_an_expired_rule() -> Arc<Store> {
@@ -106,16 +107,6 @@ mod tests {
         store
     }
 
-    async fn until(what: &str, mut done: impl FnMut() -> bool) {
-        for _ in 0..500 {
-            if done() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        assert!(done(), "timed out waiting for {what}");
-    }
-
     #[tokio::test]
     async fn a_sweep_that_cannot_write_is_a_problem_until_one_works() {
         let store = store_with_an_expired_rule();
@@ -123,13 +114,19 @@ mod tests {
         let problems = Arc::new(Problems::new(Arc::new(NullSink)));
         let sweeper =
             Sweeper::spawn_reporting(store.clone(), Duration::from_millis(20), problems.clone());
-        until("the sweep problem", || !problems.list().is_empty()).await;
+        eventually("the sweep problem", Duration::from_secs(5), || {
+            !problems.list().is_empty()
+        })
+        .await;
         let problem = problems.list().remove(0);
         assert_eq!(problem.key, SWEEP_PROBLEM);
         assert!(problem.detail.contains("disk full"), "{problem:?}");
         assert!(problem.detail.contains("free some space"), "{problem:?}");
         store.audit_writes_work_again();
-        until("the problem to end", || problems.list().is_empty()).await;
+        eventually("the problem to end", Duration::from_secs(5), || {
+            problems.list().is_empty()
+        })
+        .await;
         sweeper.shutdown().await;
         assert_eq!(store.rules().len(), 0, "the rule was removed in the end");
     }

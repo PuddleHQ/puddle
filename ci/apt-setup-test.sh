@@ -55,7 +55,9 @@ APT_ETC="$tmp/apt" APT_HOSTS="$tmp/hosts" APT_PROBE_URL="file://$tmp/full" "$her
 
 # apt-retry.sh: a command that finishes, one that stalls then works, one that always fails
 export APT_ETC="$tmp/apt" APT_HOSTS="$tmp/hosts" APT_RETRY_NO_REPAIR=1 APT_FIRST_TRY_S=2 APT_RETRY_S=5
-"$here/apt-retry.sh" true >"$tmp/out" 2>&1 || fail "retry: a passing command failed"
+# The passing command gets a generous bound: with the 2 s of the stall cases below, a busy host that is
+# slow to start even `true` would count as a stall and the run would be retried.
+APT_FIRST_TRY_S=60 "$here/apt-retry.sh" true >"$tmp/out" 2>&1 || fail "retry: a passing command failed"
 ! grep -q retrying "$tmp/out" || fail "retry: a passing command was retried"
 printf 'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n' >"$tmp/apt/apt-mirrors.txt"
 # The stubs tell the first try from the retry by the mirror list (Canonical first after the stop), not by a

@@ -4,7 +4,7 @@
 // without a Content-Security-Policy violation. Waits are on conditions, never on time.
 import type { Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeViolations, watchCsp } from "./support";
+import { watchCsp, expectNoAxeViolations, staysEmpty } from "./support";
 
 /** A 40 by 40 red PNG: valid, and smaller than the 256 pixels Puddle stores. */
 const RED_PNG = Buffer.from(
@@ -82,7 +82,7 @@ test.describe("the app icon", () => {
     await expect(
       page.getByRole("radio", { name: "Duck at night" }),
     ).toBeChecked();
-    await expect.poll(() => csp()).toEqual([]);
+    await staysEmpty(page, csp);
   });
 
   test("checks, resizes and stores your own image, and lets it go once another icon is saved", async ({
@@ -115,7 +115,7 @@ test.describe("the app icon", () => {
     await expect(
       page.getByRole("button", { name: "Remove your image" }),
     ).toBeDisabled();
-    await expect.poll(() => axeViolations(page)).toEqual([]);
+    await expectNoAxeViolations(page);
 
     await page.getByRole("radio", { name: "Duck", exact: true }).check();
     await save(page);
@@ -129,7 +129,7 @@ test.describe("the app icon", () => {
       ((await icons.json()) as { custom_png_base64: string | null })
         .custom_png_base64,
     ).toBeNull();
-    await expect.poll(() => csp()).toEqual([]);
+    await staysEmpty(page, csp);
   });
 
   test("says why a file is not an image and keeps the icon as it was", async ({
@@ -151,6 +151,6 @@ test.describe("the app icon", () => {
     await expect(
       page.getByRole("radio", { name: "Your image" }),
     ).toBeDisabled();
-    await expect.poll(() => axeViolations(page)).toEqual([]);
+    await expectNoAxeViolations(page);
   });
 });

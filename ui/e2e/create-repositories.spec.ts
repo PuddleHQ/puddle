@@ -4,7 +4,7 @@
 // naming each clone, and the notice for a clone that failed while the create still finished.
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeStops, watchCsp } from "./support";
+import { axeStops, watchCsp, staysEmpty } from "./support";
 
 const auth = (backend: Backend) => ({
   Authorization: `Bearer ${backend.token}`,
@@ -423,7 +423,7 @@ for (const scheme of ["light", "dark"] as const) {
       await expect(dialog).toContainText("No repository");
       await scan(page, "no repository");
       scan.done();
-      await expect.poll(() => csp()).toEqual([]);
+      await staysEmpty(page, csp);
     });
   }
 }

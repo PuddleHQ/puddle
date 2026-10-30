@@ -5,7 +5,7 @@
 // Waits are on conditions, never on time.
 import type { Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeViolations, watchCsp } from "./support";
+import { expectNoAxeViolations, staysEmpty, watchCsp } from "./support";
 
 const PALETTES = ["pond", "dusk", "meadow", "ember", "graphite"] as const;
 
@@ -82,7 +82,7 @@ test.describe("the palette setting", () => {
       /.*/,
     );
     await expect.poll(() => accent(page)).toBe(pond);
-    await expect.poll(() => csp()).toEqual([]);
+    await staysEmpty(page, csp);
   });
 
   test("Custom takes the user's accent, keeps it, and warns when a pick is hard to read", async ({
@@ -127,7 +127,7 @@ test.describe("the palette setting", () => {
     await page.goto("/settings");
     await expect(page.locator("#set-colour-accent")).toHaveValue("#7a1fa2");
     await expect.poll(() => accent(page)).toContain("#7a1fa2");
-    await expect.poll(() => csp()).toEqual([]);
+    await staysEmpty(page, csp);
   });
 
   for (const palette of [...PALETTES, "custom"] as const) {
@@ -151,9 +151,7 @@ test.describe("the palette setting", () => {
           await expect(page.getByText(/hard to read/)).toBeHidden();
         }
         await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
-        await expect
-          .poll(() => axeViolations(page), { message: `${palette} ${theme}` })
-          .toEqual([]);
+        await expectNoAxeViolations(page, `${palette} ${theme}`);
       });
     }
   }

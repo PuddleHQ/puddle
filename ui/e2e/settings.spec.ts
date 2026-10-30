@@ -5,7 +5,7 @@
 import type { APIRequestContext, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
 import { CPUS_MAX, CPUS_MIN } from "../src/lib/settings/cpus.ts";
-import { axeViolations, watchCsp } from "./support";
+import { watchCsp, expectNoAxeViolations, staysEmpty } from "./support";
 
 const TERMS = "https://code.visualstudio.com/license/server";
 
@@ -88,7 +88,7 @@ test("shows every section with Puddle's defaults, no CSP violations", async ({
   );
   await expect(page.getByText(/Open VSX/)).toBeVisible();
   await expect(page.getByText(/sends nothing about you/)).toBeVisible();
-  await expect.poll(() => csp()).toEqual([]);
+  await staysEmpty(page, csp);
 });
 
 for (const scheme of ["light", "dark"] as const) {
@@ -98,14 +98,10 @@ for (const scheme of ["light", "dark"] as const) {
   }) => {
     await page.emulateMedia({ colorScheme: scheme });
     await openSettings(page, backend);
-    await expect
-      .poll(() => axeViolations(page), { message: "screen" })
-      .toEqual([]);
+    await expectNoAxeViolations(page, "screen");
     await page.getByLabel("Server", { exact: true }).selectOption("microsoft");
     await expect(page.getByRole("dialog")).toBeVisible();
-    await expect
-      .poll(() => axeViolations(page), { message: "popup" })
-      .toEqual([]);
+    await expectNoAxeViolations(page, "popup");
   });
 }
 
@@ -123,9 +119,7 @@ test("the global direct SSH default is off, asks the trust text, and is kept", a
     name: "Allow direct SSH for new workspaces?",
   });
   await expect(trust).toContainText("GitHub token");
-  await expect
-    .poll(() => axeViolations(page), { message: "trust text" })
-    .toEqual([]);
+  await expectNoAxeViolations(page, "trust text");
   await trust.getByRole("button", { name: "Cancel" }).click();
   await expect(box).not.toBeChecked();
   await box.click();
@@ -146,7 +140,7 @@ test("the licences open on request and are scrollable by keyboard", async ({
   await expect(text).toContainText("Third-party software shipped");
   await text.focus();
   await expect(text).toBeFocused();
-  await expect.poll(() => axeViolations(page)).toEqual([]);
+  await expectNoAxeViolations(page);
 });
 
 test("the theme is kept by Puddle: it comes back after the page forgets everything", async ({
@@ -269,7 +263,7 @@ test.describe("default CPUs", () => {
     expect(layout.height).toBeGreaterThanOrEqual(24);
     expect(layout.left).toBeGreaterThanOrEqual(0);
     expect(layout.right).toBeGreaterThanOrEqual(0);
-    await expect.poll(() => axeViolations(page)).toEqual([]);
+    await expectNoAxeViolations(page);
   });
 });
 
@@ -313,7 +307,7 @@ test("the Save bar stays on screen, its buttons are big enough, and the screen h
     expect(box?.height ?? 0, `${name} height`).toBeGreaterThanOrEqual(24);
     expect(box?.width ?? 0, `${name} width`).toBeGreaterThanOrEqual(24);
   }
-  await expect.poll(() => axeViolations(page)).toEqual([]);
+  await expectNoAxeViolations(page);
 });
 
 test("the notification and inbox switches start at Puddle's defaults, are saved together and survive a reload", async ({
@@ -392,9 +386,7 @@ test("the inbox keys do nothing until the switch is on, then A decides the curre
     name: /Turn on the A, D, J and K keys in Settings/,
   });
   await expect(hint).toBeVisible();
-  await expect
-    .poll(() => axeViolations(page), { message: "inbox with the keys off" })
-    .toEqual([]);
+  await expectNoAxeViolations(page, "inbox with the keys off");
   await page.locator("main").focus();
   await page.keyboard.press("a");
   await expect(row).toBeVisible();

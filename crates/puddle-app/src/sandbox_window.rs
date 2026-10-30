@@ -1208,6 +1208,7 @@ mod tests {
             open_external,
             refused,
             last_closed: Arc::new(|_| {}),
+            new_window: Arc::new(|_, _| {}),
         });
         let t = mock_target("demo", data.path());
         let ask = |url: &str| windows.new_window(app.handle(), &t, &Url::parse(url).unwrap(), None);
@@ -1301,6 +1302,7 @@ mod tests {
             open_external,
             refused,
             last_closed: Arc::new(|_| {}),
+            new_window: Arc::new(|_, _| {}),
         });
         let t = mock_target("demo", data.path());
         // The label the window would take is already in use.

@@ -41,7 +41,7 @@ test("a corporate network: the setup, sign-in, roots and routes, no notice, no C
   ).toBeVisible();
   await expect(page.getByText("No problems found.")).toBeVisible();
   await expect(notices(page).getByRole("button")).toHaveCount(0);
-  expect(await csp()).toEqual([]);
+  await expect.poll(() => csp()).toEqual([]);
 });
 
 test("a network change updates the open page, and trouble raises a notice that clears again", async ({
@@ -136,9 +136,13 @@ for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme });
     await open(page, backend, "corporate-network");
     await expect(page.getByText("No problems found.")).toBeVisible();
-    expect(await axeViolations(page), "healthy").toEqual([]);
+    await expect
+      .poll(() => axeViolations(page), { message: "healthy" })
+      .toEqual([]);
     await backend.control.script("network-trouble");
     await expect(notices(page).getByText(/^Network trouble:/)).toBeVisible();
-    expect(await axeViolations(page), "trouble").toEqual([]);
+    await expect
+      .poll(() => axeViolations(page), { message: "trouble" })
+      .toEqual([]);
   });
 }

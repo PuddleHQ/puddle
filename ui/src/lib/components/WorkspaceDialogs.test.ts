@@ -171,7 +171,7 @@ describe("WorkspaceDialogs", () => {
     expect(headings).toEqual(["In the browser", "On this computer"]);
     expect(
       within(dialog).getByRole("button", { name: "Open in the browser" }),
-    ).toBeDisabled();
+    ).toBeEnabled();
     expect(
       within(dialog).getByRole("checkbox", { name: "Allow direct SSH" }),
     ).not.toBeChecked();
@@ -180,6 +180,26 @@ describe("WorkspaceDialogs", () => {
     ).toBeDisabled();
     expect(dialog).toHaveTextContent("opens no SSH way in");
     expect(dialog).not.toHaveTextContent("Trusted");
+  });
+
+  it("opens the browser editor from the step without direct SSH and closes the step", async () => {
+    render(WorkspaceDialogs);
+    actions.connect(workspaces.byName("demo")!);
+    const dialog = await screen.findByRole("dialog", {
+      name: "Connect to demo",
+    });
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Open in the browser" }),
+    );
+    await vi.waitFor(() =>
+      expect(api.calls).toContain("POST /api/workspaces/{id}/attach"),
+    );
+    expect(api.bodies.at(-1)).toEqual({ mode: "browser" });
+    await vi.waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Connect to demo" }),
+      ).toBeNull(),
+    );
   });
 
   it("says what direct SSH trusts when the switch is ticked, and changes nothing until the yes", async () => {

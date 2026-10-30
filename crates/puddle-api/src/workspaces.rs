@@ -728,9 +728,10 @@ pub enum AttachMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Attached {
-    /// Whether Puddle opened an editor itself (desktop mode, when it worked).
+    /// Whether Puddle opened an editor itself (a window or desktop VS Code, when it worked).
     pub opened: bool,
-    /// Where the browser editor is, in browser mode.
+    /// Always `None` today: the browser editor opens in a window, never at an address the
+    /// caller follows.
     pub url: Option<String>,
     /// Why nothing was opened, when that is not an error.
     pub message: Option<String>,
@@ -743,16 +744,6 @@ impl Attached {
         Self {
             opened: true,
             url: None,
-            message: None,
-        }
-    }
-
-    /// The editor is at `url`; the caller opens it.
-    #[must_use]
-    pub fn at(url: impl Into<String>) -> Self {
-        Self {
-            opened: false,
-            url: Some(url.into()),
             message: None,
         }
     }

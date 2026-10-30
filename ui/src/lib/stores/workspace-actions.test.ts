@@ -277,6 +277,52 @@ describe("opening in VS Code", () => {
   });
 });
 
+describe("opening in the browser", () => {
+  it("asks for a browser attach and says the window is opening", async () => {
+    actions.openBrowser(w("up"));
+    await expect.poll(() => messages()).toEqual(["Opening up in the browser."]);
+    expect(api.bodies.at(-1)).toEqual({ mode: "browser" });
+    expect(toasts.items[0]?.tone).toBe("info");
+  });
+
+  it("shows the service's words when no window opened (a failed sign-in, no desktop app)", async () => {
+    api.attachReply = {
+      opened: false,
+      url: null,
+      message: "the browser editor opens from the desktop app",
+    };
+    actions.openBrowser(w("up"));
+    await expect
+      .poll(() => toasts.items[0])
+      .toMatchObject({
+        message: "the browser editor opens from the desktop app",
+        tone: "error",
+      });
+  });
+
+  it("has words of its own when the service gave none, naming the browser editor", async () => {
+    api.attachReply = { opened: false, url: null, message: null };
+    actions.openBrowser(w("up"));
+    await expect
+      .poll(() => messages())
+      .toEqual(["Puddle couldn't open the browser editor for up."]);
+  });
+
+  it("a refused attach (not running) is an error toast with the service's words", async () => {
+    api.refuse.set("POST /api/workspaces/{id}/attach", {
+      status: 409,
+      message: "down is not running; start it first",
+    });
+    actions.openBrowser(w("down"));
+    await expect
+      .poll(() => toasts.items[0])
+      .toMatchObject({
+        message: "down is not running; start it first",
+        tone: "error",
+      });
+  });
+});
+
 describe("deleting", () => {
   it("reads the check, then asks with what it found", async () => {
     api.check = dirtyCheck("down");

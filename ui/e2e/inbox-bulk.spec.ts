@@ -2,13 +2,28 @@
 // The inbox with 500 open requests (the fixture's `spread` step opens them): it must show them
 // at once.
 import type { Page } from "@playwright/test";
+import { slowdown } from "./cpu-throttle.ts";
 import { expect, test, type Backend } from "./fixture";
+
+// The bars below hold for the speed the target names. The nightly stress runs Chromium at a quarter
+// of it (PUDDLE_E2E_CPU_THROTTLE) on two shared cores: the best of five loads then took 617 and
+// 666 ms to the first paint and 2.6 s to the last (bars 600 ms and 2 s, 3 of 3 runs failed), so the
+// bars grow by the slowdown that run declares, which is 1 everywhere else. The bars catch a
+// regression, so they are not loosened for the sake of a machine: only for a slowdown asked for.
+const SLOWDOWN = slowdown();
+const ALL_ROWS_BAR_MS = 2000;
+// A load also draws 501 rows on that slow page (7 to 20 s on a fast host under the stress, 0.6 s
+// idle), so the 30 s a test gets and the wait for the rows grow by the same factor.
+const TEST_TIMEOUT_MS = 30_000 * SLOWDOWN;
+test.describe.configure({ timeout: TEST_TIMEOUT_MS });
 
 /** Data arrival to first paint, and to the last row painted, in the page just loaded. */
 async function timings(page: Page) {
   // The rows are drawn in slices, and a host with every core busy takes seconds over them: wait for
   // the state (all rows, their marks) as long as it takes; the time it took is what the bars below judge.
-  await expect(page.locator("li.req")).toHaveCount(501, { timeout: 30_000 });
+  await expect(page.locator("li.req")).toHaveCount(501, {
+    timeout: TEST_TIMEOUT_MS,
+  });
   return page.evaluate(async () => {
     const at = (name: string) =>
       performance.getEntriesByName(name)[0]?.startTime ?? -1;
@@ -69,9 +84,11 @@ test.describe("500 open requests", () => {
       description: `best of ${LOADS}: first paint ${first.toFixed(0)} ms, all rows ${all.toFixed(0)} ms (runs: ${runs.map((r) => r.first.toFixed(0)).join(", ")})`,
     });
     expect(first, "data to first paint").toBeLessThan(
-      FIRST_PAINT_TARGET_MS * 3,
+      FIRST_PAINT_TARGET_MS * 3 * SLOWDOWN,
     );
-    expect(all, "data to all 501 rows painted").toBeLessThan(2000);
+    expect(all, "data to all 501 rows painted").toBeLessThan(
+      ALL_ROWS_BAR_MS * SLOWDOWN,
+    );
   });
 });
 
@@ -88,7 +105,9 @@ test("a 500-row inbox is still driven by the keyboard", async ({
   });
   expect(reply.ok()).toBe(true);
   await page.goto("/inbox");
-  await expect(page.locator("li.req")).toHaveCount(501, { timeout: 30_000 });
+  await expect(page.locator("li.req")).toHaveCount(501, {
+    timeout: TEST_TIMEOUT_MS,
+  });
   await page.locator("main").focus();
   await page.keyboard.press("j");
   await page.keyboard.press("j");

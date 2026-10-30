@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Ports and folders that two parallel tests cannot collide on.
 
-use std::net::{SocketAddr, TcpListener};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::ops::Deref;
 use std::path::Path;
+use std::time::Duration;
 
 /// A loopback listener bound to port 0, with the port the system gave it. Hand the listener to the
 /// code under test (or keep it while a child binds its own); never drop it to "free" the port, because
@@ -20,6 +21,74 @@ pub fn bound_port() -> (TcpListener, u16) {
         .expect("read the port of a bound test listener")
         .port();
     (listener, port)
+}
+
+/// A loopback port that stays this test's until the value is dropped, for a config that must name
+/// its port before anything listens on it (a server's `--port`). The socket is bound and never
+/// listens, so connecting to the port is refused, as on a free one, while another process's port 0,
+/// a plain bind or the kernel's choice of a source port cannot take it. `SO_REUSEADDR` lets the
+/// test's own listener (the server that "answers") bind the same number and be dropped again, as
+/// many times as the test needs.
+///
+/// Never drop a listener to "free" a port for this: use this instead.
+#[derive(Debug)]
+pub struct ReservedPort {
+    _socket: tokio::net::TcpSocket,
+    port: u16,
+}
+
+impl ReservedPort {
+    /// Reserves a loopback port.
+    ///
+    /// # Panics
+    /// When the system has no loopback port to give.
+    #[must_use]
+    pub fn new() -> Self {
+        let socket = tokio::net::TcpSocket::new_v4().expect("make a socket to reserve a port");
+        socket
+            .set_reuseaddr(true)
+            .expect("let a test listener share a reserved port");
+        socket
+            .bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+            .expect("bind a loopback port to reserve");
+        let port = socket.local_addr().expect("read the reserved port").port();
+        Self {
+            _socket: socket,
+            port,
+        }
+    }
+
+    /// The reserved port number.
+    #[must_use]
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+}
+
+impl Default for ReservedPort {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Whether a listener accepts a connection on `addr` (loopback only: the connect blocks, up to a
+/// second).
+///
+/// `TcpStream::connect(..).is_ok()` is not that. A connect to a port nothing listens on can still
+/// report success: the kernel connects a socket to itself when its source port happens to be the
+/// target (a simultaneous open), and tokio's connect can return `Ok` for a refused attempt that is
+/// still in flight. Both end up with no peer to talk to, so this asks the connection for its peer
+/// and counts a socket joined to itself as refused.
+#[must_use]
+pub fn accepts(addr: SocketAddr) -> bool {
+    let Ok(conn) = TcpStream::connect_timeout(&addr, Duration::from_secs(1)) else {
+        return false;
+    };
+    has_a_peer(&conn)
+}
+
+fn has_a_peer(conn: &TcpStream) -> bool {
+    matches!((conn.local_addr(), conn.peer_addr()), (Ok(local), Ok(peer)) if local != peer)
 }
 
 /// A temporary folder with a unique name that is removed when the value drops.
@@ -67,6 +136,73 @@ mod tests {
         assert_ne!(a, b);
         assert!(TcpListener::bind(("127.0.0.1", a)).is_err());
         drop((first, second));
+    }
+
+    #[test]
+    fn a_reserved_port_refuses_connections_and_other_binds_but_takes_a_reusing_listener() {
+        let reserved = ReservedPort::new();
+        let addr = SocketAddr::from(([127, 0, 0, 1], reserved.port()));
+        assert!(!accepts(addr), "nothing listens on a reserved port");
+        // Another program picking the number without SO_REUSEADDR is turned away: the collision a
+        // dropped listener leaves open.
+        let squatter = tokio::net::TcpSocket::new_v4().unwrap();
+        assert!(squatter.bind(addr).is_err(), "a plain bind took the port");
+        // The test's own server binds with SO_REUSEADDR like a real one (serve.rs). std's plain
+        // bind would be refused on Windows, where only two sockets that both set it can share.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let server = rt.block_on(async {
+            let socket = tokio::net::TcpSocket::new_v4().unwrap();
+            socket.set_reuseaddr(true).unwrap();
+            socket
+                .bind(addr)
+                .expect("the test's own server can answer there");
+            socket.listen(8).unwrap()
+        });
+        assert!(accepts(addr), "the test's own server answers");
+        drop(server);
+        assert!(!accepts(addr), "and be dropped again");
+        let other = ReservedPort::default();
+        assert_ne!(other.port(), reserved.port());
+    }
+
+    #[test]
+    fn a_listener_is_accepted_and_a_closed_port_refused() {
+        let (listener, port) = bound_port();
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        assert!(accepts(addr));
+        drop(listener);
+        assert!(!accepts(addr));
+    }
+
+    #[test]
+    fn a_socket_connected_to_itself_is_not_accepted() {
+        // The kernel's simultaneous open: bind to a port, then connect to that same port with
+        // nothing listening. The connect succeeds, to nobody; `is_ok()` on it would read "open".
+        let (listener, port) = bound_port();
+        drop(listener);
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let joined = rt.block_on(async {
+            let socket = tokio::net::TcpSocket::new_v4().unwrap();
+            socket.set_reuseaddr(true).unwrap();
+            socket.bind(addr).unwrap();
+            socket.connect(addr).await
+        });
+        let stream = joined.expect("a socket can connect to its own address and port");
+        let stream = stream.into_std().unwrap();
+        assert_eq!(stream.local_addr().unwrap(), stream.peer_addr().unwrap());
+        assert!(
+            !has_a_peer(&stream),
+            "a socket joined to itself has no peer"
+        );
+        // While that socket holds the address, a connect from outside finds nobody either.
+        assert!(!accepts(addr));
     }
 
     #[test]

@@ -3,6 +3,7 @@
 // says so, a new host past the limit gets no row until the user answers some, and nothing
 // else changes. Against the real API on the fixture backend, with the real store's limit.
 import type { Page } from "@playwright/test";
+import { slowdown } from "./cpu-throttle.ts";
 import { type Backend, expect, test } from "./fixture";
 
 const LIMIT = 1000;
@@ -23,6 +24,10 @@ test.describe("a workspace with a full list of waiting requests", () => {
     page,
     backend,
   }) => {
+    // 14 waits over a 1000-row page: 1.5 s idle, 15 to 35 s under the nightly stress (Chromium at a
+    // quarter speed on two shared cores; 3 of 3 runs hit the 30 s there), so the test's time grows
+    // by the slowdown that run declares.
+    test.setTimeout(30_000 * slowdown());
     // One more than the limit: the last host asks while the list is full.
     await backend.control.step({
       do: "bulk",

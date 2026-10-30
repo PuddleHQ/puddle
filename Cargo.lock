@@ -6459,6 +6459,7 @@ dependencies = [
  "puddle-agent-proto",
  "puddle-ipc",
  "puddle-netpolicy",
+ "puddle-test-kit",
  "puddle-types",
  "tempfile",
  "thiserror 2.0.21",

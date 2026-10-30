@@ -301,6 +301,13 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   `PUDDLE_VM_RUNTIME_DIR` (msb + libkrunfw, from `ci/fetch-msb.sh`), and take `PUDDLE_VM_PREFIX`
   and `PUDDLE_VM_ROOT`; every sandbox name and the private msb home carry the prefix, so up to three
   runs share a host. Real-machine tests are named `vm_machine_*`.
+  A test that drives a browser client (`BrowserClient` and `Node` in `puddle-vm-tests`: headless
+  Chromium and node on the test host, beside the VM) is named `vm_browser_*`, Linux only, and needs
+  `PUDDLE_VM_BROWSER_MODULES` (`ui/node_modules` after `npm ci --ignore-scripts`; Chromium from
+  `npx playwright install chromium`). The driver and the browser build are the UI lockfile's
+  Playwright, so there is no second pin and no second download: `vm-linux` restores the UI jobs'
+  `ms-playwright` cache entry and installs the browser only on a partition that has a `vm_browser_*`
+  test. A page's budget is a limit on a hang, never a bar on speed.
 - **Redaction:** tests that handle a credential use a canary value and assert it never appears in
   logs, errors, audit entries or the guest's view.
 - **Flaky tests:** nextest never retries (`retries = 0`); only the Windows nightly retries once, to list flakes. A test that fails without a code change

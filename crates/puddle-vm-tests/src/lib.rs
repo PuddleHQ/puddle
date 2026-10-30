@@ -27,6 +27,12 @@
 //!   `vm_machine_*`; the CI jobs skip them, `ci/windows-e2e.ps1` runs them.
 //! - Sandbox names come from [`VmEnv::sandbox_name`]; images from the constants below.
 //!
+//! # A browser client
+//!
+//! [`BrowserClient`] and [`Node`] drive headless Chromium and node beside the VM (module docs in
+//! `browser.rs`); tests that use them are named `vm_browser_*` so the CI jobs can tell which
+//! partition needs the browser installed.
+//!
 //! # Running
 //!
 //! ```text
@@ -37,12 +43,16 @@
 //! `ci/fetch-msb.sh` and run exactly that.
 #![forbid(unsafe_code)]
 
+mod browser;
 mod env;
 mod error;
 mod prefix;
 mod runtime;
 pub mod sockets;
 
+pub use browser::{
+    BROWSER_MODULES_VAR, BrowserClient, NODE_VAR, Node, NodeOutput, PageOutcome, PageRequest,
+};
 pub use env::{Settings, VmEnv, test_owner, within};
 pub use error::HarnessError;
 pub use prefix::RunPrefix;

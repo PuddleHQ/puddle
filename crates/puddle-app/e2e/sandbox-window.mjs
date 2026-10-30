@@ -6,8 +6,9 @@
 //
 // What it shows, in the window and in one the page opens: no Tauri command succeeds, a navigation or
 // window.open to another site goes to the default browser (the shell logs it instead of starting a
-// browser in this test) and leaves the window where it was, the guest's /proxy/ links go to the
-// browser, and the editor's "New Window" becomes a second guarded window with the same result.
+// browser in this test) and leaves the window where it was, the guest's /proxy/<port>/ links open a
+// guarded window on that port's own origin (<port>.probe.localhost) with the same result, and the
+// editor's "New Window" becomes a second guarded window with the same result.
 // What it does not show: clipboard prompts, zoom keys, the browser shortcuts being off, and a
 // close ending the workspace's extension hosts (unit tests cover the decisions, nobody has watched
 // the rest in a window).
@@ -66,6 +67,13 @@ app.on("exit", () => {
 async function targets() {
   const list = await (await fetch(`http://127.0.0.1:${cdpPort}/json/list`)).json();
   return list.filter((t) => t.type === "page" && t.url.startsWith(origin));
+}
+
+// The windows on a forwarded port's origin (`<port>.probe.localhost`). They have a data folder of
+// their own, so a WebView2 browser process of their own, which the shell gives the next DevTools port.
+async function forwardTargets(port) {
+  const list = await (await fetch(`http://127.0.0.1:${cdpPort + 1}/json/list`)).json();
+  return list.filter((t) => t.type === "page" && t.url.startsWith(`http://${port}.probe.localhost:${sitePort}/`));
 }
 
 // The workspace pages once `done(pages)` holds. A window is listed from its first navigation on,
@@ -149,13 +157,24 @@ try {
   await main.evaluate(`setTimeout(() => { location.href = "https://example.org/navigated"; }, 0); true`);
   check("a navigation to another site is opened in the browser", await waitForLog(/opened in the browser.*example\.org\/navigated/));
   check("and the window stays on the workspace page", (await targets()).some(onPage));
-  // window.open: another site, and the guest's port proxy, both go to the browser and open no window.
+  // window.open: another site goes to the browser and opens no window; so does a /proxy/ link that
+  // names no port.
   await main.evaluate(`window.open("https://example.org/popup"); true`, true);
   check("window.open to another site is opened in the browser", await waitForLog(/opened in the browser.*example\.org\/popup/));
-  await main.evaluate(`window.open("/proxy/5173/app"); true`, true);
-  check("a /proxy/ link is opened in the browser", await waitForLog(/opened in the browser.*\/proxy\/5173\/app/));
+  await main.evaluate(`window.open("/proxy/web/"); true`, true);
+  check("a /proxy/ link without a port is opened in the browser", await waitForLog(/opened in the browser.*\/proxy\/web\//));
   await sleep(1000);
   check("neither opened a window", (await targets()).length === 1, JSON.stringify((await targets()).map((t) => t.url)));
+  // The guest's port proxy: a guarded window on Puddle's own forward of the port, not the browser.
+  await main.evaluate(`window.open("/proxy/5173/app"); true`, true);
+  let forwarded = [];
+  for (let i = 0; i < 50 && forwarded.length === 0; i++) {
+    forwarded = await forwardTargets(5173).catch(() => []);
+    if (forwarded.length === 0) await sleep(300);
+  }
+  check("a /proxy/<port>/ link opens a window on the port's own origin", forwarded.length === 1, JSON.stringify(forwarded.map((t) => t.url)));
+  check("and not the default browser", !logged(/opened in the browser.*\/proxy\/5173\//));
+  if (forwarded.length === 1) await attack(forwarded[0], "forwarded window");
   // The editor's "New Window": a second window of the same kind.
   await main.evaluate(`window.open("/attack.html?popup=1"); true`, true);
   const isPopup = (t) => t.url.startsWith(`${probePage}?popup=1`);

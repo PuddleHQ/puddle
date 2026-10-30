@@ -468,7 +468,7 @@ pub(crate) mod tests {
         let problems = Arc::new(Problems::new(Arc::new(puddle_api::EventHub::default())));
         let hooks = sandbox_hooks(app.handle(), &problems);
         (hooks.last_closed)(&WorkspaceName::new("demo").unwrap());
-        assert!(problems.list().is_empty());
+        assert_eq!(problems.list().len(), 0, "{:?}", problems.list());
     }
 
     #[test]

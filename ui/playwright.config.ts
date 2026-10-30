@@ -62,6 +62,10 @@ export default defineConfig({
   reporter: process.env["CI"]
     ? [["list"], ["html", { open: "never" }]]
     : "list",
+  // `expect.poll` and the web-first assertions give a read this long. The 5 s default is shorter than an
+  // axe scan on a loaded machine (a scan that has not returned in 5 s ends a poll with "waiting on the
+  // predicate"), so a loaded run failed on time, not on the page.
+  expect: { timeout: 15_000 },
   use: {
     baseURL: `http://127.0.0.1:${PORT}`,
     trace: "retain-on-failure",

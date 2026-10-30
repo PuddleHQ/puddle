@@ -78,6 +78,7 @@ export class FakeSettings {
   reset(): void {
     const fresh = new FakeSettings();
     this.layer = fresh.layer;
+    this.unknown = [];
     this.vscode = fresh.vscode;
     this.ui = fresh.ui;
     this.customIcon = null;

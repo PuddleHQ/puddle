@@ -6325,6 +6325,7 @@ dependencies = [
  "puddle-doctor",
  "puddle-e2e",
  "puddle-fd-limit",
+ "puddle-front",
  "puddle-fs",
  "puddle-guest-env",
  "puddle-inject",
@@ -6594,6 +6595,14 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "puddle-test-kit"
+version = "0.0.0"
+dependencies = [
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

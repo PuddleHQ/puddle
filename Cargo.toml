@@ -48,6 +48,8 @@ puddle-logins = { path = "crates/puddle-logins" }
 puddle-ports = { path = "crates/puddle-ports" }
 puddle-front = { path = "crates/puddle-front" }
 puddle-appicon = { path = "crates/puddle-appicon" }
+# Dev-dependency only (scripts/quality-gate.py checks it): bounded waits, event reads, ports, temp folders for tests.
+puddle-test-kit = { path = "crates/puddle-test-kit" }
 
 # External
 # msb SDK from Puddle's fork, tag `v<release>-puddle.N`. The SDK and the bundled runtime

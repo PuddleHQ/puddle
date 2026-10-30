@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The nightly coverage baseline raise (ci/raise-coverage-baseline.sh): when the coverage the `ci` workflow measured on develop's tip is
-# above scripts/coverage-baseline.json, ONE pull request, `build: raise the coverage baseline`, raises it and goes through the
-# merge queue like any other. Pull requests carry no raise of their own, so two of them never conflict on that file. It reads the
-# measurement the ci coverage gate uploaded; it builds and tests nothing.
+# above scripts/coverage-baseline.json or ui/coverage-baseline.json, ONE pull request, `build: raise the coverage baseline`, raises
+# them and goes through the merge queue like any other. Pull requests carry no raise of their own, so two of them never conflict on
+# those files. It reads the measurements the ci coverage gates uploaded (the Rust and the UI one); it builds and tests nothing.
 #
 # A pull request opened or updated with the default GITHUB_TOKEN does not start the required checks (a GitHub rule against
 # workflow loops), so the job mints a short-lived installation token for the GitHub App "puddle-coverage-baseline" and opens the

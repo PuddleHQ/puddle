@@ -32,6 +32,7 @@ puddle-repos = { workspace = true }
 puddle-secrets = { workspace = true }
 puddle-settings = { workspace = true }
 puddle-store = { workspace = true }
+puddle-test-kit = { workspace = true }
 puddle-types = { workspace = true, features = ["testing"] }
 rcgen = { workspace = true }
 rustls = { workspace = true }
@@ -56,7 +57,6 @@ puddle-ipc = { workspace = true }
 puddle-netpolicy = { workspace = true }
 puddle-ports = { workspace = true }
 puddle-proxy = { workspace = true, features = ["testing"] }
-puddle-test-kit = { workspace = true }
 puddle-upstream = { workspace = true, features = ["testing"] }
 puddle-vm-tests = { workspace = true }
 futures-util = { workspace = true }

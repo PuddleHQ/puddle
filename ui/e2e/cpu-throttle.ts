@@ -4,12 +4,22 @@
 // WebKit has no such protocol: the job starves its process with taskset and busy loops instead.
 import type { Page } from "@playwright/test";
 
+/**
+ * The slowdown the job asked for: 1 when unset or not above 1. The job sets it for every browser, but only
+ * Chromium is throttled by it; WebKit runs at its own speed on the starved cores (the factor still
+ * applies to its bars and timeouts).
+ */
+export function slowdown(): number {
+  const rate = Number(process.env["PUDDLE_E2E_CPU_THROTTLE"]);
+  return rate > 1 ? rate : 1;
+}
+
 export async function throttleCpu(
   page: Page,
   browserName: string,
 ): Promise<void> {
-  const rate = Number(process.env["PUDDLE_E2E_CPU_THROTTLE"]);
-  if (browserName !== "chromium" || !(rate > 1)) return;
+  const rate = slowdown();
+  if (browserName !== "chromium" || rate === 1) return;
   const session = await page.context().newCDPSession(page);
   await session.send("Emulation.setCPUThrottlingRate", { rate });
 }

@@ -256,7 +256,7 @@ pub fn dacl_is_owner_only(file: &File) -> io::Result<Result<(), String>> {
     Ok(Ok(()))
 }
 
-/// Whether the ACCESS_ALLOWED_ACE at `ace` holds its whole SID inside `AceSize`, so that nothing
+/// Whether the `ACCESS_ALLOWED_ACE` at `ace` holds its whole SID inside `AceSize`, so that nothing
 /// read through `SidStart` (`EqualSid`) leaves the entry. A SID is 8 bytes plus 4 per
 /// sub-authority, so the struct (which holds 4 bytes of it) is not enough: the length the SID's own
 /// header claims must fit too.

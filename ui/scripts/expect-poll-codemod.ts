@@ -154,4 +154,7 @@ export function run(argv: string[]): number {
   return check && changed > 0 ? 1 : 0;
 }
 
-if (import.meta.main) process.exitCode = run(process.argv.slice(2));
+// One statement that always runs, so a test import covers it; only a command-line start does the work.
+process.exitCode = import.meta.main
+  ? run(process.argv.slice(2))
+  : process.exitCode;

@@ -13,6 +13,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use puddle_test_kit::ReservedPort;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
@@ -245,12 +246,9 @@ async fn non_connect_requests_and_unreachable_targets_get_errors_from_the_endpoi
     conn.read_to_end(&mut buf).await.unwrap();
     assert!(buf.starts_with(b"HTTP/1.1 405"));
 
-    // A port nothing listens on: bind, note it, close.
-    let gone = TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap();
+    // A port nothing listens on and nobody else can take while the test runs.
+    let reserved = ReservedPort::new();
+    let gone = SocketAddr::from(([127, 0, 0, 1], reserved.port()));
     let err = connect_via(rig.agent.local_addr(), gone).await.unwrap_err();
     assert!(err.to_string().contains("502"), "{err}");
 }

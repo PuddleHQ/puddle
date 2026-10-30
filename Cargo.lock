@@ -6454,6 +6454,7 @@ dependencies = [
  "puddle-agent-proto",
  "puddle-ipc",
  "puddle-netpolicy",
+ "puddle-test-kit",
  "puddle-types",
  "thiserror 2.0.21",
  "tokio",

@@ -350,6 +350,8 @@ struct Background {
     _git_changes: AbortOnDrop,
     // Turns a read that needs a sign-in into the user's notice.
     _sign_in_notices: AbortOnDrop,
+    // Asks Microsoft's editor server to switch to a staged build when no window is on it.
+    _editor_updates: AbortOnDrop,
 }
 
 /// Aborts its task when dropped, so a forwarder never outlives the host.
@@ -602,6 +604,10 @@ impl<R: Runtime + Clone> Host<R> {
             &status,
         )?;
         let (git_changes, sign_in_notices) = injecting.watch(&service, &events);
+        let editor_updates = AbortOnDrop(crate::editor_updates::spawn(
+            service.clone(),
+            front.windows().clone(),
+        ));
         steps.push(Step::WorkspacesReady);
 
         let services = Services::new(
@@ -647,6 +653,7 @@ impl<R: Runtime + Clone> Host<R> {
                 _sign_in_failures: sign_in_failures,
                 _git_changes: git_changes,
                 _sign_in_notices: sign_in_notices,
+                _editor_updates: editor_updates,
             })),
             steps: Mutex::new(steps),
             reconcile: report,

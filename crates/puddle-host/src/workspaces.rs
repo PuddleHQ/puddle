@@ -70,6 +70,20 @@ use crate::injection::Injection;
 #[path = "repositories.rs"]
 mod repositories;
 
+impl<R: Runtime + Clone> crate::editor_updates::Builds for HostWorkspaces<R> {
+    fn on_microsoft_server(&self) -> Vec<WorkspaceName> {
+        self.inner.flavours.on_microsoft()
+    }
+
+    async fn switch(
+        &self,
+        workspace: &WorkspaceName,
+        connected_windows: usize,
+    ) -> Result<bool, SwitchEditorBuildError> {
+        self.switch_editor_build(workspace, connected_windows).await
+    }
+}
+
 impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
     fn decrypt_changed(&self, workspace: &WorkspaceName) -> Option<puddle_store::WorkspaceGit> {
         Self::decrypt_changed(self, workspace)

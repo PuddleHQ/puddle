@@ -32,6 +32,7 @@ mod data_folder;
 mod dev_cert;
 mod doctor;
 mod editor_file;
+mod editor_updates;
 mod environment;
 mod error;
 mod files;

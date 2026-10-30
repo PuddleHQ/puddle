@@ -98,6 +98,10 @@ impl Drop for StoreLock {
     }
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the lock is shared by every test process, so it must sit at one fixed path"
+)]
 fn lock_paths() -> (PathBuf, PathBuf) {
     let dir = std::env::temp_dir();
     (
@@ -275,6 +279,8 @@ struct TestCert {
     der: Vec<u8>,
     file: PathBuf,
     thumbprint: String,
+    /// Owns the folder `file` sits in; none for a `TestCert` that names no real file.
+    _dir: Option<tempfile::TempDir>,
 }
 
 fn test_root(tag: &str) -> TestCert {
@@ -283,6 +289,7 @@ fn test_root(tag: &str) -> TestCert {
         .unwrap()
         .as_nanos();
     let mut p = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+    // flake-ok: a certificate subject, not a path; the store lock runs one test at a time and the tag differs per test
     p.distinguished_name.push(
         rcgen::DnType::CommonName,
         format!("Puddle test root {tag} {nanos}"),
@@ -291,7 +298,8 @@ fn test_root(tag: &str) -> TestCert {
     p.not_after = rcgen::date_time_ymd(2040, 1, 1);
     let key = rcgen::KeyPair::generate().unwrap();
     let der = p.self_signed(&key).unwrap().der().to_vec();
-    let file = std::env::temp_dir().join(format!("puddle-root-sync-{tag}-{nanos}.cer"));
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join(format!("puddle-root-sync-{tag}.cer"));
     std::fs::write(&file, &der).unwrap();
     let thumbprint = powershell(&format!(
         "(New-Object System.Security.Cryptography.X509Certificates.X509Certificate2('{}')).Thumbprint",
@@ -304,6 +312,7 @@ fn test_root(tag: &str) -> TestCert {
         der,
         file,
         thumbprint,
+        _dir: Some(dir),
     }
 }
 
@@ -513,7 +522,8 @@ fn dev_cert(tag: &str, policy: &str) -> TestCert {
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let file = std::env::temp_dir().join(format!("puddle-devcert-{tag}-{nanos}.cer"));
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join(format!("puddle-devcert-{tag}.cer"));
     // `Stop` makes a failed cmdlet fail the script: without it a failed New-SelfSignedCertificate
     // left `$c` empty, Export-Certificate wrote no file and the script still exited 0.
     let thumbprint = powershell(&format!(
@@ -534,6 +544,7 @@ fn dev_cert(tag: &str, policy: &str) -> TestCert {
         der,
         file,
         thumbprint,
+        _dir: Some(dir),
     }
 }
 
@@ -750,8 +761,9 @@ fn a_hung_call_is_killed_with_its_children_and_named() {
 fn a_cleanup_call_that_hangs_names_its_store_and_thumbprint_and_stops() {
     let cert = TestCert {
         der: Vec::new(),
-        file: std::env::temp_dir().join("puddle-cleanup-hang-test.cer"),
+        file: std::path::absolute("puddle-cleanup-hang-test.cer").unwrap(),
         thumbprint: "ABCDEF0123".to_owned(),
+        _dir: None,
     };
     let calls = std::cell::RefCell::new(Vec::new());
     let hang = |script: &str| {
@@ -778,8 +790,9 @@ fn a_cleanup_call_that_hangs_names_its_store_and_thumbprint_and_stops() {
 fn a_cleanup_that_is_refused_goes_on_to_the_next_store() {
     let cert = TestCert {
         der: Vec::new(),
-        file: std::env::temp_dir().join("puddle-cleanup-refused-test.cer"),
+        file: std::path::absolute("puddle-cleanup-refused-test.cer").unwrap(),
         thumbprint: "ABCDEF0123".to_owned(),
+        _dir: None,
     };
     let calls = Cell::new(0);
     let refuse = |_: &str| {

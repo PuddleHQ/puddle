@@ -215,7 +215,7 @@ mod tests {
     #[test]
     fn a_missing_program_fails_to_spawn_with_its_os_error() {
         let outcome = run(
-            &mut Command::new(std::env::temp_dir().join("puddle-doctor-no-such-program")),
+            &mut Command::new(std::path::absolute("puddle-doctor-no-such-program").unwrap()),
             Duration::from_secs(5),
         );
         let ProcessOutcome::SpawnFailed { os_error, detail } = outcome else {

@@ -227,8 +227,11 @@ mod tests {
 
     #[test]
     fn the_agents_own_ports_are_left_out_and_a_missing_ipv6_table_is_fine() {
-        let dir = std::env::temp_dir().join(format!("puddle-ports-read-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let tmp = tempfile::Builder::new()
+            .prefix("puddle-ports-read-")
+            .tempdir()
+            .unwrap();
+        let dir = tmp.path().to_path_buf();
         std::fs::write(
             dir.join("tcp"),
             [
@@ -247,8 +250,8 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn the_set_is_sent_at_start_and_again_only_when_it_changes() {
-        let dir = std::env::temp_dir().join(format!("puddle-ports-watch-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let write = |ports: &[u16]| {
             let rows: String = ports.iter().map(|p| row(&v4([0; 4], *p), "0A")).collect();
             std::fs::write(dir.join("tcp"), format!("{HEADER}{rows}")).unwrap();
@@ -287,6 +290,5 @@ mod tests {
         assert_eq!(rx.recv().await, Some(AgentMessage::ports([3000, 5000])));
         drop(rx);
         task.await.unwrap();
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

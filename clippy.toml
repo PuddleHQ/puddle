@@ -11,9 +11,8 @@ allow-print-in-tests = true
 doc-valid-idents = ["WinINet", "WinHTTP", "WPAD", "PoC", "NTLM", "SSPI", "WebView2", "DevTools", "WebKitGTK", ".."]
 
 # A name or path made from the clock or the pid collides across parallel test runs, and a shared temp
-# folder is state two tests can both change. Counted for now: the workspace lint level is "allow" in the
-# root Cargo.toml until the existing sites are moved, and scripts/flake-lints-test.sh runs the rule at
-# "warn" to show it still flags the original code.
+# folder is state two tests can both change. The workspace lint level is "deny" in the root Cargo.toml,
+# and scripts/flake-lints-test.sh runs the rule at "warn" to show it still flags the original code.
 disallowed-methods = [
     { path = "std::env::temp_dir", reason = "make the file or folder with `tempfile` (a unique, self-removing path); the few production sites say why with #[expect(clippy::disallowed_methods, reason = \"...\")]" },
 ]

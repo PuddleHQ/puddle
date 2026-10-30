@@ -23,6 +23,7 @@ contract = ["tokio/io-util", "tokio/macros", "tokio/rt", "tokio/time"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["io-util", "macros", "rt", "rt-multi-thread", "time"] }
+tempfile = { workspace = true }
 
 [[test]]
 name = "contract_fake"

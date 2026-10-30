@@ -28,6 +28,13 @@ case "$1 $2" in
     case " ${FAKE_REFUSE:-} " in *" $3 "*) exit 1 ;; esac
     awk -v id="$3" '$2 == id { $3 = "completed" } { print }' "$FAKE_RUNS" >"$FAKE_RUNS.new" && mv "$FAKE_RUNS.new" "$FAKE_RUNS"
     ;;
+api\ *)
+    # the failed-step lookup of the calling run: the real --jq filter over canned JSON
+    [ -n "${FAKE_JOBS:-}" ] || exit 1
+    filter=""
+    while [ "$#" -gt 0 ]; do [ "$1" = --jq ] && filter=$2; shift; done
+    jq -r "$filter" "$FAKE_JOBS"
+    ;;
 *) exit 1 ;;
 esac
 GH
@@ -101,6 +108,22 @@ rc=$?
 [ "$rc" = 0 ] || bad "refused cancel: exit $rc"
 grep -q '^run cancel 104' "$tmp/log" || bad "a refused cancel stopped run 104"
 grep -q '^run cancel 101' "$tmp/log" || bad "a refused cancel stopped the own run"
+
+# The failure is named in an annotation before the cancel: job and failed steps from the calling run's jobs.
+cat >"$tmp/jobs.json" <<'J'
+{"jobs":[{"name":"linux (Rust and repository gates)","steps":[{"name":"clippy","conclusion":"failure"},{"name":"tests","conclusion":"failure"},{"name":"fmt","conclusion":"success"}]},
+ {"name":"linux (UI gates)","steps":[{"name":"e2e","conclusion":"cancelled"}]}]}
+J
+table
+out=$(PATH="$tmp/bin:$PATH" GITHUB_REPOSITORY=o/r FAKE_LOG="$tmp/log" FAKE_RUNS="$tmp/runs" FAKE_JOBS="$tmp/jobs.json" "$script" merge_group failure "refs/heads/$G" 101 2>&1)
+grep -qF '::error title=merge group cancelled: this job failed first::linux (Rust and repository gates): clippy, tests (run 101)' <<<"$out" || bad "the failed job and steps are not named: $out"
+grep -qF 'UI gates' <<<"$out" && bad "a cancelled step was named as the failure"
+table
+out=$(PATH="$tmp/bin:$PATH" GITHUB_REPOSITORY=o/r FAKE_LOG="$tmp/log" FAKE_RUNS="$tmp/runs" "$script" merge_group failure "refs/heads/$G" 101 2>&1)
+grep -qF 'no failed step could be read (run 101)' <<<"$out" || bad "an unreadable lookup is not said: $out"
+grep -q 'run cancel 101' "$tmp/log" || bad "an unreadable lookup stopped the cancel"
+out=$(PATH="$tmp/bin:$PATH" GITHUB_REPOSITORY=o/r FAKE_LOG="$tmp/log" FAKE_RUNS="$tmp/runs" "$script" pull_request failure "refs/heads/$G" 101 2>&1)
+grep -q '::error' <<<"$out" && bad "an annotation outside the merge queue"
 
 # gh failing to list: exit 0, nothing cancelled.
 table

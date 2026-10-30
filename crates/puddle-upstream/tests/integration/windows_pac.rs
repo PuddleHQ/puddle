@@ -196,6 +196,10 @@ static REGISTRY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 /// at once have given wrong results (one that must fail answering, ones that must answer
 /// failing). A file lock holds across processes and across threads alike. Held until the
 /// returned file is dropped.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the lock is shared by every test process, so it must sit at one fixed path"
+)]
 fn exclusive() -> std::fs::File {
     let path = std::env::temp_dir().join("puddle-test-hkcu-internet-settings.lock");
     let lock = std::fs::OpenOptions::new()

@@ -5404,7 +5404,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "Opens a running workspace in VS Code: on the desktop (Puddle opens it) or in the browser\n(the response has the URL, the caller opens it).",
+        "summary": "Opens a running workspace in VS Code: on the desktop (Puddle opens it) or in the browser\n(in a window Puddle opens).",
         "operationId": "attach_workspace",
         "parameters": [
           {

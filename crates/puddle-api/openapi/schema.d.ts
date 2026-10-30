@@ -932,7 +932,7 @@ export interface paths {
         put?: never;
         /**
          * Opens a running workspace in VS Code: on the desktop (Puddle opens it) or in the browser
-         *     (the response has the URL, the caller opens it).
+         *     (in a window Puddle opens).
          */
         post: operations["attach_workspace"];
         delete?: never;

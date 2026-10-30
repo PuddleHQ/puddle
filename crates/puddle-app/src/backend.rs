@@ -225,15 +225,15 @@ impl Backend {
                     .map_err(|e| e.to_string())
             })
         });
-        let backend = Self::new(
+        Self::new(
             info,
             events,
             problems,
             store,
             settings,
             Box::new(move || Box::pin(async move { host.shutdown().await })),
-        )?;
-        Ok(backend.with_extension_hosts(ends))
+        )
+        .map(|backend| backend.with_extension_hosts(ends))
     }
 
     /// The way to ask a workspace's guest to end its editor's extension hosts, for the windows'

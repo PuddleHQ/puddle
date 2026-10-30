@@ -1292,6 +1292,15 @@ mod tests {
     #[test]
     fn a_launcher_with_no_window_has_nothing_to_close_and_nothing_to_forget() {
         let name = WorkspaceName::new("demo").unwrap();
+        let record = WorkspaceRecord::new(WorkspaceId::new("demo").unwrap(), name.clone(), vec![]);
+        let desktop = DesktopTarget {
+            ssh_host: "puddle-demo".into(),
+            path: "/".into(),
+            is_workspace_file: false,
+        };
+        futures_util::FutureExt::now_or_never(NoWindow.open_desktop(&record, &desktop))
+            .unwrap()
+            .unwrap();
         futures_util::FutureExt::now_or_never(NoWindow.close_browser(&name)).unwrap();
         futures_util::FutureExt::now_or_never(NoWindow.forget_browser(&name))
             .unwrap()

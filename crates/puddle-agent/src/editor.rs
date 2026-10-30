@@ -1107,18 +1107,19 @@ mod tests {
         running.abort();
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn an_install_that_works_ends_the_report_once_and_says_nothing_when_nothing_was_reported()
     {
         let control = Control::new(&EditorServer::microsoft("/d", "/f", 120, false, false));
         let (out, mut host) = mpsc::channel(8);
         tokio::spawn(forward_install_problem(control.install_problem(), out));
         control.install_worked();
-        tokio::task::yield_now().await;
-        assert!(
-            host.try_recv().is_err(),
-            "nothing was wrong, nothing to end"
-        );
+        puddle_test_kit::no_event_for(
+            "a message when nothing was wrong",
+            Duration::from_secs(1),
+            &mut host,
+        )
+        .await;
         control.install_refused("nope");
         assert_eq!(
             host.recv().await,
@@ -1127,8 +1128,7 @@ mod tests {
         control.install_worked();
         assert_eq!(host.recv().await, Some(AgentMessage::editor_status(None)));
         control.install_worked();
-        tokio::task::yield_now().await;
-        assert!(host.try_recv().is_err(), "ended once");
+        puddle_test_kit::no_event_for("a second end", Duration::from_secs(1), &mut host).await;
     }
 
     #[tokio::test(start_paused = true)]

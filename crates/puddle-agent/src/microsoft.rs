@@ -6,9 +6,12 @@
 //! The agent
 //!
 //! - asks Microsoft's update service for the newest `server-linux-<arch>-web` build, and for that
-//!   build's published SHA-256 (the `latest` answer carries none; `versions/<number>` does);
+//!   build's SHA-256 (the `latest` answer carries none; `versions/<number>` does);
 //! - downloads the tarball from the same service (through Puddle's proxy, like every guest
-//!   connection) and refuses one whose SHA-256 is not the published one;
+//!   connection) and refuses one whose SHA-256 differs from the one that service gave. That is an
+//!   integrity check (it catches a corrupt or cut-short transfer), not authenticity: the hash and
+//!   the tarball come from the same service over the same kind of connection, so a compromised
+//!   service would pass it;
 //! - unpacks it into `<builds>/<commit>` beside a marker file written last, so a half-unpacked
 //!   build is never started, and remembers the newest complete one in `<builds>/current`;
 //! - starts `bin/code-server` from it with the flags in [`arguments`]. It never runs `code
@@ -57,7 +60,8 @@ const STAGED: &str = "staged";
 const REJECTED: &str = "rejected";
 /// The server's program, below a build's folder.
 pub const PROGRAM: &str = "bin/code-server";
-/// Longest answer of the update service that is read (the real ones are a few hundred bytes).
+/// Longest answer of the update service that is accepted (the real ones are a few hundred bytes).
+/// A longer one is an error and the read stops there; the rest is never buffered.
 const MAX_ANSWER: usize = 64 * 1024;
 /// How long one metadata request may take.
 const ANSWER_SECS: u32 = 60;
@@ -81,12 +85,12 @@ pub enum InstallError {
     /// The tarball could not be downloaded.
     #[error("could not download the VS Code server: {0}")]
     Download(String),
-    /// The download is not the file Microsoft published.
+    /// The download does not match the SHA-256 the update service gave for it.
     #[error(
-        "the downloaded VS Code server is not the published one (SHA-256 {actual}, expected {expected})"
+        "the downloaded VS Code server does not match the update service's SHA-256 ({actual}, expected {expected})"
     )]
     Checksum {
-        /// What Microsoft published.
+        /// What the update service gave.
         expected: String,
         /// What was downloaded.
         actual: String,
@@ -100,9 +104,9 @@ pub enum InstallError {
 }
 
 impl InstallError {
-    /// Whether a download was fetched and refused (not the published file, or not unpackable): the
-    /// same build is usually refused again on every try, so retrying it soon is a waste of a download of
-    /// hundreds of MB. A network that is down or an update service that is unreadable is not one.
+    /// Whether a download was fetched and refused (it fails its SHA-256, or is not unpackable): the
+    /// same build is usually refused again on every try, so retrying it soon is a waste of a download
+    /// of hundreds of MB. A network that is down or an update service that is unreadable is not one.
     #[must_use]
     pub fn is_refusal(&self) -> bool {
         matches!(self, Self::Checksum { .. } | Self::Archive(_))
@@ -183,7 +187,7 @@ pub fn parse_latest(json: &str) -> Result<Latest, InstallError> {
     })
 }
 
-/// Reads the answer of [`versions_url`]: the published SHA-256 of the build `commit`.
+/// Reads the answer of [`versions_url`]: the SHA-256 the service gives of the build `commit`.
 ///
 /// # Errors
 ///
@@ -259,7 +263,7 @@ impl Downloader {
         }
     }
 
-    fn curl_args(url: &str, secs: u32, dest: Option<&Path>) -> Vec<OsString> {
+    fn curl_args(url: &str, secs: u32, dest: Option<&Path>, limit: Option<usize>) -> Vec<OsString> {
         let mut args: Vec<OsString> = [
             "--fail",
             "--silent",
@@ -280,6 +284,12 @@ impl Downloader {
             args.push("--max-time".into());
             args.push(secs.to_string().into());
         }
+        if let Some(limit) = limit {
+            // Refuses a body that announces more; the bounded read in `run` covers one that does
+            // not (chunked, or a lying length).
+            args.push("--max-filesize".into());
+            args.push(limit.to_string().into());
+        }
         if let Some(dest) = dest {
             args.push("--output".into());
             args.push(dest.into());
@@ -299,10 +309,18 @@ impl Downloader {
         args
     }
 
-    /// Runs `curl`, else `wget` when there is no `curl`, and returns the standard output.
-    async fn run(&self, url: &str, secs: u32, dest: Option<&Path>) -> io::Result<Vec<u8>> {
+    /// Runs `curl`, else `wget` when there is no `curl`, and returns the standard output. With a
+    /// `limit`, no more than that many bytes are read: a longer body kills the program and is an
+    /// error.
+    async fn run(
+        &self,
+        url: &str,
+        secs: u32,
+        dest: Option<&Path>,
+        limit: Option<usize>,
+    ) -> io::Result<Vec<u8>> {
         let attempt = [
-            (&self.curl, Self::curl_args(url, secs, dest)),
+            (&self.curl, Self::curl_args(url, secs, dest, limit)),
             (&self.wget, Self::wget_args(url, secs, dest)),
         ];
         for (program, args) in attempt {
@@ -312,22 +330,29 @@ impl Downloader {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .kill_on_drop(true)
-                .output()
-                .await;
-            match child {
-                Ok(out) if out.status.success() => return Ok(out.stdout),
-                Ok(out) => {
-                    let said = String::from_utf8_lossy(&out.stderr);
-                    return Err(io::Error::other(format!(
-                        "{} failed ({}): {}",
-                        program.display(),
-                        out.status,
-                        said.trim()
-                    )));
-                }
-                Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+                .spawn();
+            let child = match child {
+                Ok(child) => child,
+                Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
                 Err(err) => return Err(err),
+            };
+            let (status, stdout, stderr) = read_bounded(child, limit).await?;
+            if stdout.len() > limit.unwrap_or(usize::MAX) {
+                return Err(io::Error::other(format!(
+                    "{} sent more than {} bytes; the answer is refused",
+                    program.display(),
+                    limit.unwrap_or(0)
+                )));
             }
+            if status.success() {
+                return Ok(stdout);
+            }
+            let said = String::from_utf8_lossy(&stderr);
+            return Err(io::Error::other(format!(
+                "{} failed ({status}): {}",
+                program.display(),
+                said.trim()
+            )));
         }
         Err(io::Error::new(
             io::ErrorKind::NotFound,
@@ -336,15 +361,48 @@ impl Downloader {
     }
 }
 
+/// Waits for `child`, reading its output. With a `limit`, standard output is read up to one byte
+/// past it; then the child is killed instead of waited for, and the caller sees the excess.
+async fn read_bounded(
+    mut child: tokio::process::Child,
+    limit: Option<usize>,
+) -> io::Result<(std::process::ExitStatus, Vec<u8>, Vec<u8>)> {
+    use tokio::io::{AsyncReadExt as _, BufReader};
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::other("no standard output"))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| io::Error::other("no standard error"))?;
+    let cap = limit.map_or(u64::MAX, |l| l as u64 + 1);
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let read_stdout = async {
+        let read = BufReader::new(stdout).take(cap).read_to_end(&mut out).await;
+        if out.len() as u64 >= cap {
+            // Stop the program now (it may send without end); that also closes its stderr.
+            let _ = child.start_kill();
+        }
+        read
+    };
+    let (read_out, read_err) = tokio::join!(read_stdout, stderr.read_to_end(&mut err));
+    read_out?;
+    read_err?;
+    let status = child.wait().await?;
+    Ok((status, out, err))
+}
+
 impl Fetch for Downloader {
     async fn text(&self, url: &str) -> io::Result<String> {
-        let mut body = self.run(url, ANSWER_SECS, None).await?;
-        body.truncate(MAX_ANSWER);
+        let body = self.run(url, ANSWER_SECS, None, Some(MAX_ANSWER)).await?;
         String::from_utf8(body).map_err(|_| io::Error::other("the answer is not text"))
     }
 
     async fn file(&self, url: &str, dest: &Path) -> io::Result<()> {
-        self.run(url, STALL_SECS, Some(dest)).await.map(drop)
+        self.run(url, STALL_SECS, Some(dest), None).await.map(drop)
     }
 }
 

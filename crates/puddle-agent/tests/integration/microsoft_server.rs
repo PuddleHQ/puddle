@@ -304,7 +304,11 @@ async fn a_download_that_is_not_the_published_file_is_refused_and_leaves_nothing
     };
     assert_eq!(expected, &wrong);
     assert_eq!(actual, &sha(&good_tarball()));
-    assert!(err.to_string().contains("not the published one"), "{err}");
+    assert!(
+        err.to_string()
+            .contains("does not match the update service"),
+        "{err}"
+    );
     assert_eq!(names(&builds(&dir)), Vec::<String>::new());
     assert_eq!(current_build(&builds(&dir)), None);
 }
@@ -505,6 +509,7 @@ async fn the_downloader_runs_curl_with_https_only_and_wget_when_there_is_no_curl
         "--proto\n=https",
         "--proto-redir\n=https",
         "--max-time",
+        "--max-filesize\n65536",
     ] {
         assert!(args.contains(wanted), "{wanted} in {args}");
     }
@@ -559,6 +564,33 @@ async fn the_downloader_runs_curl_with_https_only_and_wget_when_there_is_no_curl
     let err = none.text("https://update.test/z").await.unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::NotFound);
     assert!(err.to_string().contains("neither curl nor wget"), "{err}");
+}
+
+#[tokio::test]
+async fn an_oversized_answer_stops_the_read_at_the_bound() {
+    let dir = tempfile::tempdir().unwrap();
+    // Never ends, and ignores `--max-filesize` like a chunked body would: only a bounded read
+    // finishes this. `yes` would end by SIGPIPE once the agent stops reading.
+    let curl = script(dir.path(), "curl", "yes '{\"a\":1}'");
+    let downloader = Downloader::with_programs(&curl, dir.path().join("no-wget"));
+    let err = tokio::time::timeout(
+        Duration::from_secs(20),
+        downloader.text("https://update.test/big"),
+    )
+    .await
+    .expect("the read stopped instead of buffering a body without end")
+    .unwrap_err();
+    assert!(err.to_string().contains("65536"), "{err}");
+
+    // An answer exactly at the bound is still taken whole.
+    let exact = script(
+        dir.path(),
+        "exact",
+        "head -c 65536 /dev/zero | tr '\\0' 'a'",
+    );
+    let downloader = Downloader::with_programs(&exact, dir.path().join("no-wget"));
+    let body = downloader.text("https://update.test/ok").await.unwrap();
+    assert_eq!(body.len(), 65536);
 }
 
 // The agent's own loop, with a fake server in a real tarball.

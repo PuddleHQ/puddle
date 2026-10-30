@@ -644,6 +644,9 @@ async fn a_client_reading_one_kibibyte_a_second_for_a_minute_is_not_cut_off() {
         0,
         "the server's connection was cut"
     );
+    // flake-ok: another connection's round trip of 1 KiB while the slow reader holds the route; a
+    // route that serialised behind it would wait out the minute. 31 ms measured under 16 busy
+    // loops on 4 cores (30x under the bar).
     assert!(
         slowest_other < Duration::from_secs(1),
         "another connection waited {slowest_other:?}"

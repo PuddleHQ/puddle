@@ -97,6 +97,8 @@ async fn hostile_hg12_a_hundred_thousand_unmatched_names_wait_and_are_never_deni
     let rows = store.open_pending(None).unwrap();
     let groups = store.inbox().unwrap();
     let took = measured.elapsed();
+    // flake-ok: a time bar on one query pair (the inbox over the capped open rows); it catches a
+    // per-row query, which costs seconds. Measured under 16 busy loops on 4 cores: 38 ms, a 5x margin.
     assert!(took < Duration::from_millis(200), "the inbox took {took:?}");
     assert_eq!(rows.len(), cap, "the open rows stay at the cap");
     assert_eq!(groups.iter().map(|g| g.rows.len()).sum::<usize>(), cap);

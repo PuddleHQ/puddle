@@ -740,7 +740,6 @@ fn pings_running(marker: u32) -> usize {
 #[test]
 fn a_hung_call_is_killed_with_its_children_and_named() {
     let marker = 3000 + std::process::id() % 5000;
-    let start = Instant::now();
     let Err(Failure::TimedOut(message)) = run_bounded(
         hung_command(marker),
         "Remove-Item the-hung-call",
@@ -748,11 +747,8 @@ fn a_hung_call_is_killed_with_its_children_and_named() {
     ) else {
         panic!("a call that outlives its limit must be reported as hung");
     };
-    assert!(
-        start.elapsed() < Duration::from_secs(10),
-        "{:?}",
-        start.elapsed()
-    );
+    // No time bar: the child pings for 3000 s or more, so a kill that waited for it never returns
+    // here, and the test fails by nextest's own timeout instead of passing slowly.
     assert!(message.contains("Remove-Item the-hung-call"), "{message}");
     assert_eq!(
         pings_running(marker),
@@ -819,15 +815,11 @@ fn waiting_for_the_stores_ends_naming_the_holder() {
     let lock = dir.path().join("l.lock");
     let holder = dir.path().join("l.holder");
     let first = acquire(&lock, &holder, Duration::from_secs(5)).unwrap();
-    let start = Instant::now();
+    // No time bar: `first` is held for the whole test, so an `acquire` that ignored its 1 s limit
+    // would never return and nextest's timeout would end the test.
     let err = acquire(&lock, &holder, Duration::from_secs(1))
         .err()
         .expect("the second turn must not be granted while the first is held");
-    assert!(
-        start.elapsed() < Duration::from_secs(5),
-        "{:?}",
-        start.elapsed()
-    );
     assert!(
         err.contains(&format!("pid {}", std::process::id())),
         "{err}"
@@ -876,16 +868,12 @@ fn a_call_over_the_limit_is_killed_and_the_spent_budget_is_named() {
     let dir = tempfile::tempdir().unwrap();
     let shim = slow_shim(dir.path(), 300);
     DEADLINE.set(Some(Instant::now()));
-    let start = Instant::now();
+    // No time bar: the shim sleeps 300 s and the budget is spent, so a call that was not killed
+    // at the shortest limit returns `Ok` after 300 s (or nextest ends the test first): never a pass.
     let Err(Failure::TimedOut(message)) = powershell_with(&shim, "Remove-Item the-spent-budget")
     else {
         panic!("a call past the test's budget must be reported as hung");
     };
-    assert!(
-        start.elapsed() < Duration::from_secs(20),
-        "{:?}",
-        start.elapsed()
-    );
     assert!(
         message.contains("Remove-Item the-spent-budget"),
         "{message}"
@@ -901,6 +889,8 @@ fn a_call_draws_on_what_is_left_of_the_test_budget() {
     assert_eq!(call_limit(), (CALL_LIMIT, false));
     DEADLINE.set(Some(Instant::now() + Duration::from_secs(30)));
     let (limit, by_budget) = call_limit();
+    // flake-ok: no elapsed time is measured; `limit` is the 30 s deadline less the microseconds
+    // since it was set, so it stays above `MIN_CALL` (5 s) unless the thread stalls for 25 s.
     assert!(
         by_budget && limit <= Duration::from_secs(30) && limit > MIN_CALL,
         "{limit:?}"

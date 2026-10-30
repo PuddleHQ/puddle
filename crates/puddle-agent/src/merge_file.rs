@@ -388,16 +388,13 @@ mod tests {
 
     impl Dir {
         fn new(tag: &str) -> Self {
-            let p = std::env::temp_dir().join(format!(
-                "puddle-merge-file-{tag}-{}-{}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
+            Self(
+                tempfile::Builder::new()
+                    .prefix(&format!("puddle-merge-file-{tag}-"))
+                    .tempdir()
                     .unwrap()
-                    .subsec_nanos()
-            ));
-            fs::create_dir_all(&p).unwrap();
-            Self(p)
+                    .keep(),
+            )
         }
     }
 

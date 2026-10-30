@@ -25,6 +25,7 @@ puddle-ipc = { workspace = true }
 puddle-agent-proto = { workspace = true, features = ["testing"] }
 puddle-types = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "test-util", "time"] }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

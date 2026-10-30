@@ -47,6 +47,10 @@ impl Settings {
     /// [`HarnessError::MissingVar`] without a runtime directory,
     /// [`HarnessError::InvalidPrefix`] for a bad `PUDDLE_VM_PREFIX`,
     /// [`HarnessError::InvalidLogLevel`] for a bad `PUDDLE_VM_MSB_LOG_LEVEL`.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the default root of a run whose prefix keeps its names apart; VM_TESTS_ROOT overrides it"
+    )]
     pub fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, HarnessError> {
         let get = |var: &str| lookup(var).filter(|value| !value.is_empty());
         refuse_ambient_msb_vars(get)?;
@@ -403,10 +407,8 @@ pub async fn within<T>(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::collections::HashMap;
-    use std::sync::atomic::{AtomicU32, Ordering};
-
     use puddle_runtime::HostOs;
+    use std::collections::HashMap;
 
     use super::*;
 
@@ -419,27 +421,21 @@ pub(crate) mod tests {
         );
     }
 
-    /// A temp dir removed on drop (no tempfile dependency for a few tests).
-    pub(crate) struct TempDir(PathBuf);
+    /// A temp dir removed on drop, named after `tag`.
+    pub(crate) struct TempDir(tempfile::TempDir);
 
     impl TempDir {
         pub(crate) fn new(tag: &str) -> Self {
-            static NEXT: AtomicU32 = AtomicU32::new(0);
-            let n = NEXT.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir()
-                .join(format!("puddle-vm-tests-{}-{tag}-{n}", std::process::id()));
-            std::fs::create_dir_all(&path).unwrap();
-            Self(path)
+            Self(
+                tempfile::Builder::new()
+                    .prefix(&format!("puddle-vm-tests-{tag}-"))
+                    .tempdir()
+                    .unwrap(),
+            )
         }
 
         pub(crate) fn path(&self) -> &Path {
-            &self.0
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0); // best effort; it's under the temp dir
+            self.0.path()
         }
     }
 
@@ -591,6 +587,10 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test checks the documented default root, which is a folder under the system temp dir"
+    )]
     fn settings_default_the_prefix_and_root() {
         let settings = Settings::from_lookup(lookup(&[
             (RUNTIME_DIR_VAR, "/rt"),

@@ -113,6 +113,10 @@ impl Root {
 
 /// Where [`Root::new`] puts its directory: `$XDG_RUNTIME_DIR` (per-user, `0700`, tmpfs) when set
 /// to an absolute path, else the temp directory.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the socket folder is made by `IpcRoot` with a random name inside it, not at the temp dir itself"
+)]
 fn default_parent() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
@@ -225,8 +229,8 @@ mod tests {
 
     #[test]
     fn a_root_in_a_missing_parent_fails_with_the_path() {
-        let parent =
-            std::env::temp_dir().join(format!("puddle-missing-{}", random_name::<8>().unwrap()));
+        let tmp = tempfile::tempdir().unwrap();
+        let parent = tmp.path().join("missing");
         let err = Root::new_in(&parent).unwrap_err();
         match err {
             IpcError::Root { path, source } => {

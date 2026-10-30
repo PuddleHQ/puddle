@@ -197,9 +197,9 @@ undocumented_unsafe_blocks = "warn"
 unimplemented = "warn"
 unwrap_used = "warn"
 wildcard_dependencies = "warn"
-# Counted, not failing: clippy.toml names std::env::temp_dir; the sites that still use it get fixed or an
-# #[expect(..., reason)] before this becomes "warn" (scripts/flake-lints-test.sh proves the rule fires).
-disallowed_methods = "allow"
+# clippy.toml names std::env::temp_dir: make a test's files with `tempfile`, or say why in an
+# #[expect(clippy::disallowed_methods, reason = "...")] (scripts/flake-lints-test.sh proves the rule fires).
+disallowed_methods = "deny"
 
 # The msb fork's own `[patch.crates-io]` doesn't reach Puddle (patches apply only in the root
 # workspace), so its libkrun, russh and imago forks are repeated here, pinned to the commits the

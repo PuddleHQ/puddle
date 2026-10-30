@@ -194,8 +194,8 @@ mod tests {
         let layout = RuntimeLayout::new("/rt".into(), "/data/msb".into()).unwrap_or_else(|_| {
             // Relative on this platform: the test only needs some layout.
             RuntimeLayout::new(
-                std::env::temp_dir().join("rt"),
-                std::env::temp_dir().join("h"),
+                std::path::absolute("rt").unwrap(),
+                std::path::absolute("h").unwrap(),
             )
             .unwrap_or_else(|e| panic!("{e}"))
         });

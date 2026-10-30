@@ -69,7 +69,7 @@ mod tests {
 
     #[test]
     fn the_users_ssh_config_is_in_the_home_folder_when_it_is_absolute() {
-        let home = std::env::temp_dir();
+        let home = std::path::absolute("home").unwrap();
         assert_eq!(
             user_ssh_config_in(Some(&home)),
             Some(home.join(".ssh").join("config"))
@@ -83,7 +83,7 @@ mod tests {
 
     #[test]
     fn the_folder_is_puddle_inside_the_base() {
-        let base = std::env::temp_dir();
+        let base = std::path::absolute("base").unwrap();
         assert_eq!(data_dir_in(Some(&base)).unwrap(), base.join("puddle"));
     }
 

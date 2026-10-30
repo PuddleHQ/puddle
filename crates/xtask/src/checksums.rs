@@ -115,16 +115,10 @@ mod tests {
 
     const EMPTY_SHA: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
-    fn temp_file(content: &[u8]) -> std::path::PathBuf {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static N: AtomicU64 = AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!(
-            "xtask-sum-{}-{}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::write(&path, content).unwrap();
-        path
+    fn temp_file(content: &[u8]) -> tempfile::TempPath {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut file, content).unwrap();
+        file.into_temp_path()
     }
 
     #[test]

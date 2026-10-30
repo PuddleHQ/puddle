@@ -11,7 +11,6 @@
 use std::fmt::Write as _;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -138,13 +137,7 @@ struct Rig {
     tables: PathBuf,
     _root: IpcRoot,
     agent: Option<Agent>,
-    dir: PathBuf,
-}
-
-impl Drop for Rig {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
+    _dir: tempfile::TempDir,
 }
 
 async fn rig(tag: &str) -> Rig {
@@ -152,14 +145,11 @@ async fn rig(tag: &str) -> Rig {
 }
 
 async fn rig_with(tag: &str, tweak: impl FnOnce(Ports) -> Ports) -> Rig {
-    static N: AtomicUsize = AtomicUsize::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "pp-{tag}-{}-{}",
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    let tables = dir.join("net");
+    let dir = tempfile::Builder::new()
+        .prefix(&format!("pp-{tag}-"))
+        .tempdir()
+        .unwrap();
+    let tables = dir.path().join("net");
     std::fs::create_dir_all(&tables).unwrap();
     let pins = Arc::new(MemoryPins::default());
     let events = Arc::new(CollectingSink::default());
@@ -205,7 +195,7 @@ async fn rig_with(tag: &str, tweak: impl FnOnce(Ports) -> Ports) -> Rig {
         tables,
         _root: root,
         agent: None,
-        dir,
+        _dir: dir,
     };
     rig.start_agent().await;
     rig

@@ -243,8 +243,8 @@ async fn sleep_longer_than_the_timeout_times_out() {
 #[tokio::test]
 async fn filesystem_layout() {
     let rt = FakeRuntime::new();
-    let host_dir = std::env::temp_dir().join(format!("puddle-fake-fs-{}", std::process::id()));
-    std::fs::create_dir_all(&host_dir).unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let host_dir = tmp.path().to_path_buf();
     let present = host_dir.join("present");
     std::fs::write(&present, b"p").unwrap();
     let s = spec("a")
@@ -294,14 +294,13 @@ async fn filesystem_layout() {
     assert!(exists("/w/sub").await, "directory implied by a file");
     assert!(write("/var/lib/d/f").await.status.success());
     assert!(exists("/var/lib/d/f").await);
-    std::fs::remove_file(&present).unwrap();
-    std::fs::remove_dir(&host_dir).unwrap();
 }
 
 #[tokio::test]
 async fn a_directory_mount_shows_its_tree_read_only() {
     let rt = FakeRuntime::new();
-    let root = std::env::temp_dir().join(format!("puddle-fake-dir-{}", std::process::id()));
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join("sub")).unwrap();
     std::fs::write(root.join("top"), b"t").unwrap();
     std::fs::write(root.join("sub/deep"), b"d").unwrap();
@@ -339,7 +338,6 @@ async fn a_directory_mount_shows_its_tree_read_only() {
     }
     assert_eq!(std::fs::read(root.join("top")).unwrap(), b"t");
     assert!(!root.join("new").exists());
-    std::fs::remove_dir_all(&root).unwrap();
 }
 
 #[tokio::test]

@@ -22,7 +22,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use puddle_agent::config::{CaptureConfig, DnsConfig, Target};
 use puddle_agent::{Agent, Config};

@@ -88,7 +88,7 @@ test("shows every section with Puddle's defaults, no CSP violations", async ({
   );
   await expect(page.getByText(/Open VSX/)).toBeVisible();
   await expect(page.getByText(/sends nothing about you/)).toBeVisible();
-  expect(await csp()).toEqual([]);
+  await expect.poll(() => csp()).toEqual([]);
 });
 
 for (const scheme of ["light", "dark"] as const) {
@@ -98,10 +98,14 @@ for (const scheme of ["light", "dark"] as const) {
   }) => {
     await page.emulateMedia({ colorScheme: scheme });
     await openSettings(page, backend);
-    expect(await axeViolations(page), "screen").toEqual([]);
+    await expect
+      .poll(() => axeViolations(page), { message: "screen" })
+      .toEqual([]);
     await page.getByLabel("Server", { exact: true }).selectOption("microsoft");
     await expect(page.getByRole("dialog")).toBeVisible();
-    expect(await axeViolations(page), "popup").toEqual([]);
+    await expect
+      .poll(() => axeViolations(page), { message: "popup" })
+      .toEqual([]);
   });
 }
 
@@ -119,7 +123,9 @@ test("the global direct SSH default is off, asks the trust text, and is kept", a
     name: "Allow direct SSH for new workspaces?",
   });
   await expect(trust).toContainText("GitHub token");
-  expect(await axeViolations(page), "trust text").toEqual([]);
+  await expect
+    .poll(() => axeViolations(page), { message: "trust text" })
+    .toEqual([]);
   await trust.getByRole("button", { name: "Cancel" }).click();
   await expect(box).not.toBeChecked();
   await box.click();
@@ -140,7 +146,7 @@ test("the licences open on request and are scrollable by keyboard", async ({
   await expect(text).toContainText("Third-party software shipped");
   await text.focus();
   await expect(text).toBeFocused();
-  expect(await axeViolations(page)).toEqual([]);
+  await expect.poll(() => axeViolations(page)).toEqual([]);
 });
 
 test("the theme is kept by Puddle: it comes back after the page forgets everything", async ({
@@ -216,11 +222,14 @@ test.describe("default CPUs", () => {
     await page.getByLabel("Default memory").focus();
     await page.keyboard.press("Tab");
     await expect(cpus).toBeFocused();
-    const ring = await cpus.evaluate((el) => {
-      const s = getComputedStyle(el);
-      return { width: s.outlineWidth, style: s.outlineStyle };
-    });
-    expect(ring).toEqual({ width: "2px", style: "solid" });
+    await expect
+      .poll(() =>
+        cpus.evaluate((el) => {
+          const s = getComputedStyle(el);
+          return { width: s.outlineWidth, style: s.outlineStyle };
+        }),
+      )
+      .toEqual({ width: "2px", style: "solid" });
     await page.keyboard.press("ArrowDown");
     await expect(cpus).toHaveValue("2");
     await expect(
@@ -260,7 +269,7 @@ test.describe("default CPUs", () => {
     expect(layout.height).toBeGreaterThanOrEqual(24);
     expect(layout.left).toBeGreaterThanOrEqual(0);
     expect(layout.right).toBeGreaterThanOrEqual(0);
-    expect(await axeViolations(page)).toEqual([]);
+    await expect.poll(() => axeViolations(page)).toEqual([]);
   });
 });
 
@@ -304,7 +313,7 @@ test("the Save bar stays on screen, its buttons are big enough, and the screen h
     expect(box?.height ?? 0, `${name} height`).toBeGreaterThanOrEqual(24);
     expect(box?.width ?? 0, `${name} width`).toBeGreaterThanOrEqual(24);
   }
-  expect(await axeViolations(page)).toEqual([]);
+  await expect.poll(() => axeViolations(page)).toEqual([]);
 });
 
 test("the notification and inbox switches start at Puddle's defaults, are saved together and survive a reload", async ({
@@ -383,7 +392,9 @@ test("the inbox keys do nothing until the switch is on, then A decides the curre
     name: /Turn on the A, D, J and K keys in Settings/,
   });
   await expect(hint).toBeVisible();
-  expect(await axeViolations(page), "inbox with the keys off").toEqual([]);
+  await expect
+    .poll(() => axeViolations(page), { message: "inbox with the keys off" })
+    .toEqual([]);
   await page.locator("main").focus();
   await page.keyboard.press("a");
   await expect(row).toBeVisible();
@@ -393,6 +404,7 @@ test("the inbox keys do nothing until the switch is on, then A decides the curre
         await request.get("/api/rules", { headers: auth(backend) })
       ).json()) as { rules: unknown[] }
     ).rules.length;
+  // eslint-disable-next-line no-restricted-syntax -- absence: the settled state is asserted above, and a poll of a negative passes on its first read too
   expect(await open()).toBe(0);
 
   await hint.click();
@@ -408,7 +420,7 @@ test("the inbox keys do nothing until the switch is on, then A decides the curre
   await page.locator("main").focus();
   await page.keyboard.press("a");
   await expect(page.locator("li.req")).toHaveCount(0);
-  expect(await open()).toBe(1);
+  await expect.poll(() => open()).toBe(1);
 });
 
 test("a reconnection grace outside the range is refused before anything is sent", async ({

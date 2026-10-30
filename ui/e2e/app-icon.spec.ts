@@ -76,13 +76,13 @@ test.describe("the app icon", () => {
 
     await page.getByRole("radio", { name: "Duck at night" }).check();
     await save(page);
-    expect(await stored(backend, request)).toBe("duck_night");
+    await expect.poll(() => stored(backend, request)).toBe("duck_night");
 
     await page.goto("/settings");
     await expect(
       page.getByRole("radio", { name: "Duck at night" }),
     ).toBeChecked();
-    expect(await csp()).toEqual([]);
+    await expect.poll(() => csp()).toEqual([]);
   });
 
   test("checks, resizes and stores your own image, and lets it go once another icon is saved", async ({
@@ -108,13 +108,14 @@ test.describe("the app icon", () => {
     await expect
       .poll(() => picture.evaluate((img: HTMLImageElement) => img.naturalWidth))
       .toBe(256);
+    // eslint-disable-next-line no-restricted-syntax -- absence: the settled state is asserted above, and a poll of a negative passes on its first read too
     expect(await stored(backend, request)).toBeNull();
     await save(page);
-    expect(await stored(backend, request)).toBe("custom");
+    await expect.poll(() => stored(backend, request)).toBe("custom");
     await expect(
       page.getByRole("button", { name: "Remove your image" }),
     ).toBeDisabled();
-    expect(await axeViolations(page)).toEqual([]);
+    await expect.poll(() => axeViolations(page)).toEqual([]);
 
     await page.getByRole("radio", { name: "Duck", exact: true }).check();
     await save(page);
@@ -128,7 +129,7 @@ test.describe("the app icon", () => {
       ((await icons.json()) as { custom_png_base64: string | null })
         .custom_png_base64,
     ).toBeNull();
-    expect(await csp()).toEqual([]);
+    await expect.poll(() => csp()).toEqual([]);
   });
 
   test("says why a file is not an image and keeps the icon as it was", async ({
@@ -150,6 +151,6 @@ test.describe("the app icon", () => {
     await expect(
       page.getByRole("radio", { name: "Your image" }),
     ).toBeDisabled();
-    expect(await axeViolations(page)).toEqual([]);
+    await expect.poll(() => axeViolations(page)).toEqual([]);
   });
 });

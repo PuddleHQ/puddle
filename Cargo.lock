@@ -6323,6 +6323,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "microsandbox",
+ "puddle-agent",
  "puddle-agent-proto",
  "puddle-api",
  "puddle-boot",

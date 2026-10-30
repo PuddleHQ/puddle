@@ -114,6 +114,7 @@ chmod +x "$tmp/bin/npx"
 (cd "$tmp/repo" && STRESS_CPUS=$cpu STRESS_BUSY=1 STRESS_PROJECTS=webkit ci/stress.sh playwright)
 for want in '--repeat-each 3' '--project webkit'; do grep -q -- "$want" "$tmp/npx.args" || fail "playwright args lack $want: $(cat "$tmp/npx.args")"; done
 grep -q '^PLAYWRIGHT_JSON_OUTPUT_NAME=.*/stress/playwright/report.json$' "$tmp/npx.env" || fail "playwright json report path"
+grep -q '^PUDDLE_E2E_PROJECTS=webkit$' "$tmp/npx.env" || fail "playwright warm-up must be narrowed to the project: $(grep PUDDLE_E2E "$tmp/npx.env")"
 grep -q '^PUDDLE_E2E_CPU_THROTTLE=4$' "$tmp/npx.env" || fail "playwright throttle"
 grep -q "affinity list: $cpu\$" "$tmp/npx.affinity" || fail "playwright must run pinned to STRESS_CPUS: $(cat "$tmp/npx.affinity")"
 (cd "$tmp/repo" && STRESS_CPUS=$cpu STRESS_BUSY=1 ci/stress.sh vitest)

@@ -64,7 +64,7 @@ test("lists what the identity reaches on every host, with role and traits, and s
   await expect(sources).toContainText("gh · tijs-work on github.com");
   await expect(sources).toContainText("dev.azure.com/contoso");
   await expect(sources).toContainText(/6 repositories, read [23] minutes ago/);
-  expect(await csp()).toEqual([]);
+  await expect.poll(() => csp()).toEqual([]);
 });
 
 test("a slow list shows progress, then the repositories when the host answers", async ({

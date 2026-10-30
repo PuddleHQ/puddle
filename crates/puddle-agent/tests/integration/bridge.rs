@@ -138,6 +138,32 @@ async fn echo_through(proxy: SocketAddr, target: SocketAddr, payload: &[u8]) {
     assert_eq!(back, payload);
 }
 
+/// Whether a connection to `addr` is accepted. tokio's `connect` can return `Ok` for a refused
+/// attempt that is still in flight (its readiness races the reset), so a connection counts once
+/// its peer address is known.
+async fn accepts(addr: SocketAddr) -> bool {
+    let Ok(conn) = TcpStream::connect(addr).await else {
+        return false;
+    };
+    let deadline = tokio::time::Instant::now() + WAIT;
+    loop {
+        match conn.peer_addr() {
+            Ok(_) => return true,
+            Err(err)
+                if err.kind() == std::io::ErrorKind::NotConnected
+                    && conn.take_error().ok().flatten().is_none() =>
+            {
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "a connection to {addr} neither completed nor failed"
+                );
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            Err(_) => return false,
+        }
+    }
+}
+
 #[tokio::test]
 async fn nothing_listens_on_the_bridge_address_before_the_bridge_exists() {
     let s = setup("nobridge", 0).await;
@@ -185,10 +211,16 @@ async fn the_listener_stops_when_the_bridge_goes_away() {
 
     s.kernel.set(0);
     state_where(&mut state, |s| s.addr.is_none()).await;
-    assert!(
-        TcpStream::connect(addr).await.is_err(),
-        "the closed bridge address still accepts"
-    );
+    // Not at once: a child process that another test starts holds a copy of the listening socket
+    // until it execs, and the kernel goes on accepting for the copy.
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while accepts(addr).await {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the closed bridge address still accepts"
+        );
+        tokio::time::sleep(POLL).await;
+    }
     let mut rest = Vec::new();
     let ended = tokio::time::timeout(WAIT, open.read_to_end(&mut rest)).await;
     assert!(ended.is_ok(), "the connection survived its bridge");

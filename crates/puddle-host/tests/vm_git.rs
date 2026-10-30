@@ -36,7 +36,7 @@ use vm_support::{
     through_company_proxy, with_fake_names,
 };
 
-const NAME: &str = "bound.test";
+const NAME: &str = "bound.invalid";
 const WORK: &str = "KCANARY-WORK-7d41c9e2b0a8";
 const PERSONAL: &str = "KCANARY-PERSONAL-3f9a60c1d7e5";
 
@@ -247,7 +247,7 @@ async fn vm_git_clones_and_pushes_with_two_identities_and_the_guest_never_holds_
 
     // The guest's git: clone with a trace (to a file in the guest, searched below), then push.
     let script = "set -eu; rm -rf /tmp/k; mkdir /tmp/k; cd /tmp/k; \
-         GIT_TRACE_CURL=1 GIT_TRACE=1 git clone -q https://bound.test/acme/web.git web 2>/tmp/clone-trace.txt; \
+         GIT_TRACE_CURL=1 GIT_TRACE=1 git clone -q https://bound.invalid/acme/web.git web 2>/tmp/clone-trace.txt; \
          cd web; echo hi > pushed.txt; git add pushed.txt; git commit -q -m guest; \
          git push -q origin HEAD:main; git log -1 --format=%ae; git rev-parse HEAD";
     let out = guest(&vm.runtime, &sandbox, script).await;
@@ -270,7 +270,7 @@ async fn vm_git_clones_and_pushes_with_two_identities_and_the_guest_never_holds_
         author = guest(
             &vm.runtime,
             &sandbox,
-            "set -eu; cd /tmp/k; rm -rf else; git clone -q https://bound.test/someone/else.git else; \
+            "set -eu; cd /tmp/k; rm -rf else; git clone -q https://bound.invalid/someone/else.git else; \
              git -C else config user.email",
         )
         .await;
@@ -309,7 +309,7 @@ async fn vm_git_clones_and_pushes_with_two_identities_and_the_guest_never_holds_
     let out = guest(
         &vm.runtime,
         &sandbox,
-        "cd /tmp/k; git clone -q https://bound.test/acme/unlisted.git unlisted; cd unlisted; \
+        "cd /tmp/k; git clone -q https://bound.invalid/acme/unlisted.git unlisted; cd unlisted; \
          echo x > x.txt; git add x.txt; git commit -q -m x; \
          git push origin HEAD:main 2>&1 || true",
     )
@@ -336,7 +336,7 @@ async fn vm_git_clones_and_pushes_with_two_identities_and_the_guest_never_holds_
            '/acme/%75nlisted.git/info/refs?service=git-receive-pack' \
            '/acme/unlisted.git%00/info/refs?service=git-receive-pack' \
            '/ACME/Unlisted.GIT/info/refs?service=git-receive-pack'; do \
-           curl -s -o /dev/null -w '%{http_code}\\n' --path-as-is --max-time 30 \"https://bound.test$p\"; \
+           curl -s -o /dev/null -w '%{http_code}\\n' --path-as-is --max-time 30 \"https://bound.invalid$p\"; \
          done",
     )
     .await;
@@ -424,10 +424,10 @@ async fn vm_git_clones_and_pushes_with_two_identities_and_the_guest_never_holds_
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_git_the_ca_holds_no_key_and_two_workspaces_share_neither_ca_nor_credential() {
     let fake =
-        GitHost::start_with(&GitHostOptions::new(NAME, Versions::Both).also_for("plain.test"))
+        GitHost::start_with(&GitHostOptions::new(NAME, Versions::Both).also_for("plain.invalid"))
             .await;
     seed(&fake);
-    let net = internet(&[(NAME, &fake), ("plain.test", &fake)]);
+    let net = internet(&[(NAME, &fake), ("plain.invalid", &fake)]);
     let vm = start_vm_host_platform("gitca", net.options, &net.platform, |_| {}).await;
     let prefix = vm.settings.prefix.as_str().to_owned();
     let (a_name, b_name) = (format!("{prefix}-gita"), format!("{prefix}-gitb"));
@@ -435,8 +435,8 @@ async fn vm_git_the_ca_holds_no_key_and_two_workspaces_share_neither_ca_nor_cred
         WorkspaceName::new(&a_name).unwrap(),
         WorkspaceName::new(&b_name).unwrap(),
     );
-    allow(&vm, &a, &[NAME, "plain.test"]);
-    allow(&vm, &b, &[NAME, "plain.test"]);
+    allow(&vm, &a, &[NAME, "plain.invalid"]);
+    allow(&vm, &b, &[NAME, "plain.invalid"]);
     // B is made while no identity exists, so it has none; A is made after Work exists and
     // takes it as its default.
     create(&vm, &b_name, &format!("https://{NAME}/acme/open.git")).await;
@@ -452,12 +452,12 @@ async fn vm_git_the_ca_holds_no_key_and_two_workspaces_share_neither_ca_nor_cred
         format!("curl -sv -o /dev/null --max-time 60 https://{host}/ 2>&1 | grep -i 'issuer:'")
     };
 
-    // A decrypts bound.test (its CA signs the leaf); plain.test is nobody's: its real issuer.
+    // A decrypts bound.invalid (its CA signs the leaf); plain.invalid is nobody's: its real issuer.
     let out = guest(&vm.runtime, &a, &issuer(NAME)).await;
     assert!(out.contains(&ca_a), "{out}");
-    let out = guest(&vm.runtime, &a, &issuer("plain.test")).await;
+    let out = guest(&vm.runtime, &a, &issuer("plain.invalid")).await;
     assert!(out.contains(root) && !out.contains("Puddle CA"), "{out}");
-    // B has no identity: bound.test is not decrypted for it, whatever A decrypts.
+    // B has no identity: bound.invalid is not decrypted for it, whatever A decrypts.
     let out = guest(&vm.runtime, &b, &issuer(NAME)).await;
     assert!(out.contains(root) && !out.contains(&ca_a), "{out}");
 
@@ -546,10 +546,10 @@ async fn vm_git_the_ca_holds_no_key_and_two_workspaces_share_neither_ca_nor_cred
         &vm.runtime,
         &a,
         "proxy=${HTTPS_PROXY#http://}; proxy=${proxy%/}; \
-         echo openssl=$(echo | openssl s_client -proxy \"$proxy\" -connect bound.test:443 -servername bound.test \
+         echo openssl=$(echo | openssl s_client -proxy \"$proxy\" -connect bound.invalid:443 -servername bound.invalid \
              -verify_return_error 2>&1 | grep -c 'Verify return code: 0'); \
          if command -v python3 >/dev/null; then \
-           echo python=$(python3 -c \"import urllib.request as u; print(u.urlopen('https://bound.test/acme/open.git/info/refs?service=git-upload-pack', timeout=30).status)\" 2>&1 | tail -1); \
+           echo python=$(python3 -c \"import urllib.request as u; print(u.urlopen('https://bound.invalid/acme/open.git/info/refs?service=git-upload-pack', timeout=30).status)\" 2>&1 | tail -1); \
          else echo python=absent; fi",
     )
     .await;
@@ -564,7 +564,7 @@ async fn vm_git_the_ca_holds_no_key_and_two_workspaces_share_neither_ca_nor_cred
     for (ws, injected) in [(&a_name, true), (&b_name, false)] {
         let page = api
             .get(&format!(
-                "/api/audit?workspace={ws}&type=connection&host_contains=bound.test&limit=100"
+                "/api/audit?workspace={ws}&type=connection&host_contains=bound.invalid&limit=100"
             ))
             .await
             .json();
@@ -597,20 +597,20 @@ async fn vm_git_the_ca_holds_no_key_and_two_workspaces_share_neither_ca_nor_cred
 async fn vm_git_a_guest_clock_at_2010_or_2040_does_not_change_the_upstream_check() {
     let valid = git_host(NAME).await;
     let old = GitHost::start_with(
-        &GitHostOptions::new("old.test", Versions::Http1).valid_between(2008, 2012),
+        &GitHostOptions::new("old.invalid", Versions::Http1).valid_between(2008, 2012),
     )
     .await;
     old.add_repo("acme/open", false);
     let new = GitHost::start_with(
-        &GitHostOptions::new("new.test", Versions::Http1).valid_between(2038, 2042),
+        &GitHostOptions::new("new.invalid", Versions::Http1).valid_between(2038, 2042),
     )
     .await;
     new.add_repo("acme/open", false);
-    let net = internet(&[(NAME, &valid), ("old.test", &old), ("new.test", &new)]);
+    let net = internet(&[(NAME, &valid), ("old.invalid", &old), ("new.invalid", &new)]);
     let vm = start_vm_host_platform("gitclock", net.options, &net.platform, |_| {}).await;
     let name = format!("{}-gitclock", vm.settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
-    allow(&vm, &sandbox, &[NAME, "old.test", "new.test"]);
+    allow(&vm, &sandbox, &[NAME, "old.invalid", "new.invalid"]);
     // One identity names all three hosts, so all three are decrypted and the proxy checks each
     // upstream certificate itself.
     vm.host
@@ -619,8 +619,8 @@ async fn vm_git_a_guest_clock_at_2010_or_2040_does_not_change_the_upstream_check
             "Work",
             vec![
                 stored(NAME, WORK, &vm, "kwork"),
-                stored("old.test", WORK, &vm, "kold"),
-                stored("new.test", WORK, &vm, "knew"),
+                stored("old.invalid", WORK, &vm, "kold"),
+                stored("new.invalid", WORK, &vm, "knew"),
             ],
         ))
         .unwrap();
@@ -631,7 +631,7 @@ async fn vm_git_a_guest_clock_at_2010_or_2040_does_not_change_the_upstream_check
             "now=$(date +%s); date -s '{date}' >/dev/null || echo SETFAIL; echo year=$(date +%Y); \
              code() {{ curl -sk -o /dev/null -w '%{{http_code}}' --max-time 30 \
                \"https://$1/acme/open.git/info/refs?service=git-upload-pack\"; }}; \
-             echo old=$(code old.test) bound=$(code bound.test) new=$(code new.test); \
+             echo old=$(code old.invalid) bound=$(code bound.invalid) new=$(code new.invalid); \
              date -s @$now >/dev/null"
         )
     };

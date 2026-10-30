@@ -24,16 +24,17 @@ pub(crate) fn keep(from: &Path, to: &Path) {
 mod tests {
     use super::*;
 
-    fn dir(tag: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("puddle-msb-logs-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    fn dir(tag: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!("puddle-msb-logs-{tag}-"))
+            .tempdir()
+            .unwrap()
     }
 
     #[test]
     fn keep_copies_the_files_and_tolerates_a_missing_dir() {
-        let d = dir("keep");
+        let tmp = dir("keep");
+        let d = tmp.path();
         let from = d.join("sb").join("logs");
         std::fs::create_dir_all(from.join("nested")).unwrap();
         std::fs::write(from.join("runtime.log"), b"vmm").unwrap();
@@ -46,6 +47,5 @@ mod tests {
         let none = d.join("kept").join("never-booted");
         keep(&d.join("missing"), &none);
         assert!(!none.exists());
-        std::fs::remove_dir_all(&d).unwrap();
     }
 }

@@ -7,7 +7,7 @@
 )]
 
 use std::io::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
 use puddle_types::{MergeEntry, MergeFormat, MergeSpec};
@@ -24,10 +24,11 @@ fn agent(args: &[&str], stdin: &[u8]) -> Output {
     child.wait_with_output().unwrap()
 }
 
-fn tmp() -> PathBuf {
-    let p = std::env::temp_dir().join(format!("puddle-agent-merge-{}", std::process::id()));
-    std::fs::create_dir_all(&p).unwrap();
-    p
+fn tmp() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix("puddle-agent-merge-")
+        .tempdir()
+        .unwrap()
 }
 
 fn s(p: &Path) -> &str {
@@ -36,7 +37,8 @@ fn s(p: &Path) -> &str {
 
 #[test]
 fn apply_and_remove_print_one_word_and_keep_the_users_keys() {
-    let dir = tmp();
+    let tmp = tmp();
+    let dir = tmp.path();
     let state = dir.join("state");
     let file = dir.join("config.json");
     std::fs::write(&file, "{\"auths\": {}}\n").unwrap();
@@ -83,5 +85,4 @@ fn apply_and_remove_print_one_word_and_keep_the_users_keys() {
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("bad merge spec"));
     assert_eq!(agent(&["merge-file", "apply"], b"").status.code(), Some(2));
-    std::fs::remove_dir_all(&dir).unwrap();
 }

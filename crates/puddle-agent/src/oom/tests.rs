@@ -205,14 +205,19 @@ async fn a_counter_read_failure_is_warned_once_per_outage() {
 /// A temp dir with a fake `vmstat` and `kmsg`, removed on drop.
 struct Fake {
     dir: PathBuf,
+    _tmp: tempfile::TempDir,
 }
 
 impl Fake {
     fn new(tag: &str, counter: u64) -> Self {
-        let dir =
-            std::env::temp_dir().join(format!("puddle-agent-oom-{tag}-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let fake = Self { dir };
+        let tmp = tempfile::Builder::new()
+            .prefix(&format!("puddle-agent-oom-{tag}-"))
+            .tempdir()
+            .unwrap();
+        let fake = Self {
+            dir: tmp.path().to_path_buf(),
+            _tmp: tmp,
+        };
         fake.set_counter(counter);
         std::fs::write(fake.kmsg(), "6,1,1,-;old boot noise\n3,2,2,-;Out of memory: Killed process 1 (before) total-vm:1kB\n").unwrap();
         fake
@@ -240,12 +245,6 @@ impl Fake {
             poll: Duration::from_millis(20),
             grace: Duration::from_millis(200),
         }
-    }
-}
-
-impl Drop for Fake {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
 

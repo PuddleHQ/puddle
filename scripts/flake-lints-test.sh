@@ -3,8 +3,8 @@
 # Proves the clippy half of the flake rules: clippy.toml's `disallowed-methods` flags the original code of a
 # fixed flake (a test file named from the clock inside `std::env::temp_dir()`, from the windows store tests),
 # the error names the fix, and `#[expect(clippy::disallowed_methods, reason = ...)]` is the one escape.
-# The workspace level in Cargo.toml is "allow" while the existing sites are moved, so this runs the rule at
-# "warn" in a small crate that uses the repository's clippy.toml and toolchain.
+# The workspace level in Cargo.toml must be "deny"; this runs the rule at "warn" in a small crate that
+# uses the repository's clippy.toml and toolchain, so the fixture shows the message without failing.
 # usage: scripts/flake-lints-test.sh
 set -eu
 
@@ -12,8 +12,8 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
-grep -Eq '^disallowed_methods = "(allow|warn|deny)"' "$root/Cargo.toml" || {
-    echo "flake-lints-test: Cargo.toml no longer sets the disallowed_methods level" >&2
+grep -Eq '^disallowed_methods = "deny"' "$root/Cargo.toml" || {
+    echo "flake-lints-test: Cargo.toml must set disallowed_methods to \"deny\"" >&2
     exit 1
 }
 

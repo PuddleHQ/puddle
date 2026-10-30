@@ -385,11 +385,16 @@ mod tests {
 
     #[test]
     fn a_part_that_cannot_be_copied_is_named() {
-        let dir = std::env::temp_dir();
-        let missing = dir.join("xtask-assemble-no-such-msb");
-        let err = place(&[("msb".to_owned(), Part::Msb)], &missing, &missing, &dir)
-            .unwrap_err()
-            .to_string();
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("xtask-assemble-no-such-msb");
+        let err = place(
+            &[("msb".to_owned(), Part::Msb)],
+            &missing,
+            &missing,
+            dir.path(),
+        )
+        .unwrap_err()
+        .to_string();
         assert!(
             err.contains("copying") && err.contains("no-such-msb"),
             "{err}"

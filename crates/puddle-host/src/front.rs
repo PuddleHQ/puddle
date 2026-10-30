@@ -2,6 +2,7 @@
 //! The host's side of the browser editor's front: which guests it serves and with which server.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_agent_proto::editor::{EditorServer, ServerKind};
@@ -64,6 +65,10 @@ impl Guests for HostGuests {
 /// Starts the front over the workspaces `ports` holds an agent link for, entered in `endpoints`
 /// as one of Puddle's own listeners.
 ///
+/// The port is the one the last run used, kept in [`HostPaths::front_port_file`]: a browser keeps
+/// the editor's storage per origin, and the port is part of it. When that port is taken, the front
+/// takes another and the new one is kept from then on.
+///
 /// # Errors
 ///
 /// [`HostError::Front`] when no loopback port can be bound.
@@ -74,12 +79,35 @@ pub(crate) async fn serve(
     flavours: Arc<Flavours>,
 ) -> Result<Front, HostError> {
     let guests = HostGuests { ports, flavours };
-    Front::bind(
-        None,
+    let file = paths.front_port_file();
+    let usual = read_port(&file);
+    let front = Front::bind(
+        usual,
         endpoints,
         Arc::new(guests),
         Arc::new(FileHalves::new(paths.front_keys())),
     )
     .await
-    .map_err(HostError::Front)
+    .map_err(HostError::Front)?;
+    let port = front.local_addr().port();
+    if usual != Some(port) {
+        if front.preferred_port_was_taken() {
+            tracing::warn!(
+                port,
+                "the browser editor's usual port is taken, so its address changes this run; \
+                 a browser editor opened before starts with empty browser storage"
+            );
+        }
+        // The front works without the file; the next run just takes another port.
+        if let Err(err) = puddle_fs::private::write_atomic(&file, port.to_string().as_bytes()) {
+            tracing::warn!(port, error = %err, "the browser editor's port could not be kept for the next run");
+        }
+    }
+    Ok(front)
+}
+
+/// The port kept by an earlier run; a missing or unreadable file means there is none.
+fn read_port(file: &Path) -> Option<u16> {
+    let port: u16 = std::fs::read_to_string(file).ok()?.trim().parse().ok()?;
+    (port != 0).then_some(port)
 }

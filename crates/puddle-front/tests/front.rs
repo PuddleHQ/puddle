@@ -559,7 +559,7 @@ async fn the_key_survives_a_new_front_and_differs_between_workspaces() {
     let running = Arc::new(Running::default());
     running.start("a", Some(a.addr), Flavour::Microsoft);
     let halves: Arc<dyn ServerHalves> = Arc::new(FileHalves::new(first.dir.path().join("front")));
-    let front = Front::bind(None, &PuddleEndpoints::new(), running, halves)
+    let front = Front::bind(None, &PuddleEndpoints::new(), running, halves.clone())
         .await
         .unwrap();
     let h = format!("a.localhost:{}", front.local_addr().port());
@@ -571,7 +571,7 @@ async fn the_key_survives_a_new_front_and_differs_between_workspaces() {
     assert_eq!(again.body, key_a);
 
     // Forgetting the workspace gives the name a new key.
-    front.forget(&WorkspaceName::new("a").unwrap()).unwrap();
+    halves.forget(&WorkspaceName::new("a").unwrap()).unwrap();
     let after = ask(
         &front,
         &format!("POST {MINT} HTTP/1.1\r\nHost: {h}\r\nConnection: close\r\nContent-Length: 0\r\nCookie: {client}\r\n\r\n"),

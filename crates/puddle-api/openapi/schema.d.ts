@@ -1593,8 +1593,6 @@ export interface components {
             message: string | null;
             /** @description Whether Puddle opened an editor itself (desktop mode, when it worked). */
             opened: boolean;
-            /** @description Where the browser editor is, in browser mode; the caller opens it. */
-            url: string | null;
         };
         /** @description One audit record with its position in the log. */
         AuditEntry: {

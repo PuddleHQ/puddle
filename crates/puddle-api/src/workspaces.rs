@@ -720,7 +720,7 @@ impl DeleteCheck {
 pub enum AttachMode {
     /// VS Code on the desktop, through the [`Launcher`].
     Desktop,
-    /// VS Code in the browser; the call returns the URL and the shell opens it.
+    /// VS Code in the browser, in a window the shell opens.
     Browser,
 }
 
@@ -730,9 +730,6 @@ pub enum AttachMode {
 pub struct Attached {
     /// Whether Puddle opened an editor itself (a window or desktop VS Code, when it worked).
     pub opened: bool,
-    /// Always `None` today: the browser editor opens in a window, never at an address the
-    /// caller follows.
-    pub url: Option<String>,
     /// Why nothing was opened, when that is not an error.
     pub message: Option<String>,
 }
@@ -743,7 +740,6 @@ impl Attached {
     pub fn opened() -> Self {
         Self {
             opened: true,
-            url: None,
             message: None,
         }
     }
@@ -753,7 +749,6 @@ impl Attached {
     pub fn not_opened(message: impl Into<String>) -> Self {
         Self {
             opened: false,
-            url: None,
             message: Some(message.into()),
         }
     }

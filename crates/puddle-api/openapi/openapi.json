@@ -8950,7 +8950,6 @@
         "description": "What an attach did.",
         "required": [
           "opened",
-          "url",
           "message"
         ],
         "properties": {
@@ -8964,13 +8963,6 @@
           "opened": {
             "type": "boolean",
             "description": "Whether Puddle opened an editor itself (desktop mode, when it worked)."
-          },
-          "url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Where the browser editor is, in browser mode; the caller opens it."
           }
         }
       },

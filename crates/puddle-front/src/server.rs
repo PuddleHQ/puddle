@@ -163,16 +163,6 @@ impl Front {
         target.editor.password().await
     }
 
-    /// Forgets what the front kept for `workspace` (Microsoft's server half of the secret key),
-    /// when the workspace is deleted.
-    ///
-    /// # Errors
-    ///
-    /// The stored half could not be deleted.
-    pub fn forget(&self, workspace: &WorkspaceName) -> io::Result<()> {
-        self.halves.forget(workspace)
-    }
-
     /// Stops the listener and ends every connection, and returns once the listener is gone.
     pub async fn close(mut self) {
         self.task.abort();

@@ -8,7 +8,7 @@
     reason = "helpers outside #[test] fns run only in tests"
 )]
 
-use puddle_test_kit::eventually;
+use puddle_test_kit::{ReservedPort, eventually};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -17,8 +17,6 @@ use puddle_agent::config::Target;
 use puddle_agent::editor::EditorConfig;
 use puddle_agent::{Agent, Config};
 use puddle_agent_proto::editor::EditorServer;
-
-use crate::common::ReservedPort;
 
 const WAIT: Duration = Duration::from_secs(20);
 

@@ -9,7 +9,7 @@
     reason = "helpers outside #[test] fns run only in tests"
 )]
 
-use puddle_test_kit::eventually;
+use puddle_test_kit::{ReservedPort, eventually};
 use std::collections::BTreeMap;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
@@ -27,8 +27,6 @@ use puddle_agent::microsoft::{
 };
 use puddle_agent_proto::editor::EditorServer;
 use sha2::{Digest as _, Sha256};
-
-use crate::common::ReservedPort;
 
 const WAIT: Duration = Duration::from_secs(30);
 const COMMIT: &str = "e646868227c3e3a9e3f24277c8c7220be42c0be7";

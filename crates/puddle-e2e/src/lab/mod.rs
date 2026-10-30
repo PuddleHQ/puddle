@@ -32,7 +32,7 @@ mod pac;
 mod squid;
 mod web_host;
 
-use std::net::{Ipv4Addr, TcpStream};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::process::Child;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -249,7 +249,7 @@ fn try_ready(
                 diagnostics()
             ));
         }
-        if TcpStream::connect((LOCAL, port)).is_ok() {
+        if puddle_test_kit::accepts(SocketAddr::from((LOCAL, port))) {
             // A child that dies right after something else answered is a collision too.
             std::thread::sleep(Duration::from_millis(100));
             if let Some(Ok(Some(status))) = child.as_deref_mut().map(Child::try_wait) {

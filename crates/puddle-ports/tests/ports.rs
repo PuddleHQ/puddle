@@ -23,6 +23,7 @@ use puddle_agent_proto::host::{
 use puddle_ipc::IpcRoot;
 use puddle_netpolicy::{EndpointKind, OwnAddresses, PuddleEndpoints};
 use puddle_ports::{Pin, Pins, PinsError, PortOwner, PortRow, Ports, PortsError, ProgramLookup};
+use puddle_test_kit::accepts;
 use puddle_types::{CollectingSink, Event, WorkspaceName};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -271,6 +272,11 @@ fn unlistening() -> (tokio::net::TcpSocket, u16) {
     (socket, port)
 }
 
+/// `port` on this computer's loopback.
+fn local(port: u16) -> SocketAddr {
+    SocketAddr::from(([127, 0, 0, 1], port))
+}
+
 /// How many ports [`on_ports`] tries before it gives up.
 const PORT_ATTEMPTS: u32 = 5;
 
@@ -416,7 +422,7 @@ async fn a_forward_carries_bytes_to_the_guest_and_is_one_of_puddles_own_listener
     assert_eq!(through(host, b"again").await.unwrap(), b"again");
     // Stopping closes the listener and takes it out of the registry.
     rig.ports.release(&rig.workspace, guest).await.unwrap();
-    assert!(TcpStream::connect(addr).await.is_err());
+    assert!(!accepts(addr));
     assert_eq!(rig.endpoints.find(addr, &OwnAddresses), None);
     assert_eq!(
         rig.ports.release(&rig.workspace, guest).await,
@@ -434,10 +440,7 @@ async fn a_forward_defaults_to_the_same_port_number_and_moves_when_asked_for_ano
     let (second, moved) = forward_free(&rig.ports, &rig.workspace, guest, true).await;
     let moved = moved.unwrap();
     assert_eq!(moved.host_port, Some(second));
-    assert!(
-        TcpStream::connect(("127.0.0.1", first)).await.is_err(),
-        "the old port is closed"
-    );
+    assert!(!accepts(local(first)), "the old port is closed");
     assert_eq!(through(second, b"moved").await.unwrap(), b"moved");
     assert_eq!(
         rig.pins.pinned(&rig.workspace).unwrap(),
@@ -462,7 +465,7 @@ async fn a_pinned_forward_survives_a_stop_and_comes_back_at_the_next_start() {
     let (host, forwarded) = forward_free(&rig.ports, &rig.workspace, guest, true).await;
     forwarded.unwrap();
     rig.ports.stopped(&rig.workspace).await;
-    assert!(TcpStream::connect(("127.0.0.1", host)).await.is_err());
+    assert!(!accepts(local(host)));
     // Stopped: the pin is listed, nothing runs.
     let view = rig.ports.view(&rig.workspace).unwrap();
     assert!(!view.running);
@@ -752,10 +755,7 @@ async fn a_bad_port_a_stopped_workspace_and_a_broken_store_are_refused_in_words(
         refused,
         Err(PortsError::Pins("the database is read-only".into()))
     );
-    assert!(
-        TcpStream::connect(("127.0.0.1", host)).await.is_err(),
-        "the forward was closed again"
-    );
+    assert!(!accepts(local(host)), "the forward was closed again");
     assert_eq!(
         rig.ports.view(&rig.workspace).unwrap().ports,
         Vec::<PortRow>::new()

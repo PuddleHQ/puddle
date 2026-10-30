@@ -55,6 +55,9 @@ const CONFIG: &str = "config.yaml";
 const HEALTHY: Duration = Duration::from_secs(30);
 /// How often the port of a server left by an earlier agent is looked at.
 const PORT_POLL: Duration = Duration::from_secs(2);
+
+/// How long [`has_a_peer`] waits for a connect attempt to settle.
+const SETTLE: Duration = Duration::from_secs(1);
 /// The longest wait between two starts.
 const MAX_WAIT: Duration = Duration::from_secs(30);
 /// The wait after the first refused download of Microsoft's server; each further one doubles it.
@@ -578,9 +581,35 @@ async fn stop(child: &mut tokio::process::Child) -> io::Result<std::process::Exi
 
 /// Whether something already accepts connections on the server's port.
 async fn port_taken(port: u16) -> bool {
-    tokio::net::TcpStream::connect(("127.0.0.1", port))
-        .await
-        .is_ok()
+    match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
+        Ok(stream) => has_a_peer(&stream).await,
+        Err(_) => false,
+    }
+}
+
+/// Whether a connect that reported success reached a listener. `Ok` is not enough on loopback: the
+/// kernel joins a socket to itself when its source port happens to be the one it dials (nothing
+/// listens there, so the port is free), and tokio can report `Ok` for an attempt that is still in
+/// flight and then refused. Both look like a taken port, which delays the start by [`PORT_POLL`]
+/// (or, while confirming a build, records a build that never listened). An attempt still unsettled
+/// after [`SETTLE`] counts as taken, as every `Ok` did before.
+async fn has_a_peer(stream: &tokio::net::TcpStream) -> bool {
+    let deadline = Instant::now() + SETTLE;
+    loop {
+        match (stream.peer_addr(), stream.local_addr()) {
+            (Ok(peer), Ok(local)) => return peer != local,
+            (Err(err), _)
+                if err.kind() == io::ErrorKind::NotConnected
+                    && stream.take_error().ok().flatten().is_none() =>
+            {
+                if Instant::now() >= deadline {
+                    return true;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            _ => return false,
+        }
+    }
 }
 
 /// Returns once `taken` says nothing answers on `port` (the probe is asked every [`PORT_POLL`]).
@@ -772,6 +801,37 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_port_with_a_listener_is_taken_and_a_free_one_is_not() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(port_taken(port).await);
+        drop(listener);
+        assert!(!port_taken(port).await);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_connect_that_reached_only_itself_is_not_a_taken_port() {
+        // The kernel's simultaneous open: bind a port, then connect to that same port with nothing
+        // listening. The connect succeeds, to nobody.
+        let probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = probe.local_addr().unwrap();
+        drop(probe);
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.set_reuseaddr(true).unwrap();
+        socket.bind(addr).unwrap();
+        let joined = socket.connect(addr).await.unwrap();
+        assert_eq!(joined.local_addr().unwrap(), joined.peer_addr().unwrap());
+        assert!(!has_a_peer(&joined).await);
+        // A real connection to a listener has one.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let real = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        assert!(has_a_peer(&real).await);
     }
 
     #[test]

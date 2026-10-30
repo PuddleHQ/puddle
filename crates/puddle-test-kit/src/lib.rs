@@ -21,5 +21,5 @@ mod wait;
 pub use events::{
     EventSource, next_event_matching, next_event_within, no_event_for, no_event_matching,
 };
-pub use resources::{TestDir, bound_port};
+pub use resources::{ReservedPort, TestDir, accepts, bound_port};
 pub use wait::{MAX_WAIT, Outcome, Step, eventually, eventually_async, eventually_blocking};

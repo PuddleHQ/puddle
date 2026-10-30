@@ -182,10 +182,11 @@ mod tests {
 
     #[test]
     fn a_password_is_hex_and_fits_a_line() {
-        assert!(is_password(&"ab".repeat(32)));
+        let hex = puddle_types::fixture::suffix();
+        assert!(is_password(&hex.repeat(4)));
         for bad in ["", "xyz", "ab cd", &"a".repeat(MAX_ANSWER_LINE)] {
             assert!(!is_password(bad), "{bad:?}");
         }
-        assert_eq!(password_line("ab"), b"password ab\n");
+        assert_eq!(password_line(hex), format!("password {hex}\n").into_bytes());
     }
 }

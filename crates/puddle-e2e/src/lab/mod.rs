@@ -143,6 +143,8 @@ fn parse_cpu_time(stat: &str) -> Option<Duration> {
 /// by number (Squid reads it from its config file) may find it taken; start such a program
 /// through `on_free_port`. A program that can bind port 0 and report it (mitmproxy) should do
 /// that and never use this.
+// flake-ok: Squid reads its port from a config file and inherits no socket, so the port cannot
+// be held across its start; `on_free_port` retries on a taken port and a test of it forces one.
 #[must_use]
 pub fn free_port() -> u16 {
     std::net::TcpListener::bind((LOCAL, 0))
@@ -307,6 +309,15 @@ mod tests {
     }
     use std::process::Command;
 
+    /// A port that refuses connections and that no other process can take while the socket
+    /// lives (bound, never listening).
+    fn unlistening() -> (tokio::net::TcpSocket, u16) {
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind((LOCAL, 0).into()).unwrap();
+        let port = socket.local_addr().unwrap().port();
+        (socket, port)
+    }
+
     #[test]
     fn a_configured_program_runs_and_a_missing_one_skips() {
         assert!(configured_or_skip(true, true, "V", "how"));
@@ -422,7 +433,7 @@ mod tests {
     #[should_panic(expected = "the fixture did not accept connections\nlog text")]
     fn a_port_nobody_listens_on_times_out_with_the_diagnostics() {
         let _ports = ports();
-        let port = free_port();
+        let (_held, port) = unlistening();
         wait_ready(port, None, Duration::from_millis(100), || "log text".into());
     }
 
@@ -430,7 +441,7 @@ mod tests {
     #[should_panic(expected = "the fixture exited early")]
     fn a_fixture_that_exits_is_reported_at_once() {
         let _ports = ports();
-        let port = free_port();
+        let (_held, port) = unlistening();
         let mut child = Command::new(std::env::current_exe().unwrap())
             .arg("--list")
             .stdout(std::process::Stdio::null())

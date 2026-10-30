@@ -802,8 +802,8 @@ mod tests {
 
     #[tokio::test]
     async fn open_gives_the_sdk_the_runtime_pair_and_home_as_arguments() {
-        let base = std::env::temp_dir().join(format!("puddle-msb-args-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().to_path_buf();
         let config = MsbConfig::new(
             base.join("home"),
             "/no/msb",
@@ -819,7 +819,6 @@ mod tests {
             resolved.paths.libkrunfw.as_deref(),
             Some(Path::new("/no/libkrunfw"))
         );
-        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[tokio::test]

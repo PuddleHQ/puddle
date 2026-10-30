@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_agent_proto::editor::{EditorServer, ServerKind};
-use puddle_front::{FileHalves, Flavour, Front, PortsGuests};
+use puddle_front::{FileHalves, Flavour, Front, Guests, Target};
 use puddle_netpolicy::PuddleEndpoints;
 use puddle_ports::Ports;
 use puddle_types::WorkspaceName;
@@ -18,13 +18,12 @@ use crate::{HostError, HostPaths};
 pub(crate) struct Flavours(Mutex<BTreeMap<WorkspaceName, Flavour>>);
 
 impl Flavours {
-    /// `name`'s guest runs with `editor` (`None`: the host bundles no code-server and the guest
-    /// runs none, so there is nothing for the front to carry to).
+    /// `name`'s guest runs with `editor`. `None` means the host bundles no code-server, so the
+    /// guest runs none: the front still reaches the agent and says the editor is not there.
     pub(crate) fn running(&self, name: &WorkspaceName, editor: Option<&EditorServer>) {
-        let Some(editor) = editor else { return };
-        let flavour = match editor.kind {
-            ServerKind::Microsoft { .. } => Flavour::Microsoft,
-            ServerKind::CodeServer => Flavour::CodeServer,
+        let flavour = match editor.map(|e| e.kind) {
+            Some(ServerKind::Microsoft { .. }) => Flavour::Microsoft,
+            Some(ServerKind::CodeServer) | None => Flavour::CodeServer,
         };
         self.map().insert(name.clone(), flavour);
     }
@@ -34,12 +33,31 @@ impl Flavours {
         self.map().remove(name);
     }
 
-    fn of(&self, name: &WorkspaceName) -> Flavour {
-        self.map().get(name).copied().unwrap_or(Flavour::CodeServer)
+    fn of(&self, name: &WorkspaceName) -> Option<Flavour> {
+        self.map().get(name).copied()
     }
 
     fn map(&self) -> std::sync::MutexGuard<'_, BTreeMap<WorkspaceName, Flavour>> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// The workspaces the front serves: those with a connected agent whose server is known. A guest
+/// whose start has not recorded its server yet is not served, rather than served with the wrong
+/// flavour.
+struct HostGuests {
+    ports: Ports,
+    flavours: Arc<Flavours>,
+}
+
+impl Guests for HostGuests {
+    fn target(&self, workspace: &WorkspaceName) -> Option<Target> {
+        let flavour = self.flavours.of(workspace)?;
+        let link = self.ports.guest_link(workspace)?;
+        Some(Target {
+            editor: Arc::new(link),
+            flavour,
+        })
     }
 }
 
@@ -55,7 +73,7 @@ pub(crate) async fn serve(
     ports: Ports,
     flavours: Arc<Flavours>,
 ) -> Result<Front, HostError> {
-    let guests = PortsGuests::new(ports, move |workspace| flavours.of(workspace));
+    let guests = HostGuests { ports, flavours };
     Front::bind(
         None,
         endpoints,

@@ -105,8 +105,10 @@ cat >"$tmp/clean.log" <<'E'
      Summary [   0.5s] 1 test run: 1 passed, 0 skipped
 E
 report "$tmp/clean.log"
-[ "$(errors)" = 0 ] || bad "clean log gave an annotation: $(cat "$tmp/out")"
-has "$tmp/sum" 'nextest reports no failed test' "clean log summary"
+has "$tmp/out" 'no test failed::nextest reports no failed test; look at the failing step' "clean log is said, not blamed on a test"
+printf '     Summary [   0.0s] 0 tests run: 0 passed, 831 skipped\nerror: no tests to run\n' >"$tmp/none.log"
+report "$tmp/none.log" 3
+has "$tmp/out" 'nextest reports no failed test (error: no tests to run)' "nextest's own error line is quoted"
 
 # --- the log ends without a summary (nextest died): names the last line
 printf '        PASS [   0.003s] (1/9) nx vm_ok\nsome last output\n' >"$tmp/nosum.log"

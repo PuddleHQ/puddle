@@ -77,8 +77,10 @@ report_log() {
     fi
     if [ "$n" = 0 ] && [ -z "$cut" ]; then
         if grep -qE '^[[:space:]]*Summary \[' <<<"$clean"; then
-            echo "partition $part: nextest summary found, no test failed (the job failed in another step)"
-            echo "| none | | nextest reports no failed test; look at the failing step |" >>"$summary"
+            local err
+            err=$(grep -E '^error:' <<<"$clean" | tail -1)
+            echo "::error title=vm-linux partition $part: no test failed::nextest reports no failed test${err:+ ($(esc "$err"))}; look at the failing step"
+            echo "| none | | nextest reports no failed test${err:+ (\`$err\`)}; look at the failing step |" >>"$summary"
         else
             local last
             last=$(grep -v '^[[:space:]]*$' <<<"$clean" | tail -1 | cut -c1-200)

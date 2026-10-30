@@ -18,8 +18,9 @@ use puddle_agent_proto::yamux::client_config;
 use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{AnyAddress, StaticPolicy, StaticResolver};
 use puddle_proxy::{Proxy, ProxyConfig, Route};
+use puddle_test_kit::{EventSource, next_event_within};
 use puddle_types::{ConnectionLog, Host, NullConnectionLog, NullSink, WorkspaceName};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::net::TcpListener;
 use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 use tokio::task::JoinHandle;
@@ -34,13 +35,23 @@ pub(crate) fn guest_route() -> Option<PathBuf> {
     std::env::var_os(GUEST_ROUTE).map(PathBuf::from)
 }
 
+/// The child's stdout a line at a time, as the events [`next_event_within`] waits for.
+struct GuestLines(Lines<BufReader<ChildStdout>>);
+
+impl EventSource for GuestLines {
+    type Event = String;
+    async fn next(&mut self) -> Option<String> {
+        self.0.next_line().await.unwrap()
+    }
+}
+
 /// A test's guests in a child process: the same test binary, re-run as `test` with
 /// [`guest_route`] set. A real guest runs in its own machine, so what a guest holds (its streams,
 /// the bytes it has queued but not yet sent) is its memory, not the proxy's, and the heap a test
 /// counts in the parent is the proxy's.
 pub(crate) struct Guests {
     child: Child,
-    stdout: BufReader<ChildStdout>,
+    lines: GuestLines,
     stderr: ChildStderr,
     said: String,
 }
@@ -56,38 +67,38 @@ impl Guests {
             .spawn()
             .unwrap();
         Self {
-            stdout: BufReader::new(child.stdout.take().unwrap()),
+            lines: GuestLines(BufReader::new(child.stdout.take().unwrap()).lines()),
             stderr: child.stderr.take().unwrap(),
             child,
             said: String::new(),
         }
     }
 
-    /// Reads what the guests print until they print `line` (or end); panics naming `line` and what they
-    /// said when 30 s pass first.
-    // flake-ok: reads the child's stdout (consumes input, so it cannot be a poll), bounded to 30 s, and
-    // the panic names the line.
-    pub(crate) async fn until(&mut self, line: &str) {
-        let read = async {
-            while !self.said.contains(line)
-                && self.stdout.read_line(&mut self.said).await.unwrap() > 0
-            {}
-        };
-        assert!(
-            tokio::time::timeout(Duration::from_secs(30), read)
-                .await
-                .is_ok(),
-            "the guests did not print {line:?} within 30 s; they said: {}",
-            self.said
-        );
+    /// Reads what the guests print until they print `line`. The bound is progress, not wall time: the
+    /// guests' work takes CPU time, so on a starved machine it takes as long as it takes. Each line they
+    /// print restarts the `stall` window; the panic names `line`, the last thing the guests said and
+    /// what they said in all when `stall` passes with nothing new (or when they end first).
+    pub(crate) async fn until(&mut self, line: &str, stall: Duration) {
+        let mut last = String::from("nothing yet");
+        while !self.said.contains(line) {
+            let what = format!(
+                "the guests, waiting for {line:?}, printed nothing new (last said {last:?}; all: {:?})",
+                self.said
+            );
+            let said = next_event_within(&what, stall, &mut self.lines).await;
+            self.said.push_str(&said);
+            self.said.push('\n');
+            last = said;
+        }
     }
 
     /// Waits up to `limit` for the guests to end: whether they succeeded, and all they printed.
     pub(crate) async fn finish(mut self, limit: Duration) -> (bool, String) {
-        let mut stderr = String::new();
+        // The rest goes into its own strings: a read cut off by the timeout drops what it was filling.
+        let (mut rest, mut stderr) = (String::new(), String::new());
         let status = tokio::time::timeout(limit, async {
             let (out, err) = tokio::join!(
-                self.stdout.read_to_string(&mut self.said),
+                self.lines.0.get_mut().read_to_string(&mut rest),
                 self.stderr.read_to_string(&mut stderr)
             );
             out.unwrap();
@@ -104,7 +115,11 @@ impl Guests {
                 ),
             );
         };
-        (status.success(), self.said + &stderr)
+        let said = format!(
+            "exit status {status}; stdout: {:?}{rest:?}; stderr: {stderr:?}",
+            self.said
+        );
+        (status.success(), said)
     }
 }
 

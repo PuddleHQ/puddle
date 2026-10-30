@@ -423,7 +423,7 @@ for (const scheme of ["light", "dark"] as const) {
       await expect(dialog).toContainText("No repository");
       await scan(page, "no repository");
       scan.done();
-      expect(await csp()).toEqual([]);
+      await expect.poll(() => csp()).toEqual([]);
     });
   }
 }

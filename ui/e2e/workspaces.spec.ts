@@ -960,10 +960,14 @@ test.describe("renaming", () => {
       await openDetail(page, backend, "web-shop");
       await rename(page).click();
       await expect(dialog(page)).toBeVisible();
-      expect(await axeViolations(page), "rename dialog").toEqual([]);
+      await expect
+        .poll(() => axeViolations(page), { message: "rename dialog" })
+        .toEqual([]);
       await dialog(page).getByLabel("Name").fill("docs-site");
       await expect(dialog(page).getByRole("alert")).toBeVisible();
-      expect(await axeViolations(page), "rename refused").toEqual([]);
+      await expect
+        .poll(() => axeViolations(page), { message: "rename refused" })
+        .toEqual([]);
     });
   }
 });
@@ -1009,7 +1013,7 @@ test.describe("the network tab", () => {
       .click();
     await expect(rows).toHaveCount(n - 1);
     await expect(toast(page, /^Allowed/)).toBeVisible();
-    expect(await pendingCount(request, backend)).toBe(total - 1);
+    await expect.poll(() => pendingCount(request, backend)).toBe(total - 1);
     await page.getByRole("button", { name: "Undo" }).click();
     await expect(toast(page, /Undone/)).toBeVisible();
   });
@@ -1127,10 +1131,19 @@ test.describe("the settings tab", () => {
           data: { overrides: { ...overrides, cpus: count } },
         })
       ).ok();
-    expect(await put(CPUS_MIN - 1)).toBe(false);
-    expect(await put(CPUS_MAX + 1)).toBe(false);
-    expect(await put(CPUS_MIN)).toBe(true);
-    expect(await put(CPUS_MAX)).toBe(true);
+    // Each put is an action whose answer is the thing under test, so it is made once, not polled.
+    const accepted = {
+      belowMin: await put(CPUS_MIN - 1),
+      aboveMax: await put(CPUS_MAX + 1),
+      min: await put(CPUS_MIN),
+      max: await put(CPUS_MAX),
+    };
+    expect(accepted).toEqual({
+      belowMin: false,
+      aboveMax: false,
+      min: true,
+      max: true,
+    });
   });
 
   test("local destinations and clipboard follow the global setting until set here", async ({
@@ -1409,7 +1422,7 @@ test.describe("accessibility", () => {
           .click();
         await expect(card(page, "data-tools").getByRole("alert")).toBeVisible();
         await scan(page, "failure and toast");
-        expect(await csp()).toEqual([]);
+        await expect.poll(() => csp()).toEqual([]);
         scan.done();
       });
     }
@@ -1423,7 +1436,11 @@ test.describe("accessibility", () => {
       await openDetail(page, backend, "web-shop");
       await backend.control.script("oom");
       await expect(page.getByRole("alert")).toBeVisible();
-      expect(await axeViolations(page), "overview with the notice").toEqual([]);
+      await expect
+        .poll(() => axeViolations(page), {
+          message: "overview with the notice",
+        })
+        .toEqual([]);
 
       await page.goto("/workspaces/data-tools");
       await expect(
@@ -1432,9 +1449,11 @@ test.describe("accessibility", () => {
       await page.getByRole("button", { name: "Delete workspace…" }).click();
       const confirm = page.getByRole("alertdialog");
       await expect(confirm).toBeVisible();
-      expect(await axeViolations(page), "delete clean").toEqual([]);
+      await expect
+        .poll(() => axeViolations(page), { message: "delete clean" })
+        .toEqual([]);
       await page.keyboard.press("Escape");
-      expect(await csp()).toEqual([]);
+      await expect.poll(() => csp()).toEqual([]);
     });
 
     for (const tab of [
@@ -1460,8 +1479,10 @@ test.describe("accessibility", () => {
           page.getByRole("heading", { level: 1, name: "web-shop" }),
         ).toBeVisible();
         await expect(page.getByText("Loading")).toHaveCount(0);
-        expect(await axeViolations(page), tab).toEqual([]);
-        expect(await csp()).toEqual([]);
+        await expect
+          .poll(() => axeViolations(page), { message: tab })
+          .toEqual([]);
+        await expect.poll(() => csp()).toEqual([]);
       });
     }
   }
@@ -1473,7 +1494,9 @@ test.describe("accessibility", () => {
     await openDetail(page, backend, "docs-site");
     await page.getByRole("button", { name: "Delete workspace…" }).click();
     await expect(page.getByRole("alertdialog")).toContainText("stash@{0}");
-    expect(await axeViolations(page), "delete with losses").toEqual([]);
+    await expect
+      .poll(() => axeViolations(page), { message: "delete with losses" })
+      .toEqual([]);
   });
 
   test("the buttons are at least 24 by 24 CSS pixels (WCAG 2.5.8)", async ({
@@ -1515,14 +1538,18 @@ test.describe("a workspace whose volume is gone", () => {
     await expect(
       lost.getByRole("button", { name: "Start lost-disk" }),
     ).toBeEnabled();
-    expect(await axeViolations(page), "list").toEqual([]);
+    await expect
+      .poll(() => axeViolations(page), { message: "list" })
+      .toEqual([]);
 
     await lost.getByRole("link", { name: /^Details/ }).click();
     await expect(page.getByText("Its disk is gone")).toBeVisible();
     await page.getByRole("button", { name: "Delete workspace…" }).click();
     const confirm = page.getByRole("alertdialog");
     await expect(confirm).toContainText("nothing is lost");
-    expect(await axeViolations(page), "delete dialog").toEqual([]);
+    await expect
+      .poll(() => axeViolations(page), { message: "delete dialog" })
+      .toEqual([]);
     await confirm.getByRole("checkbox", { name: "Delete lost-disk" }).check();
     await confirm.getByRole("button", { name: "Delete workspace" }).click();
     await expect(page).toHaveURL(/\/workspaces$/);

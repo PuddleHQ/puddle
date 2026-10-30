@@ -499,7 +499,7 @@ def kit_dependency_rows(texts, add):
 # gate fail on it; flipping a rule from counted to failing is adding its id there, once its sites are fixed
 # or reasoned. The scan reads shapes, not truth: a reason is read by a reviewer, and a shape it cannot see
 # (a producer that is synchronous, a wait anchored on something already true) needs a run under load.
-FLAKE_FAILING = {"o1", "p1", "w1", "w2"}
+FLAKE_FAILING = {"o1", "o2", "p1", "w1", "w2"}
 FLAKE_OK = re.compile(r"flake-ok:\s*\S")
 FLAKE_FIX = {
     "w1": "a wait helper outside the shared test kit: use `eventually(what, within, probe)` (it names the wait and bounds it below nextest's slow-timeout), or `flake-ok: <why>`",
@@ -601,9 +601,18 @@ def flake_port_calls(code, com, raw, pickers, rows_add):
                 flake_row(rows_add, "p1", i, raw[i].strip(), ok)
 
 
+# Matchers that only a locator, page or response takes: `expect(dialog).toHaveCount(0)` on a variable is a
+# web-first assertion that waits by itself, never a value read once.
+FLAKE_WEB_FIRST = re.compile(
+    r"\)\s*\.(?:not\.)?(?:toHave(?:Count|Text|Attribute|Class|CSS|Id|JSProperty|Value|Values|Title|URL|Role|AccessibleName|AccessibleDescription)"
+    r"|toBe(?:Visible|Hidden|Checked|Enabled|Disabled|Editable|Focused|Attached|InViewport)|toContain(?:Text|Class)|toMatchAriaSnapshot|toBeOK)\b"
+)
+
+
 def flake_e2e(lines, rows_add):
-    """Rule o2 in ui/e2e: an awaited page read asserted once (`expect(await read)`, or a read kept in a variable)."""
-    awaited = {}
+    """Rule o2 in ui/e2e: an awaited page read asserted once (`expect(await read)`, or a read kept in a variable).
+    A reason on the line that reads into a variable covers every `expect` of that variable."""
+    awaited = {}  # variable -> (line of the read, whether that line carries a reason)
 
     def reasoned(i):
         for k in range(max(0, i - 3), i + 1):
@@ -617,14 +626,16 @@ def flake_e2e(lines, rows_add):
             continue
         m = re.search(r"\b(?:const|let)\s+(\w+)\s*=\s*await\s+(.*)", line)
         if m and FLAKE_PAGE_READ.search(m.group(2)):
-            awaited[m.group(1)] = i
+            awaited[m.group(1)] = (i, reasoned(i))
         if re.search(r"^\s*(?:async\s+)?function\b|^\s*test\(", line):
             awaited.clear()
         for em in re.finditer(r"(?<![.\w])expect\((?!\s*\.)", line):
             inner = line[em.end():].lstrip()
             v = re.match(r"(\w+)\s*[,)]", inner)
-            if (inner.startswith("await ") and FLAKE_PAGE_READ.search(inner)) or (v and v.group(1) in awaited):
+            if inner.startswith("await ") and FLAKE_PAGE_READ.search(inner):
                 flake_row(rows_add, "o2", i, line.strip(), reasoned(i))
+            elif v and v.group(1) in awaited and not FLAKE_WEB_FIRST.search(line[em.end():]):
+                flake_row(rows_add, "o2", i, line.strip(), reasoned(i) or awaited[v.group(1)][1])
 
 
 def flake_summary(rows):
@@ -828,6 +839,11 @@ def flake_self_test():
     case("o2 reasoned", "o2", {FLAKE_SPEC: reasoned(one_shot, "expect(await")}, 1, 0)
     lint = one_shot.replace("  expect", "  // eslint-disable-next-line no-restricted-syntax -- the data is held\n  expect")
     case("o2 eslint-disable with a reason", "o2", {FLAKE_SPEC: lint}, 1, 0)
+    held = 'test("x", async ({ page }) => {\n  const dialog = await openDialog(page);\n  await expect(dialog).toHaveCount(0);\n  await expect(dialog).not.toBeVisible();\n});\n'
+    case("o2 a locator in a variable is a web-first assertion", "o2", {FLAKE_SPEC: held}, 0, 0)
+    value = 'test("x", async ({ page }) => {\n  const n = await page.locator("li").count();\n  expect(n).toBeGreaterThan(0);\n  expect(n).toBeLessThan(9);\n});\n'
+    case("o2 a count in a variable is read once per expect", "o2", {FLAKE_SPEC: value}, 2, 2)
+    case("o2 a reason on the read covers its expects", "o2", {FLAKE_SPEC: value.replace("  const n", "  // flake-ok: the list is complete\n  const n")}, 2, 0)
 
     # A counted rule adds no `noreason` row; a rule flipped to failing adds one that opens with its fix.
     bad = {

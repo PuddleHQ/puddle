@@ -154,10 +154,17 @@ test.describe("filters and sort", () => {
   }) => {
     await openRules(page, backend);
     await page.getByRole("button", { name: "Sort by host" }).click();
+    const sorted = (hosts: string[]) =>
+      [...hosts].sort((a, b) => a.localeCompare(b));
+    await expect
+      .poll(async () => {
+        const shown = await hostsShown(page);
+        return shown.join("\n") === sorted(shown).join("\n");
+      })
+      .toBe(true);
     const asc = await hostsShown(page);
-    expect(asc).toEqual([...asc].sort((a, b) => a.localeCompare(b)));
     await page.getByRole("button", { name: "Sort by host" }).click();
-    expect(await hostsShown(page)).toEqual(asc.slice().reverse());
+    await expect.poll(() => hostsShown(page)).toEqual(asc.slice().reverse());
     await expect(
       page.getByRole("columnheader", { name: /host/i }),
     ).toHaveAttribute("aria-sort", "descending");
@@ -418,9 +425,11 @@ test.describe("deleting", () => {
     ).toBe(false);
     // Focus did not fall to the page.
     await expect(page.locator("body")).not.toBeFocused();
-    expect(
-      await page.evaluate(() => document.activeElement?.closest("tr") !== null),
-    ).toBe(true);
+    await expect
+      .poll(() =>
+        page.evaluate(() => document.activeElement?.closest("tr") !== null),
+      )
+      .toBe(true);
   });
 
   test("the last rule going leaves the empty state and focus on the heading", async ({
@@ -559,14 +568,18 @@ test.describe("accessibility", () => {
       await page.emulateMedia({ colorScheme: scheme });
       const csp = await watchCsp(page);
       await openRules(page, backend);
-      expect(await axeViolations(page), "list").toEqual([]);
+      await expect
+        .poll(() => axeViolations(page), { message: "list" })
+        .toEqual([]);
 
       await page.getByRole("button", { name: "Add rule" }).first().click();
       const add = page.getByRole("dialog", { name: "Add a rule" });
       await add.getByRole("button", { name: "Add rule" }).click();
       await expect(add.getByRole("alert")).toHaveCount(2);
-      expect(await axeViolations(page), "add with errors").toEqual([]);
-      expect(await csp()).toEqual([]);
+      await expect
+        .poll(() => axeViolations(page), { message: "add with errors" })
+        .toEqual([]);
+      await expect.poll(() => csp()).toEqual([]);
     });
 
     test(`axe finds nothing in ${scheme}: the expiry and delete dialogs and the toast`, async ({
@@ -579,19 +592,25 @@ test.describe("accessibility", () => {
       await rowFor(page, "api.example.com")
         .getByRole("button", { name: /^Change expiry/ })
         .click();
-      expect(await axeViolations(page), "expiry").toEqual([]);
+      await expect
+        .poll(() => axeViolations(page), { message: "expiry" })
+        .toEqual([]);
       await page.keyboard.press("Escape");
 
       await rowFor(page, "api.example.com")
         .getByRole("button", { name: /^Delete rule/ })
         .click();
-      expect(await axeViolations(page), "delete").toEqual([]);
+      await expect
+        .poll(() => axeViolations(page), { message: "delete" })
+        .toEqual([]);
       await page
         .getByRole("button", { name: "Delete rule", exact: true })
         .click();
       await expect(page.getByRole("status")).toContainText("Deleted");
-      expect(await axeViolations(page), "toast").toEqual([]);
-      expect(await csp()).toEqual([]);
+      await expect
+        .poll(() => axeViolations(page), { message: "toast" })
+        .toEqual([]);
+      await expect.poll(() => csp()).toEqual([]);
     });
 
     test(`axe finds nothing in ${scheme}: the empty state`, async ({
@@ -607,8 +626,10 @@ test.describe("accessibility", () => {
       await expect(
         page.getByRole("heading", { name: "No rules yet" }),
       ).toBeVisible();
-      expect(await axeViolations(page), "empty").toEqual([]);
-      expect(await csp()).toEqual([]);
+      await expect
+        .poll(() => axeViolations(page), { message: "empty" })
+        .toEqual([]);
+      await expect.poll(() => csp()).toEqual([]);
     });
   }
 

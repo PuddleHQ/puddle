@@ -174,6 +174,13 @@ jobs:
           "$RUNNER_TEMP/lab-venv/Scripts/python.exe" -m pip install --require-hashes --no-deps --quiet -r ci/lab/requirements.txt
           "$RUNNER_TEMP/lab-venv/Scripts/mitmdump.exe" --version
           echo "PUDDLE_MITMDUMP_BIN=$(cygpath -w "$RUNNER_TEMP/lab-venv/Scripts/mitmdump.exe")" >> "$GITHUB_ENV"
+      # `--version` loads only part of what a running proxy imports (on a developer Windows machine the
+      # first start after it still took 4 s against 1 s warm, and 14 to 29 s cold). Start one here, outside
+      # any test bound, so that cost is not a test's and the log shows what a start takes on this runner.
+      - name: first mitmdump start (outside the tests)
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        run: '"$RUNNER_TEMP/lab-venv/Scripts/python.exe" ci/lab/warm-mitmdump.py "$RUNNER_TEMP/lab-venv/Scripts/mitmdump.exe"'
       - name: tests
         if: steps.changed.outputs.run == 'true'
         shell: bash

@@ -564,6 +564,8 @@ mod accelerators {
 mod tests {
     use std::sync::Mutex;
 
+    use puddle_types::fixture;
+
     use super::*;
 
     fn workspace(name: &str) -> WorkspaceName {
@@ -1065,14 +1067,15 @@ mod tests {
         let Fixture { windows, .. } = fixture();
         let (addr, logins) = counting_editor().await;
         let demo = workspace("demo");
-        let first = windows.session(addr, &demo, "one").await.unwrap();
-        let second = windows.session(addr, &demo, "one").await.unwrap();
+        let (one, two) = (fixture::password("one"), fixture::password("two"));
+        let first = windows.session(addr, &demo, &one).await.unwrap();
+        let second = windows.session(addr, &demo, &one).await.unwrap();
         assert_eq!(first, second);
         assert_eq!(logins.load(Ordering::SeqCst), 1);
-        windows.session(addr, &demo, "two").await.unwrap();
+        windows.session(addr, &demo, &two).await.unwrap();
         assert_eq!(logins.load(Ordering::SeqCst), 2);
         windows.forget(&demo);
-        windows.session(addr, &demo, "two").await.unwrap();
+        windows.session(addr, &demo, &two).await.unwrap();
         assert_eq!(logins.load(Ordering::SeqCst), 3);
     }
 
@@ -1084,7 +1087,7 @@ mod tests {
         drop(free);
         assert!(
             windows
-                .session(addr, &workspace("demo"), "x")
+                .session(addr, &workspace("demo"), &fixture::password("unused"))
                 .await
                 .is_err()
         );

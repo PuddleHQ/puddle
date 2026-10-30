@@ -1488,7 +1488,9 @@ mod tests {
                 pending: denied,
             },
         ]);
-        // The database as version 1 left it: the owner column still has its old name.
+        // The database as version 1 left it: the owner column still has its old name. Each row's id
+        // is its key: the check below finds a record by it, not by where the row comes back.
+        let mut by_id = std::collections::HashMap::new();
         for record in &records {
             conn.execute(
                 "INSERT INTO audit (ts, type, sandbox_id, line) VALUES (?1, ?2, ?3, ?4)",
@@ -1500,18 +1502,22 @@ mod tests {
                 ],
             )
             .unwrap();
+            by_id.insert(conn.last_insert_rowid(), record);
         }
         crate::schema::migrate(&mut conn).unwrap();
         let mut stmt = conn
-            .prepare("SELECT type, host, outcome FROM audit ORDER BY id")
+            .prepare("SELECT id, type, host, outcome FROM audit")
             .unwrap();
-        let rows: Vec<(String, Option<String>, Option<String>)> = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        let rows: Vec<(i64, String, Option<String>, Option<String>)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
             .unwrap()
             .map(Result::unwrap)
             .collect();
         assert_eq!(rows.len(), records.len());
-        for (record, (kind, host, outcome)) in records.iter().zip(rows) {
+        for (id, kind, host, outcome) in rows {
+            let record = by_id
+                .get(&id)
+                .unwrap_or_else(|| panic!("the migration made up a row {id}"));
             assert_eq!(kind, record.kind());
             assert_eq!(host, record.host(), "{kind} host");
             assert_eq!(

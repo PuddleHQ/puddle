@@ -135,6 +135,7 @@ impl Probe for Fake {
         self.launch.clone()
     }
     fn boot(&self, limit: Duration) -> BootFacts {
+        // flake-ok: no clock is read; this checks the limit the doctor hands to `boot`, a constant.
         assert!(limit >= Duration::from_secs(5) && limit <= Duration::from_secs(25));
         self.boots.set(self.boots.get() + 1);
         self.boot.clone()

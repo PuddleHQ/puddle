@@ -163,6 +163,8 @@ async fn dead_proxies_and_the_last_network_change_are_reported() {
     let health = d.health().await;
     assert_eq!(health.dead.len(), 1);
     assert_eq!(health.dead[0].proxy, dead);
+    // flake-ok: no clock is read; `retry_in` is the backoff the discovery computed on a clock that
+    // `start_paused` froze (300 s less the virtual time spent, none here).
     assert!(health.dead[0].retry_in <= Duration::from_secs(300));
     assert!(health.dead[0].retry_in > Duration::from_secs(290));
     assert_eq!(health.epoch, 0);

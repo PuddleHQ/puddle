@@ -2,7 +2,11 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { ESLint } from "eslint";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// The first lint builds the whole type-aware ESLint program, which took over the 5 s default
+// on a loaded host.
+vi.setConfig({ testTimeout: 60_000 });
 
 const original = readFileSync(
   resolve(
@@ -22,9 +26,7 @@ async function lint(source: string) {
   return result?.messages ?? [];
 }
 
-// The first lint builds the whole type-aware ESLint program, which took over the 5 s default
-// on a loaded host; each test is one cold lint, so they get a budget that fits it.
-describe("the e2e rule against a read asserted once", { timeout: 60_000 }, () => {
+describe("the e2e rule against a read asserted once", () => {
   it("flags both awaited reads of the original code and names the fix", async () => {
     const found = (await lint(original)).filter(
       (m) => m.ruleId === "no-restricted-syntax",

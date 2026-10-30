@@ -11,7 +11,7 @@ use tauri::{AppHandle, Manager, RunEvent, Runtime};
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
-use crate::backend::{Backend, BackendError, Source};
+use crate::backend::{Backend, BackendError, EndExtensionHosts, Source};
 use crate::launcher::AppLauncher;
 use puddle_settings::ClipboardRead;
 use puddle_types::WorkspaceName;
@@ -232,7 +232,11 @@ where
     }
     let backend = tauri::async_runtime::block_on(source.start_with(options, factory, host))?;
     if let Some(launcher) = launcher {
-        let windows = SandboxWindows::new(sandbox_hooks(app, backend.problems()));
+        let windows = SandboxWindows::new(sandbox_hooks(
+            app,
+            backend.problems(),
+            backend.extension_hosts(),
+        ));
         launcher.install(windows.clone());
         app.manage(windows);
     }
@@ -241,15 +245,37 @@ where
 
 /// What the workspaces' editor windows ask of the shell: links go to the default browser or are
 /// reported as a problem, as the main window's do.
-fn sandbox_hooks<R: Runtime>(app: &AppHandle<R>, problems: &Arc<Problems>) -> Hooks {
+fn sandbox_hooks<R: Runtime>(
+    app: &AppHandle<R>,
+    problems: &Arc<Problems>,
+    extension_hosts: EndExtensionHosts,
+) -> Hooks {
     Hooks {
         open_external: opener(app, problems),
         refused: refuser(problems),
         new_window: window_reporter(problems),
-        last_closed: Arc::new(|workspace| {
-            tracing::debug!(%workspace, "last editor window closed");
-        }),
+        last_closed: ends_extension_hosts(extension_hosts),
     }
+}
+
+/// The hook for a workspace's last window closing: the guest ends the editor's extension hosts and
+/// what they started (AT-37), so a closed window leaves no extension host behind. The window system
+/// calls it, so the guest is asked from the async runtime; a workspace that is stopping already
+/// has nothing to end.
+fn ends_extension_hosts(ends: EndExtensionHosts) -> Arc<dyn Fn(&WorkspaceName) + Send + Sync> {
+    Arc::new(move |workspace| {
+        let (ends, workspace) = (Arc::clone(&ends), workspace.clone());
+        tauri::async_runtime::spawn(async move {
+            match ends(workspace.clone()).await {
+                Ok(()) => {
+                    tracing::debug!(%workspace, "extension hosts ended after the last window closed");
+                }
+                Err(reason) => {
+                    tracing::debug!(%workspace, %reason, "extension hosts not ended after the last window closed");
+                }
+            }
+        });
+    })
 }
 
 /// Opens the main window on a started backend, then keeps the backend for the exit hook.
@@ -424,6 +450,7 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
 pub(crate) mod tests {
     use puddle_lifecycle::{ShutdownReport, StopOutcome, TrimOutcome, WorkspaceOutcome};
     use puddle_types::SandboxName;
+    use std::sync::Mutex;
 
     use super::*;
 
@@ -477,13 +504,81 @@ pub(crate) mod tests {
         let _ = data_folder(&Options::default());
     }
 
+    /// A way to end extension hosts that records the workspaces it was asked about and refuses
+    /// the one named `stopped`, as a workspace with no connected agent does.
+    fn recording_ends() -> (EndExtensionHosts, Arc<Mutex<Vec<String>>>) {
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let sink = asked.clone();
+        let ends: EndExtensionHosts = Arc::new(move |workspace| {
+            sink.lock().unwrap().push(workspace.to_string());
+            Box::pin(async move {
+                if workspace.as_str() == "stopped" {
+                    Err("the workspace is not running".to_owned())
+                } else {
+                    Ok(())
+                }
+            })
+        });
+        (ends, asked)
+    }
+
+    fn wait_for(asked: &Arc<Mutex<Vec<String>>>, count: usize) -> Vec<String> {
+        puddle_test_kit::eventually_blocking(
+            "the guest is asked to end the extension hosts",
+            std::time::Duration::from_secs(10),
+            || {
+                let seen = asked.lock().unwrap().clone();
+                (seen.len() >= count).then_some(seen)
+            },
+        )
+    }
+
     #[test]
-    fn the_last_window_closing_is_not_a_problem_for_the_user() {
+    fn the_last_window_closing_asks_the_guest_to_end_the_extension_hosts_and_is_no_problem() {
         let app = tauri::test::mock_app();
         let problems = Arc::new(Problems::new(Arc::new(puddle_api::EventHub::default())));
-        let hooks = sandbox_hooks(app.handle(), &problems);
+        let (ends, asked) = recording_ends();
+        let hooks = sandbox_hooks(app.handle(), &problems, ends);
         (hooks.last_closed)(&WorkspaceName::new("demo").unwrap());
+        // A workspace that has stopped has nothing to end: not the user's concern either.
+        (hooks.last_closed)(&WorkspaceName::new("stopped").unwrap());
+        // Each ask runs in its own task, so the order is not the calls'.
+        let mut seen = wait_for(&asked, 2);
+        seen.sort();
+        assert_eq!(seen, ["demo", "stopped"]);
         assert_eq!(problems.list().len(), 0, "{:?}", problems.list());
+    }
+
+    #[test]
+    fn closing_a_popup_asks_nothing_and_the_last_window_asks_once() {
+        let app = tauri::test::mock_app();
+        let problems = Arc::new(Problems::new(Arc::new(puddle_api::EventHub::default())));
+        let (ends, asked) = recording_ends();
+        let windows = SandboxWindows::new(sandbox_hooks(app.handle(), &problems, ends));
+        let data = tempfile::tempdir().unwrap();
+        let demo = WorkspaceName::new("demo").unwrap();
+        let target = Target {
+            origin: "http://demo.localhost:4800/".parse().unwrap(),
+            data_folder: sandbox_window::data_folder(data.path(), &demo),
+            workspace: demo.clone(),
+            settings: WindowSettings {
+                zoom_hotkeys: true,
+                clipboard_read: ClipboardRead::Ask,
+            },
+            cookie: None,
+            debug_port: None,
+        };
+        windows.open(app.handle(), &target).unwrap();
+        // A second window of the same workspace (the editor's "New Window"), counted as the
+        // window system does.
+        windows.opened(&demo);
+        let ended = windows.on_event(demo.clone());
+        ended(&tauri::WindowEvent::Destroyed);
+        // An absence window: a call for the first window's end would have arrived by now.
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert!(asked.lock().unwrap().is_empty(), "a window is still open");
+        ended(&tauri::WindowEvent::Destroyed);
+        assert_eq!(wait_for(&asked, 1), ["demo"]);
     }
 
     #[test]

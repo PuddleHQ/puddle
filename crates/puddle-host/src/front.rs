@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_agent_proto::editor::{EditorServer, ServerKind};
-use puddle_front::{FileHalves, Flavour, Front, Guests, Target};
+use puddle_front::{FileHalves, Flavour, Front, Guests, ServerHalves, Target};
 use puddle_netpolicy::PuddleEndpoints;
 use puddle_ports::Ports;
 use puddle_types::WorkspaceName;
@@ -69,7 +69,8 @@ impl Guests for HostGuests {
 /// the editor's storage per origin, and the port is part of it. When that port is taken, the front
 /// takes another and the new one is kept from then on.
 ///
-/// The guests come back too: a window's sign-in asks them for the editor's password.
+/// The guests come back too (a window's sign-in asks them for the editor's password), and the
+/// stored halves of Microsoft's secret key (a deleted workspace's is forgotten through them).
 ///
 /// # Errors
 ///
@@ -79,18 +80,14 @@ pub(crate) async fn serve(
     endpoints: &PuddleEndpoints,
     ports: Ports,
     flavours: Arc<Flavours>,
-) -> Result<(Front, Arc<dyn Guests>), HostError> {
+) -> Result<(Front, Arc<dyn Guests>, Arc<dyn ServerHalves>), HostError> {
     let guests: Arc<dyn Guests> = Arc::new(HostGuests { ports, flavours });
     let file = paths.front_port_file();
     let usual = read_port(&file);
-    let front = Front::bind(
-        usual,
-        endpoints,
-        Arc::clone(&guests),
-        Arc::new(FileHalves::new(paths.front_keys())),
-    )
-    .await
-    .map_err(HostError::Front)?;
+    let halves: Arc<dyn ServerHalves> = Arc::new(FileHalves::new(paths.front_keys()));
+    let front = Front::bind(usual, endpoints, Arc::clone(&guests), Arc::clone(&halves))
+        .await
+        .map_err(HostError::Front)?;
     let port = front.local_addr().port();
     if usual != Some(port) {
         if front.preferred_port_was_taken() {
@@ -105,7 +102,7 @@ pub(crate) async fn serve(
             tracing::warn!(port, error = %err, "the browser editor's port could not be kept for the next run");
         }
     }
-    Ok((front, guests))
+    Ok((front, guests, halves))
 }
 
 /// The port kept by an earlier run; a missing or unreadable file means there is none.

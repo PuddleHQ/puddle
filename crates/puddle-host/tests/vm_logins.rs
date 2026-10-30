@@ -139,7 +139,7 @@ struct Rig {
 
 async fn rig(tag: &str, workspaces: &[&str]) -> Rig {
     let mut names = SITES.to_vec();
-    names.push("site.test");
+    names.push("site.invalid");
     let internet = web_internet(
         &names,
         WebOptions {

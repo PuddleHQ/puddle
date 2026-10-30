@@ -24,6 +24,7 @@ use puddle_api::{
 };
 use puddle_certs::CorporateRoots;
 use puddle_compute::{Runtime, SandboxInfo};
+use puddle_front::Front;
 use puddle_fs::DataLock;
 use puddle_lifecycle::{Inventory, Lifecycle, ShutdownReport, adopt_workspaces, reconcile};
 use puddle_netpolicy::{LocalAccess, NetPolicy, PuddleEndpoints};
@@ -45,6 +46,7 @@ use crate::boot::BootKit;
 use crate::dev_cert::{DevCertSource, host_dev_cert};
 use crate::doctor::system_doctor;
 use crate::files::{FileSettings, WorkspaceBook};
+use crate::front::Flavours;
 use crate::injection::{Injection, InjectorFactory, InjectorInputs, forward_sign_in_needed};
 use crate::learned::HostLearned;
 use crate::ports::{HostPorts, StorePins};
@@ -80,7 +82,7 @@ pub enum Step {
     WorkspacesAdopted,
     /// The image-pull proxy serves.
     PullProxyServing,
-    /// The sweeper and the network-change watcher run.
+    /// The sweeper, the network-change watcher and the browser editor's front run.
     BackgroundStarted,
     /// The workspace service is built over the runtime.
     WorkspacesReady,
@@ -96,7 +98,7 @@ pub enum Step {
     RoutesClosed,
     /// The API stopped serving.
     ApiStopped,
-    /// The sweeper, the watcher and the pull proxy are stopped.
+    /// The sweeper, the watcher, the pull proxy and the front are stopped.
     BackgroundStopped,
 }
 
@@ -338,6 +340,7 @@ pub struct HostShutdown {
 struct Background {
     sweeper: Sweeper,
     pull: PullRoute,
+    front: Front,
     // Dropped (stopped) with the rest; `None` where the OS cannot watch.
     _watching: Option<Watching>,
     // Tells the API's event stream about each new network epoch; ended with the rest.
@@ -564,6 +567,12 @@ impl<R: Runtime + Clone> Host<R> {
         let watching = discovery.watch();
         let network_events = AbortOnDrop::forwarding(&discovery, &events);
         let sign_in_failures = AbortOnDrop::forwarding_sign_in_failures(&egress.chain, &events);
+        // The browser editor's front: a listener on this computer's loopback that reaches each
+        // running workspace's editor through its agent link, so a window can open it by origin.
+        let flavours = Arc::new(Flavours::default());
+        let front =
+            crate::front::serve(&config.paths, &endpoints, ports.clone(), flavours.clone()).await?;
+        let front_port = front.local_addr().port();
         steps.push(Step::BackgroundStarted);
 
         let lifecycle = Arc::new(Lifecycle::new(runtime.clone(), config.shutdown.clone()));
@@ -584,6 +593,8 @@ impl<R: Runtime + Clone> Host<R> {
                 reports,
                 ports: ports.clone(),
                 rewrite_gate: options.rewrite_gate.clone(),
+                flavours,
+                front_port,
             },
             stored,
             &status,
@@ -628,6 +639,7 @@ impl<R: Runtime + Clone> Host<R> {
             background: AsyncMutex::new(Some(Background {
                 sweeper,
                 pull,
+                front,
                 _watching: watching,
                 _network_events: network_events,
                 _sign_in_failures: sign_in_failures,
@@ -747,6 +759,7 @@ impl<R: Runtime + Clone> Host<R> {
                 if let Some(background) = self.background.lock().await.take() {
                     background.sweeper.shutdown().await;
                     background.pull.shutdown().await;
+                    background.front.close().await;
                 }
                 self.step(Step::BackgroundStopped);
                 let steps = self

@@ -102,8 +102,10 @@ playwright)
     for p in $projects; do project_args+=(--project "$p"); done
     # shellcheck disable=SC2206 # extra arguments, split on purpose
     extra=(${STRESS_ARGS:-})
-    # CI=1 for forbidOnly, and no html reporter: the json one is the record.
-    starved env CI=1 PUDDLE_E2E_CPU_THROTTLE="${STRESS_THROTTLE:-4}" PUDDLE_E2E_WORKERS="${STRESS_WORKERS:-2}" \
+    # CI=1 for forbidOnly, and no html reporter: the json one is the record. --project narrows the tests but not
+    # globalSetup's warm-up, which starts every browser in the config: PUDDLE_E2E_PROJECTS narrows that too (a job
+    # that installed one browser would otherwise die in the warm-up of the other, run 40987999249).
+    starved env CI=1 PUDDLE_E2E_PROJECTS="${projects// /,}" PUDDLE_E2E_CPU_THROTTLE="${STRESS_THROTTLE:-4}" PUDDLE_E2E_WORKERS="${STRESS_WORKERS:-2}" \
         PLAYWRIGHT_JSON_OUTPUT_NAME="$out/report.json" \
         npx playwright test "${project_args[@]}" --repeat-each "$count" --reporter=list,json \
         ${extra[@]+"${extra[@]}"}

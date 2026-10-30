@@ -63,11 +63,23 @@ impl Guests {
         }
     }
 
-    /// Reads what the guests print until they print `line` (or end).
+    /// Reads what the guests print until they print `line` (or end); panics naming `line` and what they
+    /// said when 30 s pass first.
+    // flake-ok: reads the child's stdout (consumes input, so it cannot be a poll), bounded to 30 s, and
+    // the panic names the line.
     pub(crate) async fn until(&mut self, line: &str) {
-        while !self.said.contains(line) && self.stdout.read_line(&mut self.said).await.unwrap() > 0
-        {
-        }
+        let read = async {
+            while !self.said.contains(line)
+                && self.stdout.read_line(&mut self.said).await.unwrap() > 0
+            {}
+        };
+        assert!(
+            tokio::time::timeout(Duration::from_secs(30), read)
+                .await
+                .is_ok(),
+            "the guests did not print {line:?} within 30 s; they said: {}",
+            self.said
+        );
     }
 
     /// Waits up to `limit` for the guests to end: whether they succeeded, and all they printed.

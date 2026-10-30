@@ -499,7 +499,7 @@ def kit_dependency_rows(texts, add):
 # gate fail on it; flipping a rule from counted to failing is adding its id there, once its sites are fixed
 # or reasoned. The scan reads shapes, not truth: a reason is read by a reviewer, and a shape it cannot see
 # (a producer that is synchronous, a wait anchored on something already true) needs a run under load.
-FLAKE_FAILING = set()
+FLAKE_FAILING = {"o1", "w1", "w2"}
 FLAKE_OK = re.compile(r"flake-ok:\s*\S")
 FLAKE_FIX = {
     "w1": "a wait helper outside the shared test kit: use `eventually(what, within, probe)` (it names the wait and bounds it below nextest's slow-timeout), or `flake-ok: <why>`",
@@ -513,6 +513,7 @@ FLAKE_FIX = {
 }
 FLAKE_WAIT_NAME = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(until\w*|eventually\w*|wait_for\w*|wait_until\w*|poll_until\w*)\b")
 FLAKE_WAIT_HOME = "crates/puddle-test-kit/"  # the kit's own helpers (the crate is that path) are the target, not a hit
+FLAKE_KIT_CALL = re.compile(r"\b(?:eventually\w*|next_event_within|no_event_for)\s*\(")
 FLAKE_CLOCK = re.compile(r"SystemTime::now\(\)|UNIX_EPOCH|as_nanos\(\)|subsec_nanos\(\)|\{nanos\}|\bnanos\b")
 FLAKE_PAGE_READ = re.compile(r"\.(evaluate|evaluateAll|boundingBox|textContent|innerText|innerHTML|getAttribute|isVisible|isHidden|isChecked|isEnabled|isDisabled|isEditable|count|inputValue|allTextContents|allInnerTexts|all)\(|\b\w+\(\s*page\b")
 
@@ -550,6 +551,8 @@ def flake_rust(f, raw, code, com, test, rows_add):
         if t and re.search(r"\b\w*file\w*\.lock(?:_exclusive|_shared)?\(\)", line, re.I):
             hit("w2", i)
         m = FLAKE_WAIT_NAME.match(line)
+        if m and t and not f.startswith(FLAKE_WAIT_HOME) and FLAKE_KIT_CALL.search("\n".join(code[i:item_end(code, i)[0] + 1]).partition("{")[2]):
+            m = None  # a helper that only fills in the probe of a kit wait is named and bounded by the kit
         if t and m and not f.startswith(FLAKE_WAIT_HOME):
             sig, k = line, i
             while "{" not in sig and k + 1 < len(code) and k < i + 6:
@@ -782,6 +785,10 @@ def flake_self_test():
     case("w1 not a wait name", "w1", {FLAKE_HOST: "async fn settle(what: &str, within: Duration) {}\n"}, 0, 0)
     case("w1 in production code", "w1", {"crates/x/src/lib.rs": read("w1-wait-helper.bad.rs.txt")}, 0, 0)
     case("w1 reasoned", "w1", {FLAKE_HOST: reasoned(read("w1-wait-helper.bad.rs.txt"), "async fn eventually")}, 1, 0)
+    kit_wait = ("async fn wait_for_rows(store: &Store, count: usize) -> Vec<Row> {\n"
+                "    eventually(\"rows\", Duration::from_secs(5), || store.rows().filter(|r| r.len() >= count)).await\n}\n")
+    case("w1 delegates to the kit", "w1", {FLAKE_HOST: kit_wait}, 0, 0)
+    case("w1 names the kit only in a comment", "w1", {FLAKE_HOST: kit_wait.replace("    eventually(", "    // eventually(\n    loop_until(")}, 1, 1)
     case("w1 in the kit", "w1", {"crates/puddle-test-kit/tests/wait.rs": read("w1-wait-helper.bad.rs.txt")}, 0, 0)
     case("w2 original", "w2", {FLAKE_STORE: read("w2-store-lock.bad.rs.txt")}, 1, 1)
     case("w2 fix", "w2", {FLAKE_STORE: read("w2-store-lock.good.rs.txt")}, 0, 0)
@@ -820,13 +827,16 @@ def flake_self_test():
     if sorted(bad) != sorted(FLAKE_FIX):
         failures.append(f"every rule needs a failing-flip case: {sorted(set(FLAKE_FIX) ^ set(bad))}")
     for rule, files in bad.items():
+        was_failing = rule in FLAKE_FAILING
+        FLAKE_FAILING.discard(rule)
         if any(r[0] == "noreason" for r in run(files)):
             failures.append(f"{rule}: a counted rule must not add a noreason row")
         FLAKE_FAILING.add(rule)
         try:
             miss = [r for r in run(files) if r[0] == "noreason"]
         finally:
-            FLAKE_FAILING.discard(rule)
+            if not was_failing:
+                FLAKE_FAILING.discard(rule)
         if not miss or not all(r[3].startswith(f"flake-{rule}: {FLAKE_FIX[rule]} | ") for r in miss):
             failures.append(f"{rule}: a failing rule adds noreason rows that open with the whole fix text: {miss}")
     return failures

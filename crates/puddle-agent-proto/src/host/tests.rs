@@ -2,6 +2,7 @@
 use std::time::Duration;
 
 use futures_util::StreamExt;
+use puddle_test_kit::{eventually, no_event_for};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -433,8 +434,16 @@ async fn a_control_stream_with_a_bad_preamble_is_dropped() {
     send(&mut s, &AgentMessage::oom_kill(Some(1), None)).await;
     let mut buf = [0u8; 1];
     assert!(s.read(&mut buf).await.is_err());
-    assert!(h.events.try_recv().is_err());
+    // Closing joins the session, which drops its end of the channel: no event is read at once, and a
+    // late one would still show inside the window.
+    let mut events = std::mem::replace(&mut h.events, mpsc::unbounded_channel().1);
     h.close().await.unwrap();
+    no_event_for(
+        "an event for a stream with a bad preamble",
+        Duration::from_millis(200),
+        &mut events,
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -821,16 +830,6 @@ impl StreamHandler for Reaching {
     }
 }
 
-async fn until<T>(mut look: impl FnMut() -> Option<T>) -> T {
-    for _ in 0..500 {
-        if let Some(found) = look() {
-            return found;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("not seen in time");
-}
-
 #[tokio::test]
 async fn the_handler_gets_the_link_at_hello_and_the_ports_clamped_to_what_a_port_can_be() {
     let reach = Arc::new(Reach::default());
@@ -841,7 +840,10 @@ async fn the_handler_gets_the_link_at_hello_and_the_ports_clamped_to_what_a_port
     let mut c = h.control_stream().await;
     assert!(reach.link.lock().unwrap().is_none());
     send(&mut c, &AgentMessage::hello()).await;
-    until(|| reach.link.lock().unwrap().is_some().then_some(())).await;
+    eventually("the handler gets the link at hello", WAIT, || {
+        reach.link.lock().unwrap().is_some()
+    })
+    .await;
     // A hostile report: unsorted, 600 entries (the most a line holds), then repeats and a zero.
     let many: Vec<u16> = (10_001..=10_600).rev().collect();
     let line = format!(
@@ -853,7 +855,7 @@ async fn the_handler_gets_the_link_at_hello_and_the_ports_clamped_to_what_a_port
     c.write_all(b"{\"type\":\"ports\",\"listening\":[8080,0,3000,8080]}\n")
         .await
         .unwrap();
-    let told = until(|| {
+    let told = eventually("the handler gets both port reports", WAIT, || {
         let ports = reach.ports.lock().unwrap();
         (ports.len() == 2).then(|| ports.clone())
     })
@@ -873,7 +875,10 @@ async fn a_forward_opened_through_the_link_is_the_connection_once_the_agent_says
     );
     let mut c = h.control_stream().await;
     send(&mut c, &AgentMessage::hello()).await;
-    let link = until(|| reach.link.lock().unwrap().clone()).await;
+    let link = eventually("the handler gets the link at hello", WAIT, || {
+        reach.link.lock().unwrap().clone()
+    })
+    .await;
     // A fake agent: port 3000 echoes, anything else is refused.
     let mut inbound = std::mem::replace(&mut h.inbound, mpsc::unbounded_channel().1);
     tokio::spawn(async move {

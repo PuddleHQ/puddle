@@ -32,6 +32,8 @@ fn header(kind: u8, flags: u16, stream: u32, length: u32) -> [u8; 12] {
 
 /// Reads frames until one for `stream` carries `flag`. Data frames are never sent to this peer,
 /// so only headers come back.
+// flake-ok: reads frames off the pipe until one matches, so it consumes input and cannot be a poll;
+// it is bounded to 20 s and the panic names the stream and the flag.
 async fn wait_for(rx: &mut ReadHalf<tokio::io::DuplexStream>, stream: u32, flag: u16) {
     let found = tokio::time::timeout(Duration::from_secs(20), async {
         loop {

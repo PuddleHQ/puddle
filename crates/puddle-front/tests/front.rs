@@ -6,7 +6,6 @@
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
-    clippy::panic,
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
@@ -21,6 +20,7 @@ use puddle_front::{
     Editor, FileHalves, Flavour, Front, Guests, Io, ServerHalves, Target, Unreachable,
 };
 use puddle_netpolicy::{EndpointKind, PuddleEndpoints};
+use puddle_test_kit::eventually;
 use puddle_types::WorkspaceName;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -400,16 +400,6 @@ async fn upgrade(rig: &Rig, host: &str, extra: &str) -> (TcpStream, String) {
     (stream, head)
 }
 
-async fn until(what: &str, mut ready: impl FnMut() -> bool) {
-    for _ in 0..500 {
-        if ready() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("timed out waiting for {what}");
-}
-
 #[tokio::test]
 async fn a_websocket_upgrade_carries_bytes_both_ways_and_is_counted_while_it_is_open() {
     let rig = rig().await;
@@ -421,7 +411,10 @@ async fn a_websocket_upgrade_carries_bytes_both_ways_and_is_counted_while_it_is_
     let (mut one, head) = upgrade(&rig, &h, &format!("Origin: http://{h}\r\n")).await;
     assert!(head.starts_with("HTTP/1.1 101"), "{head}");
     let (mut two, _) = upgrade(&rig, &h, "").await;
-    until("two counted", || rig.front.connected(&ws(&name)) == 2).await;
+    eventually("two counted", Duration::from_secs(5), || {
+        rig.front.connected(&ws(&name)) == 2
+    })
+    .await;
     for (stream, word) in [(&mut one, &b"first"[..]), (&mut two, b"second")] {
         stream.write_all(word).await.unwrap();
         let mut back = vec![0_u8; word.len()];
@@ -429,9 +422,15 @@ async fn a_websocket_upgrade_carries_bytes_both_ways_and_is_counted_while_it_is_
         assert_eq!(back, word);
     }
     drop(one);
-    until("one left", || rig.front.connected(&ws(&name)) == 1).await;
+    eventually("one left", Duration::from_secs(5), || {
+        rig.front.connected(&ws(&name)) == 1
+    })
+    .await;
     drop(two);
-    until("none left", || rig.front.connected(&ws(&name)) == 0).await;
+    eventually("none left", Duration::from_secs(5), || {
+        rig.front.connected(&ws(&name)) == 0
+    })
+    .await;
 }
 
 #[tokio::test]

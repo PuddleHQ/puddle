@@ -31,6 +31,7 @@ use std::time::Duration;
 
 use puddle_e2e::lab::{WebHost, WebOptions};
 use puddle_store::{Actor, Effect, NewRule, Pattern, Resolution, Scope};
+use puddle_test_kit::eventually;
 use puddle_types::WorkspaceName;
 use serde_json::json;
 use support::{Api, ended, hermetic_options};
@@ -115,14 +116,18 @@ async fn wait_for_row(
     workspace: &WorkspaceName,
     wanted: &str,
 ) -> puddle_types::PendingId {
-    for _ in 0..100 {
-        let rows = vm.host.store().open_pending(Some(workspace)).unwrap();
-        if let Some(row) = rows.iter().find(|r| r.host.to_string() == wanted) {
-            return row.id;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    panic!("no open row for {wanted}: {:?}", open_rows(vm, workspace));
+    eventually(
+        &format!("an open row for {wanted}"),
+        Duration::from_secs(10),
+        || {
+            let rows = vm.host.store().open_pending(Some(workspace)).unwrap();
+            rows.iter()
+                .find(|r| r.host.to_string() == wanted)
+                .map(|row| row.id)
+                .ok_or_else(|| format!("{:?}", open_rows(vm, workspace)))
+        },
+    )
+    .await
 }
 
 /// The number of allowed connection records to `host:port` in the audit.
@@ -148,22 +153,26 @@ fn allowed_connections(vm: &VmHost, host: &str, port: u16) -> usize {
 /// tool that opened it has exited and the test has read its output, so reading the audit
 /// right away races the proxy's write.
 async fn wait_for_connection_record(vm: &VmHost, host: &str, port: u16, before: usize) {
-    for _ in 0..200 {
-        if allowed_connections(vm, host, port) > before {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    let lines: Vec<String> = vm
-        .host
-        .store()
-        .audit_lines(0, 100_000)
-        .unwrap()
-        .into_iter()
-        .map(|(_, line)| line)
-        .filter(|line| line.contains(host))
-        .collect();
-    panic!("no connection record for {host}:{port} after 20 s; audit lines naming it: {lines:#?}");
+    eventually(
+        &format!("a connection record for {host}:{port}"),
+        Duration::from_secs(20),
+        || {
+            if allowed_connections(vm, host, port) > before {
+                return Ok(());
+            }
+            let lines: Vec<String> = vm
+                .host
+                .store()
+                .audit_lines(0, 100_000)
+                .unwrap()
+                .into_iter()
+                .map(|(_, line)| line)
+                .filter(|line| line.contains(host))
+                .collect();
+            Err(format!("audit lines naming it: {lines:#?}"))
+        },
+    )
+    .await;
 }
 
 /// With capture on from the boot and no proxy setting in the command, tools that never look at

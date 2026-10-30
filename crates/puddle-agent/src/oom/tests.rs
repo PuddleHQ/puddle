@@ -295,6 +295,8 @@ impl Polls {
         )
     }
 
+    // flake-ok: waits on the watch channel the reader publishes to (no polling); bounded to 5 s, and the
+    // panic names what it waited for.
     async fn until(&mut self, what: &str, mut done: impl FnMut(Readings) -> bool) {
         tokio::time::timeout(Duration::from_secs(5), self.readings.wait_for(|&r| done(r)))
             .await

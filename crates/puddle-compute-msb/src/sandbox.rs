@@ -6,9 +6,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use microsandbox::sandbox::SandboxHandle;
-use microsandbox::{MicrosandboxError, Sandbox as SdkSandbox};
+use microsandbox::{MicrosandboxError, Sandbox as SdkSandbox, SshServer};
 use puddle_compute::{ComputeError, ExecOutput, ExecRequest, Sandbox, SshStream};
 use puddle_types::{SandboxName, WorkspaceStatus};
+use tokio::sync::OnceCell;
 
 use crate::error::{map, runtime};
 use crate::runtime::{MsbRuntime, status};
@@ -35,6 +36,13 @@ pub struct MsbSandbox {
     boot: Option<i32>,
     /// Set when a stop ended the VM by force.
     forced: AtomicBool,
+    /// The SSH server every connection of this boot is served with, set up by the first one:
+    /// the SDK's server is made to be reused. Setting it up loads the sandbox's host key and
+    /// creates it when missing, which the SDK does not do atomically, so a server per
+    /// connection let the first connections of a new sandbox race to create the key and all but
+    /// one fail with "File exists". Boxed: the SDK server is large and the handle lives in
+    /// many futures.
+    ssh: OnceCell<Box<SshServer>>,
 }
 
 impl std::fmt::Debug for MsbSandbox {
@@ -91,6 +99,7 @@ impl MsbSandbox {
             sdk,
             boot,
             forced: AtomicBool::new(false),
+            ssh: OnceCell::new(),
         }
     }
 
@@ -250,18 +259,24 @@ impl Sandbox for MsbSandbox {
     ) -> impl Future<Output = Result<(), ComputeError>> + Send {
         Box::pin(async move {
             self.this_boot("serve ssh for").await?;
-            let ssh = self.runtime.config().ssh.clone();
             let server = self
-                .runtime
-                .sdk(self.sdk.ssh().server_with(move |mut o| {
-                    for key in ssh.authorized_keys {
-                        o = o.authorized_key(key);
-                    }
-                    match ssh.inactivity_timeout {
-                        Some(t) => o.inactivity_timeout(t),
-                        None => o.disable_inactivity_timeout(),
-                    }
-                }))
+                .ssh
+                .get_or_try_init(|| async {
+                    let ssh = self.runtime.config().ssh.clone();
+                    let ops = self.sdk.ssh();
+                    self.runtime
+                        .sdk(ops.server_with(move |mut o| {
+                            for key in ssh.authorized_keys {
+                                o = o.authorized_key(key);
+                            }
+                            match ssh.inactivity_timeout {
+                                Some(t) => o.inactivity_timeout(t),
+                                None => o.disable_inactivity_timeout(),
+                            }
+                        }))
+                        .await
+                        .map(Box::new)
+                })
                 .await
                 .map_err(|e| runtime("serve ssh", &e))?;
             self.runtime

@@ -27,6 +27,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 use puddle_app::backend::{Backend, BackendError, Source};
+use puddle_app::sandbox_window::SandboxWindows;
 use puddle_app::window::MAIN_LABEL;
 use puddle_app::{Options, ShellError, context, shell, with_plugins};
 
@@ -174,6 +175,26 @@ fn the_window_opens_on_the_hosts_api_with_its_token_and_the_system_check_answers
     );
     let (status, body) = get(backend.url(), backend.token(), "/api/workspaces");
     assert_eq!((status, body.as_str()), (200, r#"{"workspaces":[]}"#));
+    shell::stop(app.handle());
+}
+
+#[test]
+fn a_started_shell_has_the_windows_the_launcher_opens_into() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = options_in(dir.path());
+    let app = app();
+    assert!(app.try_state::<SandboxWindows>().is_none());
+    let source = Source::prepare(&options, &Machine::default());
+    shell::start_with(
+        app.handle(),
+        &options,
+        source,
+        &FakeFactory(FakeRuntime::new()),
+    )
+    .unwrap();
+    // The host's own launcher is the shell's: its windows exist and none is open.
+    let windows = app.state::<SandboxWindows>();
+    assert_eq!(windows.open_count(&"demo".parse().unwrap()), 0);
     shell::stop(app.handle());
 }
 

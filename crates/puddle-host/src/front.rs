@@ -34,7 +34,7 @@ impl Flavours {
         self.map().remove(name);
     }
 
-    fn of(&self, name: &WorkspaceName) -> Option<Flavour> {
+    pub(crate) fn of(&self, name: &WorkspaceName) -> Option<Flavour> {
         self.map().get(name).copied()
     }
 
@@ -69,6 +69,8 @@ impl Guests for HostGuests {
 /// the editor's storage per origin, and the port is part of it. When that port is taken, the front
 /// takes another and the new one is kept from then on.
 ///
+/// The guests come back too: a window's sign-in asks them for the editor's password.
+///
 /// # Errors
 ///
 /// [`HostError::Front`] when no loopback port can be bound.
@@ -77,14 +79,14 @@ pub(crate) async fn serve(
     endpoints: &PuddleEndpoints,
     ports: Ports,
     flavours: Arc<Flavours>,
-) -> Result<Front, HostError> {
-    let guests = HostGuests { ports, flavours };
+) -> Result<(Front, Arc<dyn Guests>), HostError> {
+    let guests: Arc<dyn Guests> = Arc::new(HostGuests { ports, flavours });
     let file = paths.front_port_file();
     let usual = read_port(&file);
     let front = Front::bind(
         usual,
         endpoints,
-        Arc::new(guests),
+        Arc::clone(&guests),
         Arc::new(FileHalves::new(paths.front_keys())),
     )
     .await
@@ -103,7 +105,7 @@ pub(crate) async fn serve(
             tracing::warn!(port, error = %err, "the browser editor's port could not be kept for the next run");
         }
     }
-    Ok(front)
+    Ok((front, guests))
 }
 
 /// The port kept by an earlier run; a missing or unreadable file means there is none.

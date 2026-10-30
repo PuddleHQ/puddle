@@ -570,9 +570,9 @@ impl<R: Runtime + Clone> Host<R> {
         // The browser editor's front: a listener on this computer's loopback that reaches each
         // running workspace's editor through its agent link, so a window can open it by origin.
         let flavours = Arc::new(Flavours::default());
-        let front =
+        let (front, front_guests) =
             crate::front::serve(&config.paths, &endpoints, ports.clone(), flavours.clone()).await?;
-        let front_port = front.local_addr().port();
+        let front_addr = front.local_addr();
         steps.push(Step::BackgroundStarted);
 
         let lifecycle = Arc::new(Lifecycle::new(runtime.clone(), config.shutdown.clone()));
@@ -594,7 +594,8 @@ impl<R: Runtime + Clone> Host<R> {
                 ports: ports.clone(),
                 rewrite_gate: options.rewrite_gate.clone(),
                 flavours,
-                front_port,
+                front_addr,
+                front_guests,
             },
             stored,
             &status,

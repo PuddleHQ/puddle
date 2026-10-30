@@ -10,6 +10,7 @@
 //! [`puddle_types::Event::StatusChanged`] and [`puddle_types::Event::WorkspaceProgress`].
 
 use std::fmt;
+use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
 use puddle_store::{IdentityId, RepoRef};
@@ -1038,6 +1039,59 @@ pub trait Launcher: Send + Sync {
         workspace: &'a WorkspaceRecord,
         target: &'a DesktopTarget,
     ) -> BoxFuture<'a, Result<(), LaunchError>>;
+
+    /// Opens the workspace's browser editor in a window of the desktop shell. The default is for
+    /// a launcher with no window (`puddle serve`): it says so, because the editor's password is
+    /// handed to a window the shell controls and to nothing else.
+    ///
+    /// # Errors
+    ///
+    /// [`LaunchError`] with a message for the user (no window here, the editor gave no session,
+    /// the window could not be built).
+    fn open_browser<'a>(
+        &'a self,
+        _workspace: &'a WorkspaceRecord,
+        _target: &'a BrowserTarget,
+    ) -> BoxFuture<'a, Result<(), LaunchError>> {
+        Box::pin(async {
+            Err(LaunchError::new(
+                "the browser editor opens from the desktop app",
+            ))
+        })
+    }
+}
+
+/// What a browser editor window needs: where the editor is and how to sign in to it.
+#[derive(Clone)]
+pub struct BrowserTarget {
+    /// The editor's origin on the front, `http://<workspace>.localhost:<port>`.
+    pub origin: String,
+    /// The front's address, for the sign-in.
+    pub front: std::net::SocketAddr,
+    /// The workspace's settings, of which a window uses zoom and the clipboard prompt.
+    pub settings: puddle_settings::Effective,
+    /// The way to the editor's password, when its server asks for one (code-server); `None` for
+    /// Microsoft's server, which the front signs in with its own cookie.
+    pub login: Option<Arc<dyn EditorLogin>>,
+}
+
+impl fmt::Debug for BrowserTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BrowserTarget")
+            .field("origin", &self.origin)
+            .field("front", &self.front)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The editor's password, read when a window signs in. Never log what it returns.
+pub trait EditorLogin: Send + Sync {
+    /// The password of this boot of the workspace's editor server.
+    ///
+    /// # Errors
+    ///
+    /// [`LaunchError`] when the workspace is not running or its agent has none yet.
+    fn password(&self) -> BoxFuture<'_, Result<String, LaunchError>>;
 }
 
 /// What a desktop editor opens: a place in a workspace, reached through its ssh host entry.
@@ -1193,6 +1247,40 @@ fn fingerprint(check: &DeleteCheck) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct SecretLogin(String);
+
+    impl EditorLogin for SecretLogin {
+        fn password(&self) -> BoxFuture<'_, Result<String, LaunchError>> {
+            Box::pin(async move { Ok(self.0.clone()) })
+        }
+    }
+
+    #[test]
+    fn a_browser_target_shows_where_the_editor_is_and_never_the_way_to_its_password() {
+        let secret = "debug-form-secret-value".to_owned();
+        let target = BrowserTarget {
+            origin: "http://demo.localhost:4100".into(),
+            front: "127.0.0.1:4100".parse().unwrap(),
+            settings: puddle_settings::resolve(
+                &puddle_settings::GlobalSettings::default(),
+                None::<&puddle_settings::WorkspaceSettings>,
+            ),
+            login: Some(Arc::new(SecretLogin(secret.clone()))),
+        };
+        let login = target.login.as_ref().unwrap();
+        assert_eq!(
+            futures_util::FutureExt::now_or_never(login.password())
+                .unwrap()
+                .unwrap(),
+            secret
+        );
+        let shown = format!("{target:?}");
+        assert!(shown.contains("http://demo.localhost:4100"), "{shown}");
+        assert!(shown.contains("127.0.0.1:4100"), "{shown}");
+        assert!(!shown.contains(&secret), "{shown}");
+        assert!(!shown.contains("SecretLogin"), "{shown}");
+    }
 
     #[test]
     fn https_urls_pass() {

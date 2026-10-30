@@ -196,7 +196,9 @@ describe("WorkspaceDialogs", () => {
     );
     expect(api.bodies.at(-1)).toEqual({ mode: "browser" });
     await vi.waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Connect to demo" })).toBeNull(),
+      expect(
+        screen.queryByRole("dialog", { name: "Connect to demo" }),
+      ).toBeNull(),
     );
   });
 

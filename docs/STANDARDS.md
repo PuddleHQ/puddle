@@ -216,8 +216,8 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   position, and an awaited page read asserted once. A site is accepted with `flake-ok: <why>` on its line or within three
   lines above (in the UI also `eslint-disable-next-line no-restricted-syntax -- <why>`). The kinds are counted, not
   failing, until their existing sites are fixed or reasoned; a rule then moves into `FLAKE_FAILING` and an unreasoned
-  site fails the `quality` gate like the others (`flake-w1`, `flake-w2`, `flake-o1` the port rule and `flake-o2` already do). Two rules live in the linters: clippy's `disallowed-methods` names
-  `std::env::temp_dir` (workspace level `allow` until its sites move; `scripts/flake-lints-test.sh` runs it at `warn`),
+  site fails the `quality` gate like the others (`flake-n1`, `flake-w1`, `flake-w2`, `flake-o1`, the port rule and `flake-o2` already do). Two rules live in the linters: clippy's `disallowed-methods` names
+  `std::env::temp_dir` (workspace level `deny`; a site that must keep it says why in `#[expect(clippy::disallowed_methods, reason = ...)]`; `scripts/flake-lints-test.sh` runs the rule at `warn`),
   and an ESLint selector flags `expect(await ...)` in `ui/e2e` as an error (`ui/scripts/expect-poll-codemod.ts` converts a site to `await expect.poll(() => ...)`). Each rule's self-test replays the original
   code of a flake it would have caught (`scripts/flake-fixtures/`). A wait in a test goes through `puddle-test-kit`
   (`eventually(what, within, probe)`; a wait that runs out panics with its `what`, at most 100 s in, before nextest

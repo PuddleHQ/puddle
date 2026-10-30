@@ -31,15 +31,13 @@ struct TempDir(PathBuf);
 
 impl TempDir {
     fn new(tag: &str) -> Self {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static N: AtomicU64 = AtomicU64::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "xtask-runtime-{tag}-{}-{}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        Self(dir)
+        Self(
+            tempfile::Builder::new()
+                .prefix(&format!("xtask-runtime-{tag}-"))
+                .tempdir()
+                .unwrap()
+                .keep(),
+        )
     }
 }
 

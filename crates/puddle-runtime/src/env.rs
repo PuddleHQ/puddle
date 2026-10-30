@@ -106,7 +106,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn layout() -> RuntimeLayout {
-        let root = std::env::temp_dir();
+        let root = std::path::absolute("env-test").unwrap();
         RuntimeLayout::new(root.join("rt"), root.join("home")).unwrap()
     }
 

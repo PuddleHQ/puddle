@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use puddle_host::{HostShutdown, SystemPlatform};
+use puddle_host::{HostOptions, HostShutdown, MsbFactory, RuntimeFactory, SystemPlatform};
 use puddle_lifecycle::LifecycleError;
 use puddle_types::Problems;
 use tauri::{AppHandle, Manager, RunEvent, Runtime};
@@ -12,12 +12,16 @@ use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
 use crate::backend::{Backend, BackendError, Source};
+use crate::launcher::AppLauncher;
 use puddle_settings::ClipboardRead;
 use puddle_types::WorkspaceName;
 
 use crate::sandbox_window::{self, Hooks, SandboxWindows, Target, WindowSettings};
 use crate::window::{MAIN_LABEL, OpenExternal, Refused, open_main};
 use crate::{crash, desktop, links};
+
+/// The folder under the data folder that holds each workspace window's own data folder.
+const WEBVIEW_FOLDER: &str = "webview";
 
 /// Why the shell didn't start or ended badly.
 #[derive(Debug, thiserror::Error)]
@@ -185,8 +189,55 @@ pub fn start<R: Runtime>(
     options: &Options,
     source: Source,
 ) -> Result<(), ShellError> {
-    let backend = tauri::async_runtime::block_on(source.start(options))?;
+    start_with(app, options, source, &MsbFactory)
+}
+
+/// [`start`] with the host's runtime opened by `factory` (tests open a fake runtime).
+///
+/// # Errors
+///
+/// As [`start`].
+pub fn start_with<R: Runtime, F: RuntimeFactory>(
+    app: &AppHandle<R>,
+    options: &Options,
+    source: Source,
+    factory: &F,
+) -> Result<(), ShellError>
+where
+    F::Runtime: 'static,
+{
+    // The host holds the launcher from its start; its windows need the backend's problem list,
+    // so they are installed once it runs.
+    let launcher = match (&source, data_folder(options)) {
+        (Source::Host(_), Some(data)) => Some(Arc::new(AppLauncher::new(
+            app.clone(),
+            data.join(WEBVIEW_FOLDER),
+        ))),
+        _ => None,
+    };
+    let mut host = HostOptions::default();
+    if let Some(launcher) = &launcher {
+        host.launcher = launcher.clone();
+    }
+    let backend = tauri::async_runtime::block_on(source.start_with(options, factory, host))?;
+    if let Some(launcher) = launcher {
+        let windows = SandboxWindows::new(sandbox_hooks(app, backend.problems()));
+        launcher.install(windows.clone());
+        app.manage(windows);
+    }
     open(app, options, backend)
+}
+
+/// What the workspaces' editor windows ask of the shell: links go to the default browser or are
+/// reported as a problem, as the main window's do.
+fn sandbox_hooks<R: Runtime>(app: &AppHandle<R>, problems: &Arc<Problems>) -> Hooks {
+    Hooks {
+        open_external: opener(app, problems),
+        refused: refuser(problems),
+        last_closed: Arc::new(|workspace| {
+            tracing::debug!(%workspace, "last editor window closed");
+        }),
+    }
 }
 
 /// Opens the main window on a started backend, then keeps the backend for the exit hook.
@@ -250,7 +301,7 @@ fn open_probe<R: Runtime>(
     origin.set_query(None);
     let target = Target {
         origin,
-        data_folder: sandbox_window::data_folder(&data.join("webview"), &probe.workspace),
+        data_folder: sandbox_window::data_folder(&data.join(WEBVIEW_FOLDER), &probe.workspace),
         workspace: probe.workspace.clone(),
         settings: WindowSettings {
             zoom_hotkeys: true,

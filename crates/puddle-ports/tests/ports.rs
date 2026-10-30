@@ -22,7 +22,9 @@ use puddle_agent_proto::host::{
 };
 use puddle_ipc::IpcRoot;
 use puddle_netpolicy::{EndpointKind, OwnAddresses, PuddleEndpoints};
-use puddle_ports::{Pin, Pins, PinsError, PortOwner, PortRow, Ports, PortsError, ProgramLookup};
+use puddle_ports::{
+    NoLink, Pin, Pins, PinsError, PortOwner, PortRow, Ports, PortsError, ProgramLookup,
+};
 use puddle_test_kit::accepts;
 use puddle_types::{CollectingSink, Event, WorkspaceName};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -146,6 +148,13 @@ async fn rig(tag: &str) -> Rig {
 }
 
 async fn rig_with(tag: &str, tweak: impl FnOnce(Ports) -> Ports) -> Rig {
+    let mut rig = rig_without_agent(tag, tweak);
+    rig.start_agent().await;
+    rig
+}
+
+/// The host side of a workspace whose agent has not started (and so has not said hello).
+fn rig_without_agent(tag: &str, tweak: impl FnOnce(Ports) -> Ports) -> Rig {
     let dir = tempfile::Builder::new()
         .prefix(&format!("pp-{tag}-"))
         .tempdir()
@@ -186,7 +195,7 @@ async fn rig_with(tag: &str, tweak: impl FnOnce(Ports) -> Ports) -> Rig {
             });
         }
     });
-    let mut rig = Rig {
+    Rig {
         ports,
         pins,
         events,
@@ -197,9 +206,7 @@ async fn rig_with(tag: &str, tweak: impl FnOnce(Ports) -> Ports) -> Rig {
         _root: root,
         agent: None,
         _dir: dir,
-    };
-    rig.start_agent().await;
-    rig
+    }
 }
 
 impl Rig {
@@ -873,4 +880,59 @@ async fn a_port_that_stays_taken_gives_up_after_five_tries_with_the_refusal() {
     assert_eq!(tries, PORT_ATTEMPTS);
     assert_eq!(port, taken);
     assert!(matches!(forwarded, Err(PortsError::Taken { .. })));
+}
+
+#[tokio::test]
+async fn a_link_asked_for_before_the_agents_hello_arrives_with_the_hello_and_not_with_a_timer() {
+    let mut rig = rig_without_agent("late-hello", |ports| ports);
+    rig.started().await;
+    let ports = rig.ports.clone();
+    let workspace = rig.workspace.clone();
+    // A bound far above the test's own time: only the hello can end the wait early.
+    let asked = tokio::spawn(async move {
+        ports
+            .guest_link_within(&workspace, Duration::from_secs(60))
+            .await
+            .map(|_| ())
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!asked.is_finished(), "nothing said hello yet");
+    rig.start_agent().await;
+    assert_eq!(asked.await.unwrap(), Ok(()));
+}
+
+#[tokio::test]
+async fn a_link_asked_for_of_a_running_workspace_that_never_hears_from_its_agent_says_so() {
+    let rig = rig_without_agent("no-hello", |ports| ports);
+    rig.started().await;
+    let got = rig
+        .ports
+        .guest_link_within(&rig.workspace, Duration::from_millis(50))
+        .await;
+    assert_eq!(got.err(), Some(NoLink::NotConnected));
+}
+
+#[tokio::test]
+async fn a_link_asked_for_of_a_workspace_that_stops_meanwhile_is_not_running() {
+    let rig = rig_without_agent("stops", |ports| ports);
+    assert_eq!(
+        rig.ports
+            .guest_link_within(&rig.workspace, Duration::from_secs(60))
+            .await
+            .err(),
+        Some(NoLink::NotRunning),
+        "never started"
+    );
+    rig.started().await;
+    let ports = rig.ports.clone();
+    let workspace = rig.workspace.clone();
+    let asked = tokio::spawn(async move {
+        ports
+            .guest_link_within(&workspace, Duration::from_secs(60))
+            .await
+            .err()
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    rig.ports.stopped(&rig.workspace).await;
+    assert_eq!(asked.await.unwrap(), Some(NoLink::NotRunning));
 }

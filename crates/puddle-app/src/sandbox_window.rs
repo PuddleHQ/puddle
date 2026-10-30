@@ -298,19 +298,21 @@ impl SandboxWindows {
             .unwrap_or(0)
     }
 
-    /// Starts the quit: from now on a window's end does not run the last-closed hook. Says which
-    /// workspaces have an editor window open, sorted, for the caller to clean up after closing the
-    /// windows.
+    /// Starts the quit: from now on a window's end does not run the last-closed hook, and the
+    /// windows count as gone. Says which workspaces had an editor window open, sorted, for the
+    /// caller to clean up after closing the windows; a second call says none. A window opened
+    /// after this is not covered.
     pub fn begin_quit(&self) -> Vec<WorkspaceName> {
         self.inner.quitting.store(true, Ordering::SeqCst);
-        let mut open: Vec<_> = self
-            .inner
-            .open
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .keys()
-            .cloned()
-            .collect();
+        let mut open: Vec<_> = std::mem::take(
+            &mut *self
+                .inner
+                .open
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        )
+        .into_keys()
+        .collect();
         open.sort();
         open
     }

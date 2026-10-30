@@ -362,7 +362,7 @@ fn open_probe<R: Runtime>(
 /// about 4 s, and a guest that does not must not hold up the stop.
 const QUIT_CLEANUP_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// The exit hook, the quit sequence (APP-16): close every window but the main one (the workspaces'
+/// The exit hook, the quit sequence: close every window but the main one (the workspaces'
 /// editor windows), have the guest of each workspace that had one end its extension hosts, then
 /// stop the backend, which trims and stops every workspace before its API ends.
 /// Says what the backend's shutdown did; `None` when there was no backend or it had stopped
@@ -825,14 +825,14 @@ mod fixture_tests {
             .build()
             .unwrap();
         windows.opened(&demo);
-        let ended = windows.on_event(demo);
         app.manage(windows);
 
         assert!(stop(app.handle()).is_some());
-        // The window's own end, arriving after the quit began, asks nothing more.
-        ended(&tauri::WindowEvent::Destroyed);
-        std::thread::sleep(std::time::Duration::from_millis(100));
         assert_eq!(*asked.lock().unwrap(), [("demo".to_owned(), true)]);
+        // A second exit event asks nobody again: the real window system may never report the
+        // destroyed windows back once the loop has ended.
+        assert_eq!(stop(app.handle()), None);
+        assert_eq!(asked.lock().unwrap().len(), 1);
     }
 
     #[test]

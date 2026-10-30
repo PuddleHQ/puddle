@@ -422,7 +422,7 @@ impl FakeWorkspaces {
     }
 
     /// Clones `new` into the running workspace `id`: a new entry when `add`, else the entry it
-    /// already is (storage ST-51, ST-52).
+    /// already is.
     async fn clone_into(
         &self,
         id: &WorkspaceId,

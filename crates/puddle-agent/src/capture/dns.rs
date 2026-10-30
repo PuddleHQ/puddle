@@ -164,7 +164,7 @@ struct State<A> {
 }
 
 impl<A> State<A> {
-    /// Counts one `kind` of trouble and reports it to the host when a report is due (CP-44).
+    /// Counts one `kind` of trouble and reports it to the host when a report is due.
     fn trouble(&self, kind: StubDnsTrouble) {
         let Some(reports) = &self.reports else { return };
         let due = self

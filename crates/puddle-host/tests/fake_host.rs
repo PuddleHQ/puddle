@@ -2843,6 +2843,13 @@ async fn a_taken_front_port_falls_back_to_another_that_is_then_kept() {
     let first = rig.start().await;
     let moved = front_port_of(&first);
     assert_ne!(moved, taken, "the held port cannot be the front's");
+    let notice = first
+        .problems()
+        .list()
+        .into_iter()
+        .find(|p| p.key == "front-port-moved")
+        .expect("the user is told the address moved");
+    assert!(notice.detail.contains(&moved.to_string()), "{notice:?}");
     assert_eq!(
         stored_front_port(&rig),
         Some(moved),
@@ -2854,6 +2861,14 @@ async fn a_taken_front_port_falls_back_to_another_that_is_then_kept() {
     // Next run the new port is the usual one, with the old one still taken.
     let second = rig.start().await;
     assert_eq!(front_port_of(&second), moved);
+    assert!(
+        second
+            .problems()
+            .list()
+            .iter()
+            .all(|p| p.key != "front-port-moved"),
+        "a port that is kept raises no notice"
+    );
     second.shutdown().await;
     drop(held);
 }

@@ -406,6 +406,44 @@ async fn a_forwarded_port_s_origin_is_its_own_another_origin_may_not_use_it() {
 }
 
 #[tokio::test]
+async fn an_app_s_page_may_call_a_port_beside_it_but_not_another_workspace_or_the_editor() {
+    let rig = rig().await;
+    let (api, editor) = (Server::start("api").await, Server::start("editor").await);
+    rig.running.start_with_ports(
+        "a",
+        Some(editor.addr),
+        Flavour::CodeServer,
+        &[(3000, api.addr)],
+    );
+    let (api_host, port) = (forward_host(&rig, 3000, "a"), rig.front.local_addr().port());
+    let from = |origin: String| get(&rig, &api_host, "/whoami", &format!("Origin: {origin}\r\n"));
+    // The app on 5173 calling its API on 3000, as a dev setup does.
+    let beside = ask(&rig.front, &from(format!("http://5173.a.localhost:{port}"))).await;
+    assert_eq!((beside.status, beside.text()), (200, "api".to_owned()));
+    for origin in [
+        format!("http://a.localhost:{port}"),
+        format!("http://5173.b.localhost:{port}"),
+        format!("http://5173.a.localhost:{}", port.wrapping_add(1)),
+        "https://example.org".to_owned(),
+        format!("http://05173.a.localhost:{port}"),
+    ] {
+        let answer = ask(&rig.front, &from(origin.clone())).await;
+        assert_eq!(answer.status, 403, "{origin}");
+    }
+    // The editor's own origin takes no sibling: only itself.
+    let editor_host = host(&rig, "a");
+    let request = get(
+        &rig,
+        &editor_host,
+        "/",
+        &format!("Origin: http://3000.a.localhost:{port}\r\n"),
+    );
+    assert_eq!(ask(&rig.front, &request).await.status, 403);
+    assert_eq!(api.seen.connections.load(Ordering::SeqCst), 1);
+    assert_eq!(editor.seen.connections.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn a_forwarded_port_s_websocket_works_and_is_not_an_editor_window() {
     let rig = rig().await;
     let app = Server::start("app").await;

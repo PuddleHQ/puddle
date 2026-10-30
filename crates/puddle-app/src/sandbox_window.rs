@@ -93,17 +93,22 @@ pub fn data_folder(webview_root: &Path, workspace: &WorkspaceName) -> PathBuf {
     webview_root.join(workspace.as_str())
 }
 
-/// Deletes the webview's data of `workspace`, when the workspace is deleted. A folder that is not
-/// there is fine.
+/// Deletes the webview's data of `workspace` (the editor's and its forwarded ports'), when the
+/// workspace is deleted. A folder that is not there is fine.
 ///
 /// # Errors
 ///
-/// The folder exists and could not be removed (a window still has it open).
+/// A folder exists and could not be removed (a window still has it open). The other one is still
+/// tried.
 pub fn delete_data_folder(webview_root: &Path, workspace: &WorkspaceName) -> std::io::Result<()> {
-    match std::fs::remove_dir_all(data_folder(webview_root, workspace)) {
+    let editor = data_folder(webview_root, workspace);
+    let forward = forward_data_folder(&editor);
+    let gone = |folder: &Path| match std::fs::remove_dir_all(folder) {
         Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(err),
         _ => Ok(()),
-    }
+    };
+    let editor = gone(&editor);
+    gone(&forward).and(editor)
 }
 
 /// What the workspace's settings say about its windows.
@@ -458,15 +463,24 @@ impl SandboxWindows {
         let builder = builder.on_new_window(move |url, features| {
             this.new_window(&app_for_popups, &popup_target, &url, Some(features))
         });
-        self.opened(&target.workspace);
+        // Only the editor's windows are counted: the cleanup hook ends the editor's extension hosts
+        // when the last of them is gone, whatever apps are still open on forwarded ports.
+        let counted = !is_forward(target);
+        if counted {
+            self.opened(&target.workspace);
+        }
         let window = match builder.build() {
             Ok(window) => window,
             Err(err) => {
-                self.closed(&target.workspace);
+                if counted {
+                    self.closed(&target.workspace);
+                }
                 return Err(err);
             }
         };
-        window.on_window_event(self.on_event(target.workspace.clone()));
+        if counted {
+            window.on_window_event(self.on_event(target.workspace.clone()));
+        }
         #[cfg(windows)]
         accelerators::turn_off(&window);
         Ok(window)
@@ -541,16 +555,7 @@ impl SandboxWindows {
         target: &Target,
         address: &Url,
     ) -> tauri::Result<()> {
-        let mut origin = address.clone();
-        origin.set_path("/");
-        origin.set_query(None);
-        origin.set_fragment(None);
-        let forwarded = Arc::new(Target {
-            origin,
-            data_folder: target.data_folder.join(FORWARD_FOLDER),
-            cookie: None,
-            ..target.clone()
-        });
+        let forwarded = Arc::new(forward_target(target, address));
         std::fs::create_dir_all(&forwarded.data_folder)?;
         let n = self.inner.popups.fetch_add(1, Ordering::Relaxed);
         let label = popup_label(&target.workspace, n);
@@ -565,8 +570,37 @@ impl SandboxWindows {
     }
 }
 
-/// The folder, inside a workspace's data folder, of the windows on its forwarded ports.
-const FORWARD_FOLDER: &str = "forward";
+/// The target of a window on `address`, a forward of one of `editor`'s workspace's guest ports.
+fn forward_target(editor: &Target, address: &Url) -> Target {
+    let mut origin = address.clone();
+    origin.set_path("/");
+    origin.set_query(None);
+    origin.set_fragment(None);
+    Target {
+        origin,
+        data_folder: forward_data_folder(&editor.data_folder),
+        cookie: None,
+        // The page is the guest's own app: the setting that lets the editor read the clipboard
+        // unasked does not extend to it.
+        settings: WindowSettings {
+            clipboard_read: match editor.settings.clipboard_read {
+                ClipboardRead::Allow => ClipboardRead::Ask,
+                other => other,
+            },
+            ..editor.settings
+        },
+        ..editor.clone()
+    }
+}
+
+/// The data folder of the windows on a workspace's forwarded ports, beside the editor's
+/// `editor_folder` (not inside it: two webview environments do not share a folder tree). A dot
+/// cannot be part of a workspace name, so no workspace's own folder has this name.
+fn forward_data_folder(editor_folder: &Path) -> PathBuf {
+    let mut name = editor_folder.file_name().unwrap_or_default().to_owned();
+    name.push(".forward");
+    editor_folder.with_file_name(name)
+}
 
 /// Whether `target` is a window on a forwarded port rather than on the editor: its host has the
 /// port in front of `<workspace>.localhost`.
@@ -694,9 +728,16 @@ mod tests {
         assert_ne!(data_folder(root.path(), &a), data_folder(root.path(), &b));
         std::fs::create_dir_all(data_folder(root.path(), &a).join("EBWebView")).unwrap();
         std::fs::create_dir_all(data_folder(root.path(), &b)).unwrap();
+        // The windows on forwarded ports keep their data beside the editor's, and go with it.
+        let apps = forward_data_folder(&data_folder(root.path(), &a));
+        std::fs::create_dir_all(apps.join("EBWebView")).unwrap();
+        let others = forward_data_folder(&data_folder(root.path(), &b));
+        std::fs::create_dir_all(&others).unwrap();
         delete_data_folder(root.path(), &a).unwrap();
         assert!(!data_folder(root.path(), &a).exists());
+        assert!(!apps.exists());
         assert!(data_folder(root.path(), &b).exists());
+        assert!(others.exists());
         // Already gone is fine.
         delete_data_folder(root.path(), &a).unwrap();
     }
@@ -752,6 +793,72 @@ mod tests {
         ] {
             assert_eq!(class(refused), NewWindow::Refuse, "{refused}");
         }
+    }
+
+    #[test]
+    fn an_app_window_on_a_forwarded_port_does_not_decide_when_the_editor_is_done() {
+        let app = tauri::test::mock_app();
+        let data = tempfile::tempdir().unwrap();
+        let Fixture { windows, ended } = fixture();
+        let t = mock_target("demo", data.path());
+        // The editor's window and an app's window; the app's is not counted.
+        windows.open(&app, &t).unwrap();
+        windows.new_window(
+            app.handle(),
+            &t,
+            &Url::parse("http://demo.localhost:4800/proxy/5173/").unwrap(),
+            None,
+        );
+        assert_eq!(app.webview_windows().len(), 2);
+        assert_eq!(windows.open_count(&t.workspace), 1);
+        // The editor's window ends: the cleanup runs although the app's window is still open.
+        windows.on_event(t.workspace.clone())(&WindowEvent::Destroyed);
+        assert_eq!(*ended.lock().unwrap(), ["demo"]);
+        // A window the app itself opens on its own origin is an app window too.
+        let forwarded =
+            forward_target(&t, &Url::parse("http://5173.demo.localhost:4800/").unwrap());
+        assert!(is_forward(&forwarded));
+        assert!(!is_forward(&t));
+    }
+
+    #[test]
+    fn a_window_on_a_forwarded_port_is_the_guests_own_app_with_nothing_of_the_editors() {
+        let editor = Target {
+            cookie: Some(SessionCookie::new("code-server-session", "abc")),
+            settings: WindowSettings {
+                zoom_hotkeys: false,
+                clipboard_read: ClipboardRead::Allow,
+            },
+            ..target("demo", Path::new("/data"), None)
+        };
+        let address = Url::parse("http://5173.demo.localhost:4800/a/b?c=1#d").unwrap();
+        let forwarded = forward_target(&editor, &address);
+        assert_eq!(
+            forwarded.origin.as_str(),
+            "http://5173.demo.localhost:4800/"
+        );
+        assert_eq!(forwarded.workspace, editor.workspace);
+        assert!(
+            forwarded.cookie.is_none(),
+            "the editor's sign-in stays with the editor"
+        );
+        // A page of the guest's does not read the clipboard unasked, whatever the editor may.
+        assert_eq!(forwarded.settings.clipboard_read, ClipboardRead::Ask);
+        assert!(!forwarded.settings.zoom_hotkeys);
+        for (set, expected) in [
+            (ClipboardRead::Ask, ClipboardRead::Ask),
+            (ClipboardRead::Deny, ClipboardRead::Deny),
+        ] {
+            let mut again = editor.clone();
+            again.settings.clipboard_read = set;
+            assert_eq!(
+                forward_target(&again, &address).settings.clipboard_read,
+                expected
+            );
+        }
+        assert_ne!(forwarded.data_folder, editor.data_folder);
+        assert_eq!(forwarded.data_folder.file_name().unwrap(), "demo.forward");
+        assert_eq!(forwarded.data_folder.parent(), editor.data_folder.parent());
     }
 
     #[test]
@@ -1075,9 +1182,11 @@ mod tests {
             window.url().unwrap().as_str(),
             "http://5173.demo.localhost:4800/app/?a=1#top"
         );
-        assert_eq!(windows.open_count(&t.workspace), 1);
+        // Not an editor window: it does not hold up the editor's cleanup (see the next test).
+        assert_eq!(windows.open_count(&t.workspace), 0);
         // Its data is not the editor's: the page there is the guest's own app.
-        assert!(t.data_folder.join("forward").is_dir());
+        assert!(data.path().join("demo.forward").is_dir());
+        assert!(!t.data_folder.exists());
         // `/absproxy/` keeps its path: the app is told to serve under it.
         ask("http://demo.localhost:4800/absproxy/3000/x");
         assert_eq!(

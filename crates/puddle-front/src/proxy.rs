@@ -113,7 +113,14 @@ async fn respond(shared: &Shared, request: Request<Incoming>) -> Response<Body> 
         }
     };
     let own_origin = origin_of(host.as_deref().unwrap_or_default());
-    if let Some(wrong) = misdirected(&request, host.as_deref().unwrap_or_default(), &own_origin) {
+    let asked = Asked {
+        host: host.as_deref().unwrap_or_default(),
+        own_origin: &own_origin,
+        workspace: &workspace,
+        forwarded: guest_port.is_some(),
+        front_port: shared.port,
+    };
+    if let Some(wrong) = misdirected(&request, &asked) {
         return wrong;
     }
     let Some(target) = shared.guests.target(&workspace) else {
@@ -134,17 +141,39 @@ async fn respond(shared: &Shared, request: Request<Incoming>) -> Response<Body> 
     forward(shared, &workspace, &target, guest_port, request).await
 }
 
+/// Who a request was addressed to, for [`misdirected`].
+struct Asked<'a> {
+    host: &'a str,
+    own_origin: &'a str,
+    workspace: &'a WorkspaceName,
+    /// The `Host` is a forwarded port's, not the editor's.
+    forwarded: bool,
+    front_port: u16,
+}
+
+impl Asked<'_> {
+    /// Whether a request from the page at `origin` may use this address: its own origin, and, on a
+    /// forwarded port, the origin of another forwarded port of the same workspace (an app's page
+    /// calls its API on a port beside it). Never the editor's origin, which holds the sign-in.
+    fn allows(&self, origin: &str) -> bool {
+        if origin == self.own_origin {
+            return true;
+        }
+        let sibling = origin
+            .strip_prefix("http://")
+            .and_then(|host| route_of(Some(host), self.front_port).ok());
+        self.forwarded
+            && sibling.is_some_and(|r| r.guest_port.is_some() && &r.workspace == self.workspace)
+    }
+}
+
 /// A refusal for a request that names another origin than the page's own, or another authority in
 /// its target than in its `Host`.
-fn misdirected(
-    request: &Request<Incoming>,
-    host: &str,
-    own_origin: &str,
-) -> Option<Response<Body>> {
+fn misdirected(request: &Request<Incoming>, asked: &Asked<'_>) -> Option<Response<Body>> {
     let target_differs = request
         .uri()
         .authority()
-        .is_some_and(|a| !a.as_str().eq_ignore_ascii_case(host));
+        .is_some_and(|a| !a.as_str().eq_ignore_ascii_case(asked.host));
     if target_differs {
         return Some(text(
             StatusCode::MISDIRECTED_REQUEST,
@@ -152,7 +181,7 @@ fn misdirected(
         ));
     }
     let origin = request.headers().get(ORIGIN)?;
-    (origin.to_str().ok() != Some(own_origin)).then(|| {
+    (!origin.to_str().is_ok_and(|origin| asked.allows(origin))).then(|| {
         text(
             StatusCode::FORBIDDEN,
             "Another origin may not use this editor.",

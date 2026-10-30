@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! I tests for Microsoft's editor server: the agent finds the newest build, downloads it, checks
-//! the published SHA-256, unpacks it on the volume and starts it with a connection token, the
+//! the service's SHA-256, unpacks it on the volume and starts it with a connection token, the
 //! accepted terms and the telemetry choice. A fake update service and a shell script inside a
 //! small tarball stand in for Microsoft; `Downloader` is run against fake `curl` and `wget`.
 #![cfg(unix)]

@@ -7,7 +7,12 @@
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { CPUS_MAX, CPUS_MIN } from "../src/lib/settings/cpus.ts";
 import { type Backend, expect, test } from "./fixture";
-import { axeStops, axeViolations, watchCsp } from "./support";
+import {
+  axeStops,
+  watchCsp,
+  expectNoAxeViolations,
+  staysEmpty,
+} from "./support";
 
 const auth = (backend: Backend) => ({
   Authorization: `Bearer ${backend.token}`,
@@ -974,14 +979,10 @@ test.describe("renaming", () => {
       await openDetail(page, backend, "web-shop");
       await rename(page).click();
       await expect(dialog(page)).toBeVisible();
-      await expect
-        .poll(() => axeViolations(page), { message: "rename dialog" })
-        .toEqual([]);
+      await expectNoAxeViolations(page, "rename dialog");
       await dialog(page).getByLabel("Name").fill("docs-site");
       await expect(dialog(page).getByRole("alert")).toBeVisible();
-      await expect
-        .poll(() => axeViolations(page), { message: "rename refused" })
-        .toEqual([]);
+      await expectNoAxeViolations(page, "rename refused");
     });
   }
 });
@@ -1436,7 +1437,7 @@ test.describe("accessibility", () => {
           .click();
         await expect(card(page, "data-tools").getByRole("alert")).toBeVisible();
         await scan(page, "failure and toast");
-        await expect.poll(() => csp()).toEqual([]);
+        await staysEmpty(page, csp);
         scan.done();
       });
     }
@@ -1450,11 +1451,7 @@ test.describe("accessibility", () => {
       await openDetail(page, backend, "web-shop");
       await backend.control.script("oom");
       await expect(page.getByRole("alert")).toBeVisible();
-      await expect
-        .poll(() => axeViolations(page), {
-          message: "overview with the notice",
-        })
-        .toEqual([]);
+      await expectNoAxeViolations(page, "overview with the notice");
 
       await page.goto("/workspaces/data-tools");
       await expect(
@@ -1463,11 +1460,9 @@ test.describe("accessibility", () => {
       await page.getByRole("button", { name: "Delete workspace…" }).click();
       const confirm = page.getByRole("alertdialog");
       await expect(confirm).toBeVisible();
-      await expect
-        .poll(() => axeViolations(page), { message: "delete clean" })
-        .toEqual([]);
+      await expectNoAxeViolations(page, "delete clean");
       await page.keyboard.press("Escape");
-      await expect.poll(() => csp()).toEqual([]);
+      await staysEmpty(page, csp);
     });
 
     for (const tab of [
@@ -1493,10 +1488,8 @@ test.describe("accessibility", () => {
           page.getByRole("heading", { level: 1, name: "web-shop" }),
         ).toBeVisible();
         await expect(page.getByText("Loading")).toHaveCount(0);
-        await expect
-          .poll(() => axeViolations(page), { message: tab })
-          .toEqual([]);
-        await expect.poll(() => csp()).toEqual([]);
+        await expectNoAxeViolations(page, tab);
+        await staysEmpty(page, csp);
       });
     }
   }
@@ -1508,9 +1501,7 @@ test.describe("accessibility", () => {
     await openDetail(page, backend, "docs-site");
     await page.getByRole("button", { name: "Delete workspace…" }).click();
     await expect(page.getByRole("alertdialog")).toContainText("stash@{0}");
-    await expect
-      .poll(() => axeViolations(page), { message: "delete with losses" })
-      .toEqual([]);
+    await expectNoAxeViolations(page, "delete with losses");
   });
 
   test("the buttons are at least 24 by 24 CSS pixels (WCAG 2.5.8)", async ({
@@ -1552,18 +1543,14 @@ test.describe("a workspace whose volume is gone", () => {
     await expect(
       lost.getByRole("button", { name: "Start lost-disk" }),
     ).toBeEnabled();
-    await expect
-      .poll(() => axeViolations(page), { message: "list" })
-      .toEqual([]);
+    await expectNoAxeViolations(page, "list");
 
     await lost.getByRole("link", { name: /^Details/ }).click();
     await expect(page.getByText("Its disk is gone")).toBeVisible();
     await page.getByRole("button", { name: "Delete workspace…" }).click();
     const confirm = page.getByRole("alertdialog");
     await expect(confirm).toContainText("nothing is lost");
-    await expect
-      .poll(() => axeViolations(page), { message: "delete dialog" })
-      .toEqual([]);
+    await expectNoAxeViolations(page, "delete dialog");
     await confirm.getByRole("checkbox", { name: "Delete lost-disk" }).check();
     await confirm.getByRole("button", { name: "Delete workspace" }).click();
     await expect(page).toHaveURL(/\/workspaces$/);

@@ -4,7 +4,7 @@
 // time or key order.
 import type { Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeViolations, watchCsp } from "./support";
+import { watchCsp, expectNoAxeViolations, staysEmpty } from "./support";
 
 async function open(page: Page, backend: Backend, scenario: string) {
   await backend.control.reset(scenario);
@@ -41,7 +41,7 @@ test("a corporate network: the setup, sign-in, roots and routes, no notice, no C
   ).toBeVisible();
   await expect(page.getByText("No problems found.")).toBeVisible();
   await expect(notices(page).getByRole("button")).toHaveCount(0);
-  await expect.poll(() => csp()).toEqual([]);
+  await staysEmpty(page, csp);
 });
 
 test("a network change updates the open page, and trouble raises a notice that clears again", async ({
@@ -136,13 +136,9 @@ for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme });
     await open(page, backend, "corporate-network");
     await expect(page.getByText("No problems found.")).toBeVisible();
-    await expect
-      .poll(() => axeViolations(page), { message: "healthy" })
-      .toEqual([]);
+    await expectNoAxeViolations(page, "healthy");
     await backend.control.script("network-trouble");
     await expect(notices(page).getByText(/^Network trouble:/)).toBeVisible();
-    await expect
-      .poll(() => axeViolations(page), { message: "trouble" })
-      .toEqual([]);
+    await expectNoAxeViolations(page, "trouble");
   });
 }

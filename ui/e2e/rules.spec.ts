@@ -4,7 +4,7 @@
 // own backend. The page clock is the fixture's, so relative times and expiries agree with the API.
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeViolations, watchCsp } from "./support";
+import { watchCsp, expectNoAxeViolations, staysEmpty } from "./support";
 
 interface Rule {
   id: number;
@@ -568,18 +568,14 @@ test.describe("accessibility", () => {
       await page.emulateMedia({ colorScheme: scheme });
       const csp = await watchCsp(page);
       await openRules(page, backend);
-      await expect
-        .poll(() => axeViolations(page), { message: "list" })
-        .toEqual([]);
+      await expectNoAxeViolations(page, "list");
 
       await page.getByRole("button", { name: "Add rule" }).first().click();
       const add = page.getByRole("dialog", { name: "Add a rule" });
       await add.getByRole("button", { name: "Add rule" }).click();
       await expect(add.getByRole("alert")).toHaveCount(2);
-      await expect
-        .poll(() => axeViolations(page), { message: "add with errors" })
-        .toEqual([]);
-      await expect.poll(() => csp()).toEqual([]);
+      await expectNoAxeViolations(page, "add with errors");
+      await staysEmpty(page, csp);
     });
 
     test(`axe finds nothing in ${scheme}: the expiry and delete dialogs and the toast`, async ({
@@ -592,25 +588,19 @@ test.describe("accessibility", () => {
       await rowFor(page, "api.example.com")
         .getByRole("button", { name: /^Change expiry/ })
         .click();
-      await expect
-        .poll(() => axeViolations(page), { message: "expiry" })
-        .toEqual([]);
+      await expectNoAxeViolations(page, "expiry");
       await page.keyboard.press("Escape");
 
       await rowFor(page, "api.example.com")
         .getByRole("button", { name: /^Delete rule/ })
         .click();
-      await expect
-        .poll(() => axeViolations(page), { message: "delete" })
-        .toEqual([]);
+      await expectNoAxeViolations(page, "delete");
       await page
         .getByRole("button", { name: "Delete rule", exact: true })
         .click();
       await expect(page.getByRole("status")).toContainText("Deleted");
-      await expect
-        .poll(() => axeViolations(page), { message: "toast" })
-        .toEqual([]);
-      await expect.poll(() => csp()).toEqual([]);
+      await expectNoAxeViolations(page, "toast");
+      await staysEmpty(page, csp);
     });
 
     test(`axe finds nothing in ${scheme}: the empty state`, async ({
@@ -626,10 +616,8 @@ test.describe("accessibility", () => {
       await expect(
         page.getByRole("heading", { name: "No rules yet" }),
       ).toBeVisible();
-      await expect
-        .poll(() => axeViolations(page), { message: "empty" })
-        .toEqual([]);
-      await expect.poll(() => csp()).toEqual([]);
+      await expectNoAxeViolations(page, "empty");
+      await staysEmpty(page, csp);
     });
   }
 

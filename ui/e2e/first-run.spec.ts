@@ -4,7 +4,7 @@
 // run again from Settings. Each test has a backend of its own, reset before it.
 import type { APIRequestContext, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeViolations, watchCsp } from "./support";
+import { watchCsp, expectNoAxeViolations, staysEmpty } from "./support";
 
 const auth = (backend: Backend) => ({
   Authorization: `Bearer ${backend.token}`,
@@ -136,7 +136,7 @@ test("a fresh install is led through every step and then opens on the workspaces
   await page.goto("/");
   await expect(page).toHaveURL(/\/workspaces$/);
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expect.poll(() => csp()).toEqual([]);
+  await staysEmpty(page, csp);
 });
 
 test("a blocking finding stops the flow until it is fixed, and the report can be copied", async ({
@@ -285,9 +285,7 @@ for (const scheme of ["light", "dark"] as const) {
           page.getByRole("radio", { name: /code-server/ }),
         ).toBeVisible();
       }
-      await expect
-        .poll(() => axeViolations(page), { message: path })
-        .toEqual([]);
+      await expectNoAxeViolations(page, path);
     });
   }
 }
@@ -314,12 +312,12 @@ test("the blocked system check and the form dialog pass the accessibility scan",
   await page.goto("/welcome/check");
   await expect(page.getByText(/1 problem to fix/)).toBeVisible();
   await page.getByText("Technical details").click();
-  await expect.poll(() => axeViolations(page)).toEqual([]);
+  await expectNoAxeViolations(page);
 
   await page.goto("/welcome/workspace");
   await page.getByRole("button", { name: "Create a workspace" }).click();
   await expect(
     page.getByRole("dialog", { name: "New workspace" }),
   ).toBeVisible();
-  await expect.poll(() => axeViolations(page)).toEqual([]);
+  await expectNoAxeViolations(page);
 });

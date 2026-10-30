@@ -28,6 +28,8 @@ use puddle_agent::microsoft::{
 use puddle_agent_proto::editor::EditorServer;
 use sha2::{Digest as _, Sha256};
 
+use crate::common::ReservedPort;
+
 const WAIT: Duration = Duration::from_secs(30);
 const COMMIT: &str = "e646868227c3e3a9e3f24277c8c7220be42c0be7";
 const RELEASE: &str = "1.143.1";
@@ -598,17 +600,9 @@ async fn an_oversized_answer_stops_the_read_at_the_bound() {
 
 struct Fixture {
     _dir: tempfile::TempDir,
+    _port: ReservedPort,
     out: PathBuf,
     config: EditorConfig,
-}
-
-/// A port nothing listens on now.
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
 }
 
 fn fixture(telemetry: bool) -> Fixture {
@@ -626,13 +620,15 @@ fn fixture_updating(telemetry: bool, auto_update: bool) -> Fixture {
         telemetry,
         auto_update,
     );
-    server.port = free_port();
+    let reserved = ReservedPort::new();
+    server.port = reserved.port();
     let config = EditorConfig {
         server,
         password_file: dir.path().join("run/editor-password"),
     };
     Fixture {
         _dir: dir,
+        _port: reserved,
         out,
         config,
     }

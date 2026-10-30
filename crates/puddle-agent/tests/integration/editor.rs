@@ -18,6 +18,8 @@ use puddle_agent::editor::EditorConfig;
 use puddle_agent::{Agent, Config};
 use puddle_agent_proto::editor::EditorServer;
 
+use crate::common::ReservedPort;
+
 const WAIT: Duration = Duration::from_secs(20);
 
 /// Records its arguments, its `PASSWORD` and the number of `VSCODE_` variables it was started
@@ -34,18 +36,10 @@ exec sleep 600
 
 struct Fixture {
     _dir: tempfile::TempDir,
+    _port: ReservedPort,
     out: PathBuf,
     config: Config,
     password_file: PathBuf,
-}
-
-/// A port nothing listens on now.
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
 }
 
 fn fixture() -> Fixture {
@@ -63,7 +57,8 @@ fn fixture() -> Fixture {
         120,
     );
     server.dir = release.to_string_lossy().into_owned();
-    server.port = free_port();
+    let reserved = ReservedPort::new();
+    server.port = reserved.port();
     let password_file = dir.path().join("run/editor-password");
     let config = Config {
         listen: "127.0.0.1:0".parse().unwrap(),
@@ -78,6 +73,7 @@ fn fixture() -> Fixture {
     };
     Fixture {
         _dir: dir,
+        _port: reserved,
         out,
         config,
         password_file,

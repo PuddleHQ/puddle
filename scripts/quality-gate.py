@@ -827,7 +827,7 @@ def flake_self_test():
     if sorted(bad) != sorted(FLAKE_FIX):
         failures.append(f"every rule needs a failing-flip case: {sorted(set(FLAKE_FIX) ^ set(bad))}")
     for rule, files in bad.items():
-FLAKE_FAILING = {"n1", "o1", "w1", "w2"}
+        was_failing = rule in FLAKE_FAILING
         FLAKE_FAILING.discard(rule)
         if any(r[0] == "noreason" for r in run(files)):
             failures.append(f"{rule}: a counted rule must not add a noreason row")
@@ -835,7 +835,7 @@ FLAKE_FAILING = {"n1", "o1", "w1", "w2"}
         try:
             miss = [r for r in run(files) if r[0] == "noreason"]
         finally:
-FLAKE_FAILING = {"n1", "o1", "w1", "w2"}
+            if not was_failing:
                 FLAKE_FAILING.discard(rule)
         if not miss or not all(r[3].startswith(f"flake-{rule}: {FLAKE_FIX[rule]} | ") for r in miss):
             failures.append(f"{rule}: a failing rule adds noreason rows that open with the whole fix text: {miss}")

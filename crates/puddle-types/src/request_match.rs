@@ -91,7 +91,8 @@ impl CanonicalPath {
     /// - the path with a `#` read as a plain character (a server that keeps it reads
     ///   `/public#/../admin` as `/admin`);
     /// - the path without a leading `//name`, which a parser that resolves the target against a
-    ///   base URL takes as an authority (`//evil.example/admin` is `/admin` there).
+    ///   base URL takes as an authority (`//evil.example/admin` is `/admin` there), cut from the
+    ///   path as written and from the decoded path.
     ///
     /// Each text is read in every combination of these choices, because servers combine them in
     /// every way: decode the whole path and then split it, or split where it has a `/` or `\`
@@ -132,16 +133,12 @@ impl CanonicalPath {
                 .replace('#', "%23");
             texts.push(target_path(&literal).to_owned());
         }
-        if let Some(rest) = decoded
-            .strip_prefix(['/', '\\'])
-            .and_then(|rest| rest.strip_prefix(['/', '\\']))
-        {
-            // More separators after the first two are skipped before the authority.
-            let rest = rest.trim_start_matches(['/', '\\']);
-            let after = rest
-                .find(['/', '\\'])
-                .map_or("", |at| rest.get(at..).unwrap_or_default());
-            texts.push(after.to_owned());
+        // The authority is cut before decoding too: a parser that resolves against a base takes
+        // it from the path as written, so an escaped `/` after it stays inside one name.
+        for text in [path, decoded.as_str()] {
+            if let Some(after) = without_authority(text) {
+                texts.push(after.to_owned());
+            }
         }
         let mut readings: Vec<Self> = Vec::new();
         for text in &texts {
@@ -156,6 +153,18 @@ impl CanonicalPath {
         }
         readings
     }
+}
+
+/// `text` without a leading `//name` (or `\\name`), which a parser that resolves the target
+/// against a base URL takes as an authority. `None` when it has none.
+fn without_authority(text: &str) -> Option<&str> {
+    let rest = text.strip_prefix(['/', '\\'])?.strip_prefix(['/', '\\'])?;
+    // More separators after the first two are skipped before the authority.
+    let rest = rest.trim_start_matches(['/', '\\']);
+    Some(
+        rest.find(['/', '\\'])
+            .map_or("", |at| rest.get(at..).unwrap_or_default()),
+    )
 }
 
 fn hex(byte: u8) -> Option<u8> {

@@ -513,7 +513,7 @@ FLAKE_FIX = {
 }
 FLAKE_WAIT_NAME = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(until\w*|eventually\w*|wait_for\w*|wait_until\w*|poll_until\w*)\b")
 FLAKE_WAIT_HOME = "crates/puddle-test-kit/"  # the kit's own helpers (the crate is that path) are the target, not a hit
-FLAKE_KIT_CALL = re.compile(r"\b(?:eventually\w*|next_event_within|no_event_for)\s*\(")
+FLAKE_KIT_CALL = re.compile(r"\b(?:eventually\w*|next_event_\w+|no_event_\w+)\s*\(")
 FLAKE_CLOCK = re.compile(r"SystemTime::now\(\)|UNIX_EPOCH|as_nanos\(\)|subsec_nanos\(\)|\{nanos\}|\bnanos\b")
 FLAKE_PAGE_READ = re.compile(r"\.(evaluate|evaluateAll|boundingBox|textContent|innerText|innerHTML|getAttribute|isVisible|isHidden|isChecked|isEnabled|isDisabled|isEditable|count|inputValue|allTextContents|allInnerTexts|all)\(|\b\w+\(\s*page\b")
 

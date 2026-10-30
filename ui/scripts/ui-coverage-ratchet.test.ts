@@ -152,7 +152,7 @@ describe("main", () => {
     const { args, b } = files(t(95), t(90));
     expect(main(args)).toBe(0);
     expect(out).toHaveBeenLastCalledWith(
-      "ui coverage ratchet: coverage is above the baseline (would raise it to lines 95, branches 95, functions 95, statements 95); run `scripts/check.sh ui` locally and commit ui/coverage-baseline.json",
+      "ui coverage ratchet: coverage is above the baseline (would raise it to lines 95, branches 95, functions 95, statements 95); the nightly coverage-baseline workflow raises it",
     );
     expect(JSON.parse(readFileSync(b, "utf8"))).toEqual(t(90));
   });
@@ -162,7 +162,7 @@ describe("main", () => {
     expect(main([...args, "--write"])).toBe(0);
     expect(JSON.parse(readFileSync(b, "utf8"))).toEqual(t(95));
     expect(out).toHaveBeenLastCalledWith(
-      `ui coverage ratchet: baseline raised to lines 95, branches 95, functions 95, statements 95 in ${b}; commit it`,
+      `ui coverage ratchet: baseline raised to lines 95, branches 95, functions 95, statements 95 in ${b}; do not commit it, the nightly coverage-baseline workflow raises it`,
     );
   });
 

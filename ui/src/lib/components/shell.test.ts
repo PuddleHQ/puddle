@@ -53,8 +53,13 @@ beforeEach(() => {
   health.start.mockClear();
   localStorage.clear();
   delete document.documentElement.dataset["theme"];
+  // The theme is one object for the whole file: read the (now empty) storage so every test starts on "system".
+  theme.init();
 });
-afterEach(cleanup);
+afterEach(() => {
+  vi.restoreAllMocks();
+  cleanup();
+});
 
 describe("Sidebar", () => {
   it("lists the six sections and marks the current one", () => {
@@ -115,7 +120,6 @@ describe("Sidebar", () => {
     expect(set).not.toHaveBeenCalled();
     expect(theme.choice).toBe("system");
     expect(toasts.items).toHaveLength(shown);
-    vi.restoreAllMocks();
   });
 
   it("says why a theme choice wasn't saved", async () => {
@@ -130,7 +134,6 @@ describe("Sidebar", () => {
         "The theme changed here but wasn't saved. Settings file is damaged.",
       ),
     );
-    vi.restoreAllMocks();
   });
 });
 

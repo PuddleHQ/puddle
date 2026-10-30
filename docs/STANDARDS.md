@@ -564,6 +564,9 @@ pull request and push runs are untouched. The result jobs still run `if: always(
 another job is cancelled with the rest and shows on the requeue. `actions: write` is job-wide, so on a pull request from
 this repository (not a fork) the build code of those jobs holds a token that can cancel runs; it cannot write code.
 
+The `cancel-group` step first annotates the calling job with the failed job and step names (`merge group cancelled:
+this job failed first`), in every workflow, because the cancel ends that job as `cancelled` and the group's result checks
+say only that (PR 376's group on 2026-10-30 was a compile error that showed as five cancelled runs).
 A cancelled job keeps only its annotations, so a `vm-linux` partition that fails writes one `::error` per failed or stopped
 test and one for the run deadline before the cancel (`ci/vm-tests-report.sh log`, with the slowest passing tests and
 `ci/runner-speed.sh`'s figures in the job summary), and the result job prints them back (`ci/vm-tests-report.sh run`),

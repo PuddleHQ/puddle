@@ -13,9 +13,13 @@
 )]
 mod support;
 
-use puddle_runtime::{DEV_OVERRIDE_VAR, DevOverride, RuntimeEnv, RuntimeLayout};
+use puddle_runtime::{DEV_OVERRIDE_VAR, DevOverride};
+#[cfg(unix)]
+use puddle_runtime::{RuntimeEnv, RuntimeLayout};
+#[cfg(unix)]
 use support::TempDir;
 
+#[cfg(unix)]
 const USER_VARS: [(&str, &str); 7] = [
     ("MSB_PATH", "/user/bin/msb"),
     ("MSB_HOME", "/user/.microsandbox"),

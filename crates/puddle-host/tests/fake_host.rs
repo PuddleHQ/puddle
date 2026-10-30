@@ -2581,7 +2581,6 @@ async fn a_browser_attach_without_a_window_says_the_editor_opens_from_the_deskto
         reply.json(),
         json!({
             "opened": false,
-            "url": null,
             "message": "the browser editor opens from the desktop app"
         })
     );

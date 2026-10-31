@@ -59,7 +59,8 @@ impl Rcode {
 /// The name in a question.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueryName {
-    /// Letters, digits, `-` and `_` only, lower-cased, no trailing dot (the root is empty).
+    /// Dot-separated labels of letters, digits, `-` and `_`, lower-cased, no trailing dot (the root is
+    /// empty).
     Plain(String),
     /// Anything else (escape characters, non-ASCII bytes, spaces).
     Odd,

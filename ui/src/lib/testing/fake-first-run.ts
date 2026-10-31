@@ -70,6 +70,14 @@ export class FakeFirstRun {
   hold: Promise<void> | null = null;
   /** Answers `PUT /api/first-run` with a failure. */
   refusePut = false;
+  /** What a press of "Trust it now" comes to; the state follows it. */
+  trustAnswer: {
+    dev_certificate: FirstRun["dev_certificate"];
+    detail: string | null;
+    waiting: boolean;
+  } = { dev_certificate: "trusted", detail: null, waiting: false };
+  /** Holds the next trust request until released, like Windows' confirmation left open. */
+  holdTrust: Promise<void> | null = null;
 
   GET = async (path: string) => {
     this.calls.push(`GET ${path}`);
@@ -111,5 +119,21 @@ export class FakeFirstRun {
       completed_at: completed ? 1_700_000_000_000 : null,
     };
     return { data: this.state, response: response(200) };
+  };
+
+  POST = async (path: string) => {
+    this.calls.push(`POST ${path}`);
+    if (this.down) throw new TypeError("down");
+    const response = (status: number) =>
+      ({ status, ok: status < 400 }) as Response;
+    if (path !== "/api/dev-certificate/trust") {
+      throw new Error(`unexpected POST ${path}`);
+    }
+    if (this.holdTrust) await this.holdTrust;
+    this.state = {
+      ...this.state,
+      dev_certificate: this.trustAnswer.dev_certificate,
+    };
+    return { data: this.trustAnswer, response: response(200) };
   };
 }

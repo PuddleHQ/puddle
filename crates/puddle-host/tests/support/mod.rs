@@ -320,6 +320,14 @@ impl puddle_api::DevCertService for TestDevCert {
     fn status(&self) -> puddle_api::wire::DevCertificate {
         puddle_api::wire::DevCertificate::Unsupported
     }
+
+    fn trust(&self) -> puddle_api::wire::DevCertTrustResult {
+        puddle_api::wire::DevCertTrustResult {
+            dev_certificate: puddle_api::wire::DevCertificate::Unsupported,
+            detail: None,
+            waiting: false,
+        }
+    }
 }
 
 /// A host that gives its guests no development certificate and reports none: the host's own
@@ -335,6 +343,14 @@ impl GuestCertSource for NoDevCert {
 impl puddle_api::DevCertService for NoDevCert {
     fn status(&self) -> puddle_api::wire::DevCertificate {
         puddle_api::wire::DevCertificate::NotChecked
+    }
+
+    fn trust(&self) -> puddle_api::wire::DevCertTrustResult {
+        puddle_api::wire::DevCertTrustResult {
+            dev_certificate: puddle_api::wire::DevCertificate::NotChecked,
+            detail: None,
+            waiting: false,
+        }
     }
 }
 

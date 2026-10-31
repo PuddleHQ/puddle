@@ -157,12 +157,26 @@ describe("deleting", () => {
     const store = make();
     await store.refresh();
     api.refuse = { status: 500, message: "x" };
+    expect(await store.remove(1)).toEqual({ ok: false, message: "X." });
+    expect(store.rules).toHaveLength(1);
+    api.DELETE = async () =>
+      ({ error: undefined, response: { status: 500, ok: false } }) as never;
     expect(await store.remove(1)).toEqual({
       ok: false,
       message: "Puddle couldn't delete that rule.",
     });
-    expect(store.rules).toHaveLength(1);
-    api.down = true;
+    api.DELETE = async () =>
+      ({
+        error: { error: "internal", message: "the store is locked" },
+        response: { status: 500, ok: false } as Response,
+      }) as never;
+    expect(await store.remove(1)).toEqual({
+      ok: false,
+      message: "The store is locked.",
+    });
+    api.DELETE = async () => {
+      throw new TypeError("down");
+    };
     expect(await store.remove(1)).toEqual({
       ok: false,
       message: "Puddle's service isn't answering.",

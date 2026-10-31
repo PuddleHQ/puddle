@@ -263,9 +263,7 @@ describe("on the Rules screen", () => {
     await fireEvent.click(
       await screen.findByRole("button", { name: "Delete rule" }),
     );
-    expect(
-      await screen.findByText("Puddle couldn't delete that rule."),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("X.")).toBeInTheDocument();
     expect(store.rules).toHaveLength(1);
   });
 });

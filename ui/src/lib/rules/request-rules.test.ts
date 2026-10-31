@@ -138,6 +138,12 @@ describe("the path check", () => {
       /at most 32 segments/,
     ],
   ])("refuses %j", (path, words) => expect(pathProblem(path)).toMatch(words));
+  it("counts the segments the API counts: not a closing ** and not . or ..", () => {
+    const names = Array.from({ length: 32 }, () => "a").join("/");
+    expect(pathProblem(`/${names}/**`)).toBeNull();
+    // A path with `.` or `..` is counted by the API after it resolves them.
+    expect(pathProblem(`/./${names}/x`)).toBeNull();
+  });
   it("allows exactly 32 segments", () => {
     expect(
       pathProblem(`/${Array.from({ length: 32 }, () => "a").join("/")}`),

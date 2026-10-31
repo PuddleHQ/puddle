@@ -95,11 +95,17 @@ export class RequestRulesStore {
   /** Deletes a rule. A rule that is already gone counts as deleted. */
   async remove(id: number): Promise<RemoveResult> {
     try {
-      const { response } = await this.#api.DELETE("/api/request-rules/{id}", {
-        params: { path: { id } },
-      });
+      const { error, response } = await this.#api.DELETE(
+        "/api/request-rules/{id}",
+        { params: { path: { id } } },
+      );
       if (!response.ok && response.status !== 404) {
-        return { ok: false, message: "Puddle couldn't delete that rule." };
+        return {
+          ok: false,
+          message: error?.message
+            ? sentence(error.message)
+            : "Puddle couldn't delete that rule.",
+        };
       }
       this.rules = this.rules.filter((r) => r.id !== id);
       return { ok: true };

@@ -12,7 +12,7 @@ export const MAX_METHODS = 16;
 export const MAX_PATH_SEGMENTS = 32;
 export const MAX_PATH_BYTES = 512;
 
-/** The two things the screen says about every rule of this kind (rules spec R-49, R-50). */
+/** The two things the screen says about every rule of this kind. */
 export const REQUEST_RULES_INTRO =
   "A rule here only refuses: it never opens a host. It names a host a workspace may reach and the methods and paths on it that are not allowed, such as DELETE on /repos/**. Puddle reads the requests to that host, so it decrypts the host while the rule exists, whatever the decrypt setting says.";
 
@@ -101,7 +101,10 @@ export function pathProblem(path: string): string | null {
   const open = named.indexOf("**");
   if (open !== -1 && open !== named.length - 1)
     return "** may only end a path (/gists/**).";
-  if (named.length > MAX_PATH_SEGMENTS)
+  // `.` and `..` change what is counted once the API resolves them, so a path with one is left to it.
+  const resolved = named.some((s) => s === "." || s === "..");
+  const counted = named.filter((s) => s !== "**");
+  if (!resolved && counted.length > MAX_PATH_SEGMENTS)
     return `A path has at most ${MAX_PATH_SEGMENTS} segments.`;
   return null;
 }

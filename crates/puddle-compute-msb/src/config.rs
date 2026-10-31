@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use microsandbox::sandbox::{SandboxConfig, VolumeMount};
 use puddle_compute::{ComputeError, MountKind};
 
 /// The SDK's SSH server settings for [`puddle_compute::Sandbox::serve_ssh`].
@@ -44,8 +45,12 @@ pub struct MsbConfig {
     /// The `libkrunfw` library released with it.
     pub libkrunfw: PathBuf,
     /// The only directory file mounts may come from: it holds just the files meant for guests,
-    /// never Puddle's data (database, tokens, CA keys).
+    /// never Puddle's data (database, tokens, CA keys). The one exception is a checkout's `.git`
+    /// ([`MountKind::Checkout`]), which has a rule of its own.
     pub guest_share: PathBuf,
+    /// Folders no checkout mount may lie in or hold, besides the msb home and the guest share:
+    /// Puddle's data folder.
+    pub protected_dirs: Vec<PathBuf>,
     /// SSH server settings.
     pub ssh: SshConfig,
     /// Extra roots the registry client trusts for image pulls, as PEM: the corporate roots
@@ -86,6 +91,7 @@ impl MsbConfig {
             msb: msb.into(),
             libkrunfw: libkrunfw.into(),
             guest_share: guest_share.into(),
+            protected_dirs: Vec::new(),
             ssh: SshConfig::default(),
             registry_roots: Vec::new(),
             registry_proxy: None,
@@ -130,6 +136,14 @@ impl MsbConfig {
         self
     }
 
+    /// The same config, refusing a checkout mount inside `dir` or holding it (see
+    /// [`MsbConfig::protected_dirs`]).
+    #[must_use]
+    pub fn with_protected_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.protected_dirs.push(dir.into());
+        self
+    }
+
     /// The same config, accepting SSH logins with `key` (an OpenSSH public key line).
     #[must_use]
     pub fn with_ssh_key(mut self, key: impl Into<String>) -> Self {
@@ -163,13 +177,43 @@ impl MsbConfig {
 
     /// Checks that `host` lies under [`MsbConfig::guest_share`] after resolving symlinks and
     /// `..`, so a mount can never expose Puddle's own data. The share root itself is refused: a
-    /// directory mount names a folder below it.
+    /// directory mount names a folder below it. A [`MountKind::Checkout`] instead must be the
+    /// canonical path of a real `.git` directory outside the msb home, the guest share and every
+    /// [`MsbConfig::protected_dirs`] folder, owned by this user on Unix.
     ///
     /// # Errors
     ///
     /// [`ComputeError::InvalidSpec`] when it doesn't, when either path can't be resolved, or
     /// when it isn't a file (or a directory, for [`MountKind::Dir`]) as the mount says.
     pub fn check_mount_source(&self, host: &Path, kind: MountKind) -> Result<(), ComputeError> {
+        match kind {
+            MountKind::Checkout => self.check_checkout(host),
+            MountKind::File => self.check_shared(host, true),
+            MountKind::Dir => self.check_shared(host, false),
+        }
+    }
+
+    /// The checkout rule (see [`crate::checkout`]), with the msb home, the guest share and every
+    /// [`MsbConfig::protected_dirs`] folder protected.
+    fn check_checkout(&self, host: &Path) -> Result<(), ComputeError> {
+        // Without the data folder named, a checkout inside it would pass: fail closed.
+        if self.protected_dirs.is_empty() {
+            return Err(ComputeError::InvalidSpec {
+                reason: format!(
+                    "the checkout {} can't be mounted: Puddle's data folder was not given to the runtime",
+                    host.display()
+                ),
+            });
+        }
+        let protected: Vec<&Path> = [self.home.as_path(), self.guest_share.as_path()]
+            .into_iter()
+            .chain(self.protected_dirs.iter().map(PathBuf::as_path))
+            .collect();
+        crate::checkout::check(host, &protected)
+    }
+
+    /// The guest-share rule for a file (`file`) or directory mount.
+    fn check_shared(&self, host: &Path, file: bool) -> Result<(), ComputeError> {
         let invalid = |reason: String| ComputeError::InvalidSpec { reason };
         let root = self.guest_share.canonicalize().map_err(|e| {
             invalid(format!(
@@ -183,26 +227,67 @@ impl MsbConfig {
                 host.display()
             ))
         })?;
-        if source.starts_with(&root) && source != root {
-            let (found, want) = match kind {
-                MountKind::File => (source.is_file(), "file"),
-                MountKind::Dir => (source.is_dir(), "directory"),
-            };
-            if found {
-                Ok(())
-            } else {
-                Err(invalid(format!(
-                    "mount source {} is not a {want}",
-                    host.display()
-                )))
-            }
-        } else {
-            Err(invalid(format!(
+        if !source.starts_with(&root) || source == root {
+            return Err(invalid(format!(
                 "mount source {} is outside the guest-share root {}",
                 host.display(),
                 self.guest_share.display()
+            )));
+        }
+        let (found, want) = if file {
+            (source.is_file(), "file")
+        } else {
+            (source.is_dir(), "directory")
+        };
+        if found {
+            Ok(())
+        } else {
+            Err(invalid(format!(
+                "mount source {} is not a {want}",
+                host.display()
             )))
         }
+    }
+}
+
+impl MsbConfig {
+    /// Refuses to start sandbox `name` again when its stored configuration binds a host path
+    /// outside the guest share: only a checkout mount does, and a sandbox with one is made for
+    /// the one boot of its create. Its source was checked at that create; a start would bind
+    /// whatever the path holds by now, unchecked. A stored configuration that can't be read
+    /// passes here: the volume check that follows refuses it with its own reason.
+    pub(crate) fn check_restart<E>(
+        &self,
+        name: &str,
+        stored: Result<SandboxConfig, E>,
+    ) -> Result<(), ComputeError> {
+        let Ok(config) = stored else {
+            return Ok(());
+        };
+        let root = self.guest_share.canonicalize().ok();
+        for mount in &config.spec.mounts {
+            let VolumeMount::Bind { host, .. } = mount else {
+                continue;
+            };
+            let inside = match (host.canonicalize(), &root) {
+                (Ok(source), Some(root)) => source.starts_with(root),
+                // A source that is gone: judged by its spelling, which a start then fails on.
+                _ => {
+                    host.starts_with(&self.guest_share)
+                        || root.as_ref().is_some_and(|r| host.starts_with(r))
+                }
+            };
+            if !inside {
+                return Err(ComputeError::InvalidSpec {
+                    reason: format!(
+                        "sandbox `{name}` mounts {}, which is outside the guest share (a checkout); \
+                         a sandbox that mounts a checkout is only for its create and is never started again; remove it",
+                        host.display()
+                    ),
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -345,6 +430,112 @@ mod tests {
         assert!(
             no_root
                 .check_mount_source(&data.join("puddle.db"), MountKind::File)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_checkout_mount_follows_its_own_rule_with_every_puddle_folder_protected() {
+        let dir = Dir::new("checkout");
+        let base = dunce::canonicalize(&dir.0).unwrap();
+        let (home, share, data) = (base.join("msb"), base.join("share"), base.join("data"));
+        let git = base.join("api").join(".git");
+        for d in [
+            &home,
+            &share,
+            &data,
+            &git.join("objects"),
+            &git.join("refs"),
+        ] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        let c = MsbConfig::new(&home, "/m", "/l", &share).with_protected_dir(&data);
+        assert_eq!(c.protected_dirs, vec![data.clone()]);
+        c.check_mount_source(&git, MountKind::Checkout).unwrap();
+        // The same directory is no plain directory mount: it is not in the share.
+        assert!(c.check_mount_source(&git, MountKind::Dir).is_err());
+        // Each of the three folders is protected, the data folder through the config.
+        for root in [&home, &share, &data] {
+            let inside = root.join("api").join(".git");
+            for d in [inside.join("objects"), inside.join("refs")] {
+                std::fs::create_dir_all(d).unwrap();
+            }
+            std::fs::write(inside.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+            let err = c
+                .check_mount_source(&inside, MountKind::Checkout)
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("lies inside Puddle's folder"),
+                "{err}"
+            );
+        }
+        // Without a data folder named, every checkout is refused.
+        let unprotected = MsbConfig::new(&home, "/m", "/l", &share);
+        let err = unprotected
+            .check_mount_source(&git, MountKind::Checkout)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("data folder was not given"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_sandbox_that_binds_a_path_outside_the_share_is_never_started_again() {
+        let dir = Dir::new("restart");
+        let share = dir.0.join("share");
+        std::fs::create_dir_all(share.join("boot")).unwrap();
+        std::fs::create_dir_all(dir.0.join("api").join(".git")).unwrap();
+        let c = MsbConfig::new("/h", "/m", "/l", &share);
+        let bind = |host: PathBuf| VolumeMount::Bind {
+            host,
+            guest: "/g".into(),
+            options: microsandbox::sandbox::MountOptions::default(),
+            stat_virtualization: microsandbox::sandbox::StatVirtualization::Strict,
+            host_permissions: microsandbox::sandbox::HostPermissions::Private,
+            follow_root_symlinks: false,
+            quota_mib: None,
+        };
+        let mut config = SandboxConfig::default();
+        let named = VolumeMount::Named {
+            name: "ws-a".into(),
+            guest: "/w".into(),
+            create: None,
+            options: microsandbox::sandbox::MountOptions::default(),
+            stat_virtualization: microsandbox::sandbox::StatVirtualization::Strict,
+            host_permissions: microsandbox::sandbox::HostPermissions::Private,
+            follow_root_symlinks: false,
+        };
+        config.spec.mounts = vec![
+            named,
+            bind(share.join("boot")),
+            bind(share.join("gone-file")),
+        ];
+        c.check_restart("ws", Ok::<_, String>(config.clone()))
+            .unwrap();
+        config
+            .spec
+            .mounts
+            .push(bind(dir.0.join("api").join(".git")));
+        let err = c
+            .check_restart("ws", Ok::<_, String>(config.clone()))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("never started again"), "{err}");
+        // A source that is gone and was never in the share is refused too.
+        config.spec.mounts = vec![bind(dir.0.join("gone").join(".git"))];
+        assert!(
+            c.check_restart("ws", Ok::<_, String>(config.clone()))
+                .is_err()
+        );
+        // A stored configuration that can't be read is left to the volume check after it.
+        c.check_restart("ws", Err::<SandboxConfig, _>("unreadable"))
+            .unwrap();
+        // `..` out of the share is resolved, not taken by its spelling.
+        config.spec.mounts = vec![bind(share.join("..").join("api").join(".git"))];
+        assert!(
+            c.check_restart("ws", Ok::<_, String>(config.clone()))
                 .is_err()
         );
     }

@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use puddle_types::{GuestEnv, GuestPath, ImageRef, MemoryMib, SandboxName, VolumeName};
 
@@ -56,11 +56,18 @@ pub enum MountKind {
     File,
     /// A host directory appears at the guest path with its whole tree.
     Dir,
+    /// The `.git` directory of a checkout on the host, which the user picked, appears at the
+    /// guest path with its whole tree. The one mount whose source is not a file Puddle wrote for
+    /// guests: a runtime accepts it only from a canonical path to a real git directory outside
+    /// Puddle's own folders, and only in a sandbox with no route out (see
+    /// [`SandboxSpec::validate`]), so the guest that reads it cannot send it anywhere.
+    Checkout,
 }
 
 /// A host file or directory mounted **read-only** at a guest path (virtiofs; a guest write gets
 /// `EROFS`, also for new files in a directory mount). Puddle uses files for the agent binary,
-/// the boot hook and its inputs, and directories for shared caches and the dev CA.
+/// the boot hook and its inputs, directories for shared caches and the dev CA, and a checkout's
+/// `.git` to clone a workspace's repository from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileMount {
     /// The file or directory on the host.
@@ -92,6 +99,63 @@ impl FileMount {
             kind: MountKind::Dir,
         }
     }
+
+    /// Mounts the checkout `.git` directory `git_dir` read-only at `guest` (see
+    /// [`MountKind::Checkout`]).
+    #[must_use]
+    pub fn checkout(git_dir: impl Into<PathBuf>, guest: GuestPath) -> Self {
+        Self {
+            host: git_dir.into(),
+            guest,
+            kind: MountKind::Checkout,
+        }
+    }
+}
+
+/// Checks that `git_dir` has the shape of a checkout's git directory, by what is on disk and
+/// without following a link: a real directory named `.git` (a `.git` file, as in a linked
+/// worktree or a submodule, is refused with that reason) holding a `HEAD` file and `objects` and
+/// `refs` directories, and no `commondir` (a linked worktree's). Every runtime applies it to a
+/// [`MountKind::Checkout`] at create; a runtime adds its own rules on where the path may be.
+///
+/// # Errors
+///
+/// What is wrong, worded to follow `the checkout <path>`.
+pub fn check_checkout_dir(git_dir: &Path) -> Result<(), String> {
+    if git_dir.file_name().is_none_or(|n| n != ".git") {
+        return Err("is not a `.git` directory".into());
+    }
+    let meta = std::fs::symlink_metadata(git_dir).map_err(|e| format!("can't be read: {e}"))?;
+    if meta.is_file() {
+        return Err(
+            "is a file that points elsewhere, as in a linked worktree or a submodule; \
+             start from the main checkout"
+                .into(),
+        );
+    }
+    if meta.file_type().is_symlink() {
+        return Err("is a link".into());
+    }
+    if !meta.is_dir() {
+        return Err("is not a directory".into());
+    }
+    for (entry, dir) in [("HEAD", false), ("objects", true), ("refs", true)] {
+        let kind = if dir { "directory" } else { "file" };
+        match std::fs::symlink_metadata(git_dir.join(entry)) {
+            Ok(m) if m.file_type().is_symlink() => {
+                return Err(format!("is not a git directory: its {entry} is a link"));
+            }
+            Ok(m) if (dir && m.is_dir()) || (!dir && m.is_file()) => {}
+            _ => return Err(format!("is not a git directory: it has no {entry} {kind}")),
+        }
+    }
+    if std::fs::symlink_metadata(git_dir.join("commondir")).is_ok() {
+        return Err(
+            "belongs to a linked worktree (it has a commondir file); start from the main checkout"
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 /// A disk size in MiB (what msb's `.disk().size(n)` takes).
@@ -289,7 +353,8 @@ impl SandboxSpec {
     }
 
     /// Checks what the types can't: routes use distinct non-zero ports, no two mounts share a
-    /// guest path or nest, a volume is attached once, CPUs and disk sizes are non-zero.
+    /// guest path or nest, a volume is attached once, CPUs and disk sizes are non-zero, and a
+    /// sandbox that mounts a checkout has no route (its guest has no way out).
     /// Runtimes call this at the start of [`crate::Runtime::create`].
     ///
     /// # Errors
@@ -299,6 +364,17 @@ impl SandboxSpec {
         let invalid = |reason: String| Err(ComputeError::InvalidSpec { reason });
         if self.cpus == Some(0) {
             return invalid("cpus must be at least 1".into());
+        }
+        if !self.routes.is_empty()
+            && let Some(m) = self
+                .file_mounts
+                .iter()
+                .find(|m| m.kind == MountKind::Checkout)
+        {
+            return invalid(format!(
+                "the checkout mounted at {} may only go to a sandbox with no route",
+                m.guest
+            ));
         }
         let mut ports = BTreeSet::new();
         for route in &self.routes {
@@ -447,6 +523,58 @@ mod tests {
             .with_file_mount(FileMount::read_only_dir("/h/e", p("/cache2")))
             .validate()
             .unwrap();
+    }
+
+    #[test]
+    fn a_checkout_is_its_own_kind_and_only_goes_to_a_sandbox_with_no_route() {
+        let checkout = FileMount::checkout("/home/u/api/.git", p("/puddle/import/0"));
+        assert_eq!(checkout.kind, MountKind::Checkout);
+        assert_eq!(checkout.host, PathBuf::from("/home/u/api/.git"));
+        base().with_file_mount(checkout.clone()).validate().unwrap();
+        let routed = base()
+            .with_route(VsockRoute::new(5000, "/run/p.sock"))
+            .with_file_mount(checkout.clone());
+        assert_eq!(
+            reason(&routed),
+            "the checkout mounted at /puddle/import/0 may only go to a sandbox with no route"
+        );
+        // Any route counts, whatever the order the spec was built in.
+        let routed_later = base()
+            .with_file_mount(checkout.clone())
+            .with_route(VsockRoute::new(6000, "/run/q.sock"));
+        assert!(reason(&routed_later).contains("no route"));
+        // A plain directory mount keeps its routes.
+        base()
+            .with_route(VsockRoute::new(5000, "/run/p.sock"))
+            .with_file_mount(FileMount::read_only_dir("/h/d", p("/cache")))
+            .validate()
+            .unwrap();
+        let overlap = base()
+            .with_file_mount(checkout)
+            .with_volume(VolumeMount::named(v("ws-a"), p("/puddle/import")));
+        assert!(reason(&overlap).contains("overlap"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_checkout_dir_that_is_a_link_or_no_directory_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("real");
+        std::fs::create_dir_all(&real).unwrap();
+        let linked = tmp.path().join("a");
+        std::fs::create_dir_all(&linked).unwrap();
+        std::os::unix::fs::symlink(&real, linked.join(".git")).unwrap();
+        assert_eq!(
+            check_checkout_dir(&linked.join(".git")),
+            Err("is a link".into())
+        );
+        let socket = tmp.path().join("b");
+        std::fs::create_dir_all(&socket).unwrap();
+        let _listener = std::os::unix::net::UnixListener::bind(socket.join(".git")).unwrap();
+        assert_eq!(
+            check_checkout_dir(&socket.join(".git")),
+            Err("is not a directory".into())
+        );
     }
 
     #[test]

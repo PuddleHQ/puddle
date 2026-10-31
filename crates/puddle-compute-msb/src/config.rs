@@ -277,7 +277,7 @@ impl MsbConfig {
                 return Err(ComputeError::InvalidSpec {
                     reason: format!(
                         "sandbox `{name}` mounts {}, which is outside the guest share (a checkout); \
-                         a sandbox that mounts a checkout is only for its create and is never started again",
+                         a sandbox that mounts a checkout is only for its create and is never started again; remove it",
                         host.display()
                     ),
                 });

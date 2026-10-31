@@ -32,7 +32,13 @@ libc = { workspace = true }
 nix = { workspace = true }
 rustix = { workspace = true, features = ["net"] }
 
+[features]
+# `fuzzing`: entry points for the cargo-fuzz targets in `fuzz/` and their checked-in corpus (never in
+# product code; the xtask release-feature check refuses it in a shipped build).
+fuzzing = []
+
 [dev-dependencies]
+puddle-agent = { path = ".", features = ["fuzzing"] }
 puddle-test-kit = { workspace = true }
 puddle-types = { workspace = true, features = ["testing"] }
 proptest = { workspace = true }

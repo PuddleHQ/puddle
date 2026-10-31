@@ -9,10 +9,12 @@ cargo-fuzz targets for what a guest's first bytes reach before any rule is asked
 | `connect_target` | the target of a `CONNECT` or absolute-form request, as text |
 | `normalise_host` | `puddle_netpolicy::normalise_host` |
 | `agent_preamble` | the first line of an agent stream |
+| `resolve_line` | the lookup lines the host reads from the agent (`puddle_agent_proto::fuzzing`) |
+| `dns_message` | the DNS message the guest's stub reads from a tool in the guest (`puddle_agent::fuzzing`) |
 
-The checks live in `puddle_proxy::fuzzing` (behind the `fuzzing` feature), so the stable test run
-replays the same code: `crates/puddle-proxy/tests/integration/fuzz_corpus.rs` runs every file under
-`corpus/<target>/`.
+The checks live in each crate's `fuzzing` module (behind its `fuzzing` feature), so the stable test run
+replays the same code: `fuzz_corpus.rs` in the tests of `puddle-proxy`, `puddle-agent-proto` and
+`puddle-agent` runs every file under `corpus/<target>/`.
 
 ```sh
 cargo install cargo-fuzz --locked

@@ -15,6 +15,8 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+puddle-agent = { path = "../crates/puddle-agent", features = ["fuzzing"] }
+puddle-agent-proto = { path = "../crates/puddle-agent-proto", features = ["fuzzing"] }
 puddle-proxy = { path = "../crates/puddle-proxy", features = ["fuzzing"] }
 
 [workspace]
@@ -43,6 +45,20 @@ bench = false
 [[bin]]
 name = "agent_preamble"
 path = "fuzz_targets/agent_preamble.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "resolve_line"
+path = "fuzz_targets/resolve_line.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dns_message"
+path = "fuzz_targets/dns_message.rs"
 test = false
 doc = false
 bench = false

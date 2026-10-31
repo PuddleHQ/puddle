@@ -30,6 +30,11 @@
 //! The wire protocol is in `puddle-agent-proto`. Settings come from environment variables
 //! ([`config`]). The binary's `main` only parses the command line ([`cli`]) and starts an
 //! [`Agent`].
+//!
+//! # Features
+//!
+//! - `fuzzing`: the DNS messages the stub reads from the guest, behind an entry point that checks
+//!   its own invariants (`fuzzing`), for the cargo-fuzz targets. Never use it in product code.
 
 pub mod bridge;
 pub mod capture;
@@ -42,6 +47,8 @@ pub mod editor_stream;
 pub mod entrypoint;
 pub mod exthost;
 pub mod forward;
+#[cfg(feature = "fuzzing")]
+pub mod fuzzing;
 pub mod host_control;
 pub mod host_streams;
 #[cfg(target_os = "linux")]

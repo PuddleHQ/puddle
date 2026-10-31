@@ -14,10 +14,12 @@
     reason = "one registry write through the Win32 call, see `set_in_process`"
 )]
 
+use std::net::SocketAddr;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use puddle_types::fixture;
 use puddle_upstream::{
     ChangeCallback, Config, Destination, Detected, Discovery, EnvFallback, EnvOs, Hop, ModeKind,
     OsProxy, PacError, PacQuery, ProblemCallback, ProxyAddr, ProxyConfig, RouteSource, Scheme,
@@ -25,6 +27,7 @@ use puddle_upstream::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::task::JoinHandle;
 
 const PAC: &str = r#"function FindProxyForURL(url, host) {
   if (dnsDomainIs(host, ".corp.test")) return "DIRECT";
@@ -34,27 +37,42 @@ const PAC: &str = r#"function FindProxyForURL(url, host) {
 }
 "#;
 
+/// A PAC URL on `addr` that no earlier test, in any process, has used. WinHTTP keeps every script
+/// it fetched under its URL, for the whole machine and after the server is gone, so a server that
+/// gets a loopback port another test's server once had would be answered from that test's script.
+fn fresh_pac_url(addr: SocketAddr) -> String {
+    format!("http://{addr}/{}.pac", fixture::unique("proxy"))
+}
+
 /// Serves `PAC` on a loopback port until the runtime ends. Returns the PAC URL.
 async fn pac_server() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}/proxy.pac", listener.local_addr().unwrap());
-    tokio::spawn(async move {
+    serve_pac(listener, PAC).0
+}
+
+/// Serves `script` on `listener` until the returned task is stopped or the runtime ends. Returns
+/// the PAC URL and the task.
+fn serve_pac(listener: TcpListener, script: &str) -> (String, JoinHandle<()>) {
+    let url = fresh_pac_url(listener.local_addr().unwrap());
+    let response: Arc<str> = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/x-ns-proxy-autoconfig\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{script}",
+        script.len()
+    )
+    .into();
+    let task = tokio::spawn(async move {
         loop {
             let Ok((mut stream, _)) = listener.accept().await else {
                 return;
             };
+            let response = Arc::clone(&response);
             tokio::spawn(async move {
                 let mut buf = [0u8; 2048];
                 let _ = stream.read(&mut buf).await; // the request line and headers are not needed
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/x-ns-proxy-autoconfig\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{PAC}",
-                    PAC.len()
-                );
                 let _ = stream.write_all(response.as_bytes()).await;
             });
         }
     });
-    url
+    (url, task)
 }
 
 fn query(pac_url: &str, url: &str) -> PacQuery {
@@ -108,7 +126,7 @@ async fn winhttp_evaluates_a_local_pac_per_url_with_the_full_failover_list() {
 async fn an_unreachable_pac_is_an_error_not_a_hang() {
     let _exclusive = exclusive();
     let closed = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}/proxy.pac", closed.local_addr().unwrap());
+    let url = fresh_pac_url(closed.local_addr().unwrap());
     drop(closed);
     let started = Instant::now();
     let err = resolve(query(&url, "https://github.com/"))
@@ -128,7 +146,7 @@ async fn an_unreachable_pac_is_an_error_not_a_hang() {
 async fn a_pac_server_that_never_answers_times_out_at_the_query_timeout() {
     let _exclusive = exclusive();
     let silent = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}/proxy.pac", silent.local_addr().unwrap());
+    let url = fresh_pac_url(silent.local_addr().unwrap());
     tokio::spawn(async move {
         let mut held = Vec::new();
         while let Ok((stream, _)) = silent.accept().await {
@@ -167,6 +185,35 @@ async fn parallel_pac_lookups_all_answer() {
     for task in tasks {
         assert_eq!(task.await.unwrap().unwrap(), vec![proxy(3128)]);
     }
+}
+
+/// A server that gets the port an earlier server had (here the same test's, on any machine it is
+/// another test's that ended minutes ago) is asked for its own script, not answered from the one
+/// WinHTTP fetched from the earlier server.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pac_server_on_a_reused_port_is_answered_from_its_own_script() {
+    let _exclusive = exclusive();
+    let answering = |port: u16| {
+        format!("function FindProxyForURL(url, host) {{ return \"PROXY 127.0.0.1:{port}\"; }}\n")
+    };
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (first, server) = serve_pac(listener, &answering(4001));
+    assert_eq!(
+        resolve(query(&first, "https://example.test/"))
+            .await
+            .unwrap(),
+        vec![proxy(4001)]
+    );
+    server.abort();
+    let _ = server.await; // the listener is closed once the task is gone
+    let (second, _server) = serve_pac(TcpListener::bind(addr).await.unwrap(), &answering(4002));
+    assert_eq!(
+        resolve(query(&second, "https://example.test/"))
+            .await
+            .unwrap(),
+        vec![proxy(4002)]
+    );
 }
 
 #[test]

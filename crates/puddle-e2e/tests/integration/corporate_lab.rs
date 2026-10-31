@@ -165,12 +165,18 @@ fn the_pac_server_hands_out_its_failover_list_and_counts_fetches() {
     let pac = failover_pac(&[".corp.test"], &["127.0.0.1:1", "127.0.0.1:2"]);
     let server = PacServer::start(&pac);
     let url = server.url();
-    let addr = url
+    let (addr, path) = url
         .strip_prefix("http://")
-        .and_then(|rest| rest.strip_suffix("/proxy.pac"))
+        .and_then(|rest| rest.split_once('/'))
         .unwrap();
+    assert!(path.ends_with(".pac"), "{url}");
+    assert_ne!(
+        PacServer::start(&pac).url(),
+        url,
+        "every server has a URL of its own"
+    );
     let mut conn = std::net::TcpStream::connect(addr).unwrap();
-    conn.write_all(b"GET /proxy.pac HTTP/1.1\r\nHost: lab\r\n\r\n")
+    conn.write_all(format!("GET /{path} HTTP/1.1\r\nHost: lab\r\n\r\n").as_bytes())
         .unwrap();
     let mut response = String::new();
     conn.read_to_string(&mut response).unwrap();

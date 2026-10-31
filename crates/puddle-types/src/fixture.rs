@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Test fixtures for passwords and canary strings, made at run time.
+//! Test fixtures for passwords, canary strings and unique names, made at run time.
 //!
 //! A test that needs a password or a canary asks for one here instead of writing a literal. Each
 //! test process picks one random suffix; every value carries it, so two runs never share a value
@@ -14,6 +14,7 @@
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 static SUFFIX: OnceLock<String> = OnceLock::new();
 
@@ -56,6 +57,16 @@ pub fn canary(label: &str) -> String {
     "CANARY-".to_owned() + label + "-" + suffix()
 }
 
+/// A name no other call returns, in this process or any other: `<label>-<suffix>-<n>`, where `n`
+/// counts the calls of this process. For a fixture whose name outlives it somewhere the test does
+/// not control, such as a URL that a system service caches by name after the test's server is gone.
+#[must_use]
+pub fn unique(label: &str) -> String {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    format!("{label}-{}-{n}", suffix())
+}
+
 /// Asserts that `text` does not contain `secret`. A failure names `what` and never prints the
 /// secret or the text (which holds it when the assertion fails), so a failing leak test does not
 /// itself leak into the CI log.
@@ -85,6 +96,15 @@ mod tests {
         assert_eq!(suffix().len(), 16);
         assert!(suffix().bytes().all(|c| c.is_ascii_hexdigit()));
         assert!(canary("x").starts_with("CANARY-x-"));
+    }
+
+    #[test]
+    fn unique_names_differ_on_every_call_and_carry_the_run_suffix() {
+        let (a, b) = (unique("pac"), unique("pac"));
+        assert_ne!(a, b);
+        for name in [&a, &b] {
+            assert!(name.starts_with(&format!("pac-{}-", suffix())), "{name}");
+        }
     }
 
     #[test]

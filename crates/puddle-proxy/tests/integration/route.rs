@@ -1483,3 +1483,50 @@ async fn the_guest_watcher_gets_the_link_and_the_ports_of_the_routes_workspace()
     let linked = watched.link.lock().unwrap().take().map(|(name, _)| name);
     assert_eq!(linked, Some(workspace("box")));
 }
+
+/// Whether anything still accepts on `path`.
+async fn listening(path: &std::path::Path) -> bool {
+    puddle_ipc::connect(path).await.is_ok()
+}
+
+#[tokio::test]
+async fn shutdown_returns_only_once_nothing_accepts_on_the_route_any_more() {
+    let rig = Rig::new(&ProxyConfig::default());
+    let path = rig.route.endpoint().path().to_owned();
+    let _guest = rig.guest().await;
+    assert!(listening(&path).await);
+    let Rig { route, root, .. } = rig;
+    route.shutdown().await;
+    // A blocking connect cannot yield, so a shutdown that only asked the task to stop (which
+    // then ends at its next poll) would still be listening here. A Windows pipe has no such
+    // probe, and its idle instances stop listening only once the runtime has dropped the aborted
+    // acceptors, so there the check is bounded polling.
+    #[cfg(unix)]
+    assert!(
+        std::os::unix::net::UnixStream::connect(&path).is_err(),
+        "the listener outlived shutdown"
+    );
+    #[cfg(not(unix))]
+    puddle_test_kit::eventually_async(
+        "nothing accepts on the route after shutdown",
+        Duration::from_secs(10),
+        || async { !listening(&path).await },
+    )
+    .await;
+    drop(root);
+}
+
+#[tokio::test]
+async fn dropping_the_route_stops_the_accept_loop() {
+    let rig = Rig::new(&ProxyConfig::default());
+    let path = rig.route.endpoint().path().to_owned();
+    let Rig { route, root, .. } = rig;
+    drop(route);
+    puddle_test_kit::eventually_async(
+        "the accept loop ends after the route is dropped",
+        Duration::from_secs(10),
+        || async { !listening(&path).await },
+    )
+    .await;
+    drop(root);
+}

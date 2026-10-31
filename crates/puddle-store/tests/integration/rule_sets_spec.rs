@@ -661,3 +661,53 @@ fn r37_stored_switches_and_reasons_this_version_cannot_read_are_ignored() {
     assert!(hosts.iter().all(|h| h.workspace == Some(sb("a"))));
     assert!(decide(&store, "a", "open-vsx.org").is_allow());
 }
+
+#[test]
+fn r37_a_workspace_override_beats_the_global_switch_which_beats_the_default() {
+    let (_, store) = fixture();
+    let id = user_set(&store, "Layers");
+    let set = RuleSetId::User(id);
+    let (a, b) = (sb("a"), sb("b"));
+    let is_on = |w: &WorkspaceName| store.rule_set(set).unwrap().is_on(w);
+    // A set the user made is on by default, for everyone.
+    assert!(is_on(&a) && is_on(&b));
+    // The global switch decides where no override says otherwise.
+    store
+        .switch_rule_set(set, None, Some(false), Actor::Ui)
+        .unwrap();
+    assert!(!is_on(&a) && !is_on(&b));
+    // An override turns one workspace on, and only that one.
+    store
+        .switch_rule_set(set, Some(&a), Some(true), Actor::Ui)
+        .unwrap();
+    assert!(is_on(&a) && !is_on(&b));
+    // An override turns one off while the rest follow a global on.
+    store
+        .switch_rule_set(set, None, Some(true), Actor::Ui)
+        .unwrap();
+    store
+        .switch_rule_set(set, Some(&a), Some(false), Actor::Ui)
+        .unwrap();
+    assert!(!is_on(&a) && is_on(&b));
+    // Back to following the global switch, then the default.
+    store
+        .switch_rule_set(set, Some(&a), None, Actor::Ui)
+        .unwrap();
+    assert!(is_on(&a));
+    store.switch_rule_set(set, None, None, Actor::Ui).unwrap();
+    assert!(is_on(&a) && is_on(&b));
+}
+
+#[test]
+fn r38_a_name_of_64_characters_and_a_description_of_500_are_the_longest_allowed() {
+    let (_, store) = fixture();
+    let longest = store
+        .create_rule_set(&"x".repeat(64), &"d".repeat(500), Actor::Ui)
+        .unwrap();
+    assert_eq!(longest.name.chars().count(), 64);
+    assert_eq!(longest.description.chars().count(), 500);
+    // Counted in characters, not bytes.
+    store
+        .create_rule_set(&"é".repeat(64), &"é".repeat(500), Actor::Ui)
+        .unwrap();
+}

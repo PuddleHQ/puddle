@@ -706,6 +706,11 @@ async fn hostile_hg08_a_mixed_answer_is_connected_at_the_allowed_address_and_aud
         ),
         "the row names the address connected to, never the refused one"
     );
+    assert_eq!(
+        event.refused_address.as_ref().map(|(ip, _)| *ip),
+        Some(refused),
+        "the row also names the refused address"
+    );
 }
 
 #[tokio::test]

@@ -9199,6 +9199,8 @@
               "rule_id",
               "request_rule",
               "rule_set",
+              "refused_address",
+              "refused_reason",
               "pending_id",
               "binding_id",
               "injected",
@@ -9315,6 +9317,20 @@
               "reason": {
                 "type": "string",
                 "description": "Why: `rule`, `no_rule`, or a block reason."
+              },
+              "refused_address": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The first address of the answer that the address guard refused, while the connection\nwent to the allowed addresses only. `null` when none was refused and in records written\nbefore it existed."
+              },
+              "refused_reason": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Why `refused_address` was refused: a reason code such as `toggle:private`."
               },
               "request_rule": {
                 "type": [

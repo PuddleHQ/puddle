@@ -5,10 +5,10 @@
 use std::sync::Arc;
 
 use puddle_api::wire::DevCertificate;
-use puddle_api::{FakeDevCert, SettingsRepo};
+use puddle_api::{ApiConfig, DevCertService, FakeDevCert, SettingsRepo};
 use serde_json::json;
 
-use crate::common::{START_MS, start, start_with_dev_cert};
+use crate::common::{START_MS, start, start_with_config_and_dev_cert, start_with_dev_cert};
 
 #[tokio::test]
 async fn a_fresh_install_has_not_been_through_the_flow_and_reading_writes_nothing() {
@@ -147,5 +147,82 @@ async fn the_certificates_step_reports_where_the_development_certificate_stands(
             assert_eq!(reply.json()["dev_certificate"], wire);
         }
     }
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn without_a_certificate_service_trusting_answers_not_checked() {
+    let api = start().await;
+    let reply = api.send("POST", "/api/dev-certificate/trust", None).await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(
+        reply.json(),
+        json!({"dev_certificate": "not_checked", "detail": null, "waiting": false})
+    );
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn trusting_answers_where_the_certificate_stands_and_the_next_read_agrees() {
+    let fake = Arc::new(FakeDevCert::new(DevCertificate::NeedsTrust));
+    let api = start_with_dev_cert(fake.clone()).await;
+
+    let reply = api.send("POST", "/api/dev-certificate/trust", None).await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(
+        reply.json(),
+        json!({"dev_certificate": "trusted", "detail": null, "waiting": false})
+    );
+    assert_eq!(
+        api.get("/api/first-run").await.json()["dev_certificate"],
+        "trusted"
+    );
+
+    fake.set(DevCertificate::NeedsTrust);
+    fake.set_trust_answer(DevCertificate::TrustDeclined, None);
+    let reply = api.send("POST", "/api/dev-certificate/trust", None).await;
+    assert_eq!(
+        reply.json(),
+        json!({"dev_certificate": "trust_declined", "detail": null, "waiting": false})
+    );
+
+    fake.set_trust_answer(DevCertificate::TrustFailed, Some("os error 5".to_owned()));
+    let reply = api.send("POST", "/api/dev-certificate/trust", None).await;
+    assert_eq!(
+        reply.json(),
+        json!({"dev_certificate": "trust_failed", "detail": "os error 5", "waiting": false})
+    );
+    assert_eq!(fake.trust_calls(), 3);
+    api.running.shutdown().await;
+}
+
+/// A service whose confirmation takes `delay`, longer than the usual request limit.
+struct SlowTrust(std::time::Duration);
+
+impl DevCertService for SlowTrust {
+    fn status(&self) -> DevCertificate {
+        DevCertificate::NeedsTrust
+    }
+
+    fn trust(&self) -> puddle_api::wire::DevCertTrustResult {
+        // Simulated slow confirmation, longer than the usual request limit under test.
+        std::thread::sleep(self.0);
+        puddle_api::wire::DevCertTrustResult {
+            dev_certificate: DevCertificate::Trusted,
+            detail: None,
+            waiting: false,
+        }
+    }
+}
+
+#[tokio::test]
+async fn trusting_may_outlast_the_usual_request_limit_because_the_user_answers_a_dialog() {
+    let mut config = ApiConfig::default();
+    config.request_timeout = std::time::Duration::from_millis(100);
+    let slow = Arc::new(SlowTrust(std::time::Duration::from_millis(600)));
+    let api = start_with_config_and_dev_cert(config, slow).await;
+    let reply = api.send("POST", "/api/dev-certificate/trust", None).await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(reply.json()["dev_certificate"], "trusted");
     api.running.shutdown().await;
 }

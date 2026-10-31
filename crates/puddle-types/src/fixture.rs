@@ -57,8 +57,8 @@ pub fn canary(label: &str) -> String {
     "CANARY-".to_owned() + label + "-" + suffix()
 }
 
-/// A name no other call returns, in this process or any other: `<label>-<suffix>-<n>`, where `n`
-/// counts the calls of this process. For a fixture whose name outlives it somewhere the test does
+/// A name no other call of this process returns, `<label>-<suffix>-<n>` where `n` counts the
+/// calls; the random run suffix keeps other processes apart. For a fixture whose name outlives it somewhere the test does
 /// not control, such as a URL that a system service caches by name after the test's server is gone.
 #[must_use]
 pub fn unique(label: &str) -> String {

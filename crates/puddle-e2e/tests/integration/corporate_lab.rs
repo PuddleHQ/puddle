@@ -170,10 +170,10 @@ fn the_pac_server_hands_out_its_failover_list_and_counts_fetches() {
         .and_then(|rest| rest.split_once('/'))
         .unwrap();
     assert!(path.ends_with(".pac"), "{url}");
-    assert_ne!(
-        PacServer::start(&pac).url(),
-        url,
-        "every server has a URL of its own"
+    let other = PacServer::start(&pac).url();
+    assert!(
+        !other.ends_with(path),
+        "every server has a path of its own: {other}"
     );
     let mut conn = std::net::TcpStream::connect(addr).unwrap();
     conn.write_all(format!("GET /{path} HTTP/1.1\r\nHost: lab\r\n\r\n").as_bytes())

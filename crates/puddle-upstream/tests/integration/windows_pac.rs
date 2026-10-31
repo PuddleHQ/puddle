@@ -187,9 +187,8 @@ async fn parallel_pac_lookups_all_answer() {
     }
 }
 
-/// A server that gets the port an earlier server had (here the same test's, on any machine it is
-/// another test's that ended minutes ago) is asked for its own script, not answered from the one
-/// WinHTTP fetched from the earlier server.
+/// A server that gets the port an earlier server had, this test's or another's, is asked for its
+/// own script, not answered from the one WinHTTP kept from the earlier server.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_pac_server_on_a_reused_port_is_answered_from_its_own_script() {
     let _exclusive = exclusive();

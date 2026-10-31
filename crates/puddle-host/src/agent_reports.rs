@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The guest agents' reports about their own workspaces (an entrypoint that exited, stub DNS
-//! trouble, an editor server that could not be installed), made background problems.
+//! trouble, an editor server that could not be installed or updated), made background problems.
 //!
 //! A report is the guest's claim and the guest is untrusted, so a report can only raise one of
-//! three problems of the workspace whose route carried it, with text written here. Reports count
+//! four problems of the workspace whose route carried it, with text written here. Reports count
 //! only between a start and a stop, and each run of a workspace changes each problem a bounded
 //! number of times, whatever the guest sends: the entrypoint problem once, the DNS one once per
-//! kind, the editor one at most [`MAX_EDITOR_CHANGES`] times.
+//! kind, each editor one at most [`MAX_EDITOR_CHANGES`] times.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use puddle_agent_proto::StubDnsTrouble;
 use puddle_agent_proto::host::{AgentReport, AgentReports};
+use puddle_agent_proto::{EditorProblemKind, StubDnsTrouble};
 use puddle_types::{Problem, Problems, WorkspaceName};
 
 /// Longest entrypoint failure (`<status>: <output>`) put in a problem.
@@ -23,12 +23,17 @@ fn entrypoint_key(name: &WorkspaceName) -> String {
     format!("entrypoint:{name}")
 }
 
-/// How often one run of a workspace may change the editor problem's text.
+/// How often one run of a workspace may change the text of each editor problem.
 const MAX_EDITOR_CHANGES: u8 = 4;
 
 /// The key of the problem about the browser editor's install in `name`.
 pub(crate) fn editor_install_key(name: &WorkspaceName) -> String {
     format!("editor-install:{name}")
+}
+
+/// The key of the problem about the browser editor's updates in `name`.
+fn editor_update_key(name: &WorkspaceName) -> String {
+    format!("editor-update:{name}")
 }
 
 /// The key of the problem about the stub DNS of `name`.
@@ -58,16 +63,30 @@ pub(crate) fn entrypoint_problem(name: &WorkspaceName, failure: &str) -> Problem
     .about(name.clone())
 }
 
-/// The problem for an editor server whose download was refused; `reason` is the agent's cleaned
-/// text.
+/// The problem for an editor server that could not be installed (a refused download, or a network
+/// that kept failing); `reason` is the agent's cleaned text.
 fn editor_install_problem(name: &WorkspaceName, reason: &str) -> Problem {
     Problem::new(
         editor_install_key(name),
         format!("The browser editor could not be installed in {name}: {reason}"),
-        "Puddle downloaded the editor server and refused it, so the browser editor cannot open \
-         in this workspace until an install works. Puddle tries again, waiting longer each time \
-         (up to an hour); stopping and starting the workspace tries at once. Terminals and \
-         desktop VS Code are not affected."
+        "Puddle could not get the editor server for this workspace, so the browser editor cannot \
+         open in it until an install works. Puddle tries again (after a refused download it waits \
+         longer each time, up to an hour); stopping and starting the workspace tries at once. \
+         Terminals and desktop VS Code are not affected."
+            .to_owned(),
+    )
+    .about(name.clone())
+}
+
+/// The problem for a newer editor server build that could not be taken (refused, rolled back after
+/// a bad start, or looks that keep failing); `reason` is the agent's cleaned text.
+fn editor_update_problem(name: &WorkspaceName, reason: &str) -> Problem {
+    Problem::new(
+        editor_update_key(name),
+        format!("The browser editor in {name} could not update: {reason}"),
+        "The editor keeps working on the build it has, so nothing you do in it is affected. \
+         Puddle looks for a newer build again later (after a refused one it waits longer each \
+         time, up to an hour); this ends when a look works, or when the workspace stops."
             .to_owned(),
     )
     .about(name.clone())
@@ -117,10 +136,47 @@ struct Run {
     entrypoint: bool,
     /// The DNS trouble kinds the problem names.
     dns: BTreeSet<StubDnsTrouble>,
-    /// The reason the editor problem names now, `None` while there is none.
-    editor: Option<String>,
-    /// How often the editor problem's text changed in this run.
-    editor_changes: u8,
+    /// The editor's install problem.
+    install: EditorSlot,
+    /// The editor's update problem.
+    update: EditorSlot,
+}
+
+/// What one run has reported of one editor problem.
+#[derive(Debug, Default)]
+struct EditorSlot {
+    /// The reason the problem names now, `None` while there is none.
+    reason: Option<String>,
+    /// How often the problem's text changed in this run.
+    changes: u8,
+}
+
+/// What a report did to an [`EditorSlot`].
+enum Slot {
+    /// Nothing the user would see.
+    Same,
+    /// The problem is over.
+    Ended,
+    /// The problem has this reason now.
+    Raised(String),
+    /// The run already changed it [`MAX_EDITOR_CHANGES`] times.
+    Limited,
+}
+
+impl EditorSlot {
+    fn report(&mut self, problem: Option<String>) -> Slot {
+        match problem {
+            None if self.reason.take().is_some() => Slot::Ended,
+            None => Slot::Same,
+            Some(reason) if self.reason.as_deref() == Some(reason.as_str()) => Slot::Same,
+            Some(_) if self.changes >= MAX_EDITOR_CHANGES => Slot::Limited,
+            Some(reason) => {
+                self.changes += 1;
+                self.reason = Some(reason.clone());
+                Slot::Raised(reason)
+            }
+        }
+    }
 }
 
 impl Run {
@@ -129,8 +185,8 @@ impl Run {
             taking: true,
             entrypoint: false,
             dns: BTreeSet::new(),
-            editor: None,
-            editor_changes: 0,
+            install: EditorSlot::default(),
+            update: EditorSlot::default(),
         }
     }
 }
@@ -161,6 +217,7 @@ impl ReportDesk {
         self.problems.clear(&entrypoint_key(name));
         self.problems.clear(&stub_dns_key(name));
         self.problems.clear(&editor_install_key(name));
+        self.problems.clear(&editor_update_key(name));
     }
 
     /// A stop of `name` was accepted: what its guest reports from now (its entrypoint ended by the
@@ -185,6 +242,7 @@ impl ReportDesk {
         self.runs().remove(name);
         self.problems.clear(&stub_dns_key(name));
         self.problems.clear(&editor_install_key(name));
+        self.problems.clear(&editor_update_key(name));
     }
 
     /// `name` was deleted: both problems end.
@@ -196,7 +254,7 @@ impl ReportDesk {
 
 impl AgentReports for ReportDesk {
     fn report(&self, workspace: &WorkspaceName, report: AgentReport) {
-        let mut end_editor = false;
+        let mut end_editor = None;
         let raise = {
             let mut runs = self.runs();
             let Some(run) = runs.get_mut(workspace).filter(|run| run.taking) else {
@@ -221,32 +279,37 @@ impl AgentReports for ReportDesk {
                 AgentReport::StubDns { kind, .. } => (stub_dns_effect(kind).is_some()
                     && run.dns.insert(kind))
                 .then(|| stub_dns_problem(workspace, &run.dns)),
-                AgentReport::EditorStatus { problem: None } => {
-                    end_editor = run.editor.take().is_some();
-                    None
-                }
-                AgentReport::EditorStatus {
-                    problem: Some(reason),
-                } if run.editor.as_deref() == Some(reason.as_str()) => None,
-                AgentReport::EditorStatus { problem: Some(_) }
-                    if run.editor_changes >= MAX_EDITOR_CHANGES =>
-                {
-                    tracing::info!(%workspace, "an editor report past the limit for one run ignored");
-                    None
-                }
-                AgentReport::EditorStatus {
-                    problem: Some(reason),
-                } => {
-                    run.editor_changes += 1;
-                    let problem = editor_install_problem(workspace, &reason);
-                    run.editor = Some(reason);
-                    Some(problem)
+                AgentReport::EditorStatus { kind, problem } => {
+                    let slot = match kind {
+                        EditorProblemKind::Install => &mut run.install,
+                        EditorProblemKind::Update => &mut run.update,
+                        _ => return,
+                    };
+                    match slot.report(problem) {
+                        Slot::Same => None,
+                        Slot::Ended => {
+                            end_editor = Some(kind);
+                            None
+                        }
+                        Slot::Limited => {
+                            tracing::info!(%workspace, ?kind, "an editor report past the limit for one run ignored");
+                            None
+                        }
+                        Slot::Raised(reason) if kind == EditorProblemKind::Install => {
+                            Some(editor_install_problem(workspace, &reason))
+                        }
+                        Slot::Raised(reason) => Some(editor_update_problem(workspace, &reason)),
+                    }
                 }
                 _ => None,
             }
         };
-        if end_editor {
-            self.problems.clear(&editor_install_key(workspace));
+        match end_editor {
+            Some(EditorProblemKind::Install) => {
+                self.problems.clear(&editor_install_key(workspace));
+            }
+            Some(_) => self.problems.clear(&editor_update_key(workspace)),
+            None => {}
         }
         if let Some(problem) = raise {
             self.problems.raise(problem);

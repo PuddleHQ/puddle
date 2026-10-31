@@ -419,8 +419,9 @@ fn synced_sources(roots: &CorporateRoots, der: &[u8]) -> Option<Vec<StoreSource>
 
 const LM_GP_ROOT_KEY: &str = "HKLM:\\SOFTWARE\\Policies\\Microsoft\\SystemCertificates\\Root";
 
-/// Imports the certificate in `file` into `CurrentUser\Root` with `Import-Certificate` (the add
-/// opens the dialog, owned by that PowerShell process) while the answerer presses `answer`.
+/// Adds the certificate in `file` to `CurrentUser\Root` through .NET's `X509Store` (the add
+/// opens the dialog, owned by that PowerShell process; `Import-Certificate` opens none and is
+/// refused) while the answerer presses `answer`.
 /// Returns the dialog's text; `Err` when no dialog appears (the import is then killed) or the
 /// import itself fails.
 fn import_answered(file: &Path, answer: trust_dialog::Answer) -> Result<String, String> {
@@ -433,7 +434,10 @@ fn import_answered(file: &Path, answer: trust_dialog::Answer) -> Result<String, 
             "-Command",
         ])
         .arg(format!(
-            "Import-Certificate -FilePath '{}' -CertStoreLocation 'Cert:\\CurrentUser\\Root' | Out-Null",
+            "$s = New-Object Security.Cryptography.X509Certificates.X509Store('Root', 'CurrentUser'); \
+             $s.Open('ReadWrite'); \
+             $s.Add((New-Object Security.Cryptography.X509Certificates.X509Certificate2('{}'))); \
+             $s.Close()",
             file.display()
         ))
         .stdin(Stdio::null())

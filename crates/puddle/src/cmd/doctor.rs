@@ -3,7 +3,7 @@
 //! the way, with the exact fix for each problem ([`puddle_doctor`]). Exit code 0 when nothing
 //! failed, 1 when something must be fixed first, so scripts can gate on it.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use puddle_doctor::boot::boot_logs_dir;
@@ -57,7 +57,7 @@ pub fn run(args: DoctorArgs) -> ExitCode {
     let probe = match std::env::current_exe()
         .map_err(|e| e.to_string())
         .and_then(|exe| SystemProbe::installed(&exe).map_err(|e| e.to_string()))
-        .map(|probe| keeping_logs(probe, puddle_fs::data_dir().ok().as_deref()))
+        .map(|probe| keeping_logs(probe, data_folder(puddle_fs::data_dir()).as_deref()))
     {
         Ok(probe) => probe,
         Err(e) => {
@@ -68,6 +68,19 @@ pub fn run(args: DoctorArgs) -> ExitCode {
     let (output, code) = report(&probe, args);
     print!("{output}");
     code
+}
+
+/// Puddle's data folder, or `None` after saying on stderr that a failed boot's logs then go
+/// unkept.
+#[expect(clippy::print_stderr, reason = "a diagnostic note beside the report")]
+fn data_folder(found: Result<PathBuf, puddle_fs::DataDirError>) -> Option<PathBuf> {
+    match found {
+        Ok(dir) => Some(dir),
+        Err(e) => {
+            eprintln!("puddle: a failed test boot's logs will not be kept: {e}");
+            None
+        }
+    }
 }
 
 /// `probe`, keeping a failed test boot's logs in the data folder (`data`) like the system check
@@ -107,7 +120,6 @@ fn exit_code(report: &Report) -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use std::time::Duration;
 
     use puddle_doctor::{
@@ -335,6 +347,15 @@ mod tests {
         assert_eq!(
             probe.keep_boot_logs_dir(),
             Some(Path::new("/data/puddle/doctor-boot-logs"))
+        );
+    }
+
+    #[test]
+    fn a_missing_data_folder_is_none_and_a_found_one_is_used() {
+        assert_eq!(data_folder(Err(puddle_fs::DataDirError::NoBase)), None);
+        assert_eq!(
+            data_folder(Ok(PathBuf::from("/data/puddle"))),
+            Some(PathBuf::from("/data/puddle"))
         );
     }
 

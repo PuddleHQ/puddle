@@ -5,20 +5,25 @@
 # instead of after the slowest job. The result jobs of the cancelled runs run `if: always()` and report red,
 # so the cancel can never pass as green (ci/scope.sh fails a verdict on a cancelled job).
 #
-# usage: ci/cancel-group.sh <event> <job-status> <ref> <run-id>
+# A group stacked on this one (its ref ends in this group's head sha, and again for each level above) is cancelled
+# too: GitHub rebuilds the entries behind a removed group but leaves their old runs going for up to 17 minutes on
+# runners that nothing needs (run 41005588205 was cancelled by this script, not by GitHub).
+#
+# usage: ci/cancel-group.sh <event> <job-status> <ref> <run-id> [<head-sha>]
 #   event       github.event_name; anything but merge_group does nothing
 #   job-status  job.status of the calling job; anything but failure does nothing (a skipped or cancelled job,
 #               for example an infrastructure cancel, never cascades)
 #   ref         github.ref; only refs/heads/gh-readonly-queue/... is touched, and the runs are those of that
 #               one branch, so no other group and no pull request run is ever cancelled
 #   run-id      github.run_id; its run is cancelled last, after the others
+#   head-sha    github.sha, the head of this group; omitted or empty: stacked groups are left alone
 # env: GH_TOKEN with `actions: write`, GITHUB_REPOSITORY. DRY_RUN=1 lists and prints, cancels nothing.
 # Before cancelling it annotates the calling job with the failed job and step names (the cancel turns the job into
 # `cancelled`, which hides them). Best effort: always exits 0 (a failed cancel only leaves the old, slower behaviour). Safe to run from two
 # failed jobs at once: a run that completed or was cancelled meanwhile is skipped, a lost race is ignored.
 set -uo pipefail
 
-event=${1:-} status=${2:-} ref=${3:-} own=${4:-}
+event=${1:-} status=${2:-} ref=${3:-} own=${4:-} head=${5:-}
 repo=${GITHUB_REPOSITORY:-}
 
 [ "$event" = merge_group ] || { echo "cancel-group: event '$event' is not merge_group, nothing to do"; exit 0; }
@@ -41,11 +46,37 @@ named=$(gh api "repos/$repo/actions/runs/$own/jobs?per_page=100" \
     --jq '[.jobs[] | select(any(.steps[]?; .conclusion == "failure")) | "\(.name): \([.steps[] | select(.conclusion == "failure") | .name] | join(", "))"] | join("; ")' 2>/dev/null) || named=""
 echo "::error title=merge group cancelled: this job failed first::${named:-no failed step could be read} (run $own)"
 
+# Active queue runs as "<branch> <run id> <head sha>"; the groups stacked on `head` are found among them.
+stacked() {
+    local all frontier=$head seen=" " next sha ref id runsha
+    [ -n "$head" ] || return 0
+    all=$(gh run list --repo "$repo" --event merge_group --limit 200 --json databaseId,status,headBranch,headSha \
+        --jq '.[] | select(.status != "completed") | "\(.headBranch) \(.databaseId) \(.headSha)"') || return 1
+    while [ -n "$frontier" ]; do
+        next=""
+        for sha in $frontier; do
+            while read -r ref id runsha; do
+                case $ref in
+                gh-readonly-queue/*/pr-*-"$sha")
+                    case $seen in *" $id "*) continue ;; esac
+                    seen="$seen$id "
+                    echo "$id"
+                    next="$next $runsha"
+                    ;;
+                esac
+            done <<<"$all"
+        done
+        frontier=$next
+    done
+}
+
 ids=$(list) || { echo "cancel-group: could not list the runs of $branch" >&2; exit 0; }
-[ -n "$ids" ] || { echo "cancel-group: no run of $branch is still active"; exit 0; }
+up=$(stacked) || { up=""; echo "cancel-group: could not list the stacked groups" >&2; }
+[ -n "$ids$up" ] || { echo "cancel-group: no run of $branch is still active"; exit 0; }
 
 # Own run last: cancelling it ends this very job.
-ordered=$(printf '%s\n' "$ids" | grep -vx -- "$own"; printf '%s\n' "$ids" | grep -x -- "$own")
+ordered=$(printf '%s\n' "$ids" | grep -vx -- "$own"; printf '%s\n' "$up"; printf '%s\n' "$ids" | grep -x -- "$own")
+ordered=$(printf '%s\n' "$ordered" | grep .)
 for id in $ordered; do
     if [ "${DRY_RUN:-0}" = 1 ]; then
         echo "cancel-group: would cancel run $id of $branch"

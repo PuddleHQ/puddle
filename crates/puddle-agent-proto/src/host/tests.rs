@@ -220,12 +220,12 @@ async fn capture_reports_reach_the_handler_with_the_guests_text_cleaned() {
     )
     .await;
     // The session is still reading: wait until the last report was handled.
-    for _ in 0..100 {
-        if told.tampered.lock().unwrap().len() == 2 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    eventually(
+        "both tamper reports handled",
+        Duration::from_secs(10),
+        || told.tampered.lock().unwrap().len() == 2,
+    )
+    .await;
     let udp = told.udp.lock().unwrap().clone();
     assert_eq!(udp.len(), 2);
     assert_eq!(
@@ -271,12 +271,12 @@ async fn entrypoint_and_stub_dns_reports_reach_the_handler_cleaned_and_unknown_k
         &AgentMessage::stub_dns(StubDnsTrouble::LookupTimedOut, 4),
     )
     .await;
-    for _ in 0..100 {
-        if told.reports.lock().unwrap().len() == 3 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    eventually(
+        "three agent reports handled",
+        Duration::from_secs(10),
+        || told.reports.lock().unwrap().len() == 3,
+    )
+    .await;
     let reports = told.reports.lock().unwrap().clone();
     assert_eq!(reports.len(), 3, "{reports:?}");
     assert_eq!(
@@ -333,14 +333,11 @@ async fn an_editor_status_reaches_the_handler_cleaned_and_a_blank_one_means_inst
         &AgentMessage::editor_status(EditorProblemKind::Install, None),
     )
     .await;
-    for _ in 0..100 {
-        if told.reports.lock().unwrap().len() == 4 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    let reports = told.reports.lock().unwrap().clone();
-    assert_eq!(reports.len(), 4, "{reports:?}");
+    let reports = eventually("the handler gets all four editor statuses", WAIT, || {
+        let reports = told.reports.lock().unwrap().clone();
+        (reports.len() == 4).then_some(reports)
+    })
+    .await;
     assert_eq!(
         reports[0],
         AgentReport::EditorStatus {

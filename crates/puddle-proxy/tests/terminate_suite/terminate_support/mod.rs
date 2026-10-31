@@ -358,6 +358,7 @@ async fn serve_http<S: AsyncRead + AsyncWriteExt + Unpin>(
         let stream = reader.get_mut();
         match reply.trickle {
             Some(pause) => {
+                // flake-ok: simulated trickling server, the pause between bytes is the behaviour under test.
                 for byte in &reply.bytes {
                     if stream.write_all(&[*byte]).await.is_err() || stream.flush().await.is_err() {
                         return;
@@ -832,14 +833,12 @@ impl Rig {
     /// Waits until the proxy has seen `count` of its connections to real servers end, so a test
     /// that cut one knows the next request finds the connection gone.
     pub(crate) async fn upstream_ended(&self, count: u64) {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        while self.proxy.upstream_connections_ended() < count {
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "the proxy never saw {count} upstream connection(s) end"
-            );
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        puddle_test_kit::eventually(
+            &format!("the proxy saw {count} upstream connection(s) end"),
+            Duration::from_secs(5),
+            || self.proxy.upstream_connections_ended() >= count,
+        )
+        .await;
     }
 
     pub(crate) async fn events(&self, count: usize) -> Vec<ConnectionEvent> {

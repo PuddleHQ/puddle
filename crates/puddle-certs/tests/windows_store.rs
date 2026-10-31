@@ -125,6 +125,7 @@ fn who_am_i() -> String {
 fn acquire(lock: &Path, holder: &Path, wait: Duration) -> Result<StoreLock, String> {
     let file = File::create(lock).unwrap();
     let start = Instant::now();
+    // flake-ok: a bounded retry of taking the lock whose timeout is an `Err` naming the holder (a test checks it), not a panic
     loop {
         match file.try_lock() {
             Ok(()) => {
@@ -218,6 +219,7 @@ fn run_bounded(mut command: Command, call: &str, limit: Duration) -> Result<Stri
         .spawn()
         .unwrap();
     let start = Instant::now();
+    // flake-ok: waits for a child with a limit whose outcome is a killed process tree and an `Err` value the caller matches on, not a panic
     loop {
         if child.try_wait().unwrap().is_some() {
             break;

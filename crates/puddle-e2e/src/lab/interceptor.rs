@@ -92,24 +92,29 @@ fn listening_port(log: &str) -> Option<u16> {
 /// When the child exits first or logs nothing within `within`; the message then says what the
 /// child's processes were doing and how long the machine took to start a trivial program.
 fn wait_listening(child: &mut Child, log_path: &Path, within: Duration) -> u16 {
-    let deadline = Instant::now() + within;
-    while Instant::now() < deadline {
-        if let Some(port) = listening_port(&read(log_path)) {
-            return port;
-        }
-        if let Ok(Some(status)) = child.try_wait() {
-            panic!("mitmproxy exited early ({status})\n{}", read(log_path));
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    let evidence = procs::stall_evidence(child);
-    // A child that never logged its port would outlive the panic and keep the runner's pipes open.
-    drop(child.kill());
-    drop(child.wait());
-    panic!(
-        "mitmproxy did not log its port within {within:.0?}\n{evidence}\nits log:\n{}",
-        read(log_path)
-    );
+    let waited = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        puddle_test_kit::eventually_blocking("mitmproxy did not log its port", within, || {
+            if let Some(port) = listening_port(&read(log_path)) {
+                return Ok(port);
+            }
+            if let Ok(Some(status)) = child.try_wait() {
+                panic!("mitmproxy exited early ({status})\n{}", read(log_path));
+            }
+            Err(format!("no port logged yet\n{}", read(log_path)))
+        })
+    }));
+    waited.unwrap_or_else(|panic| {
+        let evidence = procs::stall_evidence(child);
+        // A child that never logged its port would outlive the panic and keep the runner's pipes open.
+        drop(child.kill());
+        drop(child.wait());
+        let why = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .unwrap_or("mitmproxy did not log its port");
+        panic!("{why}\n{evidence}")
+    })
 }
 
 /// A running `mitmdump`; stopped on drop.
@@ -440,7 +445,7 @@ mod tests {
         }));
         let message = *outcome.unwrap_err().downcast::<String>().unwrap();
         assert!(
-            message.contains("did not log its port within 200ms"),
+            message.contains("mitmproxy did not log its port: not true within 200ms"),
             "{message}"
         );
         let pid = child.id();

@@ -27,6 +27,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
+puddle-test-kit = { workspace = true }
 serde_json = { workspace = true }
 puddle-boot = { workspace = true }
 puddle-compute = { workspace = true }

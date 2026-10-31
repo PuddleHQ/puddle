@@ -36,6 +36,7 @@ windows-sys = { workspace = true, features = [
 testing = []
 
 [dev-dependencies]
+puddle-test-kit = { workspace = true }
 puddle-types = { workspace = true, features = ["testing"] }
 proptest = { workspace = true }
 puddle-upstream = { path = ".", features = ["testing"] }

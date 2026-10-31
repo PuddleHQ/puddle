@@ -362,6 +362,7 @@ async fn a_log_line_ready_together_with_the_end_of_the_grace_period_is_served_fi
     let grace = fake.sources().grace;
     let (task, mut polls) = Polls::start(fake.sources(), tx);
     polls.baseline().await;
+    // flake-ok: repeats the whole scenario ten times and stalls the thread on purpose, nothing is polled
     for round in 1..=10_u32 {
         fake.set_counter(u64::from(round));
         // The grace period (200 ms) runs from the reading that sees the change. After that

@@ -320,8 +320,9 @@ pub trait Sandbox: Send + Sync + 'static {
     /// [`ComputeError::NotFound`] if it was removed.
     fn status(&self) -> impl Future<Output = Result<WorkspaceStatus, ComputeError>> + Send;
 
-    /// Stops the VM gracefully; the sandbox becomes `Stopped`. Stopping a sandbox that is
-    /// already down is a no-op.
+    /// Stops the VM gracefully: every process in the guest gets SIGTERM and a grace period to
+    /// exit, as on a machine that shuts down; the sandbox becomes `Stopped`. Stopping a sandbox
+    /// that is already down is a no-op.
     ///
     /// # Errors
     ///

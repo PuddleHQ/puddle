@@ -34,6 +34,8 @@ export function connection(
       count: null,
       injected: false,
       unswapped_stand_ins: [],
+      refused_address: null,
+      refused_reason: null,
       method: null,
       path: null,
       path_truncated: false,

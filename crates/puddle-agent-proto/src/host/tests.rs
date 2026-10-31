@@ -171,7 +171,6 @@ async fn oom_kills_on_the_control_stream_become_events_for_the_routes_workspace(
 #[derive(Default)]
 struct Told {
     udp: std::sync::Mutex<Vec<UdpRefusal>>,
-    tampered: std::sync::Mutex<Vec<bool>>,
     reports: std::sync::Mutex<Vec<AgentReport>>,
 }
 
@@ -182,10 +181,6 @@ impl StreamHandler for Listening {
 
     async fn udp_refused(&self, refusal: UdpRefusal) {
         self.0.udp.lock().unwrap().push(refusal);
-    }
-
-    async fn capture_tampered(&self, table_missing: bool) {
-        self.0.tampered.lock().unwrap().push(table_missing);
     }
 
     async fn agent_report(&self, report: AgentReport) {
@@ -219,11 +214,13 @@ async fn capture_reports_reach_the_handler_with_the_guests_text_cleaned() {
         &AgentMessage::capture_unavailable("no nf_tables\u{1b}[2J".repeat(40)),
     )
     .await;
+    send(&mut c, &AgentMessage::capture_unavailable(String::new())).await;
+    send(&mut c, &AgentMessage::capture_ready()).await;
     // The session is still reading: wait until the last report was handled.
     eventually(
-        "both tamper reports handled",
+        "all five capture reports handled",
         Duration::from_secs(10),
-        || told.tampered.lock().unwrap().len() == 2,
+        || told.reports.lock().unwrap().len() == 5,
     )
     .await;
     let udp = told.udp.lock().unwrap().clone();
@@ -241,7 +238,35 @@ async fn capture_reports_reach_the_handler_with_the_guests_text_cleaned() {
         "{:?}",
         udp[1].address
     );
-    assert_eq!(*told.tampered.lock().unwrap(), vec![true, false]);
+    let reports = told.reports.lock().unwrap().clone();
+    assert_eq!(reports.len(), 5, "{reports:?}");
+    assert_eq!(
+        reports[..2],
+        [
+            AgentReport::CaptureTampered {
+                table_missing: true
+            },
+            AgentReport::CaptureTampered {
+                table_missing: false
+            }
+        ]
+    );
+    let AgentReport::CaptureUnavailable {
+        reason: Some(reason),
+    } = &reports[2]
+    else {
+        panic!("wrong report: {:?}", reports[2]);
+    };
+    assert!(reason.chars().count() <= MAX_REASON_CHARS && !reason.contains('\u{1b}'));
+    assert!(reason.starts_with("no nf_tables?[2J"));
+    assert_eq!(
+        reports[3],
+        AgentReport::CaptureUnavailable {
+            reason: Some("no reason given".into())
+        },
+        "an empty reason is still an outage"
+    );
+    assert_eq!(reports[4], AgentReport::CaptureUnavailable { reason: None });
     h.close().await.unwrap();
 }
 

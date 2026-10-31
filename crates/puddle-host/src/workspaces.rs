@@ -31,9 +31,9 @@ use puddle_agent_proto::forward::OpenError;
 use puddle_agent_proto::host_control::{HostMessage, HostReply};
 use puddle_api::{
     AttachMode, Attached, BrowserTarget, DEFAULT_IMAGE, DeleteCheck, DesktopTarget, DisplayName,
-    EditorLogin, GitSetup, KeptLogin, KeptLogins, LaunchError, Launcher, Listing, NewWorkspace,
-    Operation, RepoFindings, Repository, ShellInitCheck, StartFolder, StartFolderChange,
-    WorkspaceError, WorkspaceRecord, WorkspaceService,
+    EditorLogin, EditorSignIn, GitSetup, KeptLogin, KeptLogins, LaunchError, Launcher, Listing,
+    NewWorkspace, Operation, RepoFindings, Repository, ShellInitCheck, StartFolder,
+    StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService,
 };
 use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
@@ -1993,15 +1993,20 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             origin: puddle_front::origin_of(self.inner.front_addr.port(), name),
             front: self.inner.front_addr,
             settings,
-            login: match self.inner.flavours.of(name) {
-                Some(puddle_front::Flavour::CodeServer) => Some(Arc::new(GuestLogin {
+            login: self.inner.flavours.of(name).map(|flavour| {
+                let login: Arc<dyn EditorLogin> = Arc::new(GuestLogin {
                     guests: Arc::clone(&self.inner.front_guests),
                     ports: self.inner.ports.clone(),
                     workspace: name.clone(),
-                })),
-                // Microsoft's server signs in through the front's key cookie, not a password.
-                Some(_) | None => None,
-            },
+                });
+                // Microsoft's server takes the password file as its connection token;
+                // code-server takes it in its login form.
+                if flavour == puddle_front::Flavour::Microsoft {
+                    EditorSignIn::ConnectionToken(login)
+                } else {
+                    EditorSignIn::Form(login)
+                }
+            }),
         };
         match self.inner.launcher.open_browser(record, &target).await {
             Ok(()) => Attached::opened(),

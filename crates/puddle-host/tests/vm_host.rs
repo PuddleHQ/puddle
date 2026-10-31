@@ -512,7 +512,7 @@ async fn vm_host_starts_a_workspace_from_a_checkout_on_this_computer() {
             "cd {clone} && git remote -v && git status -sb && cat README.md && \
              git log --format=%s feature && ls -A && \
              echo \"fsmonitor=$(git config --get core.fsmonitor) hooksPath=$(git config --get core.hooksPath)\" && \
-             ls -A .. && ls /puddle/import 2>&1"
+             ls -A ..; ls /puddle/import 2>&1 || true"
         ),
     )
     .await;

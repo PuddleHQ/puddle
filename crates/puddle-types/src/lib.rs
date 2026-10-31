@@ -40,7 +40,7 @@ mod request_match;
 
 pub use connection::{
     ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin, ConnectionOutcome,
-    ConnectionReason, HttpRequestLine, NullConnectionLog, request_path,
+    ConnectionReason, HttpRequestLine, NullConnectionLog, RefusedReason, request_path,
 };
 pub use cpus::CpuCount;
 pub use error::ValidationError;

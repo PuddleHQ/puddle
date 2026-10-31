@@ -367,7 +367,9 @@ function connectionDetail(
   if (record.refused_address !== null) {
     const why = record.refused_reason ?? "";
     parts.push(
-      `the answer also held ${record.refused_address} (${REASONS[why] ?? why}), which Puddle did not use`,
+      why === "ip_rule"
+        ? `the answer held ${record.refused_address}, which a rule on that address denies, so Puddle did not use it`
+        : `the answer also held ${record.refused_address} (${REASONS[why] ?? why}), which Puddle did not use`,
     );
   }
   if (record.unswapped_stand_ins.length > 0) {

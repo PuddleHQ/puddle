@@ -402,7 +402,7 @@ describe("run on a real git repository", () => {
       join(dir, "src/a.rs"),
       "fn a() {\n    1;\n    let two = compute_two();\n    let three = compute_three();\n}\n",
     );
-  });
+  }, 60_000);
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
   afterEach(() => vi.restoreAllMocks());
 

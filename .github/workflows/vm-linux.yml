@@ -45,7 +45,7 @@ env:
   RUST_BACKTRACE: 1
   # Line tables only: backtraces keep file:line, builds and the cache stay much smaller.
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
-  # Crates with VM tests: the harness smoke, the msb adapter (contract suite, HG-01/02, memory),
+  # Crates with VM tests: the harness smoke, the msb adapter (contract suite, memory),
   # the boot hook, the workspace lifecycle, shutdown and reconcile, the whole host.
   VM_CRATES: -p puddle-vm-tests -p puddle-compute-msb -p puddle-boot -p puddle-workspace -p puddle-lifecycle -p puddle-host --package=puddle
   # msb's sandbox runtimes log at debug, and the harness keeps each removed sandbox's logs beside

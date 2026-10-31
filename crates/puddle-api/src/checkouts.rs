@@ -231,7 +231,7 @@ pub enum AddRepository {
 }
 
 /// Refuses a "Manage this" whose checkout no longer has the address the user was shown, so a
-/// workspace cannot swap the remote between the listing and the click (storage ST-50).
+/// workspace cannot swap the remote between the listing and the click.
 ///
 /// # Errors
 ///
@@ -251,7 +251,7 @@ pub fn check_seen(
     )))
 }
 
-/// Whether `new` may join `entries` (storage ST-51): the list has room, its directory is not
+/// Whether `new` may join `entries`: the list has room, its directory is not
 /// taken and its repository is not on the list yet.
 ///
 /// # Errors

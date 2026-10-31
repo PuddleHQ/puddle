@@ -158,7 +158,7 @@ fn reports_from_one_workspace_never_touch_the_problems_of_another() {
     assert_eq!(problems.list(), [entrypoint_problem(&b, "1: b's own")]);
 }
 
-/// HG-37 at the host's end: whatever a hostile guest sends during one run, each problem changes
+/// At the host's end: whatever a hostile guest sends during one run, each problem changes
 /// within its bound, so the notices and `problems_changed` events stay bounded too. The control
 /// stream's own limits (line length, rate, one stream per session) come on top and are tested in
 /// `puddle-agent-proto`.

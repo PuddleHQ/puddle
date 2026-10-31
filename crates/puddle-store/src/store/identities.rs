@@ -167,7 +167,7 @@ fn choose<'a>(
         return Ok((Some(named), StartBasis::Chosen));
     }
     // Whether an identity covers the repository by naming its owner (`true`) or as the rest of
-    // its host (`false`): naming the owner wins (credentials CD-38), and one already on the
+    // its host (`false`): naming the owner wins, and one already on the
     // list wins over one that would have to join.
     let level = |identity: &Identity| match resolve(std::slice::from_ref(identity), host, owner) {
         CredentialChoice::Covered { exact, .. } => Some(exact),
@@ -582,7 +582,7 @@ impl Store {
         Ok(())
     }
 
-    /// Sets up one repository of the workspace `ws` before it is cloned (storage ST-44): the
+    /// Sets up one repository of the workspace `ws` before it is cloned: the
     /// identity the request names, else the one on the workspace's list that covers the
     /// repository, else the one that covers it of all your identities (the first in your order
     /// when several do), else the default identity, joins the list unless it is on it already;

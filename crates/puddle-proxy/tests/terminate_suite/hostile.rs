@@ -40,7 +40,7 @@ fn quick() -> ProxyConfig {
         )
 }
 
-// HG-15: the wrong host ------------------------------------------------------------------------
+// The wrong host ------------------------------------------------------------------------
 
 #[tokio::test]
 async fn hostile_hg15_a_request_for_another_host_is_421_and_the_injector_never_hears_of_it() {
@@ -203,7 +203,7 @@ async fn early_bytes_after_the_connect_are_not_lost() {
     assert_eq!(conn.alpn_protocol(), Some(&b"http/1.1"[..]));
 }
 
-// HG-16: smuggling ------------------------------------------------------------------------------
+// Smuggling ------------------------------------------------------------------------------
 
 #[tokio::test]
 async fn hostile_hg16_ambiguous_framing_is_refused_before_anything_goes_upstream() {
@@ -499,7 +499,7 @@ async fn hostile_hg16_a_guest_that_stops_sending_a_body_does_not_hold_the_upstre
     assert!(server.recorded().iter().all(|r| r.body.len() != 100));
 }
 
-// HG-17: what the guest sends in `Authorization` and `Proxy-Authorization`. The injector of the
+// What the guest sends in `Authorization` and `Proxy-Authorization`. The injector of the
 // Git hosts adds nothing when the guest sent its own `Authorization` (`terminate_git_inject.rs`);
 // what the proxy itself guarantees, whatever an injector says, is below.
 
@@ -524,7 +524,7 @@ async fn an_injected_authorization_replaces_the_guests_and_proxy_authorization_n
     assert_eq!(seen.headers_named("proxy-authorization").len(), 0);
 }
 
-// HG-19: a bad upstream certificate ----------------------------------------------------------------
+// A bad upstream certificate ----------------------------------------------------------------
 
 #[tokio::test]
 async fn hostile_hg19_an_upstream_certificate_that_is_not_accepted_is_a_502_and_nothing_is_sent() {
@@ -604,7 +604,7 @@ async fn hostile_hg19_a_root_the_host_does_not_trust_is_not_trusted_because_the_
     assert!(server.recorded().is_empty());
 }
 
-// HG-28: the guest's clock ---------------------------------------------------------------------------
+// The guest's clock ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn hostile_hg28_the_upstream_check_uses_the_hosts_clock_alone() {
@@ -642,7 +642,7 @@ async fn hostile_hg28_the_upstream_check_uses_the_hosts_clock_alone() {
     }
 }
 
-// HG-29: a hostile bound upstream -------------------------------------------------------------------------
+// A hostile bound upstream -------------------------------------------------------------------------
 
 #[tokio::test]
 async fn hostile_hg29_a_huge_response_head_is_a_502_and_other_connections_are_fine() {

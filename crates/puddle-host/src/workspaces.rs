@@ -41,9 +41,7 @@ use puddle_compute::{ComputeError, DiskSize, ExecRequest, ImageConfig, Runtime, 
 use puddle_lifecycle::Lifecycle;
 use puddle_ports::{NoLink, Ports};
 use puddle_proxy::Route;
-use puddle_settings::{
-    Effective, GlobalSettings, ReconnectionGrace, ServerChoice, WorkspaceSettings, resolve,
-};
+use puddle_settings::{Effective, ReconnectionGrace, ServerChoice, WorkspaceSettings, resolve};
 use puddle_ssh::SshEndpoint;
 use puddle_store::Clock;
 use puddle_types::{
@@ -1947,10 +1945,21 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// password is held back from anything but a shell.
     async fn attach_browser(&self, record: &WorkspaceRecord) -> Attached {
         let name = &record.name;
+        // No window opens on settings that cannot be read: the user may have tightened what the
+        // window does (no clipboard prompt, no zoom keys), and the defaults would undo that.
+        let settings = match self.window_settings(name) {
+            Ok(settings) => settings,
+            Err(reason) => {
+                tracing::warn!(workspace = %name, %reason, "no window opens: the settings cannot be read");
+                return Attached::not_opened(format!(
+                    "the editor window did not open because of this: {reason}; fix the settings file, or delete it to go back to the defaults, then open the editor again"
+                ));
+            }
+        };
         let target = BrowserTarget {
             origin: puddle_front::origin_of(self.inner.front_addr.port(), name),
             front: self.inner.front_addr,
-            settings: self.window_settings(name),
+            settings,
             login: match self.inner.flavours.of(name) {
                 Some(puddle_front::Flavour::CodeServer) => Some(Arc::new(GuestLogin {
                     guests: Arc::clone(&self.inner.front_guests),
@@ -1967,19 +1976,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
-    /// What `name`'s settings say about its window; the defaults when they cannot be read (the
-    /// window is not worth a failed attach).
-    fn window_settings(&self, name: &WorkspaceName) -> Effective {
+    /// What `name`'s settings say about its window, or why they cannot be read.
+    fn window_settings(&self, name: &WorkspaceName) -> Result<Effective, String> {
         let settings = self.inner.settings.as_ref();
-        let read = || {
-            let global = crate::settings_read::global(settings)?;
-            let own = crate::settings_read::workspace(settings, name)?;
-            Ok::<_, String>(resolve(&global, Some(&own)))
-        };
-        read().unwrap_or_else(|reason| {
-            tracing::warn!(workspace = %name, %reason, "the window uses the default settings: the settings cannot be read");
-            resolve(&GlobalSettings::default(), None::<&WorkspaceSettings>)
-        })
+        let global = crate::settings_read::global(settings)?;
+        let own = crate::settings_read::workspace(settings, name)?;
+        Ok(resolve(&global, Some(&own)))
     }
 
     fn direct_ssh_setting(&self, name: &WorkspaceName) -> Result<bool, String> {

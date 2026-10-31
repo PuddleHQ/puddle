@@ -9411,8 +9411,8 @@ async fn a_checkout_git_refuses_is_a_problem_and_a_boot_that_fails_after_the_imp
 
     // The volume cannot be removed either: the failure says so and names the volume left.
     rig.runtime.inject(
-        puddle_compute::fake::Op::RemoveVolume,
-        puddle_compute::fake::Fault::once(puddle_compute::ComputeError::Runtime {
+        Op::RemoveVolume,
+        Fault::once(puddle_compute::ComputeError::Runtime {
             op: "remove_volume",
             message: "the disk is busy".into(),
         }),

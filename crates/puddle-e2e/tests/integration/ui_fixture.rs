@@ -1062,6 +1062,50 @@ async fn the_git_identities_scenario_seeds_identities_tables_and_what_the_creden
 }
 
 #[tokio::test]
+async fn a_read_step_makes_the_identities_carry_what_the_last_read_came_to() {
+    let run = start("git-identities").await;
+    let last = |list: &Value, label: usize, credential: usize| {
+        list["identities"][label]["credentials"][credential]["last_check"].clone()
+    };
+    let before = run.get("/api/identities").await.json();
+    assert!(last(&before, 1, 0).is_null(), "nothing read yet");
+
+    let mut stream = run.events().await;
+    let ran = run
+        .control("POST", "/control/script/pushes_read_credentials", None)
+        .await;
+    assert_eq!(ran.status, 204);
+    read_until(&mut stream, |s| s.contains("identities_changed")).await;
+
+    let after = run.get("/api/identities").await.json();
+    let fine = last(&after, 1, 0);
+    assert_eq!(
+        (fine["readable"].clone(), fine["by"].clone()),
+        (serde_json::json!(true), serde_json::json!("injection"))
+    );
+    let broken = last(&after, 0, 1);
+    assert_eq!(
+        (broken["needs_sign_in"].clone(), broken["by"].clone()),
+        (
+            serde_json::json!(true),
+            serde_json::json!("repository_list")
+        )
+    );
+    assert!(
+        last(&after, 0, 0).is_null(),
+        "the third credential was never read"
+    );
+
+    // A test is a use too.
+    let step = json!({"do": "credential_read", "by": "test", "readable": true,
+        "source": {"kind": "gh", "host": "github.com", "account": "tijs-work"}});
+    let ran = run.control("POST", "/control/step", Some(&step)).await;
+    assert_eq!(ran.status, 204, "{}", ran.body);
+    let tested = run.get("/api/identities").await.json();
+    assert_eq!(last(&tested, 0, 0)["by"], "test");
+}
+
+#[tokio::test]
 async fn the_fixture_answers_the_repository_endpoints_with_nothing_listed() {
     let run = start("git-identities").await;
     let listing = run.get("/api/repos").await;

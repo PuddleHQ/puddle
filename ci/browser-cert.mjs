@@ -38,19 +38,16 @@ const ws = (u) =>
   });
 const rpc = (s) => {
   let next = 1;
-  const pending = new Map();
-  s.onmessage = (e) => {
-    const m = JSON.parse(e.data);
-    const p = pending.get(m.id);
-    if (p) {
-      pending.delete(m.id);
-      p(m);
-    }
-  };
   return (method, params = {}) =>
     new Promise((res) => {
       const id = next++;
-      pending.set(id, res);
+      const onMessage = (e) => {
+        const m = JSON.parse(e.data);
+        if (m.id !== id) return;
+        s.removeEventListener("message", onMessage);
+        res(m);
+      };
+      s.addEventListener("message", onMessage);
       s.send(JSON.stringify({ id, method, params }));
     });
 };
@@ -110,7 +107,7 @@ function kill(child) {
 
 const server = createServer({ cert: readFileSync(certFile), key: readFileSync(keyFile) }, (_req, res) => {
   res.writeHead(200, { "content-type": "text/plain" });
-  res.end("puddle dev certificate check\n");
+  res.end("Puddle development certificate check\n");
 });
 await new Promise((res) => server.listen(0, "127.0.0.1", res));
 const url = `https://localhost:${server.address().port}/`;

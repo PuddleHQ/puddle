@@ -54,6 +54,7 @@ fn the_corpus_holds_messages_the_stub_answers_drops_and_refuses_by_name() {
         "compression-pointer",
         "label-64",
         "name-over-255",
+        "crash-name-over-255-in-last-label",
         "name-no-root",
         "two-questions",
         "no-question",

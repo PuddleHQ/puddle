@@ -9,8 +9,8 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use super::{
-    LOCAL, Prefix, READY, StartCost, StartSlot, configured_or_skip, read, require_file, stop,
-    wait_ready,
+    LOCAL, Prefix, READY, StartCost, StartSlot, configured_or_skip, procs, read, require_file,
+    stop, wait_ready,
 };
 
 /// The test root of one interceptor: made before the proxy starts and handed to it, so a test
@@ -89,7 +89,8 @@ fn listening_port(log: &str) -> Option<u16> {
 /// Waits until `child` has logged the port it bound, and returns it.
 ///
 /// # Panics
-/// When the child exits first or logs nothing within `within`.
+/// When the child exits first or logs nothing within `within`; the message then says what the
+/// child's processes were doing and how long the machine took to start a trivial program.
 fn wait_listening(child: &mut Child, log_path: &Path, within: Duration) -> u16 {
     let deadline = Instant::now() + within;
     while Instant::now() < deadline {
@@ -101,10 +102,14 @@ fn wait_listening(child: &mut Child, log_path: &Path, within: Duration) -> u16 {
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+    let evidence = procs::stall_evidence(child);
     // A child that never logged its port would outlive the panic and keep the runner's pipes open.
     drop(child.kill());
     drop(child.wait());
-    panic!("mitmproxy did not log its port\n{}", read(log_path));
+    panic!(
+        "mitmproxy did not log its port within {within:.0?}\n{evidence}\nits log:\n{}",
+        read(log_path)
+    );
 }
 
 /// A running `mitmdump`; stopped on drop.

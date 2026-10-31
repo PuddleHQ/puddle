@@ -3,9 +3,12 @@
   import { tick } from "svelte";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import {
+    authorDiffers,
+    authorFill,
     credentialChip,
     describeSource,
     identityProblem,
+    type AccountProfile,
     type Credential,
     type Identity,
     type Source,
@@ -37,6 +40,8 @@
   let email = $state("");
   let credentials = $state.raw<Credential[]>([]);
   let adding = $state(false);
+  /** What the Git host said of the account being added: offered for the author, never forced. */
+  let offered = $state.raw<AccountProfile | null>(null);
   let problem = $state<{
     field: "label" | "name" | "email" | "form";
     message: string;
@@ -53,6 +58,7 @@
       email = identity?.author.email ?? "";
       credentials = identity?.credentials ?? [];
       adding = false;
+      offered = null;
       problem = null;
       pasted = [];
       saved = false;
@@ -76,6 +82,16 @@
       pasted = pasted.filter((s) => s !== mine);
       void store.forgetToken(mine);
     }
+  }
+
+  /** Fills empty author fields from the account; typed text stays until the button is pressed. */
+  function profiled(profile: AccountProfile) {
+    offered = profile;
+    ({ name, email } = authorFill({ name, email }, profile, false));
+  }
+
+  function useAccount() {
+    if (offered) ({ name, email } = authorFill({ name, email }, offered, true));
   }
 
   function added(credential: Credential, stored: Source | null) {
@@ -176,6 +192,13 @@
             : undefined}
         />
       </div>
+      {#if offered && authorDiffers({ name, email }, offered)}
+        <div>
+          <button type="button" class="btn" onclick={useAccount}
+            >Use this account's name and address</button
+          >
+        </div>
+      {/if}
     </fieldset>
   </form>
 
@@ -208,6 +231,7 @@
         {store}
         existing={credentials}
         onAdd={added}
+        onProfile={profiled}
         onCancel={() => (adding = false)}
       />
     {:else}

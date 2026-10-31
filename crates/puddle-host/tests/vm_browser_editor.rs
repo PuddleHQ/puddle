@@ -263,12 +263,12 @@ async fn sign_in(front: SocketAddr, workspace: &str, password: &str) -> Result<S
         })
 }
 
-/// The guest's extension hosts, and the shells of its terminals (children of the editor's pty
-/// host), counted.
+/// The guest's extension hosts and the editor's terminal host (its pty host, which the window's
+/// first terminal starts), counted.
 const COUNT: &str = r#"
 hosts=$(ps -eo args= | grep -c -e '--type=extensionHos[t]' || true)
-pty=$(ps -eo pid=,ppid=,args= | awk '/--type=ptyHos[t]/ { host[$1] = 1 } { parent[$1] = $2 } END { n = 0; for (p in parent) if (parent[p] in host) n++; print n }')
-echo "hosts=$hosts terminals=$pty health=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:41337/healthz)"
+pty=$(ps -eo args= | grep -c -e '--type=ptyHos[t]' || true)
+echo "hosts=$hosts pty=$pty health=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:41337/healthz)"
 "#;
 
 /// Parses `key=<n>` out of [`COUNT`]'s line.
@@ -317,7 +317,7 @@ async fn windows_become(windows: &puddle_front::Windows, workspace: &WorkspaceNa
 /// K tier, code-server. An attach in the browser opens the workspace's editor signed in (no
 /// login page, and the password nowhere in an address), and the editor shows the volume's
 /// checkouts; the front counts the window. Closing the window ends the guest's real extension
-/// host (the shell's last-window cleanup) and keeps the terminal; opening it again within the
+/// host (the shell's last-window cleanup) and keeps the terminal host; opening it again within the
 /// grace finds the editor with the kept session (no second sign-in). A stop closes the window
 /// before the guest goes; after the next start the editor opens the multi-root file, one root per
 /// checkout and the volume, with a new password and so a new sign-in.
@@ -415,7 +415,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     })
     .await;
 
-    // A terminal in the window: its shell runs below the editor's pty host.
+    // A terminal in the window: the editor starts its terminal host for it.
     shell
         .browser
         .lock()
@@ -438,13 +438,13 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
             PAGE_BUDGET,
         )
         .await;
-    let with_terminal = counts_until(&runtime, &sandbox, "the terminal's shell", |line| {
-        count(line, "terminals") >= 1
+    let with_terminal = counts_until(&runtime, &sandbox, "the terminal host", |line| {
+        count(line, "pty") >= 1
     })
     .await;
 
     // The window closes: the front counts none, and the cleanup ends the real extension host and
-    // leaves the terminal and the server.
+    // leaves the terminal host and the server.
     shell.close_pages(&name).await;
     windows_become(windows, &sandbox, false).await;
     let reply = host
@@ -462,8 +462,8 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     let closed = guest(&runtime, &sandbox, COUNT).await;
     assert_eq!(count(&closed, "hosts"), 0, "{closed}");
     assert_eq!(
-        count(&closed, "terminals"),
-        count(&with_terminal, "terminals"),
+        count(&closed, "pty"),
+        count(&with_terminal, "pty"),
         "{closed}"
     );
     assert!(closed.contains("health=200"), "{closed}");

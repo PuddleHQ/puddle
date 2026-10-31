@@ -139,6 +139,20 @@ pub trait Runtime: Send + Sync + 'static {
     /// [`ComputeError::Runtime`] when the runtime can't be reached.
     fn probe(&self) -> impl Future<Output = Result<Capabilities, ComputeError>> + Send;
 
+    /// Checks `git_dir` against this runtime's rule for a [`crate::MountKind::Checkout`] mount
+    /// now, so a caller can refuse it before anything is made (the runtime checks it again at
+    /// create). By default the shape of a git directory ([`crate::check_checkout_dir`]); a
+    /// runtime adds its own rules on where the path may be.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::InvalidSpec`] naming what is wrong.
+    fn check_checkout(&self, git_dir: &std::path::Path) -> Result<(), ComputeError> {
+        crate::check_checkout_dir(git_dir).map_err(|why| ComputeError::InvalidSpec {
+            reason: format!("the checkout {} {why}", git_dir.display()),
+        })
+    }
+
     /// Makes sure `image` is in the local cache (pulling it if needed) and returns its config.
     ///
     /// # Errors

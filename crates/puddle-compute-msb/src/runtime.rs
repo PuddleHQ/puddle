@@ -386,6 +386,12 @@ impl Runtime for MsbRuntime {
         })
     }
 
+    fn check_checkout(&self, git_dir: &Path) -> Result<(), ComputeError> {
+        self.inner
+            .config
+            .check_mount_source(git_dir, puddle_compute::MountKind::Checkout)
+    }
+
     fn pull_image(
         &self,
         image: &ImageRef,

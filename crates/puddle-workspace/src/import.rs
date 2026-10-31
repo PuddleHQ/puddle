@@ -8,19 +8,22 @@
 //!
 //! The host never runs git against the checkout. [`LocalCheckout::open`] looks at it as files:
 //! the folder's shape and, as text, the `url` of its `origin` remote, which becomes the new
-//! repository's address (an SSH remote of a known Git host in its HTTPS form).
+//! repository's address (an SSH remote of a known Git host in its HTTPS form). A checkout whose
+//! objects live elsewhere (alternates, a partial clone) is refused: the guest cannot reach them.
 //!
-//! In the guest every git call of the import carries `core.hooksPath=/dev/null` and
-//! `core.fsmonitor=false`, so no hook and no monitor runs, whoever wrote them; git never copies a
-//! repository's hooks into a clone anyway. The clone uses `--no-local`: git's own transport reads
-//! the source through `upload-pack`, which takes no command from the source's config, instead of
-//! copying or hard-linking its files by path.
+//! In the guest every git process of the import, the `upload-pack` that reads the source
+//! included, gets its settings from the environment ([`import_env`]): no hook and no file-system
+//! monitor runs, no transport but the local one is allowed, no lazy fetch is made, and Git LFS
+//! leaves its files as pointers. The clone uses `--no-local` (git's own transport through
+//! `upload-pack`, never a copy of the files by path) and `--no-checkout`, so the work tree is
+//! written once, after every ref is in place.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use puddle_compute::ExecRequest;
-use puddle_types::{CheckoutDir, GuestPath};
+use puddle_types::{CheckoutDir, GuestEnv, GuestPath};
 
 use crate::WorkspaceError;
 use crate::layout::Layout;
@@ -61,8 +64,9 @@ impl LocalCheckout {
     ///
     /// # Errors
     ///
-    /// A message for the user: the folder is missing, holds no `.git`, is a bare repository, or
-    /// its `.git` is a worktree's or submodule's link file or not a git directory.
+    /// A message for the user: the folder is missing, holds no `.git`, is a bare repository, its
+    /// `.git` is a worktree's or submodule's link file or not a git directory, or its objects
+    /// are kept elsewhere.
     pub fn open(folder: &Path) -> Result<Self, String> {
         if !folder.is_absolute() {
             return Err(format!("{} is not an absolute path", folder.display()));
@@ -77,6 +81,7 @@ impl LocalCheckout {
         let folder = git_dir
             .parent()
             .map_or_else(|| picked.clone(), Path::to_path_buf);
+        let refuse = |why: &str| format!("the checkout {} {why}", folder.display());
         if std::fs::symlink_metadata(&git_dir).is_err() {
             let bare = ["HEAD", "objects", "refs"]
                 .iter()
@@ -91,9 +96,25 @@ impl LocalCheckout {
                 format!("{} is not a git checkout: it has no .git", folder.display())
             });
         }
-        puddle_compute::check_checkout_dir(&git_dir)
-            .map_err(|why| format!("the checkout {} {why}", folder.display()))?;
-        let origin = read_origin(&git_dir.join("config")).and_then(|url| https_form(&url));
+        puddle_compute::check_checkout_dir(&git_dir).map_err(|why| refuse(&why))?;
+        if std::fs::symlink_metadata(git_dir.join("objects").join("info").join("alternates"))
+            .is_ok()
+        {
+            return Err(refuse(
+                "keeps its objects in another repository (alternates), which the clone can't \
+                 reach; use its address instead",
+            ));
+        }
+        let config = read_config(&git_dir.join("config"));
+        if config.as_deref().is_ok_and(is_partial_clone) {
+            return Err(refuse(
+                "is a partial clone, whose missing objects the clone can't fetch; \
+                 use its address instead",
+            ));
+        }
+        let origin = config
+            .and_then(|text| origin_url(&text))
+            .and_then(|url| https_form(&url));
         Ok(Self {
             git_dir,
             folder,
@@ -102,28 +123,54 @@ impl LocalCheckout {
     }
 }
 
-/// The first `url` of `[remote "origin"]` in the git config file `config`, read as text: no
-/// include is followed and nothing runs.
-fn read_origin(config: &Path) -> Result<String, String> {
-    let meta = std::fs::symlink_metadata(config)
-        .map_err(|_| "it has no config file, so no origin remote".to_owned())?;
-    if !meta.is_file() {
+/// The git config file `config` as text: a plain file (checked on the open file, so a swap for a
+/// link or a device in between does not count) of at most [`MAX_CONFIG_BYTES`].
+fn read_config(config: &Path) -> Result<String, String> {
+    if !std::fs::symlink_metadata(config).is_ok_and(|m| m.is_file()) {
+        return Err("it has no config file, so no origin remote".into());
+    }
+    let file = std::fs::File::open(config).map_err(|e| format!("its config can't be read: {e}"))?;
+    if !file.metadata().is_ok_and(|m| m.is_file()) {
         return Err("its config is not a plain file".into());
     }
-    if meta.len() > MAX_CONFIG_BYTES {
+    let mut bytes = Vec::new();
+    file.take(MAX_CONFIG_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("its config can't be read: {e}"))?;
+    if bytes.len() as u64 > MAX_CONFIG_BYTES {
         return Err("its config file is too large to read".into());
     }
-    let text = std::fs::read(config).map_err(|e| format!("its config can't be read: {e}"))?;
-    origin_url(&String::from_utf8_lossy(&text)).ok_or_else(|| "it has no origin remote".into())
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// The first `url` in the `[remote "origin"]` section of git config text. A value git would
-/// continue on the next line, or one it would read differently from this reader, counts as none.
-fn origin_url(text: &str) -> Option<String> {
+/// Whether config text makes the repository a partial clone (objects to be fetched on demand).
+fn is_partial_clone(text: &str) -> bool {
+    text.lines().any(|line| {
+        let key = line.split('=').next().unwrap_or_default().trim();
+        key.eq_ignore_ascii_case("partialclone") || key.eq_ignore_ascii_case("promisor")
+    })
+}
+
+/// The reason given for an origin this reader could read differently from git.
+const UNREADABLE: &str = "its origin is written in a way Puddle does not read (a continued line, \
+                          an include before it, or an escape); give the repository's HTTPS address";
+
+/// The first `url` in the `[remote "origin"]` section of git config text. Text git could read
+/// differently from this reader (a line continued with `\`, an include before the origin, an
+/// escape other than `\"` and `\\`) is refused rather than guessed at.
+fn origin_url(text: &str) -> Result<String, String> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    if text.lines().any(|l| l.trim_end().ends_with('\\')) {
+        return Err(UNREADABLE.into());
+    }
     let mut in_origin = false;
     for raw in text.lines() {
         let line = raw.trim();
-        if line.starts_with('[') {
+        if let Some(header) = line.strip_prefix('[') {
+            let name = header.trim_start().to_ascii_lowercase();
+            if name.starts_with("include") {
+                return Err(UNREADABLE.into());
+            }
             in_origin = is_origin_header(line);
             continue;
         }
@@ -136,9 +183,9 @@ fn origin_url(text: &str) -> Option<String> {
         if !key.trim().eq_ignore_ascii_case("url") {
             continue;
         }
-        return config_value(value.trim());
+        return config_value(value.trim()).ok_or_else(|| UNREADABLE.into());
     }
-    None
+    Err("it has no origin remote".into())
 }
 
 /// `[remote "origin"]` (section names ignore case, subsection names do not) or the old
@@ -160,7 +207,7 @@ fn is_origin_header(line: &str) -> bool {
 }
 
 /// A config value: quotes removed, `\"` and `\\` unescaped, a comment after it dropped. `None`
-/// for a value that continues on the next line or holds another escape.
+/// for a value that holds another escape or an unclosed quote.
 fn config_value(value: &str) -> Option<String> {
     let mut out = String::new();
     let mut quoted = false;
@@ -180,28 +227,61 @@ fn config_value(value: &str) -> Option<String> {
     (!quoted && !out.is_empty()).then_some(out)
 }
 
+/// `url` with any user name and password of a `scheme://` address replaced by `***`, for a
+/// message.
+fn redacted(url: &str) -> String {
+    match url.split_once("://") {
+        Some((scheme, rest)) => {
+            let end = rest.find(['/', '?', '#', '\\']).unwrap_or(rest.len());
+            match rest[..end].rfind('@') {
+                Some(at) => format!("{scheme}://***{}", &rest[at..]),
+                None => url.to_owned(),
+            }
+        }
+        None => url.to_owned(),
+    }
+}
+
+/// Splits `rest` (what follows `scheme://`) into its host, without user name, password or port
+/// for SSH, and the rest of the address. The authority ends at the first `/`, `?`, `#` or `\`,
+/// as it does for curl and git.
+fn authority(rest: &str) -> (&str, &str) {
+    let end = rest.find(['/', '?', '#', '\\']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(end);
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    (host, tail)
+}
+
 /// The HTTPS form of a remote address: an `https://` address without its user name or password,
 /// or an SSH remote of GitHub, GitLab, Bitbucket or Azure DevOps written as HTTPS.
 ///
 /// # Errors
 ///
-/// Why the address can't be used, for a remote of any other kind.
+/// Why the address can't be used, for a remote of any other kind; the message never shows a
+/// password the address held.
 pub fn https_form(url: &str) -> Result<String, String> {
-    let lower = url.to_ascii_lowercase();
-    if let Some(rest) = lower.strip_prefix("https://") {
-        let rest = &url[url.len() - rest.len()..];
-        let (authority, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
-        let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-        return Ok(format!("https://{host}{path}"));
+    let shown = redacted(url);
+    if url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(format!(
+            "its origin {shown} holds spaces or control characters; give the repository's HTTPS address"
+        ));
     }
-    let (host, path) = if let Some(rest) = lower.strip_prefix("ssh://") {
-        let rest = &url[url.len() - rest.len()..];
-        let (authority, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
-        let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let lower = url.to_ascii_lowercase();
+    if lower.starts_with("https://") {
+        let (host, tail) = authority(&url["https://".len()..]);
+        if host.is_empty() || !tail.starts_with('/') {
+            return Err(format!(
+                "its origin {shown} names no repository on a host; give the repository's HTTPS address"
+            ));
+        }
+        return Ok(format!("https://{host}{tail}"));
+    }
+    let (host, path) = if lower.starts_with("ssh://") {
+        let (host, tail) = authority(&url["ssh://".len()..]);
         let host = host.split(':').next().unwrap_or(host);
         (
             host.to_ascii_lowercase(),
-            path.trim_start_matches('/').to_owned(),
+            tail.trim_start_matches('/').to_owned(),
         )
     } else if let Some((authority, path)) = scp_like(url) {
         let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
@@ -211,9 +291,14 @@ pub fn https_form(url: &str) -> Result<String, String> {
         )
     } else {
         return Err(format!(
-            "its origin {url} is not an HTTPS or SSH address; give the repository's HTTPS address"
+            "its origin {shown} is not an HTTPS or SSH address; give the repository's HTTPS address"
         ));
     };
+    if path.contains(['?', '#', '\\']) {
+        return Err(format!(
+            "its origin {shown} is an SSH address Puddle can't read; give the repository's HTTPS address"
+        ));
+    }
     match host.as_str() {
         "github.com" | "ssh.github.com" => Ok(format!("https://github.com/{path}")),
         "gitlab.com" => Ok(format!("https://gitlab.com/{path}")),
@@ -227,13 +312,13 @@ pub fn https_form(url: &str) -> Result<String, String> {
                     Ok(format!("https://dev.azure.com/{org}/{project}/_git/{repo}"))
                 }
                 _ => Err(format!(
-                    "its origin {url} is an Azure DevOps SSH address Puddle can't read; \
+                    "its origin {shown} is an Azure DevOps SSH address Puddle can't read; \
                      give the repository's HTTPS address"
                 )),
             }
         }
         _ => Err(format!(
-            "its origin {url} is an SSH address of a host Puddle knows no HTTPS form for; \
+            "its origin {shown} is an SSH address of a host Puddle knows no HTTPS form for; \
              give the repository's HTTPS address"
         )),
     }
@@ -260,19 +345,43 @@ pub struct Import {
     pub url: String,
 }
 
-/// The `-c` settings of every git call of an import: no hook and no file-system monitor runs,
-/// and the mounted repository (owned by the host's user) is one git may read.
-fn guarded(source: &str) -> Vec<String> {
-    [
-        "-c",
-        "core.hooksPath=/dev/null",
-        "-c",
-        "core.fsmonitor=false",
-        "-c",
-        &format!("safe.directory={source}"),
-    ]
-    .map(str::to_owned)
-    .to_vec()
+/// The git settings of every git process of the `n`-th import, as environment (`-c` would not
+/// reach the `upload-pack` that reads the source: git clears it for that child): no hook, no
+/// file-system monitor, no command for alternates' refs (settings from the environment win over
+/// the source's own config), no transport but the local one, no automatic gc, the mounted repository
+/// (owned by the host's user) one git may read. `GIT_NO_LAZY_FETCH` keeps a source that claims
+/// missing objects from fetching them; `GIT_LFS_SKIP_SMUDGE` leaves LFS files as pointers.
+///
+/// # Errors
+///
+/// [`WorkspaceError::Layout`] (never: every name and value is fixed or a fixed path).
+pub(crate) fn import_env(n: usize) -> Result<GuestEnv, WorkspaceError> {
+    let settings = [
+        ("core.hooksPath", "/dev/null".to_owned()),
+        ("core.fsmonitor", "false".to_owned()),
+        ("safe.directory", source(n)),
+        ("protocol.allow", "never".to_owned()),
+        ("protocol.file.allow", "always".to_owned()),
+        ("gc.auto", "0".to_owned()),
+        // The source's config could name a command for the refs of its alternates; this one
+        // prints none.
+        ("core.alternateRefsCommand", "true".to_owned()),
+        ("maintenance.auto", "false".to_owned()),
+    ];
+    let mut env = GuestEnv::new();
+    let mut set = |name: &str, value: &str| {
+        env.set(name, value).map_err(|e| WorkspaceError::Layout {
+            reason: e.to_string(),
+        })
+    };
+    set("GIT_CONFIG_COUNT", &settings.len().to_string())?;
+    for (i, (key, value)) in settings.iter().enumerate() {
+        set(&format!("GIT_CONFIG_KEY_{i}"), key)?;
+        set(&format!("GIT_CONFIG_VALUE_{i}"), value)?;
+    }
+    set("GIT_NO_LAZY_FETCH", "1")?;
+    set("GIT_LFS_SKIP_SMUDGE", "1")?;
+    Ok(env)
 }
 
 /// The source folder in the guest of the `n`-th checkout (the parent of [`import_mount`]).
@@ -281,24 +390,31 @@ fn source(n: usize) -> String {
 }
 
 /// After the clone, in the clone (`$1`), from the source (`$2`) with `origin`'s address `$3`:
-/// every branch and tag of the checkout, and what it knew of `origin`'s branches, become the
-/// clone's own; the source remote goes; `origin` is the address; the branch that is checked out
-/// follows its namesake on `origin` when the checkout knew one. The guard settings come first in
-/// the arguments after `$3` and go before every git call.
+/// every branch and tag of the checkout, and what it knew of `origin`'s branches (not its
+/// `origin/HEAD`), become the clone's own; the source remote goes; `origin` is the address; the
+/// branch that is checked out follows its namesake on `origin` when the checkout knew one
+/// (written as config, so no branch name is read as an option); then the work tree is written.
 pub const FINISH_IMPORT_SH: &str = r#"set -eu
-dest=$1; src=$2; url=$3; shift 3
+dest=$1; src=$2; url=$3
 cd "$dest"
-git "$@" fetch --quiet --update-head-ok "$src" '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*' '+refs/remotes/origin/*:refs/remotes/origin/*'
-git "$@" remote remove puddle-checkout
-git "$@" remote add origin "$url"
-if branch=$(git "$@" symbolic-ref --quiet --short HEAD) && git "$@" rev-parse --quiet --verify "refs/remotes/origin/$branch" >/dev/null; then
-  git "$@" branch --quiet --set-upstream-to="origin/$branch" "$branch"
+git fetch --quiet --update-head-ok "$src" '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*' '+refs/remotes/origin/*:refs/remotes/origin/*'
+git update-ref -d refs/remotes/origin/HEAD 2>/dev/null || true
+git remote remove puddle-checkout
+git remote add origin "$url"
+if full=$(git symbolic-ref --quiet HEAD); then
+  branch=${full#refs/heads/}
+  if git rev-parse --quiet --verify "refs/remotes/origin/$branch" >/dev/null; then
+    git config "branch.$branch.remote" origin
+    git config "branch.$branch.merge" "$full"
+  fi
 fi
+git reset --quiet --hard
 "#;
 
 impl Layout {
-    /// The clone of the `n`-th import: `git clone --no-local --origin puddle-checkout -- <source>
-    /// <checkout>`, guarded (see [`FINISH_IMPORT_SH`]); an argument vector, never a shell string.
+    /// The clone of the `n`-th import: `git clone --no-local --no-checkout --origin
+    /// puddle-checkout -- <source> <checkout>`, with [`import_env`]; an argument vector, never a
+    /// shell string.
     ///
     /// # Errors
     ///
@@ -310,25 +426,24 @@ impl Layout {
     ) -> Result<ExecRequest, WorkspaceError> {
         let dest = self.checkout(dir)?;
         let src = source(n);
-        let mut args = guarded(&src);
-        args.extend(
-            [
-                "clone",
-                "--quiet",
-                "--no-local",
-                "--origin",
-                "puddle-checkout",
-                "--",
-                &src,
-                dest.as_str(),
-            ]
-            .map(str::to_owned),
-        );
-        Ok(ExecRequest::new("git", args).with_timeout(IMPORT_TIMEOUT))
+        let args = [
+            "clone",
+            "--quiet",
+            "--no-local",
+            "--no-checkout",
+            "--origin",
+            "puddle-checkout",
+            "--",
+            &src,
+            dest.as_str(),
+        ];
+        Ok(ExecRequest::new("git", args.map(str::to_owned))
+            .with_env(&import_env(n)?)
+            .with_timeout(IMPORT_TIMEOUT))
     }
 
     /// The step after [`Layout::import_request`]: [`FINISH_IMPORT_SH`] with the clone, the
-    /// source, `origin`'s address and the guard settings as its arguments.
+    /// source and `origin`'s address as its arguments, and [`import_env`].
     ///
     /// # Errors
     ///
@@ -340,17 +455,17 @@ impl Layout {
         url: &str,
     ) -> Result<ExecRequest, WorkspaceError> {
         let dest = self.checkout(dir)?;
-        let src = source(n);
-        let mut args = vec![
-            "-c".to_owned(),
-            FINISH_IMPORT_SH.to_owned(),
-            "puddle-import".to_owned(),
-            dest.as_str().to_owned(),
-            src.clone(),
-            url.to_owned(),
+        let args = [
+            "-c",
+            FINISH_IMPORT_SH,
+            "puddle-import",
+            dest.as_str(),
+            &source(n),
+            url,
         ];
-        args.extend(guarded(&src));
-        Ok(ExecRequest::new("sh", args).with_timeout(IMPORT_TIMEOUT))
+        Ok(ExecRequest::new("sh", args.map(str::to_owned))
+            .with_env(&import_env(n)?)
+            .with_timeout(IMPORT_TIMEOUT))
     }
 }
 
@@ -362,37 +477,52 @@ mod tests {
 
     #[test]
     fn the_origin_is_the_first_url_of_its_section_in_any_spelling() {
-        let text = "[core]\n\tbare = false\n[remote \"upstream\"]\n\turl = https://example.org/up.git\n\
+        let text = "\u{feff}[core]\n\tbare = false\n[remote \"upstream\"]\n\turl = https://example.org/up.git\n\
                     [Remote \"origin\"]  # mine\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n\
                     \tURL = \"https://github.com/acme/api.git\" ; comment\n\turl = https://second\n";
         assert_eq!(
             origin_url(text).as_deref(),
-            Some("https://github.com/acme/api.git")
+            Ok("https://github.com/acme/api.git")
         );
         assert_eq!(
             origin_url("[remote.origin]\nurl=git@github.com:acme/api.git\n").as_deref(),
-            Some("git@github.com:acme/api.git")
+            Ok("git@github.com:acme/api.git")
         );
+        let none = |text: &str| origin_url(text).unwrap_err();
         // The subsection name is exact; nothing else counts.
-        assert_eq!(origin_url("[remote \"Origin\"]\nurl = https://x/y\n"), None);
         assert_eq!(
-            origin_url("[remote \"origin\"] junk\nurl = https://x/y\n"),
-            None
+            none("[remote \"Origin\"]\nurl = https://x/y\n"),
+            "it has no origin remote"
         );
         assert_eq!(
-            origin_url("[remote \"origin\"]\nfetch = x\n[core]\nurl = https://x/y\n"),
-            None
+            none("[remote \"origin\"] junk\nurl = https://x/y\n"),
+            "it has no origin remote"
         );
-        assert_eq!(origin_url("url = https://x/y\n"), None);
-        assert_eq!(origin_url(""), None);
+        assert_eq!(
+            none("[remote \"origin\"]\nfetch = x\n[core]\nurl = https://x/y\n"),
+            "it has no origin remote"
+        );
+        assert_eq!(none("url = https://x/y\n"), "it has no origin remote");
+        assert_eq!(none(""), "it has no origin remote");
     }
 
     #[test]
-    fn a_value_this_reader_could_misread_counts_as_none() {
+    fn text_git_could_read_differently_is_refused_not_guessed_at() {
+        for text in [
+            // A continued line: git would read `url = ...` as part of `fetch`.
+            "[remote \"origin\"]\n\tfetch = x \\\n\turl = https://evil.example/x.git\n",
+            // A continued line in another section that swallows the header.
+            "[core]\n\tfoo = bar\\\n[remote \"origin\"]\n\turl = https://evil.example/x.git\n",
+            // An include before the origin may set it first.
+            "[include]\n\tpath = other\n[remote \"origin\"]\n\turl = https://x/y\n",
+            "[includeIf \"gitdir:~/\"]\n\tpath = other\n[remote \"origin\"]\n\turl = https://x/y\n",
+            // Escapes this reader does not take.
+            "[remote \"origin\"]\n\turl = https://x/\\ty\n",
+            "[remote \"origin\"]\n\turl = \"unclosed\n",
+        ] {
+            assert_eq!(origin_url(text), Err(UNREADABLE.to_owned()), "{text}");
+        }
         assert_eq!(config_value(r#""a\"b\\c""#).as_deref(), Some(r#"a"b\c"#));
-        assert_eq!(config_value(r"https://x/y \"), None);
-        assert_eq!(config_value(r"https://x/\ty"), None);
-        assert_eq!(config_value(r#""unclosed"#), None);
         assert_eq!(
             config_value(r#""a # not a comment""#).as_deref(),
             Some("a # not a comment")
@@ -451,9 +581,42 @@ mod tests {
             ("/home/u/other/api", "not an HTTPS or SSH address"),
             ("C:\\repos\\api", "not an HTTPS or SSH address"),
             ("http://example.org/api.git", "not an HTTPS or SSH address"),
+            ("https://github.com/a b", "spaces or control characters"),
+            ("https:///acme/api", "names no repository"),
+            ("https://github.com", "names no repository"),
+            ("git@github.com:acme/api?x", "SSH address Puddle can't read"),
         ] {
             let err = https_form(remote).unwrap_err();
             assert!(err.contains(why), "{remote}: {err}");
+        }
+    }
+
+    #[test]
+    fn the_host_is_where_git_and_curl_would_go_never_one_hidden_after_a_query() {
+        // git and curl end the authority at `?`, `#` or `\`: the `@...` part is not a host.
+        // Reading it any other way would aim origin at another host.
+        for remote in [
+            "https://github.com?@evil.example/acme/x.git",
+            "https://evil.example#@github.com/x",
+            "https://evil.example\\@github.com/x",
+        ] {
+            let err = https_form(remote).unwrap_err();
+            assert!(err.contains("names no repository"), "{remote}: {err}");
+        }
+        let err = https_form("ssh://git@github.com?@evil.example/x").unwrap_err();
+        assert!(err.contains("SSH address Puddle can't read"), "{err}");
+    }
+
+    #[test]
+    fn a_refused_origin_never_shows_its_password() {
+        for remote in [
+            "http://me:s3cr3t@gitlab.internal/acme/x.git",
+            "ssh://me:s3cr3t@git.example.com/acme/x.git",
+            "https://me:s3cr3t@github.com",
+        ] {
+            let err = https_form(remote).unwrap_err();
+            assert!(!err.contains("s3cr3t"), "{err}");
+            assert!(err.contains("***@"), "{err}");
         }
     }
 
@@ -518,6 +681,23 @@ mod tests {
         let empty = base.join("empty");
         std::fs::create_dir_all(empty.join(".git")).unwrap();
         refused(&empty, "is not a git directory");
+        let shared = base.join("shared").join(".git");
+        git_dir(&shared);
+        std::fs::create_dir_all(shared.join("objects").join("info")).unwrap();
+        std::fs::write(
+            shared.join("objects").join("info").join("alternates"),
+            "/elsewhere/objects\n",
+        )
+        .unwrap();
+        refused(&base.join("shared"), "alternates");
+        let partial = base.join("partial").join(".git");
+        git_dir(&partial);
+        std::fs::write(
+            partial.join("config"),
+            "[remote \"origin\"]\n\turl = https://github.com/a/b\n\tpromisor = true\n\tpartialclonefilter = blob:none\n",
+        )
+        .unwrap();
+        refused(&base.join("partial"), "partial clone");
     }
 
     #[test]
@@ -527,9 +707,9 @@ mod tests {
         git_dir(&git);
         std::fs::create_dir(git.join("config")).unwrap();
         assert!(
-            read_origin(&git.join("config"))
+            read_config(&git.join("config"))
                 .unwrap_err()
-                .contains("not a plain file")
+                .contains("no config file")
         );
         std::fs::remove_dir(git.join("config")).unwrap();
         let big = format!(
@@ -538,14 +718,24 @@ mod tests {
         );
         std::fs::write(git.join("config"), big).unwrap();
         assert!(
-            read_origin(&git.join("config"))
+            read_config(&git.join("config"))
                 .unwrap_err()
                 .contains("too large")
         );
+        #[cfg(unix)]
+        {
+            std::fs::remove_file(git.join("config")).unwrap();
+            std::os::unix::fs::symlink("/dev/zero", git.join("config")).unwrap();
+            assert!(
+                read_config(&git.join("config"))
+                    .unwrap_err()
+                    .contains("no config file")
+            );
+        }
     }
 
     #[test]
-    fn the_import_commands_are_argument_vectors_with_every_git_call_guarded() {
+    fn the_import_commands_are_argument_vectors_and_every_git_process_gets_the_guard() {
         let layout = Layout::new(&WorkspaceId::new("acme").unwrap()).unwrap();
         let dir = CheckoutDir::new("api").unwrap();
         assert_eq!(import_mount(2).unwrap().as_str(), "/puddle/import/2/.git");
@@ -554,15 +744,10 @@ mod tests {
         assert_eq!(
             clone.args,
             [
-                "-c",
-                "core.hooksPath=/dev/null",
-                "-c",
-                "core.fsmonitor=false",
-                "-c",
-                "safe.directory=/puddle/import/2",
                 "clone",
                 "--quiet",
                 "--no-local",
+                "--no-checkout",
                 "--origin",
                 "puddle-checkout",
                 "--",
@@ -570,22 +755,46 @@ mod tests {
                 "/workspaces/acme/api",
             ]
         );
+        let env = import_env(2).unwrap();
+        assert_eq!(clone.env, env);
+        let pairs: Vec<(String, String)> = (0..env
+            .get("GIT_CONFIG_COUNT")
+            .unwrap()
+            .parse::<usize>()
+            .unwrap())
+            .map(|i| {
+                (
+                    env.get(&format!("GIT_CONFIG_KEY_{i}")).unwrap().to_owned(),
+                    env.get(&format!("GIT_CONFIG_VALUE_{i}"))
+                        .unwrap()
+                        .to_owned(),
+                )
+            })
+            .collect();
+        for (key, value) in [
+            ("core.hooksPath", "/dev/null"),
+            ("core.fsmonitor", "false"),
+            ("safe.directory", "/puddle/import/2"),
+            ("protocol.allow", "never"),
+            ("protocol.file.allow", "always"),
+            ("gc.auto", "0"),
+            ("core.alternateRefsCommand", "true"),
+        ] {
+            assert!(
+                pairs.contains(&(key.to_owned(), value.to_owned())),
+                "{key}: {pairs:?}"
+            );
+        }
+        assert_eq!(env.get("GIT_NO_LAZY_FETCH"), Some("1"));
+        assert_eq!(env.get("GIT_LFS_SKIP_SMUDGE"), Some("1"));
         let url = "https://github.com/acme/a b'$(x)";
         let finish = layout.finish_import_request(2, &dir, url).unwrap();
         assert_eq!(finish.program, "sh");
         assert_eq!(finish.args[1], FINISH_IMPORT_SH);
         assert_eq!(
-            finish.args[3..6],
+            finish.args[3..],
             ["/workspaces/acme/api", "/puddle/import/2", url]
         );
-        assert_eq!(finish.args[6..], clone.args[..6]);
-        // Every git call of the script passes the guard settings.
-        let guarded_calls = FINISH_IMPORT_SH.matches("git \"$@\" ").count();
-        assert_eq!(guarded_calls, 6, "{FINISH_IMPORT_SH}");
-        assert_eq!(
-            FINISH_IMPORT_SH.matches("git ").count(),
-            6,
-            "{FINISH_IMPORT_SH}"
-        );
+        assert_eq!(finish.env, env);
     }
 }

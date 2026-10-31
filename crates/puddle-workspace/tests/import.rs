@@ -39,6 +39,8 @@ struct Guest {
     log: Arc<Mutex<Vec<String>>>,
     heads: Arc<Mutex<Vec<String>>>,
     fail_clone_of: Arc<Mutex<Option<String>>>,
+    /// The finishing step for this source fails, and the `rm` after it answers this code.
+    fail_finish_of: Arc<Mutex<Option<(String, i32)>>>,
 }
 
 impl Guest {
@@ -63,6 +65,14 @@ impl Guest {
                     .push(String::from_utf8(head).unwrap());
                 if g.fail_clone_of.lock().unwrap().as_deref() == Some(src.as_str()) {
                     return Some(ExecOutput::new(128, "", "fatal: bad object HEAD\n"));
+                }
+            }
+            if let Some((src, rm_code)) = g.fail_finish_of.lock().unwrap().clone() {
+                if r.program == "sh" && r.args.get(4) == Some(&src) {
+                    return Some(ExecOutput::new(1, "", "fatal: couldn't find remote ref\n"));
+                }
+                if r.program == "rm" {
+                    return Some(ExecOutput::new(rm_code, "", "rm: cannot remove: busy\n"));
                 }
             }
             Some(ExecOutput::new(0, "", ""))
@@ -132,22 +142,13 @@ async fn each_checkout_is_cloned_in_a_sandbox_with_no_route_that_is_gone_afterwa
         ["ref: refs/heads/main\n", "ref: refs/heads/feature\n"]
     );
     let lines = s.guest.lines();
-    let guard = "-c core.hooksPath=/dev/null -c core.fsmonitor=false";
     assert_eq!(
         lines,
         [
-            format!(
-                "m--acme - git {guard} -c safe.directory=/puddle/import/0 clone --quiet --no-local --origin puddle-checkout -- /puddle/import/0 /workspaces/acme/api"
-            ),
-            format!(
-                "m--acme - sh -c {FINISH_IMPORT_SH} puddle-import /workspaces/acme/api /puddle/import/0 https://github.com/acme/api.git {guard} -c safe.directory=/puddle/import/0"
-            ),
-            format!(
-                "m--acme - git {guard} -c safe.directory=/puddle/import/1 clone --quiet --no-local --origin puddle-checkout -- /puddle/import/1 /workspaces/acme/web"
-            ),
-            format!(
-                "m--acme - sh -c {FINISH_IMPORT_SH} puddle-import /workspaces/acme/web /puddle/import/1 https://github.com/acme/web.git {guard} -c safe.directory=/puddle/import/1"
-            ),
+            "m--acme - git clone --quiet --no-local --no-checkout --origin puddle-checkout -- /puddle/import/0 /workspaces/acme/api".to_owned(),
+            format!("m--acme - sh -c {FINISH_IMPORT_SH} puddle-import /workspaces/acme/api /puddle/import/0 https://github.com/acme/api.git"),
+            "m--acme - git clone --quiet --no-local --no-checkout --origin puddle-checkout -- /puddle/import/1 /workspaces/acme/web".to_owned(),
+            format!("m--acme - sh -c {FINISH_IMPORT_SH} puddle-import /workspaces/acme/web /puddle/import/1 https://github.com/acme/web.git"),
             "m--acme root sync ".to_owned(),
         ]
     );
@@ -218,13 +219,89 @@ async fn a_checkout_git_refuses_fails_alone_and_leaves_no_folder() {
         "{:?}",
         report.failed
     );
+    // git removed its own refused clone: no `rm` of a path git owns.
     let lines = s.guest.lines();
-    assert!(
-        lines.contains(&"m--acme root rm -rf -- /workspaces/acme/api".to_owned()),
-        "{lines:#?}"
-    );
+    assert!(!lines.iter().any(|l| l.contains(" rm ")), "{lines:#?}");
     assert_eq!(lines.iter().filter(|l| l.contains(" sh -c ")).count(), 1);
     assert_eq!(lines.last().unwrap(), "m--acme root sync ");
+}
+
+#[tokio::test]
+async fn a_clone_whose_finishing_step_fails_is_removed_and_a_failed_removal_is_said() {
+    for (rm_code, said) in [(0, false), (1, true)] {
+        let s = setup();
+        *s.guest.fail_finish_of.lock().unwrap() = Some(("/puddle/import/0".into(), rm_code));
+        let report = s
+            .workspaces
+            .import(
+                &s.rt,
+                &s.id,
+                &image(),
+                DiskSize::gib(1),
+                &[import(checkout(&s.base, "api", "main"), "api")],
+            )
+            .await
+            .unwrap();
+        let (dir, reason) = &report.failed[0];
+        assert_eq!(dir.as_str(), "api");
+        assert!(
+            reason.starts_with("git exited 1: fatal: couldn't find remote ref"),
+            "{reason}"
+        );
+        assert_eq!(
+            reason.contains("half-made folder was not removed"),
+            said,
+            "{reason}"
+        );
+        assert!(
+            s.guest
+                .lines()
+                .contains(&"m--acme root rm -rf -- /workspaces/acme/api".to_owned())
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_clone_that_runs_out_of_time_fails_alone_and_a_lost_guest_fails_the_import() {
+    let s = setup();
+    s.rt.inject(
+        Op::Exec,
+        Fault::once(ComputeError::ExecTimeout {
+            sandbox: "m--acme".into(),
+            program: "git".into(),
+            timeout: std::time::Duration::from_secs(600),
+        }),
+    );
+    let imports = [
+        import(checkout(&s.base, "api", "main"), "api"),
+        import(checkout(&s.base, "web", "main"), "web"),
+    ];
+    let report = s
+        .workspaces
+        .import(&s.rt, &s.id, &image(), DiskSize::gib(1), &imports)
+        .await
+        .unwrap();
+    assert_eq!(report.failed.len(), 1);
+    assert_eq!(report.failed[0].1, "git did not finish within 600 s");
+    assert!(report.created_volume);
+
+    // The guest gone mid-import: the create fails, and the volume it made goes with it.
+    let s = setup();
+    s.rt.inject(
+        Op::Exec,
+        Fault::once(ComputeError::Runtime {
+            op: "exec",
+            message: "the guest is gone".into(),
+        }),
+    );
+    let err = s
+        .workspaces
+        .import(&s.rt, &s.id, &image(), DiskSize::gib(1), &imports)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("the guest is gone"), "{err}");
+    assert_eq!(s.rt.list_volumes().await.unwrap(), []);
+    assert_eq!(sandboxes(&s.rt).await, Vec::<String>::new());
 }
 
 #[tokio::test]
@@ -247,7 +324,7 @@ async fn when_every_checkout_fails_nothing_is_synced() {
 }
 
 #[tokio::test]
-async fn a_volume_that_exists_is_kept_and_a_failed_boot_removes_only_a_new_one() {
+async fn a_volume_that_exists_is_kept_and_a_failed_create_leaves_none_behind() {
     let s = setup();
     let imports = [import(checkout(&s.base, "api", "main"), "api")];
     s.rt.inject(

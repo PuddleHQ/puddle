@@ -193,9 +193,9 @@ pub struct NewRepositoryRequest {
     /// worktree's or submodule's `.git` file and a bare repository are refused with the reason.
     #[serde(default)]
     pub local_path: Option<String>,
-    /// The checkout's directory under the volume root; left out or `null` is the last part of
-    /// the address (`api` for `https://github.com/acme/api.git`), or `src` when that is no usable
-    /// name.
+    /// The checkout's directory under the volume root; left out or `null` is the folder's name
+    /// for a `local_path`, else the last part of the address (`api` for
+    /// `https://github.com/acme/api.git`), or `src` when that is no usable name.
     #[serde(default)]
     pub directory: Option<String>,
     /// The identity that serves it (`id` of `GET /api/identities`); left out or `null` is the

@@ -2313,7 +2313,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 .find(|r| &r.directory == directory)
             {
                 tracing::warn!(workspace = %record.name, checkout = %directory, %reason, "a checkout of a new workspace was not imported");
-                self.raise_clone_problem(record, repository, reason, true);
+                let reason = format!(
+                    "{reason}. To try again, add the repository by its address on the Git tab"
+                );
+                self.raise_clone_problem(record, repository, &reason, true);
             }
         }
         let done = imports.iter().map(|i| i.directory.clone()).collect();
@@ -2353,12 +2356,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         imported: &BTreeSet<CheckoutDir>,
     ) -> Result<(), String> {
         let workspaces = &self.inner.workspaces;
-        let mut cloned = false;
+        let mut any_cloned = false;
         for repository in &record.repositories {
             if imported.contains(&repository.directory) {
                 continue;
             }
-            cloned = true;
+            any_cloned = true;
             self.progress_cloning(&record.name, repository);
             let key = clone_problem_key(&record.name, &repository.directory);
             let cloned = workspaces
@@ -2379,7 +2382,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 Err(other) => return Err(other.to_string()),
             }
         }
-        if !cloned {
+        if !any_cloned {
             return Ok(());
         }
         workspaces
@@ -2635,6 +2638,14 @@ fn boot_message(e: &BootError) -> String {
 impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
     fn local_checkout(&self, path: &str) -> Result<LocalSource, String> {
         let found = LocalCheckout::open(std::path::Path::new(path))?;
+        // The runtime's own rule (owner, Puddle's folders) now, not only when the create runs.
+        self.inner
+            .runtime
+            .check_checkout(&found.git_dir)
+            .map_err(|e| match e {
+                ComputeError::InvalidSpec { reason } => reason,
+                other => other.to_string(),
+            })?;
         Ok(LocalSource {
             folder_name: found
                 .folder

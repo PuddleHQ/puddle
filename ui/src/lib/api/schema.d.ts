@@ -3169,9 +3169,9 @@ export interface components {
         /** @description One repository of `POST /api/workspaces`. */
         NewRepositoryRequest: {
             /**
-             * @description The checkout's directory under the volume root; left out or `null` is the last part of
-             *     the address (`api` for `https://github.com/acme/api.git`), or `src` when that is no usable
-             *     name.
+             * @description The checkout's directory under the volume root; left out or `null` is the folder's name
+             *     for a `local_path`, else the last part of the address (`api` for
+             *     `https://github.com/acme/api.git`), or `src` when that is no usable name.
              */
             directory?: string | null;
             /**

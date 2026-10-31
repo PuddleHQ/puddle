@@ -936,8 +936,8 @@ impl Workspaces {
         let name = maintenance_name(id)?;
         self.borrow(id, &name)?;
         let volume = id.volume_name();
-        let created = match rt.volume(&volume).await {
-            Ok(found) => found.is_none(),
+        let existed = match rt.volume(&volume).await {
+            Ok(found) => found.is_some(),
             Err(e) => {
                 self.registry.give_back(id);
                 return Err(WorkspaceError::runtime("look up the volume", id, e));
@@ -945,17 +945,25 @@ impl Workspaces {
         };
         let result = self.run_import(rt, id, &name, image, size, imports).await;
         self.registry.give_back(id);
+        // The create makes the volume; whether it got that far is read, not assumed.
+        let made = !existed && matches!(rt.volume(&volume).await, Ok(Some(_)));
         match result {
             Ok(failed) => Ok(ImportReport {
-                created_volume: created,
+                created_volume: made,
                 failed,
             }),
-            Err(e) => {
-                if created && let Err(left) = rt.remove_volume(&volume).await {
-                    warn!(workspace = %id, error = %left, "removing the volume of a failed import failed");
-                }
-                Err(e)
-            }
+            // The sandbox is still there and holds the volume: removing it now would fail or
+            // pull it from under a running guest. The error names the sandbox left behind.
+            Err(e @ WorkspaceError::Leftover { .. }) => Err(e),
+            Err(e) if made => match rt.remove_volume(&volume).await {
+                Ok(()) => Err(e),
+                Err(left) => Err(WorkspaceError::Leftover {
+                    workspace: id.to_string(),
+                    job: e.to_string(),
+                    leftover: format!("the new volume {volume} was not removed ({left})"),
+                }),
+            },
+            Err(e) => Err(e),
         }
     }
 
@@ -1020,31 +1028,52 @@ impl Workspaces {
         let mut failed = Vec::new();
         for (n, import) in imports.iter().enumerate() {
             let dir = &import.directory;
-            let run = |request: ExecRequest| async move {
-                sandbox
-                    .exec(request)
-                    .await
-                    .map_err(|e| WorkspaceError::runtime("import a checkout", id, e))
+            // A refusal of git and a step that ran out of time fail only this checkout; anything
+            // else (the guest gone) fails the import.
+            let step = |request: ExecRequest| async move {
+                match sandbox.exec(request).await {
+                    Ok(out) if out.status.success() => Ok(None),
+                    Ok(out) => Ok(Some(format!(
+                        "git exited {}: {}",
+                        out.status.code,
+                        tail(&out.stderr_text())
+                    ))),
+                    Err(ComputeError::ExecTimeout { timeout, .. }) => Ok(Some(format!(
+                        "git did not finish within {} s",
+                        timeout.as_secs()
+                    ))),
+                    Err(e) => Err(WorkspaceError::runtime("import a checkout", id, e)),
+                }
             };
-            let cloned = run(layout.import_request(n, dir)?).await?;
-            let out = if cloned.status.success() {
-                run(layout.finish_import_request(n, dir, &import.url)?).await?
-            } else {
-                cloned
+            // git removes the folder of a clone it refused; a clone whose finishing step failed
+            // is half made.
+            let reason = match step(layout.import_request(n, dir)?).await? {
+                Some(reason) => Some((reason, false)),
+                None => step(layout.finish_import_request(n, dir, &import.url)?)
+                    .await?
+                    .map(|reason| (reason, true)),
             };
-            if out.status.success() {
+            let Some((mut reason, half_made)) = reason else {
                 info!(workspace = %id, checkout = %dir, "checkout imported");
                 continue;
-            }
-            let reason = format!(
-                "git exited {}: {}",
-                out.status.code,
-                tail(&out.stderr_text())
-            );
+            };
             warn!(workspace = %id, checkout = %dir, %reason, "a checkout was not imported");
-            // Leave no half-made clone behind: a later clone of the same folder would refuse.
-            let checkout = layout.checkout(dir)?;
-            run(ExecRequest::new("rm", ["-rf", "--", checkout.as_str()]).as_user("root")).await?;
+            // A clone whose finishing step failed is half made: remove it, so a later clone of
+            // the same folder is not refused.
+            if half_made {
+                let checkout = layout.checkout(dir)?;
+                let rm = ExecRequest::new("rm", ["-rf", "--", checkout.as_str()]).as_user("root");
+                let removed = sandbox
+                    .exec(rm)
+                    .await
+                    .map_err(|e| WorkspaceError::runtime("import a checkout", id, e))?;
+                if !removed.status.success() {
+                    reason = format!(
+                        "{reason}; its half-made folder was not removed: {}",
+                        tail(&removed.stderr_text())
+                    );
+                }
+            }
             failed.push((dir.clone(), reason));
         }
         if failed.len() < imports.len() {

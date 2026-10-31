@@ -256,7 +256,13 @@ pub(crate) async fn create_workspace(
     let store = state.store.clone();
     let known: BTreeSet<IdentityId> =
         blocking(move || Ok(store.identities()?.into_iter().map(|i| i.id).collect())).await?;
-    let paths = body.local_paths();
+    let mut paths = body.local_paths();
+    // Looked at only for a list the create can take: each look reads the disk.
+    if body.repositories.len() > crate::workspaces::MAX_REPOSITORIES {
+        paths.clear();
+    }
+    paths.sort();
+    paths.dedup();
     let service = state.workspaces.clone();
     let locals: BTreeMap<String, Result<LocalSource, String>> = blocking(move || {
         Ok(paths

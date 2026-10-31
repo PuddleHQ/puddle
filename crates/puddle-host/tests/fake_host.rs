@@ -196,9 +196,12 @@ struct Guest {
     volume: Mutex<Vec<(String, String)>>,
     /// How many times the listing script ran, for all checkouts or for one.
     listings: Mutex<Vec<Option<String>>>,
-    /// Each import's arguments, with what the guest read at its mounted source's `HEAD` and
-    /// whether a file beside the `.git` (the working tree) could be read there.
-    imports: Mutex<Vec<(Vec<String>, String, bool)>>,
+    /// Each import's arguments, with what the guest read at its mounted source's `HEAD`,
+    /// whether a file beside the `.git` (the working tree) could be read there, and the hook
+    /// setting its environment gave git.
+    imports: Mutex<Vec<SeenImport>>,
+    /// Every import fails the way git does for a repository it can't read.
+    fail_import: AtomicBool,
     /// The listing script fails the way it does for a volume it cannot enter.
     fail_listing: AtomicBool,
     /// Checkouts the listing reports as unreadable, by directory and message.
@@ -207,6 +210,10 @@ struct Guest {
     listing_hold: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
     listing_waits: AtomicBool,
 }
+
+/// One import as the fake guest saw it: its arguments, its source's `HEAD`, whether the working
+/// tree was readable, and the hook setting its environment gave git.
+type SeenImport = (Vec<String>, String, bool, Option<String>);
 
 impl Guest {
     fn install(self: &Arc<Self>, runtime: &FakeRuntime) {
@@ -339,10 +346,22 @@ impl Guest {
             .map(|b| String::from_utf8_lossy(&b).into_owned())
             .unwrap_or_default();
         let tree_visible = read(&format!("{src}/.env")).is_some();
+        let hooks = (0..8).find_map(|i| {
+            (ctx.env().get(&format!("GIT_CONFIG_KEY_{i}")) == Some("core.hooksPath"))
+                .then(|| {
+                    ctx.env()
+                        .get(&format!("GIT_CONFIG_VALUE_{i}"))
+                        .map(str::to_owned)
+                })
+                .flatten()
+        });
         self.imports
             .lock()
             .unwrap()
-            .push((r.args.clone(), head, tree_visible));
+            .push((r.args.clone(), head, tree_visible, hooks));
+        if self.fail_import.load(Ordering::SeqCst) {
+            return ExecOutput::new(128, "", "fatal: bad object HEAD\n");
+        }
         ExecOutput::new(0, "", "")
     }
 
@@ -9214,15 +9233,16 @@ async fn a_workspace_starts_from_a_checkout_on_this_computer_and_the_checkout_is
     );
     let imports = rig.guest.imports.lock().unwrap().clone();
     assert_eq!(imports.len(), 1);
-    let (args, head, tree_visible) = &imports[0];
+    let (args, head, tree_visible, hooks) = &imports[0];
     assert_eq!(
         head, "ref: refs/heads/main\n",
         "the import read the checkout's own .git"
     );
     assert!(!tree_visible, "the working tree was visible to the import");
-    assert!(
-        args.contains(&"core.hooksPath=/dev/null".to_owned()),
-        "{args:?}"
+    assert_eq!(
+        hooks.as_deref(),
+        Some("/dev/null"),
+        "no hook may run in the import"
     );
     assert_eq!(args.last().unwrap(), "/workspaces/local/shop");
     // The import sandbox had no route and is gone; the workspace's has its own.
@@ -9299,5 +9319,79 @@ async fn a_folder_that_cannot_be_started_from_is_refused_before_anything_exists(
         "https://git.example.com/acme/x.git"
     );
     events.until(ended("given"), Duration::from_secs(20)).await;
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_checkout_git_refuses_is_a_problem_and_a_boot_that_fails_after_the_import_leaves_no_volume()
+ {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let tmp = tempfile::tempdir().unwrap();
+    let base = std::fs::canonicalize(tmp.path()).unwrap();
+    let work = local_checkout(&base, "shop");
+    let body = |name: &str| {
+        json!({"name": name, "repositories": [{"local_path": work.display().to_string()}]})
+            .to_string()
+    };
+
+    // git refuses the checkout: the workspace is made without it, and a problem says what to do.
+    rig.guest.fail_import.store(true, Ordering::SeqCst);
+    let mut events = api.events().await;
+    let reply = api.post("/api/workspaces", &body("refused")).await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended("refused"), Duration::from_secs(20))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let problems = api.get("/api/problems").await.json();
+    let problem = problems["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["key"] == "clone:refused:shop")
+        .unwrap_or_else(|| panic!("{problems}"))
+        .clone();
+    assert!(
+        problem["title"]
+            .as_str()
+            .unwrap()
+            .contains("https://github.com/acme/shop.git"),
+        "{problem}"
+    );
+    let detail = problem["detail"].as_str().unwrap();
+    assert!(
+        detail.starts_with("git exited 128: fatal: bad object HEAD"),
+        "{problem}"
+    );
+    assert!(
+        detail.contains("add the repository by its address on the Git tab"),
+        "{problem}"
+    );
+    rig.guest.fail_import.store(false, Ordering::SeqCst);
+
+    // The import made the volume and then the boot failed: the volume goes with the create.
+    rig.guest.fail_boot.store(true, Ordering::SeqCst);
+    let reply = api.post("/api/workspaces", &body("unbooted")).await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended("unbooted"), Duration::from_secs(20))
+        .await;
+    assert_eq!(end["step"], "failed", "{end}");
+    let volumes: Vec<String> = rig
+        .runtime
+        .list_volumes()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|v| v.name)
+        .collect();
+    assert!(!volumes.contains(&"ws-unbooted".to_owned()), "{volumes:?}");
+    assert!(
+        rig.guest
+            .commands()
+            .contains(&"m--unbooted import".to_owned())
+    );
     host.shutdown().await;
 }

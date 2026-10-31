@@ -455,7 +455,7 @@ impl Runtime for MsbRuntime {
                     .map(|v| (v, None))
                     .collect();
             self.check_volumes(name.as_str(), &mounts).await?;
-            root_disk::check_before_start(&self.sandbox_dir(name.as_str()))?;
+            root_disk::check_before_start(name.as_str(), &self.sandbox_dir(name.as_str()))?;
             match self.sdk(Sandbox::start(name.as_str())).await {
                 Ok(sdk) => self.handle_for(name, sdk).await,
                 Err(e) => {

@@ -37,7 +37,9 @@ use puddle_api::{
 };
 use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
-use puddle_compute::{ComputeError, DiskSize, ExecRequest, ImageConfig, Runtime, Sandbox as _};
+use puddle_compute::{
+    ComputeError, DiskSize, ExecRequest, ImageConfig, Runtime, Sandbox as _, StartRefusal,
+};
 use puddle_lifecycle::Lifecycle;
 use puddle_ports::{NoLink, Ports};
 use puddle_proxy::Route;
@@ -2329,6 +2331,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let name = &record.name;
         self.progress(name, WorkspaceStep::Starting, None);
         inner.problems.clear(&problem_key("forced-stop", name));
+        inner.problems.clear(&problem_key("start-refused", name));
         inner.reports.begin(name);
         let exists = inner
             .runtime
@@ -2443,7 +2446,27 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .hook()
             .start(&inner.runtime, &name.sandbox_name(), plan, &gate)
             .await
-            .map_err(|e| boot_message(&e))
+            .map_err(|e| {
+                if let BootError::Compute(ComputeError::StartRefused { cause, .. }) = &e {
+                    self.raise_start_refused(name, *cause);
+                }
+                boot_message(&e)
+            })
+    }
+
+    /// Raises the problem that the runtime refused to start `name` and why.
+    fn raise_start_refused(&self, name: &WorkspaceName, cause: StartRefusal) {
+        self.inner.problems.raise(
+            Problem::new(
+                problem_key("start-refused", name),
+                format!("{name} was not started"),
+                format!(
+                    "Puddle refused to start it, and nothing was attached: {cause}. {}",
+                    cause.way_out()
+                ),
+            )
+            .about(name.clone()),
+        );
     }
 
     async fn stop_work(&self, record: WorkspaceRecord) -> Result<(), String> {

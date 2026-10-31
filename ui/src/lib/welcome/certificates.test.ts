@@ -1,10 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 import { report } from "#lib/testing/fake-network.ts";
-import { devCertificateLine, rootsLine } from "./certificates.ts";
+import { canTrust, devCertificateLine, rootsLine } from "./certificates.ts";
 
 const roots = (over: Partial<ReturnType<typeof report>["roots"]>) => ({
   roots: { ...report().roots, ...over },
+});
+
+describe("the Trust button", () => {
+  it("is offered where Windows can be asked and has not been answered yes", () => {
+    expect(canTrust("needs_trust")).toBe(true);
+    expect(canTrust("trust_declined")).toBe(true);
+    for (const status of [
+      "trusted",
+      "reusing_existing",
+      "trust_failed",
+      "unsupported",
+      "not_checked",
+      undefined,
+    ] as const) {
+      expect(canTrust(status), String(status)).toBe(false);
+    }
+  });
 });
 
 describe("the development certificate line", () => {
@@ -22,7 +39,7 @@ describe("the development certificate line", () => {
         "needs_trust",
         "info",
         "Development certificate: not trusted yet",
-        /hasn't asked Windows/,
+        /Security Warning/,
       ],
       [
         "trust_declined",

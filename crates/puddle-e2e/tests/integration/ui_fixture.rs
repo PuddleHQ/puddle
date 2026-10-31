@@ -1202,6 +1202,57 @@ async fn the_system_check_is_healthy_until_a_scenario_or_a_step_says_otherwise()
 }
 
 #[tokio::test]
+async fn the_certificate_is_not_checked_until_a_scenario_or_a_step_sets_it_and_trusting_follows_the_step()
+ {
+    let run = start("first-run").await;
+    let dev_certificate = |reply: Reply| reply.json()["dev_certificate"].clone();
+    assert_eq!(
+        dev_certificate(run.get("/api/first-run").await),
+        "not_checked"
+    );
+
+    let step = json!({"do": "dev_certificate", "state": "needs_trust"});
+    assert_eq!(
+        run.control("POST", "/control/step", Some(&step))
+            .await
+            .status,
+        204
+    );
+    assert_eq!(
+        dev_certificate(run.get("/api/first-run").await),
+        "needs_trust"
+    );
+    // The default answer is a yes.
+    let trusted = run.api("POST", "/api/dev-certificate/trust", None).await;
+    assert_eq!(trusted.status, 200, "{}", trusted.body);
+    assert_eq!(
+        trusted.json(),
+        json!({"dev_certificate": "trusted", "detail": null})
+    );
+    assert_eq!(dev_certificate(run.get("/api/first-run").await), "trusted");
+
+    let refused = json!({
+        "do": "dev_certificate", "state": "needs_trust",
+        "trust_answer": "trust_failed", "detail": "os error 5"
+    });
+    run.control("POST", "/control/step", Some(&refused)).await;
+    let failed = run.api("POST", "/api/dev-certificate/trust", None).await;
+    assert_eq!(
+        failed.json(),
+        json!({"dev_certificate": "trust_failed", "detail": "os error 5"})
+    );
+
+    let seeded = json!({"name": "untrusted", "dev_certificate": "needs_trust"}).to_string();
+    let run2 = start_scenario(serde_json::from_str(&seeded).unwrap()).await;
+    assert_eq!(
+        dev_certificate(run2.get("/api/first-run").await),
+        "needs_trust"
+    );
+    run.fixture.shutdown().await;
+    run2.fixture.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_scenario_whose_global_settings_are_not_an_object_fails_to_start() {
     let scenario: Scenario =
         serde_json::from_str(r#"{"name": "bad", "settings": {"global": []}}"#).unwrap();

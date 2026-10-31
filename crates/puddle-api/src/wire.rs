@@ -51,7 +51,7 @@ pub use doctor::{DoctorCheck, DoctorReport, DoctorStatus};
 pub use environment::{
     EnvKind, EnvList, EnvScope, EnvSetRequest, EnvVariable, SecretText, WorkspaceEnv,
 };
-pub use first_run::{DevCertificate, FirstRun, FirstRunRequest};
+pub use first_run::{DevCertTrustResult, DevCertificate, FirstRun, FirstRunRequest};
 pub use identities::{
     AttachIdentityRequest, CredentialCoverage, CredentialSource, GitDefaultsView, GitRepoRequest,
     GitRepoToggles, GitRepoView, GitSwitchesRequest, IdentityAuthor, IdentityCredential,

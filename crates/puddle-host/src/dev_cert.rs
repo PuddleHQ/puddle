@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use puddle_api::DevCertService;
-use puddle_api::wire::DevCertificate;
+use puddle_api::wire::{DevCertTrustResult, DevCertificate};
 use puddle_certs::devcert::{
     DevCertManager, DevCertReport, DevCertStatus, DevCertTrust, GuestDevCert, HostTrust,
 };
@@ -113,6 +113,29 @@ fn log_report(report: &DevCertReport) {
 impl<T: DevCertTrust> DevCertService for HostDevCert<T> {
     fn status(&self) -> DevCertificate {
         wire(self.manager.status(self.now()))
+    }
+
+    fn trust(&self) -> DevCertTrustResult {
+        let _one_at_a_time = self
+            .ensuring
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match self.manager.ensure(self.now()) {
+            Ok(report) => {
+                log_report(&report);
+                DevCertTrustResult {
+                    dev_certificate: wire(report.status),
+                    detail: report.detail,
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "the development certificate could not be made");
+                DevCertTrustResult {
+                    dev_certificate: DevCertificate::TrustFailed,
+                    detail: Some(error.to_string()),
+                }
+            }
+        }
     }
 }
 
@@ -236,6 +259,100 @@ mod tests {
         let clock = Arc::new(ManualClock::new(1_800_000_000_000));
         let service = HostDevCert::new(dir.path(), Empty, clock);
         assert_eq!(service.guest_cert(), None);
+    }
+
+    /// A host whose store lets the user answer: it starts untrusted and a yes (or a no, or a
+    /// refusal by policy) is what `answer` says.
+    struct Answering {
+        trusted: std::sync::Mutex<bool>,
+        answer: Result<TrustOutcome, TrustError>,
+        asked: std::sync::atomic::AtomicU32,
+    }
+
+    impl Answering {
+        fn new(answer: Result<TrustOutcome, TrustError>) -> Self {
+            Self {
+                trusted: std::sync::Mutex::new(false),
+                answer,
+                asked: std::sync::atomic::AtomicU32::new(0),
+            }
+        }
+    }
+
+    impl DevCertTrust for &Answering {
+        fn existing(&self) -> Result<Vec<ExistingCert>, TrustError> {
+            Ok(Vec::new())
+        }
+        fn export_key(&self, _: &[u8]) -> Result<PrivateKey, TrustError> {
+            Err(TrustError::Failed("none".into()))
+        }
+        fn is_trusted(&self, _: &[u8]) -> Result<bool, TrustError> {
+            Ok(*self.trusted.lock().unwrap())
+        }
+        fn trust(&self, _: &[u8]) -> Result<TrustOutcome, TrustError> {
+            self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.answer == Ok(TrustOutcome::Trusted) {
+                *self.trusted.lock().unwrap() = true;
+            }
+            self.answer.clone()
+        }
+    }
+
+    fn trusting(answering: &Answering) -> (tempfile::TempDir, HostDevCert<&Answering>) {
+        let dir = tempfile::tempdir().unwrap();
+        let clock = Arc::new(ManualClock::new(1_800_000_000_000));
+        let service = HostDevCert::new(dir.path(), answering, clock);
+        (dir, service)
+    }
+
+    #[test]
+    fn pressing_trust_asks_once_and_a_second_press_after_a_yes_asks_nothing() {
+        let store = Answering::new(Ok(TrustOutcome::Trusted));
+        let (_dir, service) = trusting(&store);
+        assert_eq!(service.status(), DevCertificate::NeedsTrust);
+        let first = service.trust();
+        assert_eq!(first.dev_certificate, DevCertificate::Trusted);
+        assert_eq!(first.detail, None);
+        assert_eq!(service.status(), DevCertificate::Trusted);
+        assert_eq!(service.trust().dev_certificate, DevCertificate::Trusted);
+        assert_eq!(store.asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_no_is_remembered_and_asked_again_at_the_next_press() {
+        let store = Answering::new(Ok(TrustOutcome::Declined));
+        let (_dir, service) = trusting(&store);
+        assert_eq!(
+            service.trust().dev_certificate,
+            DevCertificate::TrustDeclined
+        );
+        assert_eq!(service.status(), DevCertificate::TrustDeclined);
+        assert_eq!(
+            service.trust().dev_certificate,
+            DevCertificate::TrustDeclined
+        );
+        assert_eq!(store.asked.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_refusal_by_policy_is_a_failure_with_the_systems_words() {
+        let store = Answering::new(Err(TrustError::Failed("os error 5".into())));
+        let (_dir, service) = trusting(&store);
+        let result = service.trust();
+        assert_eq!(result.dev_certificate, DevCertificate::TrustFailed);
+        assert!(result.detail.unwrap().contains("os error 5"));
+        assert_eq!(service.status(), DevCertificate::TrustFailed);
+    }
+
+    #[test]
+    fn a_data_folder_that_cannot_hold_the_leaf_is_a_failed_attempt() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("dev-cert"), b"in the way").unwrap();
+        let clock = Arc::new(ManualClock::new(1_800_000_000_000));
+        let service = HostDevCert::new(dir.path(), Empty, clock);
+        let result = service.trust();
+        assert_eq!(result.dev_certificate, DevCertificate::TrustFailed);
+        assert!(result.detail.is_some());
     }
 
     #[test]

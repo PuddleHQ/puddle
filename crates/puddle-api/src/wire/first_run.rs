@@ -29,6 +29,19 @@ pub enum DevCertificate {
     Unsupported,
 }
 
+/// What pressing "Trust it now" came to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DevCertTrustResult {
+    /// Where the certificate stands after the attempt.
+    pub dev_certificate: DevCertificate,
+    /// Why, when the system or Puddle has more to say than the state does (the operating
+    /// system's error for `trust_failed`, or that Windows is still waiting for an answer);
+    /// `null` otherwise.
+    #[schema(required = true)]
+    pub detail: Option<String>,
+}
+
 /// Where the first-run flow stands.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]

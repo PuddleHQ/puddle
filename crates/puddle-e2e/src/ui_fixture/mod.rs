@@ -22,14 +22,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 
-use puddle_api::wire::{FoundAccount, FoundVia};
+use puddle_api::wire::{DevCertificate, FoundAccount, FoundVia};
 use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, ConnectionInfo, CredentialService, DoctorService, EventHub,
-    FakeCredentials, FakeDoctor, FakeLauncher, FakeLearned, FakeNetworkHealth, FakePorts,
-    FakeWorkspaces, Found, FoundList, Launcher, LearnedService, Listing, MemorySettings,
-    NetworkHealthService, Operation, PortsService, RemoteNote, RepoFindings, RepoService,
-    RepositoryDraft, RunningApi, Services, SettingsRepo, ShellInitCheck, StartFolder, Unsaved,
-    WorkspaceRecord, check_repositories,
+    ApiConfig, ApiServer, ApiToken, ConnectionInfo, CredentialService, DevCertService,
+    DoctorService, EventHub, FakeCredentials, FakeDevCert, FakeDoctor, FakeLauncher, FakeLearned,
+    FakeNetworkHealth, FakePorts, FakeWorkspaces, Found, FoundList, Launcher, LearnedService,
+    Listing, MemorySettings, NetworkHealthService, Operation, PortsService, RemoteNote,
+    RepoFindings, RepoService, RepositoryDraft, RunningApi, Services, SettingsRepo, ShellInitCheck,
+    StartFolder, Unsaved, WorkspaceRecord, check_repositories,
 };
 use puddle_secrets::{
     AccountName, DiscoveredAccount, Discovery, HostName, Listing as FoundListing, OrgName,
@@ -169,6 +169,7 @@ struct State {
     secrets: Arc<puddle_secrets::MemoryStore>,
     repos: Arc<repos::HeldRepos>,
     doctor: Arc<FakeDoctor>,
+    dev_cert: Arc<FakeDevCert>,
     /// The background problems the API lists; kept here so they outlive a rebind of the API.
     problems: Arc<Problems>,
     /// Every workspace's ports: nothing listens until a test or scenario says so.
@@ -231,6 +232,7 @@ impl Fixture {
         let credentials = Arc::new(FakeCredentials::new());
         let repos = Arc::new(repos::HeldRepos::new());
         let doctor = Arc::new(FakeDoctor::new());
+        let dev_cert = Arc::new(FakeDevCert::new(DevCertificate::NotChecked));
         let problems = Arc::new(Problems::new(events.clone()));
         let state = State {
             store,
@@ -243,6 +245,7 @@ impl Fixture {
             secrets: Arc::new(puddle_secrets::MemoryStore::new()),
             repos,
             doctor,
+            dev_cert,
             problems,
             ports: Arc::new(FakePorts::new()),
             learned: Arc::new(FakeLearned::new()),
@@ -270,6 +273,7 @@ impl Fixture {
             .with_secret_store(state.secrets.clone())
             .with_repos(state.repos.clone() as Arc<dyn RepoService>)
             .with_doctor(state.doctor.clone() as Arc<dyn DoctorService>)
+            .with_dev_cert(state.dev_cert.clone() as Arc<dyn DevCertService>)
             .with_problems(state.problems.clone())
             .with_ports(state.ports.clone() as Arc<dyn PortsService>)
             .with_learned(state.learned.clone() as Arc<dyn LearnedService>);
@@ -541,6 +545,9 @@ impl State {
         if let Some(report) = &scenario.doctor {
             self.doctor.set(report.clone());
         }
+        if let Some(state) = scenario.dev_certificate {
+            self.dev_cert.set(state);
+        }
         if !scenario.first_run_open {
             self.finish_first_run(start)?;
         }
@@ -663,6 +670,17 @@ impl State {
             Step::HoldRepos => self.repos.hold(),
             Step::ReleaseRepos => self.repos.release(),
             Step::Doctor(report) => self.doctor.set((**report).clone()),
+            Step::DevCertificate {
+                state,
+                trust_answer,
+                detail,
+            } => {
+                self.dev_cert.set(*state);
+                self.dev_cert.set_trust_answer(
+                    trust_answer.unwrap_or(DevCertificate::Trusted),
+                    detail.clone(),
+                );
+            }
             Step::Problem(seed) => {
                 let mut problem = Problem::new(&seed.key, &seed.title, &seed.detail);
                 if let Some(name) = &seed.workspace {

@@ -149,3 +149,49 @@ async fn the_certificates_step_reports_where_the_development_certificate_stands(
     }
     api.running.shutdown().await;
 }
+
+#[tokio::test]
+async fn without_a_certificate_service_trusting_answers_not_checked() {
+    let api = start().await;
+    let reply = api.send("POST", "/api/dev-certificate/trust", None).await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(
+        reply.json(),
+        json!({"dev_certificate": "not_checked", "detail": null})
+    );
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn trusting_answers_where_the_certificate_stands_and_the_next_read_agrees() {
+    let fake = Arc::new(FakeDevCert::new(DevCertificate::NeedsTrust));
+    let api = start_with_dev_cert(fake.clone()).await;
+
+    let reply = api.send("POST", "/api/dev-certificate/trust", None).await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(
+        reply.json(),
+        json!({"dev_certificate": "trusted", "detail": null})
+    );
+    assert_eq!(
+        api.get("/api/first-run").await.json()["dev_certificate"],
+        "trusted"
+    );
+
+    fake.set(DevCertificate::NeedsTrust);
+    fake.set_trust_answer(DevCertificate::TrustDeclined, None);
+    let reply = api.send("POST", "/api/dev-certificate/trust", None).await;
+    assert_eq!(
+        reply.json(),
+        json!({"dev_certificate": "trust_declined", "detail": null})
+    );
+
+    fake.set_trust_answer(DevCertificate::TrustFailed, Some("os error 5".to_owned()));
+    let reply = api.send("POST", "/api/dev-certificate/trust", None).await;
+    assert_eq!(
+        reply.json(),
+        json!({"dev_certificate": "trust_failed", "detail": "os error 5"})
+    );
+    assert_eq!(fake.trust_calls(), 3);
+    api.running.shutdown().await;
+}

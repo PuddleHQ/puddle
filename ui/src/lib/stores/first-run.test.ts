@@ -27,7 +27,17 @@ const api = {
     return answer;
   },
 };
-const make = () => new FirstRunStore(api as never);
+const trusted = { dev_certificate: "trusted", detail: null };
+const post = async () => {
+  const answer = answers.shift() ?? {
+    data: trusted,
+    response: { status: 200 },
+  };
+  if (answer === "throw") throw new Error("down");
+  return answer;
+};
+const withPost = { ...api, POST: post };
+const make = () => new FirstRunStore(withPost as never);
 
 beforeEach(() => {
   answers = [];
@@ -98,6 +108,53 @@ describe("FirstRunStore", () => {
       ok: false,
       message: "Puddle's service isn't answering.",
     });
+    expect(store.state).toBeNull();
+  });
+
+  it("trusts the certificate and keeps the new state and the system's words", async () => {
+    const store = make();
+    await store.load();
+    answers.push({
+      data: { dev_certificate: "trust_failed", detail: "os error 5" },
+      response: { status: 200 },
+    });
+    const pending = store.trust();
+    expect(store.trusting).toBe(true);
+    await pending;
+    expect(store.trusting).toBe(false);
+    expect(store.state?.dev_certificate).toBe("trust_failed");
+    expect(store.trustNote).toBe("os error 5");
+    await store.trust();
+    expect(store.state?.dev_certificate).toBe("trusted");
+    expect(store.trustNote).toBeNull();
+  });
+
+  it("asks once at a time and says why a press did not work", async () => {
+    const store = make();
+    await store.load();
+    const first = store.trust();
+    await store.trust();
+    await first;
+    answers.push(
+      {
+        error: { error: "internal", message: "no thanks" },
+        response: { status: 500 },
+      },
+      { response: { status: 500 } },
+      "throw",
+    );
+    await store.trust();
+    expect(store.trustNote).toBe("no thanks");
+    await store.trust();
+    expect(store.trustNote).toBe("Puddle refused that.");
+    await store.trust();
+    expect(store.trustNote).toBe("Puddle's service isn't answering.");
+    expect(store.state?.dev_certificate).toBe("trusted");
+  });
+
+  it("keeps no state of its own when the state was never read", async () => {
+    const store = make();
+    await store.trust();
     expect(store.state).toBeNull();
   });
 });

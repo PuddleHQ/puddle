@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.24.0"
+    "version": "0.25.0"
   },
   "paths": {
     "/api/app-icons": {
@@ -1119,6 +1119,67 @@
           },
           "503": {
             "description": "the credential store is not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dev-certificate/trust": {
+      "post": {
+        "tags": [
+          "first-run"
+        ],
+        "summary": "Makes Puddle's development certificate if it has none and asks the system to trust it. On\nWindows that opens a confirmation the user answers; this waits up to two minutes for it. A\nrefusal or a failure is an answer (`trust_declined`, `trust_failed`), not an error.",
+        "operationId": "trust_dev_certificate",
+        "responses": {
+          "200": {
+            "description": "where the certificate stands after the attempt",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DevCertTrustResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -10815,6 +10876,28 @@
           "comfortable",
           "compact"
         ]
+      },
+      "DevCertTrustResult": {
+        "type": "object",
+        "description": "What pressing \"Trust it now\" came to.",
+        "required": [
+          "dev_certificate",
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why, when the system or Puddle has more to say than the state does (the operating\nsystem's error for `trust_failed`, or that Windows is still waiting for an answer);\n`null` otherwise."
+          },
+          "dev_certificate": {
+            "$ref": "#/components/schemas/DevCertificate",
+            "description": "Where the certificate stands after the attempt."
+          }
+        },
+        "additionalProperties": false
       },
       "DevCertificate": {
         "type": "string",

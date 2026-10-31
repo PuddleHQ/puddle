@@ -251,6 +251,74 @@ test("the certificates step counts the company roots Puddle will add", async ({
   await expect(page.getByText(/Added to every workspace/)).toBeVisible();
 });
 
+test("Trust it now asks once, shows a no and a failure in words, and ends the offer after a yes", async ({
+  page,
+  backend,
+  request,
+}) => {
+  await freshInstall(page, backend);
+  await backend.control.step({
+    do: "dev_certificate",
+    state: "needs_trust",
+    trust_answer: "trust_declined",
+  });
+  await page.goto("/welcome/certificates");
+  await expect(
+    page.getByText("Development certificate: not trusted yet"),
+  ).toBeVisible();
+  const trust = page.getByRole("button", { name: "Trust it now" });
+  await expectNoAxeViolations(page);
+
+  // No in Windows' dialog: the step says so and offers it again.
+  await trust.click();
+  await expect(
+    page.getByText("You declined Windows' confirmation."),
+  ).toBeVisible();
+  await expect(trust).toBeEnabled();
+
+  // A policy refusal: the system's words show and there is nothing to press.
+  await backend.control.step({
+    do: "dev_certificate",
+    state: "trust_declined",
+    trust_answer: "trust_failed",
+    detail: "Access is denied. (os error 5)",
+  });
+  await trust.click();
+  await expect(page.getByRole("status")).toHaveText(
+    "Details: Access is denied. (os error 5)",
+  );
+  await expect(trust).toHaveCount(0);
+
+  // Yes: trusted, and the next read of the state agrees.
+  await backend.control.step({
+    do: "dev_certificate",
+    state: "needs_trust",
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "Trust it now" }).click();
+  await expect(page.getByText("Development certificate trusted")).toBeVisible();
+  await expect(trust).toHaveCount(0);
+  const state = (await (
+    await request.get("/api/first-run", { headers: auth(backend) })
+  ).json()) as { dev_certificate: string };
+  expect(state.dev_certificate).toBe("trusted");
+});
+
+test("the certificates step offers no Trust button where nothing can be trusted", async ({
+  page,
+  backend,
+}) => {
+  await freshInstall(page, backend);
+  await backend.control.step({ do: "dev_certificate", state: "unsupported" });
+  await page.goto("/welcome/certificates");
+  await expect(
+    page.getByText("Development certificate: not trusted on this system yet"),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Trust it now" })).toHaveCount(
+    0,
+  );
+});
+
 test("Settings runs the system check again on its own page and leads back", async ({
   page,
   backend,

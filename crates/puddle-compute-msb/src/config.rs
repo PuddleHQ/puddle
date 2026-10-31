@@ -437,7 +437,7 @@ mod tests {
     #[test]
     fn a_checkout_mount_follows_its_own_rule_with_every_puddle_folder_protected() {
         let dir = Dir::new("checkout");
-        let base = std::fs::canonicalize(&dir.0).unwrap();
+        let base = dunce::canonicalize(&dir.0).unwrap();
         let (home, share, data) = (base.join("msb"), base.join("share"), base.join("data"));
         let git = base.join("api").join(".git");
         for d in [

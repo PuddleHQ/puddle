@@ -487,6 +487,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     .await;
 
     // A stop closes the window before the guest goes.
+    let before = guest(&runtime, &sandbox, "cat /run/puddle/editor-password").await;
     let stop = api.post(&format!("/api/workspaces/{name}/stop"), "").await;
     assert_eq!(stop.status, 202, "{}", stop.body);
     let end = events
@@ -499,7 +500,6 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
 
     // After the start the shell signs in again if the password changed, and only then; the window
     // opens signed in either way.
-    let before = guest(&runtime, &sandbox, "cat /run/puddle/editor-password").await;
     let start = api.post(&format!("/api/workspaces/{name}/start"), "").await;
     assert_eq!(start.status, 202, "{}", start.body);
     let end = events

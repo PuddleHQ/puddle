@@ -217,6 +217,8 @@ pub struct RuntimeInputs<'a> {
     pub layout: &'a puddle_runtime::RuntimeLayout,
     /// The root every mount source must be inside.
     pub guest_share: PathBuf,
+    /// Puddle's data folder: no checkout mount may lie in it or hold it.
+    pub data: PathBuf,
     /// The pull proxy, which the runtime's image pulls go through.
     pub pull_proxy: ProxyUrl,
     /// The corporate roots (PEM) the registry client must trust besides the system's.
@@ -259,6 +261,7 @@ impl RuntimeFactory for MsbFactory {
             inputs.layout.libkrunfw_path(),
             inputs.guest_share,
         )
+        .with_protected_dir(inputs.data)
         .with_registry_proxy(inputs.pull_proxy.expose())
         .with_registry_roots(inputs.registry_roots)
         .with_runtime_log_level(inputs.log_level);
@@ -535,6 +538,7 @@ impl<R: Runtime + Clone> Host<R> {
             .open(RuntimeInputs {
                 layout: &config.layout,
                 guest_share: config.paths.guest_share(),
+                data: config.paths.data().to_path_buf(),
                 pull_proxy: pull_url,
                 registry_roots: pem_of(&roots),
                 log_level: config.runtime_log_level.clone(),

@@ -26,7 +26,7 @@ node_modules/, fuzz/corpus and build output. `vendor/` is third-party code we pa
 Flake rules (`flake-<id>` kinds; `--flakes` lists them with the fix each names) count test shapes that
 raced in the past: a hand-rolled wait helper (every one outside the shared test kit counts; the row says
 whether it lacks a name or a bound), a hand-rolled wait loop (a `for`, `while` or `loop` in a test that sleeps or yields between looks), `file.lock()`, `try_recv()`, a port picked
-and dropped, a name built from the clock, a wall-clock bar, records matched by position, an awaited page read
+and dropped, a literal port bound or connected in a test (a name's authority and a URL are fakes and stay out), a name built from the clock, a wall-clock bar, records matched by position, an awaited page read
 asserted once, a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the resolver, a Unix path literal (`/tmp`, `/home`, `/no...`) used as a host path or a path joined by hand with `format!` (`flake-f1`, it fails on Windows). Three bans have kinds of their own: `ban-untagged` (`#[serde(untagged)]`), `ban-error-capital` and `ban-error-period` (thiserror messages). A site is reasoned by `flake-ok: <why>` on the line or within three lines above. A rule is
 counted (`flake-<id>`, `flake-<id>-unreasoned`) until its sites are fixed or reasoned, then its `scripts/flake-rules/<id>.rule` says
 `status: failing` and an unreasoned site becomes a `noreason` row. Their self-test replays the original code of
@@ -392,6 +392,7 @@ def scan(root):
         if not vendor:
             flake_pickers = flake_rust(f, raw, code, com, test_lines, lambda kind, i, detail: add(kind, ctx(i), f, i, detail))
             port_pickers.update({n: f for n in flake_pickers})
+            flake_fixed_port(raw, code, com, test_lines, lambda kind, i, detail: add(kind, ctx(i), f, i, detail))
             ban_rows(raw, code, ctx, lambda kind, c, i, detail: add(kind, c, f, i, detail))
 
     # Rule p1: the callers of the port-picking functions found above, in any file.
@@ -471,11 +472,11 @@ def scan(root):
     return rows
 
 
-# Every crate root (`crates/<name>/src/lib.rs` or `main.rs`, each its own compilation unit) says what it does
+# Every crate root (`crates/<name>/src/lib.rs`, `main.rs`, each bin target `src/bin/*.rs` and `build.rs`, each its own compilation unit) says what it does
 # about unsafe code: `#![forbid(unsafe_code)]` (also under `cfg_attr(<cfg>, forbid(unsafe_code))` for a crate
 # that has FFI on one platform only) or `#![expect(unsafe_code, reason = "...")]`. The workspace lint is only
 # `deny`, which a nested `#[allow]` lifts silently; `forbid` makes the absence of unsafe a compiler guarantee.
-CRATE_ROOT = re.compile(r"^crates/[^/]+/src/(?:lib|main)\.rs$")
+CRATE_ROOT = re.compile(r"^crates/[^/]+/(?:src/(?:lib|main|bin/[^/]+)|build)\.rs$")
 INNER_ATTR = re.compile(r"#!\[")
 
 
@@ -695,6 +696,27 @@ def flake_rust(f, raw, code, com, test, rows_add):
     return pickers
 
 
+FLAKE_NET_CALL = re.compile(r"\b(?:bind|connect)\w*\s*\(|\blisten\s*\(|\b(?:Tcp(?:Listener|Stream)|UdpSocket)\b")
+# A port after an address of this machine (an IP, `localhost`, `[::1]`) or a bare `:port`. A name (`api.test:8443`) is an
+# authority handed to a fake, not a socket, and a URL (`://`) is a fake site: both stay out.
+FLAKE_LOCAL_ADDR = re.compile(r'(?:(?<=\d)|(?<=localhost)|(?<=\])|(?<![\w.-])):[1-9]\d{3,4}(?!\d)', re.I)
+FLAKE_BIND_LITERAL = re.compile(r'bind\(\s*(?:"[^"]*:[1-9]\d*"|\(\s*[^,()]+,\s*[1-9]\d*\s*\))')
+
+
+def flake_fixed_port(raw, code, com, test, rows_add):
+    """Rule p2: a test that binds or connects a literal port. Another test or process may hold it, and it stays held
+    after a run that died. A literal 4 or 5 digit port in a string within two lines of `bind`, `listen` or `connect`
+    (the string is read from `raw`; `code` has them blanked), or a `bind` of any nonzero literal."""
+    for i, line in enumerate(code):
+        if not test[i]:
+            continue
+        near = any(FLAKE_NET_CALL.search(code[k]) for k in range(max(0, i - 2), min(len(code), i + 3)))
+        strings = [m for m in re.findall(r'"(?:[^"\\]|\\.)*"', raw[i]) if "://" not in m]
+        if FLAKE_BIND_LITERAL.search(raw[i]) or (near and any(FLAKE_LOCAL_ADDR.search(m) for m in strings)):
+            ok = any(FLAKE_OK.search(com[k]) for k in range(max(0, i - 3), i + 1))
+            flake_row(rows_add, "p2", i, raw[i].strip(), ok)
+
+
 def flake_port_calls(code, com, raw, pickers, rows_add):
     """Callers of a port-picking fn (rule p1): each one hands the caller a port another process can take."""
     for i, line in enumerate(code):
@@ -898,13 +920,23 @@ def root_self_test():
             os.makedirs(os.path.join(d, f"crates/{name}/src"))
             with open(os.path.join(d, f"crates/{name}/src/lib.rs"), "w", encoding="utf-8") as h:
                 h.write(text + "pub fn f() {}\n")
+        # Bin targets and build scripts: a bad and a good one each (a crate whose lib.rs is fine).
+        for crate, attr in (("binbad", ""), ("bingood", "#![forbid(unsafe_code)]\n")):
+            os.makedirs(os.path.join(d, f"crates/{crate}/src/bin"))
+            for rel in ("src/lib.rs", "src/bin/tool.rs", "build.rs"):
+                with open(os.path.join(d, f"crates/{crate}/{rel}"), "w", encoding="utf-8") as h:
+                    h.write("#![forbid(unsafe_code)]\nfn main() {}\n" if rel == "src/lib.rs" else attr + "fn main() {}\n")
+        flagged_files = {r[2].split(":")[0] for r in scan(d) if r[0] == "no-forbid"}
+        if {f for f in flagged_files if f.startswith(("crates/binbad/", "crates/bingood/"))} != {
+                "crates/binbad/src/bin/tool.rs", "crates/binbad/build.rs"}:
+            problems.append(f"bin/build.rs rule flagged {sorted(flagged_files)}")
         os.makedirs(os.path.join(d, "crates/bin/src"))
         with open(os.path.join(d, "crates/bin/src/main.rs"), "w", encoding="utf-8") as h:
             h.write("fn main() {}\n")
         with open(os.path.join(d, "crates/bin/src/other.rs"), "w", encoding="utf-8") as h:
             h.write("pub fn g() {}\n")
         flagged = {r[2].split("/")[1] for r in scan(d) if r[0] == "no-forbid"}
-        want = ROOT_BAD | {"bin"}
+        want = ROOT_BAD | {"bin", "binbad"}
         if flagged != want:
             problems.append(f"crate root rule flagged {sorted(flagged)}, want {sorted(want)}")
         for name in want:
@@ -915,6 +947,12 @@ def root_self_test():
                         body = h.read()
                     with open(path, "w", encoding="utf-8") as h:
                         h.write("#![forbid(unsafe_code)]\n" + body)
+        for rel in ("src/bin/tool.rs", "build.rs"):
+            path = os.path.join(d, f"crates/binbad/{rel}")
+            with open(path, encoding="utf-8") as h:
+                body = h.read()
+            with open(path, "w", encoding="utf-8") as h:
+                h.write("#![forbid(unsafe_code)]\n" + body)
         after = [r for r in scan(d) if r[0] == "no-forbid" or "crate root" in r[3]]
         if after:
             problems.append(f"crate root rule still flags after the fix: {after}")
@@ -1060,6 +1098,11 @@ def flake_self_test():
         failures.append("ban-error: lower-case messages, `{0}` and a mid-text period are not sites")
     if not any(r[0] == "noreason" for r in run({"crates/x/src/lib.rs": "#![forbid(unsafe_code)]\n#[serde(untagged)]\nenum E { A }\n"})):
         failures.append("ban-untagged: a site must add a noreason row so --missing fails")
+    p2_bad, p2_good = read("p2-fixed-port.bad.rs.txt"), read("p2-fixed-port.good.rs.txt")
+    case("p2 original", "p2", {"crates/x/tests/p.rs": p2_bad}, 3, 3)
+    case("p2 fix: port 0, a fake authority and URL, a log line stay out; a reasoned literal counts once", "p2", {"crates/x/tests/p.rs": p2_good}, 1, 0)
+    case("p2 in production code", "p2", {"crates/x/src/lib.rs": p2_bad}, 0, 0)
+    case("p2 in a cfg(test) module", "p2", {"crates/x/src/lib.rs": "#[cfg(test)]\nmod t {\n    fn f() { let l = TcpListener::bind(\"127.0.0.1:8080\"); }\n}\n"}, 1, 1)
 
     # A counted rule adds no `noreason` row; a rule flipped to failing adds one that opens with its fix.
     bad = {rule: {v["as"]: read(v["fixture"])} for rule, v in FLAKE_RULES.items()}

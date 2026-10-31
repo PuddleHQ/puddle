@@ -1,0 +1,14 @@
+#[tokio::test]
+async fn the_proxy_answers_on_its_port() {
+    let log = "proxy listening at 127.0.0.1:39551.";
+    let _ = parse(log);
+    let _ = parse(log);
+    let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let stream = TcpStream::connect(addr).await.unwrap();
+    // a fake authority and a fake site, not sockets
+    let (status, _) = guest.connect_to("api.test:8443").await;
+    let url = "http://127.0.0.1:8080/health";
+    // flake-ok: the daemon's documented default port is what this test pins
+    let d = TcpListener::bind("127.0.0.1:3128").await.unwrap();
+}

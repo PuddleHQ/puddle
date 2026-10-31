@@ -233,6 +233,7 @@ mod tests {
         assert!(rules.is_empty());
         assert_eq!(refusing(&rules, "a.example.com", "DELETE", "/"), None);
         assert!(rules.hosts().is_empty());
+        assert!(!RequestRules::new(vec![rule(1, "a.example.com", &[], "/admin")]).is_empty());
     }
 
     #[test]

@@ -11,7 +11,7 @@ trap 'rm -rf "$tmp"' EXIT
 fail() { echo "fetch-gitleaks-test: FAIL: $1" >&2; exit 1; }
 
 mkdir -p "$tmp/ci" "$tmp/bin" "$tmp/src"
-cp "$here/fetch-gitleaks.sh" "$tmp/ci/"
+cp "$here/fetch-gitleaks.sh" "$here/fetch-retry.sh" "$tmp/ci/"
 printf '#!/bin/sh\necho fake gitleaks\n' >"$tmp/src/gitleaks"
 asset=gitleaks_9.9.9_test.tar.gz
 tar -czf "$tmp/$asset" -C "$tmp/src" gitleaks
@@ -69,26 +69,22 @@ run retry 3
 [ "$(rc_of retry)" = 0 ] || { cat "$tmp/err-retry" >&2; fail "three failed downloads were not retried to success"; }
 [ "$(calls)" = 4 ] || fail "expected 4 curl calls, saw $(calls)"
 [ -x "$tmp/dest-retry/gitleaks" ] || fail "no gitleaks installed after the retries"
-grep -q "curl exit code 28" "$tmp/err-retry" || fail "a retry does not name the curl exit code"
-[ "$(sleeps)" = "10 20 40 " ] || fail "the backoff is not 10, 20, 40 s: $(sleeps)"
+grep -q "curl exit 28: curl: (28) Failed to connect" "$tmp/err-retry" || fail "a retry does not name the curl exit code"
+[ "$(sleeps)" = "5 10 20 " ] || fail "the backoff is not 5, 10, 20 s: $(sleeps)"
 
-# Four failures still fit the budget (five tries, the last one works).
-run four 4
-[ "$(rc_of four)" = 0 ] || fail "the fifth try was not made"
-[ "$(sleeps)" = "10 20 40 60 " ] || fail "the longest wait is not capped at 60 s: $(sleeps)"
+# Seven failures still fit the budget (eight tries, the last one works).
+run seven 7
+[ "$(rc_of seven)" = 0 ] || fail "the eighth try was not made"
+[ "$(sleeps)" = "5 10 20 40 60 60 60 " ] || fail "the pauses are not 5, 10, 20, 40, then capped at 60 s: $(sleeps)"
 
 # A download that never works: non-zero exit, the cause named on stderr and as an annotation.
-run never 99 GITHUB_ACTIONS=true
+run never 99
 [ "$(rc_of never)" != 0 ] || fail "an always failing download exited 0"
-[ "$(calls)" = 5 ] || fail "expected 5 tries, saw $(calls)"
-grep -q "download failed 5 times (last curl exit code 28)" "$tmp/err-never" || fail "stderr does not name the download and the exit code"
-grep -q "^::error title=gitleaks fetch::.*download failed 5 times (last curl exit code 28)" "$tmp/out-never" ||
+[ "$(calls)" = 8 ] || fail "expected 8 tries, saw $(calls)"
+grep -q "download failed 8 times: .*(curl exit 28: curl: (28) Failed to connect" "$tmp/err-never" || fail "stderr does not name the download and the exit code"
+grep -q "^::error title=fetch-gitleaks download failed::8 tries failed for .*curl exit 28" "$tmp/err-never" ||
     fail "no ::error annotation naming the download and the exit code"
 [ ! -e "$tmp/dest-never/gitleaks" ] || fail "something was installed from a failed download"
-
-# Outside GitHub Actions no annotation is printed.
-run quiet 99
-if grep -q '^::error' "$tmp/out-quiet"; then fail "an annotation was printed outside GitHub Actions"; fi
 
 # A wrong checksum is fatal at once, never retried, and nothing is unpacked.
 printf 'not gitleaks' >"$tmp/wrong"

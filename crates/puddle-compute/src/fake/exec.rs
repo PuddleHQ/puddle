@@ -91,6 +91,17 @@ impl ExecContext<'_> {
                         return Location::HostDir(&m.host, rel);
                     }
                 }
+                // A link in a checkout resolves in the guest's own file system, never the host's:
+                // the fake has nothing there, so a path through a link finds nothing.
+                MountKind::Checkout => {
+                    if let Some(rel) = path.relative_to(&m.guest) {
+                        return if through_link(&m.host, rel) {
+                            Location::Nowhere
+                        } else {
+                            Location::HostDir(&m.host, rel)
+                        };
+                    }
+                }
                 MountKind::File => {}
             }
         }
@@ -186,6 +197,15 @@ impl ExecContext<'_> {
             Location::Nowhere => false,
         }
     }
+}
+
+/// Whether any part of `rel` below the host directory `host` is a link.
+fn through_link(host: &Path, rel: &str) -> bool {
+    let mut at = host.to_path_buf();
+    rel.split('/').filter(|p| !p.is_empty()).any(|part| {
+        at.push(part);
+        std::fs::symlink_metadata(&at).is_ok_and(|m| m.file_type().is_symlink())
+    })
 }
 
 /// Reads a host file for a mount; a missing file is [`FsError::NotFound`].

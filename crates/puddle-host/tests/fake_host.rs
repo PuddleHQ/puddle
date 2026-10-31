@@ -144,6 +144,7 @@ impl RuntimeFactory for FakeFactory {
             .unwrap()
             .clone_from(&inputs.ssh_login_key);
         assert!(inputs.guest_share.ends_with("guest-share"));
+        assert!(inputs.guest_share.starts_with(&inputs.data));
         std::future::ready(Ok(self.runtime.clone()))
     }
 }

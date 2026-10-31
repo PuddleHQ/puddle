@@ -529,6 +529,28 @@ test.describe("connecting", () => {
       key: "editor-install:web-shop",
     });
     await expect(main.getByRole("alert")).toHaveCount(0);
+
+    // A newer build that could not be taken is its own line, beside the install one, and the
+    // editor still opens.
+    await backend.control.step({
+      do: "problem",
+      key: "editor-update:web-shop",
+      workspace: "web-shop",
+      title:
+        "The browser editor in web-shop could not update: a newer build was refused <img src=x onerror=alert(1)>",
+      detail: "The editor keeps working on the build it has.",
+    });
+    await expect(main.getByRole("alert")).toContainText(
+      "could not update: a newer build was refused",
+    );
+    await expect(main).toContainText("keeps working on the build it has");
+    await expect(main.locator("img")).toHaveCount(0);
+    await expectNoAxeViolations(page, "workspace page with an update problem");
+    await backend.control.step({
+      do: "clear_problem",
+      key: "editor-update:web-shop",
+    });
+    await expect(main.getByRole("alert")).toHaveCount(0);
   });
 
   test("opening in the browser needs no direct SSH and says the window is opening", async ({

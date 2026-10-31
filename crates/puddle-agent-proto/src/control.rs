@@ -110,17 +110,41 @@ pub enum AgentMessage {
         /// The ports, ascending.
         listening: Vec<u16>,
     },
-    /// Whether the browser editor's server could be installed in the guest. Sent with `problem`
-    /// set each time a download of the server is fetched and refused (a wrong checksum, an archive
-    /// that does not unpack), and with it unset once a server launches after such a refusal. The
-    /// latest message replaces the one before; the text is the agent's own error, at most
-    /// [`MAX_EDITOR_PROBLEM_CHARS`] characters, and the host cleans it.
+    /// How the browser editor's server is doing in the guest, one problem per `kind`. An
+    /// [`EditorProblemKind::Install`] problem is sent each time a download of the server is
+    /// refused (a wrong checksum, an archive that does not unpack) or has failed on the network
+    /// for several tries, and unset once a server launches after it. An
+    /// [`EditorProblemKind::Update`] one is sent for a newer build that was refused, one that
+    /// started badly and was rolled back, or looks that keep failing, and unset by the next look
+    /// that works. The latest message of a kind replaces the one before; the text is the agent's
+    /// own error, at most [`MAX_EDITOR_PROBLEM_CHARS`] characters, and the host cleans it.
     EditorStatus {
-        /// Why the server cannot be installed; `None` when it can.
+        /// Which problem this is about; an agent from before there were two sends none, which
+        /// reads as an install problem.
+        #[serde(default)]
+        kind: EditorProblemKind,
+        /// What is wrong; `None` when the problem of this `kind` is over.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         problem: Option<String>,
     },
     /// A message type this side doesn't know (from a newer agent). Ignored.
+    #[serde(other)]
+    Unknown,
+}
+
+/// The two things that can be wrong with the browser editor's server ([`AgentMessage::EditorStatus`]).
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum EditorProblemKind {
+    /// The server cannot be installed, so the editor cannot open.
+    #[default]
+    Install,
+    /// The editor works on the build it has; a newer one could not be taken.
+    Update,
+    /// A kind this side doesn't know (from a newer agent).
     #[serde(other)]
     Unknown,
 }
@@ -215,8 +239,9 @@ impl AgentMessage {
     /// An [`AgentMessage::EditorStatus`]; a `problem` longer than [`MAX_EDITOR_PROBLEM_CHARS`]
     /// characters is cut.
     #[must_use]
-    pub fn editor_status(problem: Option<&str>) -> Self {
+    pub fn editor_status(kind: EditorProblemKind, problem: Option<&str>) -> Self {
         Self::EditorStatus {
+            kind,
             problem: problem.map(|p| p.chars().take(MAX_EDITOR_PROBLEM_CHARS).collect()),
         }
     }
@@ -478,26 +503,53 @@ mod tests {
 
     #[test]
     fn the_editor_status_round_trips_and_is_cut_to_its_limit() {
-        let refused = AgentMessage::editor_status(Some("checksum mismatch"));
+        let refused =
+            AgentMessage::editor_status(EditorProblemKind::Install, Some("checksum mismatch"));
         assert_eq!(
             refused.to_line().unwrap(),
-            b"{\"type\":\"editor_status\",\"problem\":\"checksum mismatch\"}\n"
+            b"{\"type\":\"editor_status\",\"kind\":\"install\",\"problem\":\"checksum mismatch\"}\n"
         );
         assert_eq!(
             AgentMessage::from_line(&refused.to_line().unwrap()).unwrap(),
             refused
         );
-        let fine = AgentMessage::editor_status(None);
-        assert_eq!(fine.to_line().unwrap(), b"{\"type\":\"editor_status\"}\n");
+        let fine = AgentMessage::editor_status(EditorProblemKind::Install, None);
+        assert_eq!(
+            fine.to_line().unwrap(),
+            b"{\"type\":\"editor_status\",\"kind\":\"install\"}\n"
+        );
         assert_eq!(
             AgentMessage::from_line(&fine.to_line().unwrap()).unwrap(),
             fine
         );
-        let long = AgentMessage::editor_status(Some(&"\u{1b}".repeat(5000)));
+        let long =
+            AgentMessage::editor_status(EditorProblemKind::Install, Some(&"\u{1b}".repeat(5000)));
         let sent: serde_json::Value = serde_json::from_slice(&long.to_line().unwrap()).unwrap();
         let text = sent["problem"].as_str().unwrap();
         assert_eq!(text.chars().count(), MAX_EDITOR_PROBLEM_CHARS);
         assert!(long.to_line().is_ok(), "the cut text fits a control line");
+    }
+
+    #[test]
+    fn an_update_problem_names_its_kind_and_an_unknown_kind_still_parses() {
+        let update = AgentMessage::editor_status(EditorProblemKind::Update, Some("rolled back"));
+        assert_eq!(
+            update.to_line().unwrap(),
+            b"{\"type\":\"editor_status\",\"kind\":\"update\",\"problem\":\"rolled back\"}\n"
+        );
+        assert_eq!(
+            AgentMessage::from_line(&update.to_line().unwrap()).unwrap(),
+            update
+        );
+        // A line from an agent from before the kind existed is an install problem.
+        assert_eq!(
+            AgentMessage::from_line(b"{\"type\":\"editor_status\",\"problem\":\"x\"}").unwrap(),
+            AgentMessage::editor_status(EditorProblemKind::Install, Some("x"))
+        );
+        assert_eq!(
+            AgentMessage::from_line(b"{\"type\":\"editor_status\",\"kind\":\"later\"}").unwrap(),
+            AgentMessage::editor_status(EditorProblemKind::Unknown, None)
+        );
     }
 
     proptest! {

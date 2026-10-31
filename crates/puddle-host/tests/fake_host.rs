@@ -2907,22 +2907,23 @@ async fn a_first_run_stores_the_port_its_front_took() {
     host.shutdown().await;
 }
 
-/// The stored port is reserved for the whole test, because a port the first run gave up is free for
-/// anyone's port 0 or source port (the restart's own pull proxy binds one before the front does).
+/// The stored port is a quiet one (below the ephemeral ranges): a port the first run gave up is free
+/// for anyone's port 0 or source port (the restart's own pull proxy binds one before the front does).
+/// It is not held, since the front's plain bind cannot share a port on Windows.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_front_keeps_its_port_across_restarts_of_the_host() {
     let rig = Rig::new();
-    let reserved = puddle_test_kit::ReservedPort::new();
-    store_front_port(&rig, reserved.port());
+    let port = puddle_test_kit::quiet_port();
+    store_front_port(&rig, port);
 
     let first = rig.start().await;
-    assert_eq!(front_port_of(&first), reserved.port());
+    assert_eq!(front_port_of(&first), port);
     first.shutdown().await;
     drop(first); // the next run is a new process: its hold on the data folder ends
 
     // The same data folder, a new run: the same origin, so the editor's browser storage stays.
     let second = rig.start().await;
-    assert_eq!(front_port_of(&second), reserved.port());
+    assert_eq!(front_port_of(&second), port);
     second.shutdown().await;
 }
 
@@ -2950,12 +2951,12 @@ async fn a_taken_front_port_falls_back_to_another_that_is_then_kept() {
     first.shutdown().await;
     drop(first);
 
-    // Next run the stored port is the usual one, with the old one still taken. It is reserved, as the
-    // port the first run gave up is free for anyone.
-    let reserved = puddle_test_kit::ReservedPort::new();
-    store_front_port(&rig, reserved.port());
+    // Next run the stored port is the usual one, with the old one still taken. It is a quiet port, as the
+    // port the first run gave up is free for anyone's port 0.
+    let quiet = puddle_test_kit::quiet_port();
+    store_front_port(&rig, quiet);
     let second = rig.start().await;
-    assert_eq!(front_port_of(&second), reserved.port());
+    assert_eq!(front_port_of(&second), quiet);
     assert!(
         second
             .problems()

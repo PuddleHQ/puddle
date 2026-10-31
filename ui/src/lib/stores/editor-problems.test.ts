@@ -27,6 +27,28 @@ beforeEach(() => {
   source = new FakeSource();
 });
 
+describe("the editor update problem", () => {
+  it("names the update problem of one workspace apart from its install problem", async () => {
+    listed = [
+      issue("web", "bad checksum"),
+      {
+        key: "editor-update:web",
+        workspace: "web",
+        title:
+          "The browser editor in web could not update: a newer build was refused",
+        detail: "d",
+      },
+    ];
+    const store = make();
+    await store.load();
+    expect(store.updateOf("web")?.title).toMatch(
+      /could not update: a newer build was refused$/,
+    );
+    expect(store.of("web")?.title).toMatch(/installed in web/);
+    expect(store.updateOf("docs")).toBeNull();
+  });
+});
+
 describe("the editor install problem", () => {
   it("names the problem of one workspace and none for another", async () => {
     listed = [issue("web", "bad checksum")];

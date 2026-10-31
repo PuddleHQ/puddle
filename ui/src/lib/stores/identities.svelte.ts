@@ -319,7 +319,11 @@ export class IdentitiesStore {
   /** Tests one credential and remembers the answer. */
   async check(credential: Credential): Promise<Check> {
     this.#setCheck(credential, { state: "checking" });
-    const result = await this.checkSource(credential.source);
+    const read = await this.checkSource(credential.source);
+    const result: Check = {
+      ...read,
+      seen: { at: Date.now(), by: "test" },
+    } as Check;
     this.#setCheck(credential, result);
     if (result.state === "ok") this.#nowReadable(credential.source);
     return result;

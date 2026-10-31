@@ -131,6 +131,13 @@ mod tests {
     }
 
     #[test]
+    fn the_log_describes_itself_without_its_entries() {
+        let log = ReadLog::new();
+        log.record(&gh("me"), ReadUse::Test, None);
+        assert_eq!(format!("{log:?}"), "ReadLog { .. }");
+    }
+
+    #[test]
     fn a_source_has_no_entry_before_its_first_read() {
         assert_eq!(ReadLog::new().last(&gh("me")), None);
     }

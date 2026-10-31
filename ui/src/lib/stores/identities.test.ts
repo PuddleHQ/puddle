@@ -349,7 +349,10 @@ describe("credentials", () => {
     expect(store.checkOf(stale)).toMatchObject({ state: "problem" });
     // The user tests it and it reads: that answer shows at once.
     await store.check(stale);
-    expect(store.checkOf(stale)).toEqual({ state: "ok" });
+    expect(store.checkOf(stale)).toMatchObject({
+      state: "ok",
+      seen: { by: "test" },
+    });
     // A push then found it broken: the host's list, refetched, is newer than the test.
     api.identities = [identity(1, { credentials: [stale] })];
     await store.refresh();

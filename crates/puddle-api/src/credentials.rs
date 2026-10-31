@@ -470,6 +470,13 @@ mod tests {
         )
         .with_sign_ins(SignIns::new(ToolPaths::new(None, None)));
         assert_eq!(format!("{real:?}"), "HostCredentials { .. }");
+        let nothing = NoCredentials;
+        let gh = SourceSpec::Gh {
+            host: puddle_secrets::HostName::new("github.com").unwrap(),
+            account: puddle_secrets::AccountName::new("me").unwrap(),
+        };
+        assert_eq!(nothing.last_read(&gh), None);
+        assert_eq!(real.last_read(&gh), None);
         assert_eq!(
             format!("{:?}", FakeCredentials::new()),
             "FakeCredentials { .. }"

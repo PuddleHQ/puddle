@@ -17,6 +17,7 @@
 //! | `VolumeInUse` names the holder | Puddle looks it up: the running sandbox whose config mounts the volume (msb's own refusal doesn't name it) |
 //! | `VolumeNotFound` / `VolumeSizeMismatch` | checked against the volume catalog before the SDK create |
 //! | No stale directory after a failed create | a create that fails removes the sandbox directory it left (an upstream msb bug, still present in stock 0.7.7; the fork fixes it in `0ad1ef63`, and the contract suite checks it), so [`puddle_compute::Capabilities::stale_dir_fixed`] is `true` |
+//! | A start never attaches a disk outside the sandbox's folder | before every start the adapter reads msb's root-disk journal, which the guest can write, and refuses the start when a file it names is outside the sandbox's folder or behind a link (msb trusts that journal; upstream advisory GHSA-3f94-vm6x-3jv3) |
 //! | Mount sources | every file or directory mount's host path must lie under [`MsbConfig::guest_share`]; the one exception, a checkout's `.git` ([`puddle_compute::MountKind::Checkout`]), must be its canonical path, a real git directory outside Puddle's folders, owned by this user on Unix, in a sandbox with no route |
 //! | Read-only mounts | every file, directory and checkout mount is passed to msb read-only, so msb's file server refuses writes whatever the guest does to its mount flags |
 //! | Memory | `--memory` from the spec at create; [`puddle_compute::Runtime::set_memory`] persists a new size for the next start; `--max-memory` is never set |
@@ -34,6 +35,7 @@ mod config;
 pub mod error;
 mod image;
 mod logs;
+mod root_disk;
 mod runtime;
 mod sandbox;
 pub mod spec;

@@ -405,8 +405,13 @@ pub struct RepoListSeed {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileSeed {
-    /// The credential it answers for.
-    pub source: CredentialSource,
+    /// The credential it answers for (set this or `token`).
+    #[serde(default)]
+    pub source: Option<CredentialSource>,
+    /// The pasted token it answers for, whatever id the fixture kept it under (set this or
+    /// `source`). A token the UI keeps while the user types is only known by its value.
+    #[serde(default)]
+    pub token: Option<String>,
     /// The account name on the host.
     #[serde(default)]
     pub account: Option<String>,

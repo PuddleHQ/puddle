@@ -5,9 +5,11 @@
 //! installs the browser (docs of `puddle_vm_tests::BrowserClient`).
 #![cfg(target_os = "linux")]
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use puddle_vm_tests::{BrowserClient, Node, PageRequest};
+use puddle_vm_tests::{BrowserClient, BrowserCookie, Node, PageRequest};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -108,4 +110,112 @@ async fn vm_browser_node_fetches_from_the_server_and_prints_the_answer() {
     assert!(output.success, "stderr: {}", output.stderr);
     let got: serde_json::Value = serde_json::from_str(output.stdout.trim()).expect("json");
     assert_eq!(got["sum"], 42);
+}
+
+/// A page that shows the `Cookie` header it was served with and then holds one request open,
+/// as an editor window holds its socket.
+fn holding_page(cookie: &str) -> String {
+    format!(
+        "<!doctype html><title>held</title><script>\
+         window.cookie = {cookie:?};\
+         fetch('/hold').catch(() => {{}});\
+         window.holding = true;\
+         </script>"
+    )
+}
+
+/// A loopback server for [`holding_page`]: counts the `/hold` requests whose connection is still
+/// open (the count drops when the browser ends the connection).
+async fn serve_holding() -> std::io::Result<(u16, Arc<AtomicUsize>, tokio::task::JoinHandle<()>)> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+    let held = Arc::new(AtomicUsize::new(0));
+    let count = held.clone();
+    let task = tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let held = count.clone();
+            tokio::spawn(async move {
+                let mut bytes = vec![0_u8; 8192];
+                let n = stream.read(&mut bytes).await.unwrap_or(0);
+                let request =
+                    String::from_utf8_lossy(bytes.get(..n).unwrap_or_default()).into_owned();
+                if request.starts_with("GET /hold ") {
+                    held.fetch_add(1, Ordering::SeqCst);
+                    let _ = stream
+                        .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ntransfer-encoding: chunked\r\n\r\n")
+                        .await;
+                    // Held until the browser ends the connection.
+                    let mut rest = [0_u8; 512];
+                    while matches!(stream.read(&mut rest).await, Ok(n) if n > 0) {}
+                    held.fetch_sub(1, Ordering::SeqCst);
+                    return;
+                }
+                let cookie = request
+                    .lines()
+                    .find_map(|line| {
+                        line.strip_prefix("Cookie: ")
+                            .or_else(|| line.strip_prefix("cookie: "))
+                    })
+                    .unwrap_or("")
+                    .to_owned();
+                let body = holding_page(&cookie);
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(reply.as_bytes()).await;
+                let _ = stream.shutdown().await;
+            });
+        }
+    });
+    Ok((port, held, task))
+}
+
+/// Waits until `held` is `want`; a limit on a hang only.
+async fn held_becomes(held: &AtomicUsize, want: usize) {
+    puddle_test_kit::eventually(
+        "held connections (a limit on a hang)",
+        Duration::from_secs(30),
+        || {
+            let now = held.load(Ordering::SeqCst);
+            if now == want {
+                Ok(())
+            } else {
+                Err(format!("{now} held, wanted {want}"))
+            }
+        },
+    )
+    .await;
+}
+
+/// The session the browser editor tests use: a cookie set before the page opens reaches the
+/// server on a `<name>.localhost` origin, an open page keeps its connection, closing the page ends
+/// it, and a page opened again in the same session sends the cookie again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_browser_a_session_keeps_its_cookie_and_a_closed_page_ends_its_connection() {
+    let client = BrowserClient::from_env().expect("browser client environment");
+    let (port, held, server) = serve_holding().await.expect("loopback server");
+    let host = format!("smoke.localhost:{port}");
+    let mut session = client.session().await.expect("browser started");
+    session
+        .add_cookies(&[BrowserCookie::host_only("sign-in", "kept", &host)])
+        .await
+        .expect("cookie");
+    let request = PageRequest::new(format!("http://{host}/"), "window.holding === true")
+        .result("window.cookie")
+        .budget(PAGE_BUDGET);
+    let (page, outcome) = session.open(&request).await.expect("the page opened");
+    assert_eq!(outcome.result, json!("sign-in=kept"));
+    held_becomes(&held, 1).await;
+    session.close(page).await.expect("closed");
+    held_becomes(&held, 0).await;
+    let (_, again) = session.open(&request).await.expect("opened again");
+    assert_eq!(again.result, json!("sign-in=kept"));
+    held_becomes(&held, 1).await;
+    session.quit().await.expect("browser closed");
+    held_becomes(&held, 0).await;
+    server.abort();
 }

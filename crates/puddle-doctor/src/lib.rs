@@ -28,6 +28,9 @@
 //!   the file is found earlier, by the runtime check, so it is never mistaken for EDR;
 //! - access denied while booting inside a job that forbids breakaway: the job, not EDR (hosted CI
 //!   runners).
+//!
+//! Unsafe code exists only in the Windows `sys` module (Win32 calls, each with its reason); elsewhere it is forbidden.
+#![cfg_attr(not(windows), forbid(unsafe_code))]
 
 pub mod boot;
 mod diagnose;

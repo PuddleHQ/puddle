@@ -148,7 +148,8 @@ fn be16(bytes: &[u8], at: usize) -> Option<u16> {
 }
 
 /// Reads an uncompressed name at `start`; returns it and the offset after it. A compression
-/// pointer, a label over 63 bytes, or a name over 255 bytes is a malformed question.
+/// pointer, a label over 63 bytes, or a name over 255 bytes (length bytes and the root's zero
+/// included, RFC 1035 section 3.1) is a malformed question.
 fn read_name(msg: &[u8], start: usize) -> Option<(QueryName, usize)> {
     let mut at = start;
     let mut name = String::new();
@@ -159,7 +160,8 @@ fn read_name(msg: &[u8], start: usize) -> Option<(QueryName, usize)> {
         if len == 0 {
             break;
         }
-        if len > 63 || at - start > 255 {
+        // The `+ 1` counts the root's zero byte that must still follow this label.
+        if len > 63 || at + len + 1 - start > 255 {
             return None;
         }
         let label = msg.get(at..at + len)?;

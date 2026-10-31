@@ -58,7 +58,7 @@ async fn a_tunnel_goes_through_basic_auth_squid_after_a_dead_pac_hop() {
         records[0]["upstream"],
         format!("PROXY {}", squid_addr(&squid))
     );
-    let log = squid.access_log();
+    let log = squid.access_log_with("TCP_TUNNEL/200");
     assert!(
         log.contains("TCP_TUNNEL/200")
             && log.contains(&format!("{USER} "))
@@ -118,7 +118,7 @@ async fn plain_http_goes_through_squid_with_the_basic_credential() {
         format!("PROXY {}", squid_addr(&squid))
     );
     assert_eq!(records[0]["method"], "GET");
-    let log = squid.access_log();
+    let log = squid.access_log_with("TCP_MISS/200");
     assert!(
         log.contains("TCP_MISS/200") && log.contains(&format!("{USER} ")) && log.contains("/hello"),
         "{log}"
@@ -154,7 +154,7 @@ async fn a_wrong_or_missing_password_is_a_502_naming_upstream_auth_and_squid_nev
         );
         assert!(!body.contains("not-the-password"));
     }
-    let log = squid.access_log();
+    let log = squid.access_log_with("TCP_DENIED/407");
     assert!(log.contains("TCP_DENIED/407"), "{log}");
     assert!(
         !log.contains("TCP_TUNNEL"),

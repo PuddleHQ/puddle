@@ -17,6 +17,9 @@ use super::{
     on_free_port, read, require_file, stop, try_ready,
 };
 
+/// How long [`Squid::access_log_with`] waits for its line (a loaded machine needs seconds).
+const LOG_LINE_WAIT: Duration = Duration::from_secs(20);
+
 /// What a lab Squid is set up to do.
 #[derive(Clone, Debug)]
 pub struct SquidOptions {
@@ -337,11 +340,11 @@ impl Squid {
         self.started
     }
 
-    /// Squid's access log (what it forwarded, and as which user).
+    /// Squid's access log as it is now (what it forwarded, and as which user). Squid writes a
+    /// tunnel's line only when the tunnel ends, so a test that expects a line uses
+    /// [`Squid::access_log_with`], which waits for it.
     #[must_use]
     pub fn access_log(&self) -> String {
-        // Squid flushes stdio logs lazily; give it a moment.
-        std::thread::sleep(Duration::from_millis(300));
         let log = match &self.stop {
             // The container's Squid writes its logs as its own user, mode 0640.
             Stop::Container(name) => Command::new("docker")
@@ -361,6 +364,26 @@ impl Squid {
             return format!("(empty access log; files {files:?}; cache.log:\n{cache})");
         }
         log
+    }
+
+    /// Squid's access log once a line containing `needle` is in it; the log as it stands if none
+    /// shows within `LOG_LINE_WAIT` (the caller's assertion then fails with it). Squid logs a
+    /// tunnel when it ends and its log daemon writes the line after that, so reading right after
+    /// the client closed can find nothing yet.
+    #[must_use]
+    pub fn access_log_with(&self, needle: &str) -> String {
+        self.access_log_within(needle, LOG_LINE_WAIT)
+    }
+
+    fn access_log_within(&self, needle: &str, wait: Duration) -> String {
+        let deadline = Instant::now() + wait;
+        loop {
+            let log = self.access_log();
+            if log.contains(needle) || Instant::now() >= deadline {
+                return log;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 }
 
@@ -407,6 +430,28 @@ mod tests {
         );
         write_config(dir.path(), dir.path(), &SquidOptions::open(&[443]), 3128);
         assert!(!read(&dir.path().join("squid.conf")).contains("cache_peer"));
+    }
+
+    #[test]
+    fn a_line_written_after_the_call_is_waited_for() {
+        let squid = stand_in(Command::new("sleep").arg("60"));
+        let path = squid.dir.path().join("access.log");
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(700));
+            fs::write(path, "TCP_TUNNEL/200 x").unwrap();
+        });
+        assert_eq!(squid.access_log_with("TCP_TUNNEL/200"), "TCP_TUNNEL/200 x");
+        writer.join().unwrap();
+    }
+
+    #[test]
+    fn a_line_that_never_comes_returns_the_log_as_it_stands() {
+        let squid = stand_in(Command::new("sleep").arg("60"));
+        fs::write(squid.dir.path().join("access.log"), "GET x").unwrap();
+        let wait = Duration::from_millis(200);
+        let started = Instant::now();
+        assert_eq!(squid.access_log_within("TCP_TUNNEL/200", wait), "GET x");
+        assert!(started.elapsed() >= wait);
     }
 
     #[test]

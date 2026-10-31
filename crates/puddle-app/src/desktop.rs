@@ -1248,6 +1248,10 @@ mod behaviour_tests {
     fn a_start_at_sign_in_hides_the_window_to_the_tray_or_minimizes_it_without_one() {
         assert_eq!(login_start(TrayState::Shown), LoginStart::HideToTray);
         assert_eq!(login_start(TrayState::Missing), LoginStart::Minimize);
+        // The mock window cannot report being hidden or minimized, so this only runs both calls.
+        for tray in [TrayState::Shown, TrayState::Missing] {
+            start_out_of_the_way(&rig(tray).window, tray);
+        }
     }
 
     #[test]

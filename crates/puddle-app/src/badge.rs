@@ -349,12 +349,12 @@ mod tests {
             for y in 3..13 {
                 for x in 2..13 {
                     let on = white(&ART[9], 2, 2, 3, x, y) || white(&ART_PLUS, 1, 10, 5, x, y);
-                    // The corners of this box lie outside the round dot.
-                    let outside = pixel(&overlay, x, y)[3] == 0;
+                    let drawn = pixel(&overlay, x, y);
                     if on {
-                        assert_eq!(pixel(&overlay, x, y), RING, "9+ for {count} at {x},{y}");
-                    } else if !outside {
-                        assert_eq!(pixel(&overlay, x, y), DOT, "9+ for {count} at {x},{y}");
+                        assert_eq!(drawn, RING, "9+ for {count} at {x},{y}");
+                    } else {
+                        // The dot's red, or clear in this box's corners, which lie outside the dot.
+                        assert!(drawn == DOT || drawn[3] == 0, "9+ for {count} at {x},{y}");
                     }
                 }
             }

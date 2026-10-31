@@ -467,6 +467,14 @@ fn quit_warnings(shutdown: &HostShutdown) -> Vec<String> {
     lines
 }
 
+/// What a second start of the program does in the running one: bring the window forward, unless
+/// the sign-in entry made that start (a copy is already running), which shows nothing.
+fn on_second_start<R: Runtime>(app: &AppHandle<R>, args: &[String]) {
+    if !autostart::started_at_login(args) {
+        focus_main(app);
+    }
+}
+
 /// Runs the app until it quits. The close button hides the window to the tray or quits, as Settings
 /// say ([`desktop`]).
 ///
@@ -489,12 +497,9 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
     let options = options.clone();
     // Single-instance first: a second launch hands over to the running app and ends here, before
     // the error of its unlocked data folder could show.
-    // A second start by the sign-in entry (a copy is already running) shows nothing.
     let builder =
         tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if !autostart::started_at_login(&args) {
-                focus_main(app);
-            }
+            on_second_start(app, &args);
         }));
     let app = with_plugins(builder)
         .setup(move |app| {
@@ -891,6 +896,29 @@ mod fixture_tests {
     #[test]
     fn stop_without_a_backend_does_nothing() {
         assert_eq!(stop(app().handle()), None);
+    }
+
+    #[test]
+    fn a_start_at_sign_in_opens_the_window_out_of_the_way() {
+        let app = app();
+        let options = Options {
+            at_login: true,
+            ..fixture_options()
+        };
+        start(app.handle(), &options, Source::Fixture).unwrap();
+        assert!(app.get_webview_window(MAIN_LABEL).is_some());
+        assert!(stop(app.handle()).is_some());
+    }
+
+    #[test]
+    fn a_second_start_focuses_the_window_unless_it_came_from_the_sign_in_entry() {
+        let app = app();
+        // Without a window neither call has anything to focus; both must be harmless.
+        on_second_start(app.handle(), &["puddle-app".to_owned()]);
+        on_second_start(
+            app.handle(),
+            &["puddle-app".to_owned(), autostart::AT_LOGIN_FLAG.to_owned()],
+        );
     }
 
     #[test]

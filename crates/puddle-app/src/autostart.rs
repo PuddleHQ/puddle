@@ -344,6 +344,7 @@ mod tests {
     fn a_system_without_an_implementation_has_no_entry_and_says_so_when_asked_to_make_one() {
         let entry = Unsupported("linux");
         assert_eq!(apply(&entry, false, &exe()).unwrap(), Applied::Unchanged);
+        entry.clear().unwrap();
         let err = apply(&entry, true, &exe()).unwrap_err();
         assert_eq!(
             err.to_string(),

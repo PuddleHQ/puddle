@@ -600,7 +600,9 @@ server.on("upgrade", (req, socket) => {
     .update(req.headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
     .digest("base64");
   socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
-  socket.on("data", () => {});
+  // A close frame (opcode 8) is answered with one and the socket ends, as a WebSocket server does.
+  socket.on("data", (frame) => { if ((frame[0] & 0x0f) === 8) socket.end(Buffer.from([0x88, 0x00])); });
+  socket.on("end", () => socket.destroy());
   socket.on("error", () => {});
 });
 server.listen(Number(arg("--port")), arg("--host"));"#;

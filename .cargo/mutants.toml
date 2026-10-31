@@ -14,4 +14,20 @@ test_tool = "nextest"
 exclude_globs = ["**/testing.rs", "**/testing/**", "**/tests/**", "**/benches/**"]
 
 # Equivalent mutants, each with its reason:
-exclude_re = []
+exclude_re = [
+    # `SPLIT_FIRST | ESCAPED_DOTS` combines two flags that share no bit, so `^` gives the same value.
+    'replace \| with \^ in Read::all_for',
+    # `c != ' '` offers `STRICT_DOTS` for nearly any text. The flag only changes a reading when the
+    # text holds a control character or a space, so the extra flag sets repeat readings already listed.
+    'request_match.rs:\d+:59: replace == with != in Read::all_for',
+    # `WINDOWS_TRIM` differs from the plain trim only where a space sits before a trailing dot, so
+    # text with a dot or a space alone reads the same either way.
+    'replace && with \|\| in Read::all_for',
+    # `Methods::any` is `Self::default()`, so `Default::default()` is the same value.
+    'replace Methods::any -> Self with Default::default\(\)',
+]
+
+# The first failing test decides a mutant: stop the rest. Without it, a mutant that makes a test
+# loop forever keeps the run until the timeout, and is reported as a timeout although a faster
+# test already failed.
+additional_cargo_test_args = ["--max-fail=1:immediate"]

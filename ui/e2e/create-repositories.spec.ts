@@ -2,9 +2,19 @@
 // The create form with a list of repositories, on the fixture backend (scenario `lived-in`): rows
 // added and removed by keyboard, a directory clash flagged before the submit, the progress line
 // naming each clone, and the notice for a clone that failed while the create still finished.
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeStops, boxSide, insideBy, watchCsp, staysEmpty } from "./support";
+import {
+  axeStops,
+  boxSide,
+  expectNoAxeViolations,
+  insideBy,
+  watchCsp,
+  staysEmpty,
+} from "./support";
 
 const auth = (backend: Backend) => ({
   Authorization: `Bearer ${backend.token}`,
@@ -424,3 +434,58 @@ for (const scheme of ["light", "dark"] as const) {
     });
   }
 }
+
+test.describe("a checkout on this computer", () => {
+  test("starts from a folder: its origin fills in the address, and a folder without .git is refused on its field", async ({
+    page,
+    request,
+    backend,
+  }) => {
+    const base = mkdtempSync(join(tmpdir(), "puddle-e2e-checkout-"));
+    try {
+      const shop = join(base, "shop");
+      mkdirSync(join(shop, ".git"), { recursive: true });
+      writeFileSync(join(shop, ".git", "HEAD"), "ref: refs/heads/main\n");
+      writeFileSync(
+        join(shop, ".git", "config"),
+        '[remote "origin"]\n\turl = https://github.com/acme/shop.git\n',
+      );
+      const plain = join(base, "plain");
+      mkdirSync(plain);
+
+      await openList(page, backend);
+      const dialog = await openCreate(page);
+      await rowOf(page, 1).getByLabel("From a folder on this computer").check();
+      const folder = rowOf(page, 1).getByLabel("Folder of the checkout");
+      await expect(folder).toBeVisible();
+      await expect(rowOf(page, 1)).toContainText(
+        "Uncommitted changes and untracked files, such as .env, stay on this computer.",
+      );
+      await expectNoAxeViolations(page, "the create form with a folder");
+
+      await folder.fill(plain);
+      await dialog.getByLabel("Name").fill("plain");
+      await dialog.getByRole("button", { name: "Create workspace" }).click();
+      await expect(folder).toHaveAttribute("aria-invalid", "true");
+      await expect(rowOf(page, 1).getByRole("alert")).toContainText(
+        "is not a git checkout: it has no .git",
+      );
+
+      await folder.fill(shop);
+      await dialog.getByLabel("Name").fill("shop");
+      await expect(rowOf(page, 1).getByLabel("Directory")).toHaveAttribute(
+        "placeholder",
+        "shop",
+      );
+      await dialog.getByRole("button", { name: "Create workspace" }).click();
+      await expect(dialogOf(page)).toHaveCount(0);
+      await expect(card(page, "shop")).toBeVisible();
+      const made = await workspace(request, backend, "shop");
+      expect(made.repositories).toEqual([
+        { url: "https://github.com/acme/shop.git", directory: "shop" },
+      ]);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+});

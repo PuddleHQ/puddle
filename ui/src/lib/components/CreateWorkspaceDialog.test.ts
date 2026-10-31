@@ -84,7 +84,65 @@ describe("CreateWorkspaceDialog", () => {
     mount();
     const dialog = await screen.findByRole("dialog", { name: "New workspace" });
     const first = dialog.querySelector("input");
-    expect(first).toBe(field("Git repository (HTTPS)"));
+    expect(first).toBe(screen.getByTestId("source-address"));
+    expect(first).toBeChecked();
+    expect(dialog.querySelectorAll("input")[2]).toBe(
+      field("Git repository (HTTPS)"),
+    );
+  });
+
+  it("starts from a folder on this computer: only the folder is needed, and the origin fills in the address", async () => {
+    const { create, onCreated } = mount();
+    await screen.findByRole("dialog");
+    await fireEvent.click(screen.getByTestId("source-folder"));
+    expect(screen.queryByLabelText("Git repository (HTTPS)")).toBeNull();
+    expect(
+      screen.getByText(/Uncommitted changes and untracked files, such as .env/),
+    ).toBeInTheDocument();
+    await type("Folder of the checkout", "/home/you/Shop/");
+    expect(field("Name").value).toBe("shop");
+    expect(field("Directory").placeholder).toBe("Shop");
+    await fireEvent.click(submit());
+    await vi.waitFor(() => expect(onCreated).toHaveBeenCalled());
+    expect(create).toHaveBeenCalledWith({
+      name: "shop",
+      repositories: [{ url: "", local_path: "/home/you/Shop/" }],
+    });
+  });
+
+  it("checks the folder before sending, and puts a refusal about the checkout on it", async () => {
+    const { create } = mount({
+      ok: false,
+      message:
+        "repository 1 (the checkout /home/you/shop): it has no origin remote",
+    });
+    await screen.findByRole("dialog");
+    await fireEvent.click(screen.getByTestId("source-folder"));
+    await type("Folder of the checkout", "shop");
+    await type("Name", "shop");
+    await fireEvent.click(submit());
+    expect(field("Folder of the checkout")).toHaveFocus();
+    expect(screen.getByRole("alert")).toHaveTextContent("Give the full path");
+    expect(create).not.toHaveBeenCalled();
+    await type("Folder of the checkout", "/home/you/shop");
+    await fireEvent.click(submit());
+    await vi.waitFor(() =>
+      expect(field("Folder of the checkout")).toHaveAttribute(
+        "aria-invalid",
+        "true",
+      ),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "it has no origin remote",
+    );
+    // Back to an address: the folder is not sent.
+    await fireEvent.click(screen.getByTestId("source-address"));
+    await type("Git repository (HTTPS)", "https://github.com/acme/shop.git");
+    await fireEvent.click(submit());
+    expect(create).toHaveBeenLastCalledWith({
+      name: "shop",
+      repositories: [{ url: "https://github.com/acme/shop.git" }],
+    });
   });
 
   it("names the workspace after the repository until a name is typed", async () => {

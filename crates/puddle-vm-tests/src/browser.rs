@@ -486,34 +486,40 @@ impl BrowserSession {
     ) -> Result<PageOutcome, HarnessError> {
         let mut line = command.to_string();
         line.push('\n');
-        let gone = |e: std::io::Error| HarnessError::Browser {
-            detail: format!("the driver is gone: {e}"),
+        // A driver that has ended refuses the write or gives no answer; either way its stderr says why.
+        let sent = match self.stdin.write_all(line.as_bytes()).await {
+            Ok(()) => self.stdin.flush().await,
+            Err(e) => Err(e),
         };
-        self.stdin.write_all(line.as_bytes()).await.map_err(gone)?;
-        self.stdin.flush().await.map_err(gone)?;
+        if sent.is_err() {
+            return Err(self.ended().await);
+        }
         let limit = budget + self.grace;
         let answer = tokio::time::timeout(limit, self.stdout.next_line())
             .await
             .map_err(|_| HarnessError::Timeout {
                 what: "browser client",
                 limit,
-            })?
-            .map_err(gone)?;
-        let Some(answer) = answer else {
-            let mut stderr = String::new();
-            if let Some(mut err) = self.child.stderr.take() {
-                let _ =
-                    tokio::time::timeout(Duration::from_secs(5), err.read_to_string(&mut stderr))
-                        .await;
-            }
-            return Err(HarnessError::Browser {
-                detail: format!(
-                    "the driver ended without an answer; stderr: {}",
-                    stderr.trim()
-                ),
-            });
-        };
-        parse_reply(&answer)
+            })?;
+        match answer {
+            Ok(Some(answer)) => parse_reply(&answer),
+            Ok(None) | Err(_) => Err(self.ended().await),
+        }
+    }
+
+    /// The error for a driver that ended: what it wrote to stderr (read once).
+    async fn ended(&mut self) -> HarnessError {
+        let mut stderr = String::new();
+        if let Some(mut err) = self.child.stderr.take() {
+            let _ =
+                tokio::time::timeout(Duration::from_secs(5), err.read_to_string(&mut stderr)).await;
+        }
+        HarnessError::Browser {
+            detail: format!(
+                "the driver ended without an answer; stderr: {}",
+                stderr.trim()
+            ),
+        }
     }
 }
 
@@ -892,8 +898,9 @@ mod tests {
             .await
             .expect_err("node ended");
         assert!(err.to_string().contains("ended without an answer"), "{err}");
+        // Its stderr was read with the first failure; the next step fails without it.
         let err = session.press(PageId(0), "a").await.expect_err("no driver");
-        assert!(err.to_string().contains("the driver is gone"), "{err}");
+        assert!(err.to_string().contains("ended without an answer"), "{err}");
     }
 
     #[test]

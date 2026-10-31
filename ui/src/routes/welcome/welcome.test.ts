@@ -43,7 +43,10 @@ const h = await vi.hoisted(async () => {
       path === "/api/first-run"
         ? firstRun.PUT(path, init)
         : prefs.PUT(path, init as never),
-    POST: (path: string, init: never) => workspaces.POST(path, init),
+    POST: (path: string, init: never) =>
+      path === "/api/dev-certificate/trust"
+        ? firstRun.POST(path)
+        : workspaces.POST(path, init),
   };
   return { api, firstRun, prefs, workspaces };
 });
@@ -79,6 +82,12 @@ beforeEach(() => {
   h.firstRun.bodies = [];
   h.firstRun.down = false;
   h.firstRun.refusePut = false;
+  h.firstRun.trustAnswer = {
+    dev_certificate: "trusted",
+    detail: null,
+    waiting: false,
+  };
+  h.firstRun.holdTrust = null;
   h.firstRun.state = {
     completed: false,
     completed_at: null,
@@ -209,6 +218,113 @@ describe("certificates step", () => {
       ),
     ).toBeVisible();
     expect(screen.getByText(/No trust dialog needed/)).toBeVisible();
+  });
+
+  it("offers Trust it now while the certificate needs trust, and a yes ends the offer", async () => {
+    h.firstRun.state = { ...h.firstRun.state, dev_certificate: "needs_trust" };
+    render(Certificates);
+    expect(
+      await screen.findByText(
+        /one Security Warning that names the certificate/,
+      ),
+    ).toBeVisible();
+    await fireEvent.click(screen.getByRole("button", { name: "Trust it now" }));
+    expect(h.firstRun.calls).toContain("POST /api/dev-certificate/trust");
+    const status = screen.getByRole("status");
+    await waitFor(() =>
+      expect(status).toHaveTextContent("Development certificate trusted."),
+    );
+    expect(
+      screen.getByText("Development certificate trusted", {
+        selector: "p.title",
+      }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Trust it now" }),
+    ).not.toBeInTheDocument();
+    // The button the keyboard was on is gone: the outcome has the focus.
+    expect(status).toHaveFocus();
+  });
+
+  it("waits for Windows with the button off, and offers it again after a no", async () => {
+    let answer = () => {};
+    h.firstRun.holdTrust = new Promise((resolve) => (answer = resolve));
+    h.firstRun.trustAnswer = {
+      dev_certificate: "trust_declined",
+      detail: null,
+      waiting: false,
+    };
+    h.firstRun.state = { ...h.firstRun.state, dev_certificate: "needs_trust" };
+    render(Certificates);
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Trust it now" }),
+    );
+    const waiting = await screen.findByRole("button", {
+      name: "Waiting for Windows…",
+    });
+    expect(waiting).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent(/Security Warning/);
+    answer();
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Development certificate: not trusted.",
+      ),
+    );
+    expect(screen.getByRole("button", { name: "Trust it now" })).toBeEnabled();
+  });
+
+  it("says Windows is still waiting when an earlier press has its dialog open", async () => {
+    h.firstRun.trustAnswer = {
+      dev_certificate: "needs_trust",
+      detail: null,
+      waiting: true,
+    };
+    h.firstRun.state = { ...h.firstRun.state, dev_certificate: "needs_trust" };
+    render(Certificates);
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Trust it now" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        /still waiting for your answer.*Pressing again does not open another/,
+      ),
+    );
+    expect(screen.getByRole("button", { name: "Trust it now" })).toBeEnabled();
+  });
+
+  it("shows the system's words when trusting failed", async () => {
+    h.firstRun.trustAnswer = {
+      dev_certificate: "trust_failed",
+      detail: "os error 5",
+      waiting: false,
+    };
+    h.firstRun.state = {
+      ...h.firstRun.state,
+      dev_certificate: "trust_declined",
+    };
+    render(Certificates);
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Trust it now" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Development certificate: couldn't be trusted. Details: os error 5",
+      ),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Trust it now" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("has no Trust button where Windows cannot be asked", async () => {
+    h.firstRun.state = { ...h.firstRun.state, dev_certificate: "unsupported" };
+    render(Certificates);
+    await screen.findByText(
+      "Development certificate: not trusted on this system yet",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Trust it now" }),
+    ).not.toBeInTheDocument();
   });
 
   it("says when the company roots could not be read", () => {

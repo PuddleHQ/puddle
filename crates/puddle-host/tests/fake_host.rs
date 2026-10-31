@@ -9405,5 +9405,23 @@ async fn a_checkout_git_refuses_is_a_problem_and_a_boot_that_fails_after_the_imp
             .commands()
             .contains(&"m--unbooted import".to_owned())
     );
+
+    // The volume cannot be removed either: the failure says so and names the volume left.
+    rig.runtime.inject(
+        puddle_compute::fake::Op::RemoveVolume,
+        puddle_compute::fake::Fault::once(puddle_compute::ComputeError::Runtime {
+            op: "remove_volume",
+            message: "the disk is busy".into(),
+        }),
+    );
+    let reply = api.post("/api/workspaces", &body("stuck")).await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events.until(ended("stuck"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    assert!(
+        end.to_string()
+            .contains("the new volume ws-stuck was not removed"),
+        "{end}"
+    );
     host.shutdown().await;
 }

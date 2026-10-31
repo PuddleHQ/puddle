@@ -489,6 +489,15 @@ mod tests {
             Ok("git@github.com:acme/api.git")
         );
         let none = |text: &str| origin_url(text).unwrap_err();
+        // A line without an `=` and a header that never closes are skipped, not read.
+        assert_eq!(
+            origin_url("[remote \"origin\"]\n\tnot a setting\n\turl = https://x/y\n").as_deref(),
+            Ok("https://x/y")
+        );
+        assert_eq!(
+            none("[remote \"origin\"\nurl = https://x/y\n"),
+            "it has no origin remote"
+        );
         // The subsection name is exact; nothing else counts.
         assert_eq!(
             none("[remote \"Origin\"]\nurl = https://x/y\n"),

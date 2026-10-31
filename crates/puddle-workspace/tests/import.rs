@@ -361,3 +361,100 @@ async fn a_volume_that_exists_is_kept_and_a_failed_create_leaves_none_behind() {
         .unwrap();
     assert!(!report.created_volume);
 }
+
+fn runtime_error(op: &'static str, message: &str) -> ComputeError {
+    ComputeError::Runtime {
+        op,
+        message: message.into(),
+    }
+}
+
+#[tokio::test]
+async fn a_lookup_that_fails_before_anything_is_made_is_an_error_and_makes_nothing() {
+    let s = setup();
+    s.rt.inject(
+        Op::Volume,
+        Fault::once(runtime_error("volume", "no answer")),
+    );
+    let err = s
+        .workspaces
+        .import(
+            &s.rt,
+            &s.id,
+            &image(),
+            DiskSize::gib(1),
+            &[import(checkout(&s.base, "api", "main"), "api")],
+        )
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("no answer"), "{err}");
+    assert_eq!(s.rt.list_volumes().await.unwrap(), []);
+    assert_eq!(sandboxes(&s.rt).await, Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn a_sandbox_that_will_not_go_is_named_and_its_volume_is_not_pulled_from_under_it() {
+    let s = setup();
+    let imports = [import(checkout(&s.base, "api", "main"), "api")];
+    s.rt.inject(
+        Op::Exec,
+        Fault::once(runtime_error("exec", "the guest is gone")),
+    );
+    s.rt.inject(Op::Stop, Fault::once(runtime_error("stop", "stop refused")));
+    s.rt.inject(
+        Op::Remove,
+        Fault::once(runtime_error("remove", "remove refused")),
+    );
+    let err = s
+        .workspaces
+        .import(&s.rt, &s.id, &image(), DiskSize::gib(1), &imports)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, WorkspaceError::Leftover { .. }), "{err}");
+    let said = err.to_string();
+    assert!(said.contains("the guest is gone"), "{said}");
+    assert!(said.contains("stop refused"), "{said}");
+    // The volume stays: the sandbox that holds it is still there.
+    assert_eq!(s.rt.list_volumes().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_volume_that_will_not_go_after_a_failed_import_is_named() {
+    let s = setup();
+    let imports = [import(checkout(&s.base, "api", "main"), "api")];
+    s.rt.inject(
+        Op::Exec,
+        Fault::once(runtime_error("exec", "the guest is gone")),
+    );
+    s.rt.inject(
+        Op::RemoveVolume,
+        Fault::once(runtime_error("remove_volume", "the disk is busy")),
+    );
+    let err = s
+        .workspaces
+        .import(&s.rt, &s.id, &image(), DiskSize::gib(1), &imports)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, WorkspaceError::Leftover { .. }), "{err}");
+    let said = err.to_string();
+    assert!(said.contains("the guest is gone"), "{said}");
+    assert!(said.contains("was not removed"), "{said}");
+    assert!(said.contains("the disk is busy"), "{said}");
+}
+
+#[tokio::test]
+async fn a_failed_create_whose_cleanup_fails_too_reports_the_create() {
+    let s = setup();
+    let imports = [import(checkout(&s.base, "api", "main"), "api")];
+    s.rt.inject(Op::Create, Fault::once(runtime_error("create", "no room")));
+    s.rt.inject(
+        Op::List,
+        Fault::once(runtime_error("list", "list refused")).after(1),
+    );
+    let err = s
+        .workspaces
+        .import(&s.rt, &s.id, &image(), DiskSize::gib(1), &imports)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("no room"), "{err}");
+}

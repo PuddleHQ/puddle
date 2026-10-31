@@ -375,6 +375,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_default_checkout_rule_names_the_folder_and_what_is_wrong() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = crate::fake::FakeRuntime::default()
+            .check_checkout(dir.path())
+            .unwrap_err();
+        let ComputeError::InvalidSpec { reason } = err else {
+            panic!("{err}");
+        };
+        assert!(
+            reason.starts_with(&format!("the checkout {} ", dir.path().display())),
+            "{reason}"
+        );
+    }
+
+    #[test]
     fn info_names_parse_only_when_valid() {
         let ours = SandboxInfo {
             name: "box".into(),

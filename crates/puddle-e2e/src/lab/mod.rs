@@ -576,17 +576,10 @@ mod tests {
                 .spawn()
                 .unwrap()
         };
-        let (mut idle, mut busy) = if cfg!(windows) {
-            (
-                quiet("ping", &["-n", "30", "127.0.0.1"]),
-                quiet("cmd", &["/c", "for /l %i in (0,0,1) do @rem"]),
-            )
-        } else {
-            (
-                quiet("sleep", &["30"]),
-                quiet("sh", &["-c", "while :; do :; done"]),
-            )
-        };
+        let (program, args) = procs::programs::IDLE;
+        let mut idle = quiet(program, args);
+        let (program, args) = procs::programs::BUSY;
+        let mut busy = quiet(program, args);
         // A loaded host may give the loop its first 100 ms late, so wait for them.
         let deadline = Instant::now() + Duration::from_secs(60);
         while procs::tree_cpu(busy.id()).unwrap() < Duration::from_millis(100) {

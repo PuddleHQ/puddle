@@ -93,11 +93,35 @@ const TRIVIAL_START_BOUND: Duration = Duration::from_secs(30);
 /// Starts a program that does nothing (`cmd /c exit 0`, `true`) and says how long it took to run
 /// to its end. Idle it takes milliseconds; a machine that stalls every program start shows here.
 fn trivial_start() -> String {
-    if cfg!(windows) {
-        time_to_end("cmd", &["/c", "exit 0"], TRIVIAL_START_BOUND)
-    } else {
-        time_to_end("true", &[], TRIVIAL_START_BOUND)
-    }
+    let (program, args) = TRIVIAL;
+    time_to_end(program, args, TRIVIAL_START_BOUND)
+}
+
+/// A program that does nothing and ends, with its arguments.
+#[cfg(windows)]
+const TRIVIAL: (&str, &[&str]) = ("cmd", &["/c", "exit 0"]);
+#[cfg(not(windows))]
+const TRIVIAL: (&str, &[&str]) = ("true", &[]);
+
+/// Programs the tests run: one that waits about 30 s using no CPU, one that spins until stopped,
+/// and a shell that waits on a child of its own (the child's executable name last).
+#[cfg(all(test, windows))]
+pub(super) mod programs {
+    pub(in super::super) const IDLE: (&str, &[&str]) = ("ping", &["-n", "30", "127.0.0.1"]);
+    pub(in super::super) const BUSY: (&str, &[&str]) =
+        ("cmd", &["/c", "for /l %i in (0,0,1) do @rem"]);
+    pub(in super::super) const SHELL_WITH_A_CHILD: (&str, &[&str], &str) = (
+        "cmd",
+        &["/c", "ping -n 30 127.0.0.1 >nul & exit 0"],
+        "PING.EXE",
+    );
+}
+#[cfg(all(test, not(windows)))]
+pub(super) mod programs {
+    pub(in super::super) const IDLE: (&str, &[&str]) = ("sleep", &["30"]);
+    pub(in super::super) const BUSY: (&str, &[&str]) = ("sh", &["-c", "while :; do :; done"]);
+    pub(in super::super) const SHELL_WITH_A_CHILD: (&str, &[&str], &str) =
+        ("sh", &["-c", "sleep 30; true"], "sleep");
 }
 
 /// Runs `program` and says how long it took from the call to its end, or that it had not ended
@@ -145,13 +169,18 @@ fn time_to_end(program: &str, args: &[&str], bound: Duration) -> String {
 /// from a slow or stuck fixture. Read it before the child is stopped.
 pub(super) fn stall_evidence(child: &Child) -> String {
     let tree = describe(&tree(child.id()));
-    let memory = os::memory().map_or_else(
-        || "free memory: unknown on this OS".to_owned(),
-        |(free, total)| format!("free memory: {} of {} MB", free >> 20, total >> 20),
-    );
+    let memory = describe_memory(os::memory());
     format!(
         "process tree of the fixture:\n{tree}\n{}\n{memory}",
         trivial_start()
+    )
+}
+
+/// `free of total MB`, from bytes, or that the OS does not say.
+fn describe_memory(memory: Option<(u64, u64)>) -> String {
+    memory.map_or_else(
+        || "free memory: unknown on this OS".to_owned(),
+        |(free, total)| format!("free memory: {} of {} MB", free >> 20, total >> 20),
     )
 }
 
@@ -244,10 +273,10 @@ mod os {
 
     pub(super) fn snapshot() -> Vec<Proc> {
         let boot = boot();
-        let Ok(dir) = std::fs::read_dir("/proc") else {
-            return Vec::new();
-        };
-        dir.filter_map(Result::ok)
+        std::fs::read_dir("/proc")
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
             .filter(|e| {
                 e.file_name()
                     .to_string_lossy()
@@ -438,6 +467,34 @@ mod tests {
     }
 
     #[test]
+    fn a_process_without_a_creation_time_counts_as_a_child_and_its_start_is_unknown() {
+        let mut child = proc(11, 10, 0);
+        child.created = None;
+        let all = [proc(10, 1, 100), child.clone(), proc(12, 10, 90)];
+        assert_eq!(descendants(&all, 10).len(), 2);
+        let mut early = proc(13, 10, 50);
+        early.cpu = None;
+        assert_eq!(
+            describe(&[proc(10, 1, 100), child, early]),
+            "  p10 pid 10 started +0.00s CPU 0.01s\n  p11 pid 11 started unknown CPU 0.01s\n  p13 pid 13 started before the first CPU unknown"
+        );
+    }
+
+    #[test]
+    fn memory_is_given_in_megabytes_or_as_unknown() {
+        assert_eq!(
+            describe_memory(Some((3 << 20, 16 << 30))),
+            "free memory: 3 of 16384 MB"
+        );
+        assert_eq!(describe_memory(None), "free memory: unknown on this OS");
+    }
+
+    #[test]
+    fn a_process_that_does_not_exist_has_no_tree_and_no_cpu_time() {
+        assert_eq!(tree_cpu(u32::MAX), None);
+    }
+
+    #[test]
     fn the_description_gives_each_start_relative_to_the_first_and_its_cpu() {
         let mut late = proc(11, 10, 160);
         late.cpu = None;
@@ -478,16 +535,9 @@ mod tests {
 
     /// A shell that starts a long child and waits for it: a tree of two.
     fn shell_with_a_child() -> Child {
-        let mut command = if cfg!(windows) {
-            let mut c = Command::new("cmd");
-            c.args(["/c", "ping -n 30 127.0.0.1 >nul & exit 0"]);
-            c
-        } else {
-            let mut c = Command::new("sh");
-            c.args(["-c", "sleep 30; true"]);
-            c
-        };
-        command
+        let (shell, args, _) = programs::SHELL_WITH_A_CHILD;
+        Command::new(shell)
+            .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             // The grandchild outlives a killed shell; it must hold none of the test's pipes.
@@ -515,10 +565,9 @@ mod tests {
         drop(shell.kill());
         drop(shell.wait());
         assert_eq!(found.first().map(|p| p.pid), Some(pid));
-        let [_, child, ..] = found.as_slice() else {
-            panic!("no child in {found:?}");
-        };
-        let expected = if cfg!(windows) { "PING.EXE" } else { "sleep" };
+        assert_eq!(found.len(), 2, "{found:?}");
+        let child = found.last().unwrap();
+        let (_, _, expected) = programs::SHELL_WITH_A_CHILD;
         assert!(child.name.eq_ignore_ascii_case(expected), "{found:?}");
         assert!(child.created.is_some() && child.cpu.is_some(), "{found:?}");
         assert!(cpu.is_some());
@@ -536,11 +585,7 @@ mod tests {
 
     #[test]
     fn a_program_that_overruns_its_bound_is_reported() {
-        let (program, args): (&str, &[&str]) = if cfg!(windows) {
-            ("ping", &["-n", "30", "127.0.0.1"])
-        } else {
-            ("sleep", &["30"])
-        };
+        let (program, args) = programs::IDLE;
         let text = time_to_end(program, args, Duration::from_millis(200));
         assert!(text.contains("had not ended after 0.2s"), "{text}");
         assert!(trivial_start().contains("to start and end"));

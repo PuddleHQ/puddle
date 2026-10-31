@@ -193,7 +193,7 @@ impl MsbConfig {
         }
     }
 
-    /// The checkout rule (see [`crate::checkout`]), with the msb home, the guest share and every
+    /// The checkout rule (see `crate::checkout`), with the msb home, the guest share and every
     /// [`MsbConfig::protected_dirs`] folder protected.
     ///
     /// # Errors

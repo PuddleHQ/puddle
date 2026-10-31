@@ -1660,6 +1660,81 @@ mod tests {
     }
 
     #[test]
+    fn a_checkout_on_this_computer_takes_its_origin_and_folder_name_unless_given() {
+        let source = |folder: &str, origin: Result<&str, &str>| LocalSource {
+            git_dir: PathBuf::from(format!("/home/u/{folder}/.git")),
+            folder_name: folder.into(),
+            origin: origin.map(str::to_owned).map_err(str::to_owned),
+        };
+        let local = |path: &str, url: &str| RepositoryDraft {
+            url: url.to_owned(),
+            local: Some(path.to_owned()),
+            ..RepositoryDraft::default()
+        };
+        let mut locals = BTreeMap::new();
+        locals.insert(
+            "/home/u/Shop".to_owned(),
+            Ok(source("Shop", Ok("https://github.com/acme/shop.git"))),
+        );
+        locals.insert(
+            "/home/u/none".to_owned(),
+            Ok(source("none", Err("it has no origin remote"))),
+        );
+        locals.insert(
+            "/home/u/plain".to_owned(),
+            Err("/home/u/plain is not a git checkout: it has no .git".to_owned()),
+        );
+        let checked = check_repositories_with(
+            &[
+                local("/home/u/Shop", ""),
+                local("/home/u/none", "https://example.org/acme/x.git"),
+            ],
+            |_| false,
+            &locals,
+        )
+        .unwrap();
+        assert_eq!(
+            checked[0].repository.url.as_str(),
+            "https://github.com/acme/shop.git"
+        );
+        assert_eq!(checked[0].repository.directory.as_str(), "Shop");
+        assert_eq!(checked[0].local, Some(PathBuf::from("/home/u/Shop/.git")));
+        // A given address stands in for a missing origin.
+        assert_eq!(
+            checked[1].repository.url.as_str(),
+            "https://example.org/acme/x.git"
+        );
+        assert!(checked.iter().all(|r| r.pull && r.push));
+        let refused =
+            |d: RepositoryDraft| check_repositories_with(&[d], |_| false, &locals).unwrap_err();
+        assert_eq!(
+            refused(local("/home/u/none", "")),
+            "repository 1 (the checkout /home/u/none): it has no origin remote"
+        );
+        assert_eq!(
+            refused(local("/home/u/plain", "")),
+            "repository 1 (the checkout /home/u/plain): /home/u/plain is not a git checkout: it has no .git"
+        );
+        assert_eq!(
+            refused(local("/home/u/unseen", "")),
+            "repository 1 (the checkout /home/u/unseen): it was not looked at"
+        );
+        // The address still passes the create's checks.
+        assert!(refused(local("/home/u/Shop", "http://example.org/x")).contains("https://"));
+        // Without a draft that names one, the plain check needs no service.
+        assert_eq!(
+            check_repositories(&[draft("https://github.com/a/b")], |_| false).unwrap()[0].local,
+            None
+        );
+    }
+
+    #[test]
+    fn the_default_service_has_no_checkouts_on_this_computer() {
+        let err = NoWorkspaces.local_checkout("/home/u/shop").unwrap_err();
+        assert!(err.contains("not available"), "{err}");
+    }
+
+    #[test]
     fn a_repository_list_takes_defaults_and_keeps_its_order() {
         let checked = check_repositories(
             &[

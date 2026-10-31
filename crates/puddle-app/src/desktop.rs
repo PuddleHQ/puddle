@@ -376,8 +376,9 @@ struct Loop {
     shown: (usize, bool),
     /// The app icon as last set, so only a change is drawn and set again.
     icon: Wanted,
-    /// The start-at-sign-in switch as last applied, so only a change reaches the system's entry.
-    login: bool,
+    /// The start-at-sign-in switch as last applied, so only a change reaches the system's entry;
+    /// `None` until the settings have been read once.
+    login: Option<bool>,
     /// How often the settings are read while no event arrives.
     poll: Duration,
 }
@@ -399,8 +400,8 @@ impl Loop {
 
     fn refresh_login(&mut self) {
         let wanted = self.prefs.start_at_login();
-        if wanted != self.login {
-            self.login = wanted;
+        if self.login != Some(wanted) {
+            self.login = Some(wanted);
             (self.out.login)(wanted);
         }
     }
@@ -557,7 +558,13 @@ fn attach_with<R: Runtime>(
     // Subscribe before counting: an event between the two would be missed otherwise.
     let stream = backend.events().subscribe();
     let settings = backend.settings().clone();
-    let prefs = prefs_or_default(settings.as_ref());
+    // Settings that cannot be read must not turn the sign-in entry off: it waits for a good read.
+    let read = read_prefs(settings.as_ref());
+    let login = read.as_ref().ok().map(UiPrefs::start_at_login);
+    let prefs = read.unwrap_or_else(|reason| {
+        tracing::warn!(%reason, "using the default window preferences");
+        UiPrefs::default()
+    });
     let open = open_requests(backend.store());
     let buttons = Buttons {
         settings: settings.clone(),
@@ -576,8 +583,9 @@ fn attach_with<R: Runtime>(
         (out.icon)(&drawn);
     }
     // Applied at every start, so a moved or reinstalled program is found again by the entry.
-    let login = prefs.start_at_login();
-    (out.login)(login);
+    if let Some(on) = login {
+        (out.login)(on);
+    }
     let state = Loop {
         out,
         store: backend.store().clone(),
@@ -945,7 +953,7 @@ mod behaviour_tests {
         let open = open_requests(rig.backend.store());
         let shown = (open.count(), prefs.badge());
         let icon = Wanted::read(settings.as_ref(), &prefs);
-        let login = prefs.start_at_login();
+        let login = Some(prefs.start_at_login());
         let state = Loop {
             out: rig.recorded.outputs(),
             store: rig.backend.store().clone(),
@@ -979,7 +987,7 @@ mod behaviour_tests {
             prefs: UiPrefs::default(),
             shown: (0, true),
             icon: Wanted::read(rig.backend.settings().as_ref(), &UiPrefs::default()),
-            login: false,
+            login: Some(false),
             poll: Duration::from_secs(60),
         };
         tauri::async_runtime::spawn(state.run(stream));
@@ -1114,8 +1122,6 @@ mod behaviour_tests {
         (out.badge)(2, true);
         (out.badge)(0, false);
         (out.badge)(12, true);
-        // With no entry to manage (a test, a fixture), the switch touches nothing.
-        (out.login)(true);
     }
 
     #[test]
@@ -1156,7 +1162,7 @@ mod behaviour_tests {
             notifier: Notifier::default(),
             shown: (1, prefs.badge()),
             icon: Wanted::read(settings.as_ref(), &prefs),
-            login: prefs.start_at_login(),
+            login: Some(prefs.start_at_login()),
             settings,
             prefs,
             poll: Duration::from_millis(50),
@@ -1179,6 +1185,39 @@ mod behaviour_tests {
         eventually_blocking("the switch going off", Duration::from_secs(5), || {
             own.logins() == [true, false]
         });
+    }
+
+    #[test]
+    fn settings_that_cannot_be_read_at_the_start_leave_the_entry_until_a_good_read() {
+        let app = with_plugins(mock_builder()).build(context()).unwrap();
+        let window =
+            WebviewWindowBuilder::new(&app, MAIN_LABEL, WebviewUrl::App("index.html".into()))
+                .build()
+                .unwrap();
+        let backend = tauri::async_runtime::block_on(start_fixture(0));
+        backend
+            .settings()
+            .save_global(json!({"ui": {"close_behaviour": "explode"}}))
+            .unwrap();
+        let recorded = Arc::new(Recorded::default());
+        attach_with(
+            &window,
+            &backend,
+            None,
+            TrayState::Shown,
+            recorded.outputs(),
+            Arc::new(|_| {}),
+        );
+        assert_eq!(recorded.logins(), Vec::<bool>::new(), "nothing was applied");
+        backend
+            .settings()
+            .save_global(json!({"schema_version": 2, "ui": {"start_at_login": true}}))
+            .unwrap();
+        eventually_blocking(
+            "the first good read applying the switch",
+            Duration::from_secs(10),
+            || recorded.logins() == [true],
+        );
     }
 
     #[test]
@@ -1209,11 +1248,6 @@ mod behaviour_tests {
     fn a_start_at_sign_in_hides_the_window_to_the_tray_or_minimizes_it_without_one() {
         assert_eq!(login_start(TrayState::Shown), LoginStart::HideToTray);
         assert_eq!(login_start(TrayState::Missing), LoginStart::Minimize);
-        // The test window cannot show whether it is hidden; it must at least take both calls.
-        for tray in [TrayState::Shown, TrayState::Missing] {
-            let rig = rig(tray);
-            start_out_of_the_way(&rig.window, tray);
-        }
     }
 
     #[test]

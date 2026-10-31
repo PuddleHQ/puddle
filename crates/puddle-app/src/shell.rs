@@ -131,15 +131,19 @@ impl Options {
         } else {
             Self::default()
         };
-        // A run with a folder of its own is not the user's installed app: it leaves the user's
-        // sign-in entry alone.
-        let login = (!options.fixture && options.data_dir.is_none()).then(autostart::system);
         Self {
             at_login,
-            login,
+            login: manages_login(cfg!(debug_assertions)).then(autostart::system),
             ..options
         }
     }
+}
+
+/// Whether this build manages the user's sign-in entry: only an installed (release) build does.
+/// A development build, a test run or the fixture would point the entry at itself, or remove the
+/// entry of the installed program.
+fn manages_login(debug_build: bool) -> bool {
+    !debug_build
 }
 
 /// The data folder the host uses: the one `options` name, else the per-user one.
@@ -554,6 +558,14 @@ pub(crate) mod tests {
                 "2 workspace operations were still running and were ended",
             ]
         );
+    }
+
+    #[test]
+    fn only_an_installed_build_manages_the_sign_in_entry() {
+        assert!(manages_login(false));
+        assert!(!manages_login(true));
+        // Whatever the environment says, a build under test never gets the system's entry.
+        assert!(Options::default().login.is_none());
     }
 
     #[test]

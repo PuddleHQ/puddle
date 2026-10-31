@@ -150,6 +150,7 @@ mod run_key {
 
     use winreg::RegKey;
     use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
+    use winreg::types::FromRegValue;
 
     use super::{ENTRY_NAME, LoginEntry, LoginError};
 
@@ -193,8 +194,10 @@ mod run_key {
                 Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
                 Err(err) => return Err(Self::failed("read")(err)),
             };
-            match key.get_value::<String, _>(&self.name) {
-                Ok(command) => Ok(Some(command)),
+            match key.get_raw_value(&self.name) {
+                // A value of another type is there but is not ours: empty text, which `apply`
+                // overwrites when on and removes when off.
+                Ok(raw) => Ok(Some(String::from_reg_value(&raw).unwrap_or_default())),
                 Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
                 Err(err) => Err(Self::failed("read")(err)),
             }
@@ -415,6 +418,21 @@ mod tests {
             assert_eq!(apply(&entry, false, &exe()).unwrap(), Applied::Removed);
             assert_eq!(entry.command().unwrap(), None);
             assert_eq!(apply(&entry, false, &exe()).unwrap(), Applied::Unchanged);
+        }
+
+        #[test]
+        fn a_value_of_another_type_is_replaced_when_on_and_removed_when_off() {
+            let key = Throwaway::new();
+            let (created, _) = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+                .create_subkey(&key.key)
+                .unwrap();
+            created.set_value(ENTRY_NAME, &7_u32).unwrap();
+            let entry = key.entry();
+            assert_eq!(apply(&entry, true, &exe()).unwrap(), Applied::Written);
+            assert_eq!(entry.command().unwrap(), Some(command_for(&exe())));
+            created.set_value(ENTRY_NAME, &7_u32).unwrap();
+            assert_eq!(apply(&entry, false, &exe()).unwrap(), Applied::Removed);
+            assert_eq!(entry.command().unwrap(), None);
         }
 
         #[test]

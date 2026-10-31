@@ -10,8 +10,7 @@
 #     CLI's `doctor --json` agrees;
 #   - an upgrade over the older MSI keeps what the first run wrote in the data folder;
 #   - the "Start Puddle when I sign in" switch writes the sign-in entry (the current user's Run key)
-#     for the installed program, and the switch off removes it; the entry is still there after an
-#     upgrade's restart, and the uninstall removes it, so no sign-in starts a program that is gone;
+#     for the installed program, and the switch off removes it; the entry survives an upgrade, and the uninstall removes it, so no sign-in starts a program that is gone;
 #   - uninstalling removes the install folder, the Start menu entry and the registry keys, and
 #     leaves no file outside Puddle's own data folders (listed below).
 # Usage: pwsh ci/msi-install-test.ps1 -Msi <first.msi> [-UpgradeMsi <newer.msi>] [-LogDir <dir>]
@@ -251,19 +250,14 @@ if ($UpgradeMsi) {
     Expect ($second.Version -ne $first.Version) "the upgrade left version $($second.Version) installed"
     Write-Host "upgraded $($first.Version) to $($second.Version)"
     Expect ((Get-Content -LiteralPath $marker -Raw) -eq $markerText) 'the upgrade changed the marker in the data folder'
-    # The switch is kept in the settings, so the upgraded program's start finds the entry as it
-    # should be, whether or not the upgrade's removal of the old version touched it.
+    # The upgrade removes the old version first; that must not take the sign-in entry with it
+    # (checked before the program is started again: the program would write it back itself).
+    Expect ((Get-LoginEntry) -eq (Get-ExpectedLoginEntry)) "the upgrade removed or changed the sign-in entry: '$(Get-LoginEntry)'"
     # The first run's files are still there (the connection file is rewritten by every start).
     $dataAfter = @(Get-ChildItem -LiteralPath $DataDir -Recurse -Force -File | ForEach-Object { $_.FullName })
     $lost = @($dataBefore | Where-Object { $dataAfter -notcontains $_ })
     Expect ($lost.Count -eq 0) "the upgrade removed data files: $($lost -join ', ')"
     Assert-InstalledWorks
-    $conn = Start-Installed
-    try {
-        Wait-LoginEntry (Get-ExpectedLoginEntry) 'the upgraded program did not leave the sign-in entry for the installed program'
-    } finally {
-        Stop-Installed
-    }
     $current = $UpgradeMsi
 }
 

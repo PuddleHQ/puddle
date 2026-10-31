@@ -183,11 +183,13 @@ pub fn overlay_number(count: usize) -> Pixels {
         rgba: vec![0; (OVERLAY * OVERLAY * 4) as usize],
     };
     paint_dot(&mut pixels, 8.0, 8.0, 7.0);
-    match count {
-        0 => {}
-        1..=9 => paint_glyph(&mut pixels, &DIGITS[count], 2, 5, 3),
-        _ => {
-            paint_glyph(&mut pixels, &DIGITS[9], 2, 2, 3);
+    // One to nine is the digit; ten and more is the largest digit and a plus.
+    let digit = DIGITS.get(count.min(9));
+    match (count, digit) {
+        (0, _) | (_, None) => {}
+        (1..=9, Some(rows)) => paint_glyph(&mut pixels, rows, 2, 5, 3),
+        (_, Some(nine)) => {
+            paint_glyph(&mut pixels, nine, 2, 2, 3);
             paint_glyph(&mut pixels, &PLUS, 1, 10, 5);
         }
     }

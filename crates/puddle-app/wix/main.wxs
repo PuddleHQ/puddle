@@ -54,6 +54,9 @@
 
         <InstallExecuteSequence>
             <RemoveShortcuts>Installed AND NOT UPGRADINGPRODUCTCODE</RemoveShortcuts>
+            <!-- An upgrade removes the old version first: it must keep the sign-in entry (an
+                 uninstall, which has no UPGRADINGPRODUCTCODE, removes it). -->
+            <RemoveRegistryValues>Installed AND NOT UPGRADINGPRODUCTCODE</RemoveRegistryValues>
         </InstallExecuteSequence>
 
         <Media Id="1" Cabinet="app.cab" EmbedCab="yes" />

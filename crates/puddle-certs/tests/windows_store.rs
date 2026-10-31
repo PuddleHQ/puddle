@@ -419,21 +419,70 @@ fn synced_sources(roots: &CorporateRoots, der: &[u8]) -> Option<Vec<StoreSource>
 
 const LM_GP_ROOT_KEY: &str = "HKLM:\\SOFTWARE\\Policies\\Microsoft\\SystemCertificates\\Root";
 
-/// `CurrentUser\\Root` needs the user to confirm each added root in a dialog; a non-interactive
-/// session (the hosted runner) gets "UI is not allowed in this operation", and a root written to
-/// the store's registry key directly is not enumerated. So this test cannot run on a runner: it is
-/// ignored, and a person on a workstation runs it by hand (someone clicks Yes), where a refused
-/// import fails it.
+/// Imports the certificate in `file` into `CurrentUser\Root` with `Import-Certificate` (the add
+/// opens the dialog, owned by that PowerShell process) while the answerer presses `answer`.
+/// Returns the dialog's text; `Err` when no dialog appears (the import is then killed) or the
+/// import itself fails.
+fn import_answered(file: &Path, answer: trust_dialog::Answer) -> Result<String, String> {
+    let mut import = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+        ])
+        .arg(format!(
+            "Import-Certificate -FilePath '{}' -CertStoreLocation 'Cert:\\CurrentUser\\Root' | Out-Null",
+            file.display()
+        ))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|e| panic!("starting the import: {e}"));
+    let dialog = match trust_dialog::run_answerer(
+        answer.word(),
+        import.id(),
+        trust_dialog::DIALOG_WAIT.as_secs(),
+        None,
+    ) {
+        Ok(text) => text,
+        Err(e) => {
+            let _ = import.kill();
+            let _ = import.wait();
+            return Err(format!(
+                "the dialog was not answered {}: {e}",
+                answer.word()
+            ));
+        }
+    };
+    let out = import.wait_with_output().unwrap();
+    if out.status.success() {
+        Ok(dialog)
+    } else {
+        Err(format!(
+            "the import failed after the dialog was answered {}: {}{}",
+            answer.word(),
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ))
+    }
+}
+
+/// `CurrentUser\\Root` asks for each added root in a dialog, which `ci/trust-dialog.ps1` answers Yes
+/// (see `trust_dialog`). The guard deletes the store's registry key afterwards: removing through
+/// the certificate API would open a second dialog.
 #[test]
-#[ignore = "adding a root to CurrentUser\\Root asks for confirmation in a dialog, which a hosted runner refuses; run it by hand on a workstation with --run-ignored"]
 fn a_current_user_root_is_exported_when_one_can_be_added() {
     let Some(_stores) = enabled() else {
         return;
     };
     let trusted = test_root("user");
-    let _cleanup = Cleanup(vec![(&trusted, vec!["Cert:\\CurrentUser\\Root"], vec![])]);
-    try_add(&trusted, "Cert:\\CurrentUser\\Root")
-        .unwrap_or_else(|e| panic!("CurrentUser\\Root refused the import: {}", e.trim()));
+    let _remove = trust_dialog::RootGuard::new(&trusted.thumbprint);
+    let dialog = import_answered(&trusted.file, trust_dialog::Answer::Yes)
+        .unwrap_or_else(|e| panic!("CurrentUser\\Root import: {}", e.trim()));
+    trust_dialog::assert_dialog_names(&dialog, &trusted.thumbprint);
     assert_eq!(
         synced_sources(&select(), &trusted.der),
         Some(vec![CU_ROOT]),

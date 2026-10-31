@@ -41,7 +41,7 @@ pub(crate) enum Answer {
 }
 
 impl Answer {
-    fn word(self) -> &'static str {
+    pub(crate) fn word(self) -> &'static str {
         match self {
             Self::Yes => "Yes",
             Self::No => "No",

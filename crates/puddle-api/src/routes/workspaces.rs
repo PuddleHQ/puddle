@@ -437,7 +437,7 @@ pub(crate) async fn delete_workspace(
 }
 
 /// Opens a running workspace in VS Code: on the desktop (Puddle opens it) or in the browser
-/// (the response has the URL, the caller opens it).
+/// (in a window Puddle opens).
 #[utoipa::path(
     post,
     path = "/api/workspaces/{id}/attach",

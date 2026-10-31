@@ -2706,7 +2706,6 @@ async fn a_browser_attach_without_a_window_says_the_editor_opens_from_the_deskto
         reply.json(),
         json!({
             "opened": false,
-            "url": null,
             "message": "the browser editor opens from the desktop app"
         })
     );
@@ -8820,6 +8819,69 @@ async fn an_entrypoint_that_dies_later_and_failing_lookups_are_problems_the_gues
         "{:?}",
         host.problems().list()
     );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_editor_download_is_a_problem_on_its_workspace_until_an_install_works_or_it_stops()
+ {
+    use puddle_agent_proto::AgentMessage;
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    create(&api, &mut events, "other").await;
+
+    let session = agent_says(
+        &rig,
+        "acme",
+        &[AgentMessage::editor_status(Some(
+            "the download does not match the checksum Microsoft published for it",
+        ))],
+    )
+    .await;
+    let (title, detail) = problem_is(&api, "editor-install:acme", true).await.unwrap();
+    assert_eq!(
+        title,
+        "The browser editor could not be installed in acme: the download does not match the checksum Microsoft published for it"
+    );
+    assert!(
+        detail.contains("desktop VS Code are not affected"),
+        "{detail}"
+    );
+    assert!(
+        problem_is(&api, "editor-install:other", false)
+            .await
+            .is_none()
+    );
+
+    // The install worked on a later try: the agent says so and the problem ends.
+    let fixed = agent_says(&rig, "acme", &[AgentMessage::editor_status(None)]).await;
+    assert!(
+        problem_is(&api, "editor-install:acme", false)
+            .await
+            .is_none()
+    );
+    fixed.abort();
+
+    // A stop ends it too: the machine it is about is gone.
+    let again = agent_says(
+        &rig,
+        "acme",
+        &[AgentMessage::editor_status(Some("refused again"))],
+    )
+    .await;
+    problem_is(&api, "editor-install:acme", true).await.unwrap();
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(
+        problem_is(&api, "editor-install:acme", false)
+            .await
+            .is_none()
+    );
+    again.abort();
+    session.abort();
     host.shutdown().await;
 }
 

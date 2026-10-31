@@ -8,7 +8,7 @@
 )]
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use proptest::prelude::*;
 use puddle_store::{
@@ -16,6 +16,7 @@ use puddle_store::{
     ManualClock, NewRule, Pattern, PendingExpiryReason, PendingWire, Resolution, RuleDeleteReason,
     RuleWire, Scope, Store,
 };
+use puddle_test_kit::cpu_time;
 use puddle_types::{
     CollectingSink, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin,
     ConnectionReason, Decision, EgressRequest, Event, Host, PendingEnd, PendingId, PendingOutcome,
@@ -859,22 +860,15 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
             plan.iter().any(|line| line.contains(step)),
             "{name}: expected `{step}` in the plan, got {plan:?}"
         );
-        // The best of three, so one scheduler hiccup doesn't trip the backstop.
-        let best = (0..3)
-            .map(|_| {
-                let start = Instant::now();
-                let rows = store.audit_query(&filter, cursor, 100).unwrap();
-                let took = start.elapsed();
-                assert!(rows.len() <= 100);
-                took
-            })
-            .min()
-            .unwrap();
-        eprintln!("audit query {name}: {best:?}");
-        // flake-ok: best of three, so a stall must hit all three runs; it catches a query that went
-        // quadratic, not noise. The slowest case (a full scan) took 0.2 s under 16 busy loops on 4
-        // cores (5x under the bar), the indexed ones 0.1 ms.
-        assert!(best < Duration::from_secs(1), "{name} took {best:?}");
+        let (rows, cpu) = cpu_time(|| store.audit_query(&filter, cursor, 100).unwrap());
+        assert!(rows.len() <= 100);
+        eprintln!("audit query {name}: {cpu:?} of CPU");
+        // The bar is on this thread's CPU time, so a loaded machine does not move it; it catches a
+        // query that went quadratic. The slowest case (a full scan) used 29 ms on Linux and 47 ms on Windows (3 ticks), the indexed ones 0.1 ms on Linux.
+        assert!(
+            cpu < Duration::from_millis(250),
+            "{name} used {cpu:?} of CPU"
+        );
     }
     // The filtered results are right, not just fast.
     let one = store

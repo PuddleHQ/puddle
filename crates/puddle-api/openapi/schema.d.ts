@@ -932,7 +932,7 @@ export interface paths {
         put?: never;
         /**
          * Opens a running workspace in VS Code: on the desktop (Puddle opens it) or in the browser
-         *     (the response has the URL, the caller opens it).
+         *     (in a window Puddle opens).
          */
         post: operations["attach_workspace"];
         delete?: never;
@@ -1593,8 +1593,6 @@ export interface components {
             message: string | null;
             /** @description Whether Puddle opened an editor itself (desktop mode, when it worked). */
             opened: boolean;
-            /** @description Where the browser editor is, in browser mode; the caller opens it. */
-            url: string | null;
         };
         /** @description One audit record with its position in the log. */
         AuditEntry: {

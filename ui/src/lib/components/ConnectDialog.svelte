@@ -2,6 +2,7 @@
 <script lang="ts">
   import Code from "@lucide/svelte/icons/code";
   import Globe from "@lucide/svelte/icons/globe";
+  import EditorInstallNotice from "./EditorInstallNotice.svelte";
   import FormDialog from "./FormDialog.svelte";
   import TrustedBadge from "./TrustedBadge.svelte";
   import {
@@ -20,6 +21,7 @@
     open = $bindable(false),
     workspace,
     server,
+    editorProblem = null,
     onBrowser,
     onDesktop,
     onDirectSsh,
@@ -28,6 +30,8 @@
     workspace: Workspace;
     /** The VS Code server the browser editor uses, once known. */
     server: ServerChoice | null;
+    /** Why the browser editor's server could not be installed in this workspace, if it could not. */
+    editorProblem?: { title: string; detail: string } | null;
     /** Opens the browser editor's window; it needs no direct SSH. */
     onBrowser: (w: Workspace) => void;
     onDesktop: (w: Workspace) => void;
@@ -51,6 +55,9 @@
           >Change the server in Settings</a
         >.
       </p>
+      {#if editorProblem}
+        <EditorInstallNotice title={editorProblem.title} />
+      {/if}
       <button
         type="button"
         class="btn primary"

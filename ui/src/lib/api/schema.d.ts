@@ -4316,6 +4316,8 @@ export interface components {
             palette: components["schemas"]["PaletteChoice"] | null;
             /** @description The system sound with a notification (default off). */
             sound: boolean | null;
+            /** @description Start Puddle when the user signs in to the computer (default off). */
+            start_at_login: boolean | null;
             theme: components["schemas"]["ThemeChoice"] | null;
         };
         /** @description Options for the VS Code server in the guest. `null` means Puddle's default. */

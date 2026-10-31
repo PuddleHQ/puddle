@@ -25,6 +25,7 @@ use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 use url::Url;
 
+use crate::autostart::{self, LoginEntry};
 use crate::backend::Backend;
 use crate::badge::{self, OpenRequests};
 use crate::icon::{self, Wanted};
@@ -251,11 +252,17 @@ struct Outputs {
     badge: Arc<dyn Fn(usize, bool) + Send + Sync>,
     /// Sets the app icon of the window, the taskbar and the tray.
     icon: Arc<dyn Fn(&puddle_appicon::Icon) + Send + Sync>,
+    /// Makes the system's start-at-sign-in entry match the Settings switch.
+    login: Arc<dyn Fn(bool) + Send + Sync>,
 }
 
 impl Outputs {
     /// The real outputs: the main window, the notification plugin and `tray`.
-    fn system<R: Runtime>(app: &AppHandle<R>, tray: Option<Arc<Tray<R>>>) -> Self {
+    fn system<R: Runtime>(
+        app: &AppHandle<R>,
+        tray: Option<Arc<Tray<R>>>,
+        login: Option<Arc<dyn LoginEntry>>,
+    ) -> Self {
         let front = app.clone();
         let notifying = app.clone();
         let showing = app.clone();
@@ -268,7 +275,51 @@ impl Outputs {
             icon: Arc::new(move |picture| {
                 show_icon(&decorated, tray_icon.as_deref(), &icon::image(picture));
             }),
+            login: Arc::new(move |on| {
+                if let Some(entry) = &login {
+                    set_login(entry.as_ref(), on, std::env::current_exe());
+                }
+            }),
         }
+    }
+}
+
+/// Makes `entry` match the switch for the program at `exe`. A failure is logged, never fatal: the
+/// switch is kept in the settings, and the next start tries again.
+fn set_login(entry: &dyn LoginEntry, on: bool, exe: std::io::Result<PathBuf>) {
+    let applied = exe
+        .map_err(|err| format!("the program's own path is unknown: {err}"))
+        .and_then(|exe| autostart::apply(entry, on, &exe).map_err(|err| err.to_string()));
+    match applied {
+        Ok(change) => tracing::info!(?change, on, "the start-at-sign-in entry is as wanted"),
+        Err(reason) => tracing::warn!(on, %reason, "the start-at-sign-in entry was not changed"),
+    }
+}
+
+/// What a start at sign-in does with the main window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoginStart {
+    /// Hide it: the tray icon is there to open it from.
+    HideToTray,
+    /// Minimize it: with no tray icon there is nothing to open a hidden window from.
+    Minimize,
+}
+
+fn login_start(tray: TrayState) -> LoginStart {
+    match tray {
+        TrayState::Shown => LoginStart::HideToTray,
+        TrayState::Missing => LoginStart::Minimize,
+    }
+}
+
+/// Puts the main window out of the way for a start at sign-in.
+pub fn start_out_of_the_way<R: Runtime>(window: &WebviewWindow<R>, tray: TrayState) {
+    let done = match login_start(tray) {
+        LoginStart::HideToTray => window.hide(),
+        LoginStart::Minimize => window.minimize(),
+    };
+    if let Err(err) = done {
+        tracing::warn!(%err, "the window did not step aside for a start at sign-in");
     }
 }
 
@@ -302,8 +353,8 @@ fn show_badge<R: Runtime>(
         #[cfg(windows)]
         {
             let overlay = (badge_on && count > 0).then(|| {
-                let dot = badge::overlay_dot();
-                tauri::image::Image::new_owned(dot.rgba, dot.size, dot.size)
+                let number = badge::overlay_number(count);
+                tauri::image::Image::new_owned(number.rgba, number.size, number.size)
             });
             let _ = window.set_overlay_icon(overlay);
         }
@@ -325,6 +376,9 @@ struct Loop {
     shown: (usize, bool),
     /// The app icon as last set, so only a change is drawn and set again.
     icon: Wanted,
+    /// The start-at-sign-in switch as last applied, so only a change reaches the system's entry;
+    /// `None` until the settings have been read once.
+    login: Option<bool>,
     /// How often the settings are read while no event arrives.
     poll: Duration,
 }
@@ -344,10 +398,21 @@ impl Loop {
         }
     }
 
+    fn refresh_login(&mut self) {
+        let wanted = self.prefs.start_at_login();
+        if self.login != Some(wanted) {
+            self.login = Some(wanted);
+            (self.out.login)(wanted);
+        }
+    }
+
     async fn reload_prefs(&mut self) {
         let repo = self.settings.clone();
         match tokio::task::spawn_blocking(move || read_prefs(repo.as_ref())).await {
-            Ok(Ok(prefs)) => self.prefs = prefs,
+            Ok(Ok(prefs)) => {
+                self.prefs = prefs;
+                self.refresh_login();
+            }
             Ok(Err(reason)) => {
                 tracing::debug!(%reason, "keeping the window preferences as they were");
             }
@@ -432,13 +497,16 @@ impl Loop {
 
 /// Starts the desktop behaviour on a started backend whose main window is open: the tray, the close
 /// and minimize buttons, the badge, and the notifications. `marker_folder` is where the once-only
-/// tray notice is remembered (`None`: this run only).
+/// tray notice is remembered (`None`: this run only). `login` is the system's start-at-sign-in
+/// entry the Settings switch is applied to (`None`: leave it alone). Returns whether the tray
+/// icon is there.
 pub fn attach<R: Runtime>(
     app: &AppHandle<R>,
     window: &WebviewWindow<R>,
     backend: &Backend,
     marker_folder: Option<PathBuf>,
-) {
+    login: Option<Arc<dyn LoginEntry>>,
+) -> TrayState {
     let prefs = prefs_or_default(backend.settings().as_ref());
     let open = open_requests(backend.store());
     let first = Wanted::read(backend.settings().as_ref(), &prefs)
@@ -456,7 +524,7 @@ pub fn attach<R: Runtime>(
     } else {
         TrayState::Missing
     };
-    let out = Outputs::system(app, tray);
+    let out = Outputs::system(app, tray, login);
 
     let (handle, base) = (app.clone(), backend.url().clone());
     let registered = app
@@ -475,6 +543,7 @@ pub fn attach<R: Runtime>(
         out,
         Arc::new(move |notice| notify(notice, false)),
     );
+    tray_state
 }
 
 /// [`attach`] with its outputs given: the window's buttons and the event loop.
@@ -489,7 +558,13 @@ fn attach_with<R: Runtime>(
     // Subscribe before counting: an event between the two would be missed otherwise.
     let stream = backend.events().subscribe();
     let settings = backend.settings().clone();
-    let prefs = prefs_or_default(settings.as_ref());
+    // Settings that cannot be read must not turn the sign-in entry off: it waits for a good read.
+    let read = read_prefs(settings.as_ref());
+    let login = read.as_ref().ok().map(UiPrefs::start_at_login);
+    let prefs = read.unwrap_or_else(|reason| {
+        tracing::warn!(%reason, "using the default window preferences");
+        UiPrefs::default()
+    });
     let open = open_requests(backend.store());
     let buttons = Buttons {
         settings: settings.clone(),
@@ -507,6 +582,10 @@ fn attach_with<R: Runtime>(
     if let Some(drawn) = icon.draw() {
         (out.icon)(&drawn);
     }
+    // Applied at every start, so a moved or reinstalled program is found again by the entry.
+    if let Some(on) = login {
+        (out.login)(on);
+    }
     let state = Loop {
         out,
         store: backend.store().clone(),
@@ -516,6 +595,7 @@ fn attach_with<R: Runtime>(
         prefs,
         shown,
         icon,
+        login,
         poll: SETTINGS_POLL,
     };
     tauri::async_runtime::spawn(state.run(stream));
@@ -602,6 +682,7 @@ mod behaviour_tests {
     use tauri::{WebviewUrl, WebviewWindowBuilder};
 
     use super::*;
+    use crate::autostart::memory::Fake;
     use crate::backend::tests::start_fixture;
     use crate::shell::{context, with_plugins};
 
@@ -611,14 +692,20 @@ mod behaviour_tests {
         notices: Mutex<Vec<(Notice, bool)>>,
         badges: Mutex<Vec<(usize, bool)>>,
         icons: Mutex<Vec<puddle_appicon::Icon>>,
+        logins: Mutex<Vec<bool>>,
         told: AtomicUsize,
         in_front: AtomicBool,
     }
 
     impl Recorded {
         fn outputs(self: &Arc<Self>) -> Outputs {
-            let (front, notices, badges, icons) =
-                (self.clone(), self.clone(), self.clone(), self.clone());
+            let (front, notices, badges, icons, logins) = (
+                self.clone(),
+                self.clone(),
+                self.clone(),
+                self.clone(),
+                self.clone(),
+            );
             Outputs {
                 in_front: Arc::new(move || front.in_front.load(Ordering::SeqCst)),
                 notify: Arc::new(move |notice, sound| {
@@ -630,6 +717,7 @@ mod behaviour_tests {
                 }),
                 badge: Arc::new(move |count, on| badges.badges.lock().unwrap().push((count, on))),
                 icon: Arc::new(move |icon| icons.icons.lock().unwrap().push(icon.clone())),
+                login: Arc::new(move |on| logins.logins.lock().unwrap().push(on)),
             }
         }
 
@@ -643,6 +731,10 @@ mod behaviour_tests {
 
         fn icons(&self) -> Vec<puddle_appicon::Icon> {
             self.icons.lock().unwrap().clone()
+        }
+
+        fn logins(&self) -> Vec<bool> {
+            self.logins.lock().unwrap().clone()
         }
     }
 
@@ -861,6 +953,7 @@ mod behaviour_tests {
         let open = open_requests(rig.backend.store());
         let shown = (open.count(), prefs.badge());
         let icon = Wanted::read(settings.as_ref(), &prefs);
+        let login = Some(prefs.start_at_login());
         let state = Loop {
             out: rig.recorded.outputs(),
             store: rig.backend.store().clone(),
@@ -870,6 +963,7 @@ mod behaviour_tests {
             prefs,
             shown,
             icon,
+            login,
             poll,
         };
         tauri::async_runtime::spawn(state.run(stream));
@@ -893,6 +987,7 @@ mod behaviour_tests {
             prefs: UiPrefs::default(),
             shown: (0, true),
             icon: Wanted::read(rig.backend.settings().as_ref(), &UiPrefs::default()),
+            login: Some(false),
             poll: Duration::from_secs(60),
         };
         tauri::async_runtime::spawn(state.run(stream));
@@ -1021,11 +1116,142 @@ mod behaviour_tests {
     #[test]
     fn the_system_outputs_ask_the_window_and_show_the_badge_on_its_title() {
         let rig = rig(TrayState::Shown);
-        let out = Outputs::system(rig.app.handle(), None);
+        let out = Outputs::system(rig.app.handle(), None, None);
         // The test window is visible and not minimized, and nobody has focused it.
         assert!(!(out.in_front)());
         (out.badge)(2, true);
         (out.badge)(0, false);
+        (out.badge)(12, true);
+    }
+
+    #[test]
+    fn the_system_outputs_make_the_entry_match_the_switch_for_this_program() {
+        let rig = rig(TrayState::Shown);
+        let entry = Arc::new(Fake::default());
+        let out = Outputs::system(rig.app.handle(), None, Some(entry.clone()));
+        let exe = std::env::current_exe().unwrap();
+        (out.login)(true);
+        assert_eq!(entry.now(), Some(autostart::command_for(&exe)));
+        (out.login)(false);
+        assert_eq!(entry.now(), None);
+    }
+
+    #[test]
+    fn an_entry_that_cannot_be_changed_is_logged_and_does_not_stop_anything() {
+        let entry = autostart::Unsupported("test");
+        set_login(&entry, true, Ok(PathBuf::from("/x/puddle-app")));
+        let fake = Fake::default();
+        set_login(&fake, true, Err(std::io::Error::other("no such program")));
+        assert_eq!(fake.changes(), 0, "without its own path nothing is written");
+    }
+
+    #[test]
+    fn the_start_at_sign_in_switch_is_applied_at_start_and_again_only_when_it_changes() {
+        let rig = rig(TrayState::Shown);
+        // Off by default: the entry is brought to "off" once at start.
+        assert_eq!(rig.recorded.logins(), [false]);
+        // A loop of its own with its own recorder, so the rig's loop adds nothing to what is counted.
+        let own = Arc::new(Recorded::default());
+        let hub = Arc::new(puddle_api::EventHub::default());
+        let settings = rig.backend.settings().clone();
+        let prefs = prefs_or_default(settings.as_ref());
+        let state = Loop {
+            out: own.outputs(),
+            store: rig.backend.store().clone(),
+            open: open_requests(rig.backend.store()),
+            notifier: Notifier::default(),
+            shown: (1, prefs.badge()),
+            icon: Wanted::read(settings.as_ref(), &prefs),
+            login: Some(prefs.start_at_login()),
+            settings,
+            prefs,
+            poll: Duration::from_millis(50),
+        };
+        tauri::async_runtime::spawn(state.run(hub.subscribe()));
+        save(&rig, &json!({"start_at_login": true}));
+        eventually_blocking(
+            "the switch reaching the entry",
+            Duration::from_secs(5),
+            || own.logins() == [true],
+        );
+        // Events and polls that read the unchanged switch apply nothing more.
+        hub.emit(opened(930));
+        hub.emit(opened(931));
+        eventually_blocking("the loop past the events", Duration::from_secs(5), || {
+            own.badges().len() == 2
+        });
+        assert_eq!(own.logins(), [true]);
+        save(&rig, &json!({"start_at_login": false}));
+        eventually_blocking("the switch going off", Duration::from_secs(5), || {
+            own.logins() == [true, false]
+        });
+    }
+
+    #[test]
+    fn settings_that_cannot_be_read_at_the_start_leave_the_entry_until_a_good_read() {
+        let app = with_plugins(mock_builder()).build(context()).unwrap();
+        let window =
+            WebviewWindowBuilder::new(&app, MAIN_LABEL, WebviewUrl::App("index.html".into()))
+                .build()
+                .unwrap();
+        let backend = tauri::async_runtime::block_on(start_fixture(0));
+        backend
+            .settings()
+            .save_global(json!({"ui": {"close_behaviour": "explode"}}))
+            .unwrap();
+        let recorded = Arc::new(Recorded::default());
+        attach_with(
+            &window,
+            &backend,
+            None,
+            TrayState::Shown,
+            recorded.outputs(),
+            Arc::new(|_| {}),
+        );
+        assert_eq!(recorded.logins(), Vec::<bool>::new(), "nothing was applied");
+        backend
+            .settings()
+            .save_global(json!({"schema_version": 2, "ui": {"start_at_login": true}}))
+            .unwrap();
+        eventually_blocking(
+            "the first good read applying the switch",
+            Duration::from_secs(10),
+            || recorded.logins() == [true],
+        );
+    }
+
+    #[test]
+    fn a_switch_that_was_on_before_the_start_is_applied_at_the_start() {
+        let app = with_plugins(mock_builder()).build(context()).unwrap();
+        let window =
+            WebviewWindowBuilder::new(&app, MAIN_LABEL, WebviewUrl::App("index.html".into()))
+                .build()
+                .unwrap();
+        let backend = tauri::async_runtime::block_on(start_fixture(0));
+        backend
+            .settings()
+            .save_global(json!({"schema_version": 2, "ui": {"start_at_login": true}}))
+            .unwrap();
+        let recorded = Arc::new(Recorded::default());
+        attach_with(
+            &window,
+            &backend,
+            None,
+            TrayState::Shown,
+            recorded.outputs(),
+            Arc::new(|_| {}),
+        );
+        assert_eq!(recorded.logins(), [true]);
+    }
+
+    #[test]
+    fn a_start_at_sign_in_hides_the_window_to_the_tray_or_minimizes_it_without_one() {
+        assert_eq!(login_start(TrayState::Shown), LoginStart::HideToTray);
+        assert_eq!(login_start(TrayState::Missing), LoginStart::Minimize);
+        // The mock window cannot report being hidden or minimized, so this only runs both calls.
+        for tray in [TrayState::Shown, TrayState::Missing] {
+            start_out_of_the_way(&rig(tray).window, tray);
+        }
     }
 
     #[test]

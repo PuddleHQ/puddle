@@ -1947,6 +1947,10 @@ pub struct UiPrefs {
     #[serde(default)]
     #[schema(required = true)]
     pub inbox_shortcuts: Option<bool>,
+    /// Start Puddle when the user signs in to the computer (default off).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub start_at_login: Option<bool>,
 }
 
 impl From<&settings::UiPrefs> for UiPrefs {
@@ -1970,6 +1974,7 @@ impl From<&settings::UiPrefs> for UiPrefs {
             notify_unexpected_stop: u.notify_unexpected_stop,
             confirm_global_rules: u.confirm_global_rules,
             inbox_shortcuts: u.inbox_shortcuts,
+            start_at_login: u.start_at_login,
         }
     }
 }
@@ -2005,6 +2010,7 @@ impl UiPrefs {
             notify_unexpected_stop,
             confirm_global_rules,
             inbox_shortcuts,
+            start_at_login,
         } = self;
         prefs.theme = theme.map(Into::into);
         prefs.density = density.map(Into::into);
@@ -2024,6 +2030,7 @@ impl UiPrefs {
         prefs.notify_unexpected_stop = notify_unexpected_stop;
         prefs.confirm_global_rules = confirm_global_rules;
         prefs.inbox_shortcuts = inbox_shortcuts;
+        prefs.start_at_login = start_at_login;
         Ok(())
     }
 }
@@ -2608,6 +2615,7 @@ mod tests {
                 notify_unexpected_stop: Some(false),
                 confirm_global_rules: Some(false),
                 inbox_shortcuts: Some(true),
+                start_at_login: Some(true),
             },
         }
         .apply_to(&mut g)
@@ -2632,6 +2640,7 @@ mod tests {
         assert!(!g.ui.notify_unexpected_stop());
         assert!(!g.ui.confirm_global_rules());
         assert!(g.ui.inbox_shortcuts());
+        assert!(g.ui.start_at_login());
         assert!(g.vscode_server.telemetry());
         assert!(!g.vscode_server.auto_update());
         let view = GlobalSettingsView::new(&settings::Loaded {

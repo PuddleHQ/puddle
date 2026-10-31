@@ -386,12 +386,12 @@ where
     let up = async {
         let copied = tokio::io::copy(&mut client_in, &mut server_out).await;
         let _ = server_out.shutdown().await;
-        copied.map_err(socket_error)
+        copied.inspect_err(socket_error)
     };
     let down = async {
         let copied = tokio::io::copy(&mut server_in, &mut client_out).await;
         let _ = client_out.shutdown().await;
-        copied.map_err(socket_error)
+        copied.inspect_err(socket_error)
     };
     tokio::pin!(up, down);
     // A linger that runs out ends the socket like a close.
@@ -407,7 +407,7 @@ where
 }
 
 /// Logs an error that ended one side of an editor socket (a reset ends it like a close).
-fn socket_error(err: std::io::Error) {
+fn socket_error(err: &std::io::Error) {
     tracing::debug!(error = %err, "an editor socket ended with an error");
 }
 

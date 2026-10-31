@@ -260,6 +260,10 @@ pub struct ConnectionEvent {
     pub port: u16,
     /// The address connected to, once connected.
     pub resolved_ip: Option<IpAddr>,
+    /// The first address of the answer that the address guard refused, and the reason code
+    /// (`toggle:private`, `local_address`, ...). Visibility only: the connection still goes to
+    /// the allowed addresses of the answer alone.
+    pub refused_address: Option<(IpAddr, String)>,
     /// The hop of the company-proxy route that carried the connection (`DIRECT` or
     /// `PROXY host:port`), once connected; `None` when no upstream route is configured.
     /// Never carries credentials.
@@ -313,6 +317,7 @@ impl ConnectionEvent {
             host: request.host.clone(),
             port: request.port,
             resolved_ip: None,
+            refused_address: None,
             upstream: None,
             decision,
             outcome: None,
@@ -345,6 +350,7 @@ impl ConnectionEvent {
             host,
             port,
             resolved_ip: None,
+            refused_address: None,
             upstream: None,
             decision,
             outcome: None,

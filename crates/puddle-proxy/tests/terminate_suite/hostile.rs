@@ -641,6 +641,11 @@ async fn hostile_hg08_a_bound_host_with_a_mixed_answer_is_connected_at_the_allow
         refused_addr.ip(),
         "the ports tell the two apart"
     );
+    // The audit row shows that the answer held a refused address, and why.
+    assert_eq!(
+        event.refused_address,
+        Some((refused_addr.ip(), "toggle:loopback".to_owned())),
+    );
     assert!(!captured_logs().contains(CANARY));
 }
 

@@ -345,8 +345,11 @@ die "fork: $!" unless defined $pid;
 if (!$pid) {
   open(my $log, ">", "/tmp/hg11.child") or die;
   my $off = 0;
+  select((select($log), $| = 1)[0]);
+  print $log "start ", length $out, "\n";
   while ($off < length $out) {
-    my $n = syswrite($s, $out, 65536, $off);
+    my $n = syswrite($s, $out, 4096, $off);
+    print $log "wrote $n at $off\n" if $off < 20000;
     unless ($n) { print $log "write failed at $off: $!\n"; close $log; exit 1; }
     $off += $n;
   }

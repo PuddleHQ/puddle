@@ -4,7 +4,7 @@
 // One headless Chromium with one browser context (one cookie jar, like one window's data folder),
 // driven by JSON lines on stdin; every command gets one JSON line on stdout:
 //   {"op":"cookies","cookies":[{name,value,domain,path,httpOnly,sameSite}]}   adds cookies
-//   {"op":"open","page":<id>,"url":...,"ready":...,"result":...,"timeoutMs":...}
+//   {"op":"open","page":<id>,"url":...,"ready":...,"result":...,"timeoutMs":...,"waitUntil":"domcontentloaded"|"commit"}
 //       opens a new page, waits until `ready` is truthy and evaluates `result`; the page stays open
 //   {"op":"wait","page":<id>,"ready":...,"result":...,"timeoutMs":...}   the same on an open page
 //   {"op":"press","page":<id>,"keys":"Control+Backquote"}                  presses keys in the page
@@ -56,7 +56,7 @@ const run = async (command) => {
       entry.page.on("console", (message) => entry.console.push(`${message.type()}: ${message.text()}`));
       entry.page.on("pageerror", (error) => entry.errors.push(String(error)));
       pages.set(command.page, entry);
-      await entry.page.goto(command.url, { timeout: command.timeoutMs, waitUntil: "domcontentloaded" });
+      await entry.page.goto(command.url, { timeout: command.timeoutMs, waitUntil: command.waitUntil });
       return ready(entry, command);
     }
     case "wait":

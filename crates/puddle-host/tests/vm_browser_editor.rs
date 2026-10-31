@@ -185,7 +185,11 @@ impl Launcher for ShellStandIn {
                 .browser
                 .lock()
                 .await
-                .open(&PageRequest::new(format!("{}/", target.origin), "true").budget(PAGE_BUDGET))
+                .open(
+                    &PageRequest::new(format!("{}/", target.origin), "true")
+                        .on_commit()
+                        .budget(PAGE_BUDGET),
+                )
                 .await
                 .map_err(|e| LaunchError::new(e.to_string()))?;
             self.opened.lock().unwrap().push(target.origin.clone());

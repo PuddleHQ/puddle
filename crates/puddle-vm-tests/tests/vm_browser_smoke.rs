@@ -138,10 +138,10 @@ async fn serve_holding() -> std::io::Result<(u16, Arc<AtomicUsize>, tokio::task:
             };
             let held = count.clone();
             tokio::spawn(async move {
-                let mut head = vec![0_u8; 8192];
-                let n = stream.read(&mut head).await.unwrap_or(0);
+                let mut bytes = vec![0_u8; 8192];
+                let n = stream.read(&mut bytes).await.unwrap_or(0);
                 let request =
-                    String::from_utf8_lossy(head.get(..n).unwrap_or_default()).into_owned();
+                    String::from_utf8_lossy(bytes.get(..n).unwrap_or_default()).into_owned();
                 if request.starts_with("GET /hold ") {
                     held.fetch_add(1, Ordering::SeqCst);
                     let _ = stream
@@ -182,9 +182,10 @@ async fn held_becomes(held: &AtomicUsize, want: usize) {
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    panic!(
-        "held connections stayed {} (wanted {want})",
-        held.load(Ordering::SeqCst)
+    assert_eq!(
+        held.load(Ordering::SeqCst),
+        want,
+        "held connections (a limit on a hang)"
     );
 }
 

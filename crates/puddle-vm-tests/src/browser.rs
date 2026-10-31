@@ -146,6 +146,7 @@ pub struct PageRequest {
     result: String,
     budget: Duration,
     ignore_https_errors: bool,
+    loaded: bool,
 }
 
 impl PageRequest {
@@ -159,6 +160,7 @@ impl PageRequest {
             result: "null".to_owned(),
             budget: Duration::from_secs(60),
             ignore_https_errors: false,
+            loaded: true,
         }
     }
 
@@ -174,6 +176,14 @@ impl PageRequest {
     #[must_use]
     pub fn budget(mut self, budget: Duration) -> Self {
         self.budget = budget;
+        self
+    }
+
+    /// Waits for `ready` as soon as the page's navigation has committed (its answer came), not
+    /// once its document has loaded: the moment a window exists, which is all a launcher waits for.
+    #[must_use]
+    pub fn on_commit(mut self) -> Self {
+        self.loaded = false;
         self
     }
 
@@ -193,6 +203,7 @@ impl PageRequest {
             "ready": self.ready,
             "result": self.result,
             "timeoutMs": u64::try_from(self.budget.as_millis()).unwrap_or(u64::MAX),
+            "waitUntil": if self.loaded { "domcontentloaded" } else { "commit" },
         })
     }
 }
@@ -576,6 +587,11 @@ mod tests {
         assert_eq!(parsed["timeoutMs"], 5000);
         assert_eq!(parsed["ready"], "window.done");
         assert_eq!(parsed["result"], "window.value");
+        assert_eq!(parsed["waitUntil"], "domcontentloaded");
+        assert_eq!(
+            request.on_commit().command("open", 0)["waitUntil"],
+            "commit"
+        );
     }
 
     #[test]

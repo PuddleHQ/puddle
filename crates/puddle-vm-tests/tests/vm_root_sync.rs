@@ -26,7 +26,7 @@ use puddle_ca::{CaBuilder, TrustBundle};
 use puddle_certs::{
     CorporateRoots, GuestTrust, Location, Physical, StoreName, StoreSnapshot, StoreSource,
 };
-use puddle_vm_tests::{HarnessError, VmEnv, within};
+use puddle_vm_tests::{HarnessError, VmEnv, create_from_registry, within};
 
 /// Has curl, Node 22 and Python 3 (through mercurial in buildpack-deps), runs as root.
 const IMAGE: &str = "node:22-bookworm";
@@ -153,7 +153,7 @@ async fn run(env: &VmEnv) -> Result<(), HarnessError> {
     let f = fixture();
     let builder = env.sandbox("rootsync", IMAGE)?;
     env.scope(Box::pin(async {
-        let sandbox = within("create", CREATE_BUDGET, builder.create()).await??;
+        let sandbox = create_from_registry(IMAGE, CREATE_BUDGET, builder).await?;
         let fs = sandbox.fs();
         let (uploads, install_sh) = install(&f.trust);
         for (path, data) in uploads {

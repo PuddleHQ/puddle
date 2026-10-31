@@ -30,7 +30,7 @@ use microsandbox::Sandbox;
 use puddle_ca::TrustBundle;
 use puddle_certs::devcert::{DevCertManager, GuestDevCert, Unsupported};
 use puddle_certs::{CorporateRoots, GuestTrust};
-use puddle_vm_tests::{HarnessError, VmEnv, within};
+use puddle_vm_tests::{HarnessError, VmEnv, create_from_registry, within};
 
 /// Has curl, Node 22 and openssl, runs as root.
 const NODE_IMAGE: &str = "node:22-bookworm";
@@ -148,7 +148,7 @@ echo \"vite-style: $(test -r \"$DEV_CERT_PEM\" && test -r \"$DEV_KEY_PEM\" && ec
 async fn node_run(env: &VmEnv) -> Result<(), HarnessError> {
     let builder = env.sandbox("devcert-node", NODE_IMAGE)?;
     env.scope(Box::pin(async {
-        let sandbox = within("create", CREATE_BUDGET, builder.create()).await??;
+        let sandbox = create_from_registry(NODE_IMAGE, CREATE_BUDGET, builder).await?;
         let first = trust();
         let file = |t: &GuestTrust, p: &str| {
             t.guest_files()
@@ -280,7 +280,7 @@ async fn dotnet_run(env: &VmEnv) -> Result<(), HarnessError> {
         .cpus(2)
         .memory(3072u32);
     env.scope(Box::pin(async {
-        let sandbox = within("create", CREATE_BUDGET, builder.create()).await??;
+        let sandbox = create_from_registry(DOTNET_IMAGE, CREATE_BUDGET, builder).await?;
         let (code, out) = sh(
             &sandbox,
             "tools",

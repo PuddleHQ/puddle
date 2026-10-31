@@ -170,6 +170,32 @@ describe("one identity", () => {
     expect(stored.queryByRole("button", { name: /Sign in/ })).toBeNull();
   });
 
+  it("shows what the host recorded of a credential's last read before anything is tested here", async () => {
+    api.identities = [
+      identity(1, {
+        label: "Work",
+        credentials: [
+          credential({
+            source: ghSource("tijs-work"),
+            last_check: {
+              readable: true,
+              problem: null,
+              needs_sign_in: false,
+              checked_at: Date.now() - 4 * 60_000,
+              by: "injection",
+            },
+          }),
+        ],
+      }),
+    ];
+    render(Page);
+    await screen.findByRole("heading", { level: 1, name: "Work" });
+    expect(within(cred(WORK)).getByText("OK")).toBeInTheDocument();
+    expect(within(cred(WORK)).getByTestId("checked")).toHaveTextContent(
+      "Checked 4 minutes ago by a workspace's request",
+    );
+  });
+
   it("signs in on a click: shows the code, then closes when the credential reads", async () => {
     api.unreadable.add(WORK);
     render(Page);

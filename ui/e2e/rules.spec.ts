@@ -480,7 +480,9 @@ test.describe("staying current", () => {
     backend,
   }) => {
     await openRules(page, backend);
-    // No clock movement: only the event stream can make this appear before the 10 s poll.
+    // No clock movement: only the event stream can make this appear before the 10 s poll. The 4 s
+    // waits below stay unscaled on purpose: a bound at or above the poll interval would pass by
+    // polling and stop proving the event path. On starved WebKit (2 CPUs, 8 busy loops) 48 of 48 pass.
     await backend.control.step({
       do: "rule",
       effect: "allow",

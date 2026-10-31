@@ -68,6 +68,20 @@ use crate::injection::Injection;
 #[path = "repositories.rs"]
 mod repositories;
 
+impl<R: Runtime + Clone> crate::editor_updates::Builds for HostWorkspaces<R> {
+    fn on_microsoft_server(&self) -> Vec<WorkspaceName> {
+        self.inner.flavours.on_microsoft()
+    }
+
+    async fn switch(
+        &self,
+        workspace: &WorkspaceName,
+        connected_windows: usize,
+    ) -> Result<bool, SwitchEditorBuildError> {
+        self.switch_editor_build(workspace, connected_windows).await
+    }
+}
+
 impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
     fn decrypt_changed(&self, workspace: &WorkspaceName) -> Option<puddle_store::WorkspaceGit> {
         Self::decrypt_changed(self, workspace)
@@ -710,6 +724,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .await
             .map_err(SwitchEditorBuildError::Agent)?;
         Ok(agent_reply == HostReply::EditorBuild { switched: true })
+    }
+
+    /// Asks each running workspace on Microsoft's server that `windows` counts no window on to
+    /// switch to a newer build, and says how many it asked. The host does this every few minutes;
+    /// this is one round of it.
+    pub async fn switch_idle_editor_builds(&self, windows: &puddle_front::Windows) -> usize {
+        crate::editor_updates::ask_once(self, windows).await
     }
 
     /// The SSH endpoint of a running workspace's sandbox.

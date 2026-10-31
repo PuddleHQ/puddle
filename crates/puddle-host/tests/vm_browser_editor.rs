@@ -293,14 +293,16 @@ async fn counts_until(
     panic!("{what}: the guest still shows {line}");
 }
 
-/// Waits until the front counts `want` windows of `workspace`; a limit on a hang only.
-async fn windows_become(windows: &puddle_front::Windows, workspace: &WorkspaceName, want: usize) {
+/// Waits until the front counts some window of `workspace` (`open`) or none; a limit on a hang
+/// only. The front counts the editor's connections, and one workbench window holds more than one
+/// (its management and its extension host connections), so "open" is "at least one".
+async fn windows_become(windows: &puddle_front::Windows, workspace: &WorkspaceName, open: bool) {
     let mut seen = windows.watch(workspace);
-    tokio::time::timeout(Duration::from_secs(60), seen.wait_for(|n| *n == want))
+    tokio::time::timeout(Duration::from_secs(60), seen.wait_for(|n| (*n > 0) == open))
         .await
         .unwrap_or_else(|_| {
             panic!(
-                "the front counts {} windows of {workspace}, not {want}",
+                "the front counts {} connections of {workspace}; wanted a window open: {open}",
                 windows.connected(workspace)
             )
         })
@@ -402,7 +404,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
         assert!(names.contains(&checkout), "{checkout} missing in {rows}");
     }
     assert_eq!(*shell.sign_ins.lock().unwrap(), 1);
-    windows_become(windows, &sandbox, 1).await;
+    windows_become(windows, &sandbox, true).await;
     let open = counts_until(&runtime, &sandbox, "the window's extension host", |line| {
         count(line, "hosts") >= 1
     })
@@ -432,7 +434,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     // The window closes: the front counts none, and the cleanup ends the real extension host and
     // leaves the terminal and the server.
     shell.close_pages(&name).await;
-    windows_become(windows, &sandbox, 0).await;
+    windows_become(windows, &sandbox, false).await;
     let reply = host
         .workspaces()
         .end_extension_hosts(&sandbox)
@@ -464,7 +466,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
         false
     );
     assert_eq!(*shell.sign_ins.lock().unwrap(), 1);
-    windows_become(windows, &sandbox, 1).await;
+    windows_become(windows, &sandbox, true).await;
     counts_until(
         &runtime,
         &sandbox,
@@ -482,7 +484,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     assert_eq!(end["step"], "done", "{end}");
     assert_eq!(*shell.closed.lock().unwrap(), std::slice::from_ref(&name));
     assert!(!shell.pages.lock().unwrap().contains_key(&name));
-    windows_become(windows, &sandbox, 0).await;
+    windows_become(windows, &sandbox, false).await;
 
     // The next start opens the multi-root file the attach wrote: a root per checkout and the
     // volume. The password is new, so the shell signs in again.
@@ -767,7 +769,7 @@ async fn vm_browser_microsoft_s_server_opens_with_its_token_and_switches_builds_
 
     // A build is staged while the window is open: nothing switches.
     let windows = host.editor_windows();
-    windows_become(windows, &sandbox, 1).await;
+    windows_become(windows, &sandbox, true).await;
     guest(
         &runtime,
         &sandbox,
@@ -782,13 +784,13 @@ async fn vm_browser_microsoft_s_server_opens_with_its_token_and_switches_builds_
         host.workspaces()
             .switch_editor_build(&sandbox, windows.connected(&sandbox))
             .await,
-        Err(puddle_host::SwitchEditorBuildError::WindowsConnected(1))
+        Err(puddle_host::SwitchEditorBuildError::WindowsConnected(n)) if n >= 1
     ));
     serving(&runtime, &sandbox, BUILD_A).await;
 
     // The window closes: the host's ask switches the server to the staged build.
     shell.close_pages(&name).await;
-    windows_become(windows, &sandbox, 0).await;
+    windows_become(windows, &sandbox, false).await;
     assert_eq!(
         host.workspaces().switch_idle_editor_builds(windows).await,
         1

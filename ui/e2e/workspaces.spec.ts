@@ -483,6 +483,54 @@ test.describe("connecting", () => {
     ).toBeDisabled();
   });
 
+  test("a browser editor that could not be installed is said in the step and on the page, with the reason as text, and goes away when it works", async ({
+    page,
+    backend,
+  }) => {
+    await openList(page, backend);
+    await backend.control.step({
+      do: "problem",
+      key: "editor-install:web-shop",
+      workspace: "web-shop",
+      title:
+        "The browser editor could not be installed in web-shop: the download does not match <img src=x onerror=alert(1)>",
+      detail:
+        "Puddle downloaded the editor server and refused it. Terminals and desktop VS Code are not affected.",
+    });
+    await card(page, "web-shop")
+      .getByRole("button", { name: "Connect to web-shop" })
+      .click();
+    const step = page.getByRole("dialog", { name: "Connect to web-shop" });
+    const note = step.getByRole("alert");
+    await expect(note).toContainText(
+      "The browser editor could not be installed in web-shop: the download does not match",
+    );
+    await expect(step.locator("img")).toHaveCount(0);
+    await expectNoAxeViolations(page, "connect step");
+    // Trying anyway is still the user's call.
+    await expect(
+      step.getByRole("button", { name: "Open in the browser" }),
+    ).toBeEnabled();
+    await step.getByRole("button", { name: "Close" }).click();
+
+    await card(page, "web-shop")
+      .getByRole("link", { name: /^Details/ })
+      .click();
+    const main = page.getByRole("main");
+    await expect(main.getByRole("alert")).toContainText(
+      "could not be installed in web-shop",
+    );
+    await expect(main).toContainText(
+      "Terminals and desktop VS Code are not affected",
+    );
+    await expectNoAxeViolations(page, "workspace page");
+    await backend.control.step({
+      do: "clear_problem",
+      key: "editor-install:web-shop",
+    });
+    await expect(main.getByRole("alert")).toHaveCount(0);
+  });
+
   test("opening in the browser needs no direct SSH and says the window is opening", async ({
     page,
     backend,

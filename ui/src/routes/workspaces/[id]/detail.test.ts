@@ -74,6 +74,7 @@ vi.mock("#lib/stores/rules.svelte.ts", async (original) => {
 vi.mock("#lib/api/client.ts", () => ({ api: h.api }));
 
 import { notices } from "#lib/notify/notices.svelte.ts";
+import { editorProblems } from "#lib/stores/editor-problems.svelte.ts";
 import { pending } from "#lib/stores/pending.svelte.ts";
 import { rulesStore } from "#lib/stores/rules.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
@@ -113,6 +114,7 @@ function reset() {
   api.list = [workspace("demo", { status: "running" })];
   api.checkouts = {};
   api.problems = [];
+  editorProblems.problems = [];
   api.calls = [];
   api.bodies = [];
   api.down = false;
@@ -497,6 +499,40 @@ describe("the overview", () => {
     await fireEvent.click(del);
     await vi.waitFor(() => expect(workspaceActions.deleteOpen).toBe(true));
     expect(workspaceActions.deleting?.check.fingerprint).toBe("fp-dirty");
+  });
+
+  it("says on the workspace's page why its browser editor could not be installed", async () => {
+    api.problems = [
+      {
+        key: "editor-install:demo",
+        workspace: "demo",
+        title:
+          "The browser editor could not be installed in demo: the download does not match",
+        detail: "Terminals and desktop VS Code are not affected.",
+      },
+      {
+        key: "editor-install:other",
+        workspace: "other",
+        title: "The browser editor could not be installed in other: no",
+        detail: "x",
+      },
+    ];
+    await load();
+    render(Overview);
+    expect(
+      await screen.findByText(/installed in demo: the download does not match/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Terminals and desktop VS Code are not affected/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/installed in other/)).toBeNull();
+  });
+
+  it("shows no install note on a workspace whose editor works", async () => {
+    await load();
+    render(Overview);
+    await screen.findByText("Status");
+    expect(screen.queryByText(/could not be installed/)).toBeNull();
   });
 
   it("says a workspace with no volume can be restored or deleted, and that deleting loses nothing", async () => {

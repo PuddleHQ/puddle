@@ -185,3 +185,83 @@ fn hostile_hg37_a_flood_of_reports_changes_each_problem_a_bounded_number_of_time
     assert_eq!(desk.runs().get(&box_).unwrap().dns.len(), 4);
     assert!(desk.runs().get(&other).unwrap().dns.is_empty());
 }
+
+fn editor(problem: Option<&str>) -> AgentReport {
+    AgentReport::EditorStatus {
+        problem: problem.map(str::to_owned),
+    }
+}
+
+#[test]
+fn a_refused_editor_install_is_a_problem_that_names_the_reason_and_ends_when_it_works() {
+    let (sink, problems, desk) = desk();
+    let box_ = name("box");
+    desk.begin(&box_);
+    let _ = sink.take();
+    desk.report(&box_, editor(None));
+    assert_eq!(changes(&sink), 0, "nothing was wrong");
+    desk.report(&box_, editor(Some("the download does not match")));
+    let raised = problems.list();
+    assert_eq!(raised.len(), 1);
+    assert_eq!(raised[0].key, "editor-install:box");
+    assert_eq!(
+        raised[0].title,
+        "The browser editor could not be installed in box: the download does not match"
+    );
+    assert!(
+        raised[0]
+            .detail
+            .contains("Terminals and desktop VS Code are not affected.")
+    );
+    assert_eq!(raised[0].workspace, Some(box_.clone()));
+    // The agent tells it again at every refused try: one change, not one per try.
+    desk.report(&box_, editor(Some("the download does not match")));
+    assert_eq!(changes(&sink), 1);
+    desk.report(&box_, editor(None));
+    assert_eq!(problems.list(), Vec::<Problem>::new());
+    assert_eq!(changes(&sink), 1);
+}
+
+#[test]
+fn the_editor_problem_ends_with_the_run_and_at_the_next_start() {
+    let (_, problems, desk) = desk();
+    let box_ = name("box");
+    desk.begin(&box_);
+    desk.report(&box_, editor(Some("no")));
+    desk.end(&box_);
+    assert_eq!(
+        problems.list(),
+        Vec::<Problem>::new(),
+        "the machine is gone"
+    );
+    desk.report(&box_, editor(Some("late")));
+    assert_eq!(
+        problems.list(),
+        Vec::<Problem>::new(),
+        "a report from a workspace that does not run is ignored"
+    );
+    desk.begin(&box_);
+    desk.report(&box_, editor(Some("no")));
+    desk.begin(&box_);
+    assert_eq!(
+        problems.list(),
+        Vec::<Problem>::new(),
+        "a start tells afresh"
+    );
+}
+
+#[test]
+fn hostile_hg37_a_flood_of_editor_reports_changes_the_problem_a_bounded_number_of_times() {
+    let (sink, problems, desk) = desk();
+    let box_ = name("box");
+    desk.begin(&box_);
+    let _ = sink.take();
+    for i in 0..100_000_u32 {
+        desk.report(&box_, editor(Some(&format!("cause {i}"))));
+        if i % 3 == 0 {
+            desk.report(&box_, editor(None));
+        }
+    }
+    assert!(changes(&sink) <= 2 * usize::from(MAX_EDITOR_CHANGES));
+    assert!(problems.list().len() <= 1);
+}

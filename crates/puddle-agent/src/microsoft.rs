@@ -111,6 +111,18 @@ impl InstallError {
     pub fn is_refusal(&self) -> bool {
         matches!(self, Self::Checksum { .. } | Self::Archive(_))
     }
+
+    /// What a refusal says to the user, without the checksums (they mean nothing to a reader and
+    /// would fill the line); the log has the whole error.
+    #[must_use]
+    pub fn refusal_summary(&self) -> String {
+        match self {
+            Self::Checksum { .. } => {
+                "the download does not match the checksum Microsoft published for it".to_owned()
+            }
+            other => other.to_string(),
+        }
+    }
 }
 
 /// The build name in the update service's path for a machine of architecture `arch` (the values
@@ -823,6 +835,24 @@ mod tests {
     use super::*;
 
     const COMMIT: &str = "e646868227c3e3a9e3f24277c8c7220be42c0be7";
+
+    #[test]
+    fn a_refusal_says_what_is_wrong_without_the_checksums() {
+        let checksum = InstallError::Checksum {
+            expected: "a".repeat(64),
+            actual: "b".repeat(64),
+        };
+        assert!(checksum.is_refusal());
+        assert_eq!(
+            checksum.refusal_summary(),
+            "the download does not match the checksum Microsoft published for it"
+        );
+        let archive = InstallError::Archive("a link out of the folder".to_owned());
+        assert_eq!(
+            archive.refusal_summary(),
+            "the VS Code server download holds a link out of the folder, which is not unpacked"
+        );
+    }
 
     #[test]
     fn the_urls_are_the_ones_the_code_command_uses() {

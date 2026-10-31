@@ -207,7 +207,9 @@ async fn git_sign_in_lets_the_helper_open_its_window_then_keeps_the_answer() {
         signin.begin(&git_spec()).await.unwrap(),
         SignInStart::default()
     );
-    let log = wait_for(&git, "ARGS credential approve").await;
+    // The fake writes a run's ARGS, STDIN and ENV lines one after another: the approve's last line
+    // (its ENV, the only one with `never`) says the whole record is there.
+    let log = wait_for(&git, "GCM_INTERACTIVE=never").await;
     // The fill may open a window; the approve may not, and it carries the answer.
     let fill = log.split("ARGS credential approve").next().unwrap();
     assert!(

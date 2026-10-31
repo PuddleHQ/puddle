@@ -155,6 +155,47 @@ describe("CreateWorkspaceDialog", () => {
     });
   });
 
+  it("drops the quotes of a copied Windows path before sending it", async () => {
+    const { create } = mount();
+    await screen.findByRole("dialog");
+    await fireEvent.click(screen.getByTestId("source-folder"));
+    await type("Folder of the checkout", '"C:\\Users\\you\\shop"');
+    await type("Name", "shop");
+    await fireEvent.click(submit());
+    expect(create).toHaveBeenCalledWith({
+      name: "shop",
+      repositories: [{ url: "", local_path: "C:\\Users\\you\\shop" }],
+    });
+  });
+
+  it("refuses the root of a drive on the folder field", async () => {
+    const { create } = mount();
+    await screen.findByRole("dialog");
+    await fireEvent.click(screen.getByTestId("source-folder"));
+    await type("Folder of the checkout", "C:\\");
+    await type("Name", "root");
+    await fireEvent.click(submit());
+    expect(screen.getByRole("alert")).toHaveTextContent("not the root");
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("forgets a refusal shown on the folder when the source option changes", async () => {
+    mount();
+    await screen.findByRole("dialog");
+    await fireEvent.click(screen.getByTestId("source-folder"));
+    await type("Folder of the checkout", "shop");
+    await type("Name", "shop");
+    await fireEvent.click(submit());
+    expect(screen.getByRole("alert")).toHaveTextContent("Give the full path");
+    await fireEvent.click(screen.getByTestId("source-address"));
+    await fireEvent.click(screen.getByTestId("source-folder"));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(field("Folder of the checkout")).not.toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+  });
+
   it("names the workspace after the repository until a name is typed", async () => {
     mount();
     await screen.findByRole("dialog");

@@ -477,7 +477,15 @@ test.describe("a checkout on this computer", () => {
         "placeholder",
         "shop",
       );
+      const sent = page.waitForRequest(
+        (r) => r.method() === "POST" && r.url().endsWith("/workspaces"),
+      );
       await dialog.getByRole("button", { name: "Create workspace" }).click();
+      expect(
+        (await sent).postDataJSON() as { repositories: unknown[] },
+      ).toMatchObject({
+        repositories: [{ url: "", local_path: shop }],
+      });
       await expect(dialogOf(page)).toHaveCount(0);
       await expect(card(page, "shop")).toBeVisible();
       const made = await workspace(request, backend, "shop");

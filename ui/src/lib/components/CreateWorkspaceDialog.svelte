@@ -34,6 +34,7 @@
     clashes,
     rowProblems,
     directoryFor,
+    cleanPath,
     folderOf,
     MAX_REPOSITORIES,
     newRow,
@@ -258,7 +259,7 @@
       repositories: rows.map((row) => {
         const identity = selectedFor(row);
         const directory = row.directory.trim();
-        const local = row.source === "folder" ? row.localPath.trim() : "";
+        const local = row.source === "folder" ? cleanPath(row.localPath) : "";
         return {
           url: row.url.trim(),
           ...(local === "" ? {} : { local_path: local }),
@@ -365,6 +366,9 @@
               name={rowId(row, "source")}
               value="address"
               bind:group={row.source}
+              onchange={() => {
+                rowErrors = { ...rowErrors, [row.key]: {} };
+              }}
               data-testid="source-address"
             />
             Clone from an address
@@ -375,6 +379,9 @@
               name={rowId(row, "source")}
               value="folder"
               bind:group={row.source}
+              onchange={() => {
+                rowErrors = { ...rowErrors, [row.key]: {} };
+              }}
               data-testid="source-folder"
             />
             From a folder on this computer

@@ -8,6 +8,7 @@ import {
   directoryProblem,
   folderOf,
   freeDirectory,
+  cleanPath,
   localPathProblem,
   MAX_REPOSITORIES,
   newRow,
@@ -244,7 +245,16 @@ describe("a checkout on this computer", () => {
     ["C:\\Users\\you\\shop", null],
     ["c:/Users/you/shop", null],
     ["\\\\server\\share\\shop", null],
+    ['"C:\\Users\\you\\shop"', null],
+    ['  "/home/you/shop"  ', null],
+    ["/", "not the root of a drive"],
+    ["//", "not the root of a drive"],
+    ["C:\\", "not the root of a drive"],
+    ["c:/", "not the root of a drive"],
+    ["\\\\", "not the root of a drive"],
+    ['"C:\\"', "not the root of a drive"],
     ["", "Give the folder of the checkout."],
+    ['""', "Give the folder of the checkout."],
     ["shop", "Give the full path"],
     ["~/shop", "Give the full path"],
   ])("%j: %j", (path, problem) => {
@@ -311,5 +321,14 @@ describe("a checkout on this computer", () => {
       row: 2,
       field: "localPath",
     });
+  });
+});
+
+describe("cleanPath", () => {
+  it("drops the quotes Windows' Copy as path adds, and only a matching outer pair", () => {
+    expect(cleanPath(' "C:\\a b\\shop" ')).toBe("C:\\a b\\shop");
+    expect(cleanPath("/home/you/shop")).toBe("/home/you/shop");
+    expect(cleanPath('"/home/you/shop')).toBe('"/home/you/shop');
+    expect(folderOf('"C:\\Users\\you\\shop"')).toBe("shop");
   });
 });

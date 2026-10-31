@@ -40,8 +40,7 @@ export function directoryOf(url: string): string {
  * `.git` when the path names the `.git` itself), or `null` when that is no usable directory.
  */
 export function folderOf(path: string): string | null {
-  const parts = path
-    .trim()
+  const parts = cleanPath(path)
     .split(/[\\/]+/)
     .filter(Boolean);
   if (parts[parts.length - 1] === ".git") parts.pop();
@@ -49,12 +48,26 @@ export function folderOf(path: string): string | null {
   return directoryProblem(name) === null ? name : null;
 }
 
+/**
+ * A folder path as typed: trimmed, and without the pair of double quotes that Windows'
+ * "Copy as path" puts around it.
+ */
+export function cleanPath(path: string): string {
+  const p = path.trim();
+  return p.length >= 2 && p.startsWith('"') && p.endsWith('"')
+    ? p.slice(1, -1).trim()
+    : p;
+}
+
 /** The reason `path` can't name a checkout on this computer, or `null` when it can. */
 export function localPathProblem(path: string): string | null {
-  const p = path.trim();
+  const p = cleanPath(path);
   if (p === "") return "Give the folder of the checkout.";
   if (!/^(\/|[A-Za-z]:[\\/]|\\\\)/.test(p))
     return "Give the full path of the folder, such as /home/you/project or C:\\Users\\you\\project.";
+  // A root (`/`, `C:\`, `\\`) holds no checkout: nothing is left once the separators are dropped.
+  if (p.replace(/^[A-Za-z]:/, "").replace(/[\\/]+/g, "") === "")
+    return "Give the folder of the checkout, not the root of a drive.";
   return null;
 }
 
@@ -104,7 +117,7 @@ export function directoryFor(
 ): string {
   const typed = row.directory.trim();
   if (typed !== "") return typed;
-  const local = row.source === "folder" ? (row.localPath?.trim() ?? "") : "";
+  const local = row.source === "folder" ? cleanPath(row.localPath ?? "") : "";
   if (local !== "") return folderOf(local) ?? directoryOf(row.url);
   return directoryOf(row.url);
 }

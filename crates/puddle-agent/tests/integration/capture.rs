@@ -339,16 +339,20 @@ fn config(socket: &Path, table: &Path) -> Config {
 /// How long a capture test waits for the host or the table to settle.
 const WAIT: Duration = Duration::from_secs(15);
 
-/// Capture is ready when the table is in and the stub answers.
+/// Capture is ready when the table is in and the stub answers. One slow `dig` (a process that
+/// starts late on a loaded machine) is one more attempt, not a failure: `eventually_async` bounds
+/// the wait and drops, and so kills, the attempt that is still running at the end of it.
 async fn ready() {
     eventually_async("the capture table and the stub", WAIT, || async {
-        let (_, text) = run(
-            "dig",
-            &["+short", "+time=1", "+tries=1", "@198.18.0.1", "ready.test"],
-            Duration::from_secs(5),
-        )
-        .await;
-        text.starts_with("198.18.") && puddle_agent::capture::nft::read().is_ok_and(|t| t.is_some())
+        let answer = Command::new("dig")
+            .args(["+short", "+time=1", "+tries=1", "@198.18.0.1", "ready.test"])
+            .stdin(Stdio::null())
+            .kill_on_drop(true)
+            .output()
+            .await
+            .unwrap_or_else(|e| panic!("dig: {e}"));
+        String::from_utf8_lossy(&answer.stdout).starts_with("198.18.")
+            && puddle_agent::capture::nft::read().is_ok_and(|t| t.is_some())
     })
     .await;
 }

@@ -438,7 +438,20 @@ mod tests {
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             wait_listening(&mut child, &log, Duration::from_millis(200));
         }));
-        assert!(outcome.is_err());
+        let message = *outcome.unwrap_err().downcast::<String>().unwrap();
+        assert!(
+            message.contains("did not log its port within 200ms"),
+            "{message}"
+        );
+        let pid = child.id();
+        assert!(
+            message.contains(&format!("sleep pid {pid} started +0.00s CPU")),
+            "{message}"
+        );
+        assert!(
+            message.contains("a trivial program (true) took"),
+            "{message}"
+        );
         assert!(
             child.try_wait().unwrap().is_some(),
             "the child that never logged is stopped, not left running"

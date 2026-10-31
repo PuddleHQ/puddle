@@ -102,7 +102,10 @@ fn trivial_start() -> String {
 /// Runs `program` and says how long it took from the call to its end, or that it had not ended
 /// within `bound` (it is then stopped).
 fn time_to_end(program: &str, args: &[&str], bound: Duration) -> String {
-    let what = format!("{program} {}", args.join(" "));
+    let what = std::iter::once(program)
+        .chain(args.iter().copied())
+        .collect::<Vec<_>>()
+        .join(" ");
     let begun = Instant::now();
     let mut child = match Command::new(program)
         .args(args)

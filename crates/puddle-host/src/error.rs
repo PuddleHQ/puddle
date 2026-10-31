@@ -17,9 +17,6 @@ pub enum HostError {
     /// The bundled runtime is missing, unreadable or of another version.
     #[error("{0}; `puddle doctor` explains the fix")]
     Runtime(#[from] puddle_runtime::RuntimeError),
-    /// Another thread already runs, so the process environment cannot be changed safely.
-    #[error("the process environment must be set before any other thread starts")]
-    EnvironmentTooLate,
     /// The guest agent binary that every sandbox mounts is missing.
     #[error("the guest agent {path} is missing; build it with ci/build-agent.sh")]
     AgentMissing {

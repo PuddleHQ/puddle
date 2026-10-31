@@ -20,7 +20,7 @@ static SUFFIX: OnceLock<String> = OnceLock::new();
 
 /// The random suffix of this test process: 16 lowercase hex digits, the same on every call.
 ///
-/// The first call also installs a panic hook (chained before the previous one) that prints the
+/// The first call also installs a panic hook (chained before the previous one, through `panic_hook`) that prints the
 /// suffix, so a failed test names the run that made its values.
 pub fn suffix() -> &'static str {
     SUFFIX.get_or_init(|| {
@@ -28,8 +28,7 @@ pub fn suffix() -> &'static str {
         let value = RandomState::new().build_hasher().finish();
         let suffix = format!("{value:016x}");
         let shown = suffix.clone();
-        let previous = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
+        crate::panic_hook::chain(move |_| {
             #[expect(
                 clippy::print_stderr,
                 reason = "the point: name the run of a failing test"
@@ -37,8 +36,7 @@ pub fn suffix() -> &'static str {
             {
                 eprintln!("test fixture suffix for this run: {shown}");
             }
-            previous(info);
-        }));
+        });
         suffix
     })
 }

@@ -21,6 +21,7 @@ on:
       - full-test
       - coverage-baseline
       - stress
+      - lab-override
     types: [completed]
 
 permissions:

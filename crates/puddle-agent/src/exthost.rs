@@ -456,6 +456,7 @@ mod tests {
         // A job of the user's: no inspector options.
         let job = p(55, 1, &["sleep", "600"]);
         let procs = [gone, alive, no_path, unreadable, parented, job, deferred];
+        // flake-ok: a value that is parsed or compared and never opened, so the missing drive letter does not matter
         let exists = |path: &Path| path == Path::new("/tmp/node-cdp.99-1.sock");
         assert_eq!(orphan_debuggees(&procs, 1, exists), [50]);
     }

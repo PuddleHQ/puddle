@@ -27,7 +27,7 @@ Flake rules (`flake-<id>` kinds; `--flakes` lists them with the fix each names) 
 raced in the past: a hand-rolled wait helper (every one outside the shared test kit counts; the row says
 whether it lacks a name or a bound), a hand-rolled wait loop (a `for`, `while` or `loop` in a test that sleeps or yields between looks), `file.lock()`, `try_recv()`, a port picked
 and dropped, a name built from the clock, a wall-clock bar, records matched by position, an awaited page read
-asserted once, a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the resolver. A site is reasoned by `flake-ok: <why>` on the line or within three lines above. A rule is
+asserted once, a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the resolver, a Unix path literal (`/tmp`, `/home`, `/no...`) used as a host path or a path joined by hand with `format!` (`flake-f1`, it fails on Windows). Three bans have kinds of their own: `ban-untagged` (`#[serde(untagged)]`), `ban-error-capital` and `ban-error-period` (thiserror messages). A site is reasoned by `flake-ok: <why>` on the line or within three lines above. A rule is
 counted (`flake-<id>`, `flake-<id>-unreasoned`) until its sites are fixed or reasoned, then its `scripts/flake-rules/<id>.rule` says
 `status: failing` and an unreasoned site becomes a `noreason` row. Their self-test replays the original code of
 fixed flakes from `scripts/flake-fixtures/`.
@@ -392,6 +392,7 @@ def scan(root):
         if not vendor:
             flake_pickers = flake_rust(f, raw, code, com, test_lines, lambda kind, i, detail: add(kind, ctx(i), f, i, detail))
             port_pickers.update({n: f for n in flake_pickers})
+            ban_rows(raw, code, ctx, lambda kind, c, i, detail: add(kind, c, f, i, detail))
 
     # Rule p1: the callers of the port-picking functions found above, in any file.
     for f, (code, com) in stripped.items():
@@ -510,6 +511,28 @@ def crate_root_rows(texts, stripped, add):
 TEST_KIT = "puddle-test-kit"
 
 
+# Bans in the standards' own words (docs/adr/0002 "never `#[serde(untagged)]`", docs/STANDARDS.md section 5 "error messages
+# are lower-case, no trailing period"). Each is a kind of its own and a failing one: a site adds a `noreason` row.
+BAN_UNTAGGED = re.compile(r"#!?\[\s*serde\s*\([^\]]*\buntagged\b")
+BAN_ERROR_MESSAGE = re.compile(r'#\[\s*error\(\s*"((?:[^"\\]|\\.)*)"')
+
+
+def ban_rows(raw, code, ctx, add):
+    """Rows `ban-untagged`, `ban-error-capital`, `ban-error-period` for one Rust file; `add(kind, ctx, i, detail)`."""
+    for i, line in enumerate(code):
+        if BAN_UNTAGGED.search(line):
+            add("ban-untagged", ctx(i), i, raw[i])
+            add("noreason", ctx(i), i, "#[serde(untagged)]: a wrong branch is silent, use an internally or adjacently tagged enum (ADR 0002) | " + raw[i])
+        if line.lstrip().startswith("#[") and "error(" in line:
+            m = BAN_ERROR_MESSAGE.search(raw[i])
+            if m and m.group(1)[:1].isupper():
+                add("ban-error-capital", ctx(i), i, raw[i])
+                add("noreason", ctx(i), i, "error message starts with a capital: lower-case it (STANDARDS section 5) | " + raw[i])
+            if m and m.group(1).endswith("."):
+                add("ban-error-period", ctx(i), i, raw[i])
+                add("noreason", ctx(i), i, "error message ends with a period: drop it (STANDARDS section 5) | " + raw[i])
+
+
 def kit_dependency_rows(texts, add):
     for f, lines in texts.items():
         if not (f.startswith("crates/") and f.endswith("/Cargo.toml")) or f.startswith(TEST_CRATES):
@@ -564,6 +587,10 @@ FLAKE_RULES = load_flake_rules(FLAKE_RULES_DIR)
 FLAKE_FAILING = {r for r, v in FLAKE_RULES.items() if v["status"] == "failing"}
 FLAKE_FIX = {r: v["fix"] for r, v in FLAKE_RULES.items()}
 FLAKE_OK = re.compile(r"flake-ok:\s*\S")
+FLAKE_POSIX_LIT = re.compile(r'"/(?:tmp|home|no|nonexistent)\b')  # a literal Unix path; `/none` (a URL path) is not `/no`
+FLAKE_PATH_SINK = re.compile(r"\bPath(?:Buf)?::(?:new|from)\(|\.join\(|\b\w*(?:dir|path|file|root)\w*\b.*\.(?:into|to_owned)\(\)")
+FLAKE_PATH_FORMAT = re.compile(r'format!\(\s*"\{[^}"]*\}/\{')
+FLAKE_PATH_WORD = re.compile(r"\b\w*(?:dir|path|root|tmp|home|base)\w*\b", re.I)
 FLAKE_WAIT_NAME = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(until\w*|eventually\w*|wait_for\w*|wait_until\w*|poll_until\w*)\b")
 FLAKE_WAIT_HOME = "crates/puddle-test-kit/"  # the kit's own helpers (the crate is that path) are the target, not a hit
 FLAKE_RESERVED = re.compile(r'"[^"]*(?<![@\w.-])(?:[a-z0-9-]+\.)*(?:[a-z0-9-]+\.(?:test|example)|example\.(?:com|net|org))(?![\w-]|\.[a-z0-9])', re.I)  # not `x.test.invalid` (a `.invalid` name) or `x.test.rs` (a file)
@@ -659,6 +686,12 @@ def flake_rust(f, raw, code, com, test, rows_add):
                 hit("t1", i)
         if t and re.search(r"\b\w*(record|event|row|entr|audit|line)\w*\.(?:iter\(\)\.)?zip\(", line, re.I):
             hit("a1", i)
+        # Rule f1: a Unix path literal that becomes a host path, or two parts joined with a `/` by hand, is a test that
+        # passes on Linux and fails on Windows (`/tmp` has no drive, `a/b` mixes separators). Guest paths stay strings.
+        if t and not raw[i].lstrip().startswith("//") and "://" not in raw[i]:
+            if (FLAKE_POSIX_LIT.search(raw[i]) and FLAKE_PATH_SINK.search(line)) or (
+                    FLAKE_PATH_FORMAT.search(raw[i]) and FLAKE_PATH_WORD.search(raw[i])):
+                hit("f1", i)
     return pickers
 
 
@@ -998,6 +1031,35 @@ def flake_self_test():
     case("o2 a variable named only in the message is not read", "o2", {FLAKE_SPEC: kept.replace("expect(box.width)", 'expect(24, "the box width")')}, 1, 1)
     case("o2 a plain read asserted by property is not counted", "o2", {FLAKE_SPEC: 'test("x", async ({ page }) => {\n  const box = await page.locator("li").boundingBox();\n  expect(box?.width).toBe(3);\n});\n'}, 0, 0)
     case("o2 a reason on the read covers its expects", "o2", {FLAKE_SPEC: value.replace("  const n", "  // flake-ok: the list is complete\n  const n")}, 2, 0)
+
+    f1 = "crates/puddle-store/tests/store_paths.rs"
+    f1_bad = read("f1-posix-path.bad.rs.txt")
+    case("f1 original", "f1", {f1: f1_bad}, 2, 2)
+    case("f1 reasoned", "f1", {f1: reasoned(reasoned(f1_bad, "PathBuf::from"), "Path::new")}, 2, 0)
+    case("f1 a tempdir joined portably", "f1", {f1: 'fn t() { let dir = tempfile::tempdir().unwrap(); let file = dir.path().join("config.toml"); }\n'}, 0, 0)
+    case("f1 a guest path stays a string", "f1", {f1: 'fn t() { sandbox.write("/tmp/leaf.pem", bytes); run("cat /home/dev/.rc"); }\n'}, 0, 0)
+    case("f1 a URL path is not a host path", "f1", {f1: 'fn t() { let u = Url::parse("https://x.test/tmp/a").unwrap(); let p = PathBuf::from(u.path()); }\n'}, 0, 0)
+    case("f1 a hand-joined path", "f1", {f1: 'fn t() { let file = format!("{dir}/{name}.toml"); }\n'}, 1, 1)
+    case("f1 a hand-joined image name is not a path", "f1", {f1: 'fn t() { let image = format!("{REGISTRY}/{REPO}:1"); }\n'}, 0, 0)
+    case("f1 in production code", "f1", {"crates/x/src/lib.rs": f1_bad}, 0, 0)
+    case("f1 a comment", "f1", {f1: '// Path::new("/tmp/x")\nfn t() {}\n'}, 0, 0)
+
+    def bans(src):
+        return sorted({r[0] for r in run({"crates/x/src/lib.rs": "#![forbid(unsafe_code)]\n" + src}) if r[0].startswith("ban-")})
+    if bans('#[derive(Deserialize)]\n#[serde(untagged)]\nenum E { A(u8), B(String) }\n') != ["ban-untagged"]:
+        failures.append("ban-untagged: a bare #[serde(untagged)] must be flagged")
+    if bans('#[serde(rename_all = "snake_case", untagged)]\nenum E { A }\n') != ["ban-untagged"]:
+        failures.append("ban-untagged: untagged among other serde arguments must be flagged")
+    if bans('#[serde(tag = "kind")]\nenum E { A }\n// #[serde(untagged)]\nconst S: &str = "#[serde(untagged)]";\n'):
+        failures.append("ban-untagged: a tagged enum, a comment and a string are not sites")
+    if bans('enum E {\n    #[error("Bad {0}")]\n    A(u8),\n}\n') != ["ban-error-capital"]:
+        failures.append("ban-error-capital: a capital first letter must be flagged")
+    if bans('enum E {\n    #[error("bad {0}.")]\n    A(u8),\n}\n') != ["ban-error-period"]:
+        failures.append("ban-error-period: a trailing period must be flagged")
+    if bans('enum E {\n    #[error("bad {0}: {1}")]\n    A(u8, String),\n    #[error("{0}")]\n    B(String),\n    #[error("see a.b. later")]\n    C,\n}\n'):
+        failures.append("ban-error: lower-case messages, `{0}` and a mid-text period are not sites")
+    if not any(r[0] == "noreason" for r in run({"crates/x/src/lib.rs": "#![forbid(unsafe_code)]\n#[serde(untagged)]\nenum E { A }\n"})):
+        failures.append("ban-untagged: a site must add a noreason row so --missing fails")
 
     # A counted rule adds no `noreason` row; a rule flipped to failing adds one that opens with its fix.
     bad = {rule: {v["as"]: read(v["fixture"])} for rule, v in FLAKE_RULES.items()}

@@ -836,6 +836,7 @@ mod tests {
         std::fs::create_dir_all(share.join("tree")).unwrap();
         std::fs::write(share.join("file"), b"x").unwrap();
         std::fs::write(base.join("secret"), b"x").unwrap();
+        // flake-ok: a path that must not exist; on Windows it is rooted on the current drive and still does not exist
         let config = MsbConfig::new(base.join("home"), "/no/msb", "/no/libkrunfw", &share);
         let rt = MsbRuntime::open(config).await.unwrap();
 
@@ -895,6 +896,7 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
         // A file where msb wants its database folder.
         std::fs::write(home.join("db"), b"not a folder").unwrap();
+        // flake-ok: a path that must not exist; on Windows it is rooted on the current drive and still does not exist
         let config = MsbConfig::new(home, "/no/msb", "/no/libkrunfw", base.join("share"));
         let error = MsbRuntime::open(config).await.err().unwrap().to_string();
         assert!(

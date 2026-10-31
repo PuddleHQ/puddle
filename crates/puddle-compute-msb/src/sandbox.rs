@@ -442,6 +442,7 @@ mod tests {
             AgentClientError::Handshake("read id range: timed out before relay sent bytes".into())
                 .into(),
             AgentClientError::Connect {
+                // flake-ok: a value that is parsed or compared and never opened, so the missing drive letter does not matter
                 path: "/no/relay.sock".into(),
                 source: std::io::Error::other("refused"),
             }

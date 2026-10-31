@@ -9,8 +9,9 @@
 # its own children, kernel threads (children of kthreadd, PID 2) and zombies. Each process gets
 # one SIGTERM only: some count them (dockerd quits without cleanup at the third).
 #
-# Prints the processes still running when the grace ran out ("left: <pid> <name>"), exits 0 when
-# none is left and 1 otherwise. POSIX sh: dash, busybox and bash images all run it.
+# Prints the processes still running when the grace ran out, on one line ("left: <pid> <name>,
+# ..."). Exits 0 when none is left and 1 otherwise. POSIX sh: dash, busybox and bash images all
+# run it.
 grace=${1:-10}
 self=$$
 
@@ -63,7 +64,9 @@ while :; do
     [ "$(date +%s)" -ge "$end" ] && break
     sleep "$tick"
 done
+names=
 for p in $left; do
-    name=$(cat "/proc/$p/comm" 2>/dev/null) && printf 'left: %s %s\n' "$p" "$name"
+    name=$(cat "/proc/$p/comm" 2>/dev/null) && names="${names:+$names, }$p $name"
 done
+printf 'left: %s\n' "$names"
 exit 1

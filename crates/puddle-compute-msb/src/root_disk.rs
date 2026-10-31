@@ -383,10 +383,10 @@ mod tests {
             br#"{"layers":[{}]}"#,
         ] {
             home.write_journal(bytes);
+            let got = check(&home.mine());
             assert!(
-                matches!(check(&home.mine()), Err(JournalProblem::Unreadable { .. })),
-                "{}",
-                String::from_utf8_lossy(bytes)
+                matches!(got, Err(JournalProblem::Unreadable { .. })),
+                "{got:?}"
             );
         }
         let big = vec![b' '; usize::try_from(MAX_JOURNAL_BYTES).unwrap() + 1];
@@ -415,10 +415,12 @@ mod tests {
         assert_eq!(check_before_start(&home.mine()), Ok(()));
         let theirs = home.sandboxes.join("other").join("upper.ext4");
         home.journal(&[&theirs], None);
-        let Err(ComputeError::Runtime { op, message }) = check_before_start(&home.mine()) else {
-            panic!("the start must be refused");
-        };
-        assert_eq!(op, "start");
+        let refused = check_before_start(&home.mine()).unwrap_err();
+        assert!(
+            matches!(refused, ComputeError::Runtime { op: "start", .. }),
+            "{refused:?}"
+        );
+        let message = refused.to_string();
         assert!(message.contains(&format!("{theirs:?}")), "{message}");
         assert!(
             message.contains("outside the sandbox's folder"),
@@ -428,9 +430,7 @@ mod tests {
         assert!(message.contains("creating it again"), "{message}");
 
         home.write_journal(b"not json");
-        let Err(ComputeError::Runtime { message, .. }) = check_before_start(&home.mine()) else {
-            panic!("the start must be refused");
-        };
+        let message = check_before_start(&home.mine()).unwrap_err().to_string();
         assert!(message.contains("cannot be told"), "{message}");
         assert!(!message.contains("can write that journal"), "{message}");
     }
@@ -444,6 +444,20 @@ mod tests {
         let text = problem.to_string();
         assert!(text.contains("/x/other/upper.ext4"), "{text}");
         assert!(text.contains("/x/mine"), "{text}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_journal_whose_folder_cannot_be_walked_is_refused() {
+        // A file where `runtime/` belongs: looking up the journal fails with "not a directory",
+        // which is not "no journal". (Windows reports that case as not found.)
+        let home = Home::new();
+        fs::remove_dir(home.mine().join("runtime")).unwrap();
+        fs::write(home.mine().join("runtime"), b"").unwrap();
+        assert!(matches!(
+            check(&home.mine()),
+            Err(JournalProblem::Unreadable { .. })
+        ));
     }
 
     #[cfg(unix)]

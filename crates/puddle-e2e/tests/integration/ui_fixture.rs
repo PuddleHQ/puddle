@@ -1087,6 +1087,54 @@ async fn the_fixture_answers_the_repository_endpoints_with_nothing_listed() {
 }
 
 #[tokio::test]
+async fn seeded_profiles_answer_by_credential_and_keep_notes_and_problems() {
+    let run = start("git-identities").await;
+    let ask = |source: Value| {
+        let run = &run;
+        async move {
+            let answer = run
+                .api(
+                    "POST",
+                    "/api/credentials/profile",
+                    Some(&json!({ "source": source })),
+                )
+                .await;
+            assert_eq!(answer.status, 200, "{}", answer.body);
+            answer.json()
+        }
+    };
+    let demo = ask(json!({"kind": "gh", "host": "github.com", "account": "tijs-demo"})).await;
+    assert_eq!(demo["name"], "Tijs Demo");
+    assert_eq!(demo["email"], "4242+tijs-demo@users.noreply.github.com");
+    assert_eq!(demo["organisations"], json!(["demo-org", "demo-labs"]));
+    assert_eq!(demo["notes"][0]["code"], "sso_partial");
+    assert_eq!(demo["problem"], Value::Null);
+    let old = ask(json!({"kind": "gh", "host": "github.com", "account": "tijs-old"})).await;
+    assert_eq!(old["problem"]["code"], "token_rejected");
+    assert_eq!(old["problem"]["needs_sign_in"], true);
+    let azure = ask(json!({"kind": "git_credential", "host": "dev.azure.com", "path": "contoso", "username": null})).await;
+    assert_eq!(azure["organisations"], json!(["contoso"]));
+    assert_eq!(azure["notes"][0]["code"], "author_unavailable");
+}
+
+#[tokio::test]
+async fn a_profile_for_a_credential_that_cannot_be_named_fails_to_start() {
+    let scenario: Scenario = serde_json::from_value(json!({
+        "profiles": [{"source": {"kind": "gh", "host": "not a host", "account": "x"}}],
+    }))
+    .unwrap();
+    let err = Fixture::start(FixtureOptions {
+        port: 0,
+        connection_file: None,
+        scenario,
+    })
+    .await
+    .err()
+    .unwrap();
+    assert!(err.contains("host"), "{err}");
+}
+
+#[tokio::test]
 async fn the_credentials_service_can_report_accounts_from_every_listing_and_listings_that_could_not_run()
  {
     let scenario: Scenario = serde_json::from_value(json!({

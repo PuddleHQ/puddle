@@ -4,7 +4,7 @@
 // naming each clone, and the notice for a clone that failed while the create still finished.
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeStops, watchCsp, staysEmpty } from "./support";
+import { axeStops, boxSide, insideBy, watchCsp, staysEmpty } from "./support";
 
 const auth = (backend: Backend) => ({
   Authorization: `Bearer ${backend.token}`,
@@ -304,8 +304,6 @@ test.describe("the list of repositories", () => {
     await openList(page, backend);
     const dialog = await openCreate(page);
     await addButton(page).click();
-    const edge = (await dialog.boundingBox())!;
-    const right = edge.x + edge.width;
     const controls = [
       addButton(page),
       rowOf(page, 1).getByRole("button", { name: "Remove repository 1" }),
@@ -319,10 +317,9 @@ test.describe("the list of repositories", () => {
     ];
     for (const control of controls) {
       await control.scrollIntoViewIfNeeded();
-      const box = (await control.boundingBox())!;
-      expect(box.width).toBeGreaterThanOrEqual(24);
-      expect(box.height).toBeGreaterThanOrEqual(24);
-      expect(box.x + box.width).toBeLessThanOrEqual(right);
+      await boxSide(control, "width").toBeGreaterThanOrEqual(24);
+      await boxSide(control, "height").toBeGreaterThanOrEqual(24);
+      await insideBy(dialog, control).toBeGreaterThanOrEqual(0);
     }
   });
 });

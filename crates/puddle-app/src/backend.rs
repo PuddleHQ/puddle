@@ -191,7 +191,7 @@ impl Backend {
 
     /// The same backend with `ends` as its way to end a guest's extension hosts.
     #[must_use]
-    fn with_extension_hosts(mut self, ends: EndExtensionHosts) -> Self {
+    pub(crate) fn with_extension_hosts(mut self, ends: EndExtensionHosts) -> Self {
         self.extension_hosts = ends;
         self
     }

@@ -25,7 +25,7 @@ use puddle_proxy::{
     Injector, Interception, PassThrough, RequestRule, RequestRules, StandInOrigin, StandIns,
     Termination, TerminationSet, TerminationSource, Terminations,
 };
-use puddle_secrets::{Fetch, SecretCache, SecretStore, SourceSpec, Sources};
+use puddle_secrets::{Fetch, ReadLog, SecretCache, SecretStore, SourceSpec, Sources};
 use puddle_store::{Store, WorkspaceGit};
 use puddle_types::{Event, EventSink, GuestEnv, RuleId, WorkspaceName};
 use tokio::task::JoinHandle;
@@ -542,6 +542,13 @@ impl Injection {
     pub(crate) fn running_workspaces(&self) -> Vec<WorkspaceName> {
         self.running().keys().cloned().collect()
     }
+}
+
+/// The log of what the last read of each credential came to, which sends
+/// [`Event::IdentitiesChanged`] when a credential's outcome moves so the screens refetch the
+/// identities and show it. Memory only: after a restart a credential has no entry until it is read.
+pub(crate) fn credential_read_log(sink: Arc<dyn EventSink>) -> Arc<ReadLog> {
+    Arc::new(ReadLog::new().with_on_change(move || sink.emit(Event::IdentitiesChanged {})))
 }
 
 /// One sign-in notice for a source is sent at most this often, however many reads fail (a Git
@@ -1387,6 +1394,72 @@ mod tests {
         fn emit(&self, event: Event) {
             self.0.lock().unwrap().push(event);
         }
+    }
+
+    /// A source that answers from a script and has a value worth leaking.
+    struct Scripted(Mutex<Vec<Result<(), SourceError>>>);
+
+    impl Fetch for Scripted {
+        fn fetch(
+            &self,
+            _: &SourceSpec,
+        ) -> impl Future<Output = Result<Fetched, SourceError>> + Send {
+            let next = self.0.lock().unwrap().remove(0);
+            std::future::ready(next.map(|()| Fetched {
+                credential: puddle_secrets::Credential {
+                    username: None,
+                    secret: Arc::new(Secret::new("hunter2-the-value".into())),
+                },
+                valid_for: None,
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn every_use_updates_what_the_last_read_came_to_and_the_value_is_never_kept() {
+        use puddle_secrets::ReadUse;
+        let events = Arc::new(Events::default());
+        let reads = credential_read_log(events.clone());
+        let secrets = SecretCache::new(Scripted(Mutex::new(vec![
+            Ok(()),
+            Err(SourceError::NotSignedIn),
+            Err(SourceError::NotSignedIn),
+        ])))
+        .with_read_log(Arc::clone(&reads));
+        let spec = SourceSpec::Gh {
+            host: HostName::new("github.com").unwrap(),
+            account: AccountName::new("me").unwrap(),
+        };
+        assert_eq!(reads.last(&spec), None, "no read yet");
+
+        secrets.get(&spec).await.unwrap();
+        let first = reads.last(&spec).unwrap();
+        assert_eq!(
+            (first.by, first.problem.clone()),
+            (ReadUse::Injection, None)
+        );
+        assert_eq!(told(&events), [Event::IdentitiesChanged {}]);
+        assert!(!format!("{first:?}").contains("hunter2"));
+
+        // A repository list forces a new read (the entry is invalidated) that fails.
+        secrets.invalidate(&spec);
+        assert!(
+            secrets
+                .get_for(&spec, ReadUse::RepositoryList)
+                .await
+                .is_err()
+        );
+        let second = reads.last(&spec).unwrap();
+        assert_eq!(
+            (second.by, second.problem.clone()),
+            (ReadUse::RepositoryList, Some(SourceError::NotSignedIn))
+        );
+        assert_eq!(told(&events).len(), 2, "readable to a problem is news");
+
+        // The same failure again moves nothing, but is still the latest read.
+        assert!(secrets.get_for(&spec, ReadUse::Injection).await.is_err());
+        assert_eq!(reads.last(&spec).unwrap().by, ReadUse::Injection);
+        assert_eq!(told(&events).len(), 2);
     }
 
     #[tokio::test]

@@ -364,6 +364,12 @@ function connectionDetail(
   const unreached = unreachedNote(record);
   if (unreached !== null) parts.push(unreached);
   if (record.injected) parts.push("credential added");
+  if (record.refused_address !== null) {
+    const why = record.refused_reason ?? "";
+    parts.push(
+      `the answer also held ${record.refused_address} (${REASONS[why] ?? why}), which Puddle did not use`,
+    );
+  }
   if (record.unswapped_stand_ins.length > 0) {
     parts.push(unswappedNote(record.unswapped_stand_ins));
   }

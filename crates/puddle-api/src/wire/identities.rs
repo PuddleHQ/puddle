@@ -139,6 +139,91 @@ pub struct IdentityCredential {
     pub covers: CredentialCoverage,
 }
 
+/// What the last read of a credential came to, wherever the read came from. Never the value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct LastCheck {
+    /// True when the source gave a value.
+    pub readable: bool,
+    /// Why not, in words; `null` when it is readable.
+    #[schema(required = true)]
+    pub problem: Option<String>,
+    /// True when the way out is for the user to sign in.
+    pub needs_sign_in: bool,
+    /// Epoch ms the read finished.
+    pub checked_at: u64,
+    /// What asked for it.
+    pub by: CheckedBy,
+}
+
+/// What asked for a read of a credential.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckedBy {
+    /// A workspace's request needed the credential.
+    Injection,
+    /// Puddle listed the Git host's repositories.
+    RepositoryList,
+    /// You pressed Test.
+    Test,
+}
+
+impl LastCheck {
+    pub(crate) fn from_read(read: &puddle_secrets::LastRead) -> Self {
+        let result = read
+            .problem
+            .as_ref()
+            .map_or_else(super::CheckResult::readable, super::CheckResult::from_error);
+        Self {
+            readable: result.readable,
+            problem: result.problem,
+            needs_sign_in: result.needs_sign_in,
+            checked_at: read
+                .at
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
+            by: match read.by {
+                puddle_secrets::ReadUse::Injection => CheckedBy::Injection,
+                puddle_secrets::ReadUse::RepositoryList => CheckedBy::RepositoryList,
+                // `ReadUse` grows with each new kind of reader; an unnamed one is the user's.
+                _ => CheckedBy::Test,
+            },
+        }
+    }
+}
+
+/// A credential of an identity as the host shows it: the reference and what the last read of it
+/// came to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct IdentityCredentialView {
+    /// The Git host (`github.com`, `dev.azure.com`).
+    pub host: String,
+    /// Where its value comes from.
+    pub source: CredentialSource,
+    /// What it covers.
+    pub covers: CredentialCoverage,
+    /// The last read of its source since Puddle started; `null` before any.
+    #[schema(required = true)]
+    pub last_check: Option<LastCheck>,
+}
+
+impl IdentityCredentialView {
+    fn from_store(
+        binding: &store::CredentialBinding,
+        credentials: &dyn crate::CredentialService,
+    ) -> Option<Self> {
+        let plain = IdentityCredential::from_store(binding)?;
+        Some(Self {
+            host: plain.host,
+            source: plain.source,
+            covers: plain.covers,
+            last_check: credentials
+                .last_read(&binding.source)
+                .as_ref()
+                .map(LastCheck::from_read),
+        })
+    }
+}
+
 impl IdentityCredential {
     fn from_store(binding: &store::CredentialBinding) -> Option<Self> {
         Some(Self {
@@ -199,8 +284,8 @@ pub struct IdentityView {
     pub label: String,
     /// The commit author.
     pub author: IdentityAuthor,
-    /// Its credentials, as references.
-    pub credentials: Vec<IdentityCredential>,
+    /// Its credentials, as references, with the last read of each.
+    pub credentials: Vec<IdentityCredentialView>,
     /// How it signs.
     pub signing: IdentitySigning,
     /// Whether it is the default: what a new workspace gets when no identity covers its URL.
@@ -214,7 +299,11 @@ pub struct IdentityView {
 }
 
 impl IdentityView {
-    pub(crate) fn from_store(identity: store::Identity, workspaces: Vec<WorkspaceName>) -> Self {
+    pub(crate) fn from_store(
+        identity: store::Identity,
+        workspaces: Vec<WorkspaceName>,
+        credentials: &dyn crate::CredentialService,
+    ) -> Self {
         Self {
             id: identity.id.0,
             label: identity.label,
@@ -225,7 +314,7 @@ impl IdentityView {
             credentials: identity
                 .credentials
                 .iter()
-                .filter_map(IdentityCredential::from_store)
+                .filter_map(|binding| IdentityCredentialView::from_store(binding, credentials))
                 .collect(),
             signing: IdentitySigning::None,
             is_default: identity.is_default,

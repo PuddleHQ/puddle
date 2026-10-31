@@ -431,6 +431,8 @@ fn connection(ts: u64, workspace: &str, host: &str, decision: ConnectionDecision
         rule_id: None,
         rule_set: None,
         request_rule: None,
+        refused_address: None,
+        refused_reason: None,
         pending_id: None,
         binding_id: None,
         injected: false,

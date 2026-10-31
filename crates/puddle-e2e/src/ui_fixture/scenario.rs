@@ -341,6 +341,18 @@ pub struct GitRepoSeed {
     pub push: bool,
 }
 
+/// What asked for a read of a credential.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadBy {
+    /// A workspace's request needed it.
+    Injection,
+    /// Puddle listed the Git host's repositories.
+    RepositoryList,
+    /// The user pressed Test.
+    Test,
+}
+
 /// What the credentials service answers at start.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -740,6 +752,20 @@ pub enum Step {
         source: CredentialSource,
         /// Whether it reads now.
         readable: bool,
+    },
+    /// Notes that a read of a credential finished `ago_ms` ago, as a workspace's request, a
+    /// repository list or a test would have, and sends `identities_changed` as the host does when
+    /// the outcome moves. It does not change what a later test finds.
+    CredentialRead {
+        /// The credential's source.
+        source: CredentialSource,
+        /// What asked: `injection`, `repository_list` or `test`.
+        by: ReadBy,
+        /// Whether the read gave a value; `false` is "not signed in".
+        readable: bool,
+        /// How long ago it finished, in ms; zero (the default) is now.
+        #[serde(default)]
+        ago_ms: u64,
     },
     /// Replaces the accounts "found on this computer".
     CredentialsFound {

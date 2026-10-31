@@ -219,7 +219,8 @@ pub struct Target {
     pub data_folder: PathBuf,
     /// The workspace's window settings.
     pub settings: WindowSettings,
-    /// The editor's session cookie, when its server asks for a password ([`signin::sign_in`]).
+    /// The cookie that signs the window in: code-server's session ([`signin::sign_in`]) or
+    /// Microsoft's server's connection token ([`SessionCookie::connection_token`]).
     pub cookie: Option<SessionCookie>,
     /// A port for WebView2's DevTools Protocol, for the smoke test (Windows only; the window is
     /// otherwise built as for a user).
@@ -728,10 +729,11 @@ fn session_cookie(target: &Target, cookie: &SessionCookie) -> Cookie<'static> {
         // No leading dot: WebView2 then makes a cookie for this host only, not its subdomains.
         .domain(format!("{}.localhost", target.workspace))
         .path("/")
-        .http_only(true)
+        .http_only(!cookie.script_reads())
         // Not `Secure`: this is an http loopback origin, and WebKitGTK (2.54, libsoup 3.6) drops a
         // Secure cookie for `http://<name>.localhost` instead of sending it, which would break
-        // sign-in. HttpOnly and SameSite stay; no network path reaches a loopback origin.
+        // sign-in. SameSite stays, and HttpOnly unless the page's script must read the cookie; no
+        // network path reaches a loopback origin.
         .same_site(tauri::webview::cookie::SameSite::Lax)
         .build()
 }
@@ -1234,6 +1236,18 @@ mod tests {
         );
         // The credential is never part of the address.
         assert!(!window.url().unwrap().as_str().contains("abc"));
+    }
+
+    #[test]
+    fn microsoft_s_connection_token_is_a_cookie_the_workbench_s_script_can_read() {
+        let data = tempfile::tempdir().unwrap();
+        let token = SessionCookie::connection_token("tok");
+        let set = session_cookie(&target("demo", data.path(), Some(token.clone())), &token);
+        assert_eq!(
+            (set.name(), set.value(), set.domain(), set.http_only()),
+            ("vscode-tkn", "tok", Some("demo.localhost"), Some(false))
+        );
+        assert!(!format!("{token:?}").contains("tok\""), "{token:?}");
     }
 
     #[test]

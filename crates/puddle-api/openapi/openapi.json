@@ -9199,6 +9199,8 @@
               "rule_id",
               "request_rule",
               "rule_set",
+              "refused_address",
+              "refused_reason",
               "pending_id",
               "binding_id",
               "injected",
@@ -9315,6 +9317,20 @@
               "reason": {
                 "type": "string",
                 "description": "Why: `rule`, `no_rule`, or a block reason."
+              },
+              "refused_address": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The first address of the answer that the address guard refused, while the connection\nwent to the allowed addresses only. `null` when none was refused and in records written\nbefore it existed."
+              },
+              "refused_reason": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Why `refused_address` was refused: a reason code such as `toggle:private`."
               },
               "request_rule": {
                 "type": [
@@ -10230,6 +10246,15 @@
             "description": "True when the source gave a value."
           }
         }
+      },
+      "CheckedBy": {
+        "type": "string",
+        "description": "What asked for a read of a credential.",
+        "enum": [
+          "injection",
+          "repository_list",
+          "test"
+        ]
       },
       "Checkout": {
         "type": "object",
@@ -12464,6 +12489,41 @@
           }
         }
       },
+      "IdentityCredentialView": {
+        "type": "object",
+        "description": "A credential of an identity as the host shows it: the reference and what the last read of it\ncame to.",
+        "required": [
+          "host",
+          "source",
+          "covers",
+          "last_check"
+        ],
+        "properties": {
+          "covers": {
+            "$ref": "#/components/schemas/CredentialCoverage",
+            "description": "What it covers."
+          },
+          "host": {
+            "type": "string",
+            "description": "The Git host (`github.com`, `dev.azure.com`)."
+          },
+          "last_check": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LastCheck",
+                "description": "The last read of its source since Puddle started; `null` before any."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/CredentialSource",
+            "description": "Where its value comes from."
+          }
+        }
+      },
       "IdentityDeleted": {
         "type": "object",
         "description": "What deleting an identity changed.",
@@ -12588,9 +12648,9 @@
           "credentials": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/IdentityCredential"
+              "$ref": "#/components/schemas/IdentityCredentialView"
             },
-            "description": "Its credentials, as references."
+            "description": "Its credentials, as references, with the last read of each."
           },
           "id": {
             "type": "integer",
@@ -12780,6 +12840,44 @@
             "format": "int64",
             "description": "How many events were dropped.",
             "minimum": 0
+          }
+        }
+      },
+      "LastCheck": {
+        "type": "object",
+        "description": "What the last read of a credential came to, wherever the read came from. Never the value.",
+        "required": [
+          "readable",
+          "problem",
+          "needs_sign_in",
+          "checked_at",
+          "by"
+        ],
+        "properties": {
+          "by": {
+            "$ref": "#/components/schemas/CheckedBy",
+            "description": "What asked for it."
+          },
+          "checked_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch ms the read finished.",
+            "minimum": 0
+          },
+          "needs_sign_in": {
+            "type": "boolean",
+            "description": "True when the way out is for the user to sign in."
+          },
+          "problem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why not, in words; `null` when it is readable."
+          },
+          "readable": {
+            "type": "boolean",
+            "description": "True when the source gave a value."
           }
         }
       },

@@ -38,7 +38,7 @@ use std::time::Duration;
 
 use puddle_e2e::lab::{WebHost, WebOptions, pip_index};
 use puddle_store::{Actor, Effect, NewRule, Pattern, Resolution, Scope};
-use puddle_test_kit::eventually;
+use puddle_test_kit::{eventually, eventually_async};
 use puddle_types::WorkspaceName;
 use serde_json::json;
 use support::{Api, ended, hermetic_options};
@@ -412,6 +412,22 @@ async fn vm_capture_survives_a_root_that_deletes_the_rules() {
     assert!(
         allowed_connections(&vm, "1.0.0.1", 80) == 0,
         "a connection to 1.0.0.1 was allowed"
+    );
+
+    // The agent told the host, and the user can see it: a counted problem on this workspace.
+    let key = format!("capture-tamper:{workspace}");
+    let listed = eventually_async(
+        "the host lists the capture tamper problem",
+        Duration::from_secs(60),
+        || async {
+            let body = api.get("/api/problems").await.body;
+            body.contains(&key).then_some(body)
+        },
+    )
+    .await;
+    assert!(
+        listed.contains("deleted Puddle's capture rules; Puddle put them back"),
+        "{listed}"
     );
 
     let down = vm.host.shutdown().await;

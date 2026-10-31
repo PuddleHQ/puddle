@@ -1150,9 +1150,35 @@ pub struct BrowserTarget {
     pub front: std::net::SocketAddr,
     /// The workspace's settings, of which a window uses zoom and the clipboard prompt.
     pub settings: puddle_settings::Effective,
-    /// The way to the editor's password, when its server asks for one (code-server); `None` for
-    /// Microsoft's server, which the front signs in with its own cookie.
-    pub login: Option<Arc<dyn EditorLogin>>,
+    /// How the window signs in to the editor server; `None` when no server is known to run.
+    pub login: Option<EditorSignIn>,
+}
+
+/// How a window signs in to a workspace's editor server. Either way the window carries the
+/// editor's password (or what it buys) in a cookie set before it navigates, never in a URL.
+#[derive(Clone)]
+pub enum EditorSignIn {
+    /// code-server: the password goes in a login form POST to `/login` on the editor's origin, and
+    /// the window gets the session cookie the answer sets.
+    Form(Arc<dyn EditorLogin>),
+    /// Microsoft's server: the password is its connection token, which the window carries in the
+    /// cookie [`CONNECTION_TOKEN_COOKIE`]. The server refuses every request without it, and the
+    /// workbench's script reads it from the cookie for its socket's handshake, so it can't be
+    /// `HttpOnly`.
+    ConnectionToken(Arc<dyn EditorLogin>),
+}
+
+/// The cookie Microsoft's server reads its connection token from.
+pub const CONNECTION_TOKEN_COOKIE: &str = "vscode-tkn";
+
+impl EditorSignIn {
+    /// The way to the password, whichever the use.
+    #[must_use]
+    pub fn reader(&self) -> &Arc<dyn EditorLogin> {
+        match self {
+            Self::Form(login) | Self::ConnectionToken(login) => login,
+        }
+    }
 }
 
 impl fmt::Debug for BrowserTarget {
@@ -1376,9 +1402,9 @@ mod tests {
                 &puddle_settings::GlobalSettings::default(),
                 None::<&puddle_settings::WorkspaceSettings>,
             ),
-            login: Some(Arc::new(SecretLogin(secret.clone()))),
+            login: Some(EditorSignIn::Form(Arc::new(SecretLogin(secret.clone())))),
         };
-        let login = target.login.as_ref().unwrap();
+        let login = target.login.as_ref().unwrap().reader();
         assert_eq!(
             futures_util::FutureExt::now_or_never(login.password())
                 .unwrap()

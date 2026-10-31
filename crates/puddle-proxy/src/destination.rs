@@ -234,4 +234,33 @@ mod tests {
                 .all(|a| a.port() == 8080 && a.ip().is_loopback())
         );
     }
+
+    /// A double that blocks every address with the reason it was built with, or allows all.
+    struct Fixed(Option<BlockReason>);
+
+    impl AddressCheck for Fixed {
+        fn check(&self, _: &WorkspaceName, _: SocketAddr) -> AddressVerdict {
+            self.0.map_or(AddressVerdict::Allow, AddressVerdict::Block)
+        }
+    }
+
+    #[test]
+    fn the_default_name_stage_blocks_an_ip_literal_the_address_check_blocks() {
+        let workspace = WorkspaceName::new("box").unwrap();
+        let literal = puddle_netpolicy::normalise_host("203.0.113.9").unwrap();
+        let name = puddle_netpolicy::normalise_host("example.com").unwrap();
+        let blocking = Fixed(Some(BlockReason::PuddleEndpoint));
+        assert_eq!(
+            blocking.check_target(&workspace, &literal, 443),
+            Some(BlockReason::PuddleEndpoint)
+        );
+        assert_eq!(blocking.check_target(&workspace, &name, 443), None);
+        assert_eq!(Fixed(None).check_target(&workspace, &literal, 443), None);
+    }
+
+    #[test]
+    fn a_numeric_lookup_gives_one_stream_address_with_the_port() {
+        let addrs = lookup("127.0.0.1", 8080).unwrap();
+        assert_eq!(addrs, ["127.0.0.1:8080".parse::<SocketAddr>().unwrap()]);
+    }
 }

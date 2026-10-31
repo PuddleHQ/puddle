@@ -274,7 +274,8 @@ unsafe fn sid_start(ace: *const c_void) -> PSID {
 /// after `AceSize` says it is there.
 unsafe fn ace_holds_a_sid(ace: *const c_void) -> bool {
     // SAFETY: the caller guarantees the header.
-    let ace_size = usize::from(unsafe { (*ace.cast::<ACE_HEADER>()).AceSize });
+    let header = unsafe { &*ace.cast::<ACE_HEADER>() };
+    let ace_size = usize::from(header.AceSize);
     if ace_size < size_of::<ACCESS_ALLOWED_ACE>() {
         return false;
     }

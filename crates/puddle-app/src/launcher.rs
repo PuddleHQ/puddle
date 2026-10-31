@@ -4,7 +4,7 @@
 //!
 //! The host calls [`Launcher::open_browser`] on an attach in the browser, with where the editor is
 //! and a way to its password. The shell signs in on the window's behalf and opens the window; the
-//! password goes no further than the sign-in (AT-34). The windows are installed once the backend
+//! password goes no further than the sign-in. The windows are installed once the backend
 //! has started ([`AppLauncher::install`]): their hooks need the backend's problem list, which exists
 //! only after the host that holds this launcher.
 

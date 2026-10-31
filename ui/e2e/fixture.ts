@@ -19,6 +19,8 @@ export interface Control {
     now_ms: number;
     pending: number;
     scripts: string[];
+    /** Ids of the pasted tokens the fake credential store keeps. */
+    kept_tokens: string[];
   }>;
   /** An `Event` in its wire form, e.g. `{ type: "oom_kill", workspace, pid, process }`. */
   emit(event: Record<string, unknown>): Promise<void>;

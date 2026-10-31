@@ -5,5 +5,8 @@
   "license": "GPL-3.0-or-later",
   "devDependencies": {
     "openapi-typescript": "7.13.0"
+  },
+  "overrides": {
+    "minimatch": "11.0.3"
   }
 }

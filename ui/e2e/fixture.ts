@@ -12,6 +12,7 @@ import { loadavg, tmpdir } from "node:os";
 import { join } from "node:path";
 import { throttleCpu } from "./cpu-throttle.ts";
 import { FIXTURE_BIN_ENV } from "./fixture-build.ts";
+import { WARM_UP_TIMEOUT_MS } from "./warm-up.ts";
 
 export interface Control {
   state(): Promise<{
@@ -187,27 +188,34 @@ export const test = base.extend<
   },
   // As Playwright's own `page`, plus a line when opening it is slow: `newPage` has no time limit
   // of its own, so a stalled open showed only as "Test timeout exceeded while setting up page".
-  page: async ({ context, browserName }, use) => {
-    const began = Date.now();
-    const slow = setTimeout(() => {
-      console.warn(
-        `page still not open after ${SLOW_PAGE_MS} ms: ${pageOpenState(browserName)}`,
-      );
-    }, SLOW_PAGE_MS);
-    let page: Page;
-    try {
-      page = await context.newPage();
-    } finally {
-      clearTimeout(slow);
-    }
-    if (Date.now() - began >= SLOW_PAGE_MS) {
-      console.warn(
-        `page opened after ${Date.now() - began} ms: ${pageOpenState(browserName)}`,
-      );
-    }
-    await throttleCpu(page, browserName);
-    await use(page);
-  },
+  // The open has its own limit, the one the warm-up gives the same call, so the test's 30 s are
+  // spent on what it checks: a WebKit page took 8 to 14 s to open on a host at load 335 on 40
+  // cores, and once over 30 s, which failed a one-second test on its setup. A page that is
+  // stalled still fails, by name, after that limit.
+  page: [
+    async ({ context, browserName }, use) => {
+      const began = Date.now();
+      const slow = setTimeout(() => {
+        console.warn(
+          `page still not open after ${SLOW_PAGE_MS} ms: ${pageOpenState(browserName)}`,
+        );
+      }, SLOW_PAGE_MS);
+      let page: Page;
+      try {
+        page = await context.newPage();
+      } finally {
+        clearTimeout(slow);
+      }
+      if (Date.now() - began >= SLOW_PAGE_MS) {
+        console.warn(
+          `page opened after ${Date.now() - began} ms: ${pageOpenState(browserName)}`,
+        );
+      }
+      await throttleCpu(page, browserName);
+      await use(page);
+    },
+    { scope: "test", timeout: WARM_UP_TIMEOUT_MS },
+  ],
   baseURL: async ({ workerBackend }, use) => {
     await use(workerBackend.url);
   },

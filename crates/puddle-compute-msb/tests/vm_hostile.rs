@@ -176,24 +176,52 @@ async fn vm_hostile_hg02_only_the_routed_vsock_port_accepts() {
 /// the guest, writable, at this path.
 const GUEST_JOURNAL: &str = "/.msb/root-disk.json";
 
-/// The SHA-256 of a file, read in pieces (a root disk is gigabytes, sparse).
+/// A SHA-256 over a file's content: its length, then every 1 MiB piece that is not all zeros,
+/// with its offset. Two files have the same one exactly when their bytes are the same. A root
+/// disk is 4 GiB and mostly holes, and a debug build hashes at about 20 MB/s, so the zero
+/// pieces (found by a plain comparison) are left out of the hash, not out of the comparison.
 #[expect(
     clippy::unwrap_used,
     reason = "a file the test cannot read fails the test"
 )]
-fn sha256_file(path: &Path) -> String {
+fn fingerprint(path: &Path) -> String {
     use sha2::{Digest, Sha256};
+    const PIECE: usize = 1 << 20;
+    let zeros = vec![0_u8; PIECE];
     let mut file = std::fs::File::open(path).unwrap();
     let mut hasher = Sha256::new();
-    let mut buf = vec![0_u8; 1 << 20];
+    hasher.update(file.metadata().unwrap().len().to_le_bytes());
+    let mut buf = vec![0_u8; PIECE];
+    let mut offset = 0_u64;
     loop {
-        let n = file.read(&mut buf).unwrap();
+        let n = read_piece(&mut file, &mut buf);
         let Some(piece) = buf.get(..n).filter(|p| !p.is_empty()) else {
             break;
         };
-        hasher.update(piece);
+        if zeros.get(..n) != Some(piece) {
+            hasher.update(offset.to_le_bytes());
+            hasher.update(piece);
+        }
+        offset += n as u64;
     }
     support::mount_attack::hex(&hasher.finalize())
+}
+
+/// Fills `buf` from `file` unless the file ends first, so pieces start at fixed offsets.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a file the test cannot read fails the test"
+)]
+fn read_piece(file: &mut std::fs::File, buf: &mut [u8]) -> usize {
+    let mut filled = 0;
+    while let Some(rest) = buf.get_mut(filled..).filter(|r| !r.is_empty()) {
+        let n = file.read(rest).unwrap();
+        if n == 0 {
+            break;
+        }
+        filled += n;
+    }
+    filled
 }
 
 /// As root in the guest, replaces the journal's first layer with `target` and its launch base
@@ -278,7 +306,7 @@ async fn vm_hostile_hg44_a_rewritten_root_disk_journal_attaches_no_file_outside_
         forge_journal(&sb, &journal, &own, target).await;
         sb.stop().await.unwrap();
         let landed = std::fs::read_to_string(&host_journal).unwrap();
-        let before = sha256_file(target);
+        let before = fingerprint(target);
         let started = rt.start(&n).await;
         // A start that went through has the file attached: stop it before reading the file
         // again, so what the guest wrote is on disk and the next round starts from a stopped
@@ -290,7 +318,7 @@ async fn vm_hostile_hg44_a_rewritten_root_disk_journal_attaches_no_file_outside_
             }
             Err(e) => Some(e),
         };
-        let after = sha256_file(target);
+        let after = fingerprint(target);
         outcomes.push((target.clone(), landed, refused, before, after));
     }
     cleanup(&rt, &[&n, &other_name]).await;

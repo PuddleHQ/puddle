@@ -38,8 +38,8 @@ use tokio::time::Instant;
 use tokio_yamux::{Session, StreamHandle};
 
 use crate::control::{
-    self, AgentMessage, MAX_EDITOR_PROBLEM_CHARS, MAX_LINE, MAX_PORTS, PROTOCOL_VERSION,
-    StubDnsTrouble,
+    self, AgentMessage, EditorProblemKind, MAX_EDITOR_PROBLEM_CHARS, MAX_LINE, MAX_PORTS,
+    PROTOCOL_VERSION, StubDnsTrouble,
 };
 use crate::forward::GuestLink;
 use crate::kind::{MAX_PREAMBLE, StreamKind, parse_preamble};
@@ -192,10 +192,12 @@ pub enum AgentReport {
         /// How often since the agent's last report of this kind.
         count: u32,
     },
-    /// The browser editor's server could not be installed, or can be again.
+    /// A problem with the browser editor's server, or the end of one.
     EditorStatus {
-        /// Why it cannot be installed, at most [`MAX_EDITOR_PROBLEM_CHARS`] characters, control
-        /// characters replaced by `?`; `None` when it can.
+        /// Which problem (never [`EditorProblemKind::Unknown`]: the session drops those).
+        kind: EditorProblemKind,
+        /// What is wrong, at most [`MAX_EDITOR_PROBLEM_CHARS`] characters, control characters
+        /// replaced by `?`; `None` when the problem of this `kind` is over.
         problem: Option<String>,
     },
 }
@@ -601,24 +603,37 @@ async fn on_message<H: StreamHandler>(msg: AgentMessage, shared: &Shared<H>) {
                 .agent_report(AgentReport::StubDns { kind, count })
                 .await;
         }
-        AgentMessage::EditorStatus { problem } => {
-            let problem = problem
-                .map(|p| clean(&p, MAX_EDITOR_PROBLEM_CHARS))
-                .filter(|p| !p.is_empty());
-            if let Some(problem) = &problem {
-                tracing::warn!(%workspace, %problem, "the editor server could not be installed in the guest");
-            } else {
-                tracing::info!(%workspace, "the editor server is installed in the guest");
-            }
-            shared
-                .handler
-                .agent_report(AgentReport::EditorStatus { problem })
-                .await;
+        AgentMessage::EditorStatus { kind, problem } => {
+            on_editor_status(workspace, kind, problem, shared).await;
         }
         AgentMessage::Unknown => {
             tracing::debug!(%workspace, "unknown control message ignored");
         }
     }
+}
+
+async fn on_editor_status<H: StreamHandler>(
+    workspace: &WorkspaceName,
+    kind: EditorProblemKind,
+    problem: Option<String>,
+    shared: &Shared<H>,
+) {
+    if kind == EditorProblemKind::Unknown {
+        tracing::debug!(%workspace, "editor report of an unknown kind ignored");
+        return;
+    }
+    let problem = problem
+        .map(|p| clean(&p, MAX_EDITOR_PROBLEM_CHARS))
+        .filter(|p| !p.is_empty());
+    if let Some(problem) = &problem {
+        tracing::warn!(%workspace, ?kind, %problem, "the guest's editor server has a problem");
+    } else {
+        tracing::info!(%workspace, ?kind, "the guest's editor server has no such problem now");
+    }
+    shared
+        .handler
+        .agent_report(AgentReport::EditorStatus { kind, problem })
+        .await;
 }
 
 /// Cuts `s` to `max` characters and replaces control characters, for guest text in logs.

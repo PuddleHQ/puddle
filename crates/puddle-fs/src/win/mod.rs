@@ -13,7 +13,7 @@ pub mod testing;
 use std::ffi::{OsStr, c_void};
 use std::fs::File;
 use std::io;
-use std::mem::offset_of;
+use std::mem::{MaybeUninit, offset_of};
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::Path;
@@ -218,70 +218,104 @@ pub fn dacl_is_owner_only(file: &File) -> io::Result<Result<(), String>> {
     let token = process_token(TOKEN_QUERY)?;
     let user = TokenUserBuf::read(&token)?;
     for index in 0..info.AceCount {
-        let mut ace: *mut c_void = ptr::null_mut();
-        // SAFETY: `index` is below AceCount; `ace` receives a pointer into the ACL.
-        if unsafe { GetAce(dacl, index, &raw mut ace) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: GetAce succeeded, so `ace` points at an ACE in the ACL, and every ACE starts
-        // with an ACE_HEADER. Only the header is read until the type says how long the ACE is.
-        let header = unsafe { ace.cast::<ACE_HEADER>().read() };
-        if u32::from(header.AceType) != ACCESS_ALLOWED_ACE_TYPE {
-            return Ok(Err(format!("entry {index} is not a plain allow entry")));
-        }
-        // SAFETY: `ace` points at an ACE whose header was read above; the function checks the size
-        // before it reads any of the SID.
-        if !unsafe { ace_holds_a_sid(ace, header.AceSize) } {
-            return Ok(Err(format!("entry {index} is too short to hold a SID")));
-        }
-        // SAFETY: the type and size checks above make this a whole ACCESS_ALLOWED_ACE, and
-        // `ace_holds_a_sid` showed that its whole SID is inside `AceSize`. `EqualSid` only reads
-        // it; the user's SID is valid while `user` lives.
-        let same = unsafe { EqualSid(sid_start(ace), user.sid()) };
-        if same == 0 {
-            return Ok(Err(format!(
-                "entry {index} grants access to another account"
-            )));
+        // SAFETY: `index` is below AceCount, and `dacl` lives in `descriptor`, which outlives the
+        // loop.
+        let ace = unsafe { ace_bytes(dacl, index) }?;
+        match allowed_sid(ace) {
+            Ok(sid) => {
+                // SAFETY: `allowed_sid` showed the whole SID is inside `ace`; `EqualSid` only
+                // reads it, and the user's SID is valid while `user` lives.
+                if unsafe { EqualSid(sid, user.sid()) } == 0 {
+                    return Ok(Err(format!(
+                        "entry {index} grants access to another account"
+                    )));
+                }
+            }
+            Err(AceRefusal::NotAllowEntry) => {
+                return Ok(Err(format!("entry {index} is not a plain allow entry")));
+            }
+            Err(AceRefusal::TooShort) => {
+                return Ok(Err(format!("entry {index} is too short to hold a SID")));
+            }
         }
     }
     Ok(Ok(()))
 }
 
-/// The address of the SID inside the `ACCESS_ALLOWED_ACE` at `ace`, by byte offset from the pointer
-/// `GetAce` gave. The SID extends past the struct, so no reference or field projection is made.
+/// The bytes of entry `index` of `dacl`, as long as the entry says it is. This is the only code
+/// that follows the pointer `GetAce` returns: it checks it for null, and builds both slices with
+/// `from_raw_parts`, so no reference or field projection is made on a pointer into the ACL and
+/// everything after it works on a checked `&[u8]`.
 ///
 /// # Safety
 ///
-/// `ace` must point at an ACE at least `size_of::<ACCESS_ALLOWED_ACE>()` bytes long.
-unsafe fn sid_start(ace: *const c_void) -> PSID {
-    // SAFETY: the caller guarantees the offset is inside the ACE.
-    unsafe {
-        ace.cast::<u8>()
-            .add(offset_of!(ACCESS_ALLOWED_ACE, SidStart))
+/// `index` must be below the ACL's `AceCount`, and `dacl` must stay valid and unchanged for `'a`.
+pub(crate) unsafe fn ace_bytes<'a>(dacl: *mut ACL, index: u32) -> io::Result<&'a [u8]> {
+    let mut out = MaybeUninit::<*mut c_void>::uninit();
+    // SAFETY: the caller guarantees the index; `out` is written by a successful call.
+    if unsafe { GetAce(dacl, index, out.as_mut_ptr()) } == 0 {
+        return Err(io::Error::last_os_error());
     }
-    .cast_mut()
-    .cast()
+    // SAFETY: GetAce succeeded, so it wrote the pointer.
+    let ace = unsafe { out.assume_init() }.cast::<u8>().cast_const();
+    if ace.is_null() {
+        return Err(io::Error::other("GetAce returned a null entry"));
+    }
+    // SAFETY: every ACE starts with an ACE_HEADER, and `ace` is not null.
+    let header = unsafe { std::slice::from_raw_parts(ace, size_of::<ACE_HEADER>()) };
+    // ACE_HEADER is AceType (u8), AceFlags (u8), AceSize (u16, little endian).
+    let &[_, _, size_low, size_high] = header else {
+        return Err(io::Error::other("an ACE header is not 4 bytes"));
+    };
+    let size = usize::from(u16::from_le_bytes([size_low, size_high]));
+    if size < header.len() {
+        return Err(io::Error::other("an ACE is smaller than its own header"));
+    }
+    // SAFETY: the header says the entry is `size` bytes, and it lies inside the ACL.
+    Ok(unsafe { std::slice::from_raw_parts(ace, size) })
 }
 
-/// Whether the `ACCESS_ALLOWED_ACE` at `ace` holds its whole SID inside `AceSize`, so that nothing
-/// read through `SidStart` (`EqualSid`) leaves the entry. A SID is 8 bytes plus 4 per
-/// sub-authority, so the struct (which holds 4 bytes of it) is not enough: the length the SID's own
-/// header claims must fit too.
-///
-/// # Safety
-///
-/// `ace` must point at an ACE whose `ACE_HEADER` said it is `ace_size` bytes long; the rest is
-/// read only after the size says it is there. The size is a parameter so this function never
-/// dereferences the `GetAce` pointer itself.
-unsafe fn ace_holds_a_sid(ace: *const c_void, ace_size: u16) -> bool {
-    let ace_size = usize::from(ace_size);
-    if ace_size < size_of::<ACCESS_ALLOWED_ACE>() {
-        return false;
+/// Why `allowed_sid` refused an entry.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum AceRefusal {
+    /// Not an `ACCESS_ALLOWED_ACE_TYPE` entry (a deny entry, an audit entry, ...).
+    NotAllowEntry,
+    /// Too small to hold the SID it claims.
+    TooShort,
+}
+
+/// The SID of the `ACCESS_ALLOWED_ACE` in `ace` (a whole entry, as `ace_bytes` returns it), once
+/// its whole SID is known to be inside the entry, so that nothing read through the SID leaves it.
+/// A SID is 8 bytes plus 4 per sub-authority, so the struct (which holds 4 bytes of it) is not
+/// enough: the length the SID's own header claims, which `GetLengthSid` reads, must fit too.
+pub(crate) fn allowed_sid(ace: &[u8]) -> Result<PSID, AceRefusal> {
+    // ACE_HEADER's first byte is AceType; ACCESS_ALLOWED_ACE is the 4-byte header, the 4-byte
+    // access mask, then the SID.
+    if u32::from(*ace.first().ok_or(AceRefusal::TooShort)?) != ACCESS_ALLOWED_ACE_TYPE {
+        return Err(AceRefusal::NotAllowEntry);
     }
+    let sid_offset = offset_of!(ACCESS_ALLOWED_ACE, SidStart);
+    if ace.len() < size_of::<ACCESS_ALLOWED_ACE>() {
+        return Err(AceRefusal::TooShort);
+    }
+    let sid_bytes = ace.get(sid_offset..).ok_or(AceRefusal::TooShort)?;
+    let sid: PSID = sid_bytes.as_ptr().cast_mut().cast();
     // SAFETY: the size check covers the 4 bytes of `SidStart`, which hold the SID's revision and
-    // sub-authority count, all that `GetLengthSid` reads. The pointer comes straight from `ace`.
-    let sid_length = unsafe { GetLengthSid(sid_start(ace)) } as usize;
-    ace_size - offset_of!(ACCESS_ALLOWED_ACE, SidStart) >= sid_length
+    // sub-authority count, all that `GetLengthSid` reads.
+    let sid_length = unsafe { GetLengthSid(sid) } as usize;
+    if sid_bytes.len() >= sid_length {
+        Ok(sid)
+    } else {
+        Err(AceRefusal::TooShort)
+    }
+}
+
+/// The access mask of an `ACCESS_ALLOWED_ACE` in `ace`, or `None` when it is shorter than the
+/// struct.
+#[cfg(any(test, feature = "testing"))]
+pub(crate) fn allowed_mask(ace: &[u8]) -> Option<u32> {
+    let mask = ace.get(size_of::<ACE_HEADER>()..offset_of!(ACCESS_ALLOWED_ACE, SidStart))?;
+    Some(u32::from_le_bytes(mask.try_into().ok()?))
 }
 
 /// Opens this process's token with `access`.
@@ -543,18 +577,22 @@ mod tests {
         );
     }
 
-    /// An `ACCESS_ALLOWED_ACE` in a `u32` buffer (the ACE alignment): `claimed_size` in the header and
-    /// a SID of `sub_authorities` sub-authorities from byte 8 on, as far as `bytes` reaches.
-    fn ace_bytes(claimed_size: u16, sub_authorities: u8, bytes: usize) -> Vec<u32> {
+    /// An `ACCESS_ALLOWED_ACE` in a `u32` buffer of `bytes` bytes: a SID of `sub_authorities`
+    /// sub-authorities from byte 8 on.
+    fn ace_bytes_of(sub_authorities: u8, bytes: usize) -> Vec<u32> {
         let mut buffer = vec![0u32; bytes.div_ceil(4)];
-        let raw: &mut [u8] = as_bytes(&mut buffer);
-        raw[2..4].copy_from_slice(&claimed_size.to_le_bytes());
+        let raw = as_bytes_mut(&mut buffer);
         raw[8] = 1; // SID revision
         raw[9] = sub_authorities;
         buffer
     }
 
-    fn as_bytes(buffer: &mut [u32]) -> &mut [u8] {
+    fn as_bytes(buffer: &[u32]) -> &[u8] {
+        // SAFETY: a `u32` slice is valid as bytes of four times the length.
+        unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast(), buffer.len() * 4) }
+    }
+
+    fn as_bytes_mut(buffer: &mut [u32]) -> &mut [u8] {
         // SAFETY: a `u32` slice is valid as bytes of four times the length, and any bytes are a u32.
         unsafe { std::slice::from_raw_parts_mut(buffer.as_mut_ptr().cast(), buffer.len() * 4) }
     }
@@ -564,32 +602,41 @@ mod tests {
         let header_and_mask = offset_of!(ACCESS_ALLOWED_ACE, SidStart);
         for sub_authorities in [0u8, 1, 5] {
             let sid = 8 + 4 * usize::from(sub_authorities);
-            let size = u16::try_from(header_and_mask + sid).unwrap();
-            let whole = ace_bytes(size, sub_authorities, header_and_mask + sid);
-            // SAFETY: the buffer holds the size it claims.
-            assert!(unsafe { ace_holds_a_sid(whole.as_ptr().cast(), size) });
+            let size = header_and_mask + sid;
+            let whole = ace_bytes_of(sub_authorities, size);
+            assert!(allowed_sid(&as_bytes(&whole)[..size]).is_ok());
         }
     }
 
     #[test]
     fn an_ace_cut_off_inside_its_sid_is_refused() {
-        let whole_struct = u16::try_from(size_of::<ACCESS_ALLOWED_ACE>()).unwrap();
+        let whole_struct = size_of::<ACCESS_ALLOWED_ACE>();
         // Exactly the struct, 4 bytes of a SID that claims 5 sub-authorities: the old check passed it.
-        // The buffer is larger than claimed, so the test reads no memory it does not own.
-        let cut = ace_bytes(whole_struct, 5, 64);
-        // SAFETY: the buffer is 64 bytes.
-        assert!(!unsafe { ace_holds_a_sid(cut.as_ptr().cast(), whole_struct) });
+        let cut = ace_bytes_of(5, 64);
+        assert_eq!(
+            allowed_sid(&as_bytes(&cut)[..whole_struct]),
+            Err(AceRefusal::TooShort)
+        );
         // One byte short of a one-sub-authority SID.
-        let short = ace_bytes(whole_struct + 7, 1, 64);
-        // SAFETY: as above.
-        assert!(!unsafe { ace_holds_a_sid(short.as_ptr().cast(), whole_struct + 7) });
-        // An entry smaller than its own struct.
-        let tiny = ace_bytes(whole_struct - 1, 0, 64);
-        // SAFETY: as above.
-        assert!(!unsafe { ace_holds_a_sid(tiny.as_ptr().cast(), whole_struct - 1) });
-        let zero = ace_bytes(0, 0, 64);
-        // SAFETY: as above.
-        assert!(!unsafe { ace_holds_a_sid(zero.as_ptr().cast(), 0) });
+        let short = ace_bytes_of(1, 64);
+        assert_eq!(
+            allowed_sid(&as_bytes(&short)[..whole_struct + 7]),
+            Err(AceRefusal::TooShort)
+        );
+        // An entry smaller than its own struct, and an empty one.
+        let tiny = ace_bytes_of(0, 64);
+        assert_eq!(
+            allowed_sid(&as_bytes(&tiny)[..whole_struct - 1]),
+            Err(AceRefusal::TooShort)
+        );
+        assert_eq!(allowed_sid(&[]), Err(AceRefusal::TooShort));
+    }
+
+    #[test]
+    fn an_entry_that_is_not_an_allow_entry_is_refused_by_type() {
+        let mut deny = ace_bytes_of(0, 64);
+        as_bytes_mut(&mut deny)[0] = 1; // ACCESS_DENIED_ACE_TYPE
+        assert_eq!(allowed_sid(as_bytes(&deny)), Err(AceRefusal::NotAllowEntry));
     }
 
     #[test]

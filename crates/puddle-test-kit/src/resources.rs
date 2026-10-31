@@ -86,24 +86,27 @@ impl Default for ReservedPort {
 /// When no port in the range can be bound.
 #[must_use]
 pub fn quiet_port() -> u16 {
+    free_port_in(20_000, 12_000).expect("a free loopback port between 20000 and 32000")
+}
+
+/// The first free loopback port `first + k` for a `k` below `span`, tried from a start that differs
+/// per process and call.
+fn free_port_in(first: u16, span: u16) -> Option<u16> {
     use std::sync::atomic::{AtomicU16, Ordering};
-    const FIRST: u16 = 20_000;
-    const SPAN: u16 = 12_000;
     static CALLS: AtomicU16 = AtomicU16::new(0);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.subsec_nanos());
-    let start = (nanos ^ std::process::id().wrapping_mul(2_654_435_761)) % u32::from(SPAN);
+    let start = (nanos ^ std::process::id().wrapping_mul(2_654_435_761)) % u32::from(span);
     let call = u32::from(CALLS.fetch_add(1, Ordering::Relaxed));
-    for step in 0..u32::from(SPAN) {
-        // 7919 is prime and does not divide SPAN, so the steps visit every port once.
-        let offset = (start + (call + step) * 7_919) % u32::from(SPAN);
-        let port = FIRST + u16::try_from(offset).expect("the offset is below the span");
-        if TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port))).is_ok() {
-            return port;
-        }
-    }
-    panic!("no free loopback port between {FIRST} and {}", FIRST + SPAN);
+    (0..u32::from(span)).find_map(|step| {
+        // 7919 is prime; for a span it does not divide, the steps visit every port once.
+        let offset = (start + (call + step) * 7_919) % u32::from(span);
+        let port = first + u16::try_from(offset).expect("the offset is below the span");
+        TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port)))
+            .is_ok()
+            .then_some(port)
+    })
 }
 
 /// Whether a listener accepts a connection on `addr` (loopback only: the connect blocks, up to a
@@ -209,6 +212,12 @@ mod tests {
         assert!((20_000..32_000).contains(&port), "{port}");
         let socket = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port)));
         assert!(socket.is_ok(), "a plain bind takes it");
+    }
+
+    #[test]
+    fn a_range_with_every_port_held_has_none_free() {
+        let (_held, port) = bound_port();
+        assert_eq!(free_port_in(port, 1), None);
     }
 
     #[test]

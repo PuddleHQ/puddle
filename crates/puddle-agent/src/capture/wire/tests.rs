@@ -298,6 +298,24 @@ fn a_broken_additional_section_does_not_hide_the_question() {
 }
 
 proptest! {
+    /// The parser's notion of a plain name and the resolver gate's must agree: whatever the parser
+    /// calls plain (the root aside) the gate accepts, so a plain name is never refused later.
+    #[test]
+    fn every_plain_name_the_parser_accepts_passes_is_plain(
+        bytes in proptest::collection::vec(any::<u8>(), 0..600),
+        labels in proptest::collection::vec("[A-Za-z0-9_-]{1,63}", 1..6),
+    ) {
+        let mut messages = vec![bytes];
+        messages.push(query_bytes(1, &labels.join("."), TYPE_A, None));
+        for msg in messages {
+            if let Ok(q) = parse_query(&msg)
+                && let QueryName::Plain(name) = &q.name
+            {
+                prop_assert!(name.is_empty() || crate::capture::names::is_plain(name), "{name:?}");
+            }
+        }
+    }
+
     #[test]
     fn any_bytes_parse_or_are_rejected_without_panicking(bytes in proptest::collection::vec(any::<u8>(), 0..600)) {
         if let Ok(q) = parse_query(&bytes) {

@@ -1130,6 +1130,67 @@
         }
       }
     },
+    "/api/dev-certificate/trust": {
+      "post": {
+        "tags": [
+          "first-run"
+        ],
+        "summary": "Makes Puddle's development certificate if it has none and asks the system to trust it. On\nWindows that opens a confirmation the user answers; this waits up to two minutes for it. A\nrefusal or a failure is an answer (`trust_declined`, `trust_failed`), not an error.",
+        "operationId": "trust_dev_certificate",
+        "responses": {
+          "200": {
+            "description": "where the certificate stands after the attempt",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DevCertTrustResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/doctor": {
       "get": {
         "tags": [
@@ -10815,6 +10876,33 @@
           "comfortable",
           "compact"
         ]
+      },
+      "DevCertTrustResult": {
+        "type": "object",
+        "description": "What pressing \"Trust it now\" came to.",
+        "required": [
+          "dev_certificate",
+          "detail",
+          "waiting"
+        ],
+        "properties": {
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The operating system's own error text for `trust_failed`; `null` otherwise."
+          },
+          "dev_certificate": {
+            "$ref": "#/components/schemas/DevCertificate",
+            "description": "Where the certificate stands after the attempt."
+          },
+          "waiting": {
+            "type": "boolean",
+            "description": "Windows' confirmation is still open from an earlier press (or this one ran out of\nwaiting), so nothing new was asked and `dev_certificate` is the state as it stands."
+          }
+        },
+        "additionalProperties": false
       },
       "DevCertificate": {
         "type": "string",

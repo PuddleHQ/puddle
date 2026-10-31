@@ -229,6 +229,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/dev-certificate/trust": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Makes Puddle's development certificate if it has none and asks the system to trust it. On
+         *     Windows that opens a confirmation the user answers; this waits up to two minutes for it. A
+         *     refusal or a failure is an answer (`trust_declined`, `trust_failed`), not an error.
+         */
+        post: operations["trust_dev_certificate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/doctor": {
         parameters: {
             query?: never;
@@ -2359,6 +2380,18 @@ export interface components {
          * @enum {string}
          */
         DensityChoice: "comfortable" | "compact";
+        /** @description What pressing "Trust it now" came to. */
+        DevCertTrustResult: {
+            /** @description The operating system's own error text for `trust_failed`; `null` otherwise. */
+            detail: string | null;
+            /** @description Where the certificate stands after the attempt. */
+            dev_certificate: components["schemas"]["DevCertificate"];
+            /**
+             * @description Windows' confirmation is still open from an earlier press (or this one ran out of
+             *     waiting), so nothing new was asked and `dev_certificate` is the state as it stands.
+             */
+            waiting: boolean;
+        };
         /**
          * @description Where Puddle's development certificate stands on this computer: the one that makes HTTPS
          *     servers in a workspace open in the browser without a warning.
@@ -5397,6 +5430,62 @@ export interface operations {
             };
             /** @description the credential store is not available */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    trust_dev_certificate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description where the certificate stands after the attempt */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevCertTrustResult"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -84,7 +84,9 @@ test("shows every section with Puddle's defaults, no CSP violations", async ({
     await expect(page.getByRole("heading", { level: 2, name })).toBeVisible();
   }
   await expect(page.getByLabel("Default memory")).toHaveValue("8192");
-  await expect(page.getByLabel("Start Puddle when I sign in")).not.toBeChecked();
+  await expect(
+    page.getByLabel("Start Puddle when I sign in"),
+  ).not.toBeChecked();
   await expect(page.getByLabel("Server", { exact: true })).toHaveValue(
     "code_server",
   );

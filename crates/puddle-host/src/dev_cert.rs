@@ -383,6 +383,24 @@ mod tests {
     }
 
     #[test]
+    fn a_confirmation_that_panicked_does_not_stop_the_next_press() {
+        let store = Answering::new(Ok(TrustOutcome::Trusted));
+        let (_dir, service) = trusting(&store);
+        // The double's other answer, so no line of it goes unread.
+        let by_ref = &store;
+        assert!(by_ref.export_key(b"cert").is_err());
+        // A press that panicked while it held the one-at-a-time lock leaves the lock poisoned.
+        std::thread::scope(|scope| {
+            let panicked = scope.spawn(|| {
+                let _held = service.ensuring.lock().unwrap();
+                panic!("the store blew up");
+            });
+            assert!(panicked.join().is_err());
+        });
+        assert_eq!(service.trust().dev_certificate, DevCertificate::Trusted);
+    }
+
+    #[test]
     fn a_no_is_remembered_and_asked_again_at_the_next_press() {
         let store = Answering::new(Ok(TrustOutcome::Declined));
         let (_dir, service) = trusting(&store);

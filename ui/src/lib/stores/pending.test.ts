@@ -23,6 +23,8 @@ function setup(over: { pollMs?: number; slowPollMs?: number } = {}) {
   return { inbox, source, store, counts };
 }
 
+afterEach(() => vi.restoreAllMocks());
+
 const rowOf = (store: PendingStore, id: number): Row => {
   const row = store.rows.find((r) => r.request.id === id);
   if (!row) throw new Error(`no row ${id}`);
@@ -124,10 +126,10 @@ describe("refresh", () => {
 
   it("treats a non-OK answer like a failure", async () => {
     const { inbox, store } = setup();
-    inbox.GET = (async () => ({
+    vi.spyOn(inbox, "GET").mockImplementation((async () => ({
       error: {},
       response: { status: 500, ok: false },
-    })) as never;
+    })) as never);
     await store.refresh();
     expect(store.status).toBe("failed");
     expect(store.loadError).toBe("Puddle's service hit an error (status 500).");
@@ -174,10 +176,13 @@ describe("refresh", () => {
     const { inbox, store } = setup();
     inbox.add(request(1, { host: "192.168.1.10" }), "192.168.1.10");
     const get = inbox.GET;
-    inbox.GET = (async (path: string, init: never) => {
+    vi.spyOn(inbox, "GET").mockImplementation((async (
+      path: string,
+      init: never,
+    ) => {
       if (path !== "/api/inbox") throw new TypeError("down");
       return get(path, init);
-    }) as never;
+    }) as never);
     await store.refresh();
     expect(store.status).toBe("ready");
     expect(store.toggles["demo"]).toBeNull();
@@ -278,11 +283,14 @@ describe("events", () => {
     let release: () => void = () => undefined;
     const gate = new Promise<void>((r) => (release = r));
     const get = inbox.GET;
-    inbox.GET = (async (path: string, init: never) => {
+    vi.spyOn(inbox, "GET").mockImplementation((async (
+      path: string,
+      init: never,
+    ) => {
       const out = await get(path, init);
       if (path === "/api/inbox") await gate;
       return out;
-    }) as never;
+    }) as never);
     source.resync();
     source.emit({
       type: "pending_closed",
@@ -364,10 +372,12 @@ describe("polling", () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
     const read = inbox.GET;
-    inbox.GET = (async (...args: Parameters<typeof read>) => {
+    vi.spyOn(inbox, "GET").mockImplementation((async (
+      ...args: Parameters<typeof read>
+    ) => {
       await gate;
       return read(...args);
-    }) as never;
+    }) as never);
     await vi.advanceTimersByTimeAsync(1000);
     stop();
     release();
@@ -526,9 +536,9 @@ describe("decide", () => {
 
   it("falls back to a generic message when the error has no body", async () => {
     const { store, inbox } = await loaded();
-    inbox.POST = (async () => ({
+    vi.spyOn(inbox, "POST").mockImplementation((async () => ({
       response: { status: 500, ok: false },
-    })) as never;
+    })) as never);
     expect(
       await store.decide(rowOf(store, 1), narrowest("allow"), false),
     ).toMatchObject({
@@ -567,17 +577,17 @@ describe("undo", () => {
     await store.refresh();
     const r = await store.decide(rowOf(store, 1), narrowest("allow"), false);
     if (!r.ok) throw new Error("decide failed");
-    inbox.DELETE = (async () => ({
+    vi.spyOn(inbox, "DELETE").mockImplementation((async () => ({
       response: { status: 500, ok: false },
-    })) as never;
+    })) as never);
     expect(await store.undo(r.decided)).toEqual({
       ok: false,
       message: "Puddle couldn't undo that.",
     });
     inbox.down = true;
-    inbox.DELETE = (async () => {
+    vi.spyOn(inbox, "DELETE").mockImplementation((async () => {
       throw new TypeError("down");
-    }) as never;
+    }) as never);
     expect(await store.undo(r.decided)).toMatchObject({ ok: false });
     expect(store.decided).toHaveLength(1);
   });

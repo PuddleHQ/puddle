@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! A workspace's shell init: the script its login shells source (UI-17).
+//! A workspace's shell init: the script its login shells source.
 //!
 //! The text is kept in the database and is the only source of truth. The workspace gets a
 //! read-only copy at every start, and a change reaches a running workspace at once. A script that

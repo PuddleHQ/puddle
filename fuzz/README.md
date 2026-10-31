@@ -1,6 +1,6 @@
 # Fuzz targets
 
-cargo-fuzz targets for what a guest's first bytes reach before any rule is asked (HG-10 in
+cargo-fuzz targets for what a guest's first bytes reach before any rule is asked (in
 `docs/arch/threat-model.md`). They need a nightly toolchain, so this crate is outside the workspace.
 
 | Target | What it feeds |

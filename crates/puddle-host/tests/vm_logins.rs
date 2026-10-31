@@ -10,9 +10,9 @@
 //! so a real token that reaches the guest, or a stand-in that is swapped where it must not be, shows
 //! at once. The host's credential store is an in-memory one: no real store is touched.
 //!
-//! One test for each of the hostile cases HG-32 (a stand-in sent where it is not for, a body that
-//! is not a token message, a body over the cap), HG-33 (another spelling of the token endpoint)
-//! and HG-34 (a stand-in used from another workspace).
+//! One test for each of the hostile cases: a stand-in sent where it is not for, a body that
+//! is not a token message, a body over the cap, another spelling of the token endpoint,
+//! and a stand-in used from another workspace.
 #![expect(
     clippy::unwrap_used,
     clippy::indexing_slicing,
@@ -268,7 +268,7 @@ fn refresh_body(stand_in: &str) -> String {
     json!({"grant_type": "refresh_token", "refresh_token": stand_in}).to_string()
 }
 
-/// HG-32: a stand-in in a token request's refresh field toward a host it is not for, a body that
+/// A stand-in in a token request's refresh field toward a host it is not for, a body that
 /// is not a token message, and a body over the cap. The only request the real refresh token is in
 /// is the honest refresh the test starts with, so the swap is proven to work on the same guest.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -368,7 +368,7 @@ async fn vm_logins_hostile_hg32_a_stand_in_goes_only_where_it_is_for_and_only_in
     rig.finish().await;
 }
 
-/// HG-33: the guest starts its own login against the token endpoint with another spelling of the
+/// The guest starts its own login against the token endpoint with another spelling of the
 /// path. The fake server reads every one of them as the token endpoint (as the real one would), so
 /// the answer holds real tokens, and the guest must be given stand-ins for all of them.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -400,7 +400,7 @@ async fn vm_logins_hostile_hg33_another_spelling_of_the_token_endpoint_is_still_
     rig.finish().await;
 }
 
-/// HG-34: the stand-ins one workspace captured, used from another workspace, are only text there:
+/// The stand-ins one workspace captured, used from another workspace, are only text there:
 /// not swapped in a header and not in a refresh body, so no real token reaches the server.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_logins_hostile_hg34_a_stand_in_means_nothing_in_another_workspace() {

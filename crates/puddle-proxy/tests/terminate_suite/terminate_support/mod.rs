@@ -707,7 +707,7 @@ impl RigBuilder {
             termination = termination.with_exchanges(exchanges);
         }
         terminations.insert(workspace("box"), termination);
-        // A second workspace with its own CA for the same names (HO-4).
+        // A second workspace with its own CA for the same names.
         let other_ca = workspace_ca("other");
         terminations.insert(
             workspace("other"),

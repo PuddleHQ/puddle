@@ -48,7 +48,7 @@ use super::ws;
 use crate::proxy::Refusal;
 
 /// Streams a guest may have open at once (RFC 9113 §6.5.2). Real tools open a few dozen; the
-/// bar is the hundreds `PX-40` names for connections.
+/// bar is the hundreds the spec names for connections.
 pub(crate) const MAX_CONCURRENT_STREAMS: u32 = 256;
 
 /// The largest request header list accepted from the guest (the plain-HTTP path's head limit).

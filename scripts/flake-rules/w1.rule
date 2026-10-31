@@ -1,0 +1,4 @@
+status: failing
+fixture: w1-wait-helper.bad.rs.txt
+as: crates/puddle-host/tests/fake_host.rs
+fix: a wait helper outside the shared test kit: use `eventually(what, within, probe)` (it names the wait and bounds it below nextest's slow-timeout), or `flake-ok: <why>`

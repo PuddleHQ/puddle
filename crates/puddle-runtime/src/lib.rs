@@ -8,10 +8,11 @@
 //!    private `MSB_HOME`, so images and volumes never mix with a user's own msb;
 //! 2. opens the runtime with [`BundledRuntime::open`], which refuses a missing `msb` binary or one
 //!    whose embedded version isn't exactly [`BUILT_FOR`] (both versions named in the error);
-//! 3. pins the environment with [`RuntimeEnv`]: removes **every** `MSB_*` variable the user set
-//!    (incl. `MSB_LIBKRUNFW_PATH`, `MSB_AGENTD_PATH`, `MSB_BACKEND`), then sets `MSB_PATH`,
-//!    `MSB_HOME` and `MSB_CONFIG_PATH`. Apply it to the process before any thread starts
-//!    ([`RuntimeEnv::apply_to_process`]) or to a child [`std::process::Command`];
+//! 3. gives the SDK the runtime and home as arguments (`puddle-compute-msb`), so the process
+//!    environment is never changed and a user's `MSB_*` variables are ignored. [`RuntimeEnv`] is the
+//!    same rule for a child [`std::process::Command`] Puddle starts itself: it removes **every**
+//!    `MSB_*` variable the user set (incl. `MSB_LIBKRUNFW_PATH`, `MSB_AGENTD_PATH`, `MSB_BACKEND`),
+//!    then sets `MSB_PATH`, `MSB_HOME` and `MSB_CONFIG_PATH`;
 //!
 //! Image pulls go through Puddle's pull proxy by an explicit setting on the registry client
 //! (`microsandbox_image::RegistryBuilder::proxy`, set from `puddle-compute-msb`'s

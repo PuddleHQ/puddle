@@ -1,0 +1,8 @@
+async fn t() {
+    for _ in 0..100 {
+        if ready() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}

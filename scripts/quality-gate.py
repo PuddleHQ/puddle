@@ -27,8 +27,8 @@ raced in the past: a hand-rolled wait helper (every one outside the shared test 
 whether it lacks a name or a bound), a hand-rolled wait loop (a `for`, `while` or `loop` in a test that sleeps or yields between looks), `file.lock()`, `try_recv()`, a port picked
 and dropped, a name built from the clock, a wall-clock bar, records matched by position, an awaited page read
 asserted once, a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the resolver. A site is reasoned by `flake-ok: <why>` on the line or within three lines above. A rule is
-counted (`flake-<id>`, `flake-<id>-unreasoned`) until its sites are fixed or reasoned, then it is added to
-FLAKE_FAILING and an unreasoned site becomes a `noreason` row. Their self-test replays the original code of
+counted (`flake-<id>`, `flake-<id>-unreasoned`) until its sites are fixed or reasoned, then its `scripts/flake-rules/<id>.rule` says
+`status: failing` and an unreasoned site becomes a `noreason` row. Their self-test replays the original code of
 fixed flakes from `scripts/flake-fixtures/`.
 
 Context per Rust line: `test` (under tests/, benches/, examples/; in a `#[cfg(test)]` or
@@ -492,30 +492,45 @@ def kit_dependency_rows(texts, add):
                             f"{TEST_KIT} in [{kind}]: the shared test kit is a dev-dependency only; move it to [dev-dependencies] | {lines[at]}")
 
 
-# Flake-prone test shapes (counted; failing once the rule is in FLAKE_FAILING). Each rule has two kinds: `flake-<id>` for every
+# Flake-prone test shapes (counted; failing once the rule's file says so). Each rule has two kinds: `flake-<id>` for every
 # site and `flake-<id>-unreasoned` for the sites with no `flake-ok: <why>` comment on the line or within
 # three lines above (a UI line may carry `eslint-disable-next-line no-restricted-syntax -- <why>` instead).
-# A rule in FLAKE_FAILING also adds a `noreason` row per unreasoned site, so `--missing` and the `quality`
-# gate fail on it; flipping a rule from counted to failing is adding its id there, once its sites are fixed
-# or reasoned. The scan reads shapes, not truth: a reason is read by a reviewer, and a shape it cannot see
+# A failing rule also adds a `noreason` row per unreasoned site, so `--missing` and the `quality`
+# gate fail on it. Each rule is one file, `scripts/flake-rules/<id>.rule` (`status: counted|failing`, `fix:`, and the
+# `fixture:` and `as:` the self-test replays). Flipping a rule is a one-line edit of its own file and a new rule is a
+# new file, so two branches that each add or flip a rule never edit the same line (`scripts/flake-rules-test.sh`).
+# The scan reads shapes, not truth: a reason is read by a reviewer, and a shape it cannot see
 # (a producer that is synchronous, a wait anchored on something already true) needs a run under load.
-FLAKE_FAILING = {"a1", "n1", "o1", "o2", "p1", "t1", "w1", "w2", "w3"}
+FLAKE_RULES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "flake-rules")
+FLAKE_RULE_KEYS = ("status", "fix", "fixture", "as")
+
+
+def load_flake_rules(directory):
+    """Read `<id>.rule` files: one `key: value` per line, keys in FLAKE_RULE_KEYS, status counted or failing."""
+    rules = {}
+    for name in sorted(os.listdir(directory)):
+        if not name.endswith(".rule"):
+            continue
+        fields = {}
+        with open(os.path.join(directory, name), encoding="utf-8") as h:
+            for n, line in enumerate(h, 1):
+                key, sep, value = line.rstrip("\n").partition(": ")
+                if not sep or key not in FLAKE_RULE_KEYS or key in fields:
+                    raise SystemExit(f"{name}:{n}: want one `key: value` per line with keys {FLAKE_RULE_KEYS}, each once")
+                fields[key] = value
+        if sorted(fields) != sorted(FLAKE_RULE_KEYS) or fields["status"] not in ("counted", "failing"):
+            raise SystemExit(f"{name}: needs {FLAKE_RULE_KEYS} and `status: counted` or `status: failing`")
+        rules[name[:-len(".rule")]] = fields
+    return rules
+
+
+FLAKE_RULES = load_flake_rules(FLAKE_RULES_DIR)
+FLAKE_FAILING = {r for r, v in FLAKE_RULES.items() if v["status"] == "failing"}
+FLAKE_FIX = {r: v["fix"] for r, v in FLAKE_RULES.items()}
 FLAKE_OK = re.compile(r"flake-ok:\s*\S")
-FLAKE_FIX = {
-    "w1": "a wait helper outside the shared test kit: use `eventually(what, within, probe)` (it names the wait and bounds it below nextest's slow-timeout), or `flake-ok: <why>`",
-    "w2": "`file.lock()` in a test waits for ever when another process holds it: poll `try_lock` against the test's budget, or `flake-ok: <why>`",
-    "o1": "`try_recv()` reads a channel once, before another task has sent: use `next_event_within(what, d)` to wait for an event or `no_event_for(d)` to show none comes, or `flake-ok: <why the producer is synchronous>`",
-    "p1": "a port picked from a listener that is dropped can be taken before the caller binds it: bind port 0 and pass the listener, or let the child bind 0 and report the port, or `flake-ok: <why a retry is the only way>`",
-    "n1": "a name built from the clock or the pid collides across parallel runs: create the file or folder with `tempfile`, or `flake-ok: <why>`",
-    "t1": "a test that asserts real time stayed under a fixed Duration fails on a loaded machine: assert on virtual time, CPU time or a measured margin, or `flake-ok: <what the bar measures and why it holds under load>`",
-    "a1": "records matched to expectations by position depend on an order the contract does not promise: find each record by its key, or `flake-ok: <why the order is promised>`",
-    "d1": "a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the machine's resolver asks the real DNS and waits when it stalls: use a `.invalid` name (the proxy answers it at once, RFC 6761), or `flake-ok: <why this name must go to the resolver>`",
-    "w3": "a hand-rolled wait loop (a `for`, `while` or `loop` that sleeps or yields between looks): use `eventually(what, within, probe)` (it names the wait and bounds it below nextest's slow-timeout), or `flake-ok: <why this loop is not a wait for a condition>`",
-    "o2": "an awaited page read asserted once runs before the page settles: use a web-first assertion (`await expect(locator).toHaveText(...)`) or `await expect.poll(() => read)`; for a read of something that must be absent a poll ends at its first empty read, so use `staysEmpty(page, read)` or `expectNoAxeViolations(page)` from e2e/support.ts; or `flake-ok: <why a one-shot read is meant>`",
-}
 FLAKE_WAIT_NAME = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(until\w*|eventually\w*|wait_for\w*|wait_until\w*|poll_until\w*)\b")
 FLAKE_WAIT_HOME = "crates/puddle-test-kit/"  # the kit's own helpers (the crate is that path) are the target, not a hit
-FLAKE_RESERVED = re.compile(r'"[^"]*(?<![@\w.-])(?:[a-z0-9-]+\.)*(?:[a-z0-9-]+\.(?:test|example)|example\.(?:com|net|org))(?![\w-])', re.I)
+FLAKE_RESERVED = re.compile(r'"[^"]*(?<![@\w.-])(?:[a-z0-9-]+\.)*(?:[a-z0-9-]+\.(?:test|example)|example\.(?:com|net|org))(?![\w-]|\.[a-z0-9])', re.I)  # not `x.test.invalid` (a `.invalid` name) or `x.test.rs` (a file)
 FLAKE_REAL_DNS = re.compile(r"\b(?:web_internet|through_company_proxy|SystemResolver)\b")  # a test file where a connect can reach the OS resolver
 FLAKE_LOOP_HEAD = re.compile(r"^\s*(?:'\w+:\s*)?(?:(?:let\b[^=]*=\s*|break\s+)?loop\b|for\b.*\bin\b|while\b)")
 FLAKE_PAUSE = re.compile(r"\bsleep\(|\byield_now\(\)|\.tick\(\)")
@@ -626,10 +641,21 @@ FLAKE_WEB_FIRST = re.compile(
 )
 
 
+def expect_argument(text):
+    """The text of an `expect(...)` argument, up to its closing parenthesis (or the end of the line)."""
+    depth = 1
+    for k, ch in enumerate(text):
+        depth += (ch == "(") - (ch == ")")
+        if depth == 0:
+            return text[:k]
+    return text
+
+
 def flake_e2e(lines, rows_add):
-    """Rule o2 in ui/e2e: an awaited page read asserted once (`expect(await read)`, or a read kept in a variable).
-    A reason on the line that reads into a variable covers every `expect` of that variable."""
-    awaited = {}  # variable -> (line of the read, whether that line carries a reason)
+    """Rule o2 in ui/e2e: a read of the page kept in a variable and asserted once (`const box = (await loc.boundingBox())!`,
+    then `expect(box.width)`: a non-null assertion says "there is a box now"; a plain `const n = await read` only counts for `expect(n)` itself). A reason on the line that reads into a variable covers every `expect` of that variable.
+    The inline `expect(await read)` is ESLint's (`ui/eslint.config.js`, an error), not this scan's."""
+    awaited = {}  # variable -> (whether that line carries a reason, whether an expect on any use of it counts)
 
     def reasoned(i):
         for k in range(max(0, i - 3), i + 1):
@@ -641,18 +667,19 @@ def flake_e2e(lines, rows_add):
     for i, line in enumerate(lines):
         if line.strip().startswith("//"):
             continue
-        m = re.search(r"\b(?:const|let)\s+(\w+)\s*=\s*await\s+(.*)", line)
+        m = re.search(r"\b(?:const|let)\s+(\w+)\s*=\s*\(?\s*await\s+(.*)", line)
         if m and FLAKE_PAGE_READ.search(m.group(2)):
-            awaited[m.group(1)] = (i, reasoned(i))
+            awaited[m.group(1)] = (reasoned(i), bool(re.search(r"\)\s*!\s*;?\s*$", line)))
         if re.search(r"^\s*(?:async\s+)?function\b|^\s*test\(", line):
             awaited.clear()
         for em in re.finditer(r"(?<![.\w])expect\((?!\s*\.)", line):
-            inner = line[em.end():].lstrip()
-            v = re.match(r"(\w+)\s*[,)]", inner)
-            if inner.startswith("await ") and FLAKE_PAGE_READ.search(inner):
-                flake_row(rows_add, "o2", i, line.strip(), reasoned(i))
-            elif v and v.group(1) in awaited and not FLAKE_WEB_FIRST.search(line[em.end():]):
-                flake_row(rows_add, "o2", i, line.strip(), reasoned(i) or awaited[v.group(1)][1])
+            argument = expect_argument(line[em.end():])
+            first = re.match(r"\s*(\w+)\s*(?:,|$)", argument)  # `expect(n)` or `expect(n, "message")`
+            used = [first.group(1)] if first and first.group(1) in awaited else []
+            if not used:  # `expect(box.width)`: only a read of the non-null form counts
+                used = [v for v in re.findall(r"(?<![.\w])(\w+)", re.sub(r"`[^`]*`|\"[^\"]*\"|'[^']*'", "", argument)) if v in awaited and awaited[v][1]]
+            if used and not FLAKE_WEB_FIRST.search(line[em.end():]):
+                flake_row(rows_add, "o2", i, line.strip(), reasoned(i) or awaited[used[0]][0])
 
 
 def flake_summary(rows):
@@ -825,7 +852,7 @@ def flake_self_test():
     case("w1 delegates to the kit", "w1", {FLAKE_HOST: kit_wait}, 0, 0)
     case("w1 names the kit only in a comment", "w1", {FLAKE_HOST: kit_wait.replace("    eventually(", "    // eventually(\n    loop_until(")}, 1, 1)
     case("w1 in the kit", "w1", {"crates/puddle-test-kit/tests/wait.rs": read("w1-wait-helper.bad.rs.txt")}, 0, 0)
-    spin = "async fn t() {\n    for _ in 0..100 {\n        if ready() {\n            break;\n        }\n        tokio::time::sleep(Duration::from_millis(10)).await;\n    }\n}\n"
+    spin = read("w3-sleep-loop.bad.rs.txt")
     case("w3 original", "w3", {FLAKE_HOST: spin}, 1, 1)
     case("w3 reasoned", "w3", {FLAKE_HOST: reasoned(spin, "for _ in")}, 1, 0)
     case("w3 in production code", "w3", {"crates/x/src/lib.rs": spin}, 0, 0)
@@ -857,37 +884,32 @@ def flake_self_test():
     case("d1 reasoned", "d1", {vm_test: reasoned(read("d1-fake-site.bad.rs.txt"), "const SITE")}, 1, 0)
     case("d1 example.com", "d1", {vm_test: 'use vm_support::web_internet;\nfn t() { run("curl https://api.example.com/"); }\n'}, 1, 1)
     case("d1 not a reserved name", "d1", {vm_test: 'use vm_support::web_internet;\nfn t() { run("curl https://notexample.com/ https://contest.org/ me@example.org"); }\n'}, 0, 0)
+    case("d1 a .invalid name that has test as a label is not reserved", "d1", {vm_test: 'use vm_support::web_internet;\nfn t() { run("curl https://api.test.invalid/ x.example.invalid"); }\n'}, 0, 0)
+    case("d1 a file name that ends in .test.rs is not a name", "d1", {vm_test: 'use vm_support::web_internet;\nconst F: &str = "tests/site.test.rs";\n'}, 0, 0)
+    case("d1 a name with a port or a trailing dot is one", "d1", {vm_test: 'use vm_support::web_internet;\nfn t() { run("curl http://site.test:8443/ http://other.example./"); }\n'}, 1, 1)
     case("d1 a test with a fake resolver", "d1", {"crates/puddle-proxy/tests/x.rs": 'fn t() { let n = "site.test"; }\n'}, 0, 0)
     case("d1 in production code", "d1", {"crates/x/src/lib.rs": 'use SystemResolver;\nconst DOC: &str = "site.test";\n'}, 0, 0)
     case("o2 variable", "o2", {FLAKE_SPEC: read("o2-density-measure.bad.ts.txt")}, 1, 1)
     case("o2 poll", "o2", {FLAKE_SPEC: read("o2-density-measure.good.ts.txt")}, 0, 0)
     case("o2 focus", "o2", {FLAKE_SPEC: read("o2-focus-read.bad.ts.txt")}, 1, 1)
+    # `expect(await read)` is ESLint's (an error in ui/eslint.config.js, proved by ui/scripts/flake-eslint.test.ts): the scan skips it.
     one_shot = 'test("x", async ({ page }) => {\n  expect(await measure(page, "main select")).toBeNull();\n});\n'
-    case("o2 inline", "o2", {FLAKE_SPEC: one_shot}, 1, 1)
-    case("o2 reasoned", "o2", {FLAKE_SPEC: reasoned(one_shot, "expect(await")}, 1, 0)
-    lint = one_shot.replace("  expect", "  // eslint-disable-next-line no-restricted-syntax -- the data is held\n  expect")
-    case("o2 eslint-disable with a reason", "o2", {FLAKE_SPEC: lint}, 1, 0)
+    case("o2 inline is ESLint's, not the scan's", "o2", {FLAKE_SPEC: one_shot}, 0, 0)
     held = 'test("x", async ({ page }) => {\n  const dialog = await openDialog(page);\n  await expect(dialog).toHaveCount(0);\n  await expect(dialog).not.toBeVisible();\n});\n'
     case("o2 a locator in a variable is a web-first assertion", "o2", {FLAKE_SPEC: held}, 0, 0)
     value = 'test("x", async ({ page }) => {\n  const n = await page.locator("li").count();\n  expect(n).toBeGreaterThan(0);\n  expect(n).toBeLessThan(9);\n});\n'
     case("o2 a count in a variable is read once per expect", "o2", {FLAKE_SPEC: value}, 2, 2)
+    kept = 'test("x", async ({ page }) => {\n  const box = (await page.locator("li").boundingBox())!;\n  expect(box.width).toBeGreaterThanOrEqual(24);\n  expect(box.x + box.width).toBeLessThanOrEqual(90);\n});\n'
+    case("o2 a non-null read in parentheses, asserted by property", "o2", {FLAKE_SPEC: kept}, 2, 2)
+    case("o2 a reason on a parenthesised read covers its expects", "o2", {FLAKE_SPEC: kept.replace("  const box", "  // flake-ok: laid out by the time the dialog opened\n  const box")}, 2, 0)
+    case("o2 a poll of the box passes", "o2", {FLAKE_SPEC: 'test("x", async ({ page }) => {\n  await expect.poll(async () => (await page.locator("li").boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(24);\n});\n'}, 0, 0)
+    case("o2 a parenthesised read inside a retry block is not kept", "o2", {FLAKE_SPEC: 'test("x", async ({ page }) => {\n  await expect(async () => {\n    const t = (await page.locator("li").textContent()) ?? "";\n    expect(t.length).toBe(3);\n  }).toPass();\n});\n'}, 0, 0)
+    case("o2 a variable named only in the message is not read", "o2", {FLAKE_SPEC: kept.replace("expect(box.width)", 'expect(24, "the box width")')}, 1, 1)
+    case("o2 a plain read asserted by property is not counted", "o2", {FLAKE_SPEC: 'test("x", async ({ page }) => {\n  const box = await page.locator("li").boundingBox();\n  expect(box?.width).toBe(3);\n});\n'}, 0, 0)
     case("o2 a reason on the read covers its expects", "o2", {FLAKE_SPEC: value.replace("  const n", "  // flake-ok: the list is complete\n  const n")}, 2, 0)
 
     # A counted rule adds no `noreason` row; a rule flipped to failing adds one that opens with its fix.
-    bad = {
-        "o1": {FLAKE_HOST: read("o1-sign-in-event.bad.rs.txt")},
-        "w1": {FLAKE_HOST: read("w1-wait-helper.bad.rs.txt")},
-        "w2": {FLAKE_STORE: read("w2-store-lock.bad.rs.txt")},
-        "w3": {FLAKE_HOST: spin},
-        "n1": {FLAKE_STORE: read("n1-clock-name.bad.rs.txt")},
-        "p1": {mod_rs: read("p1-free-port.bad.rs.txt")},
-        "a1": {"crates/puddle-e2e/tests/proxy_agent_store.rs": read("a1-positional-zip.bad.rs.txt")},
-        "t1": {store: read("t1-wall-clock-bar.bad.rs.txt")},
-        "o2": {FLAKE_SPEC: read("o2-density-measure.bad.ts.txt")},
-        "d1": {vm_test: read("d1-fake-site.bad.rs.txt")},
-    }
-    if sorted(bad) != sorted(FLAKE_FIX):
-        failures.append(f"every rule needs a failing-flip case: {sorted(set(FLAKE_FIX) ^ set(bad))}")
+    bad = {rule: {v["as"]: read(v["fixture"])} for rule, v in FLAKE_RULES.items()}
     for rule, files in bad.items():
         was_failing = rule in FLAKE_FAILING
         FLAKE_FAILING.discard(rule)
@@ -901,6 +923,15 @@ def flake_self_test():
                 FLAKE_FAILING.discard(rule)
         if not miss or not all(r[3].startswith(f"flake-{rule}: {FLAKE_FIX[rule]} | ") for r in miss):
             failures.append(f"{rule}: a failing rule adds noreason rows that open with the whole fix text: {miss}")
+    for label, text in (("an unknown status", "status: maybe\nfixture: a\nas: b\nfix: c\n"), ("a missing key", "status: failing\n"), ("a repeated key", "status: failing\nstatus: counted\nfixture: a\nas: b\nfix: c\n")):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "q1.rule"), "w", encoding="utf-8") as h:
+                h.write(text)
+            try:
+                load_flake_rules(d)
+                failures.append(f"rule file with {label} was accepted")
+            except SystemExit:
+                pass
     return failures
 
 

@@ -86,7 +86,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: ci/build-msi.sh stage "$RUNNER_TEMP/msi-stage"
       # The workspace's own version, then the next patch: the upgrade test installs the first and
-      # upgrades to the second. The first MSI is the one kept.
+      # upgrades to the second. Only the first MSI is kept: the second carries the same program
+      # under a newer package version, so its `puddle --version` would not match its file name.
       - name: build the shell (release)
         if: steps.changed.outputs.run == 'true'
         shell: bash
@@ -99,10 +100,10 @@ jobs:
           next=${current%.*}.$(( ${current##*.} + 1 ))
           echo "current=$current next=$next"
           ci/build-msi.sh bundle "$RUNNER_TEMP/msi-stage" "$RUNNER_TEMP/msi-out" "$current"
-          ci/build-msi.sh bundle "$RUNNER_TEMP/msi-stage" "$RUNNER_TEMP/msi-out" "$next"
-          ls -l "$RUNNER_TEMP/msi-out"
+          ci/build-msi.sh bundle "$RUNNER_TEMP/msi-stage" "$RUNNER_TEMP/msi-upgrade" "$next"
+          ls -l "$RUNNER_TEMP/msi-out" "$RUNNER_TEMP/msi-upgrade"
           echo "FIRST_MSI=$(cygpath -w "$RUNNER_TEMP/msi-out/Puddle_${current}_x64_en-US.msi")" >>"$GITHUB_ENV"
-          echo "NEXT_MSI=$(cygpath -w "$RUNNER_TEMP/msi-out/Puddle_${next}_x64_en-US.msi")" >>"$GITHUB_ENV"
+          echo "NEXT_MSI=$(cygpath -w "$RUNNER_TEMP/msi-upgrade/Puddle_${next}_x64_en-US.msi")" >>"$GITHUB_ENV"
       - name: install, start, upgrade, uninstall
         if: steps.changed.outputs.run == 'true'
         shell: pwsh

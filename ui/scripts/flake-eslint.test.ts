@@ -2,7 +2,9 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { ESLint } from "eslint";
-import { beforeAll, describe, expect, it } from "vitest";
+import tsParser from "@typescript-eslint/parser";
+import { describe, expect, it } from "vitest";
+import { e2eExpectAwait } from "../eslint.e2e.js";
 
 const original = readFileSync(
   resolve(
@@ -12,18 +14,17 @@ const original = readFileSync(
   "utf8",
 );
 
-// One instance for the file: the config and its plugins load once, so only `beforeAll` pays for that.
-const eslint = new ESLint({ cwd: resolve(import.meta.dirname, "..") });
-
-// Loading typescript-eslint, the Svelte plugin and the TypeScript compiler is CPU work of about 1 s on an
-// idle host (the lint itself is 5 to 30 ms once they are loaded). With coverage on and the CPUs
-// oversubscribed twice over it took 5.3 s, over the 5 s a test gets. The hook gets about five times
-// that; the tests keep the default bar, so a slow lint still fails them.
-const COLD_LOAD_MS = 30_000;
-
-beforeAll(async () => {
-  await lint("");
-}, COLD_LOAD_MS);
+// One instance for the file, holding the e2e block `eslint.config.js` also uses and the TypeScript parser.
+// The full config also loads the Svelte compiler and every plugin: 1 s idle, 14 s with the CPUs oversubscribed
+// four times, and a 30 s hook timed out on the CI host. This one costs about half of that. The load is
+// CPU work that no test is about, so it happens at import (the parser) and in the warm-up below, where the
+// runner sets no bar; each test then times only the lint, 1 to 60 ms. The last test checks that the config
+// still includes the block.
+const eslint = new ESLint({
+  cwd: resolve(import.meta.dirname, ".."),
+  overrideConfigFile: true,
+  overrideConfig: [{ languageOptions: { parser: tsParser } }, e2eExpectAwait],
+});
 
 // What `npm run lint` says about `source` as if it sat in ui/e2e.
 async function lint(source: string) {
@@ -33,6 +34,8 @@ async function lint(source: string) {
   );
   return result?.messages ?? [];
 }
+
+await lint("");
 
 describe("the e2e rule against a read asserted once", () => {
   it("flags both awaited reads of the original code and names the fix", async () => {
@@ -63,5 +66,13 @@ expect(await measure(page, "main select")).toBeNull();`;
     expect(
       result?.messages.filter((m) => m.ruleId === "no-restricted-syntax"),
     ).toEqual([]);
+  });
+
+  it("is the block that npm run lint uses", () => {
+    const config = readFileSync(
+      resolve(import.meta.dirname, "../eslint.config.js"),
+      "utf8",
+    );
+    expect(config).toMatch(/^ {2}e2eExpectAwait,$/m);
   });
 });

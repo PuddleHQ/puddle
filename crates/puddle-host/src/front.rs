@@ -9,7 +9,7 @@ use puddle_agent_proto::editor::{EditorServer, ServerKind};
 use puddle_front::{FileHalves, Flavour, Front, Guests, ServerHalves, Target};
 use puddle_netpolicy::PuddleEndpoints;
 use puddle_ports::Ports;
-use puddle_types::WorkspaceName;
+use puddle_types::{Problem, Problems, WorkspaceName};
 
 use crate::{HostError, HostPaths};
 
@@ -62,12 +62,16 @@ impl Guests for HostGuests {
     }
 }
 
+/// The background problem raised when the front could not keep its port.
+const MOVED_KEY: &str = "front-port-moved";
+
 /// Starts the front over the workspaces `ports` holds an agent link for, entered in `endpoints`
 /// as one of Puddle's own listeners.
 ///
 /// The port is the one the last run used, kept in [`HostPaths::front_port_file`]: a browser keeps
 /// the editor's storage per origin, and the port is part of it. When that port is taken, the front
-/// takes another and the new one is kept from then on.
+/// takes another and the new one is kept from then on, and a background problem tells the user the
+/// address moved.
 ///
 /// The guests come back too (a window's sign-in asks them for the editor's password), and the
 /// stored halves of Microsoft's secret key (a deleted workspace's is forgotten through them).
@@ -80,6 +84,7 @@ pub(crate) async fn serve(
     endpoints: &PuddleEndpoints,
     ports: Ports,
     flavours: Arc<Flavours>,
+    problems: &Problems,
 ) -> Result<(Front, Arc<dyn Guests>, Arc<dyn ServerHalves>), HostError> {
     let guests: Arc<dyn Guests> = Arc::new(HostGuests { ports, flavours });
     let file = paths.front_port_file();
@@ -96,6 +101,16 @@ pub(crate) async fn serve(
                 "the browser editor's usual port is taken, so its address changes this run; \
                  a browser editor opened before starts with empty browser storage"
             );
+            problems.raise(Problem::new(
+                MOVED_KEY,
+                "The browser editor's address changed",
+                format!(
+                    "Its usual port was taken, so it now runs on port {port}. A workspace opened \
+                     in the browser before starts with empty browser storage (settings, open \
+                     tabs); its files are untouched. Free the old port and restart Puddle to get \
+                     the old address back."
+                ),
+            ));
         }
         // The front works without the file; the next run just takes another port.
         if let Err(err) = puddle_fs::private::write_atomic(&file, port.to_string().as_bytes()) {

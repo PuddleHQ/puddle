@@ -235,18 +235,9 @@ pub fn dacl_is_owner_only(file: &File) -> io::Result<Result<(), String>> {
             return Ok(Err(format!("entry {index} is too short to hold a SID")));
         }
         // SAFETY: the type and size checks above make this a whole ACCESS_ALLOWED_ACE, and
-        // `ace_holds_a_sid` showed that its whole SID is inside `AceSize`. The SID starts at
-        // `SidStart` and extends past the struct, so the pointer is taken straight from the one
-        // `GetAce` gave (no reference to the struct in between, whose provenance would end at the
-        // struct). `EqualSid` only reads it; the user's SID is valid while `user` lives.
-        let same = unsafe {
-            EqualSid(
-                (&raw const (*ace.cast::<ACCESS_ALLOWED_ACE>()).SidStart)
-                    .cast_mut()
-                    .cast(),
-                user.sid(),
-            )
-        };
+        // `ace_holds_a_sid` showed that its whole SID is inside `AceSize`. `EqualSid` only reads
+        // it; the user's SID is valid while `user` lives.
+        let same = unsafe { EqualSid(sid_start(ace), user.sid()) };
         if same == 0 {
             return Ok(Err(format!(
                 "entry {index} grants access to another account"
@@ -254,6 +245,22 @@ pub fn dacl_is_owner_only(file: &File) -> io::Result<Result<(), String>> {
         }
     }
     Ok(Ok(()))
+}
+
+/// The address of the SID inside the `ACCESS_ALLOWED_ACE` at `ace`, by byte offset from the pointer
+/// `GetAce` gave. The SID extends past the struct, so no reference or field projection is made.
+///
+/// # Safety
+///
+/// `ace` must point at an ACE at least `size_of::<ACCESS_ALLOWED_ACE>()` bytes long.
+unsafe fn sid_start(ace: *const c_void) -> PSID {
+    // SAFETY: the caller guarantees the offset is inside the ACE.
+    unsafe {
+        ace.cast::<u8>()
+            .add(offset_of!(ACCESS_ALLOWED_ACE, SidStart))
+    }
+    .cast_mut()
+    .cast()
 }
 
 /// Whether the `ACCESS_ALLOWED_ACE` at `ace` holds its whole SID inside `AceSize`, so that nothing
@@ -273,13 +280,7 @@ unsafe fn ace_holds_a_sid(ace: *const c_void) -> bool {
     }
     // SAFETY: the size check covers the 4 bytes of `SidStart`, which hold the SID's revision and
     // sub-authority count, all that `GetLengthSid` reads. The pointer comes straight from `ace`.
-    let sid_length = unsafe {
-        GetLengthSid(
-            (&raw const (*ace.cast::<ACCESS_ALLOWED_ACE>()).SidStart)
-                .cast_mut()
-                .cast(),
-        )
-    } as usize;
+    let sid_length = unsafe { GetLengthSid(sid_start(ace)) } as usize;
     ace_size - offset_of!(ACCESS_ALLOWED_ACE, SidStart) >= sid_length
 }
 

@@ -29,7 +29,7 @@ pub mod signin;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_settings::{ClipboardRead, Effective};
@@ -261,8 +261,14 @@ struct Inner {
     hooks: Hooks,
     /// Windows open per workspace.
     open: Mutex<HashMap<WorkspaceName, usize>>,
+    /// Windows open on forwarded ports per workspace. They end nothing, but they hold the
+    /// `<workspace>.forward` data folder, so deleting the workspace waits for them.
+    forward_open: Mutex<HashMap<WorkspaceName, usize>>,
     /// Source of the popup labels.
     popups: AtomicUsize,
+    /// Set once the quit has begun: the windows' ends no longer run the hook, because the quit
+    /// asks the guests itself and waits for them.
+    quitting: AtomicBool,
     /// The cookie the last sign-in gave a workspace, with the password it was for: the editor's
     /// login limits how often one can sign in, and a window reopened a moment later must not hit it.
     sessions: Mutex<HashMap<WorkspaceName, (String, SessionCookie)>>,
@@ -276,7 +282,9 @@ impl SandboxWindows {
             inner: Arc::new(Inner {
                 hooks,
                 open: Mutex::new(HashMap::new()),
+                forward_open: Mutex::new(HashMap::new()),
                 popups: AtomicUsize::new(0),
+                quitting: AtomicBool::new(false),
                 sessions: Mutex::new(HashMap::new()),
             }),
         }
@@ -292,6 +300,58 @@ impl SandboxWindows {
             .get(workspace)
             .copied()
             .unwrap_or(0)
+    }
+
+    /// How many windows on forwarded ports `workspace` has open.
+    #[must_use]
+    pub fn forward_open_count(&self, workspace: &WorkspaceName) -> usize {
+        self.inner
+            .forward_open
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(workspace)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn forward_opened(&self, workspace: &WorkspaceName) {
+        *self
+            .inner
+            .forward_open
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(workspace.clone())
+            .or_insert(0) += 1;
+    }
+
+    fn forward_closed(&self, workspace: &WorkspaceName) {
+        let mut open = self
+            .inner
+            .forward_open
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        open.entry(workspace.clone())
+            .and_modify(|count| *count -= 1);
+        open.retain(|_, count| *count > 0);
+    }
+
+    /// Starts the quit: from now on a window's end does not run the last-closed hook, and the
+    /// windows count as gone. Says which workspaces had an editor window open, sorted, for the
+    /// caller to clean up after closing the windows; a second call says none. A window opened
+    /// after this is not covered.
+    pub fn begin_quit(&self) -> Vec<WorkspaceName> {
+        self.inner.quitting.store(true, Ordering::SeqCst);
+        let mut open: Vec<_> = std::mem::take(
+            &mut *self
+                .inner
+                .open
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        )
+        .into_keys()
+        .collect();
+        open.sort();
+        open
     }
 
     pub(crate) fn opened(&self, workspace: &WorkspaceName) {
@@ -324,7 +384,7 @@ impl SandboxWindows {
                 None => false,
             }
         };
-        if last {
+        if last && !self.inner.quitting.load(Ordering::SeqCst) {
             (self.inner.hooks.last_closed)(workspace);
         }
     }
@@ -476,22 +536,28 @@ impl SandboxWindows {
         let builder = builder.on_new_window(move |url, features| {
             this.new_window(&app_for_popups, &popup_target, &url, Some(features))
         });
-        // Only the editor's windows are counted: the cleanup hook ends the editor's extension hosts
-        // when the last of them is gone, whatever apps are still open on forwarded ports.
-        let counted = !is_forward(target);
-        if counted {
+        // The cleanup hook ends the editor's extension hosts when the last editor window is gone,
+        // whatever apps are still open on forwarded ports, so those are counted apart.
+        let forward = is_forward(target);
+        if forward {
+            self.forward_opened(&target.workspace);
+        } else {
             self.opened(&target.workspace);
         }
         let window = match builder.build() {
             Ok(window) => window,
             Err(err) => {
-                if counted {
+                if forward {
+                    self.forward_closed(&target.workspace);
+                } else {
                     self.closed(&target.workspace);
                 }
                 return Err(err);
             }
         };
-        if counted {
+        if forward {
+            window.on_window_event(self.on_forward_event(target.workspace.clone()));
+        } else {
             window.on_window_event(self.on_event(target.workspace.clone()));
         }
         #[cfg(windows)]
@@ -508,6 +574,19 @@ impl SandboxWindows {
         move |event| {
             if matches!(event, WindowEvent::Destroyed) {
                 this.closed(&workspace);
+            }
+        }
+    }
+
+    /// What a window on a forwarded port does with its events: its end is counted, and nothing else.
+    pub(crate) fn on_forward_event(
+        &self,
+        workspace: WorkspaceName,
+    ) -> impl Fn(&WindowEvent) + Send + 'static {
+        let this = self.clone();
+        move |event| {
+            if matches!(event, WindowEvent::Destroyed) {
+                this.forward_closed(&workspace);
             }
         }
     }
@@ -828,7 +907,7 @@ mod tests {
         let data = tempfile::tempdir().unwrap();
         let Fixture { windows, ended } = fixture();
         let t = mock_target("demo", data.path());
-        // The editor's window and an app's window; the app's is not counted.
+        // The editor's window and an app's window; the app's is counted apart.
         windows.open(&app, &t).unwrap();
         windows.new_window(
             app.handle(),
@@ -838,6 +917,7 @@ mod tests {
         );
         assert_eq!(app.webview_windows().len(), 2);
         assert_eq!(windows.open_count(&t.workspace), 1);
+        assert_eq!(windows.forward_open_count(&t.workspace), 1);
         // The editor's window ends: the cleanup runs although the app's window is still open.
         windows.on_event(t.workspace.clone())(&WindowEvent::Destroyed);
         assert_eq!(*ended.lock().unwrap(), ["demo"]);
@@ -1076,6 +1156,22 @@ mod tests {
         assert_eq!(*ended.lock().unwrap(), ["alpha"]);
         windows.closed(&b);
         assert_eq!(*ended.lock().unwrap(), ["alpha", "beta"]);
+    }
+
+    #[test]
+    fn once_the_quit_has_begun_a_last_window_ends_without_the_hook_and_the_open_ones_are_named() {
+        let Fixture { windows, ended } = fixture();
+        let (a, b) = (workspace("beta"), workspace("alpha"));
+        windows.opened(&a);
+        windows.opened(&b);
+        windows.opened(&b);
+        assert_eq!(windows.begin_quit(), [b.clone(), a.clone()]);
+        windows.closed(&a);
+        windows.closed(&b);
+        windows.closed(&b);
+        assert!(ended.lock().unwrap().is_empty(), "the quit asks itself");
+        assert_eq!((windows.open_count(&a), windows.open_count(&b)), (0, 0));
+        assert_eq!(windows.begin_quit(), []);
     }
 
     fn target(name: &str, data: &Path, cookie: Option<SessionCookie>) -> Target {

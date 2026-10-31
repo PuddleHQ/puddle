@@ -552,7 +552,7 @@ async fn a_plain_http_request_is_forwarded_once_with_the_checked_host() {
     );
 }
 
-/// HG-09, the sequential variant: the guest asks for `web.test` with keep-alive, waits for the
+/// The sequential variant of a keep-alive case: the guest asks for `web.test` with keep-alive, waits for the
 /// answer, then asks for `evil.test` on the same stream. The proxy closed the stream after the
 /// first answer, so the second request is never read: no rule is asked about `evil.test`, no row
 /// is written, and nothing is connected to.
@@ -601,7 +601,7 @@ async fn hostile_hg09_a_second_request_after_the_first_answer_is_never_looked_at
     );
 }
 
-/// HG-08 through the route: a name that resolves to a refused address and an allowed one is
+/// Through the route: a name that resolves to a refused address and an allowed one is
 /// connected to the allowed one only, and the audit row names that address, not the refused one.
 #[tokio::test]
 async fn hostile_hg08_a_mixed_answer_is_connected_at_the_allowed_address_and_audited_as_such() {

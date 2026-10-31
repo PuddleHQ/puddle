@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! A workspace's repository list at run time: the checkouts on its volume, adding a repository
 //! (a clone, or a checkout that is already there), cloning an entry again and taking one off the
-//! list. Part of [`HostWorkspaces`](super::HostWorkspaces); the rules are storage ST-47 to ST-53.
+//! list. Part of [`HostWorkspaces`](super::HostWorkspaces); the rules are in the storage spec.
 //!
 //! The list is saved before a call answers, so a save that fails changes nothing. Everything the
 //! guest says about a checkout is hostile input (`puddle-workspace` parses it) and is only shown,

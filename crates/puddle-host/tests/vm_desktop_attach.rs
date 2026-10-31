@@ -6,7 +6,7 @@
 //! This binary is its own `ProxyCommand`: the entry names it as the bridge program and it relays
 //! as `puddle ssh-bridge` does when it is started with `ssh-bridge <endpoint>` (the real bridge
 //! has its own tests against OpenSSH's `sshd -i`). It has no test harness for that reason, and
-//! answers the runner's `--list` itself, as `pin_environment` does.
+//! answers the runner's `--list` itself.
 //!
 //! What the hostile guest part shows: the login key's private half never reaches the guest and
 //! the guest has no SSH daemon of its own; another key is refused by the runtime's server; a host

@@ -9,8 +9,8 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use super::{
-    LOCAL, Prefix, READY, StartCost, StartSlot, configured_or_skip, read, require_file, stop,
-    wait_ready,
+    LOCAL, Prefix, READY, StartCost, StartSlot, configured_or_skip, procs, read, require_file,
+    stop, wait_ready,
 };
 
 /// The test root of one interceptor: made before the proxy starts and handed to it, so a test
@@ -89,16 +89,31 @@ fn listening_port(log: &str) -> Option<u16> {
 /// Waits until `child` has logged the port it bound, and returns it.
 ///
 /// # Panics
-/// When the child exits first or logs nothing within `within`.
+/// When the child exits first or logs nothing within `within`; the message then says what the
+/// child's processes were doing and how long the machine took to start a trivial program.
 fn wait_listening(child: &mut Child, log_path: &Path, within: Duration) -> u16 {
-    puddle_test_kit::eventually_blocking("mitmproxy did not log its port", within, || {
-        if let Some(port) = listening_port(&read(log_path)) {
-            return Ok(port);
-        }
-        if let Ok(Some(status)) = child.try_wait() {
-            panic!("mitmproxy exited early ({status})\n{}", read(log_path));
-        }
-        Err(format!("no port logged yet\n{}", read(log_path)))
+    let waited = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        puddle_test_kit::eventually_blocking("mitmproxy did not log its port", within, || {
+            if let Some(port) = listening_port(&read(log_path)) {
+                return Ok(port);
+            }
+            if let Ok(Some(status)) = child.try_wait() {
+                panic!("mitmproxy exited early ({status})\n{}", read(log_path));
+            }
+            Err(format!("no port logged yet\n{}", read(log_path)))
+        })
+    }));
+    waited.unwrap_or_else(|panic| {
+        let evidence = procs::stall_evidence(child);
+        // A child that never logged its port would outlive the panic and keep the runner's pipes open.
+        drop(child.kill());
+        drop(child.wait());
+        let why = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .unwrap_or("mitmproxy did not log its port");
+        panic!("{why}\n{evidence}")
     })
 }
 
@@ -421,13 +436,31 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    #[should_panic(expected = "mitmproxy did not log its port")]
     fn a_mitmproxy_that_logs_no_port_in_time_is_reported() {
         let dir = tempfile::tempdir().unwrap();
         let log = dir.path().join("log");
-        // The panic skips any cleanup; the child ends by itself after a second.
-        let mut child = Command::new("sleep").arg("1").spawn().unwrap();
-        wait_listening(&mut child, &log, Duration::from_millis(200));
+        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            wait_listening(&mut child, &log, Duration::from_millis(200));
+        }));
+        let message = *outcome.unwrap_err().downcast::<String>().unwrap();
+        assert!(
+            message.contains("mitmproxy did not log its port: not true within 200ms"),
+            "{message}"
+        );
+        let pid = child.id();
+        assert!(
+            message.contains(&format!("sleep pid {pid} started +0.00s CPU")),
+            "{message}"
+        );
+        assert!(
+            message.contains("a trivial program (true) took"),
+            "{message}"
+        );
+        assert!(
+            child.try_wait().unwrap().is_some(),
+            "the child that never logged is stopped, not left running"
+        );
     }
 
     #[test]

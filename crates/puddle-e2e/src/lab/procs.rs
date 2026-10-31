@@ -161,7 +161,14 @@ pub(super) fn tree_summary(child: &Child) -> String {
 /// User plus system CPU time of a `/proc/<pid>/stat` line, at the 100 Hz tick every Linux target
 /// uses. The process name (field 2) is in parentheses and may hold spaces and parentheses, so the
 /// fields are counted from the last `)`.
-pub(super) fn parse_cpu_time(stat: &str) -> Option<Duration> {
+#[cfg_attr(
+    not(target_os = "linux"),
+    expect(
+        dead_code,
+        reason = "only Linux has /proc; its parser is tested everywhere"
+    )
+)]
+fn parse_cpu_time(stat: &str) -> Option<Duration> {
     let mut fields = stat[stat.rfind(')')? + 1..].split_whitespace().skip(11);
     let utime: u64 = fields.next()?.parse().ok()?;
     let stime: u64 = fields.next()?.parse().ok()?;

@@ -6,11 +6,19 @@ import type { components } from "#lib/api/schema.d.ts";
 export type FirstRun = components["schemas"]["FirstRun"];
 export type Status = "loading" | "ready" | "failed";
 
-type StoreApi = Pick<ApiClient, "GET" | "PUT">;
+type StoreApi = Pick<ApiClient, "GET" | "PUT" | "POST">;
 
 export class FirstRunStore {
   state = $state.raw<FirstRun | null>(null);
   status = $state<Status>("loading");
+  /** Windows' confirmation is open, or Puddle is waiting for it. */
+  trusting = $state(false);
+  /** What the last press of "Trust it now" came back with, besides the new state. */
+  trustResult = $state.raw<{ waiting: boolean; detail: string | null } | null>(
+    null,
+  );
+  /** Why the last press did not reach Puddle's service, in words. */
+  trustError = $state<string | null>(null);
 
   readonly #api: StoreApi;
 
@@ -20,6 +28,8 @@ export class FirstRunStore {
 
   /** Reads the state; never throws. */
   async load(): Promise<void> {
+    this.trustResult = null;
+    this.trustError = null;
     try {
       const { data } = await this.#api.GET("/api/first-run");
       if (data) {
@@ -30,6 +40,34 @@ export class FirstRunStore {
       }
     } catch {
       if (this.state === null) this.status = "failed";
+    }
+  }
+
+  /**
+   * Asks Puddle to trust its development certificate; on Windows the user answers a confirmation
+   * meanwhile, which can take up to two minutes. One request at a time; never throws.
+   */
+  async trust(): Promise<void> {
+    if (this.trusting) return;
+    this.trusting = true;
+    this.trustResult = null;
+    this.trustError = null;
+    try {
+      const { data, error } = await this.#api.POST(
+        "/api/dev-certificate/trust",
+      );
+      if (data) {
+        const base = this.state;
+        if (base)
+          this.state = { ...base, dev_certificate: data.dev_certificate };
+        this.trustResult = { waiting: data.waiting, detail: data.detail };
+      } else {
+        this.trustError = error?.message ?? "Puddle refused that.";
+      }
+    } catch {
+      this.trustError = "Puddle's service isn't answering.";
+    } finally {
+      this.trusting = false;
     }
   }
 

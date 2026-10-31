@@ -197,13 +197,10 @@ mod tests {
             store,
             Arc::new(Problems::new(Arc::new(puddle_types::NullSink))),
         );
-        for _ in 0..200 {
-            if disk.get(&id("tok-a")).unwrap().is_none() {
-                return;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-        }
-        panic!("the sweep did not run");
+        puddle_test_kit::eventually("the sweep ran", std::time::Duration::from_secs(5), || {
+            disk.get(&id("tok-a")).unwrap().is_none()
+        })
+        .await;
     }
 
     /// A store that will not delete one id.

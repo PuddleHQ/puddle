@@ -334,30 +334,31 @@ async fn a_stream_reset_cleanly_short_of_its_content_length_never_ends_upstream_
     body.send_data(Bytes::from_static(b"0123456789"), false)
         .unwrap();
     // The reset must arrive after the ten bytes are upstream: the server's frame record shows them.
-    let mut arrived = false;
-    for _ in 0..100 {
-        let upstream = frames.lock().unwrap().clone();
-        arrived = upstream
-            .iter()
-            .any(|&(kind, _, stream, len)| kind == 0 && stream == 1 && len == 10);
-        if arrived {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert!(arrived, "the ten bytes never reached the server");
+    puddle_test_kit::eventually(
+        "the ten bytes reached the server",
+        Duration::from_secs(5),
+        || {
+            frames
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|&(kind, _, stream, len)| kind == 0 && stream == 1 && len == 10)
+        },
+    )
+    .await;
     body.send_reset(h2::Reason::NO_ERROR);
-    let mut reset_seen = false;
-    for _ in 0..50 {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        let seen = frames.lock().unwrap().clone();
-        reset_seen = seen
-            .iter()
-            .any(|&(kind, _, stream, _)| kind == 3 && stream == 1);
-        if reset_seen {
-            break;
-        }
-    }
+    puddle_test_kit::eventually(
+        "the reset reached the server",
+        Duration::from_secs(5),
+        || {
+            frames
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|&(kind, _, stream, _)| kind == 3 && stream == 1)
+        },
+    )
+    .await;
     let seen = frames.lock().unwrap().clone();
     assert!(
         seen.iter()
@@ -369,10 +370,6 @@ async fn a_stream_reset_cleanly_short_of_its_content_length_never_ends_upstream_
             .iter()
             .any(|&(kind, flags, stream, _)| kind == 0 && stream == 1 && flags & 1 != 0),
         "the body was ended as if complete: {seen:?}"
-    );
-    assert!(
-        reset_seen,
-        "the server was not told the stream was cancelled: {seen:?}"
     );
 }
 
@@ -519,23 +516,21 @@ async fn a_stream_the_guest_resets_is_cancelled_upstream() {
     tls.write_all(&frame(1, 0x4 | 0x1, 1, &get_block(b"/hang")))
         .await
         .unwrap();
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while !started.load(Ordering::SeqCst) {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("the request reached the server");
+    puddle_test_kit::eventually(
+        "the request reached the server",
+        Duration::from_secs(5),
+        || started.load(Ordering::SeqCst),
+    )
+    .await;
     tls.write_all(&frame(3, 0, 1, &8_u32.to_be_bytes()))
         .await
         .unwrap();
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while !cancelled.load(Ordering::SeqCst) {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("the server saw the stream cancelled");
+    puddle_test_kit::eventually(
+        "the server saw the stream cancelled",
+        Duration::from_secs(5),
+        || cancelled.load(Ordering::SeqCst),
+    )
+    .await;
 }
 
 #[tokio::test]

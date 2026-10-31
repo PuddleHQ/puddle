@@ -3,7 +3,6 @@
 //! watcher, and a "guest" that is this machine's loopback. What the user sees is the view and the
 //! events; what a program sees is a listener on `127.0.0.1` that carries bytes.
 #![expect(
-    clippy::panic,
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
@@ -243,21 +242,23 @@ impl Rig {
 
     /// Waits until the host's view has a row for `guest_port` that `ok` accepts.
     async fn row(&self, guest_port: u16, ok: impl Fn(&PortRow) -> bool) -> PortRow {
-        for _ in 0..500 {
-            let view = self.ports.view(&self.workspace).unwrap();
-            if let Some(row) = view
-                .ports
-                .into_iter()
-                .find(|r| r.guest_port == guest_port && ok(r))
-            {
-                return row;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        panic!(
-            "no such row for {guest_port}: {:?}",
-            self.ports.view(&self.workspace)
-        );
+        puddle_test_kit::eventually(
+            &format!("a row for {guest_port} that the test accepts"),
+            Duration::from_secs(5),
+            || {
+                let view = self.ports.view(&self.workspace);
+                view.as_ref()
+                    .ok()
+                    .and_then(|v| {
+                        v.ports
+                            .iter()
+                            .find(|r| r.guest_port == guest_port && ok(r))
+                            .cloned()
+                    })
+                    .ok_or_else(|| format!("{view:?}"))
+            },
+        )
+        .await
     }
 
     /// Takes the events so far.
@@ -381,12 +382,12 @@ async fn what_the_guest_listens_on_is_listed_and_a_change_is_announced() {
     }));
     // A port that stops listening drops out of the list.
     rig.guest_listens(&[8080]);
-    for _ in 0..500 {
-        if rig.ports.view(&rig.workspace).unwrap().ports.len() == 1 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    puddle_test_kit::eventually(
+        "the closed port drops out of the list",
+        Duration::from_secs(5),
+        || rig.ports.view(&rig.workspace).unwrap().ports.len() == 1,
+    )
+    .await;
     assert_eq!(
         rig.ports.view(&rig.workspace).unwrap().ports[0].guest_port,
         8080
@@ -677,14 +678,15 @@ async fn a_restarted_agent_gives_a_new_link_and_forwards_carry_on_through_it() {
     let down = through(host, b"lost").await;
     assert!(down.is_err() || down.unwrap().is_empty());
     rig.start_agent().await;
-    let mut back = Vec::new();
-    for _ in 0..100 {
-        back = through(host, b"two").await.unwrap_or_default();
-        if !back.is_empty() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    let back = puddle_test_kit::eventually_async(
+        "a connection through the restarted agent answers",
+        Duration::from_secs(5),
+        || async {
+            let back = through(host, b"two").await.unwrap_or_default();
+            (!back.is_empty()).then_some(back)
+        },
+    )
+    .await;
     assert_eq!(back, b"two");
 }
 
@@ -710,12 +712,10 @@ async fn a_guest_that_opens_more_connections_than_the_limit_is_reset_not_served(
         c.write_all(b"x").await.unwrap();
         clients.push(c);
     }
-    for _ in 0..500 {
-        if held.lock().unwrap().len() == 2 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    puddle_test_kit::eventually("both clients are held", Duration::from_secs(5), || {
+        held.lock().unwrap().len() == 2
+    })
+    .await;
     let mut third = TcpStream::connect(("127.0.0.1", host)).await.unwrap();
     let mut buf = [0u8; 1];
     let read = tokio::time::timeout(Duration::from_secs(5), third.read(&mut buf))

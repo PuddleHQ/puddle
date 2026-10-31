@@ -410,6 +410,7 @@ async fn tunnels_that_are_not_ssh_pass_every_byte_unchanged() {
     ];
     let mut tunnel = guest.tunnel(&authority).await;
     let mut expected = Vec::new();
+    // flake-ok: paces the chunks so each reaches the proxy as its own first read, not a wait for a condition.
     for chunk in &sent {
         tunnel.write_all(chunk).await.unwrap();
         tunnel.flush().await.unwrap();
@@ -417,10 +418,19 @@ async fn tunnels_that_are_not_ssh_pass_every_byte_unchanged() {
         expected.extend_from_slice(chunk);
     }
     tunnel.shutdown().await.unwrap();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    while server.received().len() < expected.len() && tokio::time::Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    puddle_test_kit::eventually(
+        "the server received every sent byte",
+        Duration::from_secs(5),
+        || {
+            let got = server.received().len();
+            if got >= expected.len() {
+                Ok(())
+            } else {
+                Err(format!("{got} of {} bytes", expected.len()))
+            }
+        },
+    )
+    .await;
     assert_eq!(server.received(), expected);
     // The ones that are not SSH are not recorded as refusals.
     let events = rig.events(1).await;
@@ -488,12 +498,20 @@ async fn the_hosts_direct_ssh_into_a_workspace_needs_still_pass_https_untouched(
         tunnel.write_all(hello).await.unwrap();
         tunnel.flush().await.unwrap();
     }
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    while server.received().len() < hello.len() * hosts.len()
-        && tokio::time::Instant::now() < deadline
-    {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    puddle_test_kit::eventually(
+        "the server received every hello",
+        Duration::from_secs(5),
+        || {
+            let got = server.received().len();
+            let want = hello.len() * hosts.len();
+            if got >= want {
+                Ok(())
+            } else {
+                Err(format!("{got} of {want} bytes"))
+            }
+        },
+    )
+    .await;
     assert_eq!(server.received().len(), hello.len() * hosts.len());
     let answer = guest.announce("update.code.visualstudio.com:22").await;
     assert!(

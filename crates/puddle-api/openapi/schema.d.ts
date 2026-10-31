@@ -2382,14 +2382,15 @@ export interface components {
         DensityChoice: "comfortable" | "compact";
         /** @description What pressing "Trust it now" came to. */
         DevCertTrustResult: {
-            /**
-             * @description Why, when the system or Puddle has more to say than the state does (the operating
-             *     system's error for `trust_failed`, or that Windows is still waiting for an answer);
-             *     `null` otherwise.
-             */
+            /** @description The operating system's own error text for `trust_failed`; `null` otherwise. */
             detail: string | null;
             /** @description Where the certificate stands after the attempt. */
             dev_certificate: components["schemas"]["DevCertificate"];
+            /**
+             * @description Windows' confirmation is still open from an earlier press (or this one ran out of
+             *     waiting), so nothing new was asked and `dev_certificate` is the state as it stands.
+             */
+            waiting: boolean;
         };
         /**
          * @description Where Puddle's development certificate stands on this computer: the one that makes HTTPS

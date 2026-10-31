@@ -9,6 +9,7 @@
     canTrust,
     devCertificateLine,
     rootsLine,
+    trustNote,
   } from "#lib/welcome/certificates.ts";
   import { around } from "#lib/welcome/steps.ts";
   import "#lib/theme/controls.css";
@@ -17,12 +18,20 @@
 
   const status = $derived(firstRun.state?.dev_certificate);
   const note = $derived(
-    firstRun.trusting
-      ? "Waiting for your answer in Windows' Security Warning. It can open behind this window: look for it in the taskbar."
-      : firstRun.trustNote === null
-        ? ""
-        : `Details: ${firstRun.trustNote}`,
+    trustNote({
+      trusting: firstRun.trusting,
+      error: firstRun.trustError,
+      result: firstRun.trustResult,
+      status,
+    }),
   );
+  let noteEl: HTMLElement | undefined = $state();
+
+  async function trust() {
+    await firstRun.trust();
+    // The button goes away on a yes: keep the keyboard where the outcome is read.
+    if (!canTrust(firstRun.state?.dev_certificate)) noteEl?.focus();
+  }
 
   const lines = $derived([
     devCertificateLine(firstRun.state?.dev_certificate),
@@ -57,12 +66,12 @@
       class="btn"
       disabled={firstRun.trusting}
       aria-busy={firstRun.trusting}
-      onclick={() => void firstRun.trust()}
+      onclick={() => void trust()}
     >
       {firstRun.trusting ? "Waiting for Windows…" : "Trust it now"}
     </button>
   {/if}
-  <p class="note" role="status">{note}</p>
+  <p class="note" role="status" tabindex="-1" bind:this={noteEl}>{note}</p>
 </div>
 <p class="more">
   Puddle shows this once. The details are in

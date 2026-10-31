@@ -35,11 +35,12 @@ pub enum DevCertificate {
 pub struct DevCertTrustResult {
     /// Where the certificate stands after the attempt.
     pub dev_certificate: DevCertificate,
-    /// Why, when the system or Puddle has more to say than the state does (the operating
-    /// system's error for `trust_failed`, or that Windows is still waiting for an answer);
-    /// `null` otherwise.
+    /// The operating system's own error text for `trust_failed`; `null` otherwise.
     #[schema(required = true)]
     pub detail: Option<String>,
+    /// Windows' confirmation is still open from an earlier press (or this one ran out of
+    /// waiting), so nothing new was asked and `dev_certificate` is the state as it stands.
+    pub waiting: bool,
 }
 
 /// Where the first-run flow stands.

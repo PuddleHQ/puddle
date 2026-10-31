@@ -19,6 +19,29 @@ export function canTrust(status: DevCertificate | undefined): boolean {
   return status === "needs_trust" || status === "trust_declined";
 }
 
+/** What the last press of "Trust it now" left to say, for the status line under the button. */
+export function trustNote(press: {
+  trusting: boolean;
+  error: string | null;
+  result: { waiting: boolean; detail: string | null } | null;
+  status: DevCertificate | undefined;
+}): string {
+  if (press.trusting) {
+    return "Waiting for your answer in Windows' Security Warning. It can open behind this window: look for it in the taskbar.";
+  }
+  if (press.error !== null) return press.error;
+  if (press.result === null) return "";
+  const parts = [`${devCertificateLine(press.status).title}.`];
+  if (press.result.waiting) {
+    parts.push(
+      "Windows is still waiting for your answer to the Security Warning, which can be behind this window. Pressing again does not open another.",
+    );
+  }
+  if (press.result.detail !== null)
+    parts.push(`Details: ${press.result.detail}`);
+  return parts.join(" ");
+}
+
 /** The line about the development certificate: what Puddle uses and whether the browser trusts it. */
 export function devCertificateLine(status: DevCertificate | undefined): Line {
   switch (status) {

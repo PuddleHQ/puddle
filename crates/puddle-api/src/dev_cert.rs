@@ -18,7 +18,9 @@ pub trait DevCertService: Send + Sync {
 
     /// Makes the certificate if needed and asks the system to trust it, now. The system's own
     /// confirmation may open and this waits for the answer, so the route calls it off the async
-    /// threads and with a time limit. A second call after a yes changes nothing.
+    /// threads and with a time limit. A second call after a yes changes nothing, and a call while
+    /// an earlier one still waits for the user opens no second confirmation: it answers the state
+    /// as it stands with `waiting` set.
     fn trust(&self) -> DevCertTrustResult;
 }
 
@@ -35,6 +37,7 @@ impl DevCertService for NoDevCert {
         DevCertTrustResult {
             dev_certificate: DevCertificate::NotChecked,
             detail: None,
+            waiting: false,
         }
     }
 }
@@ -44,9 +47,14 @@ impl DevCertService for NoDevCert {
 /// [`FakeDevCert::set_trust_answer`] says (a yes by default) and keeps that as the state.
 #[derive(Debug)]
 pub struct FakeDevCert {
-    status: Mutex<DevCertificate>,
-    answer: Mutex<DevCertTrustResult>,
-    trusts: Mutex<u32>,
+    inner: Mutex<Inner>,
+}
+
+#[derive(Debug)]
+struct Inner {
+    status: DevCertificate,
+    answer: DevCertTrustResult,
+    trusts: u32,
 }
 
 impl FakeDevCert {
@@ -54,48 +62,52 @@ impl FakeDevCert {
     #[must_use]
     pub fn new(status: DevCertificate) -> Self {
         Self {
-            status: Mutex::new(status),
-            answer: Mutex::new(DevCertTrustResult {
-                dev_certificate: DevCertificate::Trusted,
-                detail: None,
+            inner: Mutex::new(Inner {
+                status,
+                answer: DevCertTrustResult {
+                    dev_certificate: DevCertificate::Trusted,
+                    detail: None,
+                    waiting: false,
+                },
+                trusts: 0,
             }),
-            trusts: Mutex::new(0),
         }
+    }
+
+    fn inner(&self) -> std::sync::MutexGuard<'_, Inner> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// What the next presses of "Trust it now" come to.
     pub fn set_trust_answer(&self, dev_certificate: DevCertificate, detail: Option<String>) {
-        *self.answer.lock().unwrap_or_else(PoisonError::into_inner) = DevCertTrustResult {
+        self.inner().answer = DevCertTrustResult {
             dev_certificate,
             detail,
+            waiting: false,
         };
     }
 
     /// How many times trusting was asked for.
     #[must_use]
     pub fn trust_calls(&self) -> u32 {
-        *self.trusts.lock().unwrap_or_else(PoisonError::into_inner)
+        self.inner().trusts
     }
 
     /// Serves `status` from now on.
     pub fn set(&self, status: DevCertificate) {
-        *self.status.lock().unwrap_or_else(PoisonError::into_inner) = status;
+        self.inner().status = status;
     }
 }
 
 impl DevCertService for FakeDevCert {
     fn status(&self) -> DevCertificate {
-        *self.status.lock().unwrap_or_else(PoisonError::into_inner)
+        self.inner().status
     }
 
     fn trust(&self) -> DevCertTrustResult {
-        *self.trusts.lock().unwrap_or_else(PoisonError::into_inner) += 1;
-        let answer = self
-            .answer
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        self.set(answer.dev_certificate);
-        answer
+        let mut inner = self.inner();
+        inner.trusts += 1;
+        inner.status = inner.answer.dev_certificate;
+        inner.answer.clone()
     }
 }

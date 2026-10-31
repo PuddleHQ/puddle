@@ -116,16 +116,26 @@ impl<T: DevCertTrust> DevCertService for HostDevCert<T> {
     }
 
     fn trust(&self) -> DevCertTrustResult {
-        let _one_at_a_time = self
-            .ensuring
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // A confirmation from an earlier press (or a start) may still be open: asking again would
+        // queue a second one behind it, shown right after the user answers the first.
+        let _one_at_a_time = match self.ensuring.try_lock() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                return DevCertTrustResult {
+                    dev_certificate: self.status(),
+                    detail: None,
+                    waiting: true,
+                };
+            }
+        };
         match self.manager.ensure(self.now()) {
             Ok(report) => {
                 log_report(&report);
                 DevCertTrustResult {
                     dev_certificate: wire(report.status),
                     detail: report.detail,
+                    waiting: false,
                 }
             }
             Err(error) => {
@@ -133,6 +143,7 @@ impl<T: DevCertTrust> DevCertService for HostDevCert<T> {
                 DevCertTrustResult {
                     dev_certificate: DevCertificate::TrustFailed,
                     detail: Some(error.to_string()),
+                    waiting: false,
                 }
             }
         }
@@ -316,6 +327,56 @@ mod tests {
         assert_eq!(service.status(), DevCertificate::Trusted);
         assert_eq!(service.trust().dev_certificate, DevCertificate::Trusted);
         assert_eq!(store.asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// A store whose confirmation stays open until `answer` is sent.
+    struct Open {
+        entered: std::sync::mpsc::SyncSender<()>,
+        answer: std::sync::Mutex<std::sync::mpsc::Receiver<TrustOutcome>>,
+        asked: std::sync::atomic::AtomicU32,
+    }
+
+    impl DevCertTrust for &Open {
+        fn existing(&self) -> Result<Vec<ExistingCert>, TrustError> {
+            Ok(Vec::new())
+        }
+        fn export_key(&self, _: &[u8]) -> Result<PrivateKey, TrustError> {
+            Err(TrustError::Failed("none".into()))
+        }
+        fn is_trusted(&self, _: &[u8]) -> Result<bool, TrustError> {
+            Ok(false)
+        }
+        fn trust(&self, _: &[u8]) -> Result<TrustOutcome, TrustError> {
+            self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.entered.send(()).unwrap();
+            Ok(self.answer.lock().unwrap().recv().unwrap())
+        }
+    }
+
+    #[test]
+    fn a_press_while_the_confirmation_is_open_asks_nothing_and_says_it_is_waiting() {
+        let (entered_tx, entered) = std::sync::mpsc::sync_channel(1);
+        let (answer_tx, answer_rx) = std::sync::mpsc::channel();
+        let open = Open {
+            entered: entered_tx,
+            answer: std::sync::Mutex::new(answer_rx),
+            asked: std::sync::atomic::AtomicU32::new(0),
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let clock = Arc::new(ManualClock::new(1_800_000_000_000));
+        let service = HostDevCert::new(dir.path(), &open, clock);
+        std::thread::scope(|scope| {
+            let first = scope.spawn(|| service.trust());
+            entered.recv().unwrap();
+            let second = service.trust();
+            assert_eq!(second.dev_certificate, DevCertificate::NeedsTrust);
+            assert!(second.waiting);
+            answer_tx.send(TrustOutcome::Declined).unwrap();
+            let first = first.join().unwrap();
+            assert_eq!(first.dev_certificate, DevCertificate::TrustDeclined);
+            assert!(!first.waiting);
+        });
+        assert_eq!(open.asked.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[test]

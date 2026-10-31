@@ -251,7 +251,7 @@ test("the certificates step counts the company roots Puddle will add", async ({
   await expect(page.getByText(/Added to every workspace/)).toBeVisible();
 });
 
-test("Trust it now asks once, shows a no and a failure in words, and ends the offer after a yes", async ({
+test("Trust it now shows a no and a failure in words, and ends the offer after a yes", async ({
   page,
   backend,
   request,
@@ -284,9 +284,11 @@ test("Trust it now asks once, shows a no and a failure in words, and ends the of
     detail: "Access is denied. (os error 5)",
   });
   await trust.click();
-  await expect(page.getByRole("status")).toHaveText(
-    "Details: Access is denied. (os error 5)",
-  );
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "Details: Access is denied. (os error 5)" }),
+  ).toContainText("couldn't be trusted");
   await expect(trust).toHaveCount(0);
 
   // Yes: trusted, and the next read of the state agrees.
@@ -296,7 +298,9 @@ test("Trust it now asks once, shows a no and a failure in words, and ends the of
   });
   await page.reload();
   await page.getByRole("button", { name: "Trust it now" }).click();
-  await expect(page.getByText("Development certificate trusted")).toBeVisible();
+  await expect(
+    page.getByText("Development certificate trusted", { exact: true }),
+  ).toBeVisible();
   await expect(trust).toHaveCount(0);
   const state = (await (
     await request.get("/api/first-run", { headers: auth(backend) })

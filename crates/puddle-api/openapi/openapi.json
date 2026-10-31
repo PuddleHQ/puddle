@@ -10882,7 +10882,8 @@
         "description": "What pressing \"Trust it now\" came to.",
         "required": [
           "dev_certificate",
-          "detail"
+          "detail",
+          "waiting"
         ],
         "properties": {
           "detail": {
@@ -10890,11 +10891,15 @@
               "string",
               "null"
             ],
-            "description": "Why, when the system or Puddle has more to say than the state does (the operating\nsystem's error for `trust_failed`, or that Windows is still waiting for an answer);\n`null` otherwise."
+            "description": "The operating system's own error text for `trust_failed`; `null` otherwise."
           },
           "dev_certificate": {
             "$ref": "#/components/schemas/DevCertificate",
             "description": "Where the certificate stands after the attempt."
+          },
+          "waiting": {
+            "type": "boolean",
+            "description": "Windows' confirmation is still open from an earlier press (or this one ran out of\nwaiting), so nothing new was asked and `dev_certificate` is the state as it stands."
           }
         },
         "additionalProperties": false

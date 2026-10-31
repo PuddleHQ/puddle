@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 import { report } from "#lib/testing/fake-network.ts";
-import { canTrust, devCertificateLine, rootsLine } from "./certificates.ts";
+import {
+  canTrust,
+  devCertificateLine,
+  rootsLine,
+  trustNote,
+} from "./certificates.ts";
 
 const roots = (over: Partial<ReturnType<typeof report>["roots"]>) => ({
   roots: { ...report().roots, ...over },
@@ -21,6 +26,45 @@ describe("the Trust button", () => {
     ] as const) {
       expect(canTrust(status), String(status)).toBe(false);
     }
+  });
+});
+
+describe("the note under the Trust button", () => {
+  const press = (over: Partial<Parameters<typeof trustNote>[0]>) => ({
+    trusting: false,
+    error: null,
+    result: null,
+    status: "needs_trust" as const,
+    ...over,
+  });
+
+  it("says what Windows is doing while it waits, then what came of it", () => {
+    expect(trustNote(press({ trusting: true }))).toMatch(
+      /Security Warning.*taskbar/,
+    );
+    expect(trustNote(press({}))).toBe("");
+    expect(
+      trustNote(
+        press({ result: { waiting: false, detail: null }, status: "trusted" }),
+      ),
+    ).toBe("Development certificate trusted.");
+    expect(
+      trustNote(
+        press({
+          result: { waiting: false, detail: "os error 5" },
+          status: "trust_failed",
+        }),
+      ),
+    ).toBe("Development certificate: couldn't be trusted. Details: os error 5");
+  });
+
+  it("says when an earlier dialog is still open, and why a press failed", () => {
+    expect(
+      trustNote(press({ result: { waiting: true, detail: null } })),
+    ).toMatch(/still waiting for your answer.*another/);
+    expect(trustNote(press({ error: "Puddle refused that." }))).toBe(
+      "Puddle refused that.",
+    );
   });
 });
 

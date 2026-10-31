@@ -16,9 +16,9 @@ use crate::routes::AppState;
 use crate::routes::settings::load_global;
 use crate::wire::{DevCertTrustResult, DevCertificate, FirstRun, FirstRunRequest};
 
-/// How long the button waits for the system's confirmation: the same limit a workspace start puts
-/// on it.
-const TRUST_WAIT: Duration = Duration::from_secs(120);
+/// How long the button waits for the system's confirmation: the limit a workspace start puts on
+/// it. The route lives in the slow router, whose time limit is longer, so this answers first.
+pub(crate) const TRUST_WAIT: Duration = Duration::from_secs(120);
 
 fn view(first_run: &puddle_settings::FirstRun, dev_certificate: DevCertificate) -> FirstRun {
     FirstRun {
@@ -102,9 +102,9 @@ pub(crate) async fn trust_dev_certificate(
     Ok(Json(trust_within(state.dev_cert, TRUST_WAIT).await))
 }
 
-/// The service's answer to a trust request, or the state as it stands (with a note) when the
+/// The service's answer to a trust request, or the state as it stands (`waiting`) when the
 /// system's confirmation is still unanswered after `wait`. The confirmation stays open and a
-/// later yes shows up in the next read of the state.
+/// later answer shows up in the next read of the state.
 async fn trust_within(service: Arc<dyn DevCertService>, wait: Duration) -> DevCertTrustResult {
     let asking = service.clone();
     let work = tokio::task::spawn_blocking(move || asking.trust());
@@ -115,16 +115,15 @@ async fn trust_within(service: Arc<dyn DevCertService>, wait: Duration) -> DevCe
             DevCertTrustResult {
                 dev_certificate: DevCertificate::TrustFailed,
                 detail: Some("Puddle's attempt to trust it stopped unexpectedly.".to_owned()),
+                waiting: false,
             }
         }
         Err(_) => DevCertTrustResult {
             dev_certificate: tokio::task::spawn_blocking(move || service.status())
                 .await
                 .unwrap_or(DevCertificate::NotChecked),
-            detail: Some(
-                "Windows is still waiting for your answer. Its confirmation may be behind this window."
-                    .to_owned(),
-            ),
+            detail: None,
+            waiting: true,
         },
     }
 }
@@ -150,6 +149,7 @@ mod tests {
             DevCertTrustResult {
                 dev_certificate: DevCertificate::Trusted,
                 detail: None,
+                waiting: false,
             }
         }
     }
@@ -170,7 +170,8 @@ mod tests {
         });
         let result = trust_within(slow, Duration::from_millis(20)).await;
         assert_eq!(result.dev_certificate, DevCertificate::NeedsTrust);
-        assert!(result.detail.unwrap().contains("still waiting"));
+        assert!(result.waiting);
+        assert_eq!(result.detail, None);
     }
 
     #[tokio::test]

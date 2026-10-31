@@ -325,6 +325,7 @@ impl puddle_api::DevCertService for TestDevCert {
         puddle_api::wire::DevCertTrustResult {
             dev_certificate: puddle_api::wire::DevCertificate::Unsupported,
             detail: None,
+            waiting: false,
         }
     }
 }
@@ -348,6 +349,7 @@ impl puddle_api::DevCertService for NoDevCert {
         puddle_api::wire::DevCertTrustResult {
             dev_certificate: puddle_api::wire::DevCertificate::NotChecked,
             detail: None,
+            waiting: false,
         }
     }
 }

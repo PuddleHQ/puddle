@@ -74,7 +74,8 @@ export class FakeFirstRun {
   trustAnswer: {
     dev_certificate: FirstRun["dev_certificate"];
     detail: string | null;
-  } = { dev_certificate: "trusted", detail: null };
+    waiting: boolean;
+  } = { dev_certificate: "trusted", detail: null, waiting: false };
   /** Holds the next trust request until released, like Windows' confirmation left open. */
   holdTrust: Promise<void> | null = null;
 

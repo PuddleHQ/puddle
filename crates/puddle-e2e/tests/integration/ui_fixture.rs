@@ -1227,7 +1227,7 @@ async fn the_certificate_is_not_checked_until_a_scenario_or_a_step_sets_it_and_t
     assert_eq!(trusted.status, 200, "{}", trusted.body);
     assert_eq!(
         trusted.json(),
-        json!({"dev_certificate": "trusted", "detail": null})
+        json!({"dev_certificate": "trusted", "detail": null, "waiting": false})
     );
     assert_eq!(dev_certificate(run.get("/api/first-run").await), "trusted");
 
@@ -1239,7 +1239,7 @@ async fn the_certificate_is_not_checked_until_a_scenario_or_a_step_sets_it_and_t
     let failed = run.api("POST", "/api/dev-certificate/trust", None).await;
     assert_eq!(
         failed.json(),
-        json!({"dev_certificate": "trust_failed", "detail": "os error 5"})
+        json!({"dev_certificate": "trust_failed", "detail": "os error 5", "waiting": false})
     );
 
     let seeded = json!({"name": "untrusted", "dev_certificate": "needs_trust"}).to_string();

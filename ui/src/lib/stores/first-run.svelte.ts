@@ -13,8 +13,12 @@ export class FirstRunStore {
   status = $state<Status>("loading");
   /** Windows' confirmation is open, or Puddle is waiting for it. */
   trusting = $state(false);
-  /** What the last press of "Trust it now" has to add to the state, or why it did not work. */
-  trustNote = $state<string | null>(null);
+  /** What the last press of "Trust it now" came back with, besides the new state. */
+  trustResult = $state.raw<{ waiting: boolean; detail: string | null } | null>(
+    null,
+  );
+  /** Why the last press did not reach Puddle's service, in words. */
+  trustError = $state<string | null>(null);
 
   readonly #api: StoreApi;
 
@@ -24,6 +28,8 @@ export class FirstRunStore {
 
   /** Reads the state; never throws. */
   async load(): Promise<void> {
+    this.trustResult = null;
+    this.trustError = null;
     try {
       const { data } = await this.#api.GET("/api/first-run");
       if (data) {
@@ -44,7 +50,8 @@ export class FirstRunStore {
   async trust(): Promise<void> {
     if (this.trusting) return;
     this.trusting = true;
-    this.trustNote = null;
+    this.trustResult = null;
+    this.trustError = null;
     try {
       const { data, error } = await this.#api.POST(
         "/api/dev-certificate/trust",
@@ -53,12 +60,12 @@ export class FirstRunStore {
         const base = this.state;
         if (base)
           this.state = { ...base, dev_certificate: data.dev_certificate };
-        this.trustNote = data.detail;
+        this.trustResult = { waiting: data.waiting, detail: data.detail };
       } else {
-        this.trustNote = error?.message ?? "Puddle refused that.";
+        this.trustError = error?.message ?? "Puddle refused that.";
       }
     } catch {
-      this.trustNote = "Puddle's service isn't answering.";
+      this.trustError = "Puddle's service isn't answering.";
     } finally {
       this.trusting = false;
     }

@@ -916,7 +916,7 @@ fn a_kept_file_stays_as_an_earlier_plan_merged_it_and_is_still_puddles_to_remove
         // Never merged: keeping it does nothing and records nothing.
         let out = fr.run(&plan_with(vec![kept()]));
         assert!(out.status.success(), "{}", show(&out));
-        assert!(merge_calls(&fr).is_empty());
+        assert_eq!(merge_calls(&fr), Vec::<String>::new());
         assert!(!fr.read("/var/lib/puddle/merge-files").contains(DOCKER));
 
         let out = fr.run(&plan_with(vec![merged(DOCKER)]));

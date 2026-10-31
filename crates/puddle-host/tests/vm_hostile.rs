@@ -204,7 +204,6 @@ async fn stop(host: Host<puddle_compute_msb::MsbRuntime>, api: &Api, names: &[&s
 /// own gets what the agent got: the same answers (a rule's allow carries data to the server, no
 /// rule is refused and the server never sees a connection), and every connection is the
 /// workspace's own, in its own audit trail and under no other name, whatever the guest writes.
-#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_hostile_hg03_a_guest_that_killed_the_agent_gets_the_same_policy_and_identity() {
     let VmHost {
@@ -302,20 +301,20 @@ async fn vm_hostile_hg03_a_guest_that_killed_the_agent_gets_the_same_policy_and_
         },
     )
     .await;
+    // Every record of these destinations, whoever's, is this workspace's: the guest's own client
+    // cannot put a connection in another workspace's trail.
     let everyone = api
         .get("/api/audit?type=connection&host_contains=127.0.0.&limit=500")
         .await
         .json();
-    let owners: std::collections::BTreeSet<String> = everyone["entries"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|e| e["record"]["workspace"].as_str().map(str::to_owned))
-        .collect();
-    eprintln!("workspaces with these records: {owners:?}");
-    assert!(
-        owners.iter().all(|w| *w == name),
-        "a record names another workspace: {owners:?}"
+    let everyone = everyone["entries"].as_array().unwrap().len();
+    let mine = connections(&api, &name, "127.0.0.1").await.len()
+        + connections(&api, &name, "127.0.0.2").await.len();
+    eprintln!("records of the two destinations: {everyone}, this workspace's: {mine}");
+    assert!(mine > 0, "no record of this workspace");
+    assert_eq!(
+        everyone, mine,
+        "a record of these destinations is not this workspace's"
     );
 
     stop(host, &api, &[&name]).await;
@@ -340,7 +339,7 @@ my $out = "";
 for my $i (0 .. $count - 1) {
   $out .= pack("CCnNN", 0, 0, 1, 2 * $i + 1, length $head) . $head;
 }
-# Write in the background of the reads: the session's buffers are bounded.
+# Write in a child, so that reading never waits on a full buffer.
 my $pid = fork();
 die "fork: $!" unless defined $pid;
 if (!$pid) { my $off = 0; while ($off < length $out) { my $n = syswrite($s, $out, 65536, $off); die "write: $!\n" unless $n; $off += $n; } exit 0; }
@@ -353,24 +352,43 @@ sub read_exactly {
   }
   return $buf;
 }
+# The host drops a session that stays silent; a real agent pings, so does this client.
+sub ping { syswrite($s, pack("CCnNN", 0, 2, 1, 0, 7)); }
+sub reply_to_ping { my ($flags, $len) = @_; syswrite($s, pack("CCnNN", 0, 2, 2, 0, $len)) if $flags & 1; }
 my (%buffer, %seen, %count);
-while (keys %seen < $count) {
-  my ($version, $type, $flags, $sid, $len) = unpack("CCnNN", read_exactly(12));
-  my $data = $type == 0 && $len ? read_exactly($len) : "";
-  next unless $sid % 2 == 1;
-  $buffer{$sid} .= $data;
-  if (!$seen{$sid} && $buffer{$sid} =~ /\r\n\r\n/) {
-    $seen{$sid} = 1;
-    my ($line) = split /\r\n/, $buffer{$sid};
-    $count{(split / /, $line)[1]}++;
-    delete $buffer{$sid} if $line !~ m{ 200$} && $line !~ m{ 200 };
+my $error = "";
+eval {
+  while (keys %seen < $count) {
+    my ($version, $type, $flags, $sid, $len) = unpack("CCnNN", read_exactly(12));
+    if ($type == 2) { reply_to_ping($flags, $len); next; }
+    my $data = $type == 0 && $len ? read_exactly($len) : "";
+    next unless $sid % 2 == 1;
+    $buffer{$sid} .= $data;
+    if (!$seen{$sid} && $buffer{$sid} =~ /\r\n\r\n/) {
+      $seen{$sid} = 1;
+      my ($line) = split /\r\n/, $buffer{$sid};
+      $count{(split / /, $line)[1]}++;
+      delete $buffer{$sid};
+    }
   }
-}
+  1;
+} or $error = " error=$@";
+chomp $error;
 open(my $o, ">", "/tmp/hg11.out.tmp") or die;
-print $o join(" ", map { "$_=$count{$_}" } sort keys %count), "\n";
+print $o join(" ", map { "$_=$count{$_}" } sort keys %count), " seen=", scalar(keys %seen), "$error\n";
 close $o;
 rename "/tmp/hg11.out.tmp", "/tmp/hg11.out";
-until (-e "/tmp/hg11.release") { select(undef, undef, undef, 0.2); }
+until (-e "/tmp/hg11.release") {
+  ping();
+  my $r = ''; vec($r, fileno($s), 1) = 1;
+  while (select($r, undef, undef, 3) > 0) {
+    my ($version, $type, $flags, $sid, $len) = unpack("CCnNN", read_exactly(12));
+    read_exactly($len) if $type == 0 && $len;
+    reply_to_ping($flags, $len) if $type == 2;
+    $r = ''; vec($r, fileno($s), 1) = 1;
+    last if -e "/tmp/hg11.release";
+  }
+}
 "#;
 
 /// A flood from one workspace's guest, speaking yamux itself with more streams than the cap:
@@ -433,7 +451,7 @@ async fn vm_hostile_hg11_a_flooding_workspace_is_held_at_its_cap_and_another_is_
     eprintln!("flood counts: {counts}");
     assert_eq!(
         counts.trim(),
-        format!("200={cap} 503={}", FLOOD_STREAMS - cap),
+        format!("200={cap} 503={} seen={FLOOD_STREAMS}", FLOOD_STREAMS - cap),
         "the host did not hold the workspace at its cap"
     );
 

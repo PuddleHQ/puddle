@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Run in the guest just before a stop: sends SIGTERM to every process of the guest, once, and
 # waits until they have exited or the grace period ($1 seconds) is over. The runtime's own shutdown
 # signals only the commands it started itself and then kills everything else at once, so without

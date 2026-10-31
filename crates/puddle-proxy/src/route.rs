@@ -11,6 +11,7 @@ use std::time::Duration;
 use puddle_agent_proto::host::serve_session;
 use puddle_ipc::{Endpoint, IpcError, Listener};
 use puddle_types::WorkspaceName;
+use tokio::sync::oneshot;
 use tokio::task::{JoinHandle, JoinSet};
 use tracing::Instrument;
 
@@ -26,6 +27,8 @@ pub struct Route {
     endpoint: Endpoint,
     workspace: WorkspaceName,
     task: JoinHandle<()>,
+    /// Asks the accept loop to close its listener and end; dropping it does the same.
+    stop: Option<oneshot::Sender<()>>,
 }
 
 impl Route {
@@ -41,9 +44,14 @@ impl Route {
         &self.workspace
     }
 
-    /// Stops the route and waits until its accept loop and sessions are gone.
+    /// Stops the route and waits until its accept loop and sessions are gone and its listener
+    /// is closed, so nothing accepts on the endpoint any more (on Windows too, where a pipe
+    /// instance keeps listening until it is closed explicitly).
     pub async fn shutdown(mut self) {
-        self.task.abort();
+        if let Some(stop) = self.stop.take() {
+            // A send error means the loop already ended.
+            let _ = stop.send(());
+        }
         if let Err(err) = (&mut self.task).await
             && err.is_panic()
         {
@@ -66,20 +74,34 @@ impl Proxy {
         let endpoint = listener.endpoint().clone();
         let handler = Arc::new(self.handler(workspace.clone()));
         let span = tracing::info_span!("route", workspace = %workspace);
-        let task = tokio::spawn(accept_loop(Arc::clone(self), listener, handler).instrument(span));
+        let (stop, stopped) = oneshot::channel();
+        let task = tokio::spawn(
+            accept_loop(Arc::clone(self), listener, handler, stopped).instrument(span),
+        );
         Route {
             endpoint,
             workspace,
             task,
+            stop: Some(stop),
         }
     }
 }
 
-async fn accept_loop(proxy: Arc<Proxy>, mut listener: Listener, handler: Arc<WorkspaceHandler>) {
+async fn accept_loop(
+    proxy: Arc<Proxy>,
+    mut listener: Listener,
+    handler: Arc<WorkspaceHandler>,
+    mut stopped: oneshot::Receiver<()>,
+) {
     let max = proxy.config.max_sessions_per_route;
     let mut sessions = JoinSet::new();
     loop {
         tokio::select! {
+            _ = &mut stopped => {
+                sessions.shutdown().await;
+                listener.close().await;
+                return;
+            }
             accepted = listener.accept() => match accepted {
                 Ok(conn) if sessions.len() >= max => {
                     tracing::warn!(limit = max, "agent connection refused: route over its session limit");

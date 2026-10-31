@@ -26,7 +26,9 @@ use std::time::Duration;
 
 use puddle_agent::config::{CaptureConfig, DnsConfig, Target};
 use puddle_agent::{Agent, Config};
-use puddle_agent_proto::host::{GuestStream, HostConfig, StreamHandler, UdpRefusal, serve_session};
+use puddle_agent_proto::host::{
+    AgentReport, GuestStream, HostConfig, StreamHandler, UdpRefusal, serve_session,
+};
 use puddle_agent_proto::resolve::{RecordType, ResolveAnswer, ResolveQuery, StandInReason};
 use puddle_test_kit::eventually_async;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -175,8 +177,11 @@ impl StreamHandler for Fake {
         self.0.udp.lock().unwrap().push(refusal);
     }
 
-    async fn capture_tampered(&self, table_missing: bool) {
-        self.0.tampered.lock().unwrap().push(table_missing);
+    fn agent_report(&self, report: AgentReport) -> impl Future<Output = ()> + Send {
+        if let AgentReport::CaptureTampered { table_missing } = report {
+            self.0.tampered.lock().unwrap().push(table_missing);
+        }
+        std::future::ready(())
     }
 }
 

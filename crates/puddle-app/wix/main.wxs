@@ -54,9 +54,11 @@
 
         <InstallExecuteSequence>
             <RemoveShortcuts>Installed AND NOT UPGRADINGPRODUCTCODE</RemoveShortcuts>
-            <!-- An upgrade removes the old version first: it must keep the sign-in entry (an
-                 uninstall, which has no UPGRADINGPRODUCTCODE, removes it). -->
-            <RemoveRegistryValues>Installed AND NOT UPGRADINGPRODUCTCODE</RemoveRegistryValues>
+            <!-- The "Start Puddle when I sign in" entry is written by the program itself (its Settings
+                 switch), so the installer does not own it and Windows Installer would not remove it.
+                 An uninstall deletes it, or every sign-in would start a program that is gone; an
+                 upgrade (UPGRADINGPRODUCTCODE) keeps it. ci/msi-install-test.ps1 checks both. -->
+            <Custom Action="RemoveStartAtSignIn" After="RemoveFiles">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
         </InstallExecuteSequence>
 
         <Media Id="1" Cabinet="app.cab" EmbedCab="yes" />
@@ -89,6 +91,7 @@
         <!-- Launch checkbox on the last page. -->
         <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="!(loc.LaunchApp)" />
         <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1"/>
+        <CustomAction Id="RemoveStartAtSignIn" Directory="TARGETDIR" ExeCommand="&quot;[SystemFolder]reg.exe&quot; delete &quot;HKCU\Software\Microsoft\Windows\CurrentVersion\Run&quot; /v &quot;{{product_name}}&quot; /f" Impersonate="yes" Return="ignore" />
         <CustomAction Id="LaunchApplication" Impersonate="yes" FileKey="Path" ExeCommand="" Return="asyncNoWait" />
 
         <UI>
@@ -130,10 +133,6 @@
             {{resources}}
             <Component Id="CMP_RemoveInstallDir" Guid="*">
                 <RemoveFolder Id="RemoveInstallDir" On="uninstall" />
-                <!-- The "Start Puddle when I sign in" entry the program writes itself (its Settings
-                     switch). Uninstalling must take it away, or every sign-in would start a program
-                     that is gone. ci/msi-install-test.ps1 checks this. -->
-                <RemoveRegistryValue Id="RemoveStartAtSignIn" Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="{{product_name}}" />
                 <RegistryValue Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}" Name="Install Folder" Type="integer" Value="1" KeyPath="yes" />
             </Component>
         </DirectoryRef>

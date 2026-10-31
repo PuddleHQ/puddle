@@ -55,9 +55,9 @@ pub mod scenario;
 pub use scenario::{CheckoutSeed, RemoteNoteSeed};
 pub use scenario::{
     ConnectionSeed, CredentialsSeed, DecisionSeed, EffectSeed, EnvKindSeed, EnvSeed, GitRepoSeed,
-    GitSeed, KeptLoginSeed, ProblemSeed, RepoItemSeed, RepoListSeed, RepoNoteSeed, RepoProblemSeed,
-    RepoSeed, RequestLineSeed, RequestRuleSeed, RequestSeed, RuleSeed, Scenario, SettingsSeed,
-    StatusSeed, Step, UnsavedSeed, WorkspaceOperationSeed, WorkspaceSeed,
+    GitSeed, KeptLoginSeed, ProblemSeed, ReadBy, RepoItemSeed, RepoListSeed, RepoNoteSeed,
+    RepoProblemSeed, RepoSeed, RequestLineSeed, RequestRuleSeed, RequestSeed, RuleSeed, Scenario,
+    SettingsSeed, StatusSeed, Step, UnsavedSeed, WorkspaceOperationSeed, WorkspaceSeed,
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
@@ -661,6 +661,25 @@ impl State {
                 let spec = source.clone().into_spec()?;
                 self.credentials
                     .set_unreadable(spec, (!readable).then_some(SourceError::NotSignedIn));
+            }
+            Step::CredentialRead {
+                source,
+                by,
+                readable,
+                ago_ms,
+            } => {
+                let at = std::time::SystemTime::now() - Duration::from_millis(*ago_ms);
+                self.credentials.note_read_at(
+                    &source.clone().into_spec()?,
+                    match by {
+                        ReadBy::Injection => puddle_secrets::ReadUse::Injection,
+                        ReadBy::RepositoryList => puddle_secrets::ReadUse::RepositoryList,
+                        ReadBy::Test => puddle_secrets::ReadUse::Test,
+                    },
+                    (!readable).then_some(SourceError::NotSignedIn),
+                    at,
+                );
+                self.events.emit(Event::IdentitiesChanged {});
             }
             Step::CredentialsFound { accounts } => {
                 self.credentials.set_found(found(accounts, &[])?);

@@ -12,7 +12,7 @@
     parseOwners,
     sourceOf,
     tokenProblem,
-    type Credential,
+    type CredentialDraft,
     type FoundAccount,
     type Source,
   } from "#lib/identities/model.ts";
@@ -29,9 +29,9 @@
     onCancel,
   }: {
     store: IdentitiesStore;
-    existing: readonly Credential[];
+    existing: readonly CredentialDraft[];
     /** `stored` is the source of a token that was just kept, so the dialog can remove it again if the identity is not saved. */
-    onAdd: (credential: Credential, stored: Source | null) => void;
+    onAdd: (credential: CredentialDraft, stored: Source | null) => void;
     onCancel: () => void;
   } = $props();
 

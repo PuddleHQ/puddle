@@ -6,7 +6,7 @@
     credentialChip,
     describeSource,
     identityProblem,
-    type Credential,
+    type CredentialDraft,
     type Identity,
     type Source,
   } from "#lib/identities/model.ts";
@@ -35,7 +35,7 @@
   let label = $state("");
   let name = $state("");
   let email = $state("");
-  let credentials = $state.raw<Credential[]>([]);
+  let credentials = $state.raw<CredentialDraft[]>([]);
   let adding = $state(false);
   let problem = $state<{
     field: "label" | "name" | "email" | "form";
@@ -68,7 +68,7 @@
     }
   });
 
-  function remove(credential: Credential) {
+  function remove(credential: CredentialDraft) {
     credentials = credentials.filter((c) => c !== credential);
     const line = describeSource(credential.source);
     const mine = pasted.find((s) => describeSource(s) === line);
@@ -78,7 +78,7 @@
     }
   }
 
-  function added(credential: Credential, stored: Source | null) {
+  function added(credential: CredentialDraft, stored: Source | null) {
     credentials = [...credentials, credential];
     if (stored) pasted = [...pasted, stored];
     adding = false;

@@ -7,10 +7,10 @@
 // never here: a credential is a reference, a check says only whether it reads.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import {
+  checkFromLast,
   checkOf,
   credentialKey,
   describeSource,
-  UNTESTED,
   type Check,
   type Credential,
   type FoundAccounts,
@@ -81,6 +81,7 @@ export class IdentitiesStore {
       if (data) {
         this.identities = data.identities;
         this.status = "ready";
+        this.#adoptHostChecks(data.identities);
       } else if (this.status === "loading") {
         this.status = "failed";
       }
@@ -134,13 +135,36 @@ export class IdentitiesStore {
     );
   }
 
-  /** What is known of a credential: its last check, or that a workspace could not read it. */
+  /**
+   * What is known of a credential: a test in flight or just done here, else that a workspace could
+   * not read it, else the host's record of its last read (`UNTESTED` before any).
+   */
   checkOf(credential: Credential): Check {
     const known = this.checks[credentialKey(credential)];
     if (known && known.state !== "untested") return known;
-    return this.signedOutLines.has(describeSource(credential.source))
-      ? SIGNED_OUT
-      : UNTESTED;
+    if (this.signedOutLines.has(describeSource(credential.source)))
+      return SIGNED_OUT;
+    return checkFromLast(credential.last_check);
+  }
+
+  /**
+   * The host's list is newer than what this page remembers of a finished check, so it replaces it
+   * (a test in flight stays); a credential the host last read fine no longer needs a sign-in line.
+   */
+  #adoptHostChecks(identities: readonly Identity[]): void {
+    const kept = Object.entries(this.checks).filter(
+      ([, check]) => check.state === "checking",
+    );
+    if (kept.length !== Object.keys(this.checks).length) {
+      this.checks = Object.fromEntries(kept);
+    }
+    for (const identity of identities) {
+      for (const credential of identity.credentials) {
+        if (credential.last_check?.readable) {
+          this.#nowReadable(credential.source);
+        }
+      }
+    }
   }
 
   #setCheck(credential: Credential, check: Check): void {

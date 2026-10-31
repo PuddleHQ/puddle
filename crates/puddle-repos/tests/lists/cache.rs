@@ -11,7 +11,9 @@ use puddle_repos::{
     Api, ApiReply, ApiRequest, Config, Freshness, ListState, NoteKind, ProblemKind, Read, Repos,
     TransportError,
 };
-use puddle_secrets::{Credential, Fetch, Fetched, Secret, SecretCache, SourceError, SourceSpec};
+use puddle_secrets::{
+    Credential, Fetch, Fetched, ReadLog, ReadUse, Secret, SecretCache, SourceError, SourceSpec,
+};
 use puddle_store::{Clock, ManualClock};
 
 use crate::common::{REPOS_PATH, Rig, T0, Tokens, binding, data, gh, identities, ok_json, stored};
@@ -556,9 +558,13 @@ impl Fetch for CountingSource {
 async fn the_shared_secrets_cache_serves_the_token_until_the_host_rejects_it_then_asks_its_source_again()
  {
     let asked = Arc::new(AtomicUsize::new(0));
-    let cache = Arc::new(SecretCache::new(CountingSource {
-        asked: asked.clone(),
-    }));
+    let reads = Arc::new(ReadLog::new());
+    let cache = Arc::new(
+        SecretCache::new(CountingSource {
+            asked: asked.clone(),
+        })
+        .with_read_log(reads.clone()),
+    );
     let api = Arc::new(puddle_repos::FakeApi::new());
     api.reply(
         "api.github.com",
@@ -574,6 +580,9 @@ async fn the_shared_secrets_cache_serves_the_token_until_the_host_rejects_it_the
     };
 
     repos.lists(&ids, read).await;
+    // The listing's own read of the token is what the identities show as its last read.
+    let noted = reads.last(&gh("github.com", "octocat")).unwrap();
+    assert_eq!((noted.by, noted.problem), (ReadUse::RepositoryList, None));
     clock.advance(11_000);
     repos.lists(&ids, read).await;
     // The second read used the cached token.

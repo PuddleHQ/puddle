@@ -4,6 +4,7 @@
 // next read) and refuses a collision the way the host does. Not shipped (tests import it).
 import type {
   Credential,
+  CredentialDraft,
   FoundAccounts,
   Identity,
   Source,
@@ -26,8 +27,14 @@ export function credential(
     host: "github.com",
     source: ghSource(),
     covers: { owners: owners ?? [], rest_of_host: rest ?? true },
+    last_check: null,
     ...fields,
   };
+}
+
+/** What the host answers for a credential it has not read yet. */
+function withoutRecord(drafts: CredentialDraft[]): Credential[] {
+  return drafts.map((c) => ({ ...c, last_check: null }));
 }
 
 export function identity(id: number, over: Partial<Identity> = {}): Identity {
@@ -191,7 +198,7 @@ export class FakeIdentities {
         const made = identity(this.#id++, {
           label: String(body["label"]),
           author: body["author"] as Identity["author"],
-          credentials: body["credentials"] as Credential[],
+          credentials: withoutRecord(body["credentials"] as CredentialDraft[]),
           is_default: this.identities.length === 0,
         });
         if (
@@ -304,7 +311,7 @@ export class FakeIdentities {
           ...found,
           label: String(body["label"]),
           author: body["author"] as Identity["author"],
-          credentials: body["credentials"] as Credential[],
+          credentials: withoutRecord(body["credentials"] as CredentialDraft[]),
         };
         this.identities = this.identities.map((i) => (i.id === id ? next : i));
         return this.reply(200, next);

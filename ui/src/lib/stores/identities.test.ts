@@ -300,6 +300,102 @@ describe("credentials", () => {
     });
   });
 
+  it("shows the host's record of the last read before anything is tested here", async () => {
+    const read = (over: object) => ({
+      readable: true,
+      problem: null,
+      needs_sign_in: false,
+      checked_at: 1_000,
+      by: "injection" as const,
+      ...over,
+    });
+    const fine = credential({ last_check: read({}) });
+    const broken = credential({
+      source: ghSource("other"),
+      last_check: read({
+        readable: false,
+        problem: "not signed in",
+        needs_sign_in: true,
+        by: "repository_list",
+      }),
+    });
+    api.identities = [identity(1, { credentials: [fine, broken] })];
+    const store = make();
+    await store.refresh();
+    expect(store.checkOf(fine)).toEqual({
+      state: "ok",
+      seen: { at: 1_000, by: "injection" },
+    });
+    expect(store.checkOf(broken)).toMatchObject({
+      state: "problem",
+      needsSignIn: true,
+      seen: { by: "repository_list" },
+    });
+  });
+
+  it("lets Test override the host's record, and the host's newer record override Test", async () => {
+    const stale = credential({
+      last_check: {
+        readable: false,
+        problem: "not signed in",
+        needs_sign_in: true,
+        checked_at: 1,
+        by: "injection",
+      },
+    });
+    api.identities = [identity(1, { credentials: [stale] })];
+    const store = make();
+    await store.refresh();
+    expect(store.checkOf(stale)).toMatchObject({ state: "problem" });
+    // The user tests it and it reads: that answer shows at once.
+    await store.check(stale);
+    expect(store.checkOf(stale)).toEqual({ state: "ok" });
+    // A push then found it broken: the host's list, refetched, is newer than the test.
+    api.identities = [identity(1, { credentials: [stale] })];
+    await store.refresh();
+    expect(store.checkOf(stale)).toMatchObject({
+      state: "problem",
+      needsSignIn: true,
+    });
+  });
+
+  it("keeps a test in flight through a refresh and drops a sign-in line the host has since read", async () => {
+    const cred = credential({
+      last_check: {
+        readable: true,
+        problem: null,
+        needs_sign_in: false,
+        checked_at: 5,
+        by: "test",
+      },
+    });
+    api.identities = [identity(1, { credentials: [cred] })];
+    const store = make();
+    store.markSignedOut(describeSource(cred.source));
+    expect(store.checkOf(cred)).toMatchObject({ needsSignIn: true });
+    let finish!: () => void;
+    const held = new Promise<void>((resolve) => (finish = resolve));
+    const post = api.POST;
+    vi.spyOn(api, "POST").mockImplementation((async (
+      path: string,
+      init: { body?: Record<string, unknown> },
+    ) => {
+      await held;
+      return post(path, init);
+    }) as never);
+    const pending = store.check(cred);
+    await store.refresh();
+    expect(store.checkOf(cred).state).toBe("checking");
+    finish();
+    await pending;
+    await store.refresh();
+    expect(store.signedOutLines.size).toBe(0);
+    expect(store.checkOf(cred)).toMatchObject({
+      state: "ok",
+      seen: { by: "test" },
+    });
+  });
+
   it("tests every credential of every identity, one after another", async () => {
     api.identities = [
       identity(1, {

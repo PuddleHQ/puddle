@@ -31,7 +31,7 @@ use puddle_netpolicy::{LocalAccess, NetPolicy, PuddleEndpoints};
 use puddle_ports::Ports;
 use puddle_proxy::{Proxy, ProxyUrl, PullProxy, PullRoute, Resolver, Terminations, Upstream};
 use puddle_repos::{HostApi, Repos};
-use puddle_secrets::{SecretCache, SecretStore, Sources, ToolPaths};
+use puddle_secrets::{ReadLog, SecretCache, SecretStore, Sources, ToolPaths};
 use puddle_settings::resolve;
 use puddle_store::{ConnectionRecorder, DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock};
 use puddle_types::{
@@ -47,7 +47,9 @@ use crate::dev_cert::{DevCertSource, host_dev_cert};
 use crate::doctor::system_doctor;
 use crate::files::{FileSettings, WorkspaceBook};
 use crate::front::Flavours;
-use crate::injection::{Injection, InjectorFactory, InjectorInputs, forward_sign_in_needed};
+use crate::injection::{
+    Injection, InjectorFactory, InjectorInputs, credential_read_log, forward_sign_in_needed,
+};
 use crate::learned::HostLearned;
 use crate::ports::{HostPorts, StorePins};
 use crate::ssh_config::SshSetup;
@@ -618,7 +620,10 @@ impl<R: Runtime + Clone> Host<R> {
         .with_workspaces(Arc::new(service.clone()))
         .with_network_health(network_health)
         .with_secret_store(vault.clone())
-        .with_credentials(Arc::new(HostCredentials::new(ToolPaths::resolve(), vault)))
+        .with_credentials(Arc::new(
+            HostCredentials::new(ToolPaths::resolve(), vault)
+                .with_read_log(Arc::clone(&injecting.reads)),
+        ))
         .with_repos(injecting.repos(&egress.chain, &clock, connections.clone(), &events))
         .with_doctor(system_doctor(
             &config.layout,
@@ -858,6 +863,8 @@ fn announce_renewals(repos: &Repos, events: Arc<dyn EventSink>) {
 struct Injecting {
     injection: Arc<Injection>,
     secrets: Arc<SecretCache<Sources>>,
+    /// What the last read of each credential came to, by every use; shown on the identities.
+    reads: Arc<ReadLog>,
     terminations: Arc<Terminations>,
     tls: TlsClient,
 }
@@ -913,10 +920,11 @@ impl Injecting {
         login_markers: PathBuf,
     ) -> Result<Self, HostError> {
         // The secrets read from the user's own sign-ins (`gh`, Git, the operating system's store).
-        let secrets = Arc::new(SecretCache::new(Sources::new(
-            ToolPaths::resolve(),
-            Arc::clone(vault),
-        )));
+        let reads = credential_read_log(events.clone() as Arc<dyn EventSink>);
+        let secrets = Arc::new(
+            SecretCache::new(Sources::new(ToolPaths::resolve(), Arc::clone(vault)))
+                .with_read_log(Arc::clone(&reads)),
+        );
         // The proxy asks this registry, once per connection, what the workspace decrypts.
         let terminations = Arc::new(Terminations::new());
         let injection = Arc::new(
@@ -937,6 +945,7 @@ impl Injecting {
         Ok(Self {
             injection,
             secrets,
+            reads,
             terminations,
             tls,
         })

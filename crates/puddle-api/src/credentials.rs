@@ -12,8 +12,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use futures_util::future::BoxFuture;
 use puddle_secrets::{
-    Discovery, Fetch, Secret, SecretStore, SignInError, SignInStart, SignIns, SourceError,
-    SourceSpec, Sources, StoredId, TokenScope, ToolPaths, discover, pasted_token,
+    Discovery, Fetch, LastRead, ReadLog, ReadUse, Secret, SecretStore, SignInError, SignInStart,
+    SignIns, SourceError, SourceSpec, Sources, StoredId, TokenScope, ToolPaths, discover,
+    pasted_token,
 };
 
 /// Why a call could not be answered.
@@ -62,6 +63,11 @@ pub trait CredentialService: Send + Sync {
 
     /// Starts a sign-in the user finishes outside Puddle. Only ever from a click.
     fn sign_in(&self, source: SourceSpec) -> BoxFuture<'_, Result<SignInStart, CredentialsError>>;
+
+    /// What the last read of `source` came to, whoever asked: a workspace's request, a repository
+    /// list or a check. `None` before any read since Puddle started. Reads nothing itself, and
+    /// never holds a value.
+    fn last_read(&self, source: &SourceSpec) -> Option<LastRead>;
 }
 
 /// The service when none is wired in: every call says so.
@@ -91,6 +97,9 @@ impl CredentialService for NoCredentials {
     }
     fn sign_in(&self, _source: SourceSpec) -> BoxFuture<'_, Result<SignInStart, CredentialsError>> {
         Box::pin(async { Err(not_wired()) })
+    }
+    fn last_read(&self, _source: &SourceSpec) -> Option<LastRead> {
+        None
     }
 }
 
@@ -149,6 +158,7 @@ pub struct HostCredentials {
     sources: Sources,
     store: Arc<dyn SecretStore>,
     sign_ins: SignIns,
+    reads: Arc<ReadLog>,
 }
 
 impl std::fmt::Debug for HostCredentials {
@@ -166,7 +176,17 @@ impl HostCredentials {
             sign_ins: SignIns::new(tools.clone()),
             tools,
             store,
+            reads: Arc::new(ReadLog::new()),
         }
+    }
+
+    /// The same, keeping the outcome of every check in `reads` and answering
+    /// [`last_read`](CredentialService::last_read) from it: pass the log the secret cache of the
+    /// workspaces' requests writes to, so one log holds every use.
+    #[must_use]
+    pub fn with_read_log(mut self, reads: Arc<ReadLog>) -> Self {
+        self.reads = reads;
+        self
     }
 
     /// The same with these sign-ins (to change how long one stays open).
@@ -184,10 +204,16 @@ impl CredentialService for HostCredentials {
 
     fn check(&self, source: SourceSpec) -> BoxFuture<'_, Result<Check, CredentialsError>> {
         Box::pin(async move {
-            Ok(match self.sources.fetch(&source).await {
+            let check = match self.sources.fetch(&source).await {
                 Ok(_) => Check::Readable,
                 Err(err) => Check::Problem(err),
-            })
+            };
+            let problem = match &check {
+                Check::Readable => None,
+                Check::Problem(err) => Some(err.clone()),
+            };
+            self.reads.record(&source, ReadUse::Test, problem);
+            Ok(check)
         })
     }
 
@@ -235,6 +261,10 @@ impl CredentialService for HostCredentials {
     fn sign_in(&self, source: SourceSpec) -> BoxFuture<'_, Result<SignInStart, CredentialsError>> {
         Box::pin(async move { self.sign_ins.begin(&source).await.map_err(sign_in_error) })
     }
+
+    fn last_read(&self, source: &SourceSpec) -> Option<LastRead> {
+        self.reads.last(source)
+    }
 }
 
 /// Answers from what a test or the UI fixture put in it: the accounts "found", which credentials
@@ -243,6 +273,7 @@ impl CredentialService for HostCredentials {
 #[derive(Default)]
 pub struct FakeCredentials {
     state: Mutex<FakeState>,
+    reads: ReadLog,
 }
 
 #[derive(Default)]
@@ -286,6 +317,22 @@ impl FakeCredentials {
         };
     }
 
+    /// Notes a read of `source` that a workspace's request made, as the host's secret cache does.
+    pub fn note_read(&self, source: &SourceSpec, by: ReadUse, problem: Option<SourceError>) {
+        self.reads.record(source, by, problem);
+    }
+
+    /// The same for a read that finished at `at`.
+    pub fn note_read_at(
+        &self,
+        source: &SourceSpec,
+        by: ReadUse,
+        problem: Option<SourceError>,
+        at: std::time::SystemTime,
+    ) {
+        self.reads.record_at(source, by, problem, at);
+    }
+
     /// What a sign-in shows the user.
     pub fn set_sign_in(&self, start: SignInStart) {
         self.state().sign_in = start;
@@ -313,10 +360,9 @@ impl CredentialService for FakeCredentials {
 
     fn check(&self, source: SourceSpec) -> BoxFuture<'_, Result<Check, CredentialsError>> {
         Box::pin(async move {
-            Ok(match self.state().unreadable.get(&source) {
-                Some(why) => Check::Problem(why.clone()),
-                None => Check::Readable,
-            })
+            let why = self.state().unreadable.get(&source).cloned();
+            self.reads.record(&source, ReadUse::Test, why.clone());
+            Ok(why.map_or(Check::Readable, Check::Problem))
         })
     }
 
@@ -355,6 +401,10 @@ impl CredentialService for FakeCredentials {
             state.sign_ins.push(source);
             Ok(state.sign_in.clone())
         })
+    }
+
+    fn last_read(&self, source: &SourceSpec) -> Option<LastRead> {
+        self.reads.last(source)
     }
 }
 

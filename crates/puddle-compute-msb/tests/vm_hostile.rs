@@ -343,3 +343,214 @@ async fn vm_hostile_hg44_a_rewritten_root_disk_journal_attaches_no_file_outside_
         assert_eq!(before, after, "{} changed", target.display());
     }
 }
+
+/// What a root process can do at the packet level, one `<check> <outcome>` line per step.
+/// Phase one: raw IP sockets (ICMP, TCP, UDP, a raw header) send to a public address, and a
+/// packet socket bound to each interface but loopback sends a frame; loopback is the control (a
+/// second packet socket captures the frame sent on it, and a raw UDP send to 127.0.0.1 goes
+/// out). Phase two: root brings the dummy device up with an address and a default route, then
+/// tries a TCP connect and a UDP query to public addresses, and a raw TCP segment, which
+/// must still reach nothing.
+const PACKET_PROBE: &str = r#"
+use strict; use warnings; use Socket;
+my $payload = "puddle-hg01-frame-" . ("x" x 40);
+sub frame { return "\xff\xff\xff\xff\xff\xff" . "\x02\0\0\0\0\x01" . "\x88\xb5" . $payload; }
+sub bind_to {
+  my ($s, $ifindex) = @_;
+  return bind($s, pack("S n i S C C a8", 17, 3, $ifindex, 0, 0, 0, ""));
+}
+sub ifindex { open(my $f, "<", "/sys/class/net/$_[0]/ifindex") or return; my $i = <$f>; chomp $i; return $i; }
+my @devices = grep { $_ ne "lo" } map { s{.*/}{}r } glob("/sys/class/net/*");
+print "devices: @devices\n";
+
+# Control: a packet socket on loopback sees the frame another one sends on it.
+{
+  my $lo = ifindex("lo");
+  socket(my $rx, 17, SOCK_RAW, 768) or do { print "control-packet socket failed: $!\n"; goto RAW };
+  bind_to($rx, $lo) or do { print "control-packet bind failed: $!\n"; goto RAW };
+  socket(my $tx, 17, SOCK_RAW, 768) or do { print "control-packet socket failed: $!\n"; goto RAW };
+  bind_to($tx, $lo) or do { print "control-packet bind failed: $!\n"; goto RAW };
+  send($tx, frame(), 0) or do { print "control-packet send failed: $!\n"; goto RAW };
+  my $seen = 0; my $until = time + 3;
+  while (!$seen && time < $until) {
+    my $r = ''; vec($r, fileno($rx), 1) = 1;
+    next if select($r, undef, undef, 1) <= 0;
+    recv($rx, my $buf, 4096, 0) or next;
+    $seen = 1 if index($buf, $payload) >= 0;
+  }
+  print "control-packet ", ($seen ? "captured" : "not-captured"), "\n";
+}
+RAW:
+for my $dev (@devices) {
+  my $i = ifindex($dev);
+  socket(my $s, 17, SOCK_RAW, 768) or do { print "packet $dev socket failed: $!\n"; next };
+  bind_to($s, $i) or do { print "packet $dev bind failed: $!\n"; next };
+  send($s, frame(), 0) or do { print "packet $dev send failed: $!\n"; next };
+  print "packet $dev sent\n";
+}
+for my $proto ((1, 6, 17, 255)) {
+  for my $dst (("1.1.1.1", "9.9.9.9")) {
+    socket(my $s, AF_INET, SOCK_RAW, $proto) or do { print "raw$proto $dst socket failed: $!\n"; next };
+    send($s, pack("a24", "puddle-hg01"), 0, pack_sockaddr_in(0, inet_aton($dst)))
+      or do { print "raw$proto $dst send failed: $!\n"; next };
+    print "raw$proto $dst sent\n";
+  }
+}
+{
+  socket(my $s, AF_INET, SOCK_RAW, 17) or do { print "raw-control socket failed: $!\n"; goto PHASE2 };
+  send($s, pack("a24", "puddle-hg01"), 0, pack_sockaddr_in(0, inet_aton("127.0.0.1")))
+    or do { print "raw-control send failed: $!\n"; goto PHASE2 };
+  print "raw-control sent\n";
+}
+PHASE2:
+# Root makes the sink device a network of its own, then tries to leave through it.
+if (@devices) {
+  my $dev = $devices[0];
+  my @steps = ("ip link set $dev up", "ip addr add 192.0.2.2/24 dev $dev",
+               "ip route add default via 192.0.2.1 dev $dev");
+  for my $cmd (@steps) { system($cmd) == 0 or print "setup failed: $cmd\n"; }
+  for my $dst (("140.82.121.4", "1.1.1.1")) {
+    socket(my $s, AF_INET, SOCK_STREAM, 0) or do { print "tcp $dst socket failed: $!\n"; next };
+    my $ok = eval {
+      local $SIG{ALRM} = sub { die "timeout\n" };
+      alarm 5;
+      connect($s, pack_sockaddr_in(443, inet_aton($dst))) or die "$!\n";
+      alarm 0; 1;
+    };
+    alarm 0;
+    print "tcp $dst ", ($ok ? "connected\n" : "failed: $@");
+  }
+  socket(my $u, AF_INET, SOCK_DGRAM, 0) or print "udp socket failed: $!\n";
+  my $query = pack("n6", 0x1234, 0x0100, 1, 0, 0, 0) . "\x06github\x03com\x00" . pack("n2", 1, 1);
+  send($u, $query, 0, pack_sockaddr_in(53, inet_aton("1.1.1.1"))) or print "udp send failed: $!\n";
+  my $r = ''; vec($r, fileno($u), 1) = 1;
+  print "udp 1.1.1.1 ", (select($r, undef, undef, 4) > 0 ? "answered" : "no-answer"), "\n";
+}
+"#;
+
+/// Past the plain sockets of the first test: as root, raw IP sockets and packet sockets
+/// (`AF_PACKET`, the way a tool writes its own frames) reach no network. A raw send to a public
+/// address finds no route, and a frame on any device but loopback is refused; and even when
+/// root gives the sink device an address and a default route, TCP, UDP and DNS to public
+/// addresses reach nothing. The probe is proven by loopback: a second packet socket captures the
+/// frame sent on it, and a raw send to 127.0.0.1 goes out.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_hostile_hg01_raw_and_packet_sockets_reach_no_network() {
+    let settings = support::settings();
+    let rt = support::runtime(&settings).await;
+    let s = spec(&settings, "hg01p");
+    let n = s.name.clone();
+    let sb = rt.create(s).await.expect("create");
+    let out = sb
+        .exec(
+            ExecRequest::new("perl", ["-e", PACKET_PROBE])
+                .as_user("root")
+                .with_timeout(Duration::from_secs(120)),
+        )
+        .await
+        .expect("packet probe");
+    let ip = sh(&sb, "command -v ip").await;
+    sb.stop().await.unwrap();
+    cleanup(&rt, &[&n]).await;
+    let report = out.stdout_text();
+    eprintln!("{report}{}", out.stderr_text());
+    assert_eq!(out.status.code, 0, "{}", out.stderr_text());
+    assert_eq!(
+        ip.status.code, 0,
+        "the guest has no `ip` to reconfigure with"
+    );
+    let has = |line: &str| report.lines().any(|l| l == line);
+    // The probe works where it may: loopback.
+    assert!(
+        has("control-packet captured") || report.contains("control-packet socket failed"),
+        "the packet probe is not proven by loopback: {report}"
+    );
+    assert!(has("raw-control sent"), "raw control: {report}");
+    // Nothing leaves: no raw send to a public address, no frame on a device but loopback.
+    for l in report.lines() {
+        let leaked = (l.starts_with("raw") && l.ends_with(" sent"))
+            || (l.starts_with("packet ") && l.ends_with(" sent"))
+            || l.ends_with("connected")
+            || l.ends_with("answered");
+        assert!(
+            !leaked || l == "raw-control sent",
+            "the guest got out: {l}\n{report}"
+        );
+    }
+    assert!(
+        !report.contains("setup failed"),
+        "root could not set the sink device up, so phase two proved nothing: {report}"
+    );
+    for dst in ["140.82.121.4", "1.1.1.1"] {
+        assert!(
+            report
+                .lines()
+                .any(|l| l.starts_with(&format!("tcp {dst} failed"))),
+            "no TCP verdict for {dst}: {report}"
+        );
+    }
+    assert!(has("udp 1.1.1.1 no-answer"), "{report}");
+}
+
+/// The vsock addresses the first sweep leaves out: other guests' CIDs, a high one, the largest
+/// valid CIDs and `VMADDR_CID_ANY`.
+const OTHER_CIDS: [u32; 7] = [4, 5, 6, 100, 0x7fff_ffff, 0xffff_fffe, 0xffff_ffff];
+
+/// The ports tried on every other address: the low ones, the routed one with its neighbours,
+/// the usual proxy and web ports and the ephemeral range's start.
+const OTHER_CID_PORTS: [&str; 5] = ["1-1024", "3128", "4990-5010", "8080", "49152-49300"];
+
+/// Reads the guest's own CID from `/dev/vsock` (`IOCTL_VM_SOCKETS_GET_LOCAL_CID`).
+const LOCAL_CID: &str = r#"open(my $f, "<", "/dev/vsock") or die "open: $!\n"; my $b = pack("L", 0); ioctl($f, 0x7b9, $b) or die "ioctl: $!\n"; print unpack("L", $b), "\n";"#;
+
+/// Past the sweep of the host and CIDs 0, 1 and 3: the routed port accepts on the host and on no
+/// other address. Guests' CIDs, the largest valid CIDs, `VMADDR_CID_ANY` and the guest's own
+/// CID refuse every port of the sweep, the routed one included, and the same probe is accepted
+/// at the host's routed port in the same run (the proof that the probe encodes a CID that
+/// connects).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_hostile_hg02_no_other_vsock_address_accepts() {
+    let settings = support::settings();
+    let rt = support::runtime(&settings).await;
+    let root = IpcRoot::new().unwrap();
+    let listener = root.listen().unwrap();
+    let s = spec(&settings, "hg02o")
+        .with_route(VsockRoute::new(ROUTE_PORT, listener.endpoint().path()));
+    let n = s.name.clone();
+    let lines = collect_lines(listener);
+    let sb = rt.create(s).await.expect("create");
+    let own = sb
+        .exec(ExecRequest::new("perl", ["-e", LOCAL_CID]).as_user("root"))
+        .await
+        .expect("local cid");
+    let own_cid: Option<u32> = own.stdout_text().trim().parse().ok();
+    eprintln!("own CID: {own_cid:?} {}", own.stderr_text().trim());
+    let control = vsock_sweep(&sb, HOST_CID, "hello-hg02-control", &["5000"]).await;
+    let cids: Vec<u32> = OTHER_CIDS.into_iter().chain(own_cid).collect();
+    let mut sweeps = Vec::new();
+    for cid in &cids {
+        let message = format!("hello-hg02-{cid}");
+        sweeps.push((
+            *cid,
+            vsock_sweep(&sb, *cid, &message, &OTHER_CID_PORTS).await,
+        ));
+    }
+    sb.stop().await.unwrap();
+    cleanup(&rt, &[&n]).await;
+    assert_eq!(
+        control.accepted,
+        [ROUTE_PORT],
+        "the control sweep of the host"
+    );
+    assert!(sweeps.len() >= OTHER_CIDS.len(), "no sweeps ran");
+    for (cid, sweep) in sweeps {
+        eprintln!("{}", sweep.summary);
+        assert!(
+            sweep.accepted.is_empty(),
+            "CID {cid} accepted ports {:?}: {}",
+            sweep.accepted,
+            sweep.summary
+        );
+    }
+    assert_eq!(lines.await.unwrap(), ["hello-hg02-control"]);
+}

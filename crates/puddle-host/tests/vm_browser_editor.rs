@@ -323,8 +323,8 @@ async fn windows_become(windows: &puddle_front::Windows, workspace: &WorkspaceNa
 /// host (the shell's last-window cleanup) and keeps the terminal host; opening it again within the
 /// grace finds the editor with the kept session (no second sign-in). A stop closes the window
 /// before the guest goes; after the next start the window opens signed in again (a new sign-in only
-/// when the password changed), and a window on the multi-root file the attach wrote shows one root
-/// per checkout and the volume.
+/// when the password changed) on the multi-root file the attach wrote, not on the volume the last
+/// window showed, with one root per checkout and the volume.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_close_ends_the_extension_hosts()
@@ -503,7 +503,9 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     windows_become(windows, &sandbox, false).await;
 
     // After the start the shell signs in again if the password changed, and only then; the window
-    // opens signed in either way.
+    // opens signed in either way. The server started with the multi-root file the attach wrote,
+    // so the window opens it, not the volume the last window showed, with one root per checkout
+    // and the volume.
     let start = api.post(&format!("/api/workspaces/{name}/start"), "").await;
     assert_eq!(start.status, 202, "{}", start.body);
     let end = events
@@ -514,40 +516,13 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     let after = guest(&runtime, &sandbox, "cat /run/puddle/editor-password").await;
     let sign_ins = if after == before { 1 } else { 2 };
     attach().await;
-    shell
-        .wait(&name, EXPLORER_READY, "true", WORKBENCH_BUDGET)
-        .await;
-    assert_eq!(
-        shell.wait(&name, "true", WHERE, PAGE_BUDGET).await["login"],
-        false
-    );
-    assert_eq!(*shell.sign_ins.lock().unwrap(), sign_ins);
-
-    // The attach wrote the multi-root file; a window on it shows one root per checkout and the
-    // volume (a server that was running before the file was written opens the volume by itself).
-    let file = format!("{root}/.puddle/editor/{name}.code-workspace");
-    let (multi, _) = shell
-        .browser
-        .lock()
-        .await
-        .open(
-            &PageRequest::new(format!("{origin}/?workspace={file}"), "true")
-                .on_commit()
-                .budget(PAGE_BUDGET),
-        )
-        .await
-        .expect("a window on the file");
-    shell
-        .pages
-        .lock()
-        .unwrap()
-        .entry(name.clone())
-        .or_default()
-        .push(multi);
     let rows = shell
         .wait(&name, EXPLORER_READY, EXPLORER_ROWS, WORKBENCH_BUDGET)
         .await;
     let place = shell.wait(&name, "true", WHERE, PAGE_BUDGET).await;
+    assert_eq!(place["login"], false, "{place}");
+    assert_eq!(*shell.sign_ins.lock().unwrap(), sign_ins);
+    let file = format!("{root}/.puddle/editor/{name}.code-workspace");
     assert_eq!(place["search"], format!("?workspace={file}"), "{place}");
     let roots: Vec<&str> = rows
         .as_array()
@@ -560,7 +535,6 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
         roots.contains(&"api") && roots.contains(&"web") && roots.len() == 3,
         "{rows}"
     );
-    assert_eq!(*shell.sign_ins.lock().unwrap(), sign_ins);
 
     host.shutdown().await;
     drop(host);

@@ -1055,6 +1055,15 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let began = inner.injection.begin(name, capture).await?;
         let wanted = authors(&began.git);
         self.report_git_settings(name, &began.git, &wanted);
+        let root = Layout::new(id).map_err(|e| e.to_string())?.mount().clone();
+        // Only a running guest can list the checkouts, so the multi-root file the last attach
+        // wrote stays as it is and the editor server opens it at this start; the next attach
+        // writes it again. A start folder replaces it.
+        let editor_file = start_folder
+            .is_none()
+            .then(|| crate::editor_file::workspace_file_path(&root, id))
+            .flatten()
+            .map(GuestFile::kept);
         let state = GuestState {
             editor,
             image,
@@ -1063,8 +1072,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             env: began.env,
             dev_cert: inner.kit.dev_cert().await,
             start_folder: start_folder.cloned(),
-            root: Layout::new(id).map_err(|e| e.to_string())?.mount().clone(),
-            editor_file: None,
+            root,
+            editor_file,
         };
         match inner.kit.plan(
             &state.image,

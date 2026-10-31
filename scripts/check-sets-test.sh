@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Self-test of the gate sets in scripts/check.sh, through `--list` (which runs no gate): `all` is
-# every gate, `pre-push` is `all` minus ui-e2e, advisories and ui-audit in the same order, `fast` is a prefix of both, a
+# every gate, `pre-push` is `all` minus ui-e2e, advisories and ui-audit in the same order plus diff-coverage-fast after the fast gates, `fast` is a prefix of both, a
 # single gate is its own set, and the pre-push hook asks for the `pre-push` set. Not seen: that a
 # listed gate runs (each gate has its own CI step), and that CI's workflow file names every gate.
 set -eu
@@ -24,7 +24,11 @@ printf '%s\n' "$pre_push" | grep -qx advisories && fail "pre-push runs advisorie
 printf '%s\n' "$all" | grep -qx ui-audit || fail "all lacks ui-audit"
 printf '%s\n' "$pre_push" | grep -qx ui-audit && fail "pre-push runs ui-audit"
 printf '%s\n' "$pre_push" | grep -qx deny || fail "pre-push lacks deny (bans, licences, sources)"
-[ "$(printf '%s\n' "$all" | grep -vx -e ui-e2e -e advisories -e ui-audit)" = "$pre_push" ] || fail "pre-push is not all minus ui-e2e, advisories and ui-audit, in order"
+# diff-coverage-fast sits right after the fast gates of pre-push, and in no other set (CI's `all` has the full coverage gate).
+printf '%s\n' "$all" | grep -qx diff-coverage-fast && fail "all runs diff-coverage-fast"
+expected=$(printf '%s\n' "$fast"; echo diff-coverage-fast; printf '%s\n' "$all" | tail -n +"$(($(printf '%s\n' "$fast" | wc -l) + 1))" | grep -vx -e ui-e2e -e advisories -e ui-audit)
+[ "$expected" = "$pre_push" ] || fail "pre-push is not fast, diff-coverage-fast, then all minus ui-e2e, advisories and ui-audit, in order"
+[ "$("$check" --list diff-coverage-fast)" = diff-coverage-fast ] || fail "diff-coverage-fast is not a gate of its own"
 [ "$(printf '%s\n' "$all" | sort | uniq -d)" = "" ] || fail "all repeats a gate"
 [ "$(printf '%s\n' "$all" | head -n "$(printf '%s\n' "$fast" | wc -l)")" = "$fast" ] || fail "fast is not the start of all"
 printf '%s\n' "$pre_push" | grep -qx coverage || fail "pre-push lacks coverage"

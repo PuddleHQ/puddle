@@ -15,7 +15,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/fetch-msb-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 mkdir "$tmp/ci" "$tmp/bin"
-cp "$here/fetch-msb.sh" "$tmp/ci/fetch-msb.sh"
+cp "$here/fetch-msb.sh" "$here/fetch-retry.sh" "$tmp/ci/"
 # On a hosted runner the source-build path installs libcap-ng through these helpers first; the test
 # must not touch apt or sudo, so the copies are no-ops (GITHUB_ACTIONS is set there, unset locally).
 for helper in apt-setup.sh apt-retry.sh; do
@@ -118,6 +118,60 @@ grep -q 'checksum mismatch for v1.0.0-puddle.2 msb-linux-x86_64' "$tmp/out3" || 
     exit 1
 }
 echo "fetch-msb-test: ok (a pinned Linux msb is downloaded and checked, no git)"
+
+# A download that fails at first (a stub curl: exit 92, the stream error of a GitHub outage) is retried
+# with the shared window, and one that never works stops after FETCH_ATTEMPTS tries with an annotation.
+# A stub `sleep` keeps the pauses out of the test run.
+sed -i "s/ msb-linux-x86_64 .*/ msb-linux-x86_64 $msb_sum/" "$tmp/ci/msb-runtime.sha256"
+cat >"$tmp/bin/sleep" <<'STUB'
+#!/bin/sh
+echo "$1" >>"$FAKE_SLEEPS"
+STUB
+cat >"$tmp/bin/curl" <<'STUB'
+#!/bin/sh
+out= url=
+while [ "$#" -gt 0 ]; do
+    case "$1" in -o) out=$2 ;; http*) url=$1 ;; esac
+    shift
+done
+n=$(($(cat "$FAKE_CALLS") + 1))
+echo "$n" >"$FAKE_CALLS"
+if [ "$n" -le "$FAKE_FAILS" ]; then
+    echo "curl: (92) HTTP/2 stream 1 was not closed cleanly: PROTOCOL_ERROR" >&2
+    exit 92
+fi
+case "$url" in
+*/msb-linux-x86_64) printf '%s\n' "$MSB_BODY" >"$out" ;;
+*/libkrunfw-linux-x86_64.so) printf 'fw' >"$out" ;;
+*) exit 1 ;;
+esac
+STUB
+chmod +x "$tmp/bin/sleep" "$tmp/bin/curl"
+export FAKE_SLEEPS="$tmp/sleeps" FAKE_CALLS="$tmp/calls"
+: >"$FAKE_SLEEPS"
+echo 0 >"$FAKE_CALLS"
+FAKE_FAILS=2 PATH="$tmp/bin:$PATH" "$tmp/ci/fetch-msb.sh" v1.0.0-puddle.2 "$tmp/retried" >"$tmp/out4" 2>&1 || {
+    cat "$tmp/out4" >&2
+    echo "fetch-msb-test: a download that fails twice was not retried to success" >&2
+    exit 1
+}
+[ "$(tr '\n' ' ' <"$FAKE_SLEEPS")" = "5 10 " ] || { echo "fetch-msb-test: the pauses are not 5, 10 s" >&2; exit 1; }
+grep -q 'download attempt 1 of 8 failed (curl exit 92: curl: (92)' "$tmp/out4" || {
+    echo "fetch-msb-test: a failed try does not name curl's exit code and message" >&2
+    exit 1
+}
+echo 0 >"$FAKE_CALLS"
+if FAKE_FAILS=99 FETCH_ATTEMPTS=3 PATH="$tmp/bin:$PATH" "$tmp/ci/fetch-msb.sh" v1.0.0-puddle.2 "$tmp/never" >"$tmp/out5" 2>&1; then
+    echo "fetch-msb-test: a download that never works was accepted" >&2
+    exit 1
+fi
+[ "$(cat "$FAKE_CALLS")" = 3 ] || { echo "fetch-msb-test: expected exactly 3 tries, saw $(cat "$FAKE_CALLS")" >&2; exit 1; }
+grep -q '^::error title=fetch-msb download failed::3 tries failed for .*curl exit 92' "$tmp/out5" || {
+    cat "$tmp/out5" >&2
+    echo "fetch-msb-test: the final failure has no annotation naming curl's exit code" >&2
+    exit 1
+}
+echo "fetch-msb-test: ok (a failing download is retried, then named in an annotation)"
 
 # The tag the build is on must pin its release's Linux msb and firmware. Without the msb line
 # fetch-msb.sh falls back to a ten-minute build from source, in the build job and in each of the

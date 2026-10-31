@@ -569,6 +569,77 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_defaults_are_a_year_a_week_a_day_and_256_leaves() {
+        assert_eq!(CaBuilder::DEFAULT_CA_VALIDITY, 365 * 24 * HOUR);
+        assert_eq!(CaBuilder::DEFAULT_LEAF_VALIDITY, 7 * 24 * HOUR);
+        assert_eq!(CaBuilder::DEFAULT_BACKDATE, 24 * HOUR);
+        assert_eq!(CaBuilder::DEFAULT_LEAF_CACHE_CAPACITY, 256);
+        let now = OffsetDateTime::now_utc();
+        let ca = CaBuilder::new("Puddle test CA").build_at(now).unwrap();
+        assert_eq!(ca.not_after, now + time::Duration::days(365));
+        assert_eq!(ca.not_before, now - time::Duration::days(1));
+    }
+
+    #[test]
+    fn a_common_name_of_64_bytes_is_the_longest_allowed() {
+        assert!(CaBuilder::new(&"n".repeat(64)).build().is_ok());
+        assert!(matches!(
+            CaBuilder::new(&"n".repeat(65)).build(),
+            Err(CaError::InvalidSetting { .. })
+        ));
+    }
+
+    #[test]
+    fn debug_names_the_type_and_the_expiry_only() {
+        let now = OffsetDateTime::now_utc();
+        let ca = CaBuilder::new("Puddle test CA").build_at(now).unwrap();
+        let debug = format!("{ca:?}");
+        assert!(debug.starts_with("WorkspaceCa {"), "{debug}");
+        assert!(debug.contains("not_after"), "{debug}");
+        assert!(debug.contains(&ca.not_after.year().to_string()), "{debug}");
+    }
+
+    #[test]
+    fn a_leaf_is_kept_until_exactly_three_quarters_of_its_life() {
+        let ca = ca();
+        let t0 = OffsetDateTime::now_utc();
+        let first = ca.leaf_at("github.com", t0).unwrap();
+        let three_quarters = 7 * 24 * 3600 * 3 / 4;
+        let before = t0 + time::Duration::seconds(three_quarters - 1);
+        assert!(Arc::ptr_eq(
+            &first,
+            &ca.leaf_at("github.com", before).unwrap()
+        ));
+        let at = t0 + time::Duration::seconds(three_quarters);
+        assert!(!Arc::ptr_eq(&first, &ca.leaf_at("github.com", at).unwrap()));
+    }
+
+    #[test]
+    fn the_cache_evicts_in_use_order_over_several_rounds() {
+        let ca = CaBuilder::new("Puddle test CA")
+            .leaf_cache_capacity(3)
+            .build()
+            .unwrap();
+        let now = OffsetDateTime::now_utc();
+        let host = |n: u32| format!("h{n}.example.com");
+        let leaves: Vec<_> = (0..3).map(|n| ca.leaf_at(&host(n), now).unwrap()).collect();
+        // Use order is now 1, 2, 0 (oldest first): 1 is the next to go.
+        ca.leaf_at(&host(2), now).unwrap();
+        ca.leaf_at(&host(0), now).unwrap();
+        ca.leaf_at(&host(3), now).unwrap();
+        assert!(Arc::ptr_eq(&leaves[0], &ca.leaf_at(&host(0), now).unwrap()));
+        assert!(Arc::ptr_eq(&leaves[2], &ca.leaf_at(&host(2), now).unwrap()));
+        // Order is 3, 0, 2 now; 1 was evicted, so asking for it evicts 3.
+        assert!(!Arc::ptr_eq(
+            &leaves[1],
+            &ca.leaf_at(&host(1), now).unwrap()
+        ));
+        assert!(Arc::ptr_eq(&leaves[0], &ca.leaf_at(&host(0), now).unwrap()));
+        assert!(Arc::ptr_eq(&leaves[2], &ca.leaf_at(&host(2), now).unwrap()));
+        assert_eq!(ca.cached_leaves(), 3);
+    }
+
     /// DER of an extension whose OID is `2.5.29.<last>`: `OBJECT IDENTIFIER` (06 03 55 1d <last>).
     fn oid(last: u8) -> [u8; 5] {
         [0x06, 0x03, 0x55, 0x1d, last]

@@ -56,8 +56,25 @@ pub(crate) struct Answered {
     pub(crate) dialog: String,
 }
 
-pub(crate) fn answerer_script() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ci/trust-dialog.ps1")
+/// The answerer script: `PUDDLE_TRUST_DIALOG_SCRIPT` when set (a binary built on another host,
+/// such as a cross-build run on another machine, has a compile-time path that does not exist here),
+/// otherwise the one beside the sources. A named script that is missing is an `Err` naming it,
+/// so the test ends at once instead of waiting for a dialog nobody answers.
+fn answerer_script() -> Result<PathBuf, String> {
+    match std::env::var_os("PUDDLE_TRUST_DIALOG_SCRIPT") {
+        Some(path) => {
+            let path = PathBuf::from(path);
+            if path.is_file() {
+                Ok(path)
+            } else {
+                Err(format!(
+                    "PUDDLE_TRUST_DIALOG_SCRIPT names {}, which is not a file",
+                    path.display()
+                ))
+            }
+        }
+        None => Ok(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ci/trust-dialog.ps1")),
+    }
 }
 
 /// Runs the answerer against `owner_pid` and returns `Ok(its output)` on exit 0, `Err(its
@@ -68,6 +85,7 @@ pub(crate) fn run_answerer(
     seconds: u64,
     title: Option<&str>,
 ) -> Result<String, String> {
+    let script = answerer_script()?;
     let mut command = Command::new("powershell.exe");
     command
         .args([
@@ -77,7 +95,7 @@ pub(crate) fn run_answerer(
             "Bypass",
             "-File",
         ])
-        .arg(answerer_script())
+        .arg(script)
         .args(["-Action", action, "-OwnerPid"])
         .arg(owner_pid.to_string())
         .args(["-Seconds", &seconds.to_string()]);

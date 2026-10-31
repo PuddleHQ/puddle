@@ -156,7 +156,11 @@ mod tests {
 
         /// A git directory by structure at `<base>/<rel>/.git`; returns its path.
         fn repo(&self, rel: &str) -> PathBuf {
-            let git = self.base().join(rel).join(".git");
+            // Joined part by part: a `/` inside one `join` stays a `/` on Windows, and the rule
+            // refuses a path that is not written the way the OS spells it.
+            let mut git = self.base();
+            git.extend(rel.split('/'));
+            git.push(".git");
             make_git_dir(&git);
             git
         }

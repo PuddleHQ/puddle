@@ -210,8 +210,7 @@ kill -9 ${agent:?no puddle-agent process}"#;
 }
 
 /// `docker:dind`: the ENTRYPOINT is chained and dockerd runs with the proxy env, after the first boot and
-/// after a restart. Images without
-/// an ENTRYPOINT chain nothing.
+/// after a restart. Images without an ENTRYPOINT chain nothing.
 async fn check_entrypoint<S: Sandbox>(sb: &GatedSandbox<S>, config: &puddle_compute::ImageConfig) {
     let (code, _) = sh(sb, "test -f /run/puddle/entrypoint.pid").await;
     if config.entrypoint.is_empty() {

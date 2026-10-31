@@ -162,6 +162,68 @@ async fn a_git_credential_source_comes_back_as_sent() {
 }
 
 #[tokio::test]
+async fn a_credentials_last_read_is_null_before_any_and_follows_every_use_never_a_value() {
+    use puddle_secrets::{AccountName, HostName, ReadUse, SourceError, SourceSpec};
+    let api = start().await;
+    let id = make(&api, "Work", &["acme"], false).await;
+    let last = |view: &Value| view["credentials"][0]["last_check"].clone();
+
+    let before = api
+        .send("GET", &format!("/api/identities/{id}"), None)
+        .await;
+    assert_eq!(last(&before.json()), Value::Null);
+
+    // A workspace's request read it and it was fine.
+    let gh = SourceSpec::Gh {
+        host: HostName::new("github.com").unwrap(),
+        account: AccountName::new("me").unwrap(),
+    };
+    api.credentials.note_read(&gh, ReadUse::Injection, None);
+    let listed = api.send("GET", "/api/identities", None).await.json();
+    let check = last(&listed["identities"][0]);
+    assert_eq!(check["readable"], true);
+    assert_eq!(check["by"], "injection");
+    assert_eq!(check["problem"], Value::Null);
+    assert!(check["checked_at"].as_u64().unwrap() > 0);
+
+    // A repository list then failed.
+    api.credentials
+        .note_read(&gh, ReadUse::RepositoryList, Some(SourceError::NotSignedIn));
+    let after = api
+        .send("GET", &format!("/api/identities/{id}"), None)
+        .await;
+    let check = last(&after.json());
+    assert_eq!(
+        (
+            check["readable"].clone(),
+            check["by"].clone(),
+            check["needs_sign_in"].clone()
+        ),
+        (json!(false), json!("repository_list"), json!(true))
+    );
+
+    // Pressing Test is a use too, and the list shows it.
+    api.credentials.set_unreadable(gh.clone(), None);
+    let tested = api
+        .send(
+            "POST",
+            "/api/credentials/check",
+            Some(&json!({"source": {"kind": "gh", "host": "github.com", "account": "me"}})),
+        )
+        .await;
+    assert_eq!(tested.status, 200);
+    let after = api
+        .send("GET", &format!("/api/identities/{id}"), None)
+        .await;
+    assert_eq!(last(&after.json())["by"], "test");
+    assert_eq!(last(&after.json())["readable"], true);
+
+    // Only the status is on the wire, never a value.
+    assert!(!after.body.contains("secret") && !after.body.contains("token"));
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn bad_input_is_refused_and_no_command_source_exists() {
     let api = start().await;
     let mut cases = vec![

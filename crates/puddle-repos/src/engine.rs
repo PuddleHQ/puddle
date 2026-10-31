@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
 use futures_util::future::{BoxFuture, join_all};
-use puddle_secrets::{Credential, Fetch, SecretCache, SourceError, SourceSpec};
+use puddle_secrets::{Credential, Fetch, ReadUse, SecretCache, SourceError, SourceSpec};
 use puddle_store::{Clock, CredentialBinding, Identity, IdentityId};
 use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 
@@ -34,7 +34,7 @@ pub trait Secrets: Send + Sync {
 
 impl<F: Fetch + 'static> Secrets for SecretCache<F> {
     fn get<'a>(&'a self, spec: &'a SourceSpec) -> BoxFuture<'a, Result<Credential, SourceError>> {
-        Box::pin(SecretCache::get(self, spec))
+        Box::pin(SecretCache::get_for(self, spec, ReadUse::RepositoryList))
     }
 
     fn invalidate(&self, spec: &SourceSpec) {

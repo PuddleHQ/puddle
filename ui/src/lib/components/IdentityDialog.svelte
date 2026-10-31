@@ -9,7 +9,7 @@
     describeSource,
     identityProblem,
     type AccountProfile,
-    type Credential,
+    type CredentialDraft,
     type Identity,
     type Source,
   } from "#lib/identities/model.ts";
@@ -38,7 +38,7 @@
   let label = $state("");
   let name = $state("");
   let email = $state("");
-  let credentials = $state.raw<Credential[]>([]);
+  let credentials = $state.raw<CredentialDraft[]>([]);
   let adding = $state(false);
   /** What the Git host said of the account being added: offered for the author, never forced. */
   let offered = $state.raw<AccountProfile | null>(null);
@@ -74,7 +74,7 @@
     }
   });
 
-  function remove(credential: Credential) {
+  function remove(credential: CredentialDraft) {
     credentials = credentials.filter((c) => c !== credential);
     const line = describeSource(credential.source);
     const mine = pasted.find((s) => describeSource(s) === line);
@@ -94,7 +94,7 @@
     if (offered) ({ name, email } = authorFill({ name, email }, offered, true));
   }
 
-  function added(credential: Credential, stored: Source | null) {
+  function added(credential: CredentialDraft, stored: Source | null) {
     credentials = [...credentials, credential];
     if (stored) pasted = [...pasted, stored];
     adding = false;

@@ -378,21 +378,34 @@ describe("judge", () => {
   });
 });
 
+// Idle the fixture takes 25 ms; node starts git with fork, whose cost grows with the memory of the
+// whole vitest process (3 spawns: 9 ms at 0 GB, 110 ms at 3 GB, 115 ms at 12 GB under 3x CPU load,
+// 183 ms for the hook in a full coverage run). A host at load 90 on 40 cores has stalled this hook
+// past vitest's 10 s default, which nothing here reproduces (best: 183 ms), so the bar is 60 s: a git
+// that hangs still fails the file here, long before the CI job limit.
+const HOOK_MS = 60_000;
+const SLOW_HOOK_MS = 1_000;
+
 describe("run on a real git repository", () => {
   // One repository for all three tests: `run` only reads it, and every git
   // start-up is a process spawn that a loaded host schedules slowly, so
   // building it per test put six spawns inside each 5 s test body.
   let dir = "";
   beforeAll(() => {
+    const started = performance.now();
+    const spawnMs: number[] = [];
     // `.native` expands Windows 8.3 short names (RUNNER~1), which git reports in long form; the
     // JS realpath leaves them short, so the lcov paths would fall outside the repository.
     dir = realpathSync.native(mkdtempSync(join(tmpdir(), "diff-coverage-")));
-    const g = (...a: string[]) =>
+    const g = (...a: string[]) => {
+      const t = performance.now();
       execFileSync(
         "git",
         ["-c", "user.email=t@example.com", "-c", "user.name=t", ...a],
         { cwd: dir, env: cleanGitEnv() },
       );
+      spawnMs.push(Math.round(performance.now() - t));
+    };
     g("init", "-q");
     mkdirSync(join(dir, "src"));
     writeFileSync(join(dir, "src/a.rs"), "fn a() {\n    1;\n}\n");
@@ -402,7 +415,14 @@ describe("run on a real git repository", () => {
       join(dir, "src/a.rs"),
       "fn a() {\n    1;\n    let two = compute_two();\n    let three = compute_three();\n}\n",
     );
-  }, 60_000);
+    // A slow hook leaves its per-spawn times in the log, so the next occurrence names its step.
+    const total = Math.round(performance.now() - started);
+    if (total > SLOW_HOOK_MS) {
+      console.warn(
+        `diff-coverage fixture: ${total} ms, git spawns ${spawnMs.join(", ")} ms`,
+      );
+    }
+  }, HOOK_MS);
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
   afterEach(() => vi.restoreAllMocks());
 

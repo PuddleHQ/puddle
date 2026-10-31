@@ -55,6 +55,14 @@ const EXPLORER_READY: &str =
 const EXPLORER_ROWS: &str = "[...document.querySelectorAll('.explorer-folders-view .monaco-list-row')]\
      .map(r => ({ name: r.querySelector('.label-name')?.textContent, level: r.getAttribute('aria-level') }))";
 
+/// Waits until the editor server answers its health check.
+const EDITOR_UP: &str = "for i in $(seq 1 100); do curl -sf -o /dev/null http://127.0.0.1:41337/healthz && exit 0; sleep 1; done; exit 1";
+
+/// Ends the editor server as a crash would; the agent starts it again, and this waits for that.
+const RESTART_EDITOR: &str = "for p in /proc/[0-9]*; do tr '\\0' ' ' <$p/cmdline 2>/dev/null | \
+     grep -q '[c]ode-server/lib/node' && kill -9 ${p#/proc/}; done; sleep 3; \
+     for i in $(seq 1 100); do curl -sf -o /dev/null http://127.0.0.1:41337/healthz && exit 0; sleep 1; done; exit 1";
+
 /// Where the page is and whether it shows code-server's login form.
 const WHERE: &str = "({ path: location.pathname, search: decodeURIComponent(location.search), \
      login: !!document.querySelector('input[type=password]') })";
@@ -352,8 +360,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
         &runtime,
         &sandbox,
         &format!(
-            "for i in $(seq 1 120); do curl -sf -o /dev/null http://127.0.0.1:41337/healthz && break; sleep 1; done; \
-             cd {root} && git init -q api && git init -q web && echo loose >notes.txt"
+            "( {EDITOR_UP} ) && cd {root} && git init -q api && git init -q web && echo loose >notes.txt"
         ),
     )
     .await;
@@ -489,20 +496,25 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     assert!(!shell.pages.lock().unwrap().contains_key(&name));
     windows_become(windows, &sandbox, false).await;
 
-    // The next start opens the multi-root file the attach wrote: a root per checkout and the
-    // volume. The password is new, so the shell signs in again.
+    // After the start the password is new, so the shell signs in again; the server opened what it
+    // was started with, the volume.
     let start = api.post(&format!("/api/workspaces/{name}/start"), "").await;
     assert_eq!(start.status, 202, "{}", start.body);
     let end = events
         .until(ended(name_static), Duration::from_secs(300))
         .await;
     assert_eq!(end["step"], "done", "{end}");
-    guest(
-        &runtime,
-        &sandbox,
-        "for i in $(seq 1 120); do curl -sf -o /dev/null http://127.0.0.1:41337/healthz && break; sleep 1; done",
-    )
-    .await;
+    guest(&runtime, &sandbox, EDITOR_UP).await;
+    attach().await;
+    shell
+        .wait(&name, EXPLORER_READY, "true", WORKBENCH_BUDGET)
+        .await;
+    assert_eq!(*shell.sign_ins.lock().unwrap(), 2);
+
+    // The attach wrote the multi-root file; the server started again (as the agent starts it when
+    // it exits) opens it: one root per checkout and the volume, with the same password.
+    shell.close_pages(&name).await;
+    guest(&runtime, &sandbox, RESTART_EDITOR).await;
     attach().await;
     let rows = shell
         .wait(&name, EXPLORER_READY, EXPLORER_ROWS, WORKBENCH_BUDGET)

@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The guest agents' reports about their own workspaces (an entrypoint that exited, stub DNS
-//! trouble), made background problems.
+//! trouble, an editor server that could not be installed), made background problems.
 //!
-//! A report is the guest's claim and the guest is untrusted, so a report can only raise one of two
-//! problems of the workspace whose route carried it, with text written here. Reports count only
-//! between a start and a stop, and each run of a workspace changes each problem a bounded number of
-//! times, whatever the guest sends: the entrypoint problem once, the DNS one once per kind.
+//! A report is the guest's claim and the guest is untrusted, so a report can only raise one of
+//! three problems of the workspace whose route carried it, with text written here. Reports count
+//! only between a start and a stop, and each run of a workspace changes each problem a bounded
+//! number of times, whatever the guest sends: the entrypoint problem once, the DNS one once per
+//! kind, the editor one at most [`MAX_EDITOR_CHANGES`] times.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -20,6 +21,14 @@ const MAX_FAILURE_CHARS: usize = 320;
 /// The key of the problem about the image's entrypoint of `name`.
 fn entrypoint_key(name: &WorkspaceName) -> String {
     format!("entrypoint:{name}")
+}
+
+/// How often one run of a workspace may change the editor problem's text.
+const MAX_EDITOR_CHANGES: u8 = 4;
+
+/// The key of the problem about the browser editor's install in `name`.
+pub(crate) fn editor_install_key(name: &WorkspaceName) -> String {
+    format!("editor-install:{name}")
 }
 
 /// The key of the problem about the stub DNS of `name`.
@@ -45,6 +54,21 @@ pub(crate) fn entrypoint_problem(name: &WorkspaceName, failure: &str) -> Problem
              /run/puddle/entrypoint.log in the workspace; starting the workspace again runs it \
              again."
         ),
+    )
+    .about(name.clone())
+}
+
+/// The problem for an editor server whose download was refused; `reason` is the agent's cleaned
+/// text.
+fn editor_install_problem(name: &WorkspaceName, reason: &str) -> Problem {
+    Problem::new(
+        editor_install_key(name),
+        format!("The browser editor could not be installed in {name}: {reason}"),
+        "Puddle downloaded the editor server and refused it, so the browser editor cannot open \
+         in this workspace until an install works. Puddle tries again, waiting longer each time \
+         (up to an hour); stopping and starting the workspace tries at once. Terminals and \
+         desktop VS Code are not affected."
+            .to_owned(),
     )
     .about(name.clone())
 }
@@ -93,6 +117,10 @@ struct Run {
     entrypoint: bool,
     /// The DNS trouble kinds the problem names.
     dns: BTreeSet<StubDnsTrouble>,
+    /// The reason the editor problem names now, `None` while there is none.
+    editor: Option<String>,
+    /// How often the editor problem's text changed in this run.
+    editor_changes: u8,
 }
 
 impl Run {
@@ -101,6 +129,8 @@ impl Run {
             taking: true,
             entrypoint: false,
             dns: BTreeSet::new(),
+            editor: None,
+            editor_changes: 0,
         }
     }
 }
@@ -130,6 +160,7 @@ impl ReportDesk {
         self.runs().insert(name.clone(), Run::new());
         self.problems.clear(&entrypoint_key(name));
         self.problems.clear(&stub_dns_key(name));
+        self.problems.clear(&editor_install_key(name));
     }
 
     /// A stop of `name` was accepted: what its guest reports from now (its entrypoint ended by the
@@ -147,11 +178,13 @@ impl ReportDesk {
         }
     }
 
-    /// `name` no longer runs: the DNS problem is about a machine that is gone. The entrypoint
-    /// problem stays until the next start, because the image still has the fault.
+    /// `name` no longer runs: the DNS and editor problems are about a machine that is gone (the
+    /// agent of the next start tells again). The entrypoint problem stays until the next start,
+    /// because the image still has the fault.
     pub(crate) fn end(&self, name: &WorkspaceName) {
         self.runs().remove(name);
         self.problems.clear(&stub_dns_key(name));
+        self.problems.clear(&editor_install_key(name));
     }
 
     /// `name` was deleted: both problems end.
@@ -163,6 +196,7 @@ impl ReportDesk {
 
 impl AgentReports for ReportDesk {
     fn report(&self, workspace: &WorkspaceName, report: AgentReport) {
+        let mut end_editor = false;
         let raise = {
             let mut runs = self.runs();
             let Some(run) = runs.get_mut(workspace).filter(|run| run.taking) else {
@@ -187,9 +221,33 @@ impl AgentReports for ReportDesk {
                 AgentReport::StubDns { kind, .. } => (stub_dns_effect(kind).is_some()
                     && run.dns.insert(kind))
                 .then(|| stub_dns_problem(workspace, &run.dns)),
+                AgentReport::EditorStatus { problem: None } => {
+                    end_editor = run.editor.take().is_some();
+                    None
+                }
+                AgentReport::EditorStatus {
+                    problem: Some(reason),
+                } if run.editor.as_deref() == Some(reason.as_str()) => None,
+                AgentReport::EditorStatus { problem: Some(_) }
+                    if run.editor_changes >= MAX_EDITOR_CHANGES =>
+                {
+                    tracing::info!(%workspace, "an editor report past the limit for one run ignored");
+                    None
+                }
+                AgentReport::EditorStatus {
+                    problem: Some(reason),
+                } => {
+                    run.editor_changes += 1;
+                    let problem = editor_install_problem(workspace, &reason);
+                    run.editor = Some(reason);
+                    Some(problem)
+                }
                 _ => None,
             }
         };
+        if end_editor {
+            self.problems.clear(&editor_install_key(workspace));
+        }
         if let Some(problem) = raise {
             self.problems.raise(problem);
         }

@@ -138,7 +138,7 @@ async fn an_unreachable_pac_is_an_error_not_a_hang() {
         PacError::Unavailable(_) | PacError::Timeout | PacError::Failed(_)
     ));
     // flake-ok: the query's own timeout is 20 s, so 25 s fails only a resolve that ignored it; a
-    // closed port is refused at once. Windows only, so not measured on the Linux lanes.
+    // closed port still took 2.04 to 2.06 s (3 runs on an idle Windows machine), a 12x margin. Windows only.
     assert!(started.elapsed() < Duration::from_secs(25));
 }
 
@@ -162,8 +162,8 @@ async fn a_pac_server_that_never_answers_times_out_at_the_query_timeout() {
         "{err}"
     );
     // flake-ok: the query timeout here is 2 s and the server never answers, so a resolve that
-    // ignored it waits for WinHTTP's own (far longer) default; 20 s is 10x the limit. Windows only,
-    // so not measured on the Linux lanes.
+    // ignored it waits for WinHTTP's own (far longer) default; 20 s is 10x the limit, and it took
+    // 2.01 to 2.02 s (3 runs on an idle Windows machine). Windows only.
     assert!(
         started.elapsed() < Duration::from_secs(20),
         "{:?}",
@@ -238,10 +238,8 @@ static REGISTRY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 /// disturb each other: one's values (or its clean-up deleting them) show up in another's reads,
 /// every evaluated PAC script, in any process, makes WinHTTP call the proxy-change callback of
 /// every registered watch (about every 50 ms for as long as lookups run, with no registry change
-/// at all), which ends the epoch the debounce test is counting, and PAC lookups of two processes
-/// at once have given wrong results (one that must fail answering, ones that must answer
-/// failing). A file lock holds across processes and across threads alike. Held until the
-/// returned file is dropped.
+/// at all), which ends the epoch the debounce test is counting. A file lock holds across
+/// processes and across threads alike. Held until the returned file is dropped.
 #[expect(
     clippy::disallowed_methods,
     reason = "the lock is shared by every test process, so it must sit at one fixed path"

@@ -4,12 +4,14 @@
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
   import { page } from "$app/state";
+  import EditorInstallNotice from "#lib/components/EditorInstallNotice.svelte";
   import RepositoriesSection from "#lib/components/RepositoriesSection.svelte";
   import StatusChip from "#lib/components/StatusChip.svelte";
   import VolumeMissingNotice from "#lib/components/VolumeMissingNotice.svelte";
   import { api } from "#lib/api/client.ts";
   import { absoluteTime, relativeTime } from "#lib/format/relative-time.ts";
   import { isExpired, workspaceOf } from "#lib/rules/model.ts";
+  import { editorProblems } from "#lib/stores/editor-problems.svelte.ts";
   import { pending } from "#lib/stores/pending.svelte.ts";
   import { rulesStore } from "#lib/stores/rules.svelte.ts";
   import { workspaceActions as actions } from "#lib/stores/workspace-actions.svelte.ts";
@@ -25,6 +27,9 @@
 
   const id = $derived(page.params["id"] ?? "");
   const workspace = $derived(workspaces.list.find((w) => w.id === id));
+  const editorProblem = $derived(
+    workspace ? editorProblems.of(workspace.name) : null,
+  );
   const oom = $derived(workspace ? workspaces.oom[workspace.name] : undefined);
 
   let now = $state(Date.now());
@@ -33,11 +38,13 @@
 
   onMount(() => {
     const stopRules = rulesStore.start();
+    const stopEditor = editorProblems.start();
     const clock = setInterval(() => {
       now = Date.now();
     }, 30_000);
     return () => {
       stopRules();
+      stopEditor();
       clearInterval(clock);
     };
   });
@@ -130,6 +137,12 @@
       </dl>
       {#if workspace.status === "volume_missing" && workspace.busy === null}
         <VolumeMissingNotice name={workspace.name} detail />
+      {/if}
+      {#if editorProblem}
+        <EditorInstallNotice
+          title={editorProblem.title}
+          detail={editorProblem.detail}
+        />
       {/if}
     </section>
 

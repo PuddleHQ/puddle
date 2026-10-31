@@ -2709,7 +2709,6 @@ async fn a_browser_attach_without_a_window_says_the_editor_opens_from_the_deskto
         reply.json(),
         json!({
             "opened": false,
-            "url": null,
             "message": "the browser editor opens from the desktop app"
         })
     );
@@ -2887,17 +2886,40 @@ fn front_port_of(host: &Host<FakeRuntime>) -> u16 {
     fronts[0]
 }
 
+fn store_front_port(rig: &Rig, port: u16) {
+    let file = HostPaths::new(rig.dir.path().join("data")).front_port_file();
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, port.to_string()).unwrap();
+}
+
 fn stored_front_port(rig: &Rig) -> Option<u16> {
     let file = HostPaths::new(rig.dir.path().join("data")).front_port_file();
     std::fs::read_to_string(file).ok()?.trim().parse().ok()
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_first_run_stores_the_port_its_front_took() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    assert_eq!(
+        stored_front_port(&rig),
+        Some(front_port_of(&host)),
+        "the port is stored"
+    );
+    host.shutdown().await;
+}
+
+/// The stored port is a quiet one (below the ephemeral ranges): a port the first run gave up is free
+/// for anyone's port 0 or source port (the restart's own pull proxy binds one before the front does).
+/// It is not held, since the front's plain bind cannot share a port on Windows.
+#[tokio::test(flavor = "multi_thread")]
 async fn the_front_keeps_its_port_across_restarts_of_the_host() {
     let rig = Rig::new();
+    let port = puddle_test_kit::quiet_port();
+    store_front_port(&rig, port);
+
     let first = rig.start().await;
-    let port = front_port_of(&first);
-    assert_eq!(stored_front_port(&rig), Some(port), "the port is stored");
+    assert_eq!(front_port_of(&first), port);
     first.shutdown().await;
     drop(first); // the next run is a new process: its hold on the data folder ends
 
@@ -2911,9 +2933,7 @@ async fn the_front_keeps_its_port_across_restarts_of_the_host() {
 async fn a_taken_front_port_falls_back_to_another_that_is_then_kept() {
     let rig = Rig::new();
     let (held, taken) = puddle_test_kit::bound_port();
-    let file = HostPaths::new(rig.dir.path().join("data")).front_port_file();
-    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-    std::fs::write(&file, taken.to_string()).unwrap();
+    store_front_port(&rig, taken);
 
     let first = rig.start().await;
     let moved = front_port_of(&first);
@@ -2933,9 +2953,12 @@ async fn a_taken_front_port_falls_back_to_another_that_is_then_kept() {
     first.shutdown().await;
     drop(first);
 
-    // Next run the new port is the usual one, with the old one still taken.
+    // Next run the stored port is the usual one, with the old one still taken. It is a quiet port, as the
+    // port the first run gave up is free for anyone's port 0.
+    let quiet = puddle_test_kit::quiet_port();
+    store_front_port(&rig, quiet);
     let second = rig.start().await;
-    assert_eq!(front_port_of(&second), moved);
+    assert_eq!(front_port_of(&second), quiet);
     assert!(
         second
             .problems()
@@ -8823,6 +8846,69 @@ async fn an_entrypoint_that_dies_later_and_failing_lookups_are_problems_the_gues
         "{:?}",
         host.problems().list()
     );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_editor_download_is_a_problem_on_its_workspace_until_an_install_works_or_it_stops()
+ {
+    use puddle_agent_proto::AgentMessage;
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    create(&api, &mut events, "other").await;
+
+    let session = agent_says(
+        &rig,
+        "acme",
+        &[AgentMessage::editor_status(Some(
+            "the download does not match the checksum Microsoft published for it",
+        ))],
+    )
+    .await;
+    let (title, detail) = problem_is(&api, "editor-install:acme", true).await.unwrap();
+    assert_eq!(
+        title,
+        "The browser editor could not be installed in acme: the download does not match the checksum Microsoft published for it"
+    );
+    assert!(
+        detail.contains("desktop VS Code are not affected"),
+        "{detail}"
+    );
+    assert!(
+        problem_is(&api, "editor-install:other", false)
+            .await
+            .is_none()
+    );
+
+    // The install worked on a later try: the agent says so and the problem ends.
+    let fixed = agent_says(&rig, "acme", &[AgentMessage::editor_status(None)]).await;
+    assert!(
+        problem_is(&api, "editor-install:acme", false)
+            .await
+            .is_none()
+    );
+    fixed.abort();
+
+    // A stop ends it too: the machine it is about is gone.
+    let again = agent_says(
+        &rig,
+        "acme",
+        &[AgentMessage::editor_status(Some("refused again"))],
+    )
+    .await;
+    problem_is(&api, "editor-install:acme", true).await.unwrap();
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(
+        problem_is(&api, "editor-install:acme", false)
+            .await
+            .is_none()
+    );
+    again.abort();
+    session.abort();
     host.shutdown().await;
 }
 

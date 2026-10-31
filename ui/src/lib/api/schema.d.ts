@@ -1746,6 +1746,14 @@ export interface components {
             /** @description Why: `rule`, `no_rule`, or a block reason. */
             reason: string;
             /**
+             * @description The first address of the answer that the address guard refused, while the connection
+             *     went to the allowed addresses only. `null` when none was refused and in records written
+             *     before it existed.
+             */
+            refused_address: string | null;
+            /** @description Why `refused_address` was refused: a reason code such as `toggle:private`. */
+            refused_reason: string | null;
+            /**
              * Format: int64
              * @description The rule on method and path that refused the request, when `reason` is
              *     `request_rule`; `method` and `path` are that request's. For a tunnel refused with

@@ -1079,6 +1079,7 @@ async fn admit_into(
     let mut exact_only = Vec::new();
     let mut categories: Vec<LocalCategory> = Vec::new();
     let mut blocked = Vec::new();
+    let mut refused_first = None;
     for addr in addrs {
         match proxy.addresses.check(&request.workspace, addr) {
             AddressVerdict::Allow => usable.push(addr),
@@ -1086,13 +1087,17 @@ async fn admit_into(
                 exact_only.push(addr);
                 categories.push(category);
             }
-            AddressVerdict::Block(reason) => blocked.push(reason),
+            AddressVerdict::Block(reason) => {
+                refused_first.get_or_insert((addr.ip(), reason));
+                blocked.push(reason);
+            }
             other => {
                 tracing::warn!(%addr, verdict = ?other, "unknown address verdict, address dropped");
                 blocked.push(BlockReason::LocalAddress);
             }
         }
     }
+    event.refused_address = refused_first;
     if pattern == PatternKind::Exact {
         // An exact allow reaches local addresses whose toggle is on.
         usable.append(&mut exact_only);

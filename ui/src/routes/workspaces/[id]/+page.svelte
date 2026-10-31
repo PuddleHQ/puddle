@@ -30,6 +30,9 @@
   const editorProblem = $derived(
     workspace ? editorProblems.of(workspace.name) : null,
   );
+  const editorUpdateProblem = $derived(
+    workspace ? editorProblems.updateOf(workspace.name) : null,
+  );
   const oom = $derived(workspace ? workspaces.oom[workspace.name] : undefined);
 
   let now = $state(Date.now());
@@ -142,6 +145,12 @@
         <EditorInstallNotice
           title={editorProblem.title}
           detail={editorProblem.detail}
+        />
+      {/if}
+      {#if editorUpdateProblem}
+        <EditorInstallNotice
+          title={editorUpdateProblem.title}
+          detail={editorUpdateProblem.detail}
         />
       {/if}
     </section>

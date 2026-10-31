@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The host's problem about a workspace's browser editor server that could not be installed
-// (`editor-install:<workspace>`), kept current for the places that tell the user: the workspace's
-// page and the Connect dialog. Read again when the host says its problem list changed.
+// The host's problems about a workspace's browser editor server: it could not be installed
+// (`editor-install:<workspace>`, told on the workspace's page and in the Connect dialog) or could
+// not take a newer build (`editor-update:<workspace>`, the page only: the editor still opens).
+// Read again when the host says its problem list changed.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import {
   editorInstallProblemOf,
+  editorUpdateProblemOf,
   type Problem,
 } from "#lib/workspaces/problem-links.ts";
 import { live, type LiveSource } from "./live.svelte.ts";
@@ -26,6 +28,11 @@ export class EditorProblemsStore {
   /** What `workspace`'s install problem says, `null` when the host lists none. */
   of(workspace: string): Problem | null {
     return editorInstallProblemOf(this.problems, workspace) ?? null;
+  }
+
+  /** What `workspace`'s update problem says, `null` when the host lists none. */
+  updateOf(workspace: string): Problem | null {
+    return editorUpdateProblemOf(this.problems, workspace) ?? null;
   }
 
   /** Reads the list. A failed read leaves what the page shows as it is. */

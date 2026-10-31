@@ -114,6 +114,30 @@ describe("background problems", () => {
     expect(keys()).toEqual([]);
   });
 
+  it("shows the Kubernetes warning as a notice with what to do, linked to its workspace", async () => {
+    listed = [
+      {
+        key: "kubernetes:dev",
+        workspace: "dev",
+        title: "Kubernetes Services do not work in dev",
+        detail:
+          "kind is installed in dev. Reach a pod through a port forward instead of a Service.",
+      },
+    ];
+    await make().refresh();
+    expect(center.items).toHaveLength(1);
+    expect(center.items[0]).toMatchObject({
+      key: "problem:kubernetes:dev",
+      tone: "warning",
+      title: "Kubernetes Services do not work in dev",
+    });
+    expect(center.items[0]?.detail).toContain("port forward");
+    expect(center.items[0]?.link).toEqual({
+      href: "/workspaces/dev",
+      label: "Open workspace",
+    });
+  });
+
   it("withdraws a notice when its problem leaves the list", async () => {
     const notices = make();
     listed = [problem("sweeper"), problem("reconcile")];

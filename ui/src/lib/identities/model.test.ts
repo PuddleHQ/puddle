@@ -5,6 +5,7 @@ import {
   authorDiffers,
   authorFill,
   authorProblem,
+  checkFromLast,
   checkOf,
   coverageOf,
   coverageProblem,
@@ -25,6 +26,7 @@ import {
   orgProblem,
   parseOwners,
   requestOf,
+  seenText,
   sourceLabel,
   sourceOf,
   statusWord,
@@ -307,9 +309,71 @@ describe("small helpers", () => {
     expect(requestOf(one)).toEqual({
       label: one.label,
       author: one.author,
-      credentials: one.credentials,
+      credentials: one.credentials.map(({ host, source, covers }) => ({
+        host,
+        source,
+        covers,
+      })),
     });
     expect(requestOf(one, []).credentials).toEqual([]);
+  });
+});
+
+describe("the host's record of a read", () => {
+  const last = {
+    readable: true,
+    problem: null,
+    needs_sign_in: false,
+    checked_at: 1_000_000,
+    by: "injection" as const,
+  };
+
+  it("is untested before any read, else the outcome with when and by what", () => {
+    expect(checkFromLast(null)).toEqual(UNTESTED);
+    expect(checkFromLast(last)).toEqual({
+      state: "ok",
+      seen: { at: 1_000_000, by: "injection" },
+    });
+    expect(
+      checkFromLast({
+        ...last,
+        readable: false,
+        needs_sign_in: true,
+        problem: "gone",
+        by: "test",
+      }),
+    ).toEqual({
+      state: "problem",
+      message: "gone",
+      needsSignIn: true,
+      seen: { at: 1_000_000, by: "test" },
+    });
+    expect(
+      checkFromLast({ ...last, readable: false, problem: null }),
+    ).toMatchObject({ message: "Puddle can't read it" });
+  });
+
+  it("says when and by what, in words, and nothing for a check with no record", () => {
+    const now = 1_000_000 + 4 * 60_000;
+    expect(seenText(checkFromLast(last), now)).toBe(
+      "Checked 4 minutes ago by a workspace's request",
+    );
+    expect(
+      seenText(checkFromLast({ ...last, by: "repository_list" }), now),
+    ).toBe("Checked 4 minutes ago by a repository list");
+    expect(seenText(checkFromLast({ ...last, by: "test" }), now)).toBe(
+      "Checked 4 minutes ago by a test",
+    );
+    expect(seenText({ state: "ok" }, now)).toBe("");
+    expect(seenText(UNTESTED, now)).toBe("");
+    expect(seenText({ state: "checking" }, now)).toBe("");
+  });
+
+  it("leaves the record out of a request that saves the identity", () => {
+    const one = identity(1, {
+      credentials: [credential({ last_check: last })],
+    });
+    expect(requestOf(one).credentials[0]).not.toHaveProperty("last_check");
   });
 });
 

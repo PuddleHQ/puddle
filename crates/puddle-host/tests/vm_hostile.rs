@@ -446,7 +446,7 @@ async fn vm_hostile_hg11_a_flooding_workspace_is_held_at_its_cap_and_another_is_
     .await;
     let counts = puddle_test_kit::eventually_async(
         "the flood's counts",
-        Duration::from_secs(300),
+        Duration::from_secs(95),
         || async {
             let out = guest(
                 &runtime,

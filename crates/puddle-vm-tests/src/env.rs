@@ -415,23 +415,14 @@ pub fn registry_of(image: &str) -> &str {
     }
 }
 
-/// Creates the sandbox `builder` describes from `image`, within `limit`. The image is pulled from
-/// its public registry on purpose (a registry fake would not exercise the image the tests are
-/// about), so a failure names that registry.
+/// Awaits `creation` (a sandbox create from `image`) within `limit`. The image is pulled from its
+/// public registry on purpose (a registry fake would not exercise the image the tests are about),
+/// so a failure names that registry.
 ///
 /// # Errors
 ///
-/// [`HarnessError::ImagePull`] when the SDK fails or the budget runs out.
-pub async fn create_from_registry(
-    image: &str,
-    limit: Duration,
-    builder: SandboxBuilder,
-) -> Result<Sandbox, HarnessError> {
-    pulling(image, limit, builder.create()).await
-}
-
-/// [`create_from_registry`] for any creation future, so the failure text is testable without a VM.
-async fn pulling<T, E: std::fmt::Display>(
+/// [`HarnessError::ImagePull`] when the creation fails or the budget runs out.
+pub async fn create_from_registry<T, E: std::fmt::Display>(
     image: &str,
     limit: Duration,
     creation: impl Future<Output = Result<T, E>>,
@@ -468,7 +459,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn a_failed_creation_names_the_registry_and_the_cause() {
-        let failed = pulling::<(), _>("node:22", Duration::from_secs(5), async {
+        let failed = create_from_registry::<(), _>("node:22", Duration::from_secs(5), async {
             Err("manifest unknown")
         })
         .await
@@ -476,7 +467,7 @@ pub(crate) mod tests {
         let text = failed.to_string();
         assert!(text.contains("registry-1.docker.io"), "{text}");
         assert!(text.contains("manifest unknown"), "{text}");
-        let ok = pulling("node:22", Duration::from_secs(5), async {
+        let ok = create_from_registry("node:22", Duration::from_secs(5), async {
             Ok::<_, String>(7)
         })
         .await;
@@ -485,7 +476,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn a_creation_that_never_answers_names_the_registry_and_the_budget() {
-        let hung = pulling::<(), String>(
+        let hung = create_from_registry::<(), String>(
             "mcr.microsoft.com/dotnet/sdk:10.0",
             Duration::from_millis(50),
             std::future::pending(),

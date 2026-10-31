@@ -148,7 +148,7 @@ echo \"vite-style: $(test -r \"$DEV_CERT_PEM\" && test -r \"$DEV_KEY_PEM\" && ec
 async fn node_run(env: &VmEnv) -> Result<(), HarnessError> {
     let builder = env.sandbox("devcert-node", NODE_IMAGE)?;
     env.scope(Box::pin(async {
-        let sandbox = create_from_registry(NODE_IMAGE, CREATE_BUDGET, builder).await?;
+        let sandbox = create_from_registry(NODE_IMAGE, CREATE_BUDGET, builder.create()).await?;
         let first = trust();
         let file = |t: &GuestTrust, p: &str| {
             t.guest_files()
@@ -280,7 +280,7 @@ async fn dotnet_run(env: &VmEnv) -> Result<(), HarnessError> {
         .cpus(2)
         .memory(3072u32);
     env.scope(Box::pin(async {
-        let sandbox = create_from_registry(DOTNET_IMAGE, CREATE_BUDGET, builder).await?;
+        let sandbox = create_from_registry(DOTNET_IMAGE, CREATE_BUDGET, builder.create()).await?;
         let (code, out) = sh(
             &sandbox,
             "tools",

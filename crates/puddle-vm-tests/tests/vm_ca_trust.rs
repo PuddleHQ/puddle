@@ -296,7 +296,7 @@ async fn java_run(env: &VmEnv) -> Result<(), HarnessError> {
     let f = fixture();
     let builder = env.sandbox("catrust-java", JAVA_IMAGE)?.memory(1024u32);
     env.scope(Box::pin(async {
-        let sandbox = create_from_registry(JAVA_IMAGE, CREATE_BUDGET, builder).await?;
+        let sandbox = create_from_registry(JAVA_IMAGE, CREATE_BUDGET, builder.create()).await?;
         let script = prepare(&sandbox, &f, ("/tmp/Fetch.java", FETCH_JAVA)).await?;
         let run = "cd /tmp && java Fetch.java 2>&1";
         let (code, out) = sh(&sandbox, "java before", run.to_owned()).await?;
@@ -342,7 +342,7 @@ async fn deno_run(env: &VmEnv) -> Result<(), HarnessError> {
     let f = fixture();
     let builder = env.sandbox("catrust-deno", DENO_IMAGE)?;
     env.scope(Box::pin(async {
-        let sandbox = create_from_registry(DENO_IMAGE, CREATE_BUDGET, builder).await?;
+        let sandbox = create_from_registry(DENO_IMAGE, CREATE_BUDGET, builder.create()).await?;
         let script = prepare(&sandbox, &f, ("/tmp/fetch.ts", FETCH_DENO)).await?;
         let run = "export HOME=/root; deno run -A /tmp/fetch.ts 2>&1";
         let (code, out) = sh(&sandbox, "deno before", run.to_owned()).await?;
@@ -376,7 +376,7 @@ async fn pip_run(env: &VmEnv) -> Result<(), HarnessError> {
     let f = fixture();
     let builder = env.sandbox("catrust-pip", PIP_IMAGE)?;
     env.scope(Box::pin(async {
-        let sandbox = create_from_registry(PIP_IMAGE, CREATE_BUDGET, builder).await?;
+        let sandbox = create_from_registry(PIP_IMAGE, CREATE_BUDGET, builder.create()).await?;
         let script = prepare(&sandbox, &f, ("/tmp/server.py", PIP_SERVER_PY)).await?;
         let serve = |pre: &str| {
             format!(
@@ -482,7 +482,7 @@ async fn java_many_roots_run(env: &VmEnv) -> Result<(), HarnessError> {
     let first = fixture_with(ROOTS - 1);
     let builder = env.sandbox("catrust-many", JAVA_IMAGE)?.memory(1024u32);
     env.scope(Box::pin(async {
-        let sandbox = create_from_registry(JAVA_IMAGE, CREATE_BUDGET, builder).await?;
+        let sandbox = create_from_registry(JAVA_IMAGE, CREATE_BUDGET, builder.create()).await?;
         let script = prepare(&sandbox, &first, ("/tmp/Fetch.java", FETCH_JAVA)).await?;
         let steps = apply(&sandbox, script).await?;
         let ms = step_ms(&steps, JAVA_STEP_PATH);
@@ -528,7 +528,7 @@ async fn java_bad_roots_run(env: &VmEnv) -> Result<(), HarnessError> {
     };
     let builder = env.sandbox("catrust-bad", JAVA_IMAGE)?.memory(1024u32);
     env.scope(Box::pin(async {
-        let sandbox = create_from_registry(JAVA_IMAGE, CREATE_BUDGET, builder).await?;
+        let sandbox = create_from_registry(JAVA_IMAGE, CREATE_BUDGET, builder.create()).await?;
         let script = prepare(&sandbox, &f, ("/tmp/Fetch.java", FETCH_JAVA)).await?;
         let steps = apply(&sandbox, script.clone()).await?;
         eprintln!(

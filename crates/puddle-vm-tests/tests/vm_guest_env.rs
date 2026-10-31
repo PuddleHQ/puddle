@@ -662,7 +662,7 @@ async fn tools_reach_the_fixture(env: &VmEnv) -> Result<Vec<Outcome>, HarnessErr
         .memory(3072u32);
     env.scope(Box::pin(async {
         let started = Instant::now();
-        let sb = create_from_registry(TOOLS_IMAGE, CREATE_BUDGET, builder).await?;
+        let sb = create_from_registry(TOOLS_IMAGE, CREATE_BUDGET, builder.create()).await?;
         eprintln!("create (pull + boot) {} s", started.elapsed().as_secs());
 
         let started = Instant::now();

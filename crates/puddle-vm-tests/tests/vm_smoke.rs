@@ -24,7 +24,8 @@ async fn boot_and_exec_true(env: &VmEnv) -> Result<Timings, HarnessError> {
     // Boxed: the SDK's futures are large (clippy::large_futures).
     env.scope(Box::pin(async {
         let started = Instant::now();
-        let sandbox = create_from_registry(DEBIAN_DEVCONTAINER, CREATE_BUDGET, builder).await?;
+        let sandbox =
+            create_from_registry(DEBIAN_DEVCONTAINER, CREATE_BUDGET, builder.create()).await?;
         let create = started.elapsed();
 
         let started = Instant::now();

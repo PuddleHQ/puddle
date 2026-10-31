@@ -153,7 +153,7 @@ async fn run(env: &VmEnv) -> Result<(), HarnessError> {
     let f = fixture();
     let builder = env.sandbox("rootsync", IMAGE)?;
     env.scope(Box::pin(async {
-        let sandbox = create_from_registry(IMAGE, CREATE_BUDGET, builder).await?;
+        let sandbox = create_from_registry(IMAGE, CREATE_BUDGET, builder.create()).await?;
         let fs = sandbox.fs();
         let (uploads, install_sh) = install(&f.trust);
         for (path, data) in uploads {

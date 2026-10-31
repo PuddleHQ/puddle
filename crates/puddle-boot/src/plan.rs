@@ -590,10 +590,8 @@ impl BootPlanBuilder {
                     path: path.to_string(),
                 });
             }
-            if !matches!(
-                f.apply(),
-                ApplyKind::Replace | ApplyKind::Merge(_) | ApplyKind::Keep
-            ) {
+            let known = matches!(f.apply(), ApplyKind::Replace | ApplyKind::Merge(_));
+            if !known && !matches!(f.apply(), ApplyKind::Keep) {
                 return Err(PlanError::UnknownApplyKind {
                     path: path.to_string(),
                 });

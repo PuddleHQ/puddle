@@ -342,7 +342,16 @@ for my $i (0 .. $count - 1) {
 # Write in a child, so that reading never waits on a full buffer.
 my $pid = fork();
 die "fork: $!" unless defined $pid;
-if (!$pid) { my $off = 0; while ($off < length $out) { my $n = syswrite($s, $out, 65536, $off); die "write: $!\n" unless $n; $off += $n; } exit 0; }
+if (!$pid) {
+  open(my $log, ">", "/tmp/hg11.child") or die;
+  my $off = 0;
+  while ($off < length $out) {
+    my $n = syswrite($s, $out, 65536, $off);
+    unless ($n) { print $log "write failed at $off: $!\n"; close $log; exit 1; }
+    $off += $n;
+  }
+  print $log "wrote $off\n"; close $log; exit 0;
+}
 sub read_exactly {
   my $want = shift; my $buf = "";
   while (length $buf < $want) {
@@ -437,7 +446,7 @@ async fn vm_hostile_hg11_a_flooding_workspace_is_held_at_its_cap_and_another_is_
             let out = guest(
                 &runtime,
                 &flooder,
-                "cat /tmp/hg11.out 2>/dev/null || { echo pending; tail -3 /tmp/hg11.log; }",
+                "cat /tmp/hg11.out /tmp/hg11.child 2>/dev/null || { echo pending; tail -3 /tmp/hg11.log; }",
             )
             .await;
             if out.starts_with("pending") {

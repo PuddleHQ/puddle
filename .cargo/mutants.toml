@@ -6,8 +6,9 @@
 # result stays equal for every input). Each goes in `exclude_re` below with a comment that says why
 # it is equivalent; a reviewer reads that line like a lint suppression.
 #
-# The tests run through nextest's default profile (.config/nextest.toml), which leaves out the VM
-# tests: a mutant is judged by the same tests a pull request runs without a VM.
+# The tests run through nextest's `mutants` profile (.config/nextest.toml): the default profile's
+# tests, which leave out the VM tests, so a mutant is judged by the tests a pull request runs without
+# a VM, but with few threads and a heap limit per test process (a mutant can loop and allocate).
 test_tool = "nextest"
 
 # Test support that is compiled outside `cfg(test)` (feature-gated helpers) is no product code.
@@ -34,4 +35,4 @@ exclude_re = [
 # The first failing test decides a mutant: stop the rest. Without it, a mutant that makes a test
 # loop forever keeps the run until the timeout, and is reported as a timeout although a faster
 # test already failed.
-additional_cargo_test_args = ["--max-fail=1:immediate"]
+additional_cargo_test_args = ["--profile", "mutants", "--max-fail=1:immediate"]

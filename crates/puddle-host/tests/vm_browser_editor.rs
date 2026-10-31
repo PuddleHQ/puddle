@@ -620,20 +620,21 @@ server.on("upgrade", (req, socket) => {
 });
 server.listen(Number(arg("--port")), arg("--host"));"#;
 
-/// Puts two complete stand-in builds, `$1` and `$2` (each [`STAND_IN_SERVER`], written to
-/// `/tmp/stand-in.js` first), in the workspace's builds folder `$3`, and names `$1` the current one.
-const INSTALL_STAND_INS: &str = r#"
+/// Puts a complete stand-in build `$1` ([`STAND_IN_SERVER`], written to `stand-in.js` beside this
+/// script first)
+/// in the workspace's builds folder `$2` and names it with the pointer `$3` (`current` for the
+/// build to start, `staged` for the one to switch to). A build no pointer names is removed by the
+/// agent once a build has run, so each is put there when it is named.
+const INSTALL_STAND_IN: &str = r#"
 set -e
-a=$1; b=$2; builds=$3
-for c in "$a" "$b"; do
-  mkdir -p "$builds/$c/bin"
-  cp /tmp/stand-in.js "$builds/$c/server.js"
-  printf '#!/bin/sh\nexec /puddle/code-server/lib/node "$(dirname "$0")/../server.js" "$@"\n' >"$builds/$c/bin/code-server"
-  chmod 755 "$builds/$c/bin/code-server"
-  touch "$builds/$c/.puddle-installed"
-done
-printf %s "$a" >"$builds/current"
+c=$1; builds=$2; pointer=$3
+mkdir -p "$builds/$c/bin"
+cp "$(dirname "$0")/stand-in.js" "$builds/$c/server.js"
+printf '#!/bin/sh\nexec /puddle/code-server/lib/node "$(dirname "$0")/../server.js" "$@"\n' >"$builds/$c/bin/code-server"
+chmod 755 "$builds/$c/bin/code-server"
+touch "$builds/$c/.puddle-installed"
 chmod -R a+rX "$builds"
+printf %s "$c" >"$builds/$pointer"
 "#;
 
 /// Two builds' names (40 hex digits, like a commit).
@@ -753,13 +754,15 @@ async fn vm_browser_microsoft_s_server_opens_with_its_token_and_switches_builds_
     // The builds go on the volume (the agent found none to start: no internet here), and the next
     // start runs the current one without asking Microsoft.
     let builds = format!("/workspaces/{name}/.puddle/vscode-server/servers");
+    // On the volume, so it is there after the restart below.
+    let tools = format!("/workspaces/{name}/.puddle/stand-in");
     guest(
         &runtime,
         &sandbox,
         &format!(
-            "cat >/tmp/stand-in.js <<'JS'\n{STAND_IN_SERVER}\nJS\n\
-             cat >/tmp/install.sh <<'SH'\n{INSTALL_STAND_INS}\nSH\n\
-             sh /tmp/install.sh {BUILD_A} {BUILD_B} {builds}"
+            "mkdir -p {tools} && cat >{tools}/stand-in.js <<'JS'\n{STAND_IN_SERVER}\nJS\n\
+             cat >{tools}/install.sh <<'SH'\n{INSTALL_STAND_IN}\nSH\n\
+             sh {tools}/install.sh {BUILD_A} {builds} current"
         ),
     )
     .await;
@@ -819,7 +822,7 @@ async fn vm_browser_microsoft_s_server_opens_with_its_token_and_switches_builds_
     guest(
         &runtime,
         &sandbox,
-        &format!("printf %s {BUILD_B} >{builds}/staged"),
+        &format!("sh {tools}/install.sh {BUILD_B} {builds} staged"),
     )
     .await;
     assert_eq!(

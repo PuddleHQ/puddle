@@ -126,8 +126,8 @@ impl ConnectionRecord {
             decision: Some(event.decision),
             outcome: event.outcome,
             reason: event.reason.to_string(),
-            refused_address: event.refused_address.as_ref().map(|(ip, _)| ip.to_string()),
-            refused_reason: event.refused_address.as_ref().map(|(_, why)| why.clone()),
+            refused_address: event.refused_address.map(|(ip, _)| ip.to_string()),
+            refused_reason: event.refused_address.map(|(_, why)| why.code().to_owned()),
             rule_id: event.rule_id.map(|id| id.0),
             rule_set: event.rule_set.map(|set| set.to_string()),
             request_rule: event.request_rule.map(|id| id.0),
@@ -1151,7 +1151,7 @@ mod tests {
             })
         ));
         let mut mixed = event();
-        mixed.refused_address = Some(("10.0.0.8".parse().unwrap(), "local_address".to_owned()));
+        mixed.refused_address = Some(("10.0.0.8".parse().unwrap(), BlockReason::LocalAddress));
         let kept = ConnectionRecord::from_event(1, &mixed);
         assert_eq!(
             (

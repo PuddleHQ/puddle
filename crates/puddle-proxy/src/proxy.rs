@@ -9,7 +9,7 @@
 //! response); every failure after the connection is open is passed on as a reset.
 
 use std::io;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -572,7 +572,7 @@ impl WorkspaceHandler {
     /// claim, so only a plain IP address is taken as a destination, and the audit's own rate limit
     /// (R-26) bounds the records.
     async fn record_udp_refusal(&self, refusal: &UdpRefusal) {
-        let Ok(ip) = refusal.address.parse::<IpAddr>() else {
+        let Ok(ip) = refusal.address.parse::<std::net::IpAddr>() else {
             tracing::debug!(workspace = %self.workspace, "UDP refusal report without an IP address ignored");
             return;
         };
@@ -1078,7 +1078,8 @@ async fn admit_into(
     let mut usable = Vec::new();
     let mut exact_only = Vec::new();
     let mut categories: Vec<LocalCategory> = Vec::new();
-    let mut blocked: Vec<(IpAddr, BlockReason)> = Vec::new();
+    let mut blocked = Vec::new();
+    let mut refused_first = None;
     for addr in addrs {
         match proxy.addresses.check(&request.workspace, addr) {
             AddressVerdict::Allow => usable.push(addr),
@@ -1086,16 +1087,17 @@ async fn admit_into(
                 exact_only.push(addr);
                 categories.push(category);
             }
-            AddressVerdict::Block(reason) => blocked.push((addr.ip(), reason)),
+            AddressVerdict::Block(reason) => {
+                refused_first.get_or_insert((addr.ip(), reason));
+                blocked.push(reason);
+            }
             other => {
                 tracing::warn!(%addr, verdict = ?other, "unknown address verdict, address dropped");
-                blocked.push((addr.ip(), BlockReason::LocalAddress));
+                blocked.push(BlockReason::LocalAddress);
             }
         }
     }
-    event.refused_address = blocked
-        .first()
-        .map(|(ip, reason)| (*ip, ConnectionReason::Blocked(*reason).to_string()));
+    event.refused_address = refused_first;
     if pattern == PatternKind::Exact {
         // An exact allow reaches local addresses whose toggle is on.
         usable.append(&mut exact_only);
@@ -1125,12 +1127,11 @@ async fn admit_into(
         usable = exact_only;
     }
     if usable.is_empty() {
-        let mut reasons: Vec<BlockReason> = blocked.iter().map(|(_, reason)| *reason).collect();
-        if reasons.is_empty() {
-            reasons.push(BlockReason::LocalAddress);
+        if blocked.is_empty() {
+            blocked.push(BlockReason::LocalAddress);
         }
-        note_block(event, shown_reason(&reasons));
-        return Err(block(request, &reasons));
+        note_block(event, shown_reason(&blocked));
+        return Err(block(request, &blocked));
     }
     // A proxy may be told the name only when nothing the name resolved to was dropped: otherwise
     // it could pick the dropped address itself (R-14, R-27).

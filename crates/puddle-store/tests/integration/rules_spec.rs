@@ -1194,7 +1194,10 @@ fn r24_the_stand_ins_sent_unswapped_are_named_in_their_record_only() {
 fn the_refused_address_of_an_answer_is_named_in_its_record_only() {
     let (_, store) = fixture();
     let mut mixed = connection("a");
-    mixed.refused_address = Some(("10.0.0.8".parse().unwrap(), "toggle:private".to_owned()));
+    mixed.refused_address = Some((
+        "10.0.0.8".parse().unwrap(),
+        BlockReason::LocalToggle(puddle_types::LocalCategory::Private),
+    ));
     store.record_connection(&mixed).unwrap();
     store.record_connection(&connection("b")).unwrap();
     let records = audit_of(&store, "connection");

@@ -260,10 +260,10 @@ pub struct ConnectionEvent {
     pub port: u16,
     /// The address connected to, once connected.
     pub resolved_ip: Option<IpAddr>,
-    /// The first address of the answer that the address guard refused, and the reason code
-    /// (`toggle:private`, `local_address`, ...). Visibility only: the connection still goes to
+    /// The first address of the answer that the address guard refused, and why
+    /// (its code is `toggle:private`, `local_address`, ...). Visibility only: the connection still goes to
     /// the allowed addresses of the answer alone.
-    pub refused_address: Option<(IpAddr, String)>,
+    pub refused_address: Option<(IpAddr, BlockReason)>,
     /// The hop of the company-proxy route that carried the connection (`DIRECT` or
     /// `PROXY host:port`), once connected; `None` when no upstream route is configured.
     /// Never carries credentials.

@@ -5,7 +5,7 @@
 //!
 //! | Request | Does |
 //! |---|---|
-//! | `GET /control/state` | `{scenario, now_ms, pending, scripts}` |
+//! | `GET /control/state` | `{scenario, now_ms, pending, scripts, kept_tokens}` |
 //! | `POST /control/emit` (an event, `{"type": ...}`) | puts it on the SSE stream |
 //! | `POST /control/advance {"ms": n}` | moves the clock, sweeps what expired |
 //! | `POST /control/step` (a [`Step`]) | does one step |
@@ -41,6 +41,8 @@ pub struct ControlState {
     pub pending: usize,
     /// Scripts the scenario has.
     pub scripts: Vec<String>,
+    /// The ids of the pasted tokens the fake credential store keeps, sorted.
+    pub kept_tokens: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -113,6 +115,7 @@ async fn state(State(fixture): State<Arc<Fixture>>) -> Json<ControlState> {
         now_ms: fixture.now_ms().await,
         pending: fixture.pending_count().await,
         scripts: fixture.script_names().await,
+        kept_tokens: fixture.kept_tokens().await,
     })
 }
 

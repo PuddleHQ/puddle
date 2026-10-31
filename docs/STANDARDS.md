@@ -213,10 +213,10 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
 - **Test shapes that raced before** (the `flake-*` kinds of `scripts/quality-gate.py`, `scripts/quality-gate.py --flakes`
   lists each rule with its count and the fix its error names): a hand-rolled wait helper (the row says whether it lacks a name or a bound), `file.lock()` in a
   test, `try_recv()`, a port picked and released, a name built from the clock, a wall-clock bar, records matched by
-  position, and an awaited page read asserted once. A site is accepted with `flake-ok: <why>` on its line or within three
+  position, a reserved name (`.test`, `example.com`) in a test that reaches the real resolver, and an awaited page read asserted once (the scan reads a variable; the ESLint selector reads `expect(await ...)`; a read kept as `(await loc.boundingBox())!` counts, a value derived from it does not). A site is accepted with `flake-ok: <why>` on its line or within three
   lines above (in the UI also `eslint-disable-next-line no-restricted-syntax -- <why>`). The kinds are counted, not
   failing, until their existing sites are fixed or reasoned; a rule then moves into `FLAKE_FAILING` and an unreasoned
-  site fails the `quality` gate like the others (`flake-n1`, `flake-w1`, `flake-w2`, `flake-o1`, `flake-a1`, `flake-t1`, the port rule and `flake-o2` already do). Two rules live in the linters: clippy's `disallowed-methods` names
+  site fails the `quality` gate like the others (`flake-n1`, `flake-w1`, `flake-w2`, `flake-o1`, `flake-a1`, `flake-t1`, `flake-d1`, the port rule and `flake-o2` already do). Two rules live in the linters: clippy's `disallowed-methods` names
   `std::env::temp_dir` (workspace level `deny`; a site that must keep it says why in `#[expect(clippy::disallowed_methods, reason = ...)]`; `scripts/flake-lints-test.sh` runs the rule at `warn`),
   and an ESLint selector flags `expect(await ...)` in `ui/e2e` as an error (`ui/scripts/expect-poll-codemod.ts` converts a site to `await expect.poll(() => ...)`). Each rule's self-test replays the original
   code of a flake it would have caught (`scripts/flake-fixtures/`). A wait in a test goes through `puddle-test-kit`
@@ -310,6 +310,11 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   test. A page's budget is a limit on a hang, never a bar on speed.
 - **Redaction:** tests that handle a credential use a canary value and assert it never appears in
   logs, errors, audit entries or the guest's view.
+- **Run tests with `cargo nextest run`, not `cargo test`.** The gates run nextest, one process per test.
+  Plain `cargo test` runs a crate's tests in one shared process, and some suites (for example
+  `cargo test -p puddle-agent`) flake there under load, a failure nextest's one-process-per-test run does not show. Reproduce
+  and check a failure with `cargo nextest run -p <crate>`; doctests are the one thing nextest does not run
+  (`cargo test --doc`).
 - **Flaky tests:** nextest never retries (`retries = 0`); only the Windows nightly retries once, to list flakes. A test that fails without a code change
   is fixed or quarantined within a day (still runs, doesn't gate, linked issue, max 14 days).
   Proxy, transparency and security tests can't be quarantined: a flaky one is the bug.
@@ -568,7 +573,8 @@ A failed job in a merge queue run cancels the rest of its merge group: every job
 `cancel-group` step (`ci/cancel-group.sh`, needs `actions: write` on the job), which cancels each run that has not
 completed on that queue branch, in all four workflows. Only a `failure` triggers it, never a skipped or cancelled job, and
 pull request and push runs are untouched. The result jobs still run `if: always()` and report red. A second failure in
-another job is cancelled with the rest and shows on the requeue. `actions: write` is job-wide, so on a pull request from
+another job is cancelled with the rest and shows on the requeue. Groups stacked on the failed group (their ref ends in its head sha, at every level) are cancelled too: GitHub
+rebuilds them but leaves their old runs going on runners nothing needs. `actions: write` is job-wide, so on a pull request from
 this repository (not a fork) the build code of those jobs holds a token that can cancel runs; it cannot write code.
 
 The `cancel-group` step first annotates the calling job with the failed job and step names (`merge group cancelled:
@@ -659,6 +665,10 @@ and in `ci.yml` (Linux); every one but `ui-e2e` is also in the `pre-push` set; `
   test). A new API service gets its fake and a scenario field in `Fixture::build_state`; a new event needs
   nothing (an `Event` in JSON is a step). The `history` step writes N connection records over a week
   (the activity screen's long-log test).
+  The binary embeds `ui/build` when it is compiled (`embedded-ui`, `#[allow_missing = true]`), so a fixture built before
+  `ui/build` exists embeds nothing and answers every page with 404. Run `npm run build` in `ui/` first; a shared build
+  cache (mbx, above) can hand back the empty-embed build, so after the UI build change a `puddle-api` source file
+  to force a recompile.
 - **Coverage** (`ui/vite.config.ts`): the thresholds are `ui/coverage-baseline.json` (§9), `src/lib/**` 100 % of lines, functions and statements; `src/lib/api/**` (client,
   event stream), `src/lib/decision/**` (the four-outcome model), `src/lib/rules/**` (filter, sort, expiry),
   `src/lib/audit/**` (filters, the address, how a record reads, the drawn window) and `src/lib/workspaces/**` (what each state allows, form checks, settings choices) and `src/lib/settings/**` (consent wording, global settings choices) and `src/lib/network/**` (the network report in words, with a fix per problem) and `src/lib/notify/**` (notice list, event watcher) and `src/lib/identities/**` (how a source and its coverage read, the checks a form makes, clone addresses) ≥ 95 % lines, ≥ 90 % branches.

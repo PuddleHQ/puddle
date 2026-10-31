@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeEnvApi, secret, variable } from "#lib/testing/fake-environment.ts";
 import { FakeSource } from "#lib/testing/fake-inbox.ts";
 import { EnvironmentStore } from "./environment.svelte.ts";
@@ -15,6 +15,7 @@ beforeEach(() => {
   api.global = [variable("EDITOR", { scope: "global", value: "vim" })];
   api.own["web"] = [variable("MODE", { value: "dev" })];
 });
+afterEach(() => vi.restoreAllMocks());
 
 describe("reading", () => {
   it("lists the global variables, or a workspace's own with the global ones after them", async () => {
@@ -39,9 +40,9 @@ describe("reading", () => {
     const refused = make();
     api.down = false;
     const real = api.GET;
-    api.GET = (async () => ({
+    vi.spyOn(api, "GET").mockImplementation((async () => ({
       response: { status: 500 } as Response,
-    })) as never;
+    })) as never);
     await refused.load(web);
     expect(refused.status).toBe("failed");
     await refused.load(web, true);
@@ -53,12 +54,15 @@ describe("reading", () => {
     const store = make();
     const real = api.GET;
     let release: (() => void) | undefined;
-    api.GET = (async (path: string, init: never) => {
+    vi.spyOn(api, "GET").mockImplementation((async (
+      path: string,
+      init: never,
+    ) => {
       if (release === undefined) {
         await new Promise<void>((resolve) => (release = resolve));
       }
       return real(path, init);
-    }) as never;
+    }) as never);
     const slow = store.load(web);
     api.own["web"] = [variable("MODE", { value: "prod" })];
     await store.load(web, true);
@@ -167,9 +171,9 @@ describe("changing", () => {
     api.own["web"] = [secret("S", ["a.com"])];
     await store.load(web);
     const real = api.DELETE;
-    api.DELETE = (async () => ({
+    vi.spyOn(api, "DELETE").mockImplementation((async () => ({
       response: { status: 404, ok: false },
-    })) as never;
+    })) as never);
     expect(await store.remove("GONE")).toEqual({ ok: true });
     api.DELETE = real;
     api.down = true;

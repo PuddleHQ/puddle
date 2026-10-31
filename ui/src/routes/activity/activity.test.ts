@@ -284,11 +284,13 @@ describe("the activity page", () => {
     beforeEach(() => {
       blobs = [];
       clicked = [];
-      URL.createObjectURL = (blob: Blob | MediaSource) => {
-        blobs.push(blob as Blob);
-        return `blob:test/${blobs.length}`;
-      };
-      URL.revokeObjectURL = () => {};
+      vi.spyOn(URL, "createObjectURL").mockImplementation(
+        (blob: Blob | MediaSource) => {
+          blobs.push(blob as Blob);
+          return `blob:test/${blobs.length}`;
+        },
+      );
+      vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
       vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
         function (this: HTMLAnchorElement) {
           clicked.push({ download: this.download, href: this.href });

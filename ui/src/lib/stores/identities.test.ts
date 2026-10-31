@@ -27,7 +27,10 @@ beforeEach(() => {
   api = new FakeIdentities();
   source = new FakeSource();
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 
 describe("reading", () => {
   it("loads the identities in order", async () => {
@@ -60,9 +63,9 @@ describe("reading", () => {
     const store = make();
     await store.refresh();
     const real = api.GET;
-    api.GET = (async () => ({
+    vi.spyOn(api, "GET").mockImplementation((async () => ({
       response: { status: 500 } as Response,
-    })) as never;
+    })) as never);
     await store.refresh();
     expect(store.identities).toHaveLength(1);
     const fresh = make();
@@ -265,9 +268,9 @@ describe("credentials", () => {
   });
 
   it("says the lookup failed when the host refuses it", async () => {
-    api.GET = (async () => ({
+    vi.spyOn(api, "GET").mockImplementation((async () => ({
       response: { status: 503 } as Response,
-    })) as never;
+    })) as never);
     const store = make();
     await store.loadFound();
     expect(store.foundStatus).toBe("failed");
@@ -449,10 +452,10 @@ describe("staying current", () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
     const read = api.GET as (...args: unknown[]) => Promise<unknown>;
-    api.GET = (async (...args: unknown[]) => {
+    vi.spyOn(api, "GET").mockImplementation((async (...args: unknown[]) => {
       await gate;
       return read(...args);
-    }) as never;
+    }) as never);
     await vi.advanceTimersByTimeAsync(1000);
     stop();
     release();

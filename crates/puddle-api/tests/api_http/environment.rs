@@ -294,10 +294,8 @@ async fn a_secret_keeps_its_value_when_only_its_hosts_change_and_a_new_one_needs
     assert_eq!(moved.status, 200, "moving the hosts of a secret failed");
     assert_eq!(moved.json()["hosts"], json!(["b.example.com"]));
     // A boolean, so a failure never prints the stored ids.
-    assert!(
-        api.secrets.ids() == std::slice::from_ref(&id),
-        "the same entry, not a second"
-    );
+    let kept_the_entry = api.secrets.ids().iter().eq([&id]);
+    assert!(kept_the_entry, "the same entry, not a second");
     let held = api
         .secrets
         .get(&StoredId::new(&id).unwrap())

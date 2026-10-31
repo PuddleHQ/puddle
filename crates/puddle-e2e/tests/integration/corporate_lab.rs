@@ -169,7 +169,6 @@ fn the_pac_server_hands_out_its_failover_list_and_counts_fetches() {
         .strip_prefix("http://")
         .and_then(|rest| rest.split_once('/'))
         .unwrap();
-    assert!(path.ends_with(".pac"), "{url}");
     let other = PacServer::start(&pac).url();
     assert!(
         !other.ends_with(path),

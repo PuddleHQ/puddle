@@ -418,6 +418,13 @@ impl Runtime for MsbRuntime {
             self.check_volumes(name.as_str(), &spec_mounts(&spec))
                 .await?;
             self.pull_image(&spec.image).await?;
+            // Checked again right before msb opens them: a pull can take minutes, and a checkout
+            // is a folder the user's own programs may change meanwhile.
+            for mount in &spec.file_mounts {
+                self.inner
+                    .config
+                    .check_mount_source(&mount.host, mount.kind)?;
+            }
             match self.sdk(spec::builder(&spec).create()).await {
                 Ok(sdk) => self.handle_for(&name, sdk).await,
                 Err(e) => {
@@ -448,6 +455,9 @@ impl Runtime for MsbRuntime {
                     op: "start",
                     status: current,
                 });
+            }
+            if let Ok(config) = record.config() {
+                self.inner.config.check_restart(name.as_str(), &config)?;
             }
             let mounts: Vec<(String, Option<u32>)> =
                 mounted_volumes(name.as_str(), record.config())?
@@ -913,7 +923,7 @@ mod tests {
         assert!(inside.contains("lies inside Puddle's folder"), "{inside}");
         let climbing = base.join("api").join("..").join("api").join(".git");
         let climbing = refusal(spec(&climbing)).await;
-        assert!(climbing.contains("canonical form"), "{climbing}");
+        assert!(climbing.contains("canonical path"), "{climbing}");
         drop(rt);
     }
 

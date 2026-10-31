@@ -29,10 +29,11 @@ use support::{cleanup, path, sh, spec};
 /// Where the checkout's `.git` appears in the guest.
 const MOUNTED: &str = "/puddle/checkout";
 
-/// Root's write attempts on the mount, one line `<op> <exit>` each; `$1` is the mount point.
+/// Root's write attempts on the mount, one line `<op> <exit> <last line of stderr>` each; `$1`
+/// is the mount point.
 const ATTACK: &str = r##"
 g=$1
-try() { op=$1; shift; ( "$@" ) >/dev/null 2>&1; echo "$op $?"; }
+try() { op=$1; shift; err=$( ( "$@" ) 2>&1 >/dev/null ); code=$?; echo "$op $code $(printf '%s' "$err" | tail -n 1)"; }
 try append sh -c 'echo x >> "$0/config"' "$g"
 try overwrite sh -c 'echo x > "$0/HEAD"' "$g"
 try truncate truncate -s 0 "$g/config"
@@ -57,6 +58,9 @@ struct Entry {
     readonly: bool,
     #[cfg(unix)]
     mode: u32,
+    /// Owner, group, link count and change time.
+    #[cfg(unix)]
+    inode: (u32, u32, u64, i64, i64),
     modified: Option<SystemTime>,
     link: Option<PathBuf>,
     sha256: Option<String>,
@@ -87,6 +91,17 @@ fn host_tree(root: &Path) -> BTreeMap<PathBuf, Entry> {
                     readonly: meta.permissions().readonly(),
                     #[cfg(unix)]
                     mode: std::os::unix::fs::PermissionsExt::mode(&meta.permissions()),
+                    #[cfg(unix)]
+                    inode: {
+                        use std::os::unix::fs::MetadataExt;
+                        (
+                            meta.uid(),
+                            meta.gid(),
+                            meta.nlink(),
+                            meta.ctime(),
+                            meta.ctime_nsec(),
+                        )
+                    },
                     modified: meta.modified().ok(),
                     link: std::fs::read_link(&item).ok(),
                     sha256,
@@ -175,13 +190,35 @@ async fn attack<S: puddle_compute::Sandbox>(sb: &S, label: &str) -> ExecOutput {
     logged(label, sb.exec(request).await.expect("exec"))
 }
 
-/// Each line `<op> <exit>` of the attack whose exit is 0, that is, a write that went through.
-fn succeeded(report: &str) -> Vec<String> {
+/// Each attack line that is not a refusal with "Read-only file system": a write that went through,
+/// or one that failed for another reason (a missing path would prove nothing about the mount).
+fn not_refused(report: &str) -> Vec<String> {
     report
         .lines()
-        .filter(|l| l.split_whitespace().nth(1) == Some("0"))
+        .filter(|l| {
+            let mut parts = l.splitn(3, ' ');
+            let (_, code) = (parts.next(), parts.next());
+            code == Some("0") || !parts.next().unwrap_or("").contains("Read-only file system")
+        })
         .map(str::to_owned)
         .collect()
+}
+
+/// The options of the mount at [`MOUNTED`] in the guest's `/proc/mounts`.
+async fn flags<S: puddle_compute::Sandbox>(sb: &S, label: &str) -> String {
+    root(
+        sb,
+        label,
+        &format!(r#"awk '$2 == "{MOUNTED}" {{ print $4 }}' /proc/mounts"#),
+    )
+    .await
+    .stdout_text()
+    .trim()
+    .to_owned()
+}
+
+fn has_option(options: &str, want: &str) -> bool {
+    options.split(',').any(|o| o == want)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -212,25 +249,21 @@ async fn vm_a_checkout_mount_is_read_only_to_root_and_only_its_git_directory_cro
     assert_eq!(head.status.code, 0);
     assert!(head.stdout_text().contains("ref: refs/heads/main"));
     assert!(head.stdout_text().contains("feature"));
-    let flag = root(
-        &sb,
-        "flag",
-        &format!(r#"awk '$2 == "{MOUNTED}" {{ print $4 }}' /proc/mounts"#),
-    )
-    .await;
+    let as_mounted = flags(&sb, "flag as mounted").await;
     assert!(
-        flag.stdout_text().split(',').any(|o| o.trim() == "ro"),
-        "not read-only as mounted: {}",
-        flag.stdout_text()
+        has_option(&as_mounted, "ro"),
+        "not read-only as mounted: {as_mounted}"
     );
 
     let first = attack(&sb, "attack as mounted").await;
-    root(
-        &sb,
-        "remount",
-        &format!("mount -o remount,rw {MOUNTED}; echo \"remount exit $?\""),
-    )
-    .await;
+    let remount = root(&sb, "remount", &format!("mount -o remount,rw {MOUNTED}")).await;
+    let cleared = flags(&sb, "flag after the remount").await;
+    // The second attack only proves the host's refusal if the guest's own flag is gone.
+    assert!(
+        remount.status.code == 0 && has_option(&cleared, "rw"),
+        "root could not clear the guest's read-only flag ({cleared}): {}",
+        remount.stderr_text()
+    );
     let second = attack(&sb, "attack after the remount").await;
     // The attack must really have run every step, or a silent script would pass.
     for report in [&first, &second] {
@@ -242,7 +275,7 @@ async fn vm_a_checkout_mount_is_read_only_to_root_and_only_its_git_directory_cro
     let found = root(
         &sb,
         "canaries",
-        r"find / \( -path /proc -o -path /sys \) -prune -o \( -name 'CANARY-checkout-*' -o -name .env -o -name feature.txt \) -print 2>/dev/null",
+        r"find / \( -path /proc -o -path /sys \) -prune -o \( -name 'CANARY-checkout-*' -print \) -o \( -name .env -exec grep -l CANARY-checkout-env {} + \) 2>/dev/null",
     )
     .await;
     #[cfg(unix)]
@@ -258,8 +291,8 @@ async fn vm_a_checkout_mount_is_read_only_to_root_and_only_its_git_directory_cro
 
     let mut failures = Vec::new();
     for (label, report) in [("as mounted", &first), ("after the remount", &second)] {
-        for line in succeeded(&report.stdout_text()) {
-            failures.push(format!("{label}: {line} (the write went through)"));
+        for line in not_refused(&report.stdout_text()) {
+            failures.push(format!("{label}: {line} (not refused as read-only)"));
         }
     }
     if before != after {

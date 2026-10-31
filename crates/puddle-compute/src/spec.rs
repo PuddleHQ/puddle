@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use puddle_types::{GuestEnv, GuestPath, ImageRef, MemoryMib, SandboxName, VolumeName};
 
@@ -110,6 +110,52 @@ impl FileMount {
             kind: MountKind::Checkout,
         }
     }
+}
+
+/// Checks that `git_dir` has the shape of a checkout's git directory, by what is on disk and
+/// without following a link: a real directory named `.git` (a `.git` file, as in a linked
+/// worktree or a submodule, is refused with that reason) holding a `HEAD` file and `objects` and
+/// `refs` directories, and no `commondir` (a linked worktree's). Every runtime applies it to a
+/// [`MountKind::Checkout`] at create; a runtime adds its own rules on where the path may be.
+///
+/// # Errors
+///
+/// What is wrong, worded to follow "the checkout <path>".
+pub fn check_checkout_dir(git_dir: &Path) -> Result<(), String> {
+    if git_dir.file_name().is_none_or(|n| n != ".git") {
+        return Err("is not a `.git` directory".into());
+    }
+    let meta = std::fs::symlink_metadata(git_dir).map_err(|e| format!("can't be read: {e}"))?;
+    if meta.is_file() {
+        return Err(
+            "is a file that points elsewhere, as in a linked worktree or a submodule; \
+             start from the main checkout"
+                .into(),
+        );
+    }
+    if meta.file_type().is_symlink() {
+        return Err("is a link".into());
+    }
+    if !meta.is_dir() {
+        return Err("is not a directory".into());
+    }
+    for (entry, dir) in [("HEAD", false), ("objects", true), ("refs", true)] {
+        let kind = if dir { "directory" } else { "file" };
+        match std::fs::symlink_metadata(git_dir.join(entry)) {
+            Ok(m) if m.file_type().is_symlink() => {
+                return Err(format!("is not a git directory: its {entry} is a link"));
+            }
+            Ok(m) if (dir && m.is_dir()) || (!dir && m.is_file()) => {}
+            _ => return Err(format!("is not a git directory: it has no {entry} {kind}")),
+        }
+    }
+    if std::fs::symlink_metadata(git_dir.join("commondir")).is_ok() {
+        return Err(
+            "belongs to a linked worktree (it has a commondir file); start from the main checkout"
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 /// A disk size in MiB (what msb's `.disk().size(n)` takes).

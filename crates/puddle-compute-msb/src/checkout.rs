@@ -8,7 +8,13 @@
 //! keeps it out of any sandbox with a route, and [`crate::spec::builder`] passes it to msb
 //! read-only like every other file mount, so msb's file server refuses every write whatever the
 //! guest does to its own mount flags.
+//!
+//! What it does not cover, by design: the checks are by path, so a program of the same user that
+//! swaps the folder between the check and msb's open (narrowed by a second check right before the
+//! create) or puts a hard link or a bind mount inside `.git` gets past them. Such a program
+//! already has the user's files; nothing of the checkout runs on the host either way.
 
+#[cfg(unix)]
 use std::fs::Metadata;
 use std::path::Path;
 
@@ -17,51 +23,42 @@ use puddle_compute::ComputeError;
 /// Checks `git_dir` against the checkout rule; `protected` are the folders no checkout may lie
 /// in or hold (the msb home, the guest share, Puddle's data folder).
 pub(crate) fn check(git_dir: &Path, protected: &[&Path]) -> Result<(), ComputeError> {
+    #[cfg(unix)]
+    let owner = Some(rustix::process::geteuid().as_raw());
+    // On Windows the owner is not compared: a file that a member of Administrators makes is often
+    // owned by that group, not by the user (git's own `safe.directory` check has to allow for it),
+    // so the check would refuse ordinary checkouts. Nothing of the checkout runs on the host.
+    #[cfg(not(unix))]
+    let owner = None;
+    check_as(git_dir, protected, owner)
+}
+
+/// [`check`] with the owner a checkout must have on Unix (`None`: not compared).
+fn check_as(git_dir: &Path, protected: &[&Path], owner: Option<u32>) -> Result<(), ComputeError> {
     let refuse = |why: String| ComputeError::InvalidSpec {
         reason: format!("the checkout {} {why}", git_dir.display()),
     };
     if !git_dir.is_absolute() {
         return Err(refuse("is not an absolute path".into()));
     }
+    if !on_local_drive(git_dir) {
+        return Err(refuse(
+            "is not on a local drive (a network share or a device path)".into(),
+        ));
+    }
     let canonical =
         dunce::canonicalize(git_dir).map_err(|e| refuse(format!("can't be resolved: {e}")))?;
-    if canonical != git_dir {
+    if canonical.as_os_str() != git_dir.as_os_str() {
         return Err(refuse(format!(
-            "is not written in its canonical form {} (a `..`, a link or a junction in the path)",
+            "is not written as its canonical path {}: give it with no `..` and no link, junction \
+             or other spelling of a folder in it",
             canonical.display()
         )));
     }
-    if git_dir.file_name().is_none_or(|n| n != ".git") {
-        return Err(refuse("is not a `.git` directory".into()));
-    }
+    puddle_compute::check_checkout_dir(git_dir).map_err(refuse)?;
+    #[cfg(unix)]
     let meta =
         std::fs::symlink_metadata(git_dir).map_err(|e| refuse(format!("can't be read: {e}")))?;
-    if meta.is_file() {
-        return Err(refuse(
-            "is a file that points elsewhere, as in a linked worktree or a submodule; \
-             start from the main checkout"
-                .into(),
-        ));
-    }
-    if !meta.file_type().is_dir() {
-        return Err(refuse("is not a directory".into()));
-    }
-    for (entry, dir) in [("HEAD", false), ("objects", true), ("refs", true)] {
-        let found = std::fs::symlink_metadata(git_dir.join(entry))
-            .is_ok_and(|m| if dir { m.is_dir() } else { m.is_file() });
-        if !found {
-            let kind = if dir { "directory" } else { "file" };
-            return Err(refuse(format!(
-                "is not a git directory: it has no {entry} {kind}"
-            )));
-        }
-    }
-    if std::fs::symlink_metadata(git_dir.join("commondir")).is_ok() {
-        return Err(refuse(
-            "belongs to a linked worktree (it has a commondir file); start from the main checkout"
-                .into(),
-        ));
-    }
     for root in protected {
         let root = dunce::canonicalize(root).map_err(|e| {
             refuse(format!(
@@ -69,34 +66,52 @@ pub(crate) fn check(git_dir: &Path, protected: &[&Path]) -> Result<(), ComputeEr
                 root.display()
             ))
         })?;
-        if canonical.starts_with(&root) {
+        if within(&canonical, &root) {
             return Err(refuse(format!(
                 "lies inside Puddle's folder {}",
                 root.display()
             )));
         }
-        if root.starts_with(&canonical) {
+        if within(&root, &canonical) {
             return Err(refuse(format!("holds Puddle's folder {}", root.display())));
         }
     }
-    owner(&meta).map_err(refuse)
+    match owner {
+        #[cfg(unix)]
+        Some(uid) => owned_by(&meta, uid).map_err(refuse),
+        _ => Ok(()),
+    }
+}
+
+/// Whether `path` starts on a local drive: always on Unix; on Windows a drive letter, never a
+/// network share (`\\server\share`, also what a mapped network drive resolves to) or a device
+/// path.
+fn on_local_drive(path: &Path) -> bool {
+    use std::path::{Component, Prefix};
+    match path.components().next() {
+        Some(Component::Prefix(p)) => matches!(p.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)),
+        _ => true,
+    }
+}
+
+/// Whether `path` is `root` or lies below it. On Windows and macOS, whose usual file systems
+/// ignore case, the components are compared without case, so another spelling of a protected
+/// folder is still that folder.
+fn within(path: &Path, root: &Path) -> bool {
+    if cfg!(any(windows, target_os = "macos")) {
+        let fold = |p: &Path| -> Vec<String> {
+            p.components()
+                .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+                .collect()
+        };
+        fold(path).starts_with(&fold(root))
+    } else {
+        path.starts_with(root)
+    }
 }
 
 /// On Unix the checkout must belong to the user Puddle runs as, as git itself asks of a
 /// repository before it reads its config (`safe.directory`).
-#[cfg(unix)]
-fn owner(meta: &Metadata) -> Result<(), String> {
-    owned_by(meta, rustix::process::geteuid().as_raw())
-}
-
-/// On Windows the owner is not compared: a file that a member of Administrators makes is often
-/// owned by that group, not by the user (git's own `safe.directory` check has to allow for it), so
-/// the check would refuse ordinary checkouts. Nothing of the checkout runs on the host either way.
-#[cfg(not(unix))]
-fn owner(_meta: &Metadata) -> Result<(), String> {
-    Ok(())
-}
-
 #[cfg(unix)]
 fn owned_by(meta: &Metadata, uid: u32) -> Result<(), String> {
     use std::os::unix::fs::MetadataExt;
@@ -191,7 +206,7 @@ mod tests {
         f.repo("api");
         std::fs::create_dir_all(f.base().join("other")).unwrap();
         let climb = f.base().join("other").join("..").join("api").join(".git");
-        refused(f.check(&climb), "canonical form");
+        refused(f.check(&climb), "canonical path");
     }
 
     #[test]
@@ -305,16 +320,16 @@ mod tests {
         let a = f.base().join("a");
         std::fs::create_dir_all(&a).unwrap();
         std::os::unix::fs::symlink(&git, a.join(".git")).unwrap();
-        refused(f.check(&a.join(".git")), "canonical form");
+        refused(f.check(&a.join(".git")), "canonical path");
         // A parent folder is a link.
         std::os::unix::fs::symlink(f.base().join("real"), f.base().join("b")).unwrap();
-        refused(f.check(&f.base().join("b").join(".git")), "canonical form");
+        refused(f.check(&f.base().join("b").join(".git")), "canonical path");
         // A link to one of Puddle's folders is refused for the same reason, before anything else.
         let protected = f.protected();
         let inside = protected[1].join("api").join(".git");
         make_git_dir(&inside);
         std::os::unix::fs::symlink(protected[1].join("api"), f.base().join("c")).unwrap();
-        refused(f.check(&f.base().join("c").join(".git")), "canonical form");
+        refused(f.check(&f.base().join("c").join(".git")), "canonical path");
     }
 
     #[cfg(unix)]
@@ -331,21 +346,60 @@ mod tests {
                 std::fs::remove_file(&path).unwrap();
             }
             std::os::unix::fs::symlink(elsewhere.join(entry), &path).unwrap();
-            refused(f.check(&git), &format!("no {entry}"));
+            refused(f.check(&git), &format!("its {entry} is a link"));
         }
     }
 
     #[cfg(unix)]
     #[test]
-    fn a_checkout_of_another_user_is_refused() {
+    fn a_checkout_of_another_user_is_refused_by_the_whole_rule() {
         use std::os::unix::fs::MetadataExt;
         let f = Fixture::new();
         let git = f.repo("api");
-        let meta = std::fs::symlink_metadata(&git).unwrap();
-        owned_by(&meta, meta.uid()).unwrap();
-        let other = meta.uid().wrapping_add(1);
-        let err = owned_by(&meta, other).unwrap_err();
+        let protected = f.protected();
+        let roots: Vec<&Path> = protected.iter().map(PathBuf::as_path).collect();
+        let uid = std::fs::symlink_metadata(&git).unwrap().uid();
+        check_as(&git, &roots, Some(uid)).unwrap();
+        // What `check` itself compares with: the user the tests run as owns what they made.
+        check(&git, &roots).unwrap();
+        let other = uid.wrapping_add(1);
+        let err = check_as(&git, &roots, Some(other)).unwrap_err().to_string();
         assert!(err.contains("belongs to another user"), "{err}");
         assert!(err.contains(&format!("Puddle runs as {other}")), "{err}");
+    }
+
+    #[test]
+    fn only_a_local_drive_counts() {
+        assert!(on_local_drive(Path::new("/home/u/api/.git")));
+        #[cfg(windows)]
+        {
+            assert!(on_local_drive(Path::new(r"C:\Users\u\api\.git")));
+            assert!(on_local_drive(Path::new(r"\\?\C:\Users\u\api\.git")));
+            for remote in [
+                r"\\server\share\api\.git",
+                r"\\?\UNC\server\share\api\.git",
+                r"\\.\pipe\x\.git",
+            ] {
+                assert!(!on_local_drive(Path::new(remote)), "{remote}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_protected_folder_counts_in_any_case_where_the_file_system_ignores_case() {
+        let root = Path::new("/Users/u/Library/Application Support/puddle");
+        let other_case = Path::new("/Users/u/Library/application support/PUDDLE/x/.git");
+        assert!(within(
+            Path::new("/Users/u/Library/Application Support/puddle/x"),
+            root
+        ));
+        assert_eq!(
+            within(other_case, root),
+            cfg!(any(windows, target_os = "macos"))
+        );
+        assert!(!within(
+            Path::new("/Users/u/Library/Application Support/puddle2"),
+            root
+        ));
     }
 }

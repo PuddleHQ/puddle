@@ -374,6 +374,7 @@ mod tests {
         let ended = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let flag = ended.clone();
         let closing = tokio::spawn(async move {
+            // Simulated latency: a webview that lets go of its window long after the close was asked.
             tokio::time::sleep(Duration::from_millis(900)).await;
             flag.store(true, std::sync::atomic::Ordering::SeqCst);
             ending(&tauri::WindowEvent::Destroyed);

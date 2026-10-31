@@ -326,12 +326,9 @@ impl SandboxWindows {
             .forward_open
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        if let Some(count) = open.get_mut(workspace) {
-            *count -= 1;
-            if *count == 0 {
-                open.remove(workspace);
-            }
-        }
+        open.entry(workspace.clone())
+            .and_modify(|count| *count -= 1);
+        open.retain(|_, count| *count > 0);
     }
 
     pub(crate) fn opened(&self, workspace: &WorkspaceName) {

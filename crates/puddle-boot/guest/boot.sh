@@ -259,12 +259,18 @@ if [ -n "$GIT_INCLUDE" ]; then
     fi
 fi
 
-# The Kubernetes tools on the image's PATH; the host warns about them, because the guest kernel
-# cannot route Services. Checked at every run, so a tool installed later shows at the next start.
-k8s_tools=
-for tool in kind k3d minikube; do
-    if command -v "$tool" >/dev/null 2>&1; then k8s_tools="$k8s_tools $tool"; fi
-done
+# The Kubernetes tools on the PATH the hook has or the image's own (the file Puddle writes for login
+# shells, which a runtime exec may not pass on); the host warns about them, because the guest
+# kernel cannot route Services. Checked at every run, so a tool installed later shows at the next
+# start.
+k8s_tools=$(
+    # shellcheck source=/dev/null
+    image_path=$([ -f "$ROOT/etc/profile.d/00-puddle-path.sh" ] && . "$ROOT/etc/profile.d/00-puddle-path.sh" && printf '%s' "$PATH")
+    PATH="$PATH${image_path:+:$image_path}"
+    for tool in kind k3d minikube; do
+        if command -v "$tool" >/dev/null 2>&1; then printf ' %s' "$tool"; fi
+    done
+)
 if [ -n "$k8s_tools" ]; then say "kubernetes tools$k8s_tools"; fi
 
 # Commands to run when a file below a directory changed (update-ca-certificates).

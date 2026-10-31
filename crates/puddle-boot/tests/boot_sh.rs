@@ -689,6 +689,27 @@ fn the_hook_reports_the_kubernetes_tools_on_the_path() {
 }
 
 #[test]
+fn a_kubernetes_tool_only_the_images_own_path_names_is_found_too() {
+    let fr = FakeRoot::new(&shells()[0]);
+    let bin = tempfile::tempdir().unwrap();
+    let tool = bin.path().join("minikube");
+    std::fs::write(&tool, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&tool, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let config = ImageConfig {
+        env: vec![("PATH".into(), bin.path().display().to_string())],
+        ..ImageConfig::default()
+    };
+    let plan = BootPlan::builder(&config).no_agent().build().unwrap();
+    let out = fr.run_raw(&plan.render(), &[], false);
+    assert!(out.status.success(), "{}", show(&out));
+    let report = puddle_boot::BootReport {
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        ..Default::default()
+    };
+    assert_eq!(report.kubernetes_tools(), ["minikube"]);
+}
+
+#[test]
 fn no_credential_helper_is_ever_written() {
     let fr = FakeRoot::new(&shells()[0]);
     assert!(fr.run(&full_plan("CA\n")).status.success());

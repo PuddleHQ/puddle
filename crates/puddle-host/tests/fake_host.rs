@@ -6301,11 +6301,6 @@ async fn kubernetes_tools_are_a_problem_until_a_start_finds_none() {
     events.until(ended("acme"), Duration::from_secs(20)).await;
     assert!(!has_problem(&host, "kubernetes:acme"));
 
-    // A start that finds none raises none.
-    *rig.guest.boot_says.lock().unwrap() = String::new();
-    api.post("/api/workspaces/acme/start", "").await;
-    events.until(ended("acme"), Duration::from_secs(20)).await;
-    assert!(!has_problem(&host, "kubernetes:acme"));
     host.shutdown().await;
 }
 

@@ -58,8 +58,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 pub use self::exec::{ExecContext, ExecHandler, FsError};
 use self::exec::{Files, builtin};
 use crate::{
-    Capabilities, ComputeError, DiskSize, ExecOutput, ExecRequest, ImageConfig, Runtime, Sandbox,
-    SandboxInfo, SandboxSpec, SshStream, VolumeInfo, VolumeSpec,
+    Capabilities, ComputeError, DiskSize, ExecOutput, ExecRequest, ImageConfig, MountKind, Runtime,
+    Sandbox, SandboxInfo, SandboxSpec, SshStream, VolumeInfo, VolumeSpec,
 };
 
 /// The identification line the fake SSH server sends.
@@ -564,6 +564,15 @@ impl Runtime for FakeRuntime {
         let name = spec.name.clone();
         state.enter(Op::Create, Some(name.as_str()), None)?;
         spec.validate()?;
+        for mount in spec
+            .file_mounts
+            .iter()
+            .filter(|m| m.kind == MountKind::Checkout)
+        {
+            crate::check_checkout_dir(&mount.host).map_err(|why| ComputeError::InvalidSpec {
+                reason: format!("the checkout {} {why}", mount.host.display()),
+            })?;
+        }
         if state.sandboxes.contains_key(name.as_str()) {
             return Err(ComputeError::AlreadyExists {
                 sandbox: name.to_string(),

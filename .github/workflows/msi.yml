@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Builds Puddle's per-user MSI on a clean windows-2025 runner and tests it the way a user meets it:
 # a silent install, the installed program starting and finding its runtime, an upgrade over the
-# previous MSI that keeps the data folder, and an uninstall that leaves nothing outside Puddle's
-# own data folders (ci/msi-install-test.ps1). Not a required check: it runs on pull requests that
+# previous MSI that keeps the data folder, the installed program's real test boot, a workspace made
+# from the stock image that runs a command and is deleted, and an uninstall that leaves nothing
+# outside Puddle's own data folders (ci/msi-install-test.ps1). A runner without a usable hypervisor
+# skips the boot steps with a warning, except on a pull request, where that fails (as vm-windows). Not a required check: it runs on pull requests that
 # touch the installer (paths below), nightly on develop (skipped when this workflow already has a
 # green run on the commit), and by hand. The MSI of the run is kept as an artifact.
 name: msi
@@ -48,6 +50,9 @@ jobs:
       actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: install-test helpers (self-test)
+        shell: pwsh
+        run: ./ci/msi-install-test.ps1 -SelfTest
       - name: anything new since the last green run?
         id: changed
         shell: bash
@@ -104,7 +109,7 @@ jobs:
           ls -l "$RUNNER_TEMP/msi-out" "$RUNNER_TEMP/msi-upgrade"
           echo "FIRST_MSI=$(cygpath -w "$RUNNER_TEMP/msi-out/Puddle_${current}_x64_en-US.msi")" >>"$GITHUB_ENV"
           echo "NEXT_MSI=$(cygpath -w "$RUNNER_TEMP/msi-upgrade/Puddle_${next}_x64_en-US.msi")" >>"$GITHUB_ENV"
-      - name: install, start, upgrade, uninstall
+      - name: install, start, boot a workspace, upgrade, uninstall
         if: steps.changed.outputs.run == 'true'
         shell: pwsh
         run: ./ci/msi-install-test.ps1 -Msi $env:FIRST_MSI -UpgradeMsi $env:NEXT_MSI -LogDir "$env:RUNNER_TEMP\msi-logs"

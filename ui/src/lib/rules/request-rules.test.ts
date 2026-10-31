@@ -142,7 +142,13 @@ describe("the path check", () => {
     const names = Array.from({ length: 32 }, () => "a").join("/");
     expect(pathProblem(`/${names}/**`)).toBeNull();
     // A path with `.` or `..` is counted by the API after it resolves them.
-    expect(pathProblem(`/./${names}/x`)).toBeNull();
+    for (const odd of [".", "..", "%2e", "a;b", "a\\b", "a\\*"]) {
+      expect(pathProblem(`/${odd}/${names}/x`), odd).toBeNull();
+    }
+  });
+  it("leaves a path that needs resolving to the API, even with a wildcard in it", () => {
+    expect(pathProblem("/a\\**/b")).toBeNull();
+    expect(pathProblem("/%2a/**/b")).toBeNull();
   });
   it("allows exactly 32 segments", () => {
     expect(

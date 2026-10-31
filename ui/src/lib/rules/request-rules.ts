@@ -94,17 +94,21 @@ export function pathProblem(path: string): string | null {
     return `A path is at most ${MAX_PATH_BYTES} bytes.`;
   if (/[?#]/.test(path))
     return "A path has no query string or fragment: rules never see them.";
-  const segments = path.split("/").slice(1);
-  const named = segments.filter((s) => s !== "");
+  // The API resolves `.`, `..`, `%XX` escapes, `;parameters` and `\` before it looks at wildcards
+  // and counts segments, so a path that uses any of them is judged there, not here.
+  const named = path.split("/").filter((s) => s !== "");
+  if (
+    path.includes("\\") ||
+    /[%;]/.test(path) ||
+    named.some((s) => /^\.{1,2}$/.test(s))
+  )
+    return null;
   if (named.some((s) => s.includes("*") && s !== "*" && s !== "**"))
     return "A * stands for a whole segment (/repos/*/issues), not part of one.";
   const open = named.indexOf("**");
   if (open !== -1 && open !== named.length - 1)
     return "** may only end a path (/gists/**).";
-  // `.` and `..` change what is counted once the API resolves them, so a path with one is left to it.
-  const resolved = named.some((s) => s === "." || s === "..");
-  const counted = named.filter((s) => s !== "**");
-  if (!resolved && counted.length > MAX_PATH_SEGMENTS)
+  if (named.filter((s) => s !== "**").length > MAX_PATH_SEGMENTS)
     return `A path has at most ${MAX_PATH_SEGMENTS} segments.`;
   return null;
 }

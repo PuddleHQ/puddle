@@ -101,6 +101,20 @@ pub enum HarnessError {
         /// What went wrong, with the page's console and errors when it got that far.
         detail: String,
     },
+    /// Creating a sandbox from an image failed or ran out of time. The image comes from a public
+    /// registry (a live third party): this variant names the registry so a red run reads as an
+    /// outage of that host, not as a Puddle fault.
+    #[error(
+        "creating a sandbox from {image} needs {registry} (a live third-party registry; an outage there fails this test): {detail}"
+    )]
+    ImagePull {
+        /// The image reference.
+        image: String,
+        /// The registry host the reference pulls from.
+        registry: String,
+        /// What the SDK or the clock reported.
+        detail: String,
+    },
     /// A step took longer than its budget.
     #[error("{what} took longer than {limit:?}")]
     Timeout {

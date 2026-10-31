@@ -6,7 +6,7 @@
 //! (127.0.0.1:3128): it logs every request line and answers with a fixed response (or 502 to a
 //! CONNECT). Every probe targets a name under `.invalid`, which never resolves, so a tool that
 //! ignores the config fails instead of reaching the fixture another way. The VM keeps msb's
-//! default network only for installing the tools first.
+//! default network only for installing the tools first, from the real mirrors (see `SETUP_STEPS`).
 //!
 //! The config goes in the way the boot hook would apply it: the files written as root with their
 //! modes, the env given to each exec. Until the boot hook runs in VMs, the files are
@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 use microsandbox::Sandbox;
 use puddle_guest_env::{GuestProxyConfig, ProxySettings, guest_proxy_config};
 use puddle_types::{ApplyKind, GuestFile, MergeSpec};
-use puddle_vm_tests::{HarnessError, VmEnv, within};
+use puddle_vm_tests::{HarnessError, VmEnv, create_from_registry, within};
 
 /// Node 24 (`NODE_USE_ENV_PROXY`), Debian 13 (Maven 3.9 for `MAVEN_ARGS`, `OpenJDK` 21).
 const TOOLS_IMAGE: &str = "node:24-trixie-slim";
@@ -49,12 +49,19 @@ const STEP_BUDGET: Duration = Duration::from_secs(60);
 const KNOWN_GAPS: &[&str] = &[];
 
 /// The tool install, one named step at a time so the log shows which step is slow or hangs.
-const SETUP_STEPS: &[(&str, &str)] = &[
-    ("apt update", "apt-get update -qq"),
+///
+/// Each step is `(name, third-party host it needs, script)`. These downloads stay live on purpose: the
+/// test needs the real JDK, Maven, Gradle, pnpm and Yarn that the proxy config is written for, and
+/// a mirror serving stand-ins would test nothing. The host is in the failure message, so a red
+/// run reads as that host being down. Nothing after the setup reaches the internet (every probe
+/// targets a `.invalid` name).
+const SETUP_STEPS: &[(&str, &str, &str)] = &[
+    ("apt update", "deb.debian.org", "apt-get update -qq"),
     (
         // Names and routes the install needs, so a stall can be told from a dead network. The
         // lookup is timed on its own.
         "name lookup",
+        "deb.debian.org",
         "t=$(date +%s%N); getent ahosts deb.debian.org | head -4; \
          echo \"lookup ms=$((($(date +%s%N) - t) / 1000000))\"",
     ),
@@ -62,6 +69,7 @@ const SETUP_STEPS: &[(&str, &str)] = &[
         // Node ends the process itself: after the response it would otherwise wait for the idle
         // keep-alive connection to close, which took about 8 s of every probe.
         "network probe",
+        "deb.debian.org",
         "node -e \"const t = Date.now(); \\
          fetch('http://deb.debian.org/debian/dists/trixie/InRelease', {signal: AbortSignal.timeout(20000)}) \\
          .then((r) => { console.log('debian http=' + r.status + ' ms=' + (Date.now() - t)); process.exit(0); }) \\
@@ -71,11 +79,13 @@ const SETUP_STEPS: &[(&str, &str)] = &[
         // Output kept (no -qq): a stall shows the last package unpacked. A plain install: dpkg
         // syncs for every package, so this step is also the guest's fsync cost on a fresh image.
         "apt install (JDK 21, maven, tools)",
+        "deb.debian.org",
         "apt-get install -y -o Dpkg::Use-Pty=0 --no-install-recommends ca-certificates \
          curl wget git openssh-client sudo unzip python3-pip openjdk-21-jdk-headless maven",
     ),
     (
         "gradle download",
+        "services.gradle.org",
         "curl -fsSL -w 'http=%{http_code} bytes=%{size_download} speed=%{speed_download}B/s \
          connect=%{time_connect}s tls=%{time_appconnect}s first-byte=%{time_starttransfer}s \
          total=%{time_total}s\n' -o /tmp/gradle.zip \
@@ -83,18 +93,22 @@ const SETUP_STEPS: &[(&str, &str)] = &[
     ),
     (
         "gradle unpack",
+        "none (local step)",
         "unzip -oq /tmp/gradle.zip -d /opt && ln -sf \"/opt/gradle-$GRADLE_VERSION/bin/gradle\" /usr/local/bin/gradle",
     ),
     (
         "corepack pnpm",
+        "registry.npmjs.org",
         "export COREPACK_ENABLE_DOWNLOAD_PROMPT=0; corepack enable pnpm && corepack install -g \"$PNPM\"",
     ),
     (
         "corepack yarn berry",
+        "repo.yarnpkg.com",
         "export COREPACK_ENABLE_DOWNLOAD_PROMPT=0; mkdir -p /tmp/warm && cd /tmp/warm && corepack \"$YARN_BERRY\" --version",
     ),
     (
         "tool versions",
+        "none (local step)",
         "mvn -v | head -1; gradle --version -q | grep Gradle; node -v; pnpm -v; yarn -v; java -version 2>&1 | head -1",
     ),
 ];
@@ -579,7 +593,7 @@ async fn fixture_log(sb: &Sandbox) -> Vec<String> {
 
 /// Runs one setup step as root and prints its time and output tail; panics, naming the step, when it
 /// fails or exceeds [`SETUP_STEP_BUDGET`].
-async fn setup_step(sb: &Sandbox, name: &str, script: &str) {
+async fn setup_step(sb: &Sandbox, name: &str, host: &str, script: &str) {
     let guest_limit = SETUP_STEP_BUDGET.as_secs() - 10;
     // Every step downloads from a public registry or mirror through msb's default network, where one
     // request can fail on its own (a corepack fetch of the pnpm manifest died after 3.8 s while the
@@ -609,7 +623,7 @@ async fn setup_step(sb: &Sandbox, name: &str, script: &str) {
     let secs = started.elapsed().as_secs_f32();
     assert!(
         matches!(out, Ok(Ok(_))),
-        "setup step '{name}' did not finish in {secs:.1} s: {out:?}",
+        "setup step '{name}' (third-party host: {host}) did not finish in {secs:.1} s: {out:?}",
     );
     let out = out.unwrap().unwrap();
     let text = out.stdout().unwrap_or_default();
@@ -618,7 +632,11 @@ async fn setup_step(sb: &Sandbox, name: &str, script: &str) {
         out.status().code,
         tail(&text, 8)
     );
-    assert_eq!(out.status().code, 0, "setup step '{name}' failed:\n{text}");
+    assert_eq!(
+        out.status().code,
+        0,
+        "setup step '{name}' (third-party host: {host}) failed:\n{text}"
+    );
 }
 
 /// The last `n` lines of `text`.
@@ -644,12 +662,12 @@ async fn tools_reach_the_fixture(env: &VmEnv) -> Result<Vec<Outcome>, HarnessErr
         .memory(3072u32);
     env.scope(Box::pin(async {
         let started = Instant::now();
-        let sb = within("create", CREATE_BUDGET, builder.create()).await??;
+        let sb = create_from_registry(TOOLS_IMAGE, CREATE_BUDGET, builder.create()).await?;
         eprintln!("create (pull + boot) {} s", started.elapsed().as_secs());
 
         let started = Instant::now();
-        for (name, script) in SETUP_STEPS {
-            setup_step(&sb, name, script).await;
+        for (name, host, script) in SETUP_STEPS {
+            setup_step(&sb, name, host, script).await;
         }
         eprintln!("setup total {} s", started.elapsed().as_secs());
 

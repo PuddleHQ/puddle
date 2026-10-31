@@ -34,7 +34,7 @@ pub struct WebAnswer {
     /// The `content-type`.
     pub content_type: &'static str,
     /// The body.
-    pub body: String,
+    pub body: Vec<u8>,
 }
 
 /// Decides the answer to a request from what the site saw of it (headers, with the `host` first,

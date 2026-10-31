@@ -160,24 +160,25 @@ impl MsbSandbox {
     /// whatever goes wrong here, the stop goes ahead and the runtime ends what is left.
     async fn term_guest_processes(&self) {
         let ran = tokio::time::timeout(TERM_GRACE + TERM_SLACK, self.exec(term_request())).await;
-        match ran {
-            Ok(Ok(out)) if out.status.success() => {}
-            Ok(Ok(out)) => tracing::warn!(
-                sandbox = %self.name,
-                status = out.status.code,
-                said = %out.stdout_text().trim(),
-                "guest processes still ran after their SIGTERM and the grace period; the stop ends them"
-            ),
-            Ok(Err(e)) => tracing::warn!(
-                sandbox = %self.name,
-                error = %e,
-                "could not give the guest's processes their SIGTERM; the stop ends them"
-            ),
-            Err(_) => tracing::warn!(
-                sandbox = %self.name,
-                "the guest did not answer the SIGTERM step in time; the stop goes ahead"
-            ),
+        if let Some(problem) = term_problem(ran.ok()) {
+            tracing::warn!(sandbox = %self.name, "{problem}; the stop goes ahead");
         }
+    }
+}
+
+/// What went wrong with the SIGTERM step, from its result (`None` when the guest did not answer in
+/// time); `None` when every process exited within the grace period.
+fn term_problem(ran: Option<Result<ExecOutput, ComputeError>>) -> Option<String> {
+    match ran {
+        Some(Ok(out)) if out.status.success() => None,
+        Some(Ok(out)) => Some(format!(
+            "guest processes still ran after their SIGTERM and the grace period ({})",
+            out.stdout_text().trim()
+        )),
+        Some(Err(e)) => Some(format!(
+            "could not give the guest's processes their SIGTERM: {e}"
+        )),
+        None => Some("the guest did not answer the SIGTERM step in time".to_owned()),
     }
 }
 
@@ -367,10 +368,30 @@ mod tests {
             .args(["-n", "-c", GUEST_TERM_SH])
             .output()
             .expect("run sh -n");
-        assert!(
-            out.status.success(),
-            "{}",
-            String::from_utf8_lossy(&out.stderr)
+        assert!(out.status.success(), "{out:?}");
+    }
+
+    #[test]
+    fn the_sigterm_step_says_what_went_wrong() {
+        assert_eq!(term_problem(Some(Ok(ExecOutput::new(0, "", "")))), None);
+        assert_eq!(
+            term_problem(Some(Ok(ExecOutput::new(1, "left: 41 dockerd\n", "")))).as_deref(),
+            Some(
+                "guest processes still ran after their SIGTERM and the grace period (left: 41 dockerd)"
+            )
+        );
+        let gone = ComputeError::StaleHandle {
+            sandbox: "w".to_owned(),
+        };
+        assert_eq!(
+            term_problem(Some(Err(gone.clone()))),
+            Some(format!(
+                "could not give the guest's processes their SIGTERM: {gone}"
+            ))
+        );
+        assert_eq!(
+            term_problem(None).as_deref(),
+            Some("the guest did not answer the SIGTERM step in time")
         );
     }
 

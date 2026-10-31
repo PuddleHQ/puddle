@@ -5,7 +5,7 @@
 use std::time::{Duration, Instant};
 
 use microsandbox::Sandbox;
-use puddle_vm_tests::{DEBIAN_DEVCONTAINER, HarnessError, VmEnv, within};
+use puddle_vm_tests::{DEBIAN_DEVCONTAINER, HarnessError, VmEnv, create_from_registry, within};
 
 /// Cold pull of the devcontainer image plus first boot: 7-12 s on `windows-2025`,
 /// 60 s on a workstation's first pull. The job's own limit is 15 minutes.
@@ -24,7 +24,8 @@ async fn boot_and_exec_true(env: &VmEnv) -> Result<Timings, HarnessError> {
     // Boxed: the SDK's futures are large (clippy::large_futures).
     env.scope(Box::pin(async {
         let started = Instant::now();
-        let sandbox = within("create", CREATE_BUDGET, builder.create()).await??;
+        let sandbox =
+            create_from_registry(DEBIAN_DEVCONTAINER, CREATE_BUDGET, builder.create()).await?;
         let create = started.elapsed();
 
         let started = Instant::now();

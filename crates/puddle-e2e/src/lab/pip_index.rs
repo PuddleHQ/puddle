@@ -168,4 +168,37 @@ mod tests {
             );
         }
     }
+
+    fn ask(responder: &Responder, host: &str, target: &str) -> Option<WebAnswer> {
+        responder(&crate::lab::Seen {
+            method: "GET".into(),
+            target: target.into(),
+            headers: vec![("host".into(), host.into())],
+            version: "HTTP/1.1",
+            status: 200,
+            body: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn the_index_lists_the_wheel_and_serves_it_on_its_own_host_only() {
+        let index = pip_index("pypi.test", "puddle-probe");
+        let name = wheel_name("puddle-probe");
+        assert_eq!(name, "puddle_probe-1.0.0-py3-none-any.whl");
+
+        let page = ask(&index, "pypi.test:443", "/simple/puddle-probe/?x=1").unwrap();
+        assert_eq!((page.status, page.content_type), (200, "text/html"));
+        assert!(
+            String::from_utf8(page.body)
+                .unwrap()
+                .contains(&format!("/files/{name}"))
+        );
+
+        let file = ask(&index, "pypi.test", &format!("/files/{name}")).unwrap();
+        assert_eq!(file.status, 200);
+        assert_eq!(file.body, wheel("puddle-probe"));
+
+        assert!(ask(&index, "pypi.test", "/other").is_none());
+        assert!(ask(&index, "elsewhere.test", "/simple/puddle-probe/").is_none());
+    }
 }

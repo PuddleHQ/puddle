@@ -6,7 +6,7 @@
 use std::backtrace::Backtrace;
 use std::fs::{self, File};
 use std::io::{self, Write};
-use std::panic::{self, PanicHookInfo};
+use std::panic::PanicHookInfo;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -119,16 +119,14 @@ fn prune(dir: &Path, keep: usize) {
 /// Makes every panic write a crash file into `dir`, then run the hook that was there before (the
 /// message on stderr).
 pub fn install(dir: PathBuf) {
-    let previous = panic::take_hook();
-    panic::set_hook(Box::new(move |info| {
+    puddle_types::panic_hook::chain(move |info| {
         match write(&dir, &Report::of(info), SystemTime::now()) {
             Ok(path) => {
                 tracing::error!(file = %path.display(), "Puddle crashed; wrote a crash file");
             }
             Err(err) => tracing::error!(%err, "Puddle crashed and could not write a crash file"),
         }
-        previous(info);
-    }));
+    });
 }
 
 #[cfg(test)]

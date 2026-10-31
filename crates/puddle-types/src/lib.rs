@@ -33,6 +33,7 @@ mod local;
 mod memory;
 mod merge;
 mod name;
+pub mod panic_hook;
 mod policy;
 mod problems;
 mod request_match;

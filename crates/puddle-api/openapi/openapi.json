@@ -9323,14 +9323,14 @@
                   "string",
                   "null"
                 ],
-                "description": "The first address of the answer that the address guard refused, while the connection\nwent to the allowed addresses only. `null` when none was refused and in records written\nbefore it existed."
+                "description": "The first address of the answer that an IP rule denied, else the first the address\nguard refused, while the connection went to the allowed addresses only. `null` when none was refused and in records written\nbefore it existed."
               },
               "refused_reason": {
                 "type": [
                   "string",
                   "null"
                 ],
-                "description": "Why `refused_address` was refused: a reason code such as `toggle:private`."
+                "description": "Why `refused_address` was refused: a reason code such as `ip_rule` or `toggle:private`."
               },
               "request_rule": {
                 "type": [

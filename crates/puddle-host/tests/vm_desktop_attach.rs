@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Desktop attach end to end on a real microVM (K on Linux KVM): a real OpenSSH `ssh` logs in to a
+//! Desktop attach end to end on a real microVM (Linux KVM and Windows WHP): a real OpenSSH `ssh` logs in to a
 //! workspace through the ssh config entry the host wrote, the bridge, the endpoint and the
 //! runtime's own SSH server, with the login key the host made.
 //!
@@ -26,13 +26,13 @@ use std::process::ExitCode;
 
 type Case = (&'static str, fn());
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const CASES: &[Case] = &[(
     "vm_desktop_attach_logs_in_with_the_hosts_key_and_nothing_else",
-    unix::logs_in_with_the_hosts_key_and_nothing_else,
+    attach::logs_in_with_the_hosts_key_and_nothing_else,
 )];
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 const CASES: &[Case] = &[];
 
 fn main() -> ExitCode {
@@ -83,14 +83,13 @@ fn bridge(endpoint: Option<&str>) -> ExitCode {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[expect(
     clippy::expect_used,
     clippy::indexing_slicing,
     reason = "a plain test program for a VM: a failed step fails the run"
 )]
-mod unix {
-    use std::os::unix::fs::PermissionsExt as _;
+mod attach {
     use std::path::{Path, PathBuf};
     use std::process::Output;
     use std::sync::Arc;
@@ -105,11 +104,62 @@ mod unix {
 
     const WAIT: Duration = Duration::from_secs(120);
 
+    /// OpenSSH's own `ssh` and `ssh-keygen`. On Windows these are the ones Windows ships, not the
+    /// copies that come with Git (`ssh_config.rs` pins the entry's form against the former).
+    fn openssh(tool: &str) -> PathBuf {
+        if cfg!(windows) {
+            let root = std::env::var_os("SystemRoot").expect("SystemRoot is set");
+            let path = PathBuf::from(root)
+                .join("System32")
+                .join("OpenSSH")
+                .join(format!("{tool}.exe"));
+            assert!(path.is_file(), "{} is not installed", path.display());
+            path
+        } else {
+            PathBuf::from(tool)
+        }
+    }
+
+    /// A path as an ssh option value: forward slashes, which every OpenSSH reads.
+    fn option_path(path: &Path) -> String {
+        path.display().to_string().replace('\\', "/")
+    }
+
+    /// A stand-in for VS Code's `code` command that writes its arguments one per line to `seen`.
+    /// On Windows it is a `code.cmd`, the form the launcher runs there.
+    fn stub_code(dir: &Path, seen: &Path) -> PathBuf {
+        if cfg!(windows) {
+            let bin = dir.join("code.cmd");
+            std::fs::write(
+                &bin,
+                format!(
+                    "@echo off\r\n>\"{0}\" echo %1\r\n>>\"{0}\" echo %2\r\n",
+                    seen.display()
+                ),
+            )
+            .unwrap();
+            bin
+        } else {
+            let bin = dir.join("code");
+            std::fs::write(
+                &bin,
+                format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n", seen.display()),
+            )
+            .unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            bin
+        }
+    }
+
     /// Runs `ssh` with `args`, failing the test when it takes longer than [`WAIT`].
     async fn ssh(args: &[&str]) -> Output {
         let args: Vec<String> = args.iter().map(|a| (*a).to_owned()).collect();
         let run = tokio::task::spawn_blocking(move || {
-            std::process::Command::new("ssh")
+            std::process::Command::new(openssh("ssh"))
                 .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=60"])
                 .args(&args)
                 .output()
@@ -130,7 +180,7 @@ mod unix {
     }
 
     fn keygen(path: &Path) -> String {
-        let out = std::process::Command::new("ssh-keygen")
+        let out = std::process::Command::new(openssh("ssh-keygen"))
             .args(["-q", "-t", "ed25519", "-N", "", "-f"])
             .arg(path)
             .output()
@@ -143,12 +193,21 @@ mod unix {
     }
 
     pub(super) fn logs_in_with_the_hosts_key_and_nothing_else() {
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(4)
-            .enable_all()
-            .build()
+        // The story is one large future, and a Windows main thread has 1 MiB of stack where Linux
+        // gives 8: it runs on a thread of its own with room.
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(|| {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(4)
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(run());
+            })
             .unwrap()
-            .block_on(run());
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
     }
 
     #[expect(
@@ -157,14 +216,16 @@ mod unix {
     )]
     async fn run() {
         let scratch = tempfile::tempdir().unwrap();
-        let bin = scratch.path().join("code");
         let seen = scratch.path().join("code-args");
-        std::fs::write(
-            &bin,
-            format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n", seen.display()),
-        )
-        .unwrap();
-        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let bin = stub_code(scratch.path(), &seen);
+        // `/dev/null` is not a path on Windows: an empty file stands in for the user's own config
+        // and known hosts.
+        let empty = scratch.path().join("empty");
+        std::fs::write(&empty, "").unwrap();
+        let empty_cfg = option_path(&empty);
+        // ssh records the host key of `StrictHostKeyChecking=no` in its known-hosts file, so that
+        // file must not also be the config file read again by the next call.
+        let known_hosts = option_path(&scratch.path().join("bare_known_hosts"));
         let mut options: HostOptions = hermetic_options();
         options.launcher = Arc::new(VsCodeLauncher::with_program(&bin));
         let user_config = scratch.path().join("home/.ssh/config");
@@ -220,7 +281,7 @@ mod unix {
         // Off: no entry, no endpoint, nothing for the name to resolve to.
         assert!(host.workspaces().ssh_endpoint(&workspace).await.is_none());
         // (No file of Puddle's exists yet, so nothing defines the name.)
-        let off = ssh(&["-F", "/dev/null", &alias, "true"]).await;
+        let off = ssh(&["-F", &empty_cfg, &alias, "true"]).await;
         assert!(!off.status.success());
         assert!(
             text(&off).contains("Could not resolve hostname"),
@@ -255,7 +316,9 @@ mod unix {
             )
             .await;
         assert_eq!(attach.json()["opened"], true, "{}", attach.body);
-        let args = std::fs::read_to_string(&seen).unwrap();
+        let args = std::fs::read_to_string(&seen)
+            .unwrap()
+            .replace("\r\n", "\n");
         assert!(
             args.starts_with("--folder-uri\nvscode-remote://ssh-remote+")
                 && args.contains(&format!("+{alias}/workspaces/")),
@@ -283,18 +346,21 @@ mod unix {
         // Another key is refused by the runtime's server; the host's own key is not.
         let other = scratch.path().join("other");
         let other_pub = keygen(&other);
+        // The entry's own form: the program and the endpoint each in quotes, nothing around both.
         let proxy = format!(
             "ProxyCommand=\"{}\" ssh-bridge \"{}\"",
             std::env::current_exe().unwrap().display(),
             first_endpoint.display()
         );
         let bare = |identity: &Path| {
-            let identity = identity.display().to_string();
+            let identity = option_path(identity);
             let proxy = proxy.clone();
+            let empty_cfg = empty_cfg.clone();
+            let known_hosts = known_hosts.clone();
             async move {
                 ssh(&[
                     "-F",
-                    "/dev/null",
+                    &empty_cfg,
                     "-o",
                     &proxy,
                     "-o",
@@ -304,7 +370,7 @@ mod unix {
                     "-o",
                     "IdentityAgent=none",
                     "-o",
-                    "UserKnownHostsFile=/dev/null",
+                    &format!("UserKnownHostsFile={known_hosts}"),
                     "-o",
                     "StrictHostKeyChecking=no",
                     "root@x",

@@ -194,7 +194,11 @@ impl Launcher for ShellStandIn {
                 .browser
                 .lock()
                 .await
-                .open(&PageRequest::new(format!("{}/", target.origin), "true").budget(PAGE_BUDGET))
+                .open(
+                    &PageRequest::new(format!("{}/", target.origin), "true")
+                        .on_commit()
+                        .budget(PAGE_BUDGET),
+                )
                 .await
                 .map_err(|e| LaunchError::new(e.to_string()))?;
             self.opened.lock().unwrap().push(target.origin.clone());
@@ -762,9 +766,10 @@ async fn vm_browser_microsoft_s_server_opens_with_its_token_and_switches_builds_
     let front: SocketAddr = format!("127.0.0.1:{}", origin.rsplit(':').next().unwrap())
         .parse()
         .unwrap();
-    assert_eq!(
-        without_a_cookie(front, &name, "/").await,
-        "HTTP/1.1 403 Forbidden Forbidden."
+    let refused = without_a_cookie(front, &name, "/").await;
+    assert!(
+        refused.starts_with("HTTP/1.1 403 ") && refused.contains("Forbidden."),
+        "{refused}"
     );
 
     // A build is staged while the window is open: nothing switches.

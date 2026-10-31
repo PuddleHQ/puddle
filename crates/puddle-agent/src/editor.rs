@@ -1271,6 +1271,7 @@ mod tests {
         }
 
         async fn file(&self, _url: &str, _dest: &Path) -> io::Result<()> {
+            tokio::task::yield_now().await;
             Err(io::Error::other("no route to host"))
         }
     }

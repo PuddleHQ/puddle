@@ -603,30 +603,37 @@ async fn on_message<H: StreamHandler>(msg: AgentMessage, shared: &Shared<H>) {
                 .agent_report(AgentReport::StubDns { kind, count })
                 .await;
         }
-        AgentMessage::EditorStatus {
-            kind: EditorProblemKind::Unknown,
-            ..
-        } => {
-            tracing::debug!(%workspace, "editor report of an unknown kind ignored");
-        }
         AgentMessage::EditorStatus { kind, problem } => {
-            let problem = problem
-                .map(|p| clean(&p, MAX_EDITOR_PROBLEM_CHARS))
-                .filter(|p| !p.is_empty());
-            if let Some(problem) = &problem {
-                tracing::warn!(%workspace, ?kind, %problem, "the guest's editor server has a problem");
-            } else {
-                tracing::info!(%workspace, ?kind, "the guest's editor server has no such problem now");
-            }
-            shared
-                .handler
-                .agent_report(AgentReport::EditorStatus { kind, problem })
-                .await;
+            on_editor_status(workspace, kind, problem, shared).await;
         }
         AgentMessage::Unknown => {
             tracing::debug!(%workspace, "unknown control message ignored");
         }
     }
+}
+
+async fn on_editor_status<H: StreamHandler>(
+    workspace: &WorkspaceName,
+    kind: EditorProblemKind,
+    problem: Option<String>,
+    shared: &Shared<H>,
+) {
+    if kind == EditorProblemKind::Unknown {
+        tracing::debug!(%workspace, "editor report of an unknown kind ignored");
+        return;
+    }
+    let problem = problem
+        .map(|p| clean(&p, MAX_EDITOR_PROBLEM_CHARS))
+        .filter(|p| !p.is_empty());
+    if let Some(problem) = &problem {
+        tracing::warn!(%workspace, ?kind, %problem, "the guest's editor server has a problem");
+    } else {
+        tracing::info!(%workspace, ?kind, "the guest's editor server has no such problem now");
+    }
+    shared
+        .handler
+        .agent_report(AgentReport::EditorStatus { kind, problem })
+        .await;
 }
 
 /// Cuts `s` to `max` characters and replaces control characters, for guest text in logs.

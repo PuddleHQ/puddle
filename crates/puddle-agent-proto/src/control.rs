@@ -121,7 +121,7 @@ pub enum AgentMessage {
     EditorStatus {
         /// Which problem this is about; an agent from before there were two sends none, which
         /// reads as an install problem.
-        #[serde(default, skip_serializing_if = "EditorProblemKind::is_install")]
+        #[serde(default)]
         kind: EditorProblemKind,
         /// What is wrong; `None` when the problem of this `kind` is over.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -147,12 +147,6 @@ pub enum EditorProblemKind {
     /// A kind this side doesn't know (from a newer agent).
     #[serde(other)]
     Unknown,
-}
-
-impl EditorProblemKind {
-    fn is_install(&self) -> bool {
-        *self == Self::Install
-    }
 }
 
 /// What the stub DNS reports in [`AgentMessage::StubDns`].
@@ -513,14 +507,17 @@ mod tests {
             AgentMessage::editor_status(EditorProblemKind::Install, Some("checksum mismatch"));
         assert_eq!(
             refused.to_line().unwrap(),
-            b"{\"type\":\"editor_status\",\"problem\":\"checksum mismatch\"}\n"
+            b"{\"type\":\"editor_status\",\"kind\":\"install\",\"problem\":\"checksum mismatch\"}\n"
         );
         assert_eq!(
             AgentMessage::from_line(&refused.to_line().unwrap()).unwrap(),
             refused
         );
         let fine = AgentMessage::editor_status(EditorProblemKind::Install, None);
-        assert_eq!(fine.to_line().unwrap(), b"{\"type\":\"editor_status\"}\n");
+        assert_eq!(
+            fine.to_line().unwrap(),
+            b"{\"type\":\"editor_status\",\"kind\":\"install\"}\n"
+        );
         assert_eq!(
             AgentMessage::from_line(&fine.to_line().unwrap()).unwrap(),
             fine

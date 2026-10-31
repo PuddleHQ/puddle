@@ -49,6 +49,12 @@ impl SystemProbe {
         self
     }
 
+    /// The folder failed test boots keep their logs in, if [`Self::with_keep_boot_logs`] set one.
+    #[must_use]
+    pub fn keep_boot_logs_dir(&self) -> Option<&Path> {
+        self.keep_boot_logs.as_deref()
+    }
+
     /// Probes the installed runtime: `runtime/` next to `exe` (normally
     /// [`std::env::current_exe`]), the version this build was made for, and the developer
     /// override from the environment.

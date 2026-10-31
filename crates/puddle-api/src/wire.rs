@@ -53,11 +53,12 @@ pub use environment::{
 };
 pub use first_run::{DevCertTrustResult, DevCertificate, FirstRun, FirstRunRequest};
 pub use identities::{
-    AttachIdentityRequest, CredentialCoverage, CredentialSource, GitDefaultsView, GitRepoRequest,
-    GitRepoToggles, GitRepoView, GitSwitchesRequest, IdentityAuthor, IdentityCredential,
-    IdentityDeleted, IdentityList, IdentityOrderRequest, IdentityRequest, IdentitySigning,
-    IdentityView, NewWorkspaceIdentity, NewWorkspaceIdentityBasis, SwitchSource, TokenLeft,
-    WorkspaceGitView, WorkspaceIdentitiesRequest, WorkspaceSwitchesRequest,
+    AttachIdentityRequest, CheckedBy, CredentialCoverage, CredentialSource, GitDefaultsView,
+    GitRepoRequest, GitRepoToggles, GitRepoView, GitSwitchesRequest, IdentityAuthor,
+    IdentityCredential, IdentityCredentialView, IdentityDeleted, IdentityList,
+    IdentityOrderRequest, IdentityRequest, IdentitySigning, IdentityView, LastCheck,
+    NewWorkspaceIdentity, NewWorkspaceIdentityBasis, SwitchSource, TokenLeft, WorkspaceGitView,
+    WorkspaceIdentitiesRequest, WorkspaceSwitchesRequest,
 };
 pub use interception::{
     GlobalNeverDecrypt, InterceptionRequest, InterceptionView, LearnedHost, LearnedHosts,

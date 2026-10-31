@@ -24,11 +24,17 @@ pub fn bound_port() -> (TcpListener, u16) {
 }
 
 /// A loopback port that stays this test's until the value is dropped, for a config that must name
-/// its port before anything listens on it (a server's `--port`). The socket is bound and never
-/// listens, so connecting to the port is refused, as on a free one, while another process's port 0,
-/// a plain bind or the kernel's choice of a source port cannot take it. `SO_REUSEADDR` lets the
-/// test's own listener (the server that "answers") bind the same number and be dropped again, as
-/// many times as the test needs.
+/// its port before anything listens on it (a server's `--port`). The socket is bound with
+/// `SO_REUSEADDR` and never listens, so connecting to the port is refused, as on a free one.
+///
+/// What it guarantees depends on the system:
+/// - Linux and macOS: no other bind takes the number unless that bind sets `SO_REUSEADDR` too, and
+///   port 0 and the kernel's choice of a source port skip it. The test's own listener can bind the
+///   same number if it sets `SO_REUSEADDR` (tokio's `TcpListener::bind` does on these systems) and
+///   be dropped again as often as the test needs.
+/// - Windows: a bind that sets `SO_REUSEADDR` can share the port, and a bind that does not is
+///   refused, so a listener made by tokio's `TcpListener::bind` (it sets none there) cannot answer
+///   on it at all. Use [`quiet_port`] when the code under test binds the number itself.
 ///
 /// Never drop a listener to "free" a port for this: use this instead.
 #[derive(Debug)]
@@ -81,6 +87,10 @@ impl Default for ReservedPort {
 ///
 /// The port is free when it is returned and not held: a program that is not a test could still bind
 /// it.
+///
+/// Windows keeps ranges out of use for Hyper-V and WSL (`netsh int ipv4 show excludedportrange
+/// protocol=tcp`), and a bind to a port in one fails. Most sit in the dynamic range (from 49152),
+/// which this range is below; a port that is excluded anyway fails the bind here and is skipped.
 ///
 /// # Panics
 /// When no port in the range can be bound.

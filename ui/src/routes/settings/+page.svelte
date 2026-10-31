@@ -70,6 +70,7 @@
   const SECTIONS: [string, string][] = [
     ["s-app", "Appearance"],
     ["s-icon", "App icon"],
+    ["s-startup", "Startup"],
     ["s-notify", "Notifications"],
     ["s-inbox", "Inbox"],
     ["s-ws", "Workspaces"],
@@ -228,7 +229,8 @@
     | "notify_oom"
     | "notify_unexpected_stop"
     | "confirm_global_rules"
-    | "inbox_shortcuts";
+    | "inbox_shortcuts"
+    | "start_at_login";
   /** What the control shows: the unsaved edit, else what is stored, else Puddle's default. */
   const uiValue = <K extends keyof Ui>(key: K, fallback: NonNullable<Ui[K]>) =>
     (draft.ui[key] ?? store.view?.ui[key] ?? fallback) as NonNullable<Ui[K]>;
@@ -455,6 +457,17 @@
           stored={view.ui.app_icon ?? "duck"}
           onchoose={chooseIcon}
         />
+      </section>
+
+      <section class="card" id="s-startup" aria-labelledby="h-startup">
+        <h2 id="h-startup">Startup</h2>
+        {@render uiToggle(
+          "start_at_login",
+          "set-login",
+          "Start Puddle when I sign in",
+          "Puddle opens in the tray (minimized on a desktop with no tray icon), so requests reach you without a manual start. Off by default. Only the Windows app applies this for now; on other systems the choice is kept but nothing starts yet.",
+          false,
+        )}
       </section>
 
       <section class="card" id="s-notify" aria-labelledby="h-notify">

@@ -459,7 +459,7 @@ test.describe("a checkout on this computer", () => {
       const folder = rowOf(page, 1).getByLabel("Folder of the checkout");
       await expect(folder).toBeVisible();
       await expect(rowOf(page, 1)).toContainText(
-        "Uncommitted changes and untracked files, such as .env, stay on this computer.",
+        "Uncommitted changes, untracked files such as .env, and hooks stay on this computer.",
       );
       await expectNoAxeViolations(page, "the create form with a folder");
 

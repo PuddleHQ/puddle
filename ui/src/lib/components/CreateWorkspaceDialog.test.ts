@@ -105,7 +105,9 @@ describe("CreateWorkspaceDialog", () => {
     await fireEvent.click(screen.getByTestId("source-folder"));
     expect(screen.queryByLabelText("Git repository (HTTPS)")).toBeNull();
     expect(
-      screen.getByText(/Uncommitted changes and untracked files, such as .env/),
+      screen.getByText(
+        /Uncommitted changes, untracked files such as .env, and hooks/,
+      ),
     ).toBeInTheDocument();
     await type("Folder of the checkout", "/home/you/Shop/");
     expect(field("Name").value).toBe("shop");

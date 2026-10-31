@@ -34,6 +34,7 @@
     clashes,
     rowProblems,
     directoryFor,
+    folderOf,
     MAX_REPOSITORIES,
     newRow,
     refusedRow,
@@ -152,15 +153,11 @@
     if (nameTouched) return;
     const first = rows[0];
     // From a folder with no address typed, the folder's name stands in for the address's.
-    const fromFolder =
+    const folder =
       first?.source === "folder" && first.url.trim() === ""
-        ? first.localPath.trim().replace(/[\\/]+(\.git)?[\\/]*$/, "")
-        : "";
-    name = suggestName(
-      fromFolder === ""
-        ? (first?.url ?? "")
-        : `/${fromFolder.replace(/\\/g, "/")}`,
-    );
+        ? folderOf(first.localPath)
+        : null;
+    name = suggestName(folder === null ? (first?.url ?? "") : `/${folder}`);
   });
 
   function reset() {
@@ -409,9 +406,9 @@
               </p>
             {:else}
               <p class="hint" id={rowId(row, "localPath-hint")}>
-                Puddle reads only its .git folder, read-only: every commit,
-                branch and tag comes along. Uncommitted changes and untracked
-                files, such as .env, stay on this computer.
+                Puddle copies your commits and branches from the .git folder.
+                Uncommitted changes, untracked files such as .env, and hooks
+                stay on this computer.
               </p>
             {/if}
           </div>
@@ -448,7 +445,7 @@
           {:else}
             <p class="hint" id={rowId(row, "url-hint")}>
               {row.source === "folder"
-                ? "Left empty, the checkout's own origin is used (an SSH origin of GitHub, GitLab, Bitbucket or Azure DevOps as HTTPS)."
+                ? "Left empty, the checkout's own origin is used. An SSH origin on GitHub, GitLab, Bitbucket or Azure DevOps is turned into its HTTPS address; for any other host, give the HTTPS address here."
                 : "SSH addresses aren't supported yet: use the HTTPS URL."}
             </p>
           {/if}

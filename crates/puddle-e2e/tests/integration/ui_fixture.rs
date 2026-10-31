@@ -1112,6 +1112,80 @@ async fn seeded_profiles_answer_by_credential_and_keep_notes_and_problems() {
 }
 
 #[tokio::test]
+async fn a_kept_pasted_token_is_answered_by_its_value_and_listed_until_forgotten() {
+    let run = start("git-identities").await;
+    let keep = |token: &'static str| {
+        let run = &run;
+        async move {
+            let kept = run
+                .api(
+                    "POST",
+                    "/api/credentials/stored",
+                    Some(&json!({"host": "github.com", "org": null, "token": token})),
+                )
+                .await;
+            assert_eq!(kept.status, 201, "{}", kept.body);
+            kept.json()["source"].clone()
+        }
+    };
+    let ask = |source: Value| {
+        let run = &run;
+        async move {
+            let answer = run
+                .api(
+                    "POST",
+                    "/api/credentials/profile",
+                    Some(&json!({ "source": source })),
+                )
+                .await;
+            assert_eq!(answer.status, 200, "{}", answer.body);
+            answer.json()
+        }
+    };
+    let seeded = keep("ghp_e2ePastedLookup0123456789").await;
+    let other = keep("ghp_someOtherToken0123456789").await;
+    let known = ask(seeded.clone()).await;
+    assert_eq!(known["account"], "tijs-pasted");
+    assert_eq!(known["organisations"], json!(["pasted-org"]));
+    assert_eq!(ask(other).await["problem"]["code"], "unreachable");
+    assert_eq!(
+        run.state().await["kept_tokens"].as_array().unwrap().len(),
+        2
+    );
+    let forgotten = run
+        .api(
+            "DELETE",
+            &format!("/api/credentials/stored/{}", seeded["id"].as_str().unwrap()),
+            None,
+        )
+        .await;
+    assert_eq!(forgotten.status, 204, "{}", forgotten.body);
+    assert_eq!(
+        run.state().await["kept_tokens"].as_array().unwrap().len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_profile_seed_names_a_source_or_a_token_not_both_and_not_neither() {
+    for seed in [
+        json!({}),
+        json!({"token": "t", "source": {"kind": "gh", "host": "github.com", "account": "x"}}),
+    ] {
+        let scenario: Scenario = serde_json::from_value(json!({"profiles": [seed]})).unwrap();
+        let err = Fixture::start(FixtureOptions {
+            port: 0,
+            connection_file: None,
+            scenario,
+        })
+        .await
+        .err()
+        .unwrap();
+        assert!(err.contains("`source` or a `token`"), "{err}");
+    }
+}
+
+#[tokio::test]
 async fn a_profile_for_a_credential_that_cannot_be_named_fails_to_start() {
     let scenario: Scenario = serde_json::from_value(json!({
         "profiles": [{"source": {"kind": "gh", "host": "not a host", "account": "x"}}],

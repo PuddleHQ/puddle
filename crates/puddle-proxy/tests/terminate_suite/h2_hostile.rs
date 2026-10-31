@@ -573,3 +573,50 @@ async fn a_stream_that_is_idle_by_design_is_not_cut_by_the_body_stall_timeout() 
     tokio::time::resume();
     assert_eq!(got.text(), "tick tick ");
 }
+
+/// The bound host answers a request with a redirect to another host. The guest's follow-up on
+/// the same HTTP/2 connection names the other host in `:authority`: it is a `421` and the
+/// injector is not asked, so the credential cannot go to the host the redirect names.
+#[tokio::test]
+async fn hostile_hg20_an_h2_follow_up_to_a_redirect_carries_no_credential_to_the_new_host() {
+    let pki = Pki::new();
+    let bound = H2Server::recording(
+        &pki,
+        "bound.test",
+        Arc::new(|_| {
+            let mut redirect = reply(302, "");
+            redirect.headers_mut().insert(
+                "location",
+                http::HeaderValue::from_static("https://evil.test/steal"),
+            );
+            redirect
+        }),
+    )
+    .await;
+    let evil = H2Server::recording(&pki, "evil.test", ok()).await;
+    let injector = TestInjector::always();
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", bound.addr)
+        .name("evil.test", evil.addr)
+        .allow(vec!["bound.test", "evil.test"])
+        .injector(injector.clone())
+        .build();
+    let mut guest = rig.guest().await;
+    let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
+    let first = client.get("bound.test", "/start").await;
+    assert_eq!(
+        (first.status, first.header("location")),
+        (302, Some("https://evil.test/steal"))
+    );
+    assert_eq!(injector.calls(), 1);
+    let follow_up = client.get("evil.test", "/steal").await;
+    assert_eq!(follow_up.status, 421);
+    assert_eq!(
+        injector.calls(),
+        1,
+        "the injector heard of the first request only"
+    );
+    assert_eq!(bound.recorded().len(), 1, "the follow-up was never sent on");
+    assert!(evil.recorded().is_empty());
+    assert!(!terminate_support::captured_logs().contains(terminate_support::CANARY));
+}

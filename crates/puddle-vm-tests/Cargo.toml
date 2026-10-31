@@ -23,6 +23,7 @@ puddle-ca = { workspace = true }
 puddle-certs = { workspace = true }
 puddle-doctor = { workspace = true }
 puddle-guest-env = { workspace = true }
+puddle-test-kit = { workspace = true }
 rcgen = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "time"] }

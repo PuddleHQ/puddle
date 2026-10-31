@@ -11,7 +11,7 @@ use puddle_agent::capture::wire::{self, QueryName, Rcode, Rdata, Record, Reject}
 /// # Panics
 ///
 /// When a name the parser called plain has a character outside letters, digits, `-`, `_` and `.`
-/// or is longer than a DNS name, when an answer does not echo the message id, answers a query
+/// or is longer than a DNS name (253 bytes), when an answer does not echo the message id, answers a query
 /// without the response bit, or a UDP answer is bigger than the client allowed.
 pub(crate) fn dns_message(bytes: &[u8]) {
     // The id and the high flag byte of a message.
@@ -49,11 +49,16 @@ pub(crate) fn dns_message(bytes: &[u8]) {
                 "the id is not the message's"
             );
             if let QueryName::Plain(name) = &query.name {
+                // A wire name of at most 255 bytes spells at most 253 without its length bytes.
                 assert!(
-                    name.len() <= 255
-                        && name.bytes().all(|b| b.is_ascii_lowercase()
-                            || b.is_ascii_digit()
-                            || matches!(b, b'-' | b'_' | b'.')),
+                    name.len() <= 253,
+                    "a plain name of {} bytes is longer than a DNS name: {name:?}",
+                    name.len()
+                );
+                assert!(
+                    name.bytes().all(|b| b.is_ascii_lowercase()
+                        || b.is_ascii_digit()
+                        || matches!(b, b'-' | b'_' | b'.')),
                     "a plain name has a character it must not: {name:?}"
                 );
             }

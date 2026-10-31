@@ -12,8 +12,8 @@ use microsandbox::sandbox::{SandboxHandle, SandboxStatus as SdkStatus};
 use microsandbox::volume::Volume;
 use microsandbox::{Backend, LocalBackend, MicrosandboxError, Sandbox};
 use puddle_compute::{
-    Capabilities, ComputeError, ImageConfig, Runtime, SandboxInfo, SandboxSpec, VolumeInfo,
-    VolumeSpec,
+    Capabilities, ComputeError, ImageConfig, MountKind, Runtime, SandboxInfo, SandboxSpec,
+    VolumeInfo, VolumeSpec,
 };
 use puddle_types::{CpuCount, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus};
 
@@ -389,7 +389,7 @@ impl Runtime for MsbRuntime {
     fn check_checkout(&self, git_dir: &Path) -> Result<(), ComputeError> {
         self.inner
             .config
-            .check_mount_source(git_dir, puddle_compute::MountKind::Checkout)
+            .check_mount_source(git_dir, MountKind::Checkout)
     }
 
     fn pull_image(

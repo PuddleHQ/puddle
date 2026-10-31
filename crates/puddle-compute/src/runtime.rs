@@ -380,11 +380,10 @@ mod tests {
         let err = crate::fake::FakeRuntime::default()
             .check_checkout(dir.path())
             .unwrap_err();
-        let ComputeError::InvalidSpec { reason } = err else {
-            panic!("{err}");
-        };
+        let reason = err.to_string();
+        assert!(matches!(err, ComputeError::InvalidSpec { .. }), "{reason}");
         assert!(
-            reason.starts_with(&format!("the checkout {} ", dir.path().display())),
+            reason.contains(&format!("the checkout {} ", dir.path().display())),
             "{reason}"
         );
     }

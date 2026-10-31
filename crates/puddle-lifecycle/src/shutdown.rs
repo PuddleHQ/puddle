@@ -17,8 +17,9 @@ pub struct ShutdownConfig {
     /// How long `fstrim` may run before the stop goes ahead anyway.
     pub trim_timeout: Duration,
     /// How long a stop may take before Puddle gives up on it and reports
-    /// [`StopOutcome::TimedOut`]. The msb adapter itself kills a VM that doesn't stop
-    /// gracefully within 30 s, so this is a backstop.
+    /// [`StopOutcome::TimedOut`]. The msb adapter itself gives the guest's processes up to
+    /// 12 s after their SIGTERM and then kills a VM that doesn't stop gracefully within 30 s, so
+    /// this is a backstop.
     pub stop_timeout: Duration,
 }
 

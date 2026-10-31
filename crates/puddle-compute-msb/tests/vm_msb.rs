@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The adapter's own VM bars, beyond the contract suite: ext4 volumes and owned disks,
 //! three sandboxes at once with their own routes, `--max-memory` never set, the guest's open-file
-//! limits, and (fork) SSH reporting a signal-killed command as a failure.
+//! limits, a stop that gives the guest's processes their SIGTERM first, and (fork) SSH reporting a
+//! signal-killed command as a failure.
 mod support;
 
 use std::path::Path;
@@ -304,6 +305,52 @@ async fn vm_a_stop_the_guest_answers_is_not_by_force() {
     cleanup(&rt, &[&n]).await;
     stopped.unwrap();
     assert!(!forced);
+}
+
+/// A stop gives every process of the guest its SIGTERM and time to finish before the VM goes down,
+/// also a daemon that has left the command that started it (an image's entrypoint such as dockerd,
+/// which loses its network state when it is killed instead). The daemon here writes a file when
+/// it gets the SIGTERM; the file is there at the next boot.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_a_stop_lets_a_detached_daemon_shut_down_cleanly() {
+    let settings = support::settings();
+    let rt = support::runtime(&settings).await;
+    let s = spec(&settings, "term");
+    let n = s.name.clone();
+    let sb = rt.create(s).await.expect("create");
+    let daemon = "setsid sh -c 'trap \"echo clean >/root/daemon-stop; sync; exit 0\" TERM; \
+                  while :; do sleep 1; done' </dev/null >/dev/null 2>&1 &";
+    assert!(sh(&sb, daemon).await.status.success());
+    let stopped = sb.stop().await;
+    let forced = sb.stopped_by_force();
+    let again = rt.start(&n).await.expect("start again");
+    let seen = sh(&again, "cat /root/daemon-stop").await;
+    drop(again.stop().await);
+    cleanup(&rt, &[&n]).await;
+    stopped.unwrap();
+    assert!(!forced);
+    assert_eq!(seen.stdout_text().trim(), "clean", "{}", seen.stderr_text());
+}
+
+/// The other side: a process that ignores SIGTERM holds the stop only for the grace period, and
+/// the stop still ends in a clean shutdown (not by force).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_a_process_that_ignores_sigterm_does_not_hold_the_stop() {
+    let settings = support::settings();
+    let rt = support::runtime(&settings).await;
+    let s = spec(&settings, "noterm");
+    let n = s.name.clone();
+    let sb = rt.create(s).await.expect("create");
+    let stubborn =
+        "setsid sh -c 'trap \"\" TERM; while :; do sleep 1; done' </dev/null >/dev/null 2>&1 &";
+    assert!(sh(&sb, stubborn).await.status.success());
+    let stopped = sb.stop().await;
+    let forced = sb.stopped_by_force();
+    let status = sb.status().await;
+    cleanup(&rt, &[&n]).await;
+    stopped.unwrap();
+    assert!(!forced);
+    assert!(status.unwrap().is_down());
 }
 
 /// What the guest says a mounted volume holds, in MiB: `df`'s used column (the file system's own

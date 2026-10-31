@@ -181,8 +181,18 @@ pub struct WorkspaceList {
 #[serde(deny_unknown_fields)]
 pub struct NewRepositoryRequest {
     /// The repository to clone, as an `https://` URL without credentials. SSH remotes
-    /// (`git@host:path`, `ssh://`) are refused with a message saying so.
+    /// (`git@host:path`, `ssh://`) are refused with a message saying so. With `local_path` it
+    /// may be left out or empty: the checkout's `origin` remote gives it (an SSH remote of
+    /// GitHub, GitLab, Bitbucket or Azure DevOps in its HTTPS form).
+    #[serde(default)]
     pub url: String,
+    /// A git checkout on this computer to start from, as an absolute path to its folder (or its
+    /// `.git`). Only its `.git` directory is read, read-only, by a short-lived sandbox with no
+    /// network that clones it: every commit, branch and tag comes along; uncommitted changes and
+    /// untracked files (an `.env`) stay on this computer. The clone's `origin` is `url`. A
+    /// worktree's or submodule's `.git` file and a bare repository are refused with the reason.
+    #[serde(default)]
+    pub local_path: Option<String>,
     /// The checkout's directory under the volume root; left out or `null` is the last part of
     /// the address (`api` for `https://github.com/acme/api.git`), or `src` when that is no usable
     /// name.
@@ -243,10 +253,20 @@ pub struct NewWorkspaceRequest {
 const RESERVED_PREFIX: &str = "m--";
 
 impl NewWorkspaceRequest {
-    /// The checked request; `identity_exists` says whether an identity id names one.
+    /// The `local_path` of every repository that has one.
+    pub(crate) fn local_paths(&self) -> Vec<String> {
+        self.repositories
+            .iter()
+            .filter_map(|r| r.local_path.clone())
+            .collect()
+    }
+
+    /// The checked request; `identity_exists` says whether an identity id names one, and
+    /// `locals` holds what the service found at each [`NewWorkspaceRequest::local_paths`].
     pub(crate) fn into_new(
         self,
         identity_exists: impl Fn(puddle_store::IdentityId) -> bool,
+        locals: &std::collections::BTreeMap<String, Result<domain::LocalSource, String>>,
     ) -> Result<domain::NewWorkspace, ApiError> {
         if self.repo_url.is_some() {
             return Err(ApiError::invalid(
@@ -267,10 +287,11 @@ impl NewWorkspaceRequest {
                 identity: r.identity_id.map(puddle_store::IdentityId),
                 pull: r.pull,
                 push: r.push,
+                local: r.local_path,
             })
             .collect();
-        let repositories =
-            domain::check_repositories(&drafts, identity_exists).map_err(ApiError::invalid)?;
+        let repositories = domain::check_repositories_with(&drafts, identity_exists, locals)
+            .map_err(ApiError::invalid)?;
         let start_folder = self
             .start_folder
             .as_deref()

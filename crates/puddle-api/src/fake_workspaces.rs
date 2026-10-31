@@ -562,6 +562,7 @@ impl FakeWorkspaces {
                     identity,
                     pull,
                     push,
+                    local: None,
                 },
             )
         };
@@ -1096,6 +1097,7 @@ impl WorkspaceService for FakeWorkspaces {
                 identity: None,
                 pull: true,
                 push: true,
+                local: None,
             };
             self.clone_into(id, new, false, git).await
         })
@@ -1170,6 +1172,7 @@ mod tests {
                 identity: None,
                 pull: true,
                 push: true,
+                local: None,
             }],
         )
     }

@@ -9,7 +9,9 @@
 //! workspace with [`WorkspaceRecord::busy`] set, and reports the rest through
 //! [`puddle_types::Event::StatusChanged`] and [`puddle_types::Event::WorkspaceProgress`].
 
+use std::collections::BTreeMap;
 use std::fmt;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
@@ -318,6 +320,21 @@ pub struct NewRepository {
     pub pull: bool,
     /// Push on its new repository table row.
     pub push: bool,
+    /// The `.git` directory of the checkout on this computer it is cloned from (canonical), or
+    /// `None` to clone from its address.
+    pub local: Option<PathBuf>,
+}
+
+/// A checkout on this computer, as the service found it (see
+/// [`WorkspaceService::local_checkout`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalSource {
+    /// The canonical path of its `.git` directory.
+    pub git_dir: PathBuf,
+    /// The name of its folder, the default directory of its clone.
+    pub folder_name: String,
+    /// The HTTPS address of its `origin` remote, or why there is none Puddle can use.
+    pub origin: Result<String, String>,
 }
 
 /// A repository as a request names it, before [`check_repositories`].
@@ -333,6 +350,9 @@ pub struct RepositoryDraft {
     pub pull: Option<bool>,
     /// Push; `None` is on.
     pub push: Option<bool>,
+    /// A checkout on this computer to clone from, as given; [`RepositoryDraft::url`] may then be
+    /// empty (the checkout's `origin` is used).
+    pub local: Option<String>,
 }
 
 /// Checks a create's repository list as a whole, before anything exists. Each
@@ -348,6 +368,22 @@ pub fn check_repositories(
     drafts: &[RepositoryDraft],
     identity_exists: impl Fn(IdentityId) -> bool,
 ) -> Result<Vec<NewRepository>, String> {
+    check_repositories_with(drafts, identity_exists, &BTreeMap::new())
+}
+
+/// [`check_repositories`] for a list that may name checkouts on this computer: `locals` holds
+/// what the service found for each [`RepositoryDraft::local`] (a draft whose entry is missing is
+/// refused as not looked at). A local entry's address is its draft's `url` when given, else the
+/// checkout's `origin`; its directory defaults to the checkout's folder name.
+///
+/// # Errors
+///
+/// The message for the user, as [`check_repositories`], and the reason a checkout can't be used.
+pub fn check_repositories_with(
+    drafts: &[RepositoryDraft],
+    identity_exists: impl Fn(IdentityId) -> bool,
+    locals: &BTreeMap<String, Result<LocalSource, String>>,
+) -> Result<Vec<NewRepository>, String> {
     if drafts.len() > MAX_REPOSITORIES {
         return Err(format!(
             "a workspace holds at most {MAX_REPOSITORIES} repositories; this list has {}",
@@ -356,11 +392,36 @@ pub fn check_repositories(
     }
     let mut checked: Vec<NewRepository> = Vec::with_capacity(drafts.len());
     for (n, draft) in (1..).zip(drafts) {
-        let named = |reason: &str| format!("repository {n} ({}): {reason}", shown(&draft.url));
-        let url = RepoUrl::parse(&draft.url).map_err(|e| named(&e))?;
-        let directory = match &draft.directory {
-            Some(dir) => CheckoutDir::new(dir).map_err(|e| named(e.reason()))?,
-            None => CheckoutDir::from_url(url.as_str()),
+        let local = match &draft.local {
+            None => None,
+            Some(path) => {
+                let named =
+                    |reason: &str| format!("repository {n} (the checkout {path}): {reason}");
+                let found = locals
+                    .get(path)
+                    .ok_or_else(|| named("it was not looked at"))?
+                    .as_ref()
+                    .map_err(|e| named(e))?;
+                Some(found)
+            }
+        };
+        let typed = draft.url.trim();
+        let address = match local {
+            Some(found) if typed.is_empty() => found.origin.clone().map_err(|why| {
+                format!(
+                    "repository {n} (the checkout {}): {why}",
+                    found.git_dir.parent().unwrap_or(&found.git_dir).display()
+                )
+            })?,
+            _ => draft.url.clone(),
+        };
+        let named = |reason: &str| format!("repository {n} ({}): {reason}", shown(&address));
+        let url = RepoUrl::parse(&address).map_err(|e| named(&e))?;
+        let directory = match (&draft.directory, local) {
+            (Some(dir), _) => CheckoutDir::new(dir).map_err(|e| named(e.reason()))?,
+            (None, Some(found)) => CheckoutDir::new(&found.folder_name)
+                .unwrap_or_else(|_| CheckoutDir::from_url(url.as_str())),
+            (None, None) => CheckoutDir::from_url(url.as_str()),
         };
         if let Some(id) = draft.identity
             && !identity_exists(id)
@@ -372,6 +433,7 @@ pub fn check_repositories(
             identity: draft.identity,
             pull: draft.pull.unwrap_or(true),
             push: draft.push.unwrap_or(true),
+            local: local.map(|found| found.git_dir.clone()),
         });
     }
     for (i, a) in checked.iter().enumerate() {
@@ -837,6 +899,17 @@ pub trait WorkspaceService: Send + Sync {
         new: NewWorkspace,
         git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
+
+    /// Looks at the folder `path` on this computer as a checkout to start a workspace from
+    /// (blocking: it reads the file system). The default says it is not available.
+    ///
+    /// # Errors
+    ///
+    /// Why the folder can't be used, for the user.
+    fn local_checkout(&self, path: &str) -> Result<LocalSource, String> {
+        let _ = path;
+        Err("starting from a checkout on this computer is not available here".into())
+    }
 
     /// Boots a workspace that is down.
     fn start<'a>(
@@ -1424,6 +1497,7 @@ mod tests {
             identity: None,
             pull: true,
             push: true,
+            local: None,
         }];
         let all = [
             svc.list().await.map(|_| ()),

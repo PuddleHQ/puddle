@@ -377,6 +377,8 @@ impl Squid {
 
     fn access_log_within(&self, needle: &str, wait: Duration) -> String {
         let deadline = Instant::now() + wait;
+        // flake-ok: returns the log as it stands when the line never comes, so the caller's assertion
+        // prints it; the kit's waits would panic without it.
         loop {
             let log = self.access_log();
             if log.contains(needle) || Instant::now() >= deadline {
@@ -437,6 +439,7 @@ mod tests {
         let squid = stand_in(Command::new("sleep").arg("60"));
         let path = squid.dir.path().join("access.log");
         let writer = std::thread::spawn(move || {
+            // flake-ok: simulated latency of Squid's log daemon, the thing the wait covers.
             std::thread::sleep(Duration::from_millis(700));
             fs::write(path, "TCP_TUNNEL/200 x").unwrap();
         });

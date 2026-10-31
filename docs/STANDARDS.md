@@ -214,7 +214,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   missing a reason, and what changed since the day before.
 - **Test shapes that raced before** (the `flake-*` kinds of `scripts/quality-gate.py`, `scripts/quality-gate.py --flakes`
   lists each rule with its count and the fix its error names): a hand-rolled wait helper (the row says whether it lacks a name or a bound) or wait loop (`for`, `while` or `loop` that sleeps or yields between looks; `flake-w3`), `file.lock()` in a
-  test, `try_recv()`, a port picked and released, a name built from the clock, a wall-clock bar (a bar on a call's work goes on `cpu_time`'s result in a variable named `*cpu*` bound from that call just above, which `flake-t1` accepts), records matched by
+  test, `try_recv()`, a port picked and released, a literal port bound or connected (bind port 0), a name built from the clock, a wall-clock bar (a bar on a call's work goes on `cpu_time`'s result in a variable named `*cpu*` bound from that call just above, which `flake-t1` accepts), records matched by
   position, a reserved name (`.test`, `example.com`) in a test that reaches the real resolver, and an awaited page read asserted once (the scan reads a variable; the ESLint selector reads `expect(await ...)`; a read kept as `(await loc.boundingBox())!` counts, a value derived from it does not). A site is accepted with `flake-ok: <why>` on its line or within three
   lines above (in the UI also `eslint-disable-next-line no-restricted-syntax -- <why>`). Each rule is one file,
   `scripts/flake-rules/<id>.rule`; the kinds are counted, not failing, until their existing sites are fixed or

@@ -214,7 +214,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   missing a reason, and what changed since the day before.
 - **Test shapes that raced before** (the `flake-*` kinds of `scripts/quality-gate.py`, `scripts/quality-gate.py --flakes`
   lists each rule with its count and the fix its error names): a hand-rolled wait helper (the row says whether it lacks a name or a bound) or wait loop (`for`, `while` or `loop` that sleeps or yields between looks; `flake-w3`), `file.lock()` in a
-  test, `try_recv()`, a port picked and released, a literal port bound or connected (bind port 0), a name built from the clock, a wall-clock bar (a bar on a call's work goes on `cpu_time`'s result in a variable named `*cpu*` bound from that call just above, which `flake-t1` accepts), records matched by
+  test, `try_recv()`, a port picked and released, a literal port bound or connected (bind port 0; the rule reads only addresses of this machine, a measured choice: widening it to any 4 or 5 digit port near a socket call finds 5 lines in tests, all `.test` name authorities handed to a fake proxy or read from a captured list, none a socket, so it would need a `flake-ok:` per site and guard nothing), a name built from the clock, a wall-clock bar (a bar on a call's work goes on `cpu_time`'s result in a variable named `*cpu*` bound from that call just above, which `flake-t1` accepts), records matched by
   position, a reserved name (`.test`, `example.com`) in a test that reaches the real resolver, and an awaited page read asserted once (the scan reads a variable; the ESLint selector reads `expect(await ...)`; a read kept as `(await loc.boundingBox())!` counts, a value derived from it does not). A site is accepted with `flake-ok: <why>` on its line or within three
   lines above (in the UI also `eslint-disable-next-line no-restricted-syntax -- <why>`). Each rule is one file,
   `scripts/flake-rules/<id>.rule`; the kinds are counted, not failing, until their existing sites are fixed or
@@ -463,7 +463,9 @@ replaced by its default, a `&&` turned into `||`) and runs the crate's tests; a 
   for every input, or only timing changes). Those go in `.cargo/mutants.toml` as an `exclude_re` entry with a comment
   that says why it is equivalent, and are reviewed like a lint suppression. A mutant that only a test of a
   logging line or a timing could catch is not equivalent: assert the line or the timing.
-- **Test selection and the cache.** Mutants run through nextest's default profile (no VM tests), in a copy
+- **Test selection and the cache.** Mutants run through nextest's `mutants` profile (the default profile's tests, so no
+  VM tests, with four threads and a 2 GiB heap limit per test process: a mutant can make a loop allocate without
+  end, and the limit fails that test instead of the machine), in a copy
   of the tree each, `MUTANTS_JOBS` at a time. The nightly sweep skips a crate whose inputs hash like the last
   passing run's: the committed trees of the crate and of every workspace crate it depends on (normal, build and
   dev), `Cargo.lock`, the toolchain pin, the mutants and nextest settings, `scripts/mutants.sh` and the cargo-mutants

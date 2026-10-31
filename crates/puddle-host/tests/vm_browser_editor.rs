@@ -35,12 +35,13 @@ use puddle_api::{
     WorkspaceRecord,
 };
 use puddle_compute_msb::MsbRuntime;
+use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
 use puddle_types::WorkspaceName;
 use puddle_vm_tests::{BrowserClient, BrowserCookie, BrowserSession, PageId, PageRequest};
 use serde_json::{Value, json};
 use support::{Api, ended, hermetic_options};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use vm_support::{VmHost, guest, start_vm_host_config};
+use vm_support::{VmHost, guest, guest_within, start_vm_host_config};
 
 /// The cookie code-server's login sets.
 const SESSION_COOKIE: &str = "code-server-session";
@@ -646,10 +647,11 @@ const STAND_IN_STATE: &str = "window.state";
 /// Waits until the guest's editor server says it is `build`; a limit on a hang only.
 async fn serving(runtime: &MsbRuntime, sandbox: &WorkspaceName, build: &str) {
     let script = format!(
-        "for i in $(seq 1 120); do [ \"$(curl -s http://127.0.0.1:41337/version)\" = {build} ] && exit 0; sleep 1; done; \
-         echo \"not serving {build}:\"; curl -s http://127.0.0.1:41337/version; tail -n 30 /run/puddle/agent.log; exit 1"
+        "for i in $(seq 1 120); do [ \"$(curl -s --max-time 2 http://127.0.0.1:41337/version)\" = {build} ] && exit 0; sleep 1; done; \
+         echo \"not serving {build}:\"; curl -s --max-time 2 http://127.0.0.1:41337/version; tail -n 30 /run/puddle/agent.log; exit 1"
     );
-    guest(runtime, sandbox, &script).await;
+    // Two minutes of polling, inside a longer limit, so a miss prints the agent's log.
+    guest_within(runtime, sandbox, &script, Duration::from_secs(240)).await;
 }
 
 /// What the front answers for `path` on `workspace`'s origin to a client with no cookie.
@@ -716,6 +718,23 @@ async fn vm_browser_microsoft_s_server_opens_with_its_token_and_switches_builds_
     .await;
     let name = format!("{}-wms", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
+    // The stand-ins are the only builds: the user's own rule refuses Microsoft's update service and
+    // download host, which System managed would allow, so the agent neither installs nor stages a
+    // real build beside them (a rule the user made decides before a rule set's allow).
+    for site in [
+        "update.code.visualstudio.com",
+        "vscode.download.prss.microsoft.com",
+    ] {
+        host.store()
+            .add_rule(&NewRule {
+                scope: Scope::Workspace(sandbox.clone()),
+                pattern: Pattern::parse(site).unwrap(),
+                effect: Effect::Deny,
+                expires_at: None,
+                created_by: Actor::Cli,
+            })
+            .unwrap();
+    }
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());

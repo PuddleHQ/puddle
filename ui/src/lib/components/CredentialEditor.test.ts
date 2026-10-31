@@ -7,11 +7,13 @@ import {
   waitFor,
 } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describeSource } from "#lib/identities/model.ts";
 import { IdentitiesStore } from "#lib/stores/identities.svelte.ts";
 import {
   credential,
   FakeIdentities,
   ghSource,
+  profile,
 } from "#lib/testing/fake-identities.ts";
 import CredentialEditor from "./CredentialEditor.svelte";
 
@@ -65,8 +67,17 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+let onProfile: ReturnType<typeof vi.fn>;
+
 function mount(existing = [] as never[]) {
-  render(CredentialEditor, { store, existing, onAdd, onCancel } as never);
+  onProfile = vi.fn();
+  render(CredentialEditor, {
+    store,
+    existing,
+    onAdd,
+    onCancel,
+    onProfile,
+  } as never);
 }
 
 const submit = () =>
@@ -279,5 +290,192 @@ describe("a pasted token", () => {
     await fireEvent.click(screen.getByLabelText("Paste a token"));
     await fireEvent.click(screen.getByLabelText("Found on this computer"));
     expect(screen.getByLabelText(/Owners or organisations/)).toHaveValue("");
+  });
+});
+
+describe("the account behind a credential", () => {
+  const work = describeSource(ghSource("tijs-work"));
+  const mine = profile({
+    account: "tijs-work",
+    name: "Tijs Work",
+    email: "1+tijs-work@users.noreply.github.com",
+    organisations: ["acme", "acme-labs"],
+    notes: [{ code: "sso_partial", message: "<b>acme-sso</b> is missing." }],
+  });
+
+  it("hands the name and address over and offers the organisations as chips that fill the coverage", async () => {
+    api.profiles[work] = mine;
+    mount();
+    await fireEvent.click(
+      await screen.findByLabelText(/tijs-work on github.com/),
+    );
+    const acme = await screen.findByRole("button", { name: "acme" });
+    expect(onProfile).toHaveBeenCalledWith(mine);
+    expect(acme).toHaveAttribute("aria-pressed", "false");
+    await fireEvent.click(acme);
+    expect(acme).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText(/Owners or organisations/)).toHaveValue(
+      "acme",
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "acme-labs" }));
+    expect(screen.getByLabelText(/Owners or organisations/)).toHaveValue(
+      "acme, acme-labs",
+    );
+    await fireEvent.click(acme);
+    expect(screen.getByLabelText(/Owners or organisations/)).toHaveValue(
+      "acme-labs",
+    );
+    // The host's words are text, never markup.
+    expect(screen.getByText("<b>acme-sso</b> is missing.")).toBeInTheDocument();
+  });
+
+  it("shows the host's problem as text and offers nothing", async () => {
+    api.profiles[work] = profile({
+      problem: {
+        code: "token_rejected",
+        message: "GitHub did not accept the login <i>x</i>.",
+        needs_sign_in: true,
+      },
+    });
+    mount();
+    await fireEvent.click(await screen.findByLabelText(/tijs-work/));
+    expect(
+      await screen.findByText("GitHub did not accept the login <i>x</i>."),
+    ).toBeInTheDocument();
+    expect(onProfile).not.toHaveBeenCalled();
+    await submit();
+    expect(onAdd).toHaveBeenCalled();
+  });
+
+  it("says an Azure DevOps author has to be typed and offers its organisation", async () => {
+    api.profiles[
+      describeSource({
+        kind: "git_credential",
+        host: "dev.azure.com",
+        path: "contoso",
+        username: null,
+      })
+    ] = profile({ organisations: ["contoso"] });
+    mount();
+    await fireEvent.click(await screen.findByLabelText(/tijs@contoso.example/));
+    expect(
+      await screen.findByText(/type the author name and address yourself/),
+    ).toBeInTheDocument();
+    expect(onProfile).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "contoso" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("never holds up adding the credential while the host is slow, and drops a late answer", async () => {
+    let release = () => {};
+    api.profileGate = new Promise<void>((resolve) => (release = resolve));
+    api.profiles[work] = mine;
+    mount();
+    await fireEvent.click(await screen.findByLabelText(/tijs-work/));
+    expect(
+      await screen.findByText(/Asking github.com who/),
+    ).toBeInTheDocument();
+    await submit();
+    expect(onAdd).toHaveBeenCalledTimes(1);
+    // Going back to the pasted-token form forgets the lookup in flight.
+    await fireEvent.click(screen.getByLabelText("Paste a token"));
+    release();
+    await waitFor(() =>
+      expect(api.calls).toContain("POST /api/credentials/profile"),
+    );
+    expect(onProfile).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "acme" })).toBeNull();
+  });
+
+  it("tells a failed lookup in words and still adds the credential", async () => {
+    mount();
+    await fireEvent.click(await screen.findByLabelText(/tijs-work/));
+    await waitFor(() =>
+      expect(api.calls).toContain("POST /api/credentials/profile"),
+    );
+    api.refuse = { status: 503, message: "the service is not available" };
+    await fireEvent.click(await screen.findByLabelText(/tijs-old/));
+    expect(
+      await screen.findByText(/The service is not available/),
+    ).toBeInTheDocument();
+    expect(onProfile).not.toHaveBeenCalled();
+  });
+
+  it("looks up a pasted token by keeping it, and Add credential reuses that entry", async () => {
+    api.profiles[
+      describeSource({
+        kind: "stored",
+        id: "tok-fake-100",
+        host: "github.com",
+        org: null,
+      })
+    ] = mine;
+    mount();
+    await fireEvent.click(screen.getByLabelText("Paste a token"));
+    await type("Token", "ghp_secret");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Look up this account" }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "acme" }),
+    ).toBeInTheDocument();
+    expect(onProfile).toHaveBeenCalledWith(mine);
+    await submit();
+    expect(api.tokens).toHaveLength(1);
+    expect(onAdd.mock.calls[0]?.[1]).toMatchObject({ kind: "stored" });
+    expect(screen.getByLabelText("Token")).toHaveValue("");
+  });
+
+  it("checks the pasted form before it keeps anything, and replaces a kept token the user changed", async () => {
+    mount();
+    await fireEvent.click(screen.getByLabelText("Paste a token"));
+    const look = () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: "Look up this account" }),
+      );
+    await look();
+    expect(await screen.findByRole("alert")).toHaveTextContent(/token/i);
+    await type("Git host", "");
+    await look();
+    expect(screen.getByRole("alert")).toHaveTextContent(/host/i);
+    await type("Git host", "dev.azure.com");
+    await look();
+    expect(screen.getByRole("alert")).toHaveTextContent(/organisation/i);
+    await type("Azure DevOps organisation", "contoso");
+    await type("Token", "first");
+    await look();
+    await waitFor(() => expect(api.tokens).toHaveLength(1));
+    await type("Token", "second");
+    await look();
+    await waitFor(() =>
+      expect(
+        api.calls.filter((c) => c === "POST /api/credentials/stored"),
+      ).toHaveLength(2),
+    );
+    await waitFor(() => expect(api.tokens).toHaveLength(1));
+    // A refusal to keep the token shows at the token field.
+    await type("Token", "third");
+    api.refuse = {
+      status: 503,
+      message: "the credential store is not available",
+    };
+    await look();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /credential store/,
+    );
+  });
+
+  it("removes a kept token again when the editor goes away without adding it", async () => {
+    mount();
+    await fireEvent.click(screen.getByLabelText("Paste a token"));
+    await type("Token", "ghp_secret");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Look up this account" }),
+    );
+    await waitFor(() => expect(api.tokens).toHaveLength(1));
+    cleanup();
+    await waitFor(() => expect(api.tokens).toHaveLength(0));
   });
 });

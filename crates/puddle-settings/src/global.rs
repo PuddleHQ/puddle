@@ -224,6 +224,9 @@ pub struct UiPrefs {
     /// The single-key shortcuts of the inbox (A, D, J, K); default off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inbox_shortcuts: Option<bool>,
+    /// Start Puddle when the user signs in to the computer; default off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_at_login: Option<bool>,
     #[serde(flatten)]
     pub(crate) extra: BTreeMap<String, Value>,
 }
@@ -247,6 +250,8 @@ impl UiPrefs {
     pub const DEFAULT_CONFIRM_GLOBAL_RULES: bool = true;
     /// Puddle's default for [`UiPrefs::inbox_shortcuts`].
     pub const DEFAULT_INBOX_SHORTCUTS: bool = false;
+    /// Puddle's default for [`UiPrefs::start_at_login`].
+    pub const DEFAULT_START_AT_LOGIN: bool = false;
 
     /// The theme in use.
     #[must_use]
@@ -337,6 +342,12 @@ impl UiPrefs {
             .unwrap_or(Self::DEFAULT_INBOX_SHORTCUTS)
     }
 
+    /// Whether Puddle starts when the user signs in.
+    #[must_use]
+    pub fn start_at_login(&self) -> bool {
+        self.start_at_login.unwrap_or(Self::DEFAULT_START_AT_LOGIN)
+    }
+
     fn is_empty(&self) -> bool {
         *self == Self::default()
     }
@@ -401,6 +412,7 @@ mod tests {
         assert!(ui.notify_unexpected_stop());
         assert!(ui.confirm_global_rules());
         assert!(!ui.inbox_shortcuts());
+        assert!(!ui.start_at_login());
         assert_eq!(ui.app_icon(), AppIconChoice::Duck);
 
         let doc = json!({
@@ -409,7 +421,7 @@ mod tests {
             "ui": { "theme": "dark", "density": "compact", "palette": "custom", "custom_accent": "#0a6a85", "notifications": false, "sound": true, "close_behaviour": "quit", "minimize_to_tray": true,
                      "notify_only_unfocused": false, "badge": false, "notify_oom": false,
                      "notify_unexpected_stop": false, "confirm_global_rules": false, "inbox_shortcuts": true,
-                     "app_icon": "duck_night" },
+                     "start_at_login": true, "app_icon": "duck_night" },
         });
         let loaded = GlobalSettings::from_document(doc.clone()).unwrap();
         assert_eq!(loaded.unknown_fields, Vec::<String>::new());
@@ -440,6 +452,7 @@ mod tests {
         assert!(!ui.notify_unexpected_stop());
         assert!(!ui.confirm_global_rules());
         assert!(ui.inbox_shortcuts());
+        assert!(ui.start_at_login());
         assert_eq!(ui.app_icon(), AppIconChoice::DuckNight);
         assert_eq!(loaded.settings.to_document(), doc);
     }

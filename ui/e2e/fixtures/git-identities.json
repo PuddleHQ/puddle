@@ -87,6 +87,51 @@
       ]
     }
   ],
+  "profiles": [
+    {
+      "token": "ghp_e2ePastedLookup0123456789",
+      "account": "tijs-pasted",
+      "name": "Tijs Pasted",
+      "email": "7+tijs-pasted@users.noreply.github.com",
+      "organisations": ["pasted-org"]
+    },
+    {
+      "source": { "kind": "gh", "host": "github.com", "account": "tijs-demo" },
+      "account": "tijs-demo",
+      "name": "Tijs Demo",
+      "email": "4242+tijs-demo@users.noreply.github.com",
+      "organisations": ["demo-org", "demo-labs"],
+      "notes": [
+        {
+          "code": "sso_partial",
+          "message": "Organisations that require single sign-on may be missing."
+        }
+      ]
+    },
+    {
+      "source": { "kind": "gh", "host": "github.com", "account": "tijs-old" },
+      "problem": {
+        "code": "token_rejected",
+        "message": "GitHub did not accept the login <b>tijs-old</b>.",
+        "needs_sign_in": true
+      }
+    },
+    {
+      "source": {
+        "kind": "git_credential",
+        "host": "dev.azure.com",
+        "path": "contoso",
+        "username": null
+      },
+      "organisations": ["contoso"],
+      "notes": [
+        {
+          "code": "author_unavailable",
+          "message": "Azure DevOps does not give Puddle the account's author."
+        }
+      ]
+    }
+  ],
   "credentials": {
     "found": [
       {

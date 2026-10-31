@@ -132,15 +132,65 @@ pub fn with_dot(base: &Pixels) -> Option<Pixels> {
     Some(out)
 }
 
-/// The Windows taskbar's overlay: the dot alone, 16 pixels, on a transparent background.
+/// The digits of the overlay's number, five rows of three pixels each (bit 2 is the left pixel).
+const DIGITS: [[u8; 5]; 10] = [
+    [0b111, 0b101, 0b101, 0b101, 0b111],
+    [0b010, 0b110, 0b010, 0b010, 0b111],
+    [0b111, 0b001, 0b111, 0b100, 0b111],
+    [0b111, 0b001, 0b111, 0b001, 0b111],
+    [0b101, 0b101, 0b111, 0b001, 0b001],
+    [0b111, 0b100, 0b111, 0b001, 0b111],
+    [0b111, 0b100, 0b111, 0b101, 0b111],
+    [0b111, 0b001, 0b001, 0b001, 0b001],
+    [0b111, 0b101, 0b111, 0b101, 0b111],
+    [0b111, 0b101, 0b111, 0b001, 0b111],
+];
+
+/// The plus after a nine, three rows of three pixels.
+const PLUS: [u8; 3] = [0b010, 0b111, 0b010];
+
+/// The size of the taskbar overlay, in pixels.
+const OVERLAY: u32 = 16;
+
+/// Paints `rows` (three pixels wide) with `scale` pixels per cell, its top left corner at
+/// `(left, top)`, in white.
+fn paint_glyph(pixels: &mut Pixels, rows: &[u8], scale: u32, left: u32, top: u32) {
+    for (row, bits) in (0..).zip(rows) {
+        for column in 0..3_u32 {
+            if bits >> (2 - column) & 1 == 0 {
+                continue;
+            }
+            for dy in 0..scale {
+                for dx in 0..scale {
+                    let (x, y) = (left + column * scale + dx, top + row * scale + dy);
+                    let at = ((y * pixels.size + x) * 4) as usize;
+                    if let Some(pixel) = pixels.rgba.get_mut(at..at + 4) {
+                        pixel.copy_from_slice(&RING);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The Windows taskbar's overlay: the number of waiting requests in white on the dot, 16 pixels,
+/// on a transparent background. One to nine shows the digit, more shows `9+`. With nothing
+/// waiting it is the plain dot (the shell shows no overlay then).
 #[must_use]
-pub fn overlay_dot() -> Pixels {
-    let size = 16;
+pub fn overlay_number(count: usize) -> Pixels {
     let mut pixels = Pixels {
-        size,
-        rgba: vec![0; (size * size * 4) as usize],
+        size: OVERLAY,
+        rgba: vec![0; (OVERLAY * OVERLAY * 4) as usize],
     };
-    paint_dot(&mut pixels, 8.0, 8.0, 5.5);
+    paint_dot(&mut pixels, 8.0, 8.0, 7.0);
+    match count {
+        0 => {}
+        1..=9 => paint_glyph(&mut pixels, &DIGITS[count], 2, 5, 3),
+        _ => {
+            paint_glyph(&mut pixels, &DIGITS[9], 2, 2, 3);
+            paint_glyph(&mut pixels, &PLUS, 1, 10, 5);
+        }
+    }
     pixels
 }
 
@@ -245,13 +295,85 @@ mod tests {
         );
     }
 
+    /// The digits as a reader draws them, `#` for a white cell.
+    const ART: [[&str; 5]; 10] = [
+        ["###", "#.#", "#.#", "#.#", "###"],
+        [".#.", "##.", ".#.", ".#.", "###"],
+        ["###", "..#", "###", "#..", "###"],
+        ["###", "..#", "###", "..#", "###"],
+        ["#.#", "#.#", "###", "..#", "..#"],
+        ["###", "#..", "###", "..#", "###"],
+        ["###", "#..", "###", "#.#", "###"],
+        ["###", "..#", "..#", "..#", "..#"],
+        ["###", "#.#", "###", "#.#", "###"],
+        ["###", "#.#", "###", "..#", "###"],
+    ];
+    const ART_PLUS: [&str; 3] = [".#.", "###", ".#."];
+
+    fn pixel(p: &Pixels, x: u32, y: u32) -> [u8; 4] {
+        let at = ((y * p.size + x) * 4) as usize;
+        [p.rgba[at], p.rgba[at + 1], p.rgba[at + 2], p.rgba[at + 3]]
+    }
+
+    /// Whether `art` drawn at `scale` from `(left, top)` has a white cell on pixel `(x, y)`.
+    fn white(art: &[&str], scale: u32, left: u32, top: u32, x: u32, y: u32) -> bool {
+        let (Some(dx), Some(dy)) = (x.checked_sub(left), y.checked_sub(top)) else {
+            return false;
+        };
+        let (column, row) = ((dx / scale) as usize, (dy / scale) as usize);
+        art.get(row)
+            .and_then(|line| line.as_bytes().get(column))
+            .is_some_and(|cell| *cell == b'#')
+    }
+
     #[test]
-    fn the_overlay_is_a_dot_on_a_transparent_square() {
-        let overlay = overlay_dot();
-        assert_eq!(overlay.size, 16);
-        assert_eq!(overlay.rgba.len(), 16 * 16 * 4);
-        let centre = ((8 * 16 + 8) * 4) as usize;
-        assert_eq!(overlay.rgba[centre..centre + 4], DOT);
-        assert_eq!(overlay.rgba[0..4], [0, 0, 0, 0]);
+    fn each_digit_is_drawn_in_white_on_the_dot() {
+        for (count, art) in ART.iter().enumerate().skip(1).take(9) {
+            let overlay = overlay_number(count);
+            assert_eq!((overlay.size, overlay.rgba.len()), (16, 16 * 16 * 4));
+            for y in 3..13 {
+                for x in 5..11 {
+                    let expected = if white(art, 2, 5, 3, x, y) { RING } else { DOT };
+                    assert_eq!(pixel(&overlay, x, y), expected, "digit {count} at {x},{y}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn more_than_nine_shows_a_nine_and_a_plus() {
+        for count in [10, 11, 99, 1000] {
+            let overlay = overlay_number(count);
+            for y in 3..13 {
+                for x in 2..13 {
+                    let on = white(&ART[9], 2, 2, 3, x, y) || white(&ART_PLUS, 1, 10, 5, x, y);
+                    // The corners of this box lie outside the round dot.
+                    let outside = pixel(&overlay, x, y)[3] == 0;
+                    if on {
+                        assert_eq!(pixel(&overlay, x, y), RING, "9+ for {count} at {x},{y}");
+                    } else if !outside {
+                        assert_eq!(pixel(&overlay, x, y), DOT, "9+ for {count} at {x},{y}");
+                    }
+                }
+            }
+        }
+        assert_ne!(overlay_number(9), overlay_number(10));
+        assert_eq!(overlay_number(10), overlay_number(500));
+    }
+
+    #[test]
+    fn the_overlay_is_a_round_dot_on_a_transparent_square() {
+        for count in [0, 1, 9, 10] {
+            let overlay = overlay_number(count);
+            assert_eq!(pixel(&overlay, 0, 0), [0, 0, 0, 0], "{count}");
+            assert_eq!(pixel(&overlay, 15, 15), [0, 0, 0, 0], "{count}");
+            // The dot's rim, inside the ring, is its red.
+            assert_eq!(pixel(&overlay, 8, 1), DOT, "{count}");
+        }
+        assert_eq!(
+            pixel(&overlay_number(0), 8, 8),
+            DOT,
+            "no number with nothing waiting"
+        );
     }
 }

@@ -127,6 +127,10 @@
             {{resources}}
             <Component Id="CMP_RemoveInstallDir" Guid="*">
                 <RemoveFolder Id="RemoveInstallDir" On="uninstall" />
+                <!-- The "Start Puddle when I sign in" entry the program writes itself (its Settings
+                     switch). Uninstalling must take it away, or every sign-in would start a program
+                     that is gone. ci/msi-install-test.ps1 checks this. -->
+                <RemoveRegistryValue Id="RemoveStartAtSignIn" Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="{{product_name}}" />
                 <RegistryValue Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}" Name="Install Folder" Type="integer" Value="1" KeyPath="yes" />
             </Component>
         </DirectoryRef>

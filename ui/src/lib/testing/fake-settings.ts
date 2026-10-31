@@ -45,6 +45,7 @@ const noUi = (): S["UiPrefs"] => ({
   notify_unexpected_stop: null,
   confirm_global_rules: null,
   inbox_shortcuts: null,
+  start_at_login: null,
 });
 
 export class FakeSettings {

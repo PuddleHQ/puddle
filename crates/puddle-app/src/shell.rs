@@ -11,6 +11,7 @@ use tauri::{AppHandle, Manager, RunEvent, Runtime};
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
+use crate::autostart::{self, LoginEntry};
 use crate::backend::{Backend, BackendError, EndExtensionHosts, Source};
 use crate::launcher::AppLauncher;
 use puddle_settings::ClipboardRead;
@@ -98,13 +99,20 @@ pub struct Options {
     /// The guest agent instead of the one in the runtime folder (`PUDDLE_AGENT_BIN`, as for
     /// `puddle serve`).
     pub agent: Option<PathBuf>,
+    /// The program was started by the sign-in entry ([`autostart::AT_LOGIN_FLAG`]): the window
+    /// opens hidden in the tray, or minimized where there is no tray.
+    pub at_login: bool,
+    /// The system's start-at-sign-in entry the Settings switch is applied to. `None` in a run that
+    /// must not touch it (tests, the fixture, a run over a data folder of its own).
+    pub login: Option<Arc<dyn LoginEntry>>,
 }
 
 impl Options {
     /// The options the environment asks for (debug builds only).
     #[must_use]
     pub fn from_env() -> Self {
-        if cfg!(debug_assertions) {
+        let at_login = autostart::started_at_login(std::env::args_os());
+        let options = if cfg!(debug_assertions) {
             Self {
                 port: 0,
                 connection_file: std::env::var_os("PUDDLE_CONNECTION_FILE").map(PathBuf::from),
@@ -118,9 +126,18 @@ impl Options {
                 data_dir: std::env::var_os("PUDDLE_APP_DATA_DIR").map(PathBuf::from),
                 sandbox_probe: SandboxProbe::from_env(),
                 agent: std::env::var_os("PUDDLE_AGENT_BIN").map(PathBuf::from),
+                ..Self::default()
             }
         } else {
             Self::default()
+        };
+        // A run with a folder of its own is not the user's installed app: it leaves the user's
+        // sign-in entry alone.
+        let login = (!options.fixture && options.data_dir.is_none()).then(autostart::system);
+        Self {
+            at_login,
+            login,
+            ..options
         }
     }
 }
@@ -307,7 +324,10 @@ pub fn open<R: Runtime>(
     if let Some(probe) = &options.sandbox_probe {
         open_probe(app, probe, &data_folder(options).unwrap_or_default())?;
     }
-    desktop::attach(app, &window, &backend, marker_folder);
+    let tray = desktop::attach(app, &window, &backend, marker_folder, options.login.clone());
+    if options.at_login {
+        desktop::start_out_of_the_way(&window, tray);
+    }
     app.manage(backend);
     Ok(())
 }
@@ -465,9 +485,12 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
     let options = options.clone();
     // Single-instance first: a second launch hands over to the running app and ends here, before
     // the error of its unlocked data folder could show.
+    // A second start by the sign-in entry (a copy is already running) shows nothing.
     let builder =
-        tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            focus_main(app);
+        tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if !autostart::started_at_login(&args) {
+                focus_main(app);
+            }
         }));
     let app = with_plugins(builder)
         .setup(move |app| {

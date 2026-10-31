@@ -122,6 +122,7 @@ describe("the screen", () => {
     expect(names).toEqual([
       "Appearance",
       "App icon",
+      "Startup",
       "Notifications",
       "Inbox",
       "Workspaces",
@@ -531,6 +532,7 @@ describe("notification and inbox switches", () => {
       true,
     ],
     ["Keyboard shortcuts in the inbox", "inbox_shortcuts", false],
+    ["Start Puddle when I sign in", "start_at_login", false],
     ["Minimizing hides Puddle in the tray", "minimize_to_tray", false],
   ];
 

@@ -58,6 +58,9 @@ url = { workspace = true }
 # Already in the tree through wry: the editor window turns the webview's browser shortcuts off.
 webview2-com = "0.39"
 windows = "0.62"
+# Already in the tree through embed-resource's build script: the start-at-sign-in entry in the
+# current user's Run key.
+winreg = "0.56"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Already in the tree through the notification plugin: asks the session bus whether a tray host exists.

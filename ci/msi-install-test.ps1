@@ -9,6 +9,9 @@
 #   - the installed program starts, answers its API, and its system check finds the runtime; the
 #     CLI's `doctor --json` agrees;
 #   - an upgrade over the older MSI keeps what the first run wrote in the data folder;
+#   - the "Start Puddle when I sign in" switch writes the sign-in entry (the current user's Run key)
+#     for the installed program, and the switch off removes it; the entry is still there after an
+#     upgrade's restart, and the uninstall removes it, so no sign-in starts a program that is gone;
 #   - uninstalling removes the install folder, the Start menu entry and the registry keys, and
 #     leaves no file outside Puddle's own data folders (listed below).
 # Usage: pwsh ci/msi-install-test.ps1 -Msi <first.msi> [-UpgradeMsi <newer.msi>] [-LogDir <dir>]
@@ -120,6 +123,34 @@ function Start-Installed {
     Get-Content -LiteralPath $connectionFile -Raw | ConvertFrom-Json
 }
 
+# Puddle's start-at-sign-in entry: the value Windows starts programs from at sign-in.
+$RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$RunValue = $ProductName
+
+function Get-LoginEntry {
+    $item = Get-ItemProperty -LiteralPath $RunKey -Name $RunValue -ErrorAction SilentlyContinue
+    if ($item) { $item.$RunValue } else { $null }
+}
+
+# The command the program writes: its installed path in quotes, then the flag that opens it hidden.
+function Get-ExpectedLoginEntry { "`"$(Join-Path $InstallDir 'puddle-app.exe')`" --at-login" }
+
+# Turns the Settings switch on or off through the running program's API.
+function Set-StartAtLogin($Connection, [bool]$On) {
+    $headers = @{ Authorization = "Bearer $($Connection.token)" }
+    $body = @{ ui = @{ start_at_login = $On } } | ConvertTo-Json -Depth 4
+    Invoke-RestMethod -Method Put -Uri "$($Connection.url)/api/settings" -Headers $headers -ContentType 'application/json' -Body $body | Out-Null
+}
+
+# Waits for the entry to be $Expected ($null: gone). The program applies the switch within a few seconds.
+function Wait-LoginEntry($Expected, [string]$What) {
+    $deadline = (Get-Date).AddSeconds(60)
+    while ((Get-LoginEntry) -ne $Expected) {
+        if ((Get-Date) -gt $deadline) { Fail "$What; the sign-in entry is '$(Get-LoginEntry)', expected '$Expected'" }
+        Start-Sleep -Milliseconds 500
+    }
+}
+
 # The tolerated checks: what a hosted runner may lack, unrelated to the installer.
 $RunnerLimits = @('virtualization', 'hypervisor')
 
@@ -191,6 +222,21 @@ $reported = (& (Join-Path $InstallDir 'puddle.exe') --version) -join ' '
 Expect ($reported -match [regex]::Escape($first.Version)) "puddle --version says '$reported' for package version $($first.Version)"
 Assert-InstalledWorks
 
+Step 'the sign-in switch writes and removes the entry for the installed program'
+Expect ($null -eq (Get-LoginEntry)) "a sign-in entry exists before the switch was turned on: $(Get-LoginEntry)"
+$conn = Start-Installed
+try {
+    Set-StartAtLogin $conn $true
+    Wait-LoginEntry (Get-ExpectedLoginEntry) 'turning the switch on wrote no entry for the installed program'
+    Set-StartAtLogin $conn $false
+    Wait-LoginEntry $null 'turning the switch off left the entry'
+    # Left on for what follows: the upgrade and the uninstall must deal with a real entry.
+    Set-StartAtLogin $conn $true
+    Wait-LoginEntry (Get-ExpectedLoginEntry) 'turning the switch on again wrote no entry'
+} finally {
+    Stop-Installed
+}
+
 $current = $Msi
 if ($UpgradeMsi) {
     Step 'upgrade keeps what the first run wrote'
@@ -205,20 +251,30 @@ if ($UpgradeMsi) {
     Expect ($second.Version -ne $first.Version) "the upgrade left version $($second.Version) installed"
     Write-Host "upgraded $($first.Version) to $($second.Version)"
     Expect ((Get-Content -LiteralPath $marker -Raw) -eq $markerText) 'the upgrade changed the marker in the data folder'
+    # The switch is kept in the settings, so the upgraded program's start finds the entry as it
+    # should be, whether or not the upgrade's removal of the old version touched it.
     # The first run's files are still there (the connection file is rewritten by every start).
     $dataAfter = @(Get-ChildItem -LiteralPath $DataDir -Recurse -Force -File | ForEach-Object { $_.FullName })
     $lost = @($dataBefore | Where-Object { $dataAfter -notcontains $_ })
     Expect ($lost.Count -eq 0) "the upgrade removed data files: $($lost -join ', ')"
     Assert-InstalledWorks
+    $conn = Start-Installed
+    try {
+        Wait-LoginEntry (Get-ExpectedLoginEntry) 'the upgraded program did not leave the sign-in entry for the installed program'
+    } finally {
+        Stop-Installed
+    }
     $current = $UpgradeMsi
 }
 
+Expect ((Get-LoginEntry) -eq (Get-ExpectedLoginEntry)) 'the sign-in entry is not in place before the uninstall: the check below would prove nothing'
 Invoke-Msiexec @('/x', "`"$current`"") 'msi-uninstall.log'
 Step 'uninstall leaves nothing outside the data folders'
 Stop-Installed
 Expect (-not (Test-Path -LiteralPath $InstallDir)) "$InstallDir is still there after the uninstall: $(
     (Get-ChildItem -LiteralPath $InstallDir -Recurse -Force -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object FullName) -join ', ')"
 Expect (@(Get-UninstallEntries).Count -eq 0) 'the Add or remove programs entry is still there'
+Expect ($null -eq (Get-LoginEntry)) "the uninstall left the sign-in entry, which would start a program that is gone at every sign-in: $(Get-LoginEntry)"
 $after = Get-Footprint
 $added = @($after | Where-Object { $before -notcontains $_ })
 $unexpected = @($added | Where-Object {

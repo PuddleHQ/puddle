@@ -72,6 +72,7 @@ test("shows every section with Puddle's defaults, no CSP violations", async ({
   const csp = await watchCsp(page);
   await openSettings(page, backend);
   for (const name of [
+    "Startup",
     "Notifications",
     "Workspaces",
     "Network",
@@ -83,6 +84,7 @@ test("shows every section with Puddle's defaults, no CSP violations", async ({
     await expect(page.getByRole("heading", { level: 2, name })).toBeVisible();
   }
   await expect(page.getByLabel("Default memory")).toHaveValue("8192");
+  await expect(page.getByLabel("Start Puddle when I sign in")).not.toBeChecked();
   await expect(page.getByLabel("Server", { exact: true })).toHaveValue(
     "code_server",
   );
@@ -337,6 +339,24 @@ test("the notification and inbox switches start at Puddle's defaults, are saved 
   // With system notifications off the focus choice has nothing to decide.
   await page.getByLabel("System notifications for new requests").uncheck();
   await expect(page.getByLabel(labels.notify_only_unfocused)).toBeDisabled();
+});
+
+test("the start-at-sign-in switch is off at first, is saved and survives a reload", async ({
+  page,
+  backend,
+  request,
+}) => {
+  await openSettings(page, backend);
+  const box = page.getByLabel("Start Puddle when I sign in");
+  await expect(box).not.toBeChecked();
+  await box.check();
+  await pressSave(page);
+  expect((await stored(request, backend)).ui.start_at_login).toBe(true);
+  await page.reload();
+  await expect(box).toBeChecked();
+  await box.uncheck();
+  await pressSave(page);
+  expect((await stored(request, backend)).ui.start_at_login).toBe(false);
 });
 
 test("with the confirmation switched off, a decision for every workspace goes through at once", async ({

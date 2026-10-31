@@ -26,6 +26,7 @@ const h = await vi.hoisted(async () => {
   const inbox = await import("#lib/testing/fake-inbox.ts");
   const ws = await import("#lib/testing/fake-workspaces.ts");
   const rules = await import("#lib/testing/fake-rules.ts");
+  const requestRules = await import("#lib/testing/fake-request-rules.ts");
   return {
     inbox: new inbox.FakeInbox(),
     source: new inbox.FakeSource(),
@@ -34,6 +35,8 @@ const h = await vi.hoisted(async () => {
     workspace: ws.workspace,
     rules: new rules.FakeRules(),
     rule: rules.rule,
+    requestRules: new requestRules.FakeRequestRules(),
+    requestRule: requestRules.requestRule,
   };
 });
 
@@ -71,11 +74,24 @@ vi.mock("#lib/stores/rules.svelte.ts", async (original) => {
     }),
   };
 });
+vi.mock("#lib/stores/request-rules.svelte.ts", async (original) => {
+  const mod =
+    await original<typeof import("#lib/stores/request-rules.svelte.ts")>();
+  return {
+    ...mod,
+    requestRulesStore: new mod.RequestRulesStore({
+      api: h.requestRules as never,
+      source: h.source,
+      pollMs: 60_000,
+    }),
+  };
+});
 vi.mock("#lib/api/client.ts", () => ({ api: h.api }));
 
 import { notices } from "#lib/notify/notices.svelte.ts";
 import { editorProblems } from "#lib/stores/editor-problems.svelte.ts";
 import { pending } from "#lib/stores/pending.svelte.ts";
+import { requestRulesStore } from "#lib/stores/request-rules.svelte.ts";
 import { rulesStore } from "#lib/stores/rules.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import { workspaceActions } from "#lib/stores/workspace-actions.svelte.ts";
@@ -91,7 +107,16 @@ import Overview from "./+page.svelte";
 import Network from "./network/+page.svelte";
 import Settings from "./settings/+page.svelte";
 
-const { inbox, api, workspace, request, rules, rule } = h;
+const {
+  inbox,
+  api,
+  workspace,
+  request,
+  rules,
+  rule,
+  requestRules,
+  requestRule,
+} = h;
 
 /** The overrides a workspace has now (all inherited, for one never changed). */
 async function settingsOf(name: string) {
@@ -132,6 +157,10 @@ function reset() {
   pending.status = "loading";
   rulesStore.rules = [];
   rulesStore.status = "loading";
+  requestRules.rules = [];
+  requestRules.calls = [];
+  requestRulesStore.rules = [];
+  requestRulesStore.status = "loading";
   workspaces.list = [];
   workspaces.status = "loading";
   workspaces.progress = {};
@@ -152,6 +181,7 @@ async function load() {
     workspaces.refresh(),
     pending.refresh(),
     rulesStore.refresh(),
+    requestRulesStore.refresh(),
   ]);
 }
 
@@ -725,6 +755,47 @@ describe("the network tab", () => {
       "href",
       "/rules",
     );
+  });
+
+  it("lists the rules on method and path that apply, read-only, with their warning", async () => {
+    requestRules.rules = [
+      requestRule(1, {
+        host: "api.example.com",
+        methods: ["DELETE"],
+        path: "/repos/**",
+        workspace: "demo",
+      }),
+      requestRule(2, {
+        host: "*.example.org",
+        warning: "example.org is decrypted for this rule.",
+      }),
+      requestRule(3, { host: "theirs.example.com", workspace: "other" }),
+    ];
+    await load();
+    render(Network);
+    const section = await screen.findByRole("region", {
+      name: "Rules on method and path",
+    });
+    const table = within(section).getByRole("table");
+    expect(table).toHaveTextContent("api.example.com");
+    expect(table).toHaveTextContent("DELETE");
+    expect(table).toHaveTextContent("/repos/**");
+    expect(table).toHaveTextContent("*.example.org");
+    expect(table).toHaveTextContent("example.org is decrypted for this rule.");
+    expect(table).not.toHaveTextContent("theirs.example.com");
+    expect(within(section).queryAllByRole("button")).toHaveLength(0);
+    expect(
+      within(section).getByRole("link", { name: "All method and path rules" }),
+    ).toHaveAttribute("href", "/rules");
+  });
+
+  it("says so when no rule on method and path applies", async () => {
+    requestRules.rules = [requestRule(3, { workspace: "other" })];
+    await load();
+    render(Network);
+    expect(
+      await screen.findByText("No rule on method and path applies to demo."),
+    ).toBeInTheDocument();
   });
 
   it("says so when no rule applies yet", async () => {

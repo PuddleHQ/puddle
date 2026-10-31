@@ -13,7 +13,10 @@ const h = await vi.hoisted(async () => {
   const fakes = await import("#lib/testing/fake-rules.ts");
   const inbox = await import("#lib/testing/fake-inbox.ts");
   const sets = await import("#lib/testing/fake-rule-sets.ts");
+  const requestRules = await import("#lib/testing/fake-request-rules.ts");
   return {
+    requestApi: new requestRules.FakeRequestRules(),
+    requestRule: requestRules.requestRule,
     api: new fakes.FakeRules(),
     setsApi: new sets.FakeRuleSets(),
     source: new inbox.FakeSource(),
@@ -37,6 +40,19 @@ vi.mock("#lib/stores/rule-sets.svelte.ts", async (original) => {
   };
 });
 
+vi.mock("#lib/stores/request-rules.svelte.ts", async (original) => {
+  const mod =
+    await original<typeof import("#lib/stores/request-rules.svelte.ts")>();
+  return {
+    ...mod,
+    requestRulesStore: new mod.RequestRulesStore({
+      api: h.requestApi as never,
+      source: h.source,
+      pollMs: 60_000,
+    }),
+  };
+});
+
 vi.mock("#lib/stores/rules.svelte.ts", async (original) => {
   const mod = await original<typeof import("#lib/stores/rules.svelte.ts")>();
   return {
@@ -50,11 +66,22 @@ vi.mock("#lib/stores/rules.svelte.ts", async (original) => {
 });
 
 import { ruleSets } from "#lib/stores/rule-sets.svelte.ts";
+import { requestRulesStore } from "#lib/stores/request-rules.svelte.ts";
 import { rulesStore } from "#lib/stores/rules.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import RulesPage from "./+page.svelte";
 
-const { api, setsApi, source, rule, builtIn, mine, systemHost } = h;
+const {
+  api,
+  setsApi,
+  source,
+  rule,
+  builtIn,
+  mine,
+  systemHost,
+  requestApi,
+  requestRule,
+} = h;
 
 beforeEach(() => {
   api.rules = [];
@@ -64,6 +91,13 @@ beforeEach(() => {
   api.refuse = null;
   rulesStore.rules = [];
   rulesStore.status = "loading";
+  requestApi.rules = [];
+  requestApi.calls = [];
+  requestApi.bodies = [];
+  requestApi.down = false;
+  requestApi.refuse = null;
+  requestRulesStore.rules = [];
+  requestRulesStore.status = "loading";
   setsApi.sets = [];
   setsApi.system = [];
   setsApi.calls = [];
@@ -726,5 +760,56 @@ describe("rule sets and System managed (rules spec §7)", () => {
       }),
     );
     await waitFor(() => expect(api.calls).toContain("DELETE /api/rules/{id}"));
+  });
+});
+
+describe("method and path rules", () => {
+  const section = () => screen.getByRole("region", { name: "Method and path" });
+
+  it("sits on the rules screen with what a rule does, and an empty state", async () => {
+    render(RulesPage);
+    const region = await screen.findByRole("region", {
+      name: "Method and path",
+    });
+    expect(region).toHaveTextContent("only refuses");
+    expect(region).toHaveTextContent("decrypts the host");
+    expect(
+      await within(region).findByText(/No rules on method and path yet/),
+    ).toBeInTheDocument();
+  });
+
+  it("lists the rules and deletes one after asking", async () => {
+    requestApi.rules = [
+      requestRule(1, {
+        host: "api.example.com",
+        methods: ["DELETE", "PUT"],
+        path: "/repos/**",
+      }),
+    ];
+    render(RulesPage);
+    await waitFor(() => expect(requestRulesStore.status).toBe("ready"));
+    expect(section()).toHaveTextContent("DELETE, PUT");
+    await fireEvent.click(
+      within(section()).getByRole("button", { name: /^Delete rule: refuse/ }),
+    );
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Delete rule" }),
+    );
+    await waitFor(() =>
+      expect(requestApi.calls).toContain("DELETE /api/request-rules/{id} 1"),
+    );
+    expect(
+      await within(section()).findByText(/No rules on method and path yet/),
+    ).toBeInTheDocument();
+  });
+
+  it("reads a rule that was added elsewhere when the event arrives", async () => {
+    render(RulesPage);
+    await waitFor(() => expect(requestRulesStore.status).toBe("ready"));
+    requestApi.rules = [requestRule(2, { host: "late.example.com" })];
+    source.emit({ type: "request_rules_changed" });
+    expect(
+      await within(section()).findByText("late.example.com"),
+    ).toBeInTheDocument();
   });
 });

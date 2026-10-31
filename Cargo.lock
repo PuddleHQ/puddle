@@ -6687,6 +6687,7 @@ dependencies = [
  "puddle-doctor",
  "puddle-guest-env",
  "puddle-runtime",
+ "puddle-test-kit",
  "puddle-types",
  "rcgen",
  "serde_json",

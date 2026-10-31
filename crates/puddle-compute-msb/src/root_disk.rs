@@ -160,18 +160,26 @@ pub(crate) fn check(sandbox_dir: &Path) -> Result<(), JournalProblem> {
 /// The part above the sandbox's folder is compared resolved, not as written: msb writes the
 /// folder the way it was given (on Windows maybe without the `\\?\` prefix or with short names,
 /// anywhere maybe below a linked parent folder or with a `..`), and that is not the guest's to
-/// choose. The anchor is resolved the way msb's open resolves it, so whatever follows it starts
-/// in the sandbox's folder. Below the folder, no part may be `..` and every part must be a plain
-/// folder or file. A part that cannot be read (missing, or
-/// below a file) ends the walk: msb runs as the same user and cannot open anything below it either.
+/// choose. The anchor is the shortest leading part of the path that resolves into the
+/// folder, and it must resolve to the folder itself: so no link or `..` the guest placed inside
+/// the folder can be part of the anchor, where the walk below would not see it. Below the
+/// anchor, no part may be `..` and every part must be a plain folder or file. A part that cannot
+/// be read (missing, or below a file) ends the walk: msb runs as the same user and cannot open
+/// anything below it either.
 fn confined(path: PathBuf, sandbox: &Path) -> Result<(), JournalProblem> {
     if !path.is_absolute() {
         return Err(JournalProblem::Relative { path });
     }
-    let Some(below) = path
-        .ancestors()
-        .find(|a| fs::canonicalize(a).is_ok_and(|resolved| resolved == sandbox))
-        .and_then(|anchor| path.strip_prefix(anchor).ok())
+    let mut leading: Vec<&Path> = path.ancestors().collect();
+    leading.reverse();
+    let Some(below) = leading
+        .into_iter()
+        .find_map(|a| {
+            let resolved = fs::canonicalize(a).ok()?;
+            resolved.starts_with(sandbox).then_some((a, resolved))
+        })
+        .filter(|(_, resolved)| resolved == sandbox)
+        .and_then(|(anchor, _)| path.strip_prefix(anchor).ok())
     else {
         return Err(JournalProblem::Outside {
             path,
@@ -331,8 +339,7 @@ mod tests {
             Err(JournalProblem::ParentStep { path: escape })
         );
 
-        // A `..` that resolves back into the folder is part of the anchor, resolved the way
-        // msb's open resolves it, so the path stays inside and passes.
+        // Below the folder msb never writes one, so one that lands back inside is refused too.
         fs::create_dir(home.mine().join("runtime").join(".compact-x")).unwrap();
         let back_in = home
             .mine()
@@ -342,7 +349,10 @@ mod tests {
             .join("..")
             .join("upper.ext4");
         home.journal(&[&back_in], None);
-        assert_eq!(check(&home.mine()), Ok(()));
+        assert!(matches!(
+            check(&home.mine()),
+            Err(JournalProblem::ParentStep { .. })
+        ));
     }
 
     #[test]
@@ -508,6 +518,43 @@ mod tests {
                 .join("etc")
                 .join("passwd");
             home.journal(&[&host], None);
+            assert!(matches!(
+                check(&home.mine()),
+                Err(JournalProblem::Link { .. })
+            ));
+        }
+
+        #[test]
+        fn a_dot_dot_after_a_link_in_the_folder_is_refused_even_when_it_lands_inside() {
+            // Resolved now, `runtime/l/../../upper.ext4` is the sandbox's own disk; but the guest
+            // can repoint `l`, so a path through it is never anchored past the link.
+            let home = Home::new();
+            fs::create_dir(home.mine().join("runtime").join("x")).unwrap();
+            symlink(
+                home.mine().join("runtime").join("x"),
+                home.mine().join("runtime").join("l"),
+            )
+            .unwrap();
+            let through = home
+                .mine()
+                .join("runtime")
+                .join("l")
+                .join("..")
+                .join("..")
+                .join("upper.ext4");
+            home.journal(&[&through], None);
+            assert!(matches!(
+                check(&home.mine()),
+                Err(JournalProblem::ParentStep { .. })
+            ));
+        }
+
+        #[test]
+        fn a_link_in_the_folder_back_to_the_folder_is_refused() {
+            let home = Home::new();
+            symlink(home.mine(), home.mine().join("runtime").join("me")).unwrap();
+            let through = home.mine().join("runtime").join("me").join("upper.ext4");
+            home.journal(&[&through], None);
             assert!(matches!(
                 check(&home.mine()),
                 Err(JournalProblem::Link { .. })

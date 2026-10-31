@@ -5,7 +5,8 @@
 //! A fixture start that misses its window reports these, so its failure says which of three it
 //! was: the program had not been started yet (a later process of the tree is missing or started
 //! late), it was started and worked (CPU time), or it was started and waited (no CPU time); and
-//! whether starting any program was slow at that moment.
+//! whether starting any program was slow at that moment, and how much memory was free (a machine
+//! out of memory pages every new program in from disk, which on a hosted runner took 14 to 35 s).
 
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime};
@@ -144,7 +145,14 @@ fn time_to_end(program: &str, args: &[&str], bound: Duration) -> String {
 /// from a slow or stuck fixture. Read it before the child is stopped.
 pub(super) fn stall_evidence(child: &Child) -> String {
     let tree = describe(&tree(child.id()));
-    format!("process tree of the fixture:\n{tree}\n{}", trivial_start())
+    let memory = os::memory().map_or_else(
+        || "free memory: unknown on this OS".to_owned(),
+        |(free, total)| format!("free memory: {} of {} MB", free >> 20, total >> 20),
+    );
+    format!(
+        "process tree of the fixture:\n{tree}\n{}\n{memory}",
+        trivial_start()
+    )
 }
 
 /// The tree under `child`, one line per process, for a start that was slow but made it.
@@ -217,6 +225,23 @@ mod os {
         })
     }
 
+    /// Available and total memory in bytes, from `/proc/meminfo`.
+    pub(super) fn memory() -> Option<(u64, u64)> {
+        let info = std::fs::read_to_string("/proc/meminfo").ok()?;
+        let field = |name: &str| -> Option<u64> {
+            let kib: u64 = info
+                .lines()
+                .find_map(|l| l.strip_prefix(name))?
+                .trim()
+                .trim_end_matches("kB")
+                .trim()
+                .parse()
+                .ok()?;
+            Some(kib * 1024)
+        };
+        Some((field("MemAvailable:")?, field("MemTotal:")?))
+    }
+
     pub(super) fn snapshot() -> Vec<Proc> {
         let boot = boot();
         let Ok(dir) = std::fs::read_dir("/proc") else {
@@ -245,6 +270,7 @@ mod os {
         CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
         TH32CS_SNAPPROCESS,
     };
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
     use windows_sys::Win32::System::Threading::{
         GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
     };
@@ -294,6 +320,27 @@ mod os {
         let created = SystemTime::UNIX_EPOCH + Duration::from_nanos(since_epoch * 100);
         let cpu = Duration::from_nanos((ticks(kernel) + ticks(user)) * 100);
         Some((created, cpu))
+    }
+
+    /// Available and total physical memory in bytes.
+    #[expect(unsafe_code, reason = "GlobalMemoryStatusEx")]
+    pub(super) fn memory() -> Option<(u64, u64)> {
+        let mut status = MEMORYSTATUSEX {
+            dwLength: u32::try_from(size_of::<MEMORYSTATUSEX>()).ok()?,
+            dwMemoryLoad: 0,
+            ullTotalPhys: 0,
+            ullAvailPhys: 0,
+            ullTotalPageFile: 0,
+            ullAvailPageFile: 0,
+            ullTotalVirtual: 0,
+            ullAvailVirtual: 0,
+            ullAvailExtendedVirtual: 0,
+        };
+        // SAFETY: per Microsoft Learn (GlobalMemoryStatusEx), a writable MEMORYSTATUSEX whose
+        // dwLength is its own size.
+        // https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-globalmemorystatusex
+        let ok = unsafe { GlobalMemoryStatusEx(&raw mut status) };
+        (ok != 0).then_some((status.ullAvailPhys, status.ullTotalPhys))
     }
 
     /// Every process of the machine (pid, parent, executable name), with the times of those this
@@ -346,6 +393,10 @@ mod os {
 
     pub(super) fn snapshot() -> Vec<Proc> {
         Vec::new()
+    }
+
+    pub(super) fn memory() -> Option<(u64, u64)> {
+        None
     }
 }
 
@@ -478,6 +529,9 @@ mod tests {
         );
         assert!(evidence.contains("a trivial program"), "{evidence}");
         assert!(evidence.contains("to start and end"), "{evidence}");
+        let (free, total) = os::memory().unwrap();
+        assert!(0 < free && free <= total, "{free} of {total}");
+        assert!(evidence.contains("free memory: "), "{evidence}");
     }
 
     #[test]

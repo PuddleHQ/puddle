@@ -447,9 +447,6 @@ pub struct AttachRequest {
 pub struct AttachResponse {
     /// Whether Puddle opened an editor itself (desktop mode, when it worked).
     pub opened: bool,
-    /// Where the browser editor is, in browser mode; the caller opens it.
-    #[schema(required = true)]
-    pub url: Option<String>,
     /// Why nothing was opened, when that is not an error (for example VS Code is not
     /// installed).
     #[schema(required = true)]
@@ -460,7 +457,6 @@ impl From<domain::Attached> for AttachResponse {
     fn from(a: domain::Attached) -> Self {
         Self {
             opened: a.opened,
-            url: a.url,
             message: a.message,
         }
     }

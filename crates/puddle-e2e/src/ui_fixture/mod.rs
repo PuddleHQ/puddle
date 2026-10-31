@@ -55,9 +55,9 @@ pub mod scenario;
 pub use scenario::{CheckoutSeed, RemoteNoteSeed};
 pub use scenario::{
     ConnectionSeed, CredentialsSeed, DecisionSeed, EffectSeed, EnvKindSeed, EnvSeed, GitRepoSeed,
-    GitSeed, KeptLoginSeed, ProblemSeed, RepoItemSeed, RepoListSeed, RepoNoteSeed, RepoProblemSeed,
-    RepoSeed, RequestLineSeed, RequestRuleSeed, RequestSeed, RuleSeed, Scenario, SettingsSeed,
-    StatusSeed, Step, UnsavedSeed, WorkspaceOperationSeed, WorkspaceSeed,
+    GitSeed, KeptLoginSeed, ProblemSeed, ProfileSeed, RepoItemSeed, RepoListSeed, RepoNoteSeed,
+    RepoProblemSeed, RepoSeed, RequestLineSeed, RequestRuleSeed, RequestSeed, RuleSeed, Scenario,
+    SettingsSeed, StatusSeed, Step, UnsavedSeed, WorkspaceOperationSeed, WorkspaceSeed,
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
@@ -234,7 +234,7 @@ impl Fixture {
         );
         let network = Arc::new(FakeNetworkHealth::new(clock.clone() as Arc<dyn Clock>));
         let credentials = Arc::new(FakeCredentials::new());
-        let repos = Arc::new(repos::HeldRepos::new());
+        let repos = Arc::new(repos::HeldRepos::new(credentials.clone()));
         let doctor = Arc::new(FakeDoctor::new());
         let problems = Arc::new(Problems::new(events.clone()));
         let state = State {
@@ -350,6 +350,11 @@ impl Fixture {
     /// The names of the scripts the running scenario has.
     pub async fn script_names(&self) -> Vec<String> {
         self.scenario.lock().await.scripts.keys().cloned().collect()
+    }
+
+    /// The ids of the pasted tokens the fake credential store keeps.
+    pub async fn kept_tokens(&self) -> Vec<String> {
+        self.state.lock().await.credentials.tokens()
     }
 
     /// How many requests wait for a decision.
@@ -535,6 +540,7 @@ impl State {
         self.credentials_seed(&scenario.credentials)?;
         self.repos
             .set_lists(repos::lists(&scenario.repo_lists, &identities, start)?);
+        self.repos.set_profiles(&scenario.profiles)?;
         if let Some(global) = &scenario.settings.global {
             self.settings
                 .save_global(global.clone())
@@ -935,6 +941,7 @@ impl State {
     }
 
     fn credentials_seed(&self, seed: &CredentialsSeed) -> Result<(), String> {
+        self.credentials.forget_all_tokens();
         self.credentials
             .set_found(found(&seed.found, &seed.missing)?);
         for source in &seed.signed_out {

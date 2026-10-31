@@ -2548,6 +2548,9 @@ async fn a_browser_attach_gives_the_window_the_front_the_settings_and_a_way_to_t
         !target.settings.zoom_hotkeys.value,
         "the workspace's own setting reaches the window"
     );
+    // No window has connected to the editor, so the front counts none.
+    let acme = WorkspaceName::new("acme").unwrap();
+    assert_eq!(host.editor_windows().connected(&acme), 0);
     // code-server asks for a password: the window reads it when it signs in, from the guest's file.
     // The agent may say hello after the window asked: the sign-in waits for it.
     let login = target.login.expect("code-server asks for a password");

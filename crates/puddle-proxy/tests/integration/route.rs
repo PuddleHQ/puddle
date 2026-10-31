@@ -1483,3 +1483,42 @@ async fn the_guest_watcher_gets_the_link_and_the_ports_of_the_routes_workspace()
     let linked = watched.link.lock().unwrap().take().map(|(name, _)| name);
     assert_eq!(linked, Some(workspace("box")));
 }
+
+/// Whether anything still accepts on `path`.
+async fn listening(path: &std::path::Path) -> bool {
+    puddle_ipc::connect(path).await.is_ok()
+}
+
+#[tokio::test]
+async fn shutdown_returns_only_once_nothing_accepts_on_the_route_any_more() {
+    let rig = Rig::new(&ProxyConfig::default());
+    let path = rig.route.endpoint().path().to_owned();
+    let _guest = rig.guest().await;
+    assert!(listening(&path).await);
+    let Rig { route, root, .. } = rig;
+    route.shutdown().await;
+    assert!(!listening(&path).await, "the listener outlived shutdown");
+    drop(root);
+}
+
+#[tokio::test]
+async fn dropping_the_route_stops_the_accept_loop() {
+    let rig = Rig::new(&ProxyConfig::default());
+    let path = rig.route.endpoint().path().to_owned();
+    let Rig { route, root, .. } = rig;
+    drop(route);
+    // The abort takes effect when the runtime next runs the task: a bounded number of yields.
+    let mut stopped = false;
+    for _ in 0..1000 {
+        if !listening(&path).await {
+            stopped = true;
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        stopped,
+        "the accept loop kept running after the route was dropped"
+    );
+    drop(root);
+}

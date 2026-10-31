@@ -259,7 +259,8 @@ fn resolve_once(query: &PacQuery, auto_logon: bool) -> Result<Vec<Hop>, PacError
     if query.auto_detect {
         flags |= WINHTTP_AUTOPROXY_AUTO_DETECT;
     }
-    let options = WINHTTP_AUTOPROXY_OPTIONS {
+    // Boxed so that its address stays valid if the timeout path has to leak it.
+    let options = Box::new(WINHTTP_AUTOPROXY_OPTIONS {
         dwFlags: flags,
         dwAutoDetectFlags: if query.auto_detect {
             WINHTTP_AUTO_DETECT_TYPE_DHCP | WINHTTP_AUTO_DETECT_TYPE_DNS_A
@@ -270,7 +271,7 @@ fn resolve_once(query: &PacQuery, auto_logon: bool) -> Result<Vec<Hop>, PacError
         lpvReserved: std::ptr::null_mut(),
         dwReserved: 0,
         fAutoLogonIfChallenged: i32::from(auto_logon),
-    };
+    });
     let url = wide(&query.url);
     // SAFETY: the resolver is live. Microsoft's page for the call
     // (https://learn.microsoft.com/windows/win32/api/winhttp/nf-winhttp-winhttpgetproxyforurlex)
@@ -278,7 +279,12 @@ fn resolve_once(query: &PacQuery, auto_logon: bool) -> Result<Vec<Hop>, PacError
     // request is over: until the callback reports the outcome, or on a timeout until the closing of
     // the resolver is reported (below). Both outlive the call.
     let code = unsafe {
-        WinHttpGetProxyForUrlEx(resolver.0, url.as_ptr(), &raw const options, registration.0)
+        WinHttpGetProxyForUrlEx(
+            resolver.0,
+            url.as_ptr(),
+            &raw const *options,
+            registration.0,
+        )
     };
     let outcome = match code {
         0 => Some(Ok(())),
@@ -291,10 +297,7 @@ fn resolve_once(query: &PacQuery, auto_logon: bool) -> Result<Vec<Hop>, PacError
         // still filed) before the buffers go out of scope. If it never comes, leak them: a leak
         // is harmless, a read of freed memory is not.
         drop(resolver);
-        if !slot.wait_closed(CLOSE_WAIT) {
-            url.leak();
-            pac_url.map(Vec::leak);
-        }
+        release_when_closed(&slot, CLOSE_WAIT, (url, pac_url, options));
         return Err(PacError::Timeout);
     };
     if let Err(code) = outcome {
@@ -305,6 +308,16 @@ fn resolve_once(query: &PacQuery, auto_logon: bool) -> Result<Vec<Hop>, PacError
         });
     }
     collect(&resolver)
+}
+
+/// Frees `held` once the closing of the request is reported, or leaks it if that does not happen
+/// within `wait`. Returns whether it was freed.
+fn release_when_closed<T>(slot: &Slot, wait: Duration, held: T) -> bool {
+    let closed = slot.wait_closed(wait);
+    if !closed {
+        Box::leak(Box::new(held));
+    }
+    closed
 }
 
 fn collect(resolver: &Handle) -> Result<Vec<Hop>, PacError> {
@@ -390,6 +403,46 @@ mod tests {
         assert!(slot.wait_closed(Duration::from_secs(1)));
         // A closing is not an outcome.
         assert_eq!(slot.wait(Duration::from_millis(10)), None);
+    }
+
+    /// Sets a flag when dropped, to show whether a buffer was freed.
+    struct Freed(Arc<std::sync::atomic::AtomicBool>);
+
+    impl Drop for Freed {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn buffers_are_held_until_the_close_is_reported_and_then_freed() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let _serial = COUNTING.lock().unwrap_or_else(PoisonError::into_inner);
+        let slot = Arc::new(Slot::default());
+        let freed = Arc::new(AtomicBool::new(false));
+        let closer = {
+            let slot = Arc::clone(&slot);
+            std::thread::spawn(move || slot.close())
+        };
+        let released =
+            release_when_closed(&slot, Duration::from_secs(30), Freed(Arc::clone(&freed)));
+        assert!(released, "the wait ended without the close");
+        assert!(freed.load(Ordering::SeqCst));
+        closer.join().expect("closer thread");
+    }
+
+    #[test]
+    fn buffers_are_leaked_when_the_close_never_comes() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let _serial = COUNTING.lock().unwrap_or_else(PoisonError::into_inner);
+        let slot = Slot::default();
+        let freed = Arc::new(AtomicBool::new(false));
+        let released = release_when_closed(&slot, Duration::ZERO, Freed(Arc::clone(&freed)));
+        assert!(!released);
+        assert!(
+            !freed.load(Ordering::SeqCst),
+            "freed although WinHTTP may still read it"
+        );
     }
 
     #[test]

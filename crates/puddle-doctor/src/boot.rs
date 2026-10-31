@@ -267,7 +267,7 @@ fn prune_kept(dir: &Path, keep: usize) {
 /// Creates and returns a folder in `dir` named `name`, or `name-2`, `name-3`, ... when taken, so
 /// two boots kept in the same millisecond don't share one. Both `dir` and the folder are
 /// owner-only: a boot's logs name paths and machine details.
-fn new_folder(dir: &Path, name: &str) -> std::io::Result<std::path::PathBuf> {
+fn new_folder(dir: &Path, name: &str) -> std::io::Result<PathBuf> {
     private::create_dir(dir)?;
     for n in 1..=100 {
         let path = if n == 1 {

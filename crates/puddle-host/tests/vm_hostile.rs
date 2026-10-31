@@ -451,7 +451,7 @@ async fn vm_hostile_hg11_a_flooding_workspace_is_held_at_its_cap_and_another_is_
             let out = guest(
                 &runtime,
                 &flooder,
-                "cat /tmp/hg11.out 2>/dev/null || { echo pending; tail -3 /tmp/hg11.log; cat /tmp/hg11.progress; }",
+                "cat /tmp/hg11.out 2>/dev/null || { echo pending; tail -3 /tmp/hg11.log; cat /tmp/hg11.progress 2>/dev/null; true; }",
             )
             .await;
             if out.starts_with("pending") {

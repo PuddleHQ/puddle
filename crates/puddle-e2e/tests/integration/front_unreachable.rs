@@ -121,6 +121,7 @@ async fn rig() -> Rig {
         editor: Some(EditorConfig {
             server: editor,
             password_file,
+            boot_id: dir.path().join("boot_id"),
         }),
         ..Config::default()
     })

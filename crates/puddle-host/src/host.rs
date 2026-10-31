@@ -62,8 +62,6 @@ pub enum Step {
     DataFolderLocked,
     /// The image-pull proxy is bound (not serving yet).
     PullProxyBound,
-    /// The process environment is pinned to Puddle's runtime.
-    EnvironmentPinned,
     /// The bundled runtime is present and of the exact version.
     RuntimeChecked,
     /// The corporate root certificates are read.
@@ -103,19 +101,17 @@ pub enum Step {
 }
 
 /// The steps [`prepare`] runs, in order.
-pub const PREPARE_STEPS: [Step; 5] = [
+pub const PREPARE_STEPS: [Step; 4] = [
     Step::DataFolderLocked,
     Step::PullProxyBound,
-    Step::EnvironmentPinned,
     Step::RuntimeChecked,
     Step::RootsRead,
 ];
 
 /// The steps of a start with the default options, in order, [`prepare`]'s included.
-pub const START_STEPS: [Step; 15] = [
+pub const START_STEPS: [Step; 14] = [
     Step::DataFolderLocked,
     Step::PullProxyBound,
-    Step::EnvironmentPinned,
     Step::RuntimeChecked,
     Step::RootsRead,
     Step::StoreOpened,
@@ -173,7 +169,7 @@ impl Prepared {
 ///
 /// The order is the dependency order. The data folder is locked first (a second process on it
 /// is refused with [`HostError::DataFolder`] before it touches anything). The pull proxy is bound first because the runtime's image
-/// pulls need its address; the environment is pinned before the runtime is looked at; the
+/// pulls need its address; the runtime is checked next; the
 /// corporate roots are read last and handed to the runtime when it opens, because msb fixes them
 /// then.
 ///
@@ -190,8 +186,6 @@ pub fn prepare(config: HostConfig, platform: &dyn Platform) -> Result<Prepared, 
     let endpoints = PuddleEndpoints::new();
     let pull = PullProxy::bind(&endpoints).map_err(HostError::PullProxy)?;
     steps.push(Step::PullProxyBound);
-    platform.pin_environment(&config.layout)?;
-    steps.push(Step::EnvironmentPinned);
     platform.check_runtime(&config.layout, &config.expected_runtime)?;
     steps.push(Step::RuntimeChecked);
     let roots = platform.corporate_roots()?;
@@ -454,8 +448,6 @@ impl<R: Runtime + Clone> Host<R> {
     where
         F: RuntimeFactory<Runtime = R>,
     {
-        // The environment is final from here on: refuse any later change to it.
-        crate::process_env::mark_threads_started();
         let Prepared {
             lock,
             config,

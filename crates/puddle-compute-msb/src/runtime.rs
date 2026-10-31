@@ -122,9 +122,14 @@ impl MsbRuntime {
         }
         std::fs::write(config.config_path(), config.config_json())
             .map_err(|e| runtime("open", &e))?;
+        // The runtime pair and home are arguments and the environment is ignored, so a user's own
+        // `MSB_*` variables never reach msb and Puddle never edits its own environment.
         let mut builder = LocalBackend::builder()
             .home(&config.home)
-            .config_path(config.config_path());
+            .config_path(config.config_path())
+            .msb_path(&config.msb)
+            .libkrunfw_path(&config.libkrunfw)
+            .ignore_environment();
         if let Some(proxy) = &config.registry_proxy {
             builder = builder.registry_proxy(proxy.expose());
         }
@@ -793,6 +798,30 @@ mod tests {
         let bad = std::ffi::OsString::from_vec(vec![0x66, 0xff]);
         let names = dir_names(std::iter::once(Ok((bad, Ok(true))))).unwrap();
         assert_eq!(names.into_iter().collect::<Vec<_>>(), ["f\u{fffd}"]);
+    }
+
+    #[tokio::test]
+    async fn open_gives_the_sdk_the_runtime_pair_and_home_as_arguments() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().to_path_buf();
+        let config = MsbConfig::new(
+            base.join("home"),
+            base.join("no-msb"),
+            base.join("no-libkrunfw"),
+            base.join("s"),
+        );
+        let rt = MsbRuntime::open(config).await.unwrap();
+
+        let resolved = rt.inner.local.config();
+        assert_eq!(resolved.home(), base.join("home"));
+        assert_eq!(
+            resolved.paths.msb.as_deref(),
+            Some(base.join("no-msb").as_path())
+        );
+        assert_eq!(
+            resolved.paths.libkrunfw.as_deref(),
+            Some(base.join("no-libkrunfw").as_path())
+        );
     }
 
     #[tokio::test]

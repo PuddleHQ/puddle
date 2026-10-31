@@ -144,6 +144,7 @@ mod tests {
             DevCertificate::NeedsTrust
         }
         fn trust(&self) -> DevCertTrustResult {
+            // Simulated slow confirmation, longer than the wait under test.
             std::thread::sleep(self.delay);
             assert!(!self.panic, "the store blew up");
             DevCertTrustResult {

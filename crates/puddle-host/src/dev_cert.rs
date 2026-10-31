@@ -364,6 +364,9 @@ mod tests {
         };
         let dir = tempfile::tempdir().unwrap();
         let clock = Arc::new(ManualClock::new(1_800_000_000_000));
+        // The double's other answer, so no line of it goes unread.
+        let by_ref = &open;
+        assert!(by_ref.export_key(b"cert").is_err());
         let service = HostDevCert::new(dir.path(), &open, clock);
         std::thread::scope(|scope| {
             let first = scope.spawn(|| service.trust());

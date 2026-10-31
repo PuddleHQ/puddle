@@ -205,6 +205,7 @@ impl DevCertService for SlowTrust {
     }
 
     fn trust(&self) -> puddle_api::wire::DevCertTrustResult {
+        // Simulated slow confirmation, longer than the usual request limit under test.
         std::thread::sleep(self.0);
         puddle_api::wire::DevCertTrustResult {
             dev_certificate: DevCertificate::Trusted,

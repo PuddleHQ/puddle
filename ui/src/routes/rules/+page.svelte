@@ -1,11 +1,13 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
   import LoadNotice from "#lib/components/LoadNotice.svelte";
-  import { onMount, tick } from "svelte";
+  import { onMount } from "svelte";
+  import { settleFocus } from "#lib/focus.ts";
   import Plus from "@lucide/svelte/icons/plus";
   import AddRuleDialog from "#lib/components/AddRuleDialog.svelte";
   import ConfirmDialog from "#lib/components/ConfirmDialog.svelte";
   import ExpiryDialog from "#lib/components/ExpiryDialog.svelte";
+  import RequestRulesSection from "#lib/components/RequestRulesSection.svelte";
   import RuleSetsSection from "#lib/components/RuleSetsSection.svelte";
   import RuleTable from "#lib/components/RuleTable.svelte";
   import SystemManagedList from "#lib/components/SystemManagedList.svelte";
@@ -97,30 +99,6 @@
             key,
             direction: key === "created" || key === "expires" ? "desc" : "asc",
           };
-  }
-
-  // Where focus goes when the row it was on is gone: the next row's delete button, else the
-  // heading. The dialog gives focus back to its trigger as it closes, so wait for that first.
-  async function settleFocus(ids: number[]) {
-    for (let frame = 0; frame < 30; frame += 1) {
-      await tick();
-      if (!document.querySelector('[role="alertdialog"], [role="dialog"]'))
-        break;
-      await new Promise((resolve) => requestAnimationFrame(resolve));
-    }
-    await tick();
-    const active = document.activeElement;
-    if (active && active !== document.body && document.contains(active)) return;
-    for (const id of ids) {
-      const button = document.querySelector<HTMLElement>(
-        `[data-rule-id="${id}"] button`,
-      );
-      if (button) {
-        button.focus();
-        return;
-      }
-    }
-    heading?.focus();
   }
 
   /** Every workspace, or a set that is on for every workspace: asks first. */
@@ -228,7 +206,10 @@
       result.ok ? `Deleted: ${ruleName(rule)}.` : result.message,
       result.ok ? {} : { tone: "error", ms: 8000 },
     );
-    await settleFocus(neighbours);
+    await settleFocus(
+      neighbours.map((id) => `[data-rule-id="${id}"] button`),
+      heading,
+    );
   }
 
   const deleteSummary = $derived(deleting ? ruleName(deleting) : "");
@@ -345,6 +326,8 @@
     />
   {/if}
 {/if}
+
+<RequestRulesSection {workspaces} {now} />
 
 <RuleSetsSection
   store={ruleSets}

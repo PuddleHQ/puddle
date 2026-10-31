@@ -665,8 +665,16 @@ fn the_hook_reports_the_guests_git_version_when_there_is_a_git() {
 fn the_hook_reports_the_kubernetes_tools_on_the_path() {
     for shell in shells() {
         let fr = FakeRoot::new(&shell);
+        // The image's PATH is an empty directory: the usual one (/usr/local/bin) holds kind and
+        // minikube on a CI runner, which would be found as if installed in the guest.
+        let empty = tempfile::tempdir().unwrap();
+        let config = ImageConfig {
+            env: vec![("PATH".into(), empty.path().display().to_string())],
+            ..ImageConfig::default()
+        };
+        let plan = BootPlan::builder(&config).no_agent().build().unwrap();
         let tools_of = |fr: &FakeRoot| {
-            let out = fr.run(&full_plan("CA\n"));
+            let out = fr.run_raw(&plan.render(), &[], true);
             assert!(out.status.success(), "{}", show(&out));
             puddle_boot::BootReport {
                 stdout: String::from_utf8_lossy(&out.stdout).into_owned(),

@@ -36,6 +36,18 @@ export function editorInstallProblemOf(
   return problems.find((p) => p.key === editorInstallKey(workspace));
 }
 
+/** The key of the problem that says `workspace`'s browser editor could not take a newer build. */
+export const editorUpdateKey = (workspace: string): string =>
+  `editor-update:${workspace}`;
+
+/** The problem about `workspace`'s editor update, if the host lists one. */
+export function editorUpdateProblemOf(
+  problems: readonly Problem[],
+  workspace: string,
+): Problem | undefined {
+  return problems.find((p) => p.key === editorUpdateKey(workspace));
+}
+
 /** The page place for a problem about a workspace; `undefined` for one about nothing. */
 export function problemLink(problem: Problem): ProblemLink | undefined {
   const workspace = problem.workspace;

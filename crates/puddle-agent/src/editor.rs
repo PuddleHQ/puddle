@@ -38,8 +38,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::FutureExt as _;
-use puddle_agent_proto::AgentMessage;
 use puddle_agent_proto::editor::{EditorServer, ServerKind};
+use puddle_agent_proto::{AgentMessage, EditorProblemKind};
 use tokio::process::Command;
 use tokio::sync::{Mutex, Notify, mpsc, watch};
 
@@ -65,6 +65,10 @@ const MAX_WAIT: Duration = Duration::from_secs(30);
 const REFUSED_WAIT: Duration = Duration::from_mins(1);
 /// The longest wait between two downloads of a build that was refused.
 const MAX_REFUSED_WAIT: Duration = Duration::from_hours(1);
+
+/// How many tries in a row that fail on something other than a refusal (the network is down)
+/// pass before the user is told.
+const TRIES_BEFORE_REPORT: u32 = 5;
 
 /// How long a server is given to accept its first connection before it counts as not started.
 const STARTUP: Duration = Duration::from_secs(120);
@@ -108,9 +112,12 @@ pub struct Control {
     times: UpdateTimes,
     /// Whether this server updates at all (Microsoft's, with the user's setting on).
     updates: bool,
-    /// Why the server cannot be installed, `None` when it can: every refused download sets it
-    /// again (also to the same text), so a host that missed one hears the next.
+    /// Why the server cannot be installed, `None` when it can: every refused or failed download
+    /// sets it again (also to the same text), so a host that missed one hears the next.
     install_problem: watch::Sender<Option<String>>,
+    /// Why a newer build could not be taken, `None` when nothing is wrong; set again in the same
+    /// way. The server runs on the build it has meanwhile.
+    update_problem: watch::Sender<Option<String>>,
 }
 
 impl Control {
@@ -130,6 +137,7 @@ impl Control {
             pointers: std::sync::Mutex::new(()),
             times,
             install_problem: watch::channel(None).0,
+            update_problem: watch::channel(None).0,
             updates: matches!(
                 server.kind,
                 ServerKind::Microsoft {
@@ -160,25 +168,37 @@ impl Control {
 }
 
 impl Control {
-    /// Follows why the server cannot be installed ([`forward_install_problem`] sends it to the
+    /// Follows why the server cannot be installed ([`forward_editor_problems`] sends it to the
     /// host). Subscribe before the server runs: a receiver sees only what is set after it exists.
     #[must_use]
     pub fn install_problem(&self) -> watch::Receiver<Option<String>> {
         self.install_problem.subscribe()
     }
 
-    /// A download was fetched and refused: say why, every time.
-    fn install_refused(&self, reason: &str) {
+    /// Follows why a newer build could not be taken, like [`Control::install_problem`].
+    #[must_use]
+    pub fn update_problem(&self) -> watch::Receiver<Option<String>> {
+        self.update_problem.subscribe()
+    }
+
+    /// A download was refused, or failed on the network again and again: say why, every time.
+    fn install_failed(&self, reason: &str) {
         self.install_problem.send_replace(Some(reason.to_owned()));
     }
 
-    /// The server got past its install: ends what [`Control::install_refused`] said, once.
+    /// The server got past its install: ends what [`Control::install_failed`] said, once.
     fn install_worked(&self) {
-        self.install_problem.send_if_modified(|problem| {
-            let was_set = problem.is_some();
-            *problem = None;
-            was_set
-        });
+        end(&self.install_problem);
+    }
+
+    /// A newer build was refused, started badly or could not be looked for: say why, every time.
+    fn update_failed(&self, reason: &str) {
+        self.update_problem.send_replace(Some(reason.to_owned()));
+    }
+
+    /// A look for a newer build worked: ends what [`Control::update_failed`] said, once.
+    fn update_worked(&self) {
+        end(&self.update_problem);
     }
 
     fn pointers_lock(&self) -> std::sync::MutexGuard<'_, ()> {
@@ -468,14 +488,36 @@ pub async fn run_controlled(config: EditorConfig, fetch: impl Fetch, control: Ar
     }
 }
 
-/// Sends every change of `problem` (a [`Control::install_problem`]) to the host as an
-/// [`AgentMessage::EditorStatus`]. Returns when `out` closes.
-pub async fn forward_install_problem(
-    mut problem: watch::Receiver<Option<String>>,
+/// Ends a problem that is set, once; one that is not is left alone, so nothing is sent.
+fn end(problem: &watch::Sender<Option<String>>) {
+    problem.send_if_modified(|problem| problem.take().is_some());
+}
+
+/// Sends every change of the problems (a [`Control::install_problem`] and a
+/// [`Control::update_problem`]) to the host as an [`AgentMessage::EditorStatus`]. Returns when
+/// `out` closes.
+pub async fn forward_editor_problems(
+    mut install: watch::Receiver<Option<String>>,
+    mut update: watch::Receiver<Option<String>>,
     out: mpsc::Sender<AgentMessage>,
 ) {
-    while problem.changed().await.is_ok() {
-        let message = AgentMessage::editor_status(problem.borrow_and_update().as_deref());
+    loop {
+        let message = tokio::select! {
+            changed = install.changed() => {
+                if changed.is_err() { return; }
+                AgentMessage::editor_status(
+                    EditorProblemKind::Install,
+                    install.borrow_and_update().as_deref(),
+                )
+            }
+            changed = update.changed() => {
+                if changed.is_err() { return; }
+                AgentMessage::editor_status(
+                    EditorProblemKind::Update,
+                    update.borrow_and_update().as_deref(),
+                )
+            }
+        };
         if out.send(message).await.is_err() {
             return;
         }
@@ -489,6 +531,7 @@ async fn update_loop(control: Arc<Control>, fetch: Arc<impl Fetch>) {
     };
     tokio::time::sleep(control.times.first).await;
     let mut refused = 0_u32;
+    let mut failed = 0_u32;
     loop {
         let looked = {
             let _work = control.work.lock().await;
@@ -506,16 +549,29 @@ async fn update_loop(control: Arc<Control>, fetch: Arc<impl Fetch>) {
             }
             Err(err) if err.is_refusal() => {
                 refused = refused.saturating_add(1);
+                failed = 0;
                 tracing::warn!(%err, refused, "a newer editor server build was refused");
+                control.update_failed(&format!(
+                    "a newer build was refused: {}",
+                    err.refusal_summary()
+                ));
                 wait_after_refusal(refused).max(control.times.retry)
             }
             Err(err) => {
-                tracing::warn!(%err, "could not look for a newer editor server build");
+                failed = failed.saturating_add(1);
+                tracing::warn!(%err, failed, "could not look for a newer editor server build");
+                // A look that fails now and then (the network was down a while) is not news.
+                if failed >= TRIES_BEFORE_REPORT {
+                    control
+                        .update_failed(&format!("looking for a newer build keeps failing: {err}"));
+                }
                 control.times.retry
             }
         };
         if is_ok {
             refused = 0;
+            failed = 0;
+            control.update_worked();
         }
         tokio::time::sleep(wait).await;
     }
@@ -534,6 +590,7 @@ async fn serve_forever(config: &EditorConfig, fetch: &impl Fetch, control: &Arc<
     }
     let mut quick = 0_u32;
     let mut refused = 0_u32;
+    let mut unready = 0_u32;
     loop {
         let launched = launch(config, fetch, control).await;
         let started = Instant::now();
@@ -549,9 +606,10 @@ async fn serve_forever(config: &EditorConfig, fetch: &impl Fetch, control: &Arc<
             // downloads hundreds of MB.
             Err(NotReady::Refused { reason, summary }) => {
                 refused = refused.saturating_add(1);
+                unready = 0;
                 let wait = wait_after_refusal(refused);
                 tracing::error!(%reason, ?wait, refused, "the editor server download was refused; trying again later");
-                control.install_refused(&summary);
+                control.install_failed(&summary);
                 // A restart request (a build staged and switched to) ends the wait early.
                 tokio::select! {
                     () = tokio::time::sleep(wait) => {}
@@ -562,12 +620,19 @@ async fn serve_forever(config: &EditorConfig, fetch: &impl Fetch, control: &Arc<
             // Counted as a quick exit: a missing network must not be retried every second.
             Err(NotReady::Other(reason)) => {
                 tracing::error!(%reason, "the editor server could not be made ready");
+                unready = unready.saturating_add(1);
+                // A network that is down for a few seconds clears itself; one that stays down is
+                // what the user must hear of.
+                if unready >= TRIES_BEFORE_REPORT {
+                    control.install_failed(&format!("the download keeps failing: {reason}"));
+                }
                 quick = quick.saturating_add(1);
                 tokio::time::sleep(wait_after(quick)).await;
                 continue;
             }
         }
         refused = 0;
+        unready = 0;
         quick = if started.elapsed() >= HEALTHY {
             1
         } else {
@@ -606,11 +671,21 @@ async fn settle_trial(control: &Control, commit: &str) {
     let _work = control.work.lock().await;
     let _pointers = control.pointers_lock();
     match microsoft::roll_back(&control.builds, commit) {
-        Ok(true) => tracing::error!(
-            "the new editor server build exited before it started; running the previous one again"
-        ),
+        Ok(true) => {
+            tracing::error!(
+                "the new editor server build exited before it started; running the previous one again"
+            );
+            control.update_failed(
+                "the newer build exited before it started, so the previous one runs again",
+            );
+        }
         Ok(false) => {}
-        Err(err) => tracing::warn!(%err, "could not go back to the previous editor server build"),
+        Err(err) => {
+            tracing::warn!(%err, "could not go back to the previous editor server build");
+            control.update_failed(&format!(
+                "the newer build exited before it started and the previous one could not be restored: {err}"
+            ));
+        }
     }
 }
 
@@ -1095,11 +1170,16 @@ mod tests {
         let (config, service) = refusing(dir.path(), false);
         let control = Control::new(&config.server);
         let (out, mut host) = mpsc::channel(8);
-        tokio::spawn(forward_install_problem(control.install_problem(), out));
-        let running = tokio::spawn(run_controlled(config, service, Arc::clone(&control)));
-        let wanted = AgentMessage::editor_status(Some(
-            "the download does not match the checksum Microsoft published for it",
+        tokio::spawn(forward_editor_problems(
+            control.install_problem(),
+            control.update_problem(),
+            out,
         ));
+        let running = tokio::spawn(run_controlled(config, service, Arc::clone(&control)));
+        let wanted = AgentMessage::editor_status(
+            EditorProblemKind::Install,
+            Some("the download does not match the checksum Microsoft published for it"),
+        );
         // The first refusal, then the next one a minute later: a host that missed the first
         // (it restarted) hears the second.
         assert_eq!(host.recv().await, Some(wanted.clone()));
@@ -1112,7 +1192,11 @@ mod tests {
     {
         let control = Control::new(&EditorServer::microsoft("/d", "/f", 120, false, false));
         let (out, mut host) = mpsc::channel(8);
-        tokio::spawn(forward_install_problem(control.install_problem(), out));
+        tokio::spawn(forward_editor_problems(
+            control.install_problem(),
+            control.update_problem(),
+            out,
+        ));
         control.install_worked();
         puddle_test_kit::no_event_for(
             "a message when nothing was wrong",
@@ -1120,13 +1204,22 @@ mod tests {
             &mut host,
         )
         .await;
-        control.install_refused("nope");
+        control.install_failed("nope");
         assert_eq!(
             host.recv().await,
-            Some(AgentMessage::editor_status(Some("nope")))
+            Some(AgentMessage::editor_status(
+                EditorProblemKind::Install,
+                Some("nope")
+            ))
         );
         control.install_worked();
-        assert_eq!(host.recv().await, Some(AgentMessage::editor_status(None)));
+        assert_eq!(
+            host.recv().await,
+            Some(AgentMessage::editor_status(
+                EditorProblemKind::Install,
+                None
+            ))
+        );
         control.install_worked();
         puddle_test_kit::no_event_for("a second end", Duration::from_secs(1), &mut host).await;
     }
@@ -1166,5 +1259,161 @@ mod tests {
         tokio::time::sleep(Duration::from_mins(100)).await;
         assert_eq!(service.downloads.load(SeqCst), 7);
         looking.abort();
+    }
+
+    /// An update service that cannot be reached.
+    struct Offline;
+
+    impl Fetch for Offline {
+        async fn text(&self, _url: &str) -> io::Result<String> {
+            tokio::task::yield_now().await; // a network answer is not instant
+            Err(io::Error::other("no route to host"))
+        }
+
+        async fn file(&self, _url: &str, _dest: &Path) -> io::Result<()> {
+            tokio::task::yield_now().await;
+            Err(io::Error::other("no route to host"))
+        }
+    }
+
+    fn times(retry: Duration) -> UpdateTimes {
+        UpdateTimes {
+            first: Duration::from_secs(1),
+            every: Duration::from_hours(24),
+            retry,
+        }
+    }
+
+    fn update_message(reason: Option<&str>) -> AgentMessage {
+        AgentMessage::editor_status(EditorProblemKind::Update, reason)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_refused_newer_build_is_told_as_an_update_problem_until_a_look_works() {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, service) = refusing(dir.path(), true);
+        let control = Control::with_times(&config.server, times(Duration::from_mins(1)));
+        let (out, mut host) = mpsc::channel(8);
+        tokio::spawn(forward_editor_problems(
+            control.install_problem(),
+            control.update_problem(),
+            out,
+        ));
+        let looking = tokio::spawn(update_loop(control, Arc::new(Arc::clone(&service))));
+        assert_eq!(
+            host.recv().await,
+            Some(update_message(Some(
+                "a newer build was refused: the download does not match the checksum Microsoft published for it"
+            )))
+        );
+        // The build is now known to be bad (as after a failed start), so the next look is quiet.
+        std::fs::write(dir.path().join("servers/rejected"), "e".repeat(40)).unwrap();
+        assert_eq!(host.recv().await, Some(update_message(None)));
+        looking.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn looks_that_fail_are_told_only_after_five_in_a_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, _) = refusing(dir.path(), true);
+        let control = Control::with_times(&config.server, times(Duration::from_mins(1)));
+        let (out, mut host) = mpsc::channel(8);
+        tokio::spawn(forward_editor_problems(
+            control.install_problem(),
+            control.update_problem(),
+            out,
+        ));
+        let looking = tokio::spawn(update_loop(control, Arc::new(Offline)));
+        // Looks at 1 s, then every minute: four have failed at 200 s.
+        puddle_test_kit::no_event_for(
+            "a report before the fifth failed look",
+            Duration::from_secs(200),
+            &mut host,
+        )
+        .await;
+        let Some(AgentMessage::EditorStatus {
+            kind: EditorProblemKind::Update,
+            problem: Some(reason),
+        }) = host.recv().await
+        else {
+            panic!("no update problem after the fifth failed look");
+        };
+        assert!(
+            reason.starts_with("looking for a newer build keeps failing")
+                && reason.contains("no route to host"),
+            "{reason}"
+        );
+        looking.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_first_install_that_keeps_failing_on_the_network_is_told_after_five_tries() {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, _) = refusing(dir.path(), false);
+        let control = Control::new(&config.server);
+        let (out, mut host) = mpsc::channel(8);
+        tokio::spawn(forward_editor_problems(
+            control.install_problem(),
+            control.update_problem(),
+            out,
+        ));
+        let running = tokio::spawn(run_controlled(config, Offline, Arc::clone(&control)));
+        // Tries at 0, 1, 3, 6 and 16 s: four have failed at 10 s.
+        puddle_test_kit::no_event_for(
+            "a report before the fifth failed try",
+            Duration::from_secs(10),
+            &mut host,
+        )
+        .await;
+        let Some(AgentMessage::EditorStatus {
+            kind: EditorProblemKind::Install,
+            problem: Some(reason),
+        }) = host.recv().await
+        else {
+            panic!("no install problem after the fifth failed try");
+        };
+        assert!(
+            reason.starts_with("the download keeps failing") && reason.contains("no route to host"),
+            "{reason}"
+        );
+        running.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_build_rolled_back_after_a_bad_start_is_told_and_one_that_stays_is_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, _) = refusing(dir.path(), true);
+        let builds = Path::new(&config.server.dir);
+        let (old, new) = ("a".repeat(40), "b".repeat(40));
+        for commit in [&old, &new] {
+            let build = builds.join(commit);
+            std::fs::create_dir_all(build.join("bin")).unwrap();
+            std::fs::write(build.join(".puddle-installed"), b"").unwrap();
+            std::fs::write(build.join(microsoft::PROGRAM), b"").unwrap();
+        }
+        std::fs::write(builds.join("current"), &new).unwrap();
+        std::fs::write(builds.join("previous"), &old).unwrap();
+        let control = Control::new(&config.server);
+        let (out, mut host) = mpsc::channel(8);
+        tokio::spawn(forward_editor_problems(
+            control.install_problem(),
+            control.update_problem(),
+            out,
+        ));
+        // A build that is not the one on trial is left alone and nothing is said.
+        settle_trial(&control, &old).await;
+        puddle_test_kit::no_event_for(
+            "a report for no rollback",
+            Duration::from_secs(1),
+            &mut host,
+        )
+        .await;
+        settle_trial(&control, &new).await;
+        assert_eq!(
+            host.recv().await,
+            Some(update_message(Some(
+                "the newer build exited before it started, so the previous one runs again"
+            )))
+        );
     }
 }

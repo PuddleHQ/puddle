@@ -46,7 +46,7 @@ pub mod ssh;
 pub mod testing;
 pub mod yamux;
 
-pub use control::{AgentMessage, StubDnsTrouble};
+pub use control::{AgentMessage, EditorProblemKind, StubDnsTrouble};
 
 /// The yamux crate both sides use, so callers name the same types.
 pub use tokio_yamux;

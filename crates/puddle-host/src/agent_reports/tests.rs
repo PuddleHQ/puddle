@@ -324,7 +324,7 @@ fn hostile_hg37_a_flood_of_editor_reports_changes_the_problem_a_bounded_number_o
             desk.report(&box_, editor(None));
         }
     }
-    assert!(changes(&sink) <= 2 * usize::from(MAX_EDITOR_CHANGES));
+    assert!(changes(&sink) <= 2 * usize::from(MAX_REASON_CHANGES));
     assert!(problems.list().len() <= 1);
 }
 
@@ -343,7 +343,7 @@ fn hostile_hg37_a_flood_of_editor_update_reports_is_bounded_apart_from_the_insta
             desk.report(&box_, editor_of(EditorProblemKind::Update, None));
         }
     }
-    assert!(changes(&sink) <= 2 * usize::from(MAX_EDITOR_CHANGES));
+    assert!(changes(&sink) <= 2 * usize::from(MAX_REASON_CHANGES));
     // The flood of one kind does not use up the other's changes.
     desk.report(&box_, editor(Some("the install is refused")));
     assert!(
@@ -352,4 +352,137 @@ fn hostile_hg37_a_flood_of_editor_update_reports_is_bounded_apart_from_the_insta
             .iter()
             .any(|p| p.key == "editor-install:box")
     );
+}
+
+fn tampered() -> AgentReport {
+    AgentReport::CaptureTampered {
+        table_missing: true,
+    }
+}
+
+fn unavailable(reason: Option<&str>) -> AgentReport {
+    AgentReport::CaptureUnavailable {
+        reason: reason.map(str::to_owned),
+    }
+}
+
+#[test]
+fn a_guest_that_deletes_the_capture_rules_is_one_problem_per_run_with_no_count_in_it() {
+    let (sink, problems, desk) = desk();
+    let box_ = name("box");
+    desk.begin(&box_);
+    let _ = sink.take();
+    desk.report(&box_, tampered());
+    assert_eq!(problems.list(), [capture_tamper_problem(&box_)]);
+    let raised = &problems.list()[0];
+    assert_eq!(raised.key, "capture-tamper:box");
+    assert_eq!(raised.workspace, Some(box_.clone()));
+    assert_eq!(
+        raised.title,
+        "Something in box deleted Puddle's capture rules; Puddle put them back"
+    );
+    assert!(raised.detail.contains("nft flush ruleset"));
+    assert_eq!(changes(&sink), 1);
+    for _ in 0..1000 {
+        desk.report(&box_, tampered());
+    }
+    assert_eq!(changes(&sink), 0, "a notice the user dismissed stays gone");
+    desk.end(&box_);
+    assert_eq!(problems.list(), Vec::<Problem>::new());
+    desk.begin(&box_);
+    desk.report(&box_, tampered());
+    desk.begin(&box_);
+    assert_eq!(
+        problems.list(),
+        Vec::<Problem>::new(),
+        "a start counts afresh"
+    );
+    desk.report(&box_, tampered());
+    assert_eq!(problems.list().len(), 1);
+}
+
+#[test]
+fn hostile_hg37_a_flood_of_capture_tamper_reports_changes_the_problem_once() {
+    let (sink, problems, desk) = desk();
+    let box_ = name("box");
+    desk.begin(&box_);
+    let _ = sink.take();
+    for _ in 0..100_000_u32 {
+        desk.report(&box_, tampered());
+    }
+    assert_eq!(changes(&sink), 1);
+    assert_eq!(problems.list().len(), 1);
+}
+
+#[test]
+fn capture_rules_that_cannot_be_installed_are_a_problem_naming_the_reason_until_they_are() {
+    let (_, problems, desk) = desk();
+    let box_ = name("box");
+    desk.begin(&box_);
+    desk.report(&box_, unavailable(Some("no nf_tables")));
+    assert_eq!(
+        problems.list(),
+        [capture_unavailable_problem(&box_, "no nf_tables")]
+    );
+    let raised = &problems.list()[0];
+    assert_eq!(raised.key, "capture-unavailable:box");
+    assert_eq!(
+        raised.title,
+        "Tools in box that ignore proxy settings are offline: no nf_tables"
+    );
+    desk.report(&box_, tampered());
+    assert_eq!(problems.list().len(), 2, "the two are separate problems");
+    desk.report(&box_, unavailable(None));
+    assert_eq!(problems.list(), [capture_tamper_problem(&box_)]);
+    desk.report(&box_, unavailable(None));
+    assert_eq!(
+        problems.list().len(),
+        1,
+        "a second recovery changes nothing"
+    );
+    desk.report(&box_, unavailable(Some("module missing")));
+    assert_eq!(problems.list().len(), 2, "a later outage raises it again");
+}
+
+#[test]
+fn the_capture_problems_end_with_a_stop_a_start_and_a_delete_and_late_reports_are_ignored() {
+    let (_, problems, desk) = desk();
+    let box_ = name("box");
+    for end in [
+        ReportDesk::end as fn(&ReportDesk, &WorkspaceName),
+        ReportDesk::begin,
+        ReportDesk::forget,
+    ] {
+        desk.begin(&box_);
+        desk.report(&box_, tampered());
+        desk.report(&box_, unavailable(Some("no")));
+        assert_eq!(problems.list().len(), 2);
+        end(&desk, &box_);
+        assert_eq!(problems.list(), Vec::<Problem>::new());
+    }
+    desk.forget(&box_);
+    desk.report(&box_, tampered());
+    desk.report(&box_, unavailable(Some("late")));
+    assert_eq!(problems.list(), Vec::<Problem>::new());
+    desk.begin(&box_);
+    desk.pause(&box_);
+    desk.report(&box_, tampered());
+    assert_eq!(problems.list(), Vec::<Problem>::new(), "a stop is coming");
+}
+
+#[test]
+fn hostile_hg37_a_flood_of_capture_unavailable_reports_changes_the_problem_a_bounded_number_of_times()
+ {
+    let (sink, problems, desk) = desk();
+    let box_ = name("box");
+    desk.begin(&box_);
+    let _ = sink.take();
+    for i in 0..100_000_u32 {
+        desk.report(&box_, unavailable(Some(&format!("cause {i}"))));
+        if i % 3 == 0 {
+            desk.report(&box_, unavailable(None));
+        }
+    }
+    assert!(changes(&sink) <= 2 * usize::from(MAX_REASON_CHANGES));
+    assert!(problems.list().len() <= 1);
 }

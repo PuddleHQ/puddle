@@ -7,10 +7,11 @@
 //! leaves nothing in Puddle's real one. The runtime logs at `debug`; when a boot fails and a keep
 //! folder is given, its `logs/` folder (runtime, kernel and exec logs) is copied there first.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use puddle_fs::private;
 use puddle_runtime::{GuestArch, RuntimeEnv, RuntimeLayout};
 
 use crate::diagnose::PROBE_EXIT_CODE;
@@ -26,6 +27,18 @@ const BOOT_SANDBOX: &str = "puddle-doctor-boot";
 
 /// Log level of the test VM's runtime (`runtime.log`): the VMM trace a failed boot needs.
 const BOOT_LOG_LEVEL: &str = "debug";
+
+/// The folder inside Puddle's data folder where failed test boots' logs are kept.
+const BOOT_LOGS_FOLDER: &str = "doctor-boot-logs";
+
+/// How many failed boots' logs stay in that folder; keeping one more removes the oldest.
+pub const KEPT_BOOT_LOGS: usize = 3;
+
+/// Where the failed test boots of the installation whose data folder is `data` keep their logs.
+#[must_use]
+pub fn boot_logs_dir(data: &Path) -> PathBuf {
+    data.join(BOOT_LOGS_FOLDER)
+}
 
 /// A statically linked x86-64 Linux program of 132 bytes, without libc or loader: one ELF header,
 /// one loadable segment, and the code `mov edi, 42; mov eax, 231 (exit_group); syscall`.
@@ -199,6 +212,7 @@ fn keep_boot_logs(home: &Path, dir: &Path) -> KeptLogs {
         }
     };
     let failed = copy_logs(entries, &from, &to);
+    prune_kept(dir, KEPT_BOOT_LOGS);
     KeptLogs::Kept {
         dir: folder,
         failed,
@@ -226,17 +240,42 @@ fn copy_logs(entries: std::fs::ReadDir, from: &Path, to: &Path) -> Vec<String> {
         .collect()
 }
 
+/// Deletes all but the newest `keep` kept-boot folders in `dir` (the name's timestamp orders
+/// them). Best effort: a folder that can't be removed stays and the next failed boot tries
+/// again, and anything in `dir` that isn't a kept boot is left alone.
+fn prune_kept(dir: &Path, keep: usize) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut kept: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with(&format!("{BOOT_SANDBOX}-"))
+                && e.file_type().is_ok_and(|t| t.is_dir())
+        })
+        .map(|e| e.path())
+        .collect();
+    kept.sort();
+    let old = kept.len().saturating_sub(keep);
+    for path in kept.into_iter().take(old) {
+        drop(std::fs::remove_dir_all(path));
+    }
+}
+
 /// Creates and returns a folder in `dir` named `name`, or `name-2`, `name-3`, ... when taken, so
-/// two boots kept in the same millisecond don't share one.
-fn new_folder(dir: &Path, name: &str) -> std::io::Result<std::path::PathBuf> {
-    std::fs::create_dir_all(dir)?;
+/// two boots kept in the same millisecond don't share one. Both `dir` and the folder are
+/// owner-only: a boot's logs name paths and machine details.
+fn new_folder(dir: &Path, name: &str) -> std::io::Result<PathBuf> {
+    private::create_dir(dir)?;
     for n in 1..=100 {
         let path = if n == 1 {
             dir.join(name)
         } else {
             dir.join(format!("{name}-{n}"))
         };
-        match std::fs::create_dir(&path) {
+        match private::create_new_dir(&path) {
             Ok(()) => return Ok(path),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(e) => return Err(e),
@@ -377,6 +416,88 @@ mod tests {
         }
     }
 
+    fn kept_dir(kept: &KeptLogs) -> &Path {
+        match kept {
+            KeptLogs::Kept { dir, .. } => dir,
+            KeptLogs::NotKept { detail } => Path::new(detail),
+        }
+    }
+
+    fn kept_names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn only_the_newest_three_kept_boots_stay() {
+        let keep = tempfile::tempdir().unwrap();
+        for stamp in [1005, 1001, 1004, 1002, 1003] {
+            std::fs::create_dir_all(keep.path().join(format!("puddle-doctor-boot-{stamp}/logs")))
+                .unwrap();
+        }
+        // A numbered variant of the same millisecond is newer than its base.
+        std::fs::create_dir(keep.path().join("puddle-doctor-boot-1005-2")).unwrap();
+        prune_kept(keep.path(), KEPT_BOOT_LOGS);
+        assert_eq!(
+            kept_names(keep.path()),
+            [
+                "puddle-doctor-boot-1004",
+                "puddle-doctor-boot-1005",
+                "puddle-doctor-boot-1005-2"
+            ]
+        );
+    }
+
+    #[test]
+    fn pruning_leaves_what_is_not_a_kept_boot_and_fewer_than_the_limit() {
+        let keep = tempfile::tempdir().unwrap();
+        std::fs::create_dir(keep.path().join("puddle-doctor-boot-1")).unwrap();
+        std::fs::create_dir(keep.path().join("notes")).unwrap();
+        std::fs::write(keep.path().join("puddle-doctor-boot-0"), b"a file").unwrap();
+        prune_kept(keep.path(), 3);
+        prune_kept(&keep.path().join("missing"), 3);
+        assert_eq!(
+            kept_names(keep.path()),
+            ["notes", "puddle-doctor-boot-0", "puddle-doctor-boot-1"]
+        );
+    }
+
+    #[test]
+    fn keeping_a_fourth_boot_removes_the_oldest() {
+        let home = tempfile::tempdir().unwrap();
+        let logs = home.path().join("sandboxes/puddle-doctor-boot/logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        std::fs::write(logs.join("runtime.log"), b"vmm").unwrap();
+        let keep = tempfile::tempdir().unwrap();
+        let kept: Vec<_> = (0..4)
+            .map(|_| keep_boot_logs(home.path(), keep.path()))
+            .collect();
+        let names = kept_names(keep.path());
+        assert_eq!(names.len(), KEPT_BOOT_LOGS, "{names:?}");
+        assert!(!kept_dir(&kept[0]).exists());
+        assert!(kept_dir(&kept[3]).join("logs/runtime.log").is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_keep_folders_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = tempfile::tempdir().unwrap();
+        let logs = home.path().join("sandboxes/puddle-doctor-boot/logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let keep = boot_logs_dir(data.path());
+        let dir = kept_dir(&keep_boot_logs(home.path(), &keep)).to_path_buf();
+        for folder in [&keep, &dir] {
+            let mode = std::fs::metadata(folder).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700, "{}", folder.display());
+        }
+    }
+
     #[test]
     fn a_boot_without_logs_says_msb_wrote_none() {
         let home = tempfile::tempdir().unwrap();
@@ -387,6 +508,12 @@ mod tests {
             "{kept:?}"
         );
         assert_eq!(std::fs::read_dir(keep.path()).unwrap().count(), 0);
+        // A boot that kept nothing has no folder, only the reason.
+        assert!(
+            kept_dir(&kept)
+                .to_string_lossy()
+                .contains("msb wrote no logs")
+        );
     }
 
     #[test]

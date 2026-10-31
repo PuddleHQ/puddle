@@ -15,7 +15,7 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use puddle_agent::config::Target;
 use puddle_agent::{Agent, Config};
@@ -197,24 +197,21 @@ async fn ping(conn: &mut BufReader<TcpStream>) {
 
 /// The `connection` audit records so far, after waiting up to 5 s for at least `count`.
 async fn connection_records(store: &Store, count: usize) -> Vec<Value> {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let records: Vec<Value> = store
-            .audit_lines(0, 10_000)
-            .unwrap()
-            .into_iter()
-            .map(|(_, line)| serde_json::from_str::<Value>(&line).unwrap())
-            .filter(|v| v["type"] == "connection")
-            .collect();
-        if records.len() >= count || Instant::now() >= deadline {
-            assert!(
-                records.len() >= count,
-                "{count} records expected: {records:?}"
-            );
-            return records;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    puddle_test_kit::eventually(
+        &format!("{count} connection audit records"),
+        Duration::from_secs(5),
+        || {
+            let records: Vec<Value> = store
+                .audit_lines(0, 10_000)
+                .unwrap()
+                .into_iter()
+                .map(|(_, line)| serde_json::from_str::<Value>(&line).unwrap())
+                .filter(|v| v["type"] == "connection")
+                .collect();
+            (records.len() >= count).then_some(records)
+        },
+    )
+    .await
 }
 
 #[tokio::test]

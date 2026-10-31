@@ -41,6 +41,9 @@ pub struct Scenario {
     /// Rules, created first and in this order.
     #[serde(default)]
     pub rules: Vec<RuleSeed>,
+    /// Rules on method and path, created after the rules and in this order.
+    #[serde(default)]
+    pub request_rules: Vec<RequestRuleSeed>,
     /// Requests workspaces made, decided in this order (a matching rule decides, else a pending
     /// row opens), each leaving its `connection` audit record.
     #[serde(default)]
@@ -64,6 +67,10 @@ pub struct Scenario {
     /// The repository lists the fake Git hosts answer with, one per credential of an identity.
     #[serde(default)]
     pub repo_lists: Vec<RepoListSeed>,
+    /// What the fake Git hosts say about each credential's account (name, address, organisations);
+    /// a credential left out answers that the host could not be reached.
+    #[serde(default)]
+    pub profiles: Vec<ProfileSeed>,
     /// How long the fake workspace service pauses between the steps of an operation (create,
     /// start, ...), in ms. Zero (the default) runs them back to back; tests that need to look
     /// at the busy state use the `hold_workspaces` step instead.
@@ -132,6 +139,25 @@ pub struct RuleSeed {
     /// Expires this long after it was created (ms); left out is permanent.
     #[serde(default)]
     pub expires_in_ms: Option<u64>,
+}
+
+/// A rule on method and path to create.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RequestRuleSeed {
+    /// `host` or `*.suffix.example.com`.
+    pub host: String,
+    /// The methods it refuses; none for every method.
+    #[serde(default)]
+    pub methods: Vec<String>,
+    /// The path pattern, such as `/repos/**`.
+    pub path: String,
+    /// The one workspace it applies to; left out is every workspace.
+    #[serde(default)]
+    pub workspace: Option<String>,
+    /// Created this long before now (ms).
+    #[serde(default)]
+    pub ago_ms: u64,
 }
 
 /// Allow or deny.
@@ -380,6 +406,32 @@ pub struct RepoListSeed {
     pub repos: Vec<RepoItemSeed>,
 }
 
+/// What a Git host says about one credential's account.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileSeed {
+    /// The credential it answers for.
+    pub source: CredentialSource,
+    /// The account name on the host.
+    #[serde(default)]
+    pub account: Option<String>,
+    /// The display name.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// The address commits use.
+    #[serde(default)]
+    pub email: Option<String>,
+    /// The organisations the account belongs to.
+    #[serde(default)]
+    pub organisations: Vec<String>,
+    /// What is missing or limited.
+    #[serde(default)]
+    pub notes: Vec<RepoNoteSeed>,
+    /// Why the profile could not be read.
+    #[serde(default)]
+    pub problem: Option<RepoProblemSeed>,
+}
+
 /// Why a list could not be read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -542,10 +594,14 @@ pub struct ConnectionSeed {
     /// What happened.
     pub decision: DecisionSeed,
     /// Why, as the audit log's `reason` code: `rule` (default for allow and deny), `no_rule`
-    /// (default for pending), `puddle_endpoint`, `ssh_unsupported` or `local_address` (default
-    /// for blocked).
+    /// (default for pending), `request_rule`, `puddle_endpoint`, `ssh_unsupported` or
+    /// `local_address` (default for blocked).
     #[serde(default)]
     pub reason: Option<String>,
+    /// The request the proxy read, and the rule on method and path that refused it (reason
+    /// `request_rule`).
+    #[serde(default)]
+    pub request_line: Option<RequestLineSeed>,
     /// Bytes from the workspace.
     #[serde(default)]
     pub bytes_up: u64,
@@ -555,6 +611,19 @@ pub struct ConnectionSeed {
     /// Recorded this long before now (ms).
     #[serde(default)]
     pub ago_ms: u64,
+}
+
+/// A request the proxy read in clear, and the rule on method and path that refused it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RequestLineSeed {
+    /// `GET`, `DELETE`, ...
+    pub method: String,
+    /// The request target; only its path is kept.
+    pub path: String,
+    /// The id of the rule on method and path that refused it, when one did.
+    #[serde(default)]
+    pub rule: Option<i64>,
 }
 
 /// The audit log's connection decisions.

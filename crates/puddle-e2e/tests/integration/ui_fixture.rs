@@ -165,6 +165,7 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
         ("unmanaged-checkouts", 0, 0),
         ("start-folder-missing", 0, 0),
         ("environment", 0, 1),
+        ("request-rules", 0, 1),
     ];
     for (name, pending, rules_min) in counts {
         let run = start(name).await;
@@ -194,7 +195,8 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
             "first-run",
             "unmanaged-checkouts",
             "start-folder-missing",
-            "environment"
+            "environment",
+            "request-rules"
         ]
     );
 }
@@ -426,13 +428,7 @@ async fn a_dropped_file_makes_requests_arrive_in_the_old_serve_ui_format() {
     )
     .unwrap();
     std::fs::rename(dir.path().join("a.tmp"), &file).unwrap();
-    tokio::time::timeout(STEP, async {
-        while file.exists() {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("the file was taken");
+    puddle_test_kit::eventually("the drop file was taken", STEP, || !file.exists()).await;
     assert_eq!(run.state().await["pending"], 4);
     let rows = run.get("/api/pending").await.json();
     let attempts: Vec<i64> = rows["requests"]
@@ -1086,6 +1082,54 @@ async fn the_fixture_answers_the_repository_endpoints_with_nothing_listed() {
 }
 
 #[tokio::test]
+async fn seeded_profiles_answer_by_credential_and_keep_notes_and_problems() {
+    let run = start("git-identities").await;
+    let ask = |source: Value| {
+        let run = &run;
+        async move {
+            let answer = run
+                .api(
+                    "POST",
+                    "/api/credentials/profile",
+                    Some(&json!({ "source": source })),
+                )
+                .await;
+            assert_eq!(answer.status, 200, "{}", answer.body);
+            answer.json()
+        }
+    };
+    let demo = ask(json!({"kind": "gh", "host": "github.com", "account": "tijs-demo"})).await;
+    assert_eq!(demo["name"], "Tijs Demo");
+    assert_eq!(demo["email"], "4242+tijs-demo@users.noreply.github.com");
+    assert_eq!(demo["organisations"], json!(["demo-org", "demo-labs"]));
+    assert_eq!(demo["notes"][0]["code"], "sso_partial");
+    assert_eq!(demo["problem"], Value::Null);
+    let old = ask(json!({"kind": "gh", "host": "github.com", "account": "tijs-old"})).await;
+    assert_eq!(old["problem"]["code"], "token_rejected");
+    assert_eq!(old["problem"]["needs_sign_in"], true);
+    let azure = ask(json!({"kind": "git_credential", "host": "dev.azure.com", "path": "contoso", "username": null})).await;
+    assert_eq!(azure["organisations"], json!(["contoso"]));
+    assert_eq!(azure["notes"][0]["code"], "author_unavailable");
+}
+
+#[tokio::test]
+async fn a_profile_for_a_credential_that_cannot_be_named_fails_to_start() {
+    let scenario: Scenario = serde_json::from_value(json!({
+        "profiles": [{"source": {"kind": "gh", "host": "not a host", "account": "x"}}],
+    }))
+    .unwrap();
+    let err = Fixture::start(FixtureOptions {
+        port: 0,
+        connection_file: None,
+        scenario,
+    })
+    .await
+    .err()
+    .unwrap();
+    assert!(err.contains("host"), "{err}");
+}
+
+#[tokio::test]
 async fn the_credentials_service_can_report_accounts_from_every_listing_and_listings_that_could_not_run()
  {
     let scenario: Scenario = serde_json::from_value(json!({
@@ -1451,6 +1495,67 @@ async fn the_environment_scenario_seeds_variables_secrets_shell_init_and_listeni
         .map(|p| p["guest_port"].as_u64().unwrap())
         .collect();
     assert_eq!(listening, [3000, 5432]);
+}
+
+#[tokio::test]
+async fn the_request_rules_scenario_seeds_rules_on_method_and_path_and_a_request_one_refused() {
+    let run = start("request-rules").await;
+
+    let all = run.get("/api/request-rules").await.json();
+    let rules = all["rules"].as_array().unwrap();
+    assert_eq!(rules.len(), 2, "{all}");
+    assert_eq!(rules[0]["host"], "api.example.com");
+    assert_eq!(rules[0]["methods"], json!(["DELETE"]));
+    assert_eq!(rules[0]["path"], "/repos/**");
+    assert_eq!(rules[0]["workspace"], Value::Null);
+    assert_eq!(rules[1]["workspace"], "docs-site");
+    assert_eq!(rules[1]["methods"], json!(["POST", "PUT"]));
+
+    let own = run
+        .get("/api/request-rules?workspace=web-shop")
+        .await
+        .json();
+    assert_eq!(own["rules"].as_array().unwrap().len(), 1, "{own}");
+
+    let audit = run.get("/api/audit").await.json();
+    let refused = audit["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| &e["record"])
+        .find(|r| r["reason"] == "request_rule")
+        .unwrap_or_else(|| panic!("no refused request in {audit}"));
+    assert_eq!(refused["decision"], "deny");
+    assert_eq!(refused["method"], "DELETE");
+    assert_eq!(refused["path"], "/repos/acme/web-shop");
+    assert_eq!(refused["request_rule"], 1);
+}
+
+#[tokio::test]
+async fn a_scenario_with_a_bad_rule_on_method_and_path_fails_to_start_and_names_it() {
+    for (seed, word) in [
+        (
+            json!({"host": "a.example", "methods": ["GE T"], "path": "/"}),
+            "GE T",
+        ),
+        (json!({"host": "a.example", "path": "/a*"}), "whole segment"),
+        (json!({"host": "", "path": "/"}), "names a host"),
+        (
+            json!({"host": "a.example", "path": "/", "workspace": "Bad Name"}),
+            "Bad Name",
+        ),
+    ] {
+        let scenario: Scenario = serde_json::from_value(json!({"request_rules": [seed]})).unwrap();
+        let err = Fixture::start(FixtureOptions {
+            port: 0,
+            connection_file: None,
+            scenario,
+        })
+        .await
+        .err()
+        .unwrap();
+        assert!(err.contains(word), "{word}: {err}");
+    }
 }
 
 #[tokio::test]

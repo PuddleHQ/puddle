@@ -2556,7 +2556,9 @@ async fn a_browser_attach_gives_the_window_the_front_the_settings_and_a_way_to_t
     );
     // code-server asks for a password: the window reads it when it signs in, from the guest's file.
     // The agent may say hello after the window asked: the sign-in waits for it.
-    let login = target.login.expect("code-server asks for a password");
+    let Some(puddle_api::EditorSignIn::Form(login)) = target.login else {
+        panic!("code-server signs in with its login form");
+    };
     assert_eq!(login.password().await.unwrap(), "0".repeat(64));
     // An agent with no password yet, and a workspace that has stopped, are said in words.
     std::fs::remove_file(&editor.password_file).unwrap();
@@ -2578,7 +2580,11 @@ async fn a_window_that_signs_in_before_the_agents_hello_waits_for_it_and_gets_th
     create(&api, &mut events, "acme").await;
     // The workspace reports running and no agent has said hello: the window signs in now.
     let target = browser_target(&rig, &api, "acme").await;
-    let login = target.login.expect("code-server asks for a password");
+    let login = target
+        .login
+        .expect("code-server asks for a password")
+        .reader()
+        .clone();
     let asked = tokio::spawn(async move { login.password().await });
     // An absence window: nothing is there to signal that the sign-in has not given up.
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -2669,7 +2675,7 @@ async fn a_browser_attach_with_an_unreadable_workspace_settings_file_opens_no_wi
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_browser_attach_to_microsoft_s_server_has_no_password_to_read() {
+async fn a_browser_attach_to_microsoft_s_server_gives_the_window_its_connection_token() {
     let rig = Rig::new();
     let covering = puddle_settings::MICROSOFT_TERMS_VERSION;
     write_global_settings(&rig, &microsoft_chosen(covering, false));
@@ -2679,10 +2685,12 @@ async fn a_browser_attach_to_microsoft_s_server_has_no_password_to_read() {
     create(&api, &mut events, "acme").await;
     let _editor = editor_stand_in(&rig, "acme").await;
     let target = browser_target(&rig, &api, "acme").await;
-    assert!(
-        target.login.is_none(),
-        "the front signs Microsoft's server in with its key cookie"
-    );
+    // The server's connection token is the guest's password file: the window carries it as a
+    // cookie, and it is read only when the window asks.
+    let Some(puddle_api::EditorSignIn::ConnectionToken(token)) = target.login else {
+        panic!("Microsoft's server signs in with its connection token");
+    };
+    assert_eq!(token.password().await.unwrap(), "0".repeat(64));
     host.shutdown().await;
 }
 

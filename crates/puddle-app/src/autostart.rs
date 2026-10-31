@@ -129,7 +129,7 @@ impl LoginEntry for Unsupported {
 #[cfg(windows)]
 #[must_use]
 pub fn system() -> std::sync::Arc<dyn LoginEntry> {
-    std::sync::Arc::new(run_key::RunKey::user())
+    std::sync::Arc::new(RunKey::user())
 }
 
 /// The entry of the system Puddle runs on.
@@ -221,6 +221,22 @@ mod run_key {
                 Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
                 Err(err) => Err(Self::failed("removed")(err)),
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn the_real_run_key_is_named_where_windows_reads_it() {
+            // Only the name is checked: nothing here reads or writes the user's own list.
+            let real = RunKey::user();
+            assert_eq!(
+                real.subkey,
+                r"Software\Microsoft\Windows\CurrentVersion\Run"
+            );
+            assert_eq!(real.name, "Puddle");
         }
     }
 }
@@ -413,17 +429,6 @@ mod tests {
                 other.command().unwrap(),
                 Some("\"C:\\other.exe\"".to_owned())
             );
-        }
-
-        #[test]
-        fn the_real_run_key_is_named_where_windows_reads_it() {
-            // Only the name is checked: nothing here reads or writes the user's own list.
-            let real = RunKey::user();
-            assert_eq!(
-                real.subkey,
-                r"Software\Microsoft\Windows\CurrentVersion\Run"
-            );
-            assert_eq!(real.name, "Puddle");
         }
     }
 }

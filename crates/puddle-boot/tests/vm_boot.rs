@@ -135,6 +135,7 @@ async fn check_image(image: &str, tag: &str) {
     }
 
     check_boot(&sb, &config, "create").await;
+    check_entrypoint(&sb, &config).await;
     sb.stop().await.unwrap();
     // After a restart the guest is back at default sysctls: the hook redoes them, and
     // skips the unchanged CA step.
@@ -208,7 +209,8 @@ kill -9 ${agent:?no puddle-agent process}"#;
     .await;
 }
 
-/// `docker:dind`: the ENTRYPOINT is chained and dockerd runs with the proxy env. Images without
+/// `docker:dind`: the ENTRYPOINT is chained and dockerd runs with the proxy env, after the first boot and
+/// after a restart. Images without
 /// an ENTRYPOINT chain nothing.
 async fn check_entrypoint<S: Sandbox>(sb: &GatedSandbox<S>, config: &puddle_compute::ImageConfig) {
     let (code, _) = sh(sb, "test -f /run/puddle/entrypoint.pid").await;

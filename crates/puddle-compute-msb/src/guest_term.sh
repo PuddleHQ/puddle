@@ -14,7 +14,10 @@
 grace=${1:-10}
 self=$$
 
-if sleep 0.1 2>/dev/null; then ticks=$((grace * 10)) tick=0.1; else ticks=$grace tick=1; fi
+# A wall-clock deadline, not a count of ticks: one look at every process takes a fork per process,
+# so a tick lasts well over its sleep in a busy guest.
+end=$(($(date +%s) + grace))
+if sleep 0.1 2>/dev/null; then tick=0.1; else tick=1; fi
 
 # The stat fields after the command name: state, ppid. `cat`, not `read`: dash reads procfs a
 # byte at a time and sees a truncated file.
@@ -49,7 +52,6 @@ targets() {
 }
 
 signalled=" "
-i=0
 while :; do
     left=$(targets)
     [ -z "$left" ] && exit 0
@@ -58,8 +60,7 @@ while :; do
         kill -s TERM -- "$p" 2>/dev/null
         signalled="$signalled$p "
     done
-    [ "$i" -ge "$ticks" ] && break
-    i=$((i + 1))
+    [ "$(date +%s)" -ge "$end" ] && break
     sleep "$tick"
 done
 for p in $left; do

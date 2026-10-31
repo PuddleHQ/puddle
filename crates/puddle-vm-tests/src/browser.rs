@@ -269,6 +269,8 @@ impl BrowserCookie {
 pub struct BrowserClient {
     node: Node,
     modules: PathBuf,
+    /// How long node gets beyond a step's own budget ([`NODE_GRACE`]; shorter in this file's tests).
+    grace: Duration,
 }
 
 impl BrowserClient {
@@ -303,7 +305,11 @@ impl BrowserClient {
         if !has_playwright(&modules) {
             return Err(HarnessError::BrowserModules { dir: modules });
         }
-        Ok(Self { node, modules })
+        Ok(Self {
+            node,
+            modules,
+            grace: NODE_GRACE,
+        })
     }
 
     /// Opens the page in a browser of its own, waits for it to be ready, reads its result and
@@ -352,6 +358,7 @@ impl BrowserClient {
             });
         };
         let mut session = BrowserSession {
+            grace: self.grace,
             child,
             stdin,
             stdout,
@@ -378,6 +385,7 @@ pub struct PageId(u32);
 /// browser; [`BrowserSession::quit`] closes it cleanly.
 #[derive(Debug)]
 pub struct BrowserSession {
+    grace: Duration,
     child: tokio::process::Child,
     stdin: tokio::process::ChildStdin,
     stdout: Lines<BufReader<tokio::process::ChildStdout>>,
@@ -462,11 +470,11 @@ impl BrowserSession {
     pub async fn quit(mut self) -> Result<(), HarnessError> {
         let _ = self.stdin.write_all(b"{\"op\":\"quit\"}\n").await;
         let _ = self.stdin.flush().await;
-        match tokio::time::timeout(NODE_GRACE, self.child.wait()).await {
+        match tokio::time::timeout(self.grace, self.child.wait()).await {
             Ok(_) => Ok(()),
             Err(_) => Err(HarnessError::Timeout {
                 what: "closing the browser",
-                limit: NODE_GRACE,
+                limit: self.grace,
             }),
         }
     }
@@ -483,7 +491,7 @@ impl BrowserSession {
         };
         self.stdin.write_all(line.as_bytes()).await.map_err(gone)?;
         self.stdin.flush().await.map_err(gone)?;
-        let limit = budget + NODE_GRACE;
+        let limit = budget + self.grace;
         let answer = tokio::time::timeout(limit, self.stdout.next_line())
             .await
             .map_err(|_| HarnessError::Timeout {
@@ -662,6 +670,7 @@ mod tests {
         let err = BrowserClient {
             node: Node::new("/nonexistent/node-probe"),
             modules: PathBuf::from("/nonexistent"),
+            grace: NODE_GRACE,
         }
         .session()
         .await
@@ -671,7 +680,8 @@ mod tests {
 
     /// A `playwright-core` that drives no browser. Its page answers a wait with the request's
     /// `result` expression and what it knows (the URL it went to, the cookies of its context, the
-    /// keys pressed); `ready` of `never` times out; it logs every `goto`. `launch` fails when the
+    /// keys pressed); `ready` of `never` times out; it logs every `goto`, and a `goto` to a URL
+    /// ending in `/hang` never ends. A cookie named `exit` ends node. `launch` fails when the
     /// variable `STUB_NO_LAUNCH` is set.
     fn stub_modules() -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -686,12 +696,12 @@ mod tests {
                newContext: async (o) => {
                  const jar = [];
                  return {
-                 addCookies: async (c) => { jar.push(...c); },
+                 addCookies: async (c) => { if (c.some((k) => k.name === 'exit')) process.exit(3); jar.push(...c); },
                  newPage: async () => {
                    const h = {}; let url = null; const keys = [];
                    return {
                      on: (e, f) => { h[e] = f; },
-                     goto: async (u) => { url = u; h.console({ type: () => 'log', text: () => 'at ' + u }); },
+                     goto: async (u) => { if (u.endsWith('/hang')) await new Promise(() => {}); url = u; h.console({ type: () => 'log', text: () => 'at ' + u }); },
                      waitForFunction: async (e) => { if (e === 'never') { h.pageerror(new Error('never ready')); throw new Error('timed out'); } },
                      evaluate: async (e) => ({ evaluated: e, url, cookies: jar.map(c => c.name), keys, strict: o.ignoreHTTPSErrors }),
                      keyboard: { press: async (k) => { keys.push(k); } },
@@ -834,6 +844,56 @@ mod tests {
             .expect_err("dead driver");
         let text = err.to_string();
         assert!(text.contains("Cannot find module"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn a_step_that_hangs_and_a_browser_that_does_not_close_are_given_up_on() {
+        let modules = stub_modules();
+        let mut client = stub_client(&modules);
+        client.grace = Duration::from_millis(500);
+        let mut session = client.session().await.expect("session");
+        let err = session
+            .open(
+                &PageRequest::new("http://x.localhost:9/hang", "ready")
+                    .budget(Duration::from_millis(1)),
+            )
+            .await
+            .expect_err("hung");
+        assert!(
+            matches!(
+                err,
+                HarnessError::Timeout {
+                    what: "browser client",
+                    ..
+                }
+            ),
+            "{err}"
+        );
+        // The driver is still in the hung step, so it never reads the quit.
+        let err = session.quit().await.expect_err("stuck");
+        assert!(
+            matches!(
+                err,
+                HarnessError::Timeout {
+                    what: "closing the browser",
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_driver_that_ends_mid_session_says_so_and_is_gone_for_the_next_step() {
+        let modules = stub_modules();
+        let mut session = stub_client(&modules).session().await.expect("session");
+        let err = session
+            .add_cookies(&[BrowserCookie::host_only("exit", "v", "x.localhost")])
+            .await
+            .expect_err("node ended");
+        assert!(err.to_string().contains("ended without an answer"), "{err}");
+        let err = session.press(PageId(0), "a").await.expect_err("no driver");
+        assert!(err.to_string().contains("the driver is gone"), "{err}");
     }
 
     #[test]

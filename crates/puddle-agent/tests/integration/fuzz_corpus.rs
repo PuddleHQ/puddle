@@ -10,7 +10,10 @@
 use std::path::Path;
 
 use puddle_agent::capture::wire::{self, QueryName, Reject};
-use puddle_agent::fuzzing;
+
+// The same checks the cargo-fuzz target runs.
+#[path = "../../../../fuzz/checks/dns_message.rs"]
+mod fuzzing;
 
 fn corpus() -> Vec<(String, Vec<u8>)> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/corpus/dns_message");

@@ -15,7 +15,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-puddle-agent = { path = "../crates/puddle-agent", features = ["fuzzing"] }
+puddle-agent = { path = "../crates/puddle-agent" }
 puddle-agent-proto = { path = "../crates/puddle-agent-proto", features = ["fuzzing"] }
 puddle-proxy = { path = "../crates/puddle-proxy", features = ["fuzzing"] }
 

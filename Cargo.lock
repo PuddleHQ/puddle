@@ -5987,7 +5987,6 @@ dependencies = [
  "libc",
  "nix 0.31.3",
  "proptest",
- "puddle-agent",
  "puddle-agent-proto",
  "puddle-fd-limit",
  "puddle-front",

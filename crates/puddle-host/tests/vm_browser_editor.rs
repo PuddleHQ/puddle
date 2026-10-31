@@ -30,14 +30,18 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
-use puddle_api::{BrowserTarget, DesktopTarget, LaunchError, Launcher, WorkspaceRecord};
+use puddle_api::{
+    BrowserTarget, CONNECTION_TOKEN_COOKIE, DesktopTarget, EditorSignIn, LaunchError, Launcher,
+    WorkspaceRecord,
+};
 use puddle_compute_msb::MsbRuntime;
+use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
 use puddle_types::WorkspaceName;
 use puddle_vm_tests::{BrowserClient, BrowserCookie, BrowserSession, PageId, PageRequest};
 use serde_json::{Value, json};
 use support::{Api, ended, hermetic_options};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use vm_support::{VmHost, guest, start_vm_host_config};
+use vm_support::{VmHost, guest, guest_within, start_vm_host_config};
 
 /// The cookie code-server's login sets.
 const SESSION_COOKIE: &str = "code-server-session";
@@ -130,39 +134,45 @@ impl ShellStandIn {
         }
     }
 
+    /// Puts the cookie that signs the window in into the browser, as the shell does before the
+    /// window navigates.
     async fn session(
         &self,
         workspace: &WorkspaceRecord,
         target: &BrowserTarget,
     ) -> Result<(), LaunchError> {
-        let Some(login) = &target.login else {
-            return Ok(());
-        };
-        let password = login.password().await?;
         let name = workspace.name.to_string();
-        let kept = self.sessions.lock().unwrap().get(&name).cloned();
-        let cookie = match kept {
-            Some((for_password, cookie)) if for_password == password => cookie,
-            _ => {
-                let cookie = sign_in(target.front, &name, &password)
-                    .await
-                    .map_err(LaunchError::new)?;
-                *self.sign_ins.lock().unwrap() += 1;
-                self.sessions
-                    .lock()
-                    .unwrap()
-                    .insert(name.clone(), (password, cookie.clone()));
-                cookie
+        let domain = format!("{name}.localhost");
+        let cookie = match &target.login {
+            None => return Ok(()),
+            Some(EditorSignIn::ConnectionToken(token)) => {
+                BrowserCookie::host_only(CONNECTION_TOKEN_COOKIE, token.password().await?, domain)
+                    .script_reads()
+            }
+            Some(EditorSignIn::Form(login)) => {
+                let password = login.password().await?;
+                let kept = self.sessions.lock().unwrap().get(&name).cloned();
+                let session = match kept {
+                    Some((for_password, session)) if for_password == password => session,
+                    _ => {
+                        let session = sign_in(target.front, &name, &password)
+                            .await
+                            .map_err(LaunchError::new)?;
+                        *self.sign_ins.lock().unwrap() += 1;
+                        self.sessions
+                            .lock()
+                            .unwrap()
+                            .insert(name.clone(), (password, session.clone()));
+                        session
+                    }
+                };
+                BrowserCookie::host_only(SESSION_COOKIE, session, domain)
             }
         };
         self.browser
             .lock()
             .await
-            .add_cookies(&[BrowserCookie::host_only(
-                SESSION_COOKIE,
-                cookie,
-                format!("{name}.localhost"),
-            )])
+            .add_cookies(&[cookie])
             .await
             .map_err(|e| LaunchError::new(e.to_string()))
     }
@@ -559,5 +569,328 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
         .map(|shell| shell.browser.into_inner());
     if let Some(browser) = browser {
         browser.quit().await.expect("the browser closed");
+    }
+}
+
+/// A stand-in for a build of Microsoft's VS Code server: what the host, the front and the agent
+/// see of one, without a download from Microsoft (the VM tier has no internet). Started by the
+/// agent as `bin/code-server` with the real server's arguments. Like the real server it refuses
+/// every request but `/version` without the connection token (`?tkn=` or the cookie `vscode-tkn`:
+/// microsoft/vscode `src/vs/server/node/serverConnectionToken.ts`); its page reads the token and
+/// the secret-key path from its cookies as the workbench does (`web.main.ts`, `workbench.ts`),
+/// mints the key at that path and keeps a socket open as a window does.
+const STAND_IN_SERVER: &str = r#"// A stand-in for a build of Microsoft's VS Code server: what the host, the front and the agent
+// see of one. Started as `bin/code-server` with the real server's arguments. Like the real server
+// it refuses every request but `/version` without the connection token (`?tkn=` or the cookie
+// `vscode-tkn`, microsoft/vscode `src/vs/server/node/serverConnectionToken.ts`); its page reads
+// the token and the secret-key path from its cookies as the workbench does, mints the key and
+// keeps a socket open as a window does.
+const http = require("node:http");
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const arg = (name) => process.argv[process.argv.indexOf(name) + 1];
+const build = path.basename(__dirname);
+const token = fs.readFileSync(arg("--connection-token-file"), "utf8").trim();
+const cookie = (header, name) =>
+  (header || "").split(/;\s*/).find((c) => c.startsWith(`${name}=`))?.slice(name.length + 1);
+const allowed = (req) => {
+  const url = new URL(req.url, "http://x");
+  return url.searchParams.get("tkn") === token || cookie(req.headers.cookie, "vscode-tkn") === token;
+};
+
+const page = `<!doctype html><title>stand-in</title><script>
+const cookie = (n) => document.cookie.split('; ').find((c) => c.startsWith(n + '='))?.slice(n.length + 1);
+(async () => {
+  const keyPath = cookie('vscode-secret-key-path');
+  const answer = await fetch(keyPath, { method: 'POST' });
+  const key = [...new Uint8Array(await answer.arrayBuffer())].map((b) => b.toString(16).padStart(2, '0')).join('');
+  const socket = new WebSocket('ws://' + location.host + '/socket');
+  socket.onopen = () => { window.state = { build: ${JSON.stringify(build)}, token: !!cookie('vscode-tkn'), keyPath, key }; };
+})();
+</script>`;
+
+const server = http.createServer((req, res) => {
+  if (req.url === "/version") return res.end(build);
+  if (!allowed(req)) {
+    res.writeHead(403, { "content-type": "text/plain" });
+    return res.end("Forbidden.");
+  }
+  res.writeHead(200, { "content-type": "text/html" });
+  res.end(page);
+});
+server.on("upgrade", (req, socket) => {
+  if (!allowed(req)) return socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+  const accept = crypto
+    .createHash("sha1")
+    .update(req.headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+    .digest("base64");
+  socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+  // A close frame (opcode 8) is answered with one and the socket ends, as a WebSocket server does.
+  socket.on("data", (frame) => { if ((frame[0] & 0x0f) === 8) socket.end(Buffer.from([0x88, 0x00])); });
+  socket.on("end", () => socket.destroy());
+  socket.on("error", () => {});
+});
+server.listen(Number(arg("--port")), arg("--host"));"#;
+
+/// Puts a complete stand-in build `$1` ([`STAND_IN_SERVER`], written to `stand-in.js` beside this
+/// script first)
+/// in the workspace's builds folder `$2` and names it with the pointer `$3` (`current` for the
+/// build to start, `staged` for the one to switch to). A build no pointer names is removed by the
+/// agent once a build has run, so each is put there when it is named.
+const INSTALL_STAND_IN: &str = r#"
+set -e
+c=$1; builds=$2; pointer=$3
+mkdir -p "$builds/$c/bin"
+cp "$(dirname "$0")/stand-in.js" "$builds/$c/server.js"
+printf '#!/bin/sh\nexec /puddle/code-server/lib/node "$(dirname "$0")/../server.js" "$@"\n' >"$builds/$c/bin/code-server"
+chmod 755 "$builds/$c/bin/code-server"
+touch "$builds/$c/.puddle-installed"
+chmod -R a+rX "$builds"
+printf %s "$c" >"$builds/$pointer"
+"#;
+
+/// Two builds' names (40 hex digits, like a commit).
+const BUILD_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const BUILD_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+/// The stand-in page's state once it minted its key and its socket is open.
+const STAND_IN_READY: &str = "!!window.state";
+const STAND_IN_STATE: &str = "window.state";
+
+/// Waits until the guest's editor server says it is `build`; a limit on a hang only.
+async fn serving(runtime: &MsbRuntime, sandbox: &WorkspaceName, build: &str) {
+    let script = format!(
+        "for i in $(seq 1 120); do [ \"$(curl -s --max-time 2 http://127.0.0.1:41337/version)\" = {build} ] && exit 0; sleep 1; done; \
+         echo \"not serving {build}:\"; curl -s --max-time 2 http://127.0.0.1:41337/version; tail -n 30 /run/puddle/agent.log; exit 1"
+    );
+    // Two minutes of polling, inside a longer limit, so a miss prints the agent's log.
+    guest_within(runtime, sandbox, &script, Duration::from_secs(240)).await;
+}
+
+/// What the front answers for `path` on `workspace`'s origin to a client with no cookie.
+async fn without_a_cookie(front: SocketAddr, workspace: &str, path: &str) -> String {
+    let mut stream = tokio::net::TcpStream::connect(front).await.unwrap();
+    let request = format!(
+        "GET {path} HTTP/1.1\r\nHost: {workspace}.localhost:{}\r\nconnection: close\r\n\r\n",
+        front.port()
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut answer = Vec::new();
+    tokio::time::timeout(Duration::from_secs(30), stream.read_to_end(&mut answer))
+        .await
+        .expect("the front answered")
+        .unwrap();
+    let answer = String::from_utf8_lossy(&answer).into_owned();
+    let status = answer.lines().next().unwrap_or_default().to_owned();
+    let body = answer
+        .split("\r\n\r\n")
+        .nth(1)
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    format!("{status} {body}")
+}
+
+/// K tier, Microsoft's server (a stand-in build, [`STAND_IN_SERVER`]). The window opens with the
+/// server's connection token in its cookie, which the server asks of every request (a client
+/// without it gets 403), and gets the secret-storage key from the front. While the window is open
+/// the front counts it and a staged build is not switched to; once it closes the host's ask
+/// switches the server to it, and the window opened again runs on the new build with the same
+/// key, so stored secrets survive the reopen and the update.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
+async fn vm_browser_microsoft_s_server_opens_with_its_token_and_switches_builds_only_with_no_window_open()
+ {
+    let release = std::path::PathBuf::from(std::env::var_os("PUDDLE_CODE_SERVER_DIR").expect(
+        "PUDDLE_CODE_SERVER_DIR: the unpacked code-server release (ci/fetch-code-server.sh), whose node runs the stand-in",
+    ));
+    let shell = ShellStandIn::new().await;
+    let mut options = hermetic_options();
+    options.launcher = shell.clone();
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host_config("wms", options, |config| {
+        // Microsoft's server chosen, with the consent of the terms the popup shows today.
+        let dir = config.paths.settings();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("global.json"),
+            json!({
+                "schema_version": 2,
+                "vscode_server": {"server": "microsoft", "telemetry": false},
+                "consents": {"vscode_server": {"state": "granted", "at": 1, "terms_version": puddle_settings::MICROSOFT_TERMS_VERSION}},
+            })
+            .to_string(),
+        )
+        .unwrap();
+        config.guest.code_server = Some(release);
+    })
+    .await;
+    let name = format!("{}-wms", settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    // The stand-ins are the only builds: the user's own rule refuses Microsoft's update service and
+    // download host, which System managed would allow, so the agent neither installs nor stages a
+    // real build beside them (a rule the user made decides before a rule set's allow).
+    for site in [
+        "update.code.visualstudio.com",
+        "vscode.download.prss.microsoft.com",
+    ] {
+        host.store()
+            .add_rule(&NewRule {
+                scope: Scope::Workspace(sandbox.clone()),
+                pattern: Pattern::parse(site).unwrap(),
+                effect: Effect::Deny,
+                expires_at: None,
+                created_by: Actor::Cli,
+            })
+            .unwrap();
+    }
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "memory_mib": 2048}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+
+    // The builds go on the volume (the agent found none to start: no internet here), and the next
+    // start runs the current one without asking Microsoft.
+    let builds = format!("/workspaces/{name}/.puddle/vscode-server/servers");
+    // On the volume, so it is there after the restart below.
+    let tools = format!("/workspaces/{name}/.puddle/stand-in");
+    guest(
+        &runtime,
+        &sandbox,
+        &format!(
+            "mkdir -p {tools} && cat >{tools}/stand-in.js <<'JS'\n{STAND_IN_SERVER}\nJS\n\
+             cat >{tools}/install.sh <<'SH'\n{INSTALL_STAND_IN}\nSH\n\
+             sh {tools}/install.sh {BUILD_A} {builds} current"
+        ),
+    )
+    .await;
+    for step in ["stop", "start"] {
+        let reply = api
+            .post(&format!("/api/workspaces/{name}/{step}"), "")
+            .await;
+        assert_eq!(reply.status, 202, "{}", reply.body);
+        let end = events
+            .until(ended(name_static), Duration::from_secs(300))
+            .await;
+        assert_eq!(end["step"], "done", "{end}");
+    }
+    serving(&runtime, &sandbox, BUILD_A).await;
+
+    // The window opens with the token: the page loads, reads the token and mints the key.
+    let attach = || async {
+        let reply = api
+            .post(
+                &format!("/api/workspaces/{name}/attach"),
+                &json!({"mode": "browser"}).to_string(),
+            )
+            .await;
+        assert_eq!(reply.status, 200, "{}", reply.body);
+        let answer: Value = serde_json::from_str(&reply.body).unwrap();
+        assert_eq!(answer["opened"], true, "{answer}");
+    };
+    attach().await;
+    let first = shell
+        .wait(&name, STAND_IN_READY, STAND_IN_STATE, PAGE_BUDGET)
+        .await;
+    assert_eq!(first["build"], BUILD_A, "{first}");
+    assert_eq!(first["token"], true, "{first}");
+    assert_eq!(first["keyPath"], "/_puddle/mint-key", "{first}");
+    let key = first["key"].as_str().unwrap().to_owned();
+    assert_eq!(key.len(), 64, "{first}");
+    assert_eq!(*shell.sign_ins.lock().unwrap(), 0, "no login form to post");
+    let origin = shell.opened.lock().unwrap().last().unwrap().clone();
+    let password = guest(&runtime, &sandbox, "cat /run/puddle/editor-password").await;
+    assert!(
+        !origin.contains(password.trim()),
+        "the token is in {origin}"
+    );
+    // Without the token the server refuses, through the same front.
+    let front: SocketAddr = format!("127.0.0.1:{}", origin.rsplit(':').next().unwrap())
+        .parse()
+        .unwrap();
+    let refused = without_a_cookie(front, &name, "/").await;
+    assert!(
+        refused.starts_with("HTTP/1.1 403 ") && refused.contains("Forbidden."),
+        "{refused}"
+    );
+
+    // A build is staged while the window is open: nothing switches.
+    let windows = host.editor_windows();
+    windows_become(windows, &sandbox, true).await;
+    guest(
+        &runtime,
+        &sandbox,
+        &format!("sh {tools}/install.sh {BUILD_B} {builds} staged"),
+    )
+    .await;
+    assert_eq!(
+        host.workspaces().switch_idle_editor_builds(windows).await,
+        0
+    );
+    assert!(matches!(
+        host.workspaces()
+            .switch_editor_build(&sandbox, windows.connected(&sandbox))
+            .await,
+        Err(puddle_host::SwitchEditorBuildError::WindowsConnected(n)) if n >= 1
+    ));
+    serving(&runtime, &sandbox, BUILD_A).await;
+
+    // The window closes: the host's ask switches the server to the staged build.
+    shell.close_pages(&name).await;
+    windows_become(windows, &sandbox, false).await;
+    assert_eq!(
+        host.workspaces().switch_idle_editor_builds(windows).await,
+        1
+    );
+    serving(&runtime, &sandbox, BUILD_B).await;
+
+    // Opened again: the new build, the same token cookie, the same key.
+    attach().await;
+    let again = shell
+        .wait(&name, STAND_IN_READY, STAND_IN_STATE, PAGE_BUDGET)
+        .await;
+    assert_eq!(again["build"], BUILD_B, "{again}");
+    assert_eq!(
+        again["key"],
+        key.as_str(),
+        "the stored secrets' key changed: {again}"
+    );
+    // The new build accepted a connection, so it is confirmed and the old one goes.
+    let kept = guest(
+        &runtime,
+        &sandbox,
+        &format!("for i in $(seq 1 60); do [ -d {builds}/{BUILD_A} ] || break; sleep 1; done; cat {builds}/current; echo; ls {builds}"),
+    )
+    .await;
+    assert!(
+        kept.starts_with(BUILD_B) && !kept.contains(BUILD_A),
+        "{kept}"
+    );
+
+    host.shutdown().await;
+    drop(host);
+    if let Some(shell) = Arc::into_inner(shell) {
+        shell
+            .browser
+            .into_inner()
+            .quit()
+            .await
+            .expect("the browser closed");
     }
 }

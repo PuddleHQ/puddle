@@ -13,13 +13,15 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
-use puddle_api::{BrowserTarget, DesktopTarget, LaunchError, Launcher, WorkspaceRecord};
+use puddle_api::{
+    BrowserTarget, DesktopTarget, EditorSignIn, LaunchError, Launcher, WorkspaceRecord,
+};
 use puddle_host::VsCodeLauncher;
 use puddle_types::WorkspaceName;
 use tauri::{AppHandle, Runtime};
 use url::Url;
 
-use crate::sandbox_window::{self, SandboxWindows, Target, WindowSettings};
+use crate::sandbox_window::{self, SandboxWindows, SessionCookie, Target, WindowSettings};
 
 /// How long a delete waits for a closing editor window to let go of its data folder. A window
 /// asked to close can take a moment (the editor saves what it holds first).
@@ -96,7 +98,7 @@ impl<R: Runtime> Launcher for AppLauncher<R> {
             let origin = Url::parse(&target.origin)
                 .map_err(|e| LaunchError::new(format!("the editor's address is not a URL: {e}")))?;
             let cookie = match &target.login {
-                Some(login) => {
+                Some(EditorSignIn::Form(login)) => {
                     let password = login.password().await?;
                     let session = windows
                         .session(target.front, &workspace.name, &password)
@@ -107,6 +109,9 @@ impl<R: Runtime> Launcher for AppLauncher<R> {
                             ))
                         })?;
                     Some(session)
+                }
+                Some(EditorSignIn::ConnectionToken(login)) => {
+                    Some(SessionCookie::connection_token(login.password().await?))
                 }
                 None => None,
             };
@@ -262,7 +267,7 @@ mod tests {
         })
     }
 
-    fn target(front: SocketAddr, login: Option<Arc<dyn EditorLogin>>) -> BrowserTarget {
+    fn target(front: SocketAddr, login: Option<EditorSignIn>) -> BrowserTarget {
         BrowserTarget {
             origin: format!("http://demo.localhost:{}", front.port()),
             front,
@@ -282,7 +287,10 @@ mod tests {
         launcher.install(windows());
         let secret = password("right");
         let (addr, logins) = front(&secret).await;
-        let target = target(addr, Some(Arc::new(Password(secret.clone()))));
+        let target = target(
+            addr,
+            Some(EditorSignIn::Form(Arc::new(Password(secret.clone())))),
+        );
 
         launcher
             .open_browser(&record("demo"), &target)
@@ -317,7 +325,10 @@ mod tests {
         launcher.install(windows.clone());
         let secret = password("right");
         let (addr, logins) = front(&secret).await;
-        let with_login = target(addr, Some(Arc::new(Password(secret.clone()))));
+        let with_login = target(
+            addr,
+            Some(EditorSignIn::Form(Arc::new(Password(secret.clone())))),
+        );
         launcher
             .open_browser(&record("demo"), &with_login)
             .await
@@ -452,19 +463,50 @@ mod tests {
         );
     }
 
+    /// A reader that fails, to show when a token is read.
+    struct Unreadable;
+
+    impl EditorLogin for Unreadable {
+        fn password(&self) -> BoxFuture<'_, Result<String, LaunchError>> {
+            Box::pin(async { Err(LaunchError::new("demo is not running; start it first")) })
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread")]
-    async fn microsoft_s_server_opens_with_no_login() {
+    async fn microsoft_s_server_opens_with_its_connection_token_and_no_login() {
         let app = tauri::test::mock_app();
         let data = tempfile::tempdir().unwrap();
         let launcher = AppLauncher::new(app.handle().clone(), data.path().join("webview"));
         launcher.install(windows());
         let (addr, logins) = front(&password("unused")).await;
+        let token = Some(EditorSignIn::ConnectionToken(Arc::new(Password(password(
+            "token",
+        )))));
         launcher
-            .open_browser(&record("demo"), &target(addr, None))
+            .open_browser(&record("demo"), &target(addr, token))
             .await
             .unwrap();
-        assert!(app.get_webview_window("vs-demo").is_some());
+        let window = app.get_webview_window("vs-demo").unwrap();
+        assert!(!window.url().unwrap().as_str().contains(&password("token")));
+        // The token is the window's cookie: the login form is never posted.
         assert!(logins.lock().unwrap().is_empty());
+
+        // A token that cannot be read opens no window, and says why.
+        let other = tauri::test::mock_app();
+        let launcher = AppLauncher::new(other.handle().clone(), data.path().join("webview"));
+        launcher.install(windows());
+        let err = launcher
+            .open_browser(
+                &record("demo"),
+                &target(
+                    addr,
+                    Some(EditorSignIn::ConnectionToken(Arc::new(Unreadable))),
+                ),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), "demo is not running; start it first");
+        assert!(other.get_webview_window("vs-demo").is_none());
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -477,7 +519,10 @@ mod tests {
         let err = launcher
             .open_browser(
                 &record("demo"),
-                &target(addr, Some(Arc::new(Password(password("wrong"))))),
+                &target(
+                    addr,
+                    Some(EditorSignIn::Form(Arc::new(Password(password("wrong"))))),
+                ),
             )
             .await
             .unwrap_err();

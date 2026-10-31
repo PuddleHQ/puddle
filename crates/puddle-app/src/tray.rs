@@ -482,7 +482,9 @@ mod tests {
     }
 
     // Raced before the swaps shared one lock (red 19 of 20 runs on 2 CPUs): the icon's restore
-    // overwrote a crash hook installed at the same moment.
+    // overwrote a crash hook installed at the same moment. Each round drops the hook it chained:
+    // left in place they pile up, the closing panic runs all of them with a backtrace each, and
+    // 300 rounds took over 120 s under coverage.
     #[test]
     fn a_hook_installed_while_the_icon_is_made_survives_it() {
         let data = tempfile::tempdir().unwrap();
@@ -501,6 +503,7 @@ mod tests {
             });
             let _ = std::thread::spawn(|| panic!("after both")).join();
             assert!(folder.exists(), "round {round}: the crash hook was lost");
+            drop(std::panic::take_hook());
         }
     }
 }

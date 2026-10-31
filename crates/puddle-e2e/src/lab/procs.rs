@@ -165,7 +165,7 @@ pub(super) fn tree_summary(child: &Child) -> String {
 /// uses. The process name (field 2) is in parentheses and may hold spaces and parentheses, so the
 /// fields are counted from the last `)`.
 #[cfg_attr(
-    not(target_os = "linux"),
+    not(any(target_os = "linux", test)),
     expect(
         dead_code,
         reason = "only Linux has /proc; its parser is tested everywhere"

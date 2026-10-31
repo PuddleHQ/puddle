@@ -1,0 +1,4 @@
+status: failing
+fixture: w2-store-lock.bad.rs.txt
+as: crates/puddle-certs/tests/windows_store.rs
+fix: `file.lock()` in a test waits for ever when another process holds it: poll `try_lock` against the test's budget, or `flake-ok: <why>`

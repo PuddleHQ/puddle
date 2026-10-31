@@ -147,7 +147,9 @@ impl<R: Runtime> Launcher for AppLauncher<R> {
                 // A window that is still open holds its data folder (Windows refuses to delete it).
                 windows.close(&self.app, workspace);
                 let deadline = tokio::time::Instant::now() + self.close_wait;
-                while windows.open_count(workspace) > 0 && tokio::time::Instant::now() < deadline {
+                // Editor windows and windows on forwarded ports both hold a data folder.
+                let held = || windows.open_count(workspace) + windows.forward_open_count(workspace);
+                while held() > 0 && tokio::time::Instant::now() < deadline {
                     tokio::time::sleep(Duration::from_millis(25)).await;
                 }
                 windows.forget(workspace);
@@ -343,6 +345,48 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(logins.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn forgetting_waits_for_a_window_on_a_forwarded_port_that_closes_late() {
+        let app = tauri::test::mock_app();
+        let data = tempfile::tempdir().unwrap();
+        let launcher = AppLauncher::new(app.handle().clone(), data.path().join("webview"));
+        let windows = windows();
+        launcher.install(windows.clone());
+        let (addr, _) = front(&password("x")).await;
+        launcher
+            .open_browser(&record("demo"), &target(addr, None))
+            .await
+            .unwrap();
+        let name = WorkspaceName::new("demo").unwrap();
+        // The editor's link to a guest port opened a window of its own on the forward.
+        windows.forward_opened(&name);
+        std::fs::create_dir_all(data.path().join("webview").join("demo.forward")).unwrap();
+        assert_eq!(windows.forward_open_count(&name), 1);
+        let folder = data.path().join("webview").join("demo.forward");
+        assert!(folder.is_dir());
+
+        // The editor window ends at once, the forward window well after the delete's own retries
+        // (half a second) would have given up. Nothing may be deleted before it ends.
+        windows.on_event(name.clone())(&tauri::WindowEvent::Destroyed);
+        let ending = windows.on_forward_event(name.clone());
+        let ended = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = ended.clone();
+        let closing = tokio::spawn(async move {
+            // Simulated latency: a webview that lets go of its window long after the close was asked.
+            tokio::time::sleep(Duration::from_millis(900)).await;
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            ending(&tauri::WindowEvent::Destroyed);
+        });
+        launcher.forget_browser(&name).await.unwrap();
+        assert!(
+            ended.load(std::sync::atomic::Ordering::SeqCst),
+            "the data was deleted while the forward window was open"
+        );
+        closing.await.unwrap();
+        assert_eq!(windows.forward_open_count(&name), 0);
+        assert!(!folder.exists());
     }
 
     #[tokio::test(flavor = "multi_thread")]

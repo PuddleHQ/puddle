@@ -28,6 +28,7 @@
 mod git_host;
 mod interceptor;
 mod pac;
+mod procs;
 #[cfg(unix)]
 mod squid;
 mod web_host;
@@ -164,7 +165,7 @@ impl Prefix {
 }
 
 /// What a fixture's start cost: the wall-clock time from the call to the first accepted
-/// connection, and the CPU time its process had used by then.
+/// connection, and the CPU time its processes had used by then.
 ///
 /// The wall time is what a test waits and depends on how many other processes want the CPU
 /// (a check runs niced on a host meant to run at 100 %, so the same start takes 1 s or 13 s).
@@ -174,26 +175,27 @@ impl Prefix {
 pub struct StartCost {
     /// From the call to the first accepted connection.
     pub wall: Duration,
-    /// The fixture process's user and system CPU time at that point; `None` where the OS does
-    /// not say (no `/proc`) or the fixture runs in a container, where the wall time is the
-    /// only measure and a loaded host can stretch it.
+    /// The user and system CPU time of the fixture's process and the processes it started, at
+    /// that point; `None` where the OS does not say or the fixture runs in a container, where the
+    /// wall time is the only measure and a loaded host can stretch it.
     pub cpu: Option<Duration>,
 }
 
 impl StartCost {
     /// Measures `child` (the fixture's process, if it is one of ours) and logs one line, so a
-    /// slow start shows which of the two it was.
+    /// slow start shows which of the two it was, and which process it was in.
     fn measure(prefix: &Prefix, begun: Instant, child: Option<&Child>) -> Self {
         let cost = Self {
             wall: begun.elapsed(),
-            cpu: child.and_then(|c| cpu_time(c.id())),
+            cpu: child.and_then(|c| procs::tree_cpu(c.id())),
         };
         eprintln!(
-            "lab: {} ready after {:.2?} wall, {} CPU",
+            "lab: {} ready after {:.2?} wall, {} CPU{}",
             prefix.as_str(),
             cost.wall,
             cost.cpu
                 .map_or_else(|| "unknown".to_owned(), |c| format!("{c:.2?}")),
+            child.map_or_else(String::new, |c| format!(" ({})", procs::tree_summary(c))),
         );
         cost
     }
@@ -203,22 +205,6 @@ impl StartCost {
     pub fn bounded(&self) -> Duration {
         self.cpu.unwrap_or(self.wall)
     }
-}
-
-/// User plus system CPU time of process `pid` so far, from Linux's `/proc/<pid>/stat`; `None`
-/// where there is no such file.
-fn cpu_time(pid: u32) -> Option<Duration> {
-    parse_cpu_time(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
-}
-
-/// `utime + stime` of a `/proc/<pid>/stat` line, at the 100 Hz tick every Linux target uses. The
-/// process name (field 2) is in parentheses and may hold spaces and parentheses, so the fields
-/// are counted from the last `)`.
-fn parse_cpu_time(stat: &str) -> Option<Duration> {
-    let mut fields = stat[stat.rfind(')')? + 1..].split_whitespace().skip(11);
-    let utime: u64 = fields.next()?.parse().ok()?;
-    let stime: u64 = fields.next()?.parse().ok()?;
-    Some(Duration::from_millis((utime + stime) * 10))
 }
 
 /// A free loopback port. Nothing owns it once this returns, so a program that takes its port
@@ -581,39 +567,30 @@ mod tests {
     }
 
     #[test]
-    fn cpu_time_is_user_plus_system_ticks_counted_after_the_name() {
-        // Field 2 holds a space and a parenthesis; utime and stime are fields 14 and 15.
-        let line = "42 (mitm (dump) x) S 1 42 42 0 -1 4194560 100 0 0 0 55 17 0 0 20 0 1 0 100 0 0";
-        assert_eq!(parse_cpu_time(line), Some(Duration::from_millis(720)));
-        assert_eq!(parse_cpu_time("no name here"), None);
-        assert_eq!(parse_cpu_time("1 (x) S 1"), None);
-    }
-
-    #[test]
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     fn a_busy_process_reports_more_cpu_time_than_an_idle_one() {
-        let mut idle = Command::new("sleep").arg("30").spawn().unwrap();
-        let mut busy = Command::new("sh")
-            .args(["-c", "while :; do :; done"])
-            .spawn()
-            .unwrap();
+        let quiet = |program: &str, args: &[&str]| {
+            Command::new(program)
+                .args(args)
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .unwrap()
+        };
+        let (program, args) = procs::programs::IDLE;
+        let mut idle = quiet(program, args);
+        let (program, args) = procs::programs::BUSY;
+        let mut busy = quiet(program, args);
         // A loaded host may give the loop its first 100 ms late, so wait for them.
         let deadline = Instant::now() + Duration::from_secs(60);
-        while cpu_time(busy.id()).unwrap() < Duration::from_millis(100) {
+        while procs::tree_cpu(busy.id()).unwrap() < Duration::from_millis(100) {
             assert!(Instant::now() < deadline, "the busy loop never got a CPU");
             std::thread::sleep(Duration::from_millis(50));
         }
-        let idle_cpu = cpu_time(idle.id()).unwrap();
+        let idle_cpu = procs::tree_cpu(idle.id()).unwrap();
         stop(&mut idle);
         stop(&mut busy);
-        // flake-ok: CPU time (user plus system ticks from `/proc`), not wall time: a `sleep` spends
+        // flake-ok: CPU time (user plus system time from the OS), not wall time: a `sleep` spends
         // none while it waits, whatever the load (0 ns measured under 16 busy loops on 4 cores).
         assert!(idle_cpu < Duration::from_millis(100), "{idle_cpu:?}");
-    }
-
-    #[test]
-    #[cfg(not(target_os = "linux"))]
-    fn without_proc_there_is_no_cpu_time() {
-        assert_eq!(cpu_time(std::process::id()), None);
     }
 }

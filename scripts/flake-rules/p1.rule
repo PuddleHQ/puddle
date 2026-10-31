@@ -1,0 +1,4 @@
+status: failing
+fixture: p1-free-port.bad.rs.txt
+as: crates/puddle-e2e/src/lab/mod.rs
+fix: a port picked from a listener that is dropped can be taken before the caller binds it: bind port 0 and pass the listener, or let the child bind 0 and report the port, or `flake-ok: <why a retry is the only way>`

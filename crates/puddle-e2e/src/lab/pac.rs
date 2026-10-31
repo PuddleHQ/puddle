@@ -10,10 +10,15 @@ use std::thread::JoinHandle;
 
 use super::LOCAL;
 
-/// Serves one PAC body on `http://127.0.0.1:<port>/proxy.pac`, from a thread, so it works
+/// Serves one PAC body on `http://127.0.0.1:<port>/<unique name>.pac`, from a thread, so it works
 /// inside or outside a Tokio runtime. Stopped on drop.
+///
+/// The name is new for every server: WinHTTP keeps every script it fetched under its URL, for the
+/// whole machine and after the server is gone, so a server that gets a port another test's server
+/// once had would be answered from that test's script.
 pub struct PacServer {
     port: u16,
+    path: String,
     hits: Arc<AtomicUsize>,
     stopping: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
@@ -51,6 +56,7 @@ impl PacServer {
         });
         Self {
             port,
+            path: format!("/{}.pac", puddle_types::fixture::unique("proxy")),
             hits,
             stopping,
             thread: Some(thread),
@@ -60,7 +66,7 @@ impl PacServer {
     /// The PAC file's URL.
     #[must_use]
     pub fn url(&self) -> String {
-        format!("http://{LOCAL}:{}/proxy.pac", self.port)
+        format!("http://{LOCAL}:{}{}", self.port, self.path)
     }
 
     /// How many times the file was fetched.

@@ -83,6 +83,7 @@ mod tests {
         workspaces: Vec<WorkspaceName>,
         asked: Mutex<Vec<(WorkspaceName, usize)>>,
         agent_fails: bool,
+        switches: bool,
     }
 
     impl Builds for Arc<Recorded> {
@@ -99,6 +100,9 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((workspace.clone(), connected_windows));
+            if self.switches {
+                return std::future::ready(Ok(true));
+            }
             std::future::ready(Err(if self.agent_fails {
                 SwitchEditorBuildError::Agent(puddle_agent_proto::forward::OpenError::Disconnected)
             } else {
@@ -116,6 +120,7 @@ mod tests {
             workspaces: names.iter().map(|n| name(n)).collect(),
             asked: Mutex::default(),
             agent_fails: false,
+            switches: false,
         })
     }
 
@@ -142,6 +147,14 @@ mod tests {
             *builds.asked.lock().unwrap(),
             [(name("b"), 0), (name("c"), 0)]
         );
+    }
+
+    #[tokio::test]
+    async fn a_switch_is_asked_once_per_round_and_the_round_counts_it() {
+        let mut builds = recorded(&["a"]);
+        Arc::get_mut(&mut builds).unwrap().switches = true;
+        assert_eq!(ask_once(&builds, &Windows::default()).await, 1);
+        assert_eq!(builds.asked.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

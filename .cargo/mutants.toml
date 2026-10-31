@@ -45,6 +45,10 @@ exclude_re = [
     # `Store::rule_set` reads a user set directly; without that arm it lists every set and finds the
     # id, which returns the same set, or the same `UnknownRuleSet` error for an id that is not there.
     "sets\\.rs:\\d+:\\d+: delete match arm RuleSetId::User\\(user\\) in Store::rule_set",
+    # `close_decided_rows` skips the row it was told to leave (`except`) or one the rule's pattern does
+    # not match. The left row is already decided when the query runs, so it is never in the list, and a
+    # row the pattern does not match cannot have this rule as its winner, so `||` and `&&` close the same rows.
+    "store\\.rs:\\d+:\\d+: replace \\|\\| with && in close_decided_rows",
 ]
 
 # The first failing test decides a mutant: stop the rest. Without it, a mutant that makes a test

@@ -11,6 +11,9 @@
 //! hostile one: a root process that deletes the capture rules gets nothing through, and the
 //! agent puts them back.
 //!
+//! The third test is the Python half: `python3` and `pip` with an empty environment, against the
+//! fake website and a fake package index.
+//!
 //! The sites the tests reach are a fake website behind a fake company proxy (`web_internet`), so no
 //! result here depends on a public site being up. Two tests keep a live third party on purpose, and
 //! their failure messages name it: the second installs the real `nftables` package from
@@ -33,7 +36,7 @@ mod vm_support;
 
 use std::time::Duration;
 
-use puddle_e2e::lab::{WebHost, WebOptions};
+use puddle_e2e::lab::{WebHost, WebOptions, pip_index};
 use puddle_store::{Actor, Effect, NewRule, Pattern, Resolution, Scope};
 use puddle_test_kit::eventually;
 use puddle_types::WorkspaceName;
@@ -43,6 +46,10 @@ use vm_support::{VmHost, guest, guest_live, start_vm_host, start_vm_host_platfor
 
 /// The fake website's name (it answers plain HTTP and HTTPS).
 const SITE: &str = "site.invalid";
+
+/// The fake package index's name, and the one project it lists.
+const INDEX: &str = "index.invalid";
+const PROJECT: &str = "puddle-probe";
 
 /// Creates a workspace on `host` whose sandbox may reach `allowed` and returns its name.
 async fn create_workspace(vm: &VmHost, api: &Api, tag: &str, allowed: &[&str]) -> WorkspaceName {
@@ -451,6 +458,119 @@ async fn vm_capture_apt_update_works_with_no_proxy_file_and_no_proxy_setting() {
     );
     wait_for_connection_record(&vm, "deb.debian.org", 80, before).await;
     eprintln!("open rows: {:?}", open_rows(&vm, &workspace));
+
+    let down = vm.host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
+/// Python's own clients with an empty environment, so neither `urllib` nor `pip` sees a proxy
+/// setting or a certificate variable: `urllib` reaches an allowed name, is refused at once for an
+/// unlisted one and that makes an inbox row, and `pip download` fetches a package from an index
+/// a rule lists. The image ships no `pip`, so the test installs Debian's `python3-pip` first
+/// (the live package mirrors, named when they fail).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_capture_python_urllib_and_pip_work_with_an_empty_environment() {
+    let net = web_internet(
+        &[SITE, INDEX],
+        WebOptions {
+            responder: Some(pip_index(INDEX, PROJECT)),
+            ..WebOptions::default()
+        },
+        hermetic_options(),
+    )
+    .await;
+    let vm = start_vm_host_platform("pyth", net.options, &net.platform, |_| {}).await;
+    let api = Api::new(vm.host.url(), vm.host.token());
+    let workspace = create_workspace(
+        &vm,
+        &api,
+        "pyth",
+        &[SITE, INDEX, "deb.debian.org", "security.debian.org"],
+    )
+    .await;
+    let run = |script: String| {
+        let (runtime, workspace) = (&vm.runtime, &workspace);
+        async move { guest(runtime, workspace, &bash_script(&script)).await }
+    };
+
+    let installed = guest_live(
+        &vm.runtime,
+        &workspace,
+        &bash_script(
+            "export DEBIAN_FRONTEND=noninteractive
+             { apt-get update -qq; apt-get install -y -qq python3 python3-pip; } >/tmp/apt.log 2>&1
+             python3 -m pip --version || { echo 'no pip; the end of apt output:'; tail -15 /tmp/apt.log; }",
+        ),
+        "deb.debian.org and security.debian.org",
+    )
+    .await;
+    assert!(
+        installed.contains("pip ") && !installed.contains("no pip"),
+        "python3-pip could not be installed (live third party: deb.debian.org, security.debian.org; an outage there fails this test): {installed}"
+    );
+
+    // An allowed name through `urllib`: it resolves to a stand-in, the capture redirects the
+    // connection, and the fake website sees the request.
+    let before = allowed_connections(&vm, SITE, 443);
+    let allowed = run(format!(
+        "env -i PATH=/usr/bin:/bin python3 -c \"
+import urllib.request
+r = urllib.request.urlopen('https://{SITE}/', timeout=30)
+print('status=%d' % r.status)\"  2>&1; echo \"exit=$?\""
+    ))
+    .await;
+    eprintln!("{allowed}");
+    assert_eq!(field(&allowed, "status="), "200", "{allowed}");
+    assert_eq!(field(&allowed, "exit="), "0", "{allowed}");
+    wait_for_connection_record(&vm, SITE, 443, before).await;
+    assert!(
+        reached_by_host(&net.web, SITE) > 0,
+        "the site did not see the capture's request: {:?}",
+        net.web.seen()
+    );
+
+    // A name nothing allows: the same call raises at once, and the connect is what asks.
+    let refused = run("s=$(now); env -i PATH=/usr/bin:/bin python3 -c \"
+import urllib.request
+urllib.request.urlopen('https://unlisted.invalid/', timeout=20)\" 2>&1 | tail -3
+echo \"exit=${PIPESTATUS[0]} ms=$(($(now) - s))\""
+        .into())
+    .await;
+    eprintln!("{refused}");
+    assert_ne!(field(&refused, "exit="), "0", "{refused}");
+    assert!(
+        field(&refused, "ms=").parse::<u64>().unwrap() < 5000,
+        "{refused}"
+    );
+    wait_for_row(&vm, &workspace, "unlisted.invalid").await;
+    assert_eq!(
+        reached_by_host(&net.web, "unlisted.invalid"),
+        0,
+        "an unlisted name reached the site"
+    );
+
+    // `pip download` from the listed index, with only a flag for where the index is.
+    let before = allowed_connections(&vm, INDEX, 443);
+    let pip = run(format!(
+        "rm -rf /tmp/pipd
+         env -i PATH=/usr/bin:/bin HOME=/root python3 -m pip download --no-deps --retries 0 --timeout 20 \
+           -d /tmp/pipd --index-url https://{INDEX}/simple {PROJECT} 2>&1 | tail -5
+         echo \"pip=${{PIPESTATUS[0]}}\"
+         ls /tmp/pipd"
+    ))
+    .await;
+    eprintln!("{pip}");
+    assert_eq!(field(&pip, "pip="), "0", "{pip}");
+    assert!(pip.contains("puddle_probe-1.0.0-py3-none-any.whl"), "{pip}");
+    wait_for_connection_record(&vm, INDEX, 443, before).await;
+    assert!(
+        net.web
+            .seen()
+            .iter()
+            .any(|r| r.target.starts_with("/files/puddle_probe-1.0.0")),
+        "the index never served the wheel: {:?}",
+        net.web.seen()
+    );
 
     let down = vm.host.shutdown().await;
     assert!(down.sandboxes.all_stopped(), "{down:?}");

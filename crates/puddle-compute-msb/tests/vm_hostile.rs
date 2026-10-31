@@ -281,8 +281,18 @@ async fn vm_hostile_hg44_a_rewritten_root_disk_journal_attaches_no_file_outside_
         let landed = std::fs::read_to_string(&host_journal).unwrap();
         let before = sha256_file(target);
         let started = rt.start(&n).await;
+        // A start that went through has the file attached: stop it before reading the file
+        // again, so what the guest wrote is on disk and the next round starts from a stopped
+        // sandbox.
+        let refused = match started {
+            Ok(attached) => {
+                attached.stop().await.unwrap();
+                None
+            }
+            Err(e) => Some(e),
+        };
         let after = sha256_file(target);
-        outcomes.push((target.clone(), landed, started.err(), before, after));
+        outcomes.push((target.clone(), landed, refused, before, after));
     }
     cleanup(&rt, &[&n, &other_name]).await;
     // The run's home is removed with the run; this only tidies early.

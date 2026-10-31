@@ -15,6 +15,7 @@ use puddle_agent::config::{OomSources, Target};
 use puddle_agent::{Agent, Config};
 use puddle_agent_proto::host::{HostConfig, serve_session};
 use puddle_agent_proto::testing::AllowAll;
+use puddle_test_kit::eventually;
 use puddle_types::{Event, EventSink, WorkspaceName};
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
@@ -82,13 +83,12 @@ impl Rig {
     pub async fn restart_host(&mut self) {
         self.host.abort();
         let _ = (&mut self.host).await;
-        let closed = tokio::time::timeout(Duration::from_secs(10), async {
-            while self.sessions.load(Ordering::SeqCst) > 0 {
-                tokio::task::yield_now().await;
-            }
-        })
+        eventually(
+            "the old host's sessions did not close",
+            Duration::from_secs(10),
+            || self.sessions.load(Ordering::SeqCst) == 0,
+        )
         .await;
-        assert!(closed.is_ok(), "the old host's sessions did not close");
         std::fs::remove_file(self.socket()).unwrap();
         let (host, sessions) = start_counted_host(&self.socket(), Arc::clone(&self.sink));
         self.host = host;

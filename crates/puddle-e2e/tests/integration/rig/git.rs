@@ -297,26 +297,23 @@ impl GitRig {
     /// The connection records once `ready` accepts them (a record is written after the
     /// connection ends, so a test waits for the one it needs).
     pub(crate) async fn records_where(&self, ready: impl Fn(&[Value]) -> bool) -> Vec<Value> {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            let records: Vec<Value> = self
-                .world
-                .store
-                .audit_lines(0, 100_000)
-                .unwrap()
-                .into_iter()
-                .map(|(_, line)| serde_json::from_str::<Value>(&line).unwrap())
-                .filter(|v| v["type"] == "connection")
-                .collect();
-            if ready(&records) || Instant::now() >= deadline {
-                assert!(
-                    ready(&records),
-                    "the records the test waits for never came: {records:#?}"
-                );
-                return records;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        puddle_test_kit::eventually(
+            "the records the test waits for",
+            Duration::from_secs(5),
+            || {
+                let records: Vec<Value> = self
+                    .world
+                    .store
+                    .audit_lines(0, 100_000)
+                    .unwrap()
+                    .into_iter()
+                    .map(|(_, line)| serde_json::from_str::<Value>(&line).unwrap())
+                    .filter(|v| v["type"] == "connection")
+                    .collect();
+                ready(&records).then_some(records)
+            },
+        )
+        .await
     }
 
     /// Everything the audit log holds, as text: for "the token is nowhere" checks.

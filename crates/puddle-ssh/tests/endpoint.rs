@@ -20,6 +20,7 @@ use puddle_compute::{ExecOutput, ExecRequest, FileMount, Runtime, SandboxSpec, S
 use puddle_ipc::IpcRoot;
 use puddle_ssh::bridge::{self, BridgeError, Report, SessionEnd};
 use puddle_ssh::{SshEndpoint, SshTarget};
+use puddle_test_kit::eventually;
 use puddle_types::{GuestPath, ImageRef, SandboxName};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, DuplexStream, duplex};
 use tokio::sync::Semaphore;
@@ -573,13 +574,10 @@ async fn a_failed_session_is_reported_to_the_target_with_its_cause() {
         .unwrap()
         .unwrap();
     // The report follows the session's end; wait for it rather than race the close.
-    timeout(WAIT, async {
-        while target.reports.lock().unwrap().is_empty() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+    eventually("the failure was never reported", WAIT, || {
+        !target.reports.lock().unwrap().is_empty()
     })
-    .await
-    .expect("the failure was never reported");
+    .await;
     endpoint.close().await;
     let reports = target.reports.lock().unwrap();
     assert_eq!(

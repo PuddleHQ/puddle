@@ -4,7 +4,6 @@
 #![cfg(target_os = "linux")]
 #![expect(
     clippy::unwrap_used,
-    clippy::panic,
     reason = "helpers outside #[test] fns run only in tests"
 )]
 
@@ -14,6 +13,7 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use puddle_agent::exthost::{self, Proc};
+use puddle_test_kit::{eventually, eventually_blocking};
 use tokio::process::{Child, Command};
 
 /// An extension host with a language server below it, and (if `stubborn`) a debuggee that ignores
@@ -98,19 +98,19 @@ fn alive(pid: u32) -> bool {
 
 async fn settled(server: &Server) {
     // Wait until both scripts have started their children.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        let tree_size = exthost::extension_hosts(&server.procs(), &server.folders()).len();
-        let sleepers = exthost::snapshot()
-            .iter()
-            .filter(|p| p.argv.first().is_some_and(|a| a == "sleep") && p.ppid != 1)
-            .count();
-        if tree_size >= 1 && sleepers >= 2 {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    panic!("the fake processes did not start");
+    eventually(
+        "the fake processes did not start",
+        Duration::from_secs(10),
+        || {
+            let tree_size = exthost::extension_hosts(&server.procs(), &server.folders()).len();
+            let sleepers = exthost::snapshot()
+                .iter()
+                .filter(|p| p.argv.first().is_some_and(|a| a == "sleep") && p.ppid != 1)
+                .count();
+            tree_size >= 1 && sleepers >= 2
+        },
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -149,10 +149,12 @@ async fn a_process_that_ignores_term_is_killed_after_the_grace() {
     let host_id = host.id().unwrap();
     // `settled` counts every test's `sleep`s (the process table is shared), so it can return before this
     // server's stubborn child has started: wait for that child itself.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while server.stubborn().is_empty() && Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    eventually(
+        "the stubborn child started",
+        Duration::from_secs(10),
+        || !server.stubborn().is_empty(),
+    )
+    .await;
     let before: Vec<i32> = server.stubborn().iter().map(|p| p.pid).collect();
     assert_eq!(
         before.len(),
@@ -187,13 +189,15 @@ async fn twenty_hosts_each_with_a_debuggee_all_end_together() {
     let hosts: Vec<Child> = (0..20)
         .map(|_| server.start("host", "--type=extensionHost", true))
         .collect();
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while exthost::extension_hosts(&server.procs(), &server.folders()).len() < 20
-        || server.stubborn().len() < 20
-    {
-        assert!(Instant::now() < deadline, "the fake hosts did not start");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    eventually(
+        "the fake hosts did not start",
+        Duration::from_secs(20),
+        || {
+            exthost::extension_hosts(&server.procs(), &server.folders()).len() >= 20
+                && server.stubborn().len() >= 20
+        },
+    )
+    .await;
     let ids: Vec<u32> = hosts.iter().map(|h| h.id().unwrap()).collect();
 
     let ended = exthost::end_extension_hosts(&server.folders()).await;
@@ -238,26 +242,28 @@ fn orphans(dir: &Path, specs: &[(PathBuf, &str, &str)]) -> Vec<i32> {
     let ids: Vec<i32> = specs
         .iter()
         .map(|(_, _, tag)| {
-            loop {
-                if let Ok(text) = std::fs::read_to_string(dir.join(format!("{tag}.pid")))
-                    && let Ok(pid) = text.trim().parse()
-                {
-                    break pid;
-                }
-                std::thread::sleep(Duration::from_millis(20));
-            }
+            eventually_blocking(
+                "the shell wrote its pid file",
+                Duration::from_secs(30),
+                || {
+                    let text = std::fs::read_to_string(dir.join(format!("{tag}.pid"))).ok()?;
+                    text.trim().parse().ok()
+                },
+            )
         })
         .collect();
     let me = i32::try_from(std::process::id()).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !ids.iter().all(|pid| {
-        exthost::snapshot()
-            .iter()
-            .any(|p| p.pid == *pid && p.ppid == me)
-    }) {
-        assert!(Instant::now() < deadline, "the orphans were not adopted");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    eventually_blocking(
+        "the orphans were not adopted",
+        Duration::from_secs(10),
+        || {
+            ids.iter().all(|pid| {
+                exthost::snapshot()
+                    .iter()
+                    .any(|p| p.pid == *pid && p.ppid == me)
+            })
+        },
+    );
     ids
 }
 
@@ -307,11 +313,11 @@ async fn an_orphaned_debuggee_that_ignores_term_is_killed_after_the_grace() {
         &[(dir.path().join("dead.sock"), &command, "stubborn")],
     );
     // A `TERM` that came before the trap would end the shell at once and fake a pass.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !ready.exists() {
-        assert!(Instant::now() < deadline, "the stand-in never ignored TERM");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    eventually_blocking(
+        "the stand-in never ignored TERM",
+        Duration::from_secs(10),
+        || ready.exists(),
+    );
     let me = i32::try_from(std::process::id()).unwrap();
     let started = Instant::now();
 
@@ -339,16 +345,20 @@ async fn the_sweep_loop_ends_an_orphan_when_its_time_comes_and_not_before() {
     let before = running(ids[0]);
     tokio::time::sleep(exthost::SWEEP_EVERY * 2).await;
     // The sweep's waits run on virtual time, the process dies in real time: give it that.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while running(ids[0]) && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    let after = running(ids[0]);
+    let ended = std::panic::catch_unwind(|| {
+        eventually_blocking(
+            "the loop never ended the orphan",
+            Duration::from_secs(5),
+            || !running(ids[0]),
+        );
+    });
     looping.abort();
     kill(ids[0]);
 
     assert!(before, "the loop ended the orphan before its first sweep");
-    assert!(!after, "the loop never ended the orphan");
+    if let Err(panic) = ended {
+        std::panic::resume_unwind(panic);
+    }
 }
 
 fn kill(pid: i32) {

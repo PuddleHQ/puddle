@@ -341,6 +341,7 @@ mod h2_perf {
     /// other (at most ten seconds of waiting, then the last reading).
     pub(super) async fn settled_rss_kib() -> usize {
         let mut last = rss_kib();
+        // flake-ok: samples at a fixed 100 ms spacing and settles for the last reading on timeout, a measurement not a pass condition.
         for _ in 0..100 {
             tokio::time::sleep(Duration::from_millis(100)).await;
             let now = rss_kib();

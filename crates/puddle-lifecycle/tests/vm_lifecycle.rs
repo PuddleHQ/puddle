@@ -707,7 +707,7 @@ mod proc {
 
 #[cfg(unix)]
 mod proc {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     /// Linux: a process is gone when `/proc/<pid>` is gone or a zombie.
     pub(crate) struct Watch(Vec<u32>);
@@ -724,18 +724,15 @@ mod proc {
             })
         }
 
-        /// Polls (there is no exit event for a process that isn't our child) every 20 ms.
+        /// Polls (there is no exit event for a process that isn't our child); panics, naming the
+        /// processes, when one is still alive after `limit`.
         pub(crate) fn all_gone_within(&self, limit: Duration) -> bool {
-            let deadline = Instant::now() + limit;
-            loop {
-                if !self.0.iter().any(|p| Self::alive(*p)) {
-                    return true;
-                }
-                if Instant::now() >= deadline {
-                    return false;
-                }
-                std::thread::sleep(Duration::from_millis(20));
-            }
+            puddle_test_kit::eventually_blocking(
+                &format!("processes {:?} gone", self.0),
+                limit,
+                || !self.0.iter().any(|p| Self::alive(*p)),
+            );
+            true
         }
     }
 }

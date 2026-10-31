@@ -18,14 +18,22 @@ allow=scripts/standalone-allow.txt
 # `puddle-t165-lab` or `d37_name` (grep's \b would treat `_` as part of the word).
 #   ids:   T-<n> and D-<n> with any number of digits, W-<n>, a bare t<3-4 digits> (t165,
 #          PUDDLE_T144_X), and a d<2-3 digits>_ test-name prefix (d37_toggle).
-#   exact: MWE, W1..W9, workspace names and files.
-# Not seen: an ID spelled out ("task 165"), one split by punctuation, a bare t/d number with other
+#   exact: MWE, W1..W9, workspace names and files, and requirement IDs of the architecture spec.
+#          That spec lives in the planning workspace and is not shipped here, so an ID like `AT-34`
+#          or `HG-12` points at nothing a contributor can open, in code, comments, CI files and
+#          docs alike. Say the rule in words, or cite an ADR or a page under docs/spec. The
+#          prefixes are the spec's page prefixes (CD credentials, CP capture, ST storage, AT attach,
+#          HG hostile guest, PX proxy, HS host services, EG enforcement, HO host, CR, AP, AU, RT, UI,
+#          APP); a new spec page with a new prefix needs it added here.
+# Not seen: a spec ID of a prefix not listed above, one without its hyphen or digits (`AT 34`), the
+# bare second number of a pair (`HG-01/02` leaves `02`), an ID spelled out ("task 165"), one split by punctuation, a bare t/d number with other
 # digit counts (t42, d4; they collide with timers and NTLM "T1"/"T3"), or any reference that is
 # worded rather than numbered. Those need the read-through review, not this gate.
 B='(^|[^A-Za-z0-9])'
 E='([^A-Za-z0-9]|$)'
 ids="${B}(([TDW]-[0-9]+|T[0-9]{3,4})${E}|D[0-9]{2,3}_)"
-exact='\bMWE\b|\bW[1-9]\b|huddle-next|decisions\.md|work/briefs'
+spec='(CD|CP|ST|AT|HG|PX|HS|EG|HO|CR|AP|AU|RT|UI|APP)-[0-9]+'
+exact="\\bMWE\\b|\\bW[1-9]\\b|huddle-next|decisions\\.md|work/briefs|${B}${spec}${E}"
 
 # `--self-test` checks the patterns against lines they must catch and lines they must pass.
 if [ "${1:-}" = "--self-test" ]; then
@@ -43,7 +51,16 @@ W-4
 the MWE
 tier W1
 huddle-next/work
-decisions.md'
+decisions.md
+(AT-34)
+storage ST-50 to ST-53
+/// HG-12 through the proxy
+see HS-23..HS-25.
+// CD-38, then
+[PX-40] again
+x EG-4: capture
+UI-17
+APP-3'
     must_pass='NTLM T1 then NTLM T3
 let t0 = Instant::now();
 caller=T42;Memory
@@ -54,7 +71,13 @@ abcT-1 xD-2
 ed25519 aes-128
 d1 d2 d4
 #d37 colour
-a W10 b'
+a W10 b
+SHA-256 and AES-128-GCM
+UTF-8 and HTTP-2 and ECDSA-P256
+the ST and AT columns
+at-34 and AT34 and AT-x
+BAT-1 and XHG-12 and AT-34x
+CRC-32 and RFC-9113'
     while IFS= read -r l; do
         printf '%s\n' "$l" | grep -qiE -e "$ids" || printf '%s\n' "$l" | grep -qE -e "$exact" || {
             echo "self-test: should have caught: $l" >&2

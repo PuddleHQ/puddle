@@ -14,7 +14,7 @@ use x509_parser::prelude::{FromDer, X509Certificate};
 
 use super::material::PrivateKey;
 
-/// The names the leaf is valid for (HS-23): a leaked key impersonates only these.
+/// The names the leaf is valid for: a leaked key impersonates only these.
 pub const DNS_NAMES: [&str; 5] = [
     "localhost",
     "*.dev.localhost",

@@ -186,6 +186,9 @@ foreach ($path in @($Msi, $UpgradeMsi) | Where-Object { $_ }) {
 Invoke-Msiexec @('/i', "`"$Msi`"") 'msi-install.log'
 $first = Assert-InstalledLayout
 Write-Host "installed version $($first.Version) in $InstallDir"
+# The program must report the version of the package it came in (the kept MSI is named by it).
+$reported = (& (Join-Path $InstallDir 'puddle.exe') --version) -join ' '
+Expect ($reported -match [regex]::Escape($first.Version)) "puddle --version says '$reported' for package version $($first.Version)"
 Assert-InstalledWorks
 
 $current = $Msi

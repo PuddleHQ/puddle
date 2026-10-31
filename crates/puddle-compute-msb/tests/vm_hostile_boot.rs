@@ -3,9 +3,9 @@
 //! `puddle-agent` (started by `boot.sh`, from `PUDDLE_AGENT_BIN`, the static build of
 //! `ci/build-agent.sh`) against a real proxy on the host, and Puddle's own read-only mounts.
 //!
-//! HG-04 and HG-05: a process in the guest asks the agent for a CONNECT to each of Puddle's own
+//! First case: a process in the guest asks the agent for a CONNECT to each of Puddle's own
 //! listeners, in every loopback spelling, with every local toggle on and an allow rule for the
-//! address; every one is refused as a Puddle endpoint. HG-23: every mount Puddle puts into the
+//! address; every one is refused as a Puddle endpoint. Second case: every mount Puddle puts into the
 //! guest refuses writes, whatever root tries, and no host data folder is visible in the guest.
 #![expect(
     clippy::expect_used,

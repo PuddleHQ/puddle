@@ -2,7 +2,7 @@
 //! The upstream leg of a terminated connection: connecting to the real server with the protocols
 //! the guest offered, and the connections it yields.
 //!
-//! One guest connection owns its upstream connections and never shares them (PX-33): one HTTP/2
+//! One guest connection owns its upstream connections and never shares them: one HTTP/2
 //! connection that carries every stream, or HTTP/1.1 connections that carry one request at a time
 //! (one for an HTTP/1.1 guest, a small pool for an HTTP/2 guest talking to an HTTP/1.1 server).
 

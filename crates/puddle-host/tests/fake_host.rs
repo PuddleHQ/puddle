@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use puddle_api::WorkspaceService as _;
 use puddle_api::{
     BrowserTarget, DesktopTarget, LaunchError, Launcher, UiAssets, UiFile, WorkspaceRecord,
 };
@@ -72,10 +73,6 @@ impl FakePlatform {
 }
 
 impl Platform for FakePlatform {
-    fn pin_environment(&self, _: &RuntimeLayout) -> Result<(), HostError> {
-        self.call("pin_environment")
-    }
-
     fn check_runtime(&self, _: &RuntimeLayout, expected: &RuntimeVersion) -> Result<(), HostError> {
         assert_eq!(expected, &RuntimeVersion::built_for());
         self.call("check_runtime")
@@ -708,12 +705,7 @@ async fn start_runs_the_steps_in_the_documented_order() {
     // The machine was asked in dependency order and the runtime opened last of those.
     assert_eq!(
         rig.calls(),
-        [
-            "pin_environment",
-            "check_runtime",
-            "corporate_roots",
-            "open_runtime"
-        ]
+        ["check_runtime", "corporate_roots", "open_runtime"]
     );
     // The runtime got the address of the pull proxy bound in the first step, loopback only,
     // and no roots (this machine has none).
@@ -725,7 +717,7 @@ async fn start_runs_the_steps_in_the_documented_order() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_refused_step_stops_the_start_before_the_runtime_is_touched() {
-    for refused in ["pin_environment", "check_runtime", "corporate_roots"] {
+    for refused in ["check_runtime", "corporate_roots"] {
         let rig = Rig::new();
         let mut platform = FakePlatform::new(&rig.log);
         platform.refuse = Some(refused);
@@ -2575,12 +2567,9 @@ async fn a_window_that_signs_in_before_the_agents_hello_waits_for_it_and_gets_th
     host.shutdown().await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_browser_attach_with_unreadable_settings_still_opens_with_the_defaults() {
-    let rig = Rig::new();
-    // A global file that is not JSON at all: the read fails, not just an unknown field. The
-    // workspace names its memory, so the damaged file does not refuse the create.
-    damage_global_settings(&rig);
+/// Creates `acme` while the settings are damaged (the workspace names its memory, so the damage
+/// does not refuse the create), then attaches in a browser window; returns the reply body.
+async fn browser_attach_over_damaged_settings(rig: &Rig) -> (Host<FakeRuntime>, serde_json::Value) {
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2590,9 +2579,70 @@ async fn a_browser_attach_with_unreadable_settings_still_opens_with_the_defaults
         202
     );
     events.until(ended("acme"), Duration::from_secs(20)).await;
-    let _editor = editor_stand_in(&rig, "acme").await;
+    let _editor = editor_stand_in(rig, "acme").await;
+    let reply = api
+        .post(
+            "/api/workspaces/acme/attach",
+            &json!({"mode": "browser"}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    (host, reply.json())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_attach_with_unreadable_global_settings_opens_no_window_and_says_why() {
+    let rig = Rig::new();
+    // A user who turned the clipboard prompt off must never get a window that asks: with the
+    // settings unreadable no window opens at all.
+    let file = damage_global_settings(&rig);
+    let (host, body) = browser_attach_over_damaged_settings(&rig).await;
+    assert_eq!(body["opened"], false, "{body}");
+    let message = body["message"].as_str().unwrap();
+    assert!(
+        message.contains("the global settings cannot be read")
+            && message.contains("fix the settings file, or delete it"),
+        "{message}"
+    );
+    assert!(rig.launcher.browser.lock().unwrap().is_empty());
+    // The user's fix works: with the file mended the same attach opens the window.
+    std::fs::write(
+        &file,
+        br#"{"schema_version": 2, "workspace_defaults": {"clipboard_read": "deny"}}"#,
+    )
+    .unwrap();
+    let api = api(&host);
     let target = browser_target(&rig, &api, "acme").await;
-    assert!(target.settings.zoom_hotkeys.value, "the default is zoom on");
+    assert_eq!(
+        target.settings.clipboard_read.value,
+        puddle_settings::ClipboardRead::Deny
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_attach_with_an_unreadable_workspace_settings_file_opens_no_window() {
+    let rig = Rig::new();
+    write_global_settings(
+        &rig,
+        &json!({"schema_version": 2, "workspace_defaults": {"clipboard_read": "deny"}}),
+    );
+    let dir = rig
+        .dir
+        .path()
+        .join("data")
+        .join("settings")
+        .join("workspaces");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("acme.json"), b"{ not json").unwrap();
+    let (host, body) = browser_attach_over_damaged_settings(&rig).await;
+    assert_eq!(body["opened"], false, "{body}");
+    let message = body["message"].as_str().unwrap();
+    assert!(
+        message.contains("the settings of workspace acme cannot be read"),
+        "{message}"
+    );
+    assert!(rig.launcher.browser.lock().unwrap().is_empty());
     host.shutdown().await;
 }
 
@@ -2843,6 +2893,13 @@ async fn a_taken_front_port_falls_back_to_another_that_is_then_kept() {
     let first = rig.start().await;
     let moved = front_port_of(&first);
     assert_ne!(moved, taken, "the held port cannot be the front's");
+    let notice = first
+        .problems()
+        .list()
+        .into_iter()
+        .find(|p| p.key == "front-port-moved")
+        .expect("the user is told the address moved");
+    assert!(notice.detail.contains(&moved.to_string()), "{notice:?}");
     assert_eq!(
         stored_front_port(&rig),
         Some(moved),
@@ -2854,6 +2911,14 @@ async fn a_taken_front_port_falls_back_to_another_that_is_then_kept() {
     // Next run the new port is the usual one, with the old one still taken.
     let second = rig.start().await;
     assert_eq!(front_port_of(&second), moved);
+    assert!(
+        second
+            .problems()
+            .list()
+            .iter()
+            .all(|p| p.key != "front-port-moved"),
+        "a port that is kept raises no notice"
+    );
     second.shutdown().await;
     drop(held);
 }
@@ -2925,7 +2990,7 @@ async fn a_forwarded_port_s_origin_reaches_that_guest_port_through_the_agent() {
         0,
         "the editor was not asked"
     );
-    // The agent's own ports (its proxy) are refused by the agent, as for a forward (AT-43): the
+    // The agent's own ports (its proxy) are refused by the agent, as for a forward: the
     // answer says so, where a free port would say that nothing listens.
     let proxy = window_gets(&origin.replacen("http://", "http://3128.", 1)).await;
     assert!(proxy.starts_with("HTTP/1.1 502"), "{proxy}");
@@ -4047,6 +4112,37 @@ async fn with_direct_ssh_off_there_is_no_ssh_endpoint_and_the_gate_says_no() {
         api.get("/api/workspaces/acme").await.json()["direct_ssh"],
         false
     );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_desktop_attach_with_unreadable_settings_says_so_instead_of_blaming_the_switch() {
+    let rig = Rig::new();
+    // The settings are read once and kept, so the damage is there from the start; the workspace
+    // names its memory, so the damaged file does not refuse the create.
+    damage_global_settings(&rig);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let body = json!({"name": "acme", "repositories": [{"url": REPO}], "memory_mib": 4096});
+    assert_eq!(
+        api.post("/api/workspaces", &body.to_string()).await.status,
+        202
+    );
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let attached = host
+        .workspaces()
+        .attach(
+            &WorkspaceId::new("acme").unwrap(),
+            puddle_api::AttachMode::Desktop,
+        )
+        .await
+        .unwrap();
+    assert!(!attached.opened);
+    let message = attached.message.unwrap();
+    assert!(message.contains("settings cannot be read"), "{message}");
+    assert!(!message.contains("allow it first"), "{message}");
+    assert!(rig.launcher.opened.lock().unwrap().is_empty());
     host.shutdown().await;
 }
 

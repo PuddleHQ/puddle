@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Hostile-guest cases at tier V that need only the msb adapter: a root process in the guest
-//! tries to reach the network (HG-01) and every vsock address and port (HG-02). Each test boots
+//! tries to reach the network and every vsock address and port. Each test boots
 //! a real microVM, so they run only under the VM profile (`vm_` prefix).
 mod support;
 

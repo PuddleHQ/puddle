@@ -5,7 +5,7 @@
 // never by pictures.
 import type { Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { expectNoAxeViolations } from "./support";
+import { boxSide, expectNoAxeViolations, insideBy } from "./support";
 
 const section = (page: Page) =>
   page.getByRole("region", { name: "Kept logins" });
@@ -165,13 +165,15 @@ test("a hostile name is text that wraps inside its row, and the buttons are big 
   expect(await page.title()).not.toBe("owned");
   await expect(section(page).locator("img")).toHaveCount(0);
   await expect(section(page)).toContainText("<img src=x");
-  const edge = (await section(page).boundingBox())!;
-  const row = (await section(page).getByRole("listitem").boundingBox())!;
-  expect(row.x + row.width).toBeLessThanOrEqual(edge.x + edge.width + 1);
-  const button = (await section(page).getByRole("button").boundingBox())!;
-  expect(button.width).toBeGreaterThanOrEqual(24);
-  expect(button.height).toBeGreaterThanOrEqual(24);
-  expect(button.x + button.width).toBeLessThanOrEqual(edge.x + edge.width + 1);
+  const button = section(page).getByRole("button");
+  await insideBy(
+    section(page),
+    section(page).getByRole("listitem"),
+    1,
+  ).toBeGreaterThanOrEqual(0);
+  await boxSide(button, "width").toBeGreaterThanOrEqual(24);
+  await boxSide(button, "height").toBeGreaterThanOrEqual(24);
+  await insideBy(section(page), button, 1).toBeGreaterThanOrEqual(0);
   await expect
     .poll(() =>
       page.evaluate(

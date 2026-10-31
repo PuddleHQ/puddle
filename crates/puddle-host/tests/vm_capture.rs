@@ -12,8 +12,8 @@
 //! agent puts them back.
 //!
 //! The sites the tests reach are a fake website behind a fake company proxy (`web_internet`), so no
-//! result here depends on a public site being up; only the workspace's own clone (`REPO`) and the
-//! package install of the second test still use the real internet.
+//! result here depends on a public site being up; only the package install of the second test and
+//! the `apt-get update` of the third still use the real internet.
 //!
 //! Every guest command runs as root through the runtime's exec, which carries the workspace's
 //! proxy settings; the probes that must not use them say `env -i` or `--noproxy '*'`.
@@ -37,11 +37,8 @@ use serde_json::json;
 use support::{Api, ended, hermetic_options};
 use vm_support::{VmHost, guest, start_vm_host, start_vm_host_platform, web_internet};
 
-/// The fake website's name (it answers plain HTTP and HTTPS), and a small public repository to
-/// create the workspace from.
+/// The fake website's name (it answers plain HTTP and HTTPS).
 const SITE: &str = "site.invalid";
-const REPO_HOST: &str = "github.com";
-const REPO: &str = "https://github.com/octocat/Hello-World.git";
 
 /// Creates a workspace on `host` whose sandbox may reach `allowed` and returns its name.
 async fn create_workspace(vm: &VmHost, api: &Api, tag: &str, allowed: &[&str]) -> WorkspaceName {
@@ -63,7 +60,7 @@ async fn create_workspace(vm: &VmHost, api: &Api, tag: &str, allowed: &[&str]) -
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -186,7 +183,7 @@ async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses
     net.proxy.route("1.1.1.1:443", net.web.tls_addr());
     let vm = start_vm_host_platform("capt", net.options, &net.platform, |_| {}).await;
     let api = Api::new(vm.host.url(), vm.host.token());
-    let workspace = create_workspace(&vm, &api, "capt", &[REPO_HOST, SITE]).await;
+    let workspace = create_workspace(&vm, &api, "capt", &[SITE]).await;
     let run = |script: String| {
         let (runtime, workspace) = (&vm.runtime, &workspace);
         async move { guest(runtime, workspace, &bash_script(&script)).await }
@@ -244,7 +241,7 @@ async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses
         open_rows(&vm, &workspace)
     );
 
-    // HG-01 rerun: a direct address nothing allows is a deny row, never a way around the proxy.
+    // Rerun of the network case: a direct address nothing allows is a deny row, never a way around the proxy.
     // Approve it, and the retry works with no restart.
     let direct = |label: &str| {
         run(format!(
@@ -341,7 +338,7 @@ async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses
     assert!(down.sandboxes.all_stopped(), "{down:?}");
 }
 
-/// EG-4: capture is not enforcement, so a root process that deletes the rules gets nothing new
+/// Capture is not enforcement, so a root process that deletes the rules gets nothing new
 /// through (the VM has no route of its own), and the agent puts the rules back.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_capture_survives_a_root_that_deletes_the_rules() {
@@ -352,7 +349,7 @@ async fn vm_capture_survives_a_root_that_deletes_the_rules() {
         &vm,
         &api,
         "flush",
-        &[REPO_HOST, SITE, "deb.debian.org", "security.debian.org"],
+        &[SITE, "deb.debian.org", "security.debian.org"],
     )
     .await;
     let run = |script: String| {
@@ -414,7 +411,7 @@ async fn vm_capture_apt_update_works_with_no_proxy_file_and_no_proxy_setting() {
         &vm,
         &api,
         "aptn",
-        &[REPO_HOST, "deb.debian.org", "security.debian.org"],
+        &["deb.debian.org", "security.debian.org"],
     )
     .await;
     let before = allowed_connections(&vm, "deb.debian.org", 80);

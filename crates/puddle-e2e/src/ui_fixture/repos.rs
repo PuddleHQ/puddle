@@ -7,14 +7,14 @@ use futures_util::future::BoxFuture;
 use puddle_api::wire::{RepoListState, RepoNoteCode, RepoProblemCode, RepoRole, RepoVisibility};
 use puddle_api::{FakeRepos, RepoService, ReposError};
 use puddle_repos::{
-    ListState, Note, NoteKind, Problem, ProblemKind, ProfileRead, Read, Repository, Role,
+    ListState, Note, NoteKind, Problem, ProblemKind, Profile, ProfileRead, Read, Repository, Role,
     SourceList, Visibility,
 };
 use puddle_secrets::SourceSpec;
 use puddle_store::{Identity, IdentityId};
 use tokio::sync::watch;
 
-use super::scenario::{RepoItemSeed, RepoListSeed};
+use super::scenario::{ProfileSeed, RepoItemSeed, RepoListSeed};
 
 /// A [`FakeRepos`] whose answers wait while it is held.
 pub(super) struct HeldRepos {
@@ -32,6 +32,38 @@ impl HeldRepos {
 
     pub(super) fn set_lists(&self, lists: Vec<SourceList>) {
         self.inner.set_lists(lists);
+    }
+
+    pub(super) fn set_profiles(&self, profiles: &[ProfileSeed]) -> Result<(), String> {
+        for seed in profiles {
+            let source = seed.source.clone().into_spec()?;
+            self.inner.set_profile(
+                source,
+                ProfileRead {
+                    profile: Profile {
+                        account: seed.account.clone(),
+                        name: seed.name.clone(),
+                        email: seed.email.clone(),
+                        organisations: seed.organisations.clone(),
+                        notes: seed
+                            .notes
+                            .iter()
+                            .map(|n| Note {
+                                kind: note(n.code),
+                                message: n.message.clone(),
+                            })
+                            .collect(),
+                    },
+                    problem: seed.problem.as_ref().map(|p| Problem {
+                        kind: problem(p.code),
+                        message: p.message.clone(),
+                        retry_at: None,
+                        needs_sign_in: p.needs_sign_in,
+                    }),
+                },
+            );
+        }
+        Ok(())
     }
 
     /// Keeps every answer from now on waiting.

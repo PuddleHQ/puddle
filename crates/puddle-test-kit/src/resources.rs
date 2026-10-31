@@ -71,6 +71,44 @@ impl Default for ReservedPort {
     }
 }
 
+/// A free loopback port below both systems' ephemeral ranges (Linux from 32768, Windows from
+/// 49152), for a test that must name a port a restarted program binds itself, with a plain bind
+/// that cannot share (tokio sets no `SO_REUSEADDR` on Windows, so a [`ReservedPort`] there makes
+/// that bind fail). Nothing's port 0, source port or the kernel's choice can land on it, which is
+/// the collision a port released moments ago is open to. Another test can only reach it by picking
+/// the same number from this range at the same moment (the pick starts at a different point in each
+/// process and call).
+///
+/// The port is free when it is returned and not held: a program that is not a test could still bind
+/// it.
+///
+/// # Panics
+/// When no port in the range can be bound.
+#[must_use]
+pub fn quiet_port() -> u16 {
+    free_port_in(20_000, 12_000).expect("a free loopback port between 20000 and 32000")
+}
+
+/// The first free loopback port `first + k` for a `k` below `span`, tried from a start that differs
+/// per process and call.
+fn free_port_in(first: u16, span: u16) -> Option<u16> {
+    use std::sync::atomic::{AtomicU16, Ordering};
+    static CALLS: AtomicU16 = AtomicU16::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.subsec_nanos());
+    let start = (nanos ^ std::process::id().wrapping_mul(2_654_435_761)) % u32::from(span);
+    let call = u32::from(CALLS.fetch_add(1, Ordering::Relaxed));
+    (0..u32::from(span)).find_map(|step| {
+        // 7919 is prime; for a span it does not divide, the steps visit every port once.
+        let offset = (start + (call + step) * 7_919) % u32::from(span);
+        let port = first + u16::try_from(offset).expect("the offset is below the span");
+        TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port)))
+            .is_ok()
+            .then_some(port)
+    })
+}
+
 /// Whether a listener accepts a connection on `addr` (loopback only: the connect blocks, up to a
 /// second).
 ///
@@ -166,6 +204,20 @@ mod tests {
         assert!(!accepts(addr), "and be dropped again");
         let other = ReservedPort::default();
         assert_ne!(other.port(), reserved.port());
+    }
+
+    #[test]
+    fn a_quiet_port_is_below_the_ephemeral_ranges_and_can_be_bound_plainly() {
+        let port = quiet_port();
+        assert!((20_000..32_000).contains(&port), "{port}");
+        let socket = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port)));
+        assert!(socket.is_ok(), "a plain bind takes it");
+    }
+
+    #[test]
+    fn a_range_with_every_port_held_has_none_free() {
+        let (_held, port) = bound_port();
+        assert_eq!(free_port_in(port, 1), None);
     }
 
     #[test]

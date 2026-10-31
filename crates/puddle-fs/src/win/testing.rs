@@ -12,7 +12,6 @@
     reason = "test helpers fail the test by panicking and say what they did on stderr"
 )]
 
-use std::ffi::c_void;
 use std::fmt::Write as _;
 use std::io;
 use std::marker::PhantomData;
@@ -24,18 +23,18 @@ use std::ptr;
 use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT};
 use windows_sys::Win32::Security::{
-    ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_SIZE_INFORMATION, AclSizeInformation,
-    CreateRestrictedToken, CreateWellKnownSid, DACL_SECURITY_INFORMATION, EqualSid, GetAce,
-    GetAclInformation, GetSecurityDescriptorControl, ImpersonateLoggedOnUser,
-    LOGON32_LOGON_NETWORK, LOGON32_PROVIDER_DEFAULT, LogonUserW, PSECURITY_DESCRIPTOR,
-    RevertToSelf, SE_DACL_PROTECTED, SECURITY_MAX_SID_SIZE, SID_AND_ATTRIBUTES, TOKEN_DUPLICATE,
-    TOKEN_QUERY, WELL_KNOWN_SID_TYPE, WinAuthenticatedUserSid, WinBuiltinUsersSid,
-    WinInteractiveSid, WinWorldSid,
+    ACL, ACL_SIZE_INFORMATION, AclSizeInformation, CreateRestrictedToken, CreateWellKnownSid,
+    DACL_SECURITY_INFORMATION, EqualSid, GetAclInformation, GetSecurityDescriptorControl,
+    ImpersonateLoggedOnUser, LOGON32_LOGON_NETWORK, LOGON32_PROVIDER_DEFAULT, LogonUserW,
+    PSECURITY_DESCRIPTOR, RevertToSelf, SE_DACL_PROTECTED, SECURITY_MAX_SID_SIZE,
+    SID_AND_ATTRIBUTES, TOKEN_DUPLICATE, TOKEN_QUERY, WELL_KNOWN_SID_TYPE, WinAuthenticatedUserSid,
+    WinBuiltinUsersSid, WinInteractiveSid, WinWorldSid,
 };
 use windows_sys::Win32::Storage::FileSystem::{CreateFileW, OPEN_EXISTING};
-use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
 
-use super::{LocalBox, TokenUserBuf, process_token, wide_nul};
+use super::{
+    LocalBox, TokenUserBuf, ace_bytes, allowed_mask, allowed_sid, process_token, wide_nul,
+};
 
 /// Broad groups the user belongs to: a token restricted to these can do what "everyone logged
 /// on" may do, but nothing granted to the user's own SID.
@@ -217,23 +216,15 @@ pub fn assert_owner_only_dacl(object: &impl AsRawHandle, mask: u32) {
     assert_ne!(ok, 0, "GetAclInformation: {}", io::Error::last_os_error());
     assert_eq!(info.AceCount, 1, "the DACL must hold only the user's ACE");
 
-    let mut ace: *mut c_void = ptr::null_mut();
-    // SAFETY: index 0 exists (AceCount is 1); `ace` points into the DACL.
-    let ok = unsafe { GetAce(dacl, 0, &raw mut ace) };
-    assert_ne!(ok, 0, "GetAce: {}", io::Error::last_os_error());
-    // SAFETY: GetAce succeeded, so `ace` points at an ACE, and every ACE starts with an
-    // ACE_HEADER. Only the header is read until the type says how long the ACE is.
-    let header = unsafe { &*ace.cast::<ACE_HEADER>() };
-    assert_eq!(u32::from(header.AceType), ACCESS_ALLOWED_ACE_TYPE);
-    let ace = ace.cast::<ACCESS_ALLOWED_ACE>();
-    // SAFETY: the type check above makes this an ACCESS_ALLOWED_ACE.
-    assert_eq!(unsafe { (*ace).Mask }, mask);
+    // SAFETY: index 0 exists (AceCount is 1); `dacl` lives in `descriptor`, held by `_owned`.
+    let ace = unsafe { ace_bytes(dacl, 0) }.unwrap();
+    let sid = allowed_sid(ace).expect("the ACE is a whole allow entry");
+    assert_eq!(allowed_mask(ace), Some(mask));
 
     let token = process_token(TOKEN_QUERY).unwrap();
     let user = TokenUserBuf::read(&token).unwrap();
-    // SAFETY: both are valid SIDs. The ACE's SID starts at `SidStart` and extends past the
-    // struct, so the pointer keeps `GetAce`'s provenance instead of going through a reference.
-    let same = unsafe { EqualSid((&raw const (*ace).SidStart).cast_mut().cast(), user.sid()) };
+    // SAFETY: both are valid SIDs; `allowed_sid` showed the ACE's lies inside the entry.
+    let same = unsafe { EqualSid(sid, user.sid()) };
     assert_ne!(same, 0, "the ACE is not for the current user");
 }
 

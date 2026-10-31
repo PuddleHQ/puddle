@@ -17,6 +17,7 @@ on:
       - ci/build-msi.sh
       - ci/msi-install-test.ps1
       - ci/fetch-tauri-cli.sh
+      - ci/fetch-retry.sh
       - ci/tauri-cli.sha256
       - ci/msb-runtime.sha256
       - ci/code-server.sha256

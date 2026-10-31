@@ -175,6 +175,31 @@
     "sign_in": { "code": "ABCD-1234", "url": "https://github.com/login/device" }
   },
   "scripts": {
+    "pushes_read_credentials": [
+      {
+        "do": "credential_read",
+        "source": {
+          "kind": "gh",
+          "host": "github.com",
+          "account": "tijs-demo"
+        },
+        "by": "injection",
+        "readable": true,
+        "ago_ms": 240000
+      },
+      {
+        "do": "credential_read",
+        "source": {
+          "kind": "git_credential",
+          "host": "dev.azure.com",
+          "path": "contoso",
+          "username": null
+        },
+        "by": "repository_list",
+        "readable": false,
+        "ago_ms": 60000
+      }
+    ],
     "sign_in_needed": [
       {
         "do": "emit",

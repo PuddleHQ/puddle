@@ -9,6 +9,7 @@ use tokio::sync::broadcast;
 use tokio::time::Instant;
 
 use crate::error::SourceError;
+use crate::readlog::{ReadLog, ReadUse};
 use crate::sources::{Credential, Fetch};
 use crate::spec::SourceSpec;
 
@@ -87,6 +88,7 @@ pub struct SecretCache<F> {
     ttls: Ttls,
     slots: Mutex<HashMap<SourceSpec, Slot>>,
     events: broadcast::Sender<SignInNeeded>,
+    log: Option<Arc<ReadLog>>,
 }
 
 /// A credential should be renewed this long before its source says it ends.
@@ -106,7 +108,16 @@ impl<F: Fetch> SecretCache<F> {
             ttls,
             slots: Mutex::new(HashMap::new()),
             events,
+            log: None,
         }
+    }
+
+    /// The same, noting the outcome of every read the source itself answers (not one served from
+    /// memory) in `log`.
+    #[must_use]
+    pub fn with_read_log(mut self, log: Arc<ReadLog>) -> Self {
+        self.log = Some(log);
+        self
     }
 
     /// Sign-in notices, one per failed read that needs the user.
@@ -128,6 +139,14 @@ impl<F: Fetch> SecretCache<F> {
     /// The source's [`SourceError`] when it cannot supply a value and no earlier one is still
     /// allowed.
     pub async fn get(&self, spec: &SourceSpec) -> Result<Credential, SourceError> {
+        self.get_for(spec, ReadUse::Injection).await
+    }
+
+    /// [`get`](Self::get) for a read that `by` asked for, which the read log records.
+    ///
+    /// # Errors
+    /// As [`get`](Self::get).
+    pub async fn get_for(&self, spec: &SourceSpec, by: ReadUse) -> Result<Credential, SourceError> {
         let slot = {
             let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
             Arc::clone(slots.entry(spec.clone()).or_default())
@@ -141,6 +160,9 @@ impl<F: Fetch> SecretCache<F> {
         }
         match self.fetcher.fetch(spec).await {
             Ok(fetched) => {
+                if let Some(log) = &self.log {
+                    log.record(spec, by, None);
+                }
                 let ttl = self.ttls.for_spec(spec);
                 let mut refresh_at = ttl.fresh.map(|d| now + d);
                 let mut dead_at = refresh_at.map(|at| at + ttl.grace);
@@ -159,6 +181,9 @@ impl<F: Fetch> SecretCache<F> {
                 Ok(credential)
             }
             Err(err) => {
+                if let Some(log) = &self.log {
+                    log.record(spec, by, Some(err.clone()));
+                }
                 if let Some(h) = held.as_ref()
                     && h.dead_at.is_none_or(|at| now < at)
                 {
@@ -361,5 +386,28 @@ mod tests {
         assert_eq!(ttls.for_spec(&git), ttls.git_credential);
         assert_eq!(ttls.for_spec(&stored), ttls.stored);
         assert_ne!(ttls.gh, ttls.git_credential);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_read_log_notes_each_read_the_source_answers_and_never_a_cached_one() {
+        let script = Script::new(vec![Ok(None), Err(SourceError::NotSignedIn)]);
+        let log = Arc::new(ReadLog::new());
+        let cache = SecretCache::new(&script).with_read_log(Arc::clone(&log));
+        assert_eq!(log.last(&gh()), None);
+        cache.get_for(&gh(), ReadUse::RepositoryList).await.unwrap();
+        let first = log.last(&gh()).unwrap();
+        assert_eq!((first.by, &first.problem), (ReadUse::RepositoryList, &None));
+        // Served from memory: no read, so the entry is the same one.
+        tokio::time::advance(MIN).await;
+        cache.get(&gh()).await.unwrap();
+        assert_eq!(log.last(&gh()), Some(first));
+        // The TTL ends and the source now says no, past the grace.
+        tokio::time::advance(61 * MIN).await;
+        assert!(cache.get(&gh()).await.is_err());
+        let last = log.last(&gh()).unwrap();
+        assert_eq!(
+            (last.by, last.problem),
+            (ReadUse::Injection, Some(SourceError::NotSignedIn))
+        );
     }
 }

@@ -13,6 +13,7 @@
   import {
     coverageText,
     describeSource,
+    seenText,
     sourceLabel,
     usedBy,
     type Credential,
@@ -147,6 +148,7 @@
       <ul class="creds">
         {#each identity.credentials as credential (describeSource(credential.source))}
           {@const check = store.checkOf(credential)}
+          {@const seen = seenText(check, Date.now())}
           <li class="cred" data-credential={describeSource(credential.source)}>
             <div class="what">
               <p class="line">
@@ -164,6 +166,9 @@
                   Puddle can read it. (It checks that a token comes back, and
                   never shows it.)
                 </p>
+              {/if}
+              {#if seen}
+                <p class="muted" data-testid="checked">{seen}</p>
               {/if}
             </div>
             <div class="acts">

@@ -74,6 +74,10 @@ pub enum AgentMessage {
         /// What the kernel or the agent said.
         reason: String,
     },
+    /// The capture rules are installed after an outage the agent told with
+    /// [`AgentMessage::CaptureUnavailable`]. An agent from before this message never sends it, and
+    /// a host from before it ignores it.
+    CaptureReady,
     /// Datagrams the capture rules refused: UDP that is not DNS fails at once in the guest, and
     /// the agent says where it was going. The address and port are the guest's claim, as is the
     /// count; the host cleans them.
@@ -212,6 +216,12 @@ impl AgentMessage {
     #[must_use]
     pub fn capture_unavailable(reason: String) -> Self {
         Self::CaptureUnavailable { reason }
+    }
+
+    /// An [`AgentMessage::CaptureReady`].
+    #[must_use]
+    pub fn capture_ready() -> Self {
+        Self::CaptureReady
     }
 
     /// An [`AgentMessage::UdpRefused`].
@@ -528,6 +538,24 @@ mod tests {
         let text = sent["problem"].as_str().unwrap();
         assert_eq!(text.chars().count(), MAX_EDITOR_PROBLEM_CHARS);
         assert!(long.to_line().is_ok(), "the cut text fits a control line");
+    }
+
+    #[test]
+    fn capture_messages_round_trip_and_the_recovery_has_no_fields() {
+        assert_eq!(
+            AgentMessage::capture_ready().to_line().unwrap(),
+            b"{\"type\":\"capture_ready\"}\n"
+        );
+        for msg in [
+            AgentMessage::capture_ready(),
+            AgentMessage::capture_tampered(true),
+            AgentMessage::capture_unavailable("no nf_tables".into()),
+        ] {
+            assert_eq!(
+                AgentMessage::from_line(&msg.to_line().unwrap()).unwrap(),
+                msg
+            );
+        }
     }
 
     #[test]

@@ -258,7 +258,7 @@ async fn sign_in(front: SocketAddr, workspace: &str, password: &str) -> Result<S
 /// host), counted.
 const COUNT: &str = r#"
 hosts=$(ps -eo args= | grep -c -e '--type=extensionHos[t]' || true)
-pty=$(for p in $(pgrep -f -- '--type=ptyHos[t]'); do pgrep -P "$p"; done | wc -l)
+pty=$(ps -eo pid=,ppid=,args= | awk '/--type=ptyHos[t]/ { host[$1] = 1 } { parent[$1] = $2 } END { n = 0; for (p in parent) if (parent[p] in host) n++; print n }')
 echo "hosts=$hosts terminals=$pty health=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:41337/healthz)"
 "#;
 
@@ -285,7 +285,8 @@ async fn counts_until(
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
-    panic!("{what}: the guest still shows {line}");
+    let processes = guest(runtime, sandbox, "ps -eo pid,ppid,user,args | cut -c1-220").await;
+    panic!("{what}: the guest still shows {line}\n{processes}");
 }
 
 /// Waits until the front counts some window of `workspace` (`open`) or none; a limit on a hang
@@ -406,6 +407,13 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     .await;
 
     // A terminal in the window: its shell runs below the editor's pty host.
+    shell
+        .browser
+        .lock()
+        .await
+        .press(shell.page(&name), "Escape")
+        .await
+        .expect("keys");
     shell
         .browser
         .lock()

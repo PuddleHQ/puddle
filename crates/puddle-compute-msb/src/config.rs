@@ -44,8 +44,12 @@ pub struct MsbConfig {
     /// The `libkrunfw` library released with it.
     pub libkrunfw: PathBuf,
     /// The only directory file mounts may come from: it holds just the files meant for guests,
-    /// never Puddle's data (database, tokens, CA keys).
+    /// never Puddle's data (database, tokens, CA keys). The one exception is a checkout's `.git`
+    /// ([`MountKind::Checkout`]), which has a rule of its own.
     pub guest_share: PathBuf,
+    /// Folders no checkout mount may lie in or hold, besides the msb home and the guest share:
+    /// Puddle's data folder.
+    pub protected_dirs: Vec<PathBuf>,
     /// SSH server settings.
     pub ssh: SshConfig,
     /// Extra roots the registry client trusts for image pulls, as PEM: the corporate roots
@@ -86,6 +90,7 @@ impl MsbConfig {
             msb: msb.into(),
             libkrunfw: libkrunfw.into(),
             guest_share: guest_share.into(),
+            protected_dirs: Vec::new(),
             ssh: SshConfig::default(),
             registry_roots: Vec::new(),
             registry_proxy: None,
@@ -130,6 +135,14 @@ impl MsbConfig {
         self
     }
 
+    /// The same config, refusing a checkout mount inside `dir` or holding it (see
+    /// [`MsbConfig::protected_dirs`]).
+    #[must_use]
+    pub fn with_protected_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.protected_dirs.push(dir.into());
+        self
+    }
+
     /// The same config, accepting SSH logins with `key` (an OpenSSH public key line).
     #[must_use]
     pub fn with_ssh_key(mut self, key: impl Into<String>) -> Self {
@@ -163,7 +176,9 @@ impl MsbConfig {
 
     /// Checks that `host` lies under [`MsbConfig::guest_share`] after resolving symlinks and
     /// `..`, so a mount can never expose Puddle's own data. The share root itself is refused: a
-    /// directory mount names a folder below it.
+    /// directory mount names a folder below it. A [`MountKind::Checkout`] instead must be the
+    /// canonical path of a real `.git` directory outside the msb home, the guest share and every
+    /// [`MsbConfig::protected_dirs`] folder, owned by this user on Unix.
     ///
     /// # Errors
     ///
@@ -171,6 +186,13 @@ impl MsbConfig {
     /// when it isn't a file (or a directory, for [`MountKind::Dir`]) as the mount says.
     pub fn check_mount_source(&self, host: &Path, kind: MountKind) -> Result<(), ComputeError> {
         let invalid = |reason: String| ComputeError::InvalidSpec { reason };
+        if kind == MountKind::Checkout {
+            let protected: Vec<&Path> = [self.home.as_path(), self.guest_share.as_path()]
+                .into_iter()
+                .chain(self.protected_dirs.iter().map(PathBuf::as_path))
+                .collect();
+            return crate::checkout::check(host, &protected);
+        }
         let root = self.guest_share.canonicalize().map_err(|e| {
             invalid(format!(
                 "guest-share root {} can't be resolved: {e}",
@@ -186,7 +208,7 @@ impl MsbConfig {
         if source.starts_with(&root) && source != root {
             let (found, want) = match kind {
                 MountKind::File => (source.is_file(), "file"),
-                MountKind::Dir => (source.is_dir(), "directory"),
+                MountKind::Dir | MountKind::Checkout => (source.is_dir(), "directory"),
             };
             if found {
                 Ok(())
@@ -347,6 +369,48 @@ mod tests {
                 .check_mount_source(&data.join("puddle.db"), MountKind::File)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn a_checkout_mount_follows_its_own_rule_with_every_puddle_folder_protected() {
+        let dir = Dir::new("checkout");
+        let base = std::fs::canonicalize(&dir.0).unwrap();
+        let (home, share, data) = (base.join("msb"), base.join("share"), base.join("data"));
+        let git = base.join("api").join(".git");
+        for d in [
+            &home,
+            &share,
+            &data,
+            &git.join("objects"),
+            &git.join("refs"),
+        ] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        let c = MsbConfig::new(&home, "/m", "/l", &share).with_protected_dir(&data);
+        assert_eq!(c.protected_dirs, vec![data.clone()]);
+        c.check_mount_source(&git, MountKind::Checkout).unwrap();
+        // The same directory is no plain directory mount: it is not in the share.
+        assert!(c.check_mount_source(&git, MountKind::Dir).is_err());
+        // Each of the three folders is protected, the data folder through the config.
+        for root in [&home, &share, &data] {
+            let inside = root.join("api").join(".git");
+            for d in [inside.join("objects"), inside.join("refs")] {
+                std::fs::create_dir_all(d).unwrap();
+            }
+            std::fs::write(inside.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+            let err = c
+                .check_mount_source(&inside, MountKind::Checkout)
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("lies inside Puddle's folder"),
+                "{err}"
+            );
+        }
+        // A checkout in the share is no directory mount's business either: the share's rule
+        // takes plain mounts only.
+        let in_share = share.join("api");
+        c.check_mount_source(&in_share, MountKind::Dir).unwrap();
     }
 
     #[cfg(unix)]

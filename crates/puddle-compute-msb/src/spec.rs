@@ -98,7 +98,7 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
     set(
         "SandboxBuilder::volume",
         "file and directory mounts: bind + readonly; named volumes: named / named_with(ensure_exists, disk, size); owned disks: owned_with(disk, size)",
-        "read-only mounts only; sources under the guest-share root",
+        "read-only mounts only; sources under the guest-share root, or a checkout's `.git` that passed the checkout rule",
     ),
     set(
         "SandboxBuilder::security",
@@ -319,7 +319,8 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
 ];
 
 /// The SDK builder for `spec`: every option Puddle sets, nothing else (see [`SDK_OPTIONS`]).
-/// File mount sources must already have passed [`crate::MsbConfig::check_mount_source`].
+/// File mount sources must already have passed [`crate::MsbConfig::check_mount_source`]; every
+/// one of them, a checkout's `.git` included, is bound read-only.
 #[must_use]
 pub fn builder(spec: &SandboxSpec) -> SandboxBuilder {
     let mut b = Sandbox::builder(spec.name.as_str())

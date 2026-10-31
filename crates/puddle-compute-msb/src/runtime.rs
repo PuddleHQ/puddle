@@ -867,6 +867,56 @@ mod tests {
         drop(rt);
     }
 
+    #[tokio::test]
+    async fn create_refuses_a_checkout_that_breaks_its_rule_or_has_a_route_before_any_vm_work() {
+        use puddle_compute::{FileMount, SandboxSpec, VsockRoute};
+        use puddle_types::GuestPath;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let base = dunce::canonicalize(tmp.path()).unwrap();
+        let home = base.join("data").join("msb");
+        let share = base.join("data").join("guest-share");
+        std::fs::create_dir_all(&share).unwrap();
+        let git_dir = |at: &Path| {
+            let git = at.join(".git");
+            std::fs::create_dir_all(git.join("objects")).unwrap();
+            std::fs::create_dir_all(git.join("refs")).unwrap();
+            std::fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+            git
+        };
+        let checkout = git_dir(&base.join("api"));
+        let in_data = git_dir(&base.join("data").join("settings"));
+        let config = MsbConfig::new(&home, "/no/msb", "/no/libkrunfw", &share)
+            .with_protected_dir(base.join("data"));
+        let rt = MsbRuntime::open(config).await.unwrap();
+        let spec = |git: &Path| {
+            SandboxSpec::new(
+                SandboxName::new("import").unwrap(),
+                ImageRef::new("debian:12").unwrap(),
+            )
+            .with_file_mount(FileMount::checkout(
+                git,
+                GuestPath::new("/puddle/import/0").unwrap(),
+            ))
+        };
+        let refusal = |spec: SandboxSpec| {
+            let rt = &rt;
+            async move { rt.create(spec).await.err().unwrap().to_string() }
+        };
+        let routed =
+            refusal(spec(&checkout).with_route(VsockRoute::new(5000, "/run/p.sock"))).await;
+        assert!(
+            routed.contains("may only go to a sandbox with no route"),
+            "{routed}"
+        );
+        let inside = refusal(spec(&in_data)).await;
+        assert!(inside.contains("lies inside Puddle's folder"), "{inside}");
+        let climbing = base.join("api").join("..").join("api").join(".git");
+        let climbing = refusal(spec(&climbing)).await;
+        assert!(climbing.contains("canonical form"), "{climbing}");
+        drop(rt);
+    }
+
     #[test]
     fn the_database_folder_is_listed_with_sizes_and_ages_for_the_evidence_of_a_failed_open() {
         let tmp = tempfile::tempdir().unwrap();

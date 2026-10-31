@@ -1,0 +1,351 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! The one mount source that is not under the guest share: the `.git` directory of a checkout the
+//! user picked ([`puddle_compute::MountKind::Checkout`]).
+//!
+//! The rule is narrow on purpose. The source must be the canonical path of a real `.git`
+//! directory, with a git directory's structure, outside every folder of Puddle's own and (on
+//! Unix) owned by the user Puddle runs as. [`puddle_compute::SandboxSpec::validate`] already
+//! keeps it out of any sandbox with a route, and [`crate::spec::builder`] passes it to msb
+//! read-only like every other file mount, so msb's file server refuses every write whatever the
+//! guest does to its own mount flags.
+
+use std::fs::Metadata;
+use std::path::Path;
+
+use puddle_compute::ComputeError;
+
+/// Checks `git_dir` against the checkout rule; `protected` are the folders no checkout may lie
+/// in or hold (the msb home, the guest share, Puddle's data folder).
+pub(crate) fn check(git_dir: &Path, protected: &[&Path]) -> Result<(), ComputeError> {
+    let refuse = |why: String| ComputeError::InvalidSpec {
+        reason: format!("the checkout {} {why}", git_dir.display()),
+    };
+    if !git_dir.is_absolute() {
+        return Err(refuse("is not an absolute path".into()));
+    }
+    let canonical =
+        dunce::canonicalize(git_dir).map_err(|e| refuse(format!("can't be resolved: {e}")))?;
+    if canonical != git_dir {
+        return Err(refuse(format!(
+            "is not written in its canonical form {} (a `..`, a link or a junction in the path)",
+            canonical.display()
+        )));
+    }
+    if git_dir.file_name().is_none_or(|n| n != ".git") {
+        return Err(refuse("is not a `.git` directory".into()));
+    }
+    let meta =
+        std::fs::symlink_metadata(git_dir).map_err(|e| refuse(format!("can't be read: {e}")))?;
+    if meta.is_file() {
+        return Err(refuse(
+            "is a file that points elsewhere, as in a linked worktree or a submodule; \
+             start from the main checkout"
+                .into(),
+        ));
+    }
+    if !meta.file_type().is_dir() {
+        return Err(refuse("is not a directory".into()));
+    }
+    for (entry, dir) in [("HEAD", false), ("objects", true), ("refs", true)] {
+        let found = std::fs::symlink_metadata(git_dir.join(entry))
+            .is_ok_and(|m| if dir { m.is_dir() } else { m.is_file() });
+        if !found {
+            let kind = if dir { "directory" } else { "file" };
+            return Err(refuse(format!(
+                "is not a git directory: it has no {entry} {kind}"
+            )));
+        }
+    }
+    if std::fs::symlink_metadata(git_dir.join("commondir")).is_ok() {
+        return Err(refuse(
+            "belongs to a linked worktree (it has a commondir file); start from the main checkout"
+                .into(),
+        ));
+    }
+    for root in protected {
+        let root = dunce::canonicalize(root).map_err(|e| {
+            refuse(format!(
+                "can't be checked against Puddle's folder {}: {e}",
+                root.display()
+            ))
+        })?;
+        if canonical.starts_with(&root) {
+            return Err(refuse(format!(
+                "lies inside Puddle's folder {}",
+                root.display()
+            )));
+        }
+        if root.starts_with(&canonical) {
+            return Err(refuse(format!("holds Puddle's folder {}", root.display())));
+        }
+    }
+    owner(&meta).map_err(refuse)
+}
+
+/// On Unix the checkout must belong to the user Puddle runs as, as git itself asks of a
+/// repository before it reads its config (`safe.directory`).
+#[cfg(unix)]
+fn owner(meta: &Metadata) -> Result<(), String> {
+    owned_by(meta, rustix::process::geteuid().as_raw())
+}
+
+/// On Windows the owner is not compared: a file that a member of Administrators makes is often
+/// owned by that group, not by the user (git's own `safe.directory` check has to allow for it), so
+/// the check would refuse ordinary checkouts. Nothing of the checkout runs on the host either way.
+#[cfg(not(unix))]
+fn owner(_meta: &Metadata) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn owned_by(meta: &Metadata, uid: u32) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    if meta.uid() == uid {
+        Ok(())
+    } else {
+        Err(format!(
+            "belongs to another user (uid {}, Puddle runs as {uid})",
+            meta.uid()
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    /// A temporary folder that holds a checkout and Puddle's folders, removed at the end.
+    struct Fixture {
+        dir: tempfile::TempDir,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            Self {
+                dir: tempfile::Builder::new()
+                    .prefix("puddle-checkout-rule-")
+                    .tempdir()
+                    .unwrap(),
+            }
+        }
+
+        /// The canonical base folder (the temp folder may sit behind a link, as on macOS).
+        fn base(&self) -> PathBuf {
+            dunce::canonicalize(self.dir.path()).unwrap()
+        }
+
+        /// A git directory by structure at `<base>/<rel>/.git`; returns its path.
+        fn repo(&self, rel: &str) -> PathBuf {
+            let git = self.base().join(rel).join(".git");
+            make_git_dir(&git);
+            git
+        }
+
+        fn protected(&self) -> Vec<PathBuf> {
+            let data = self.base().join("data");
+            let share = data.join("guest-share");
+            let home = data.join("msb");
+            for d in [&share, &home] {
+                std::fs::create_dir_all(d).unwrap();
+            }
+            vec![home, share, data]
+        }
+
+        fn check(&self, git: &Path) -> Result<(), String> {
+            let protected = self.protected();
+            let roots: Vec<&Path> = protected.iter().map(PathBuf::as_path).collect();
+            check(git, &roots).map_err(|e| e.to_string())
+        }
+    }
+
+    fn make_git_dir(git: &Path) {
+        std::fs::create_dir_all(git.join("objects")).unwrap();
+        std::fs::create_dir_all(git.join("refs").join("heads")).unwrap();
+        std::fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(git.join("config"), "[core]\n\tbare = false\n").unwrap();
+    }
+
+    fn refused(result: Result<(), String>, want: &str) {
+        let err = result.expect_err("the checkout was accepted");
+        assert!(err.contains(want), "want {want:?} in {err:?}");
+    }
+
+    #[test]
+    fn the_canonical_git_directory_of_a_checkout_is_accepted() {
+        let f = Fixture::new();
+        let git = f.repo("api");
+        f.check(&git).unwrap();
+    }
+
+    #[test]
+    fn a_relative_path_is_refused() {
+        let f = Fixture::new();
+        refused(f.check(Path::new("api/.git")), "is not an absolute path");
+    }
+
+    #[test]
+    fn a_path_that_climbs_with_dot_dot_is_refused_even_when_it_lands_on_a_checkout() {
+        let f = Fixture::new();
+        f.repo("api");
+        std::fs::create_dir_all(f.base().join("other")).unwrap();
+        let climb = f.base().join("other").join("..").join("api").join(".git");
+        refused(f.check(&climb), "canonical form");
+    }
+
+    #[test]
+    fn a_missing_path_is_refused() {
+        let f = Fixture::new();
+        refused(
+            f.check(&f.base().join("gone").join(".git")),
+            "can't be resolved",
+        );
+    }
+
+    #[test]
+    fn a_folder_that_is_not_named_dot_git_is_refused_so_a_bare_repository_is_too() {
+        let f = Fixture::new();
+        let bare = f.base().join("api.git");
+        make_git_dir(&bare);
+        refused(f.check(&bare), "is not a `.git` directory");
+        refused(f.check(&f.base()), "is not a `.git` directory");
+    }
+
+    #[test]
+    fn a_gitdir_file_of_a_worktree_or_submodule_is_refused_with_the_reason() {
+        let f = Fixture::new();
+        let main = f.repo("api");
+        let linked = f.base().join("api-feature");
+        std::fs::create_dir_all(&linked).unwrap();
+        std::fs::write(
+            linked.join(".git"),
+            format!("gitdir: {}\n", main.join("worktrees").join("f").display()),
+        )
+        .unwrap();
+        refused(
+            f.check(&linked.join(".git")),
+            "linked worktree or a submodule",
+        );
+    }
+
+    #[test]
+    fn a_dot_git_without_the_structure_of_a_git_directory_is_refused() {
+        let f = Fixture::new();
+        for (missing, want) in [
+            ("HEAD", "no HEAD file"),
+            ("objects", "no objects directory"),
+            ("refs", "no refs directory"),
+        ] {
+            let git = f.repo(&format!("no-{missing}"));
+            let path = git.join(missing);
+            if path.is_dir() {
+                std::fs::remove_dir_all(&path).unwrap();
+            } else {
+                std::fs::remove_file(&path).unwrap();
+            }
+            refused(f.check(&git), want);
+        }
+        // An entry of the wrong kind counts as missing.
+        let git = f.repo("head-dir");
+        std::fs::remove_file(git.join("HEAD")).unwrap();
+        std::fs::create_dir(git.join("HEAD")).unwrap();
+        refused(f.check(&git), "no HEAD file");
+        let empty = f.base().join("empty").join(".git");
+        std::fs::create_dir_all(&empty).unwrap();
+        refused(f.check(&empty), "is not a git directory");
+    }
+
+    #[test]
+    fn a_linked_worktrees_git_directory_is_refused() {
+        let f = Fixture::new();
+        let git = f.repo("wt");
+        std::fs::write(git.join("commondir"), "../..\n").unwrap();
+        refused(f.check(&git), "commondir");
+    }
+
+    #[test]
+    fn a_checkout_inside_any_of_puddles_folders_is_refused() {
+        let f = Fixture::new();
+        for rel in [
+            "data/guest-share/api",
+            "data/msb/volumes/api",
+            "data/settings/api",
+        ] {
+            let git = f.repo(rel);
+            refused(f.check(&git), "lies inside Puddle's folder");
+        }
+    }
+
+    #[test]
+    fn a_checkout_that_holds_one_of_puddles_folders_is_refused() {
+        let f = Fixture::new();
+        let git = f.repo("home");
+        let protected = [git.join("puddle-data")];
+        std::fs::create_dir_all(&protected[0]).unwrap();
+        let err = check(&git, &[protected[0].as_path()]).unwrap_err();
+        assert!(err.to_string().contains("holds Puddle's folder"), "{err}");
+    }
+
+    #[test]
+    fn a_protected_folder_that_cannot_be_resolved_refuses_rather_than_skips() {
+        let f = Fixture::new();
+        let git = f.repo("api");
+        let gone = f.base().join("no-such-data");
+        let err = check(&git, &[gone.as_path()]).unwrap_err();
+        assert!(err.to_string().contains("can't be checked"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_anywhere_in_the_path_is_refused() {
+        let f = Fixture::new();
+        let git = f.repo("real");
+        // The `.git` itself is a link to a real git directory.
+        let a = f.base().join("a");
+        std::fs::create_dir_all(&a).unwrap();
+        std::os::unix::fs::symlink(&git, a.join(".git")).unwrap();
+        refused(f.check(&a.join(".git")), "canonical form");
+        // A parent folder is a link.
+        std::os::unix::fs::symlink(f.base().join("real"), f.base().join("b")).unwrap();
+        refused(f.check(&f.base().join("b").join(".git")), "canonical form");
+        // A link to one of Puddle's folders is refused for the same reason, before anything else.
+        let protected = f.protected();
+        let inside = protected[1].join("api").join(".git");
+        make_git_dir(&inside);
+        std::os::unix::fs::symlink(protected[1].join("api"), f.base().join("c")).unwrap();
+        refused(f.check(&f.base().join("c").join(".git")), "canonical form");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_head_objects_or_refs_entry_is_refused() {
+        let f = Fixture::new();
+        let elsewhere = f.repo("elsewhere");
+        for entry in ["HEAD", "objects", "refs"] {
+            let git = f.repo(&format!("linked-{entry}"));
+            let path = git.join(entry);
+            if path.is_dir() {
+                std::fs::remove_dir_all(&path).unwrap();
+            } else {
+                std::fs::remove_file(&path).unwrap();
+            }
+            std::os::unix::fs::symlink(elsewhere.join(entry), &path).unwrap();
+            refused(f.check(&git), &format!("no {entry}"));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_checkout_of_another_user_is_refused() {
+        use std::os::unix::fs::MetadataExt;
+        let f = Fixture::new();
+        let git = f.repo("api");
+        let meta = std::fs::symlink_metadata(&git).unwrap();
+        owned_by(&meta, meta.uid()).unwrap();
+        let other = meta.uid().wrapping_add(1);
+        let err = owned_by(&meta, other).unwrap_err();
+        assert!(err.contains("belongs to another user"), "{err}");
+        assert!(err.contains(&format!("Puddle runs as {other}")), "{err}");
+    }
+}

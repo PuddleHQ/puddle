@@ -107,6 +107,9 @@ memchr = "2.8"
 cpu-time = "1.0"
 # The per-user data folder per OS; no own per-OS code for it.
 dirs = "7"
+# Canonical paths without Windows' `\\?\` prefix where a plain path means the same (the checkout
+# mount rule compares a path with its canonical form; already in the tree).
+dunce = "1.0.5"
 windows-sys = "0.61"
 # `getaddrinfo` with its error code kept (the proxy tells "no such name" from "lookup failed" by it); std and tokio keep only text.
 dns-lookup = "4.0.2"

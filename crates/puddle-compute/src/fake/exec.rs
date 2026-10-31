@@ -86,7 +86,7 @@ impl ExecContext<'_> {
             match m.kind {
                 MountKind::File if path == &m.guest => return Location::HostFile(&m.host),
                 MountKind::File if path.is_within(&m.guest) => return Location::Nowhere,
-                MountKind::Dir => {
+                MountKind::Dir | MountKind::Checkout => {
                     if let Some(rel) = path.relative_to(&m.guest) {
                         return Location::HostDir(&m.host, rel);
                     }

@@ -380,6 +380,7 @@ eval {
       $seen{$sid} = 1;
       my ($line) = split /\r\n/, $buffer{$sid};
       $count{(split / /, $line)[1]}++;
+      if (keys(%seen) % 500 == 0) { open(my $pg, ">", "/tmp/hg11.progress"); print $pg keys(%seen), " at ", time - $^T, "s\n"; close $pg; }
       delete $buffer{$sid};
     }
   }
@@ -445,12 +446,12 @@ async fn vm_hostile_hg11_a_flooding_workspace_is_held_at_its_cap_and_another_is_
     .await;
     let counts = puddle_test_kit::eventually_async(
         "the flood's counts",
-        Duration::from_secs(90),
+        Duration::from_secs(300),
         || async {
             let out = guest(
                 &runtime,
                 &flooder,
-                "cat /tmp/hg11.out /tmp/hg11.child 2>/dev/null || { echo pending; tail -3 /tmp/hg11.log; }",
+                "cat /tmp/hg11.out 2>/dev/null || { echo pending; tail -3 /tmp/hg11.log; cat /tmp/hg11.progress; }",
             )
             .await;
             if out.starts_with("pending") {

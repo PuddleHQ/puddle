@@ -383,6 +383,7 @@ eval {
   1;
 } or $error = " error=$@";
 chomp $error;
+$error .= " child_alive=" . (kill(0, $pid) ? 1 : 0) . " elapsed=" . (time - $^T);
 open(my $o, ">", "/tmp/hg11.out.tmp") or die;
 print $o join(" ", map { "$_=$count{$_}" } sort keys %count), " seen=", scalar(keys %seen), "$error\n";
 close $o;

@@ -176,17 +176,19 @@ async fn serve_holding() -> std::io::Result<(u16, Arc<AtomicUsize>, tokio::task:
 
 /// Waits until `held` is `want`; a limit on a hang only.
 async fn held_becomes(held: &AtomicUsize, want: usize) {
-    for _ in 0..300 {
-        if held.load(Ordering::SeqCst) == want {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert_eq!(
-        held.load(Ordering::SeqCst),
-        want,
-        "held connections (a limit on a hang)"
-    );
+    puddle_test_kit::eventually(
+        "held connections (a limit on a hang)",
+        Duration::from_secs(30),
+        || {
+            let now = held.load(Ordering::SeqCst);
+            if now == want {
+                Ok(())
+            } else {
+                Err(format!("{now} held, wanted {want}"))
+            }
+        },
+    )
+    .await;
 }
 
 /// The session the browser editor tests use: a cookie set before the page opens reaches the

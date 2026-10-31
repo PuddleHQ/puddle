@@ -28,10 +28,16 @@ pub fn resolve_line(bytes: &[u8]) {
 
     let mut reader = bytes;
     // A slice never waits, so the read finishes on its first poll.
-    if let Some(Ok(_)) = read_query(&mut reader).now_or_never() {
+    if let Some(Ok(streamed)) = read_query(&mut reader).now_or_never() {
+        let taken = bytes.get(..bytes.len() - reader.len()).unwrap_or_default();
         assert!(
-            bytes.len() - reader.len() <= MAX_QUERY_LINE,
+            taken.len() <= MAX_QUERY_LINE,
             "a query line over the limit was accepted"
+        );
+        assert_eq!(
+            ResolveQuery::from_line(taken).ok(),
+            Some(streamed),
+            "the stream reader and the line parser disagree"
         );
     }
 

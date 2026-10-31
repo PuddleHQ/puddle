@@ -57,9 +57,11 @@ pub fn dns_message(bytes: &[u8]) {
             };
             let long = vec![record.clone(); 40];
             let short = [record];
-            let limit = query
-                .edns_payload
-                .map_or(512, |p| usize::from(p.min(wire::EDNS_PAYLOAD)));
+            // 512 bytes without an OPT record, else what the client advertised, at most the stub's own size.
+            let limit = query.edns_payload.map_or(512, |p| {
+                assert!(p >= 512, "an advertised size below 512 was not raised");
+                usize::from(p.min(wire::EDNS_PAYLOAD))
+            });
             for answers in [&[][..], &long[..], &short[..]] {
                 for udp in [false, true] {
                     let answer = wire::respond(&query, Rcode::NoError, answers, &[], udp);

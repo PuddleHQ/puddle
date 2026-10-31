@@ -30,7 +30,7 @@
 //! - `testing`: [`testing::AllowAll`], a [`host::StreamHandler`] that serves every `CONNECT`
 //!   without a policy, for integration tests of the agent. Never use it in product code.
 //! - `fuzzing`: the lookup lines the host reads from the guest, behind an entry point that checks
-//!   its own invariants (`fuzzing`), for the cargo-fuzz targets. Never use it in product code.
+//!   its own invariants (the `fuzzing` module), for the cargo-fuzz targets. Never use it in product code.
 #![forbid(unsafe_code)]
 
 pub mod control;

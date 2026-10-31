@@ -35,7 +35,8 @@ use support::{Api, TestDevCert, ended, hermetic_options};
 use vm_support::start_vm_host_config;
 use vm_support::{
     HarnessPlatform, VmHost, guest, guest_within, harness_config, kill_vm, start_vm_host,
-    start_vm_host_platform, start_vm_host_with, web_internet,
+    start_vm_host_github, start_vm_host_platform, start_vm_host_with, web_internet,
+    web_internet_with_github,
 };
 
 /// The fake website's names (see `web_internet`) for the hosts a test only needs to reach, one
@@ -43,18 +44,22 @@ use vm_support::{
 const SITE: &str = "site.invalid";
 const SECOND: &str = "second.invalid";
 
-/// A small public repository on a host the test allows.
+/// A small repository on a host the test allows: the fake `github.com` of `vm_support`.
 const REPO_HOST: &str = "github.com";
 const REPO: &str = "https://github.com/octocat/Hello-World.git";
 
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_host_creates_a_workspace_with_progress_and_stops_cleanly() {
-    let VmHost {
-        host,
-        runtime,
-        settings,
-        ..
-    } = start_vm_host("life").await;
+    let (
+        VmHost {
+            host,
+            runtime,
+            settings,
+            ..
+        },
+        _github,
+    ) = start_vm_host_github("life").await;
 
     // The workspace's sandbox may reach the repository host, and nothing else.
     let name = format!("{}-host", settings.prefix.as_str());
@@ -172,15 +177,6 @@ async fn vm_host_boots_a_workspace_with_the_cpus_the_settings_name() {
     } = start_vm_host("cpus").await;
     let name = format!("{}-cpus", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
-    host.store()
-        .add_rule(&NewRule {
-            scope: Scope::Workspace(sandbox.clone()),
-            pattern: Pattern::parse(REPO_HOST).unwrap(),
-            effect: Effect::Allow,
-            expires_at: None,
-            created_by: Actor::Cli,
-        })
-        .unwrap();
     let api = Api::new(host.url(), host.token());
     let global = api
         .put(
@@ -195,7 +191,7 @@ async fn vm_host_boots_a_workspace_with_the_cpus_the_settings_name() {
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -252,12 +248,15 @@ const UNREACHABLE_HOST: &str = "unreachable.invalid";
 /// kill right after the create keeps both checkouts whole: `git fsck --full` passes in each.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_host_clones_each_repository_and_one_that_cannot_be_reached_fails_alone() {
-    let VmHost {
-        host,
-        runtime,
-        settings,
-        ..
-    } = start_vm_host("repos").await;
+    let (
+        VmHost {
+            host,
+            runtime,
+            settings,
+            ..
+        },
+        _github,
+    ) = start_vm_host_github("repos").await;
     let name = format!("{}-repos", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
     for allowed in [REPO_HOST, UNREACHABLE_HOST] {
@@ -372,12 +371,15 @@ async fn checkouts_are_whole(runtime: &MsbRuntime, sandbox: &WorkspaceName, dirs
 #[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_host_manage_lists_adds_and_removes_checkouts_in_the_real_guest() {
-    let VmHost {
-        host,
-        runtime,
-        settings,
-        ..
-    } = start_vm_host("manage").await;
+    let (
+        VmHost {
+            host,
+            runtime,
+            settings,
+            ..
+        },
+        _github,
+    ) = start_vm_host_github("manage").await;
     let name = format!("{}-manage", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
     host.store()
@@ -558,7 +560,7 @@ fn identity(label: &str, host: &str) -> IdentityDraft {
 #[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_ca() {
-    let internet = web_internet(
+    let internet = web_internet_with_github(
         &[SITE, SECOND],
         WebOptions::default(),
         options_without_injection(),
@@ -631,15 +633,16 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
     .await;
     assert!(files.contains("puddle-ca-1.crt"), "{files}");
     assert!(!files.contains("PRIVATE"), "{files}");
-    // Two CAs in the extra CAs file: the one of this start, and the fake website's root, which
-    // the harness reports as a corporate root (a stale CA of an earlier start would make three).
+    // Three CAs in the extra CAs file: the one of this start, and the roots of the fake website
+    // and the fake github.com, which the harness reports as corporate roots (a stale CA of an
+    // earlier start would make four).
     let extra = guest(
         &runtime,
         &sandbox,
         "grep -c 'BEGIN CERTIFICATE' /etc/puddle/extra-cas.pem",
     )
     .await;
-    assert_eq!(extra.trim(), "2");
+    assert_eq!(extra.trim(), "3");
 
     // The author of a commit is the identity's, by remote.
     let email = |remote: &str| {
@@ -794,24 +797,22 @@ async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
     } = start_vm_host_platform("quic", internet.options, &internet.platform, |_| {}).await;
     let name = format!("{}-quic", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
-    for site in [REPO_HOST, H3_HOST] {
-        host.store()
-            .add_rule(&NewRule {
-                scope: Scope::Workspace(sandbox.clone()),
-                pattern: Pattern::parse(site).unwrap(),
-                effect: Effect::Allow,
-                expires_at: None,
-                created_by: Actor::Cli,
-            })
-            .unwrap();
-    }
+    host.store()
+        .add_rule(&NewRule {
+            scope: Scope::Workspace(sandbox.clone()),
+            pattern: Pattern::parse(H3_HOST).unwrap(),
+            effect: Effect::Allow,
+            expires_at: None,
+            created_by: Actor::Cli,
+        })
+        .unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -1067,7 +1068,7 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
     } = start_vm_host_platform("env", internet.options, &internet.platform, |_| {}).await;
     let name = format!("{}-env", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
-    for site in ["github.com", ALPHA, BETA, GAMMA] {
+    for site in [ALPHA, BETA, GAMMA] {
         host.store()
             .add_rule(&NewRule {
                 scope: Scope::Workspace(sandbox.clone()),
@@ -1108,7 +1109,7 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -1620,24 +1621,22 @@ async fn vm_host_carries_2000_concurrent_guest_connections_through_agent_and_pro
     let name = format!("{}-held", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
     // The repository host for the clone, and the host's own address for the connections.
-    for site in [REPO_HOST, "127.0.0.1"] {
-        host.store()
-            .add_rule(&NewRule {
-                scope: Scope::Workspace(sandbox.clone()),
-                pattern: Pattern::parse(site).unwrap(),
-                effect: Effect::Allow,
-                expires_at: None,
-                created_by: Actor::Cli,
-            })
-            .unwrap();
-    }
+    host.store()
+        .add_rule(&NewRule {
+            scope: Scope::Workspace(sandbox.clone()),
+            pattern: Pattern::parse("127.0.0.1").unwrap(),
+            effect: Effect::Allow,
+            expires_at: None,
+            created_by: Actor::Cli,
+        })
+        .unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -1918,24 +1917,22 @@ async fn vm_host_transparency_bar_curl_at_its_widest_through_agent_and_proxy() {
     let port = transparency_fixture().await;
     let name = format!("{}-transp", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
-    for site in [REPO_HOST, "127.0.0.1"] {
-        host.store()
-            .add_rule(&NewRule {
-                scope: Scope::Workspace(sandbox.clone()),
-                pattern: Pattern::parse(site).unwrap(),
-                effect: Effect::Allow,
-                expires_at: None,
-                created_by: Actor::Cli,
-            })
-            .unwrap();
-    }
+    host.store()
+        .add_rule(&NewRule {
+            scope: Scope::Workspace(sandbox.clone()),
+            pattern: Pattern::parse("127.0.0.1").unwrap(),
+            effect: Effect::Allow,
+            expires_at: None,
+            created_by: Actor::Cli,
+        })
+        .unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -2061,7 +2058,7 @@ async fn radar_workspace(tag: &str, terminate: bool) -> (VmHost, WorkspaceName, 
     let vm = start_vm_host_with(tag, options_without_injection()).await;
     let name = format!("{}-{tag}", vm.settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
-    for site in RADAR_HOSTS.iter().chain(&[REPO_HOST]) {
+    for site in RADAR_HOSTS {
         vm.host
             .store()
             .add_rule(&NewRule {
@@ -2085,7 +2082,7 @@ async fn radar_workspace(tag: &str, terminate: bool) -> (VmHost, WorkspaceName, 
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 2048}).to_string(),
+            &json!({"name": name, "memory_mib": 2048}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -2608,22 +2605,13 @@ async fn vm_host_a_second_process_on_the_same_data_folder_is_refused_and_the_vm_
     } = start_vm_host("twice").await;
     let name = format!("{}-twice", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
-    host.store()
-        .add_rule(&NewRule {
-            scope: Scope::Workspace(sandbox.clone()),
-            pattern: Pattern::parse(REPO_HOST).unwrap(),
-            effect: Effect::Allow,
-            expires_at: None,
-            created_by: Actor::Cli,
-        })
-        .unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -2806,22 +2794,13 @@ async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox(
 
     let name = format!("{}-edit", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
-    host.store()
-        .add_rule(&NewRule {
-            scope: Scope::Workspace(sandbox.clone()),
-            pattern: Pattern::parse(REPO_HOST).unwrap(),
-            effect: Effect::Allow,
-            expires_at: None,
-            created_by: Actor::Cli,
-        })
-        .unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 2048}).to_string(),
+            &json!({"name": name, "memory_mib": 2048}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -2966,22 +2945,13 @@ async fn vm_host_ending_the_extension_hosts_takes_the_debuggees_with_them_and_le
 
     let name = format!("{}-exth", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
-    host.store()
-        .add_rule(&NewRule {
-            scope: Scope::Workspace(sandbox.clone()),
-            pattern: Pattern::parse(REPO_HOST).unwrap(),
-            effect: Effect::Allow,
-            expires_at: None,
-            created_by: Actor::Cli,
-        })
-        .unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 2048}).to_string(),
+            &json!({"name": name, "memory_mib": 2048}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -3166,19 +3136,6 @@ async fn vm_host_the_editor_server_opens_a_window_with_every_checkout() {
     host.shutdown().await;
 }
 
-/// What the browser editor's front sees: every lookup of a workspace's editor is counted, and none
-/// is ever served, so a request that reaches the front at all shows in the count.
-#[cfg(not(windows))]
-struct CountingGuests(std::sync::Arc<std::sync::atomic::AtomicUsize>);
-
-#[cfg(not(windows))]
-impl puddle_front::Guests for CountingGuests {
-    fn target(&self, _: &WorkspaceName) -> Option<puddle_front::Target> {
-        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        None
-    }
-}
-
 /// What a client of the guest tries against this computer, from the guest as root. `$1` is the
 /// front's port, `$2` the control listener's, `$3` the workspace's name. Each line is
 /// `<label> <status> reason=<x-puddle-blocked> body=<text>` for a request through the proxy, and
@@ -3214,8 +3171,8 @@ plain control-on-the-guests-own-loopback "http://127.0.0.1:$control/"
 /// address is refused as one of Puddle's own whatever the loopback toggle says (the toggle is on
 /// here, so a plain listener beside it is reachable: that is the control that makes the refusal
 /// mean something), by IP and by name, and the guest's own loopback is its own (the guest has no gateway to this
-/// computer: its only route is the agent's catch-all). The front counts every request that reaches it, and the guest's
-/// attempts leave the count at zero while a request from this side raises it.
+/// computer: its only route is the agent's catch-all). The host's own front answers a request from this side, and the guest's
+/// attempts are refused by the proxy with its own reason before any front sees them.
 ///
 /// Not covered here: an extension host running as guest root against the workbench's APIs needs a
 /// browser client driving the editor.
@@ -3235,6 +3192,7 @@ async fn vm_host_the_browser_editors_front_and_this_computers_loopback_are_out_o
         host,
         runtime,
         settings,
+        root,
         ..
     } = start_vm_host_config("reach", hermetic_options(), |config| {
         config.guest.code_server = Some(release);
@@ -3260,18 +3218,13 @@ async fn vm_host_the_browser_editors_front_and_this_computers_loopback_are_out_o
             .unwrap();
     }
 
-    // The front, as the host will run it: bound on the loopback and entered in the host's registry.
-    let lookups = Arc::new(AtomicUsize::new(0));
-    let dir = tempfile::tempdir().unwrap();
-    let front = puddle_front::Front::bind(
-        None,
-        host.endpoints(),
-        Arc::new(CountingGuests(Arc::clone(&lookups))),
-        Arc::new(puddle_front::FileHalves::new(dir.path().join("front"))),
-    )
-    .await
-    .unwrap();
-    let front_port = front.local_addr().port();
+    // The host's own front: the port it keeps for the next run is in its data folder.
+    let front_port: u16 =
+        std::fs::read_to_string(puddle_host::HostPaths::new(&root).front_port_file())
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
     // The control: a plain loopback listener that counts what connects and answers a greeting.
     let control = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let control_port = control.local_addr().unwrap().port();
@@ -3317,9 +3270,9 @@ async fn vm_host_the_browser_editors_front_and_this_computers_loopback_are_out_o
         .await;
     assert_eq!(toggle.status, 200, "{}", toggle.body);
 
-    // The positive control from this side: the front answers a request for a workspace's origin
-    // (it has no editor to give, so it is a 404) and counts the lookup.
-    let mut conn = tokio::net::TcpStream::connect(front.local_addr())
+    // The positive control from this side: the host's front answers a request for the workspace's
+    // origin, so the refusals below are not a front that is down.
+    let mut conn = tokio::net::TcpStream::connect(("127.0.0.1", front_port))
         .await
         .unwrap();
     conn.write_all(
@@ -3332,8 +3285,7 @@ async fn vm_host_the_browser_editors_front_and_this_computers_loopback_are_out_o
     .unwrap();
     let mut answer = String::new();
     conn.read_to_string(&mut answer).await.unwrap();
-    assert!(answer.starts_with("HTTP/1.1 404"), "{answer}");
-    assert_eq!(lookups.load(Ordering::SeqCst), 1, "the front never ran");
+    assert!(answer.starts_with("HTTP/1.1 302 "), "{answer}");
 
     let out = guest(
         &runtime,
@@ -3380,15 +3332,9 @@ async fn vm_host_the_browser_editors_front_and_this_computers_loopback_are_out_o
     ] {
         assert_eq!(line(label), "000", "{label}");
     }
-    // None of it reached the front or the control again.
-    assert_eq!(
-        lookups.load(Ordering::SeqCst),
-        1,
-        "a request reached the front: {out}"
-    );
+    // None of it reached the control again.
     assert_eq!(control_seen.load(Ordering::SeqCst), 1, "{out}");
 
-    front.close().await;
     host.shutdown().await;
 }
 
@@ -3412,22 +3358,13 @@ async fn vm_host_shell_init_is_checked_read_only_sourced_by_login_shells_and_res
     } = start_vm_host("shi").await;
     let name = format!("{}-shi", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
-    host.store()
-        .add_rule(&NewRule {
-            scope: Scope::Workspace(sandbox.clone()),
-            pattern: Pattern::parse(REPO_HOST).unwrap(),
-            effect: Effect::Allow,
-            expires_at: None,
-            created_by: Actor::Cli,
-        })
-        .unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -3684,21 +3621,12 @@ async fn vm_host_boots_the_guest_with_the_development_certificate_and_its_key_st
 
     let name = format!("{}-devc", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
-    host.store()
-        .add_rule(&NewRule {
-            scope: Scope::Workspace(sandbox.clone()),
-            pattern: Pattern::parse(REPO_HOST).unwrap(),
-            effect: Effect::Allow,
-            expires_at: None,
-            created_by: Actor::Cli,
-        })
-        .unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -3870,22 +3798,13 @@ async fn vm_host_ports_are_listed_forwarded_and_pinned_across_a_restart() {
     } = start_vm_host("ports").await;
     let name = format!("{}-ports", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
-    host.store()
-        .add_rule(&NewRule {
-            scope: Scope::Workspace(sandbox.clone()),
-            pattern: Pattern::parse(REPO_HOST).unwrap(),
-            effect: Effect::Allow,
-            expires_at: None,
-            created_by: Actor::Cli,
-        })
-        .unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);

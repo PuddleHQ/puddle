@@ -16,7 +16,7 @@ use std::time::SystemTime;
 use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
 use puddle_compute::{ExecRequest, Runtime, Sandbox};
 use puddle_compute_msb::{MsbConfig, MsbRuntime};
-use puddle_e2e::lab::{NameProxy, WebHost, WebOptions};
+use puddle_e2e::lab::{GitHost, NameProxy, Versions, WebHost, WebOptions};
 use puddle_host::{
     GuestSettings, Host, HostConfig, HostError, HostOptions, HostPaths, Platform, RuntimeFactory,
     RuntimeInputs, START_STEPS, prepare,
@@ -168,6 +168,21 @@ pub(crate) struct WebInternet {
     pub(crate) proxy: NameProxy,
     pub(crate) options: HostOptions,
     pub(crate) platform: HarnessPlatform,
+    /// The fake `github.com` of [`web_internet_with_github`]; `None` for [`web_internet`].
+    pub(crate) git: Option<GitHost>,
+}
+
+/// The repositories the tests create workspaces from, as `github.com` has them: public, on branch
+/// `main`, one commit each.
+pub(crate) const GITHUB_REPOS: [&str; 2] = ["octocat/Hello-World", "octocat/Spoon-Knife"];
+
+/// The fake `github.com`: a git host answering to that name with [`GITHUB_REPOS`].
+async fn github() -> GitHost {
+    let git = GitHost::start("github.com", Versions::Both).await;
+    for repo in GITHUB_REPOS {
+        git.add_repo(repo, false);
+    }
+    git
 }
 
 /// Starts the fake website for `names` and the company proxy that holds them. A name that is not
@@ -178,20 +193,74 @@ pub(crate) async fn web_internet(
     web_options: WebOptions,
     options: HostOptions,
 ) -> WebInternet {
+    build_web_internet(names, web_options, options, None).await
+}
+
+/// [`web_internet`] with a fake `github.com` (see [`GITHUB_REPOS`]) behind the same proxy, for a
+/// test whose workspace clones. The host's report of corporate roots names both roots.
+pub(crate) async fn web_internet_with_github(
+    names: &[&str],
+    web_options: WebOptions,
+    options: HostOptions,
+) -> WebInternet {
+    build_web_internet(names, web_options, options, Some(github().await)).await
+}
+
+async fn build_web_internet(
+    names: &[&str],
+    web_options: WebOptions,
+    options: HostOptions,
+    git: Option<GitHost>,
+) -> WebInternet {
     let web = WebHost::start(names, web_options).await;
     let proxy = NameProxy::start(&[]).await;
     web.register(&proxy, names);
-    let options = with_fake_names(
-        through_company_proxy(options, &proxy),
-        names.iter().copied(),
-    );
-    let platform = platform_trusting([web.root()]);
+    let mut fake_names: Vec<&str> = names.to_vec();
+    let mut roots = vec![web.root()];
+    if let Some(git) = &git {
+        proxy.route("github.com:443", git.addr());
+        fake_names.push("github.com");
+        roots.push(git.root());
+    }
+    let options = with_fake_names(through_company_proxy(options, &proxy), fake_names);
+    let platform = platform_trusting(roots);
     WebInternet {
         web,
         proxy,
         options,
         platform,
+        git,
     }
+}
+
+/// A fake `github.com` alone, behind a company proxy: for a test that only clones.
+pub(crate) struct GithubInternet {
+    pub(crate) git: GitHost,
+    pub(crate) proxy: NameProxy,
+    pub(crate) options: HostOptions,
+    pub(crate) platform: HarnessPlatform,
+}
+
+/// Starts the fake `github.com` (see [`GITHUB_REPOS`]) and the company proxy that holds it.
+pub(crate) async fn github_internet(options: HostOptions) -> GithubInternet {
+    let git = github().await;
+    let proxy = NameProxy::start(&[("github.com:443", git.addr())]).await;
+    let options = with_fake_names(through_company_proxy(options, &proxy), ["github.com"]);
+    let platform = platform_trusting([git.root()]);
+    GithubInternet {
+        git,
+        proxy,
+        options,
+        platform,
+    }
+}
+
+/// [`start_vm_host_config`] on a fake `github.com`: the host clones from it, never from the real
+/// one. Keep the returned internet alive while the host runs.
+pub(crate) async fn start_vm_host_github(tag: &str) -> (VmHost, GithubInternet) {
+    let net = github_internet(crate::support::hermetic_options()).await;
+    let vm = start_vm_host_platform(tag, net.options.clone(), &net.platform, |_| {}).await;
+    (vm, net)
 }
 
 /// A host on a real msb runtime in the test's own scratch home.

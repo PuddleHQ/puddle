@@ -311,7 +311,10 @@ async fn an_editor_status_reaches_the_handler_cleaned_and_a_blank_one_means_inst
     let mut c = h.control_stream().await;
     send(
         &mut c,
-        &AgentMessage::editor_status(Some("the download did not match\u{1b}[2J")),
+        &AgentMessage::editor_status(
+            EditorProblemKind::Install,
+            Some("the download did not match\u{1b}[2J"),
+        ),
     )
     .await;
     // A line from a hostile guest, longer than the agent would send.
@@ -320,8 +323,16 @@ async fn an_editor_status_reaches_the_handler_cleaned_and_a_blank_one_means_inst
         "x".repeat(900)
     );
     c.write_all(long.as_bytes()).await.unwrap();
-    send(&mut c, &AgentMessage::editor_status(Some(""))).await;
-    send(&mut c, &AgentMessage::editor_status(None)).await;
+    send(
+        &mut c,
+        &AgentMessage::editor_status(EditorProblemKind::Install, Some("")),
+    )
+    .await;
+    send(
+        &mut c,
+        &AgentMessage::editor_status(EditorProblemKind::Install, None),
+    )
+    .await;
     let reports = eventually("the handler gets all four editor statuses", WAIT, || {
         let reports = told.reports.lock().unwrap().clone();
         (reports.len() == 4).then_some(reports)
@@ -330,18 +341,73 @@ async fn an_editor_status_reaches_the_handler_cleaned_and_a_blank_one_means_inst
     assert_eq!(
         reports[0],
         AgentReport::EditorStatus {
+            kind: EditorProblemKind::Install,
             problem: Some("the download did not match?[2J".into())
         }
     );
     let AgentReport::EditorStatus {
         problem: Some(text),
+        ..
     } = &reports[1]
     else {
         panic!("{reports:?}");
     };
     assert_eq!(text.chars().count(), MAX_EDITOR_PROBLEM_CHARS);
-    assert_eq!(reports[2], AgentReport::EditorStatus { problem: None });
-    assert_eq!(reports[3], AgentReport::EditorStatus { problem: None });
+    assert_eq!(
+        reports[2],
+        AgentReport::EditorStatus {
+            kind: EditorProblemKind::Install,
+            problem: None,
+        }
+    );
+    assert_eq!(
+        reports[3],
+        AgentReport::EditorStatus {
+            kind: EditorProblemKind::Install,
+            problem: None,
+        }
+    );
+    h.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn an_update_problem_arrives_as_its_own_kind_and_an_unknown_kind_is_dropped() {
+    let told = Arc::new(Told::default());
+    let mut h = start_handler(
+        Arc::new(Listening(Arc::clone(&told))),
+        HostConfig::default(),
+    );
+    let mut c = h.control_stream().await;
+    send(
+        &mut c,
+        &AgentMessage::editor_status(EditorProblemKind::Update, Some("rolled back")),
+    )
+    .await;
+    c.write_all(b"{\"type\":\"editor_status\",\"kind\":\"later\",\"problem\":\"x\"}\n")
+        .await
+        .unwrap();
+    send(
+        &mut c,
+        &AgentMessage::editor_status(EditorProblemKind::Update, None),
+    )
+    .await;
+    eventually("both update reports arrive", WAIT, || {
+        told.reports.lock().unwrap().len() == 2
+    })
+    .await;
+    assert_eq!(
+        told.reports.lock().unwrap().clone(),
+        vec![
+            AgentReport::EditorStatus {
+                kind: EditorProblemKind::Update,
+                problem: Some("rolled back".into())
+            },
+            AgentReport::EditorStatus {
+                kind: EditorProblemKind::Update,
+                problem: None
+            },
+        ]
+    );
     h.close().await.unwrap();
 }
 

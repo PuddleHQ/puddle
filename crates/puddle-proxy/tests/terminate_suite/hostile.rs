@@ -9,11 +9,15 @@ use crate::terminate_support;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use puddle_proxy::ProxyConfig;
+use puddle_netpolicy::{LocalAccess, NetPolicy};
+use puddle_proxy::{AddressCheck, AddressVerdict, ProxyConfig};
 use puddle_types::fixture;
-use puddle_types::{ConnectionDecision, ConnectionReason};
+use puddle_types::{
+    BlockReason, ConnectionDecision, ConnectionReason, LocalCategory, WorkspaceName,
+};
 use rustls::pki_types::ServerName;
 use std::fmt::Write as _;
+use std::net::SocketAddr;
 use terminate_support::{
     CANARY, FakeServer, Flaw, Guest, Handler, Pki, Reply, RigBuilder, TestInjector, captured_logs,
     inject, refuse,
@@ -522,6 +526,188 @@ async fn an_injected_authorization_replaces_the_guests_and_proxy_authorization_n
         [format!("Basic {CANARY}")]
     );
     assert_eq!(seen.headers_named("proxy-authorization").len(), 0);
+}
+
+// Where a bound host resolves to -----------------------------------------------------------
+
+/// Refuses every address on `port`, lets every other through: a stand-in for the real guard in
+/// a test whose servers all live on loopback.
+struct RefusePort(u16);
+
+impl AddressCheck for RefusePort {
+    fn check(&self, _workspace: &WorkspaceName, addr: SocketAddr) -> AddressVerdict {
+        if addr.port() == self.0 {
+            AddressVerdict::Block(BlockReason::LocalToggle(LocalCategory::Loopback))
+        } else {
+            AddressVerdict::Allow
+        }
+    }
+}
+
+#[tokio::test]
+async fn hostile_hg06_a_bound_host_that_resolves_to_a_local_address_is_never_decrypted() {
+    // The names are bound, so a credential waits for them. A name the guest's DNS owner points at
+    // loopback, the metadata service or a private address is refused at the `CONNECT` with every
+    // toggle off: no handshake, no question to the injector, no connection to the address.
+    let pki = Pki::new();
+    let server = upstream(&pki, ok_handler()).await;
+    let injector = TestInjector::always();
+    let mut builder = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .name("imds.test", "169.254.169.254:443".parse().unwrap())
+        .name("ten.test", "10.0.0.5:443".parse().unwrap())
+        .injector(injector.clone())
+        .address_check(Arc::new(NetPolicy::new(Arc::new(LocalAccess::NONE))));
+    builder.bound = vec!["bound.test", "imds.test", "ten.test"];
+    builder.allow = vec!["bound.test", "imds.test", "ten.test"];
+    let rig = builder.build();
+    let mut guest = rig.guest().await;
+    for authority in ["bound.test:443", "imds.test:443", "ten.test:443"] {
+        let (code, _) = guest.connect_to(authority).await;
+        assert_eq!(code, 403, "{authority}");
+    }
+    let events = rig.events(3).await;
+    for (name, toggle) in [
+        ("bound.test", LocalCategory::Loopback),
+        ("imds.test", LocalCategory::Metadata),
+        ("ten.test", LocalCategory::Private),
+    ] {
+        let event = events
+            .iter()
+            .find(|event| event.host.to_string() == name)
+            .unwrap_or_else(|| panic!("no record for {name}: {events:?}"));
+        assert_eq!(event.decision, ConnectionDecision::Blocked, "{event:?}");
+        assert_eq!(
+            event.reason,
+            ConnectionReason::Blocked(BlockReason::LocalToggle(toggle)),
+            "{event:?}"
+        );
+        assert_eq!(event.resolved_ip, None, "{event:?}");
+    }
+    assert_eq!(
+        server.accepted(),
+        0,
+        "nothing connected to the loopback server"
+    );
+    assert_eq!(injector.calls(), 0);
+    assert!(!captured_logs().contains(CANARY));
+    // Control: with the loopback toggle on, the same name is decrypted and served, so it was the
+    // guard that refused it and not the rig.
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .injector(injector.clone())
+        .address_check(Arc::new(NetPolicy::new(Arc::new(
+            LocalAccess::NONE.with_toggle(LocalCategory::Loopback, true),
+        ))))
+        .build();
+    let mut guest = rig.guest().await;
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    assert_eq!(client.get("bound.test", "/x").await.status, 200);
+    assert_eq!(injector.calls(), 1);
+}
+
+#[tokio::test]
+async fn hostile_hg08_a_bound_host_with_a_mixed_answer_is_connected_at_the_allowed_address_only() {
+    // The refused address answers like a server (it accepts, and would fail the handshake): a
+    // proxy that tried it before the allowed one, or at all, shows up as an accept there.
+    let pki = Pki::new();
+    let server = upstream(&pki, ok_handler()).await;
+    let refused = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let refused_addr = refused.local_addr().unwrap();
+    let injector = TestInjector::always();
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", refused_addr)
+        .name("bound.test", server.addr)
+        .injector(injector.clone())
+        .address_check(Arc::new(RefusePort(refused_addr.port())))
+        .build();
+    let mut guest = rig.guest().await;
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    let r = client.get("bound.test", "/x").await;
+    assert_eq!(r.status, 200);
+    assert_eq!(server.recorded().len(), 1);
+    let attempt = tokio::time::timeout(Duration::from_millis(200), refused.accept()).await;
+    assert!(attempt.is_err(), "the refused address was connected to");
+    drop(client);
+    let event = &rig.events(1).await[0];
+    assert_eq!(
+        (event.decision, event.resolved_ip),
+        (ConnectionDecision::Allow, Some(server.addr.ip())),
+    );
+    assert_eq!(
+        server.addr.ip(),
+        refused_addr.ip(),
+        "the ports tell the two apart"
+    );
+    assert!(!captured_logs().contains(CANARY));
+}
+
+// A redirect and the follow-up --------------------------------------------------------------
+
+#[tokio::test]
+async fn hostile_hg20_the_follow_up_to_a_redirect_carries_no_credential_to_the_new_host() {
+    // The bound host redirects to a host the guest then asks for, the way a client follows it:
+    // on the same connection (another `Host`) and on a new `CONNECT`. The injector is asked for
+    // neither and the other host's server never sees the canary.
+    let pki = Pki::new();
+    let bound = upstream(
+        &pki,
+        Arc::new(|_| Reply::status(302, "location: https://evil.test/steal\r\n", "")),
+    )
+    .await;
+    let evil = FakeServer::tls(pki.server_config("evil.test", Flaw::None), ok_handler()).await;
+    let injector = TestInjector::always();
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", bound.addr)
+        .name("evil.test", evil.addr)
+        .allow(vec!["bound.test", "evil.test"])
+        .injector(injector.clone())
+        .build();
+    let mut guest = rig.guest().await;
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    let r = client.get("bound.test", "/start").await;
+    assert_eq!(
+        (r.status, r.header("location")),
+        (302, Some("https://evil.test/steal"))
+    );
+    assert_eq!(injector.calls(), 1);
+    // The follow-up on the same connection: another host is a `421`, and the connection ends.
+    client
+        .send(b"GET /steal HTTP/1.1\r\nHost: evil.test\r\n\r\n")
+        .await;
+    assert_eq!(client.response("GET").await.status, 421);
+    assert!(client.closed().await);
+    // The follow-up on a new connection to the redirect's host: it is not bound, so the guest
+    // talks to it end to end and Puddle adds nothing.
+    let (code, reader) = guest.connect_to("evil.test:443").await;
+    assert_eq!(code, 200);
+    let config = Guest::client_config(std::slice::from_ref(&pki.root), &[]);
+    let mut tls = tokio_rustls::TlsConnector::from(Arc::new(config))
+        .connect(ServerName::try_from("evil.test").unwrap(), reader)
+        .await
+        .unwrap();
+    tls.write_all(b"GET /steal HTTP/1.1\r\nHost: evil.test\r\n\r\n")
+        .await
+        .unwrap();
+    let mut answer = [0u8; 12];
+    tokio::time::timeout(Duration::from_secs(5), tls.read_exact(&mut answer))
+        .await
+        .expect("an answer")
+        .unwrap();
+    assert_eq!(&answer, b"HTTP/1.1 200");
+    assert_eq!(
+        injector.calls(),
+        1,
+        "the injector heard of the first request only"
+    );
+    assert_eq!(bound.recorded().len(), 1);
+    let seen = evil.recorded();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].header("authorization"), None);
+    assert!(!format!("{seen:?}").contains(CANARY));
+    assert!(!captured_logs().contains(CANARY));
 }
 
 // A bad upstream certificate ----------------------------------------------------------------

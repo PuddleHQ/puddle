@@ -2,8 +2,9 @@
 <script lang="ts">
   import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
 
-  // Says the browser editor's server could not be installed in the workspace, in the host's
-  // words (its title names the reason). `detail` adds what it means and when Puddle tries again.
+  // Says the browser editor's server could not be installed or updated in the workspace, in the
+  // host's words (its title names the reason). `detail` adds what it means and when Puddle tries
+  // again.
   let { title, detail = null }: { title: string; detail?: string | null } =
     $props();
 </script>

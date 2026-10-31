@@ -16,6 +16,7 @@ embedded-ui = ["puddle-host/embedded-ui"]
 
 [dependencies]
 puddle-doctor = { workspace = true }
+puddle-fs = { workspace = true }
 puddle-host = { workspace = true }
 puddle-lifecycle = { workspace = true }
 puddle-ssh = { workspace = true }

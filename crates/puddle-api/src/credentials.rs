@@ -401,19 +401,17 @@ mod tests {
     #[tokio::test]
     async fn the_fake_keeps_a_pasted_value_under_its_id_until_forgotten() {
         let fake = FakeCredentials::new();
-        let SourceSpec::Stored { id, .. } = fake
-            .store_token(
-                TokenScope {
-                    host: puddle_secrets::HostName::new("github.com").unwrap(),
-                    org: None,
-                },
-                Secret::new("ghp_0123456789abcdef".into()),
-            )
-            .await
-            .unwrap()
-        else {
-            panic!("a pasted token is a stored source");
-        };
+        fake.store_token(
+            TokenScope {
+                host: puddle_secrets::HostName::new("github.com").unwrap(),
+                org: None,
+            },
+            Secret::new("ghp_0123456789abcdef".into()),
+        )
+        .await
+        .unwrap();
+        let [kept] = fake.tokens().try_into().unwrap();
+        let id = StoredId::new(kept).unwrap();
         assert_eq!(fake.tokens(), [id.as_str()]);
         assert_eq!(
             fake.token_value(id.as_str()).as_deref(),

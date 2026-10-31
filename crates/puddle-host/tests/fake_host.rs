@@ -6274,6 +6274,42 @@ async fn a_git_too_old_for_the_author_rules_is_a_problem_until_it_is_updated() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn kubernetes_tools_are_a_problem_until_a_start_finds_none() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    assert!(!has_problem(&host, "kubernetes:acme"));
+
+    // The start after kind and k3d were installed says so, and what to do.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    *rig.guest.boot_says.lock().unwrap() = "puddle-boot: kubernetes tools kind k3d\n".to_owned();
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let problem = problem_of(&host, "kubernetes:acme");
+    assert_eq!(problem.title, "Kubernetes Services do not work in acme");
+    assert!(
+        problem.detail.contains("kind, k3d") && problem.detail.contains("port forward"),
+        "{}",
+        problem.detail
+    );
+
+    // A stopped workspace has none.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(!has_problem(&host, "kubernetes:acme"));
+
+    // A start that finds none raises none.
+    *rig.guest.boot_says.lock().unwrap() = String::new();
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(!has_problem(&host, "kubernetes:acme"));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_git_too_old_is_noticed_at_a_start_too_but_only_when_author_rules_exist() {
     let rig = Rig::new();
     let host = rig.start().await;

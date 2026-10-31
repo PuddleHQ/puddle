@@ -259,6 +259,14 @@ if [ -n "$GIT_INCLUDE" ]; then
     fi
 fi
 
+# The Kubernetes tools on the image's PATH; the host warns about them, because the guest kernel
+# cannot route Services. Checked at every run, so a tool installed later shows at the next start.
+k8s_tools=
+for tool in kind k3d minikube; do
+    if command -v "$tool" >/dev/null 2>&1; then k8s_tools="$k8s_tools $tool"; fi
+done
+if [ -n "$k8s_tools" ]; then say "kubernetes tools$k8s_tools"; fi
+
 # Commands to run when a file below a directory changed (update-ca-certificates).
 while read -r dir cmd; do
     hit=

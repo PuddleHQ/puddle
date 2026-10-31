@@ -662,6 +662,33 @@ fn the_hook_reports_the_guests_git_version_when_there_is_a_git() {
 }
 
 #[test]
+fn the_hook_reports_the_kubernetes_tools_on_the_path() {
+    for shell in shells() {
+        let fr = FakeRoot::new(&shell);
+        let tools_of = |fr: &FakeRoot| {
+            let out = fr.run(&full_plan("CA\n"));
+            assert!(out.status.success(), "{}", show(&out));
+            puddle_boot::BootReport {
+                stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+                ..Default::default()
+            }
+            .kubernetes_tools()
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+        };
+        // Nothing installed: no line, so the host raises nothing.
+        assert_eq!(tools_of(&fr), Vec::<String>::new());
+        fr.stub("kind", "#!/bin/sh\nexit 0\n");
+        fr.stub("minikube", "#!/bin/sh\nexit 0\n");
+        assert_eq!(tools_of(&fr), ["kind", "minikube"]);
+        // A later run finds a tool added since.
+        fr.stub("k3d", "#!/bin/sh\nexit 0\n");
+        assert_eq!(tools_of(&fr), ["kind", "k3d", "minikube"]);
+    }
+}
+
+#[test]
 fn no_credential_helper_is_ever_written() {
     let fr = FakeRoot::new(&shells()[0]);
     assert!(fr.run(&full_plan("CA\n")).status.success());

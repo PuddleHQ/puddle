@@ -23,8 +23,12 @@ tracing = { workspace = true }
 [features]
 # `testing`: an allow-all CONNECT endpoint for integration tests of the agent (never in product code).
 testing = []
+# `fuzzing`: entry points for the cargo-fuzz targets in `fuzz/` and their checked-in corpus (never in
+# product code; the xtask release-feature check refuses it in a shipped build).
+fuzzing = []
 
 [dev-dependencies]
+puddle-agent-proto = { path = ".", features = ["fuzzing"] }
 proptest = { workspace = true }
 puddle-test-kit = { workspace = true }
 puddle-types = { workspace = true, features = ["testing"] }

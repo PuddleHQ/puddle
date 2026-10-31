@@ -11,6 +11,7 @@ use tauri::{AppHandle, Manager, RunEvent, Runtime};
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
+use crate::autostart::{self, LoginEntry};
 use crate::backend::{Backend, BackendError, EndExtensionHosts, Source};
 use crate::launcher::AppLauncher;
 use puddle_settings::ClipboardRead;
@@ -98,13 +99,20 @@ pub struct Options {
     /// The guest agent instead of the one in the runtime folder (`PUDDLE_AGENT_BIN`, as for
     /// `puddle serve`).
     pub agent: Option<PathBuf>,
+    /// The program was started by the sign-in entry ([`autostart::AT_LOGIN_FLAG`]): the window
+    /// opens hidden in the tray, or minimized where there is no tray.
+    pub at_login: bool,
+    /// The system's start-at-sign-in entry the Settings switch is applied to. `None` in a run that
+    /// must not touch it (tests, the fixture, a run over a data folder of its own).
+    pub login: Option<Arc<dyn LoginEntry>>,
 }
 
 impl Options {
     /// The options the environment asks for (debug builds only).
     #[must_use]
     pub fn from_env() -> Self {
-        if cfg!(debug_assertions) {
+        let at_login = autostart::started_at_login(std::env::args_os());
+        let options = if cfg!(debug_assertions) {
             Self {
                 port: 0,
                 connection_file: std::env::var_os("PUDDLE_CONNECTION_FILE").map(PathBuf::from),
@@ -118,11 +126,24 @@ impl Options {
                 data_dir: std::env::var_os("PUDDLE_APP_DATA_DIR").map(PathBuf::from),
                 sandbox_probe: SandboxProbe::from_env(),
                 agent: std::env::var_os("PUDDLE_AGENT_BIN").map(PathBuf::from),
+                ..Self::default()
             }
         } else {
             Self::default()
+        };
+        Self {
+            at_login,
+            login: manages_login(cfg!(debug_assertions)).then(autostart::system),
+            ..options
         }
     }
+}
+
+/// Whether this build manages the user's sign-in entry: only an installed (release) build does.
+/// A development build, a test run or the fixture would point the entry at itself, or remove the
+/// entry of the installed program.
+fn manages_login(debug_build: bool) -> bool {
+    !debug_build
 }
 
 /// The data folder the host uses: the one `options` name, else the per-user one.
@@ -307,7 +328,10 @@ pub fn open<R: Runtime>(
     if let Some(probe) = &options.sandbox_probe {
         open_probe(app, probe, &data_folder(options).unwrap_or_default())?;
     }
-    desktop::attach(app, &window, &backend, marker_folder);
+    let tray = desktop::attach(app, &window, &backend, marker_folder, options.login.clone());
+    if options.at_login {
+        desktop::start_out_of_the_way(&window, tray);
+    }
     app.manage(backend);
     Ok(())
 }
@@ -443,6 +467,14 @@ fn quit_warnings(shutdown: &HostShutdown) -> Vec<String> {
     lines
 }
 
+/// What a second start of the program does in the running one: bring the window forward, unless
+/// the sign-in entry made that start (a copy is already running), which shows nothing.
+fn on_second_start<R: Runtime>(app: &AppHandle<R>, args: &[String]) {
+    if !autostart::started_at_login(args) {
+        focus_main(app);
+    }
+}
+
 /// Runs the app until it quits. The close button hides the window to the tray or quits, as Settings
 /// say ([`desktop`]).
 ///
@@ -466,8 +498,8 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
     // Single-instance first: a second launch hands over to the running app and ends here, before
     // the error of its unlocked data folder could show.
     let builder =
-        tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            focus_main(app);
+        tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            on_second_start(app, &args);
         }));
     let app = with_plugins(builder)
         .setup(move |app| {
@@ -531,6 +563,14 @@ pub(crate) mod tests {
                 "2 workspace operations were still running and were ended",
             ]
         );
+    }
+
+    #[test]
+    fn only_an_installed_build_manages_the_sign_in_entry() {
+        assert!(manages_login(false));
+        assert!(!manages_login(true));
+        // Whatever the environment says, a build under test never gets the system's entry.
+        assert!(Options::default().login.is_none());
     }
 
     #[test]
@@ -856,6 +896,29 @@ mod fixture_tests {
     #[test]
     fn stop_without_a_backend_does_nothing() {
         assert_eq!(stop(app().handle()), None);
+    }
+
+    #[test]
+    fn a_start_at_sign_in_opens_the_window_out_of_the_way() {
+        let app = app();
+        let options = Options {
+            at_login: true,
+            ..fixture_options()
+        };
+        start(app.handle(), &options, Source::Fixture).unwrap();
+        assert!(app.get_webview_window(MAIN_LABEL).is_some());
+        assert!(stop(app.handle()).is_some());
+    }
+
+    #[test]
+    fn a_second_start_focuses_the_window_unless_it_came_from_the_sign_in_entry() {
+        let app = app();
+        // Without a window neither call has anything to focus; both must be harmless.
+        on_second_start(app.handle(), &["puddle-app".to_owned()]);
+        on_second_start(
+            app.handle(),
+            &["puddle-app".to_owned(), autostart::AT_LOGIN_FLAG.to_owned()],
+        );
     }
 
     #[test]

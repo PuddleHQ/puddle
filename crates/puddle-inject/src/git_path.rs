@@ -192,22 +192,20 @@ fn is_unreserved(byte: u8) -> bool {
 /// Percent-decodes `text` leniently (any hexadecimal case, bad escapes left as they are).
 fn decode_lossy(text: &str) -> String {
     let mut out = Vec::with_capacity(text.len());
-    let bytes = text.as_bytes();
-    let mut i = 0;
-    while let Some(&byte) = bytes.get(i) {
-        let escaped = (byte == b'%')
-            .then(|| {
-                let high = bytes.get(i + 1).copied().and_then(any_hex)?;
-                let low = bytes.get(i + 2).copied().and_then(any_hex)?;
-                Some(high << 4 | low)
-            })
-            .flatten();
-        if let Some(decoded) = escaped {
+    let mut rest = text.as_bytes();
+    while let Some((&byte, after)) = rest.split_first() {
+        let escaped = match (byte, after) {
+            (b'%', [high, low, escape_end @ ..]) => any_hex(*high)
+                .zip(any_hex(*low))
+                .map(|(high, low)| (high << 4 | low, escape_end)),
+            _ => None,
+        };
+        if let Some((decoded, escape_end)) = escaped {
             out.push(decoded);
-            i += 3;
+            rest = escape_end;
         } else {
             out.push(byte);
-            i += 1;
+            rest = after;
         }
     }
     String::from_utf8_lossy(&out).into_owned()

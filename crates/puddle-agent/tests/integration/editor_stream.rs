@@ -4,7 +4,6 @@
 //! server on the port stands in for the editor server.
 #![cfg(unix)]
 #![expect(
-    clippy::panic,
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
@@ -21,6 +20,7 @@ use puddle_agent_proto::editor::EditorServer;
 use puddle_agent_proto::forward::{GuestLink, OpenError};
 use puddle_agent_proto::host::{GuestStream, HostConfig, StreamHandler, serve_session};
 use puddle_front::Editor;
+use puddle_test_kit::eventually;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, UnixListener};
 
@@ -43,13 +43,12 @@ struct Rig {
 
 impl Rig {
     async fn link(&self) -> GuestLink {
-        for _ in 0..600 {
-            if let Some(link) = self.host.0.lock().unwrap().clone() {
-                return link;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        panic!("the agent did not say hello");
+        eventually(
+            "the agent did not say hello",
+            Duration::from_secs(10),
+            || self.host.0.lock().unwrap().clone(),
+        )
+        .await
     }
 }
 

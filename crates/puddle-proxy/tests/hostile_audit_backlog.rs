@@ -12,7 +12,7 @@ mod hostile_support;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use futures_util::{StreamExt, stream};
 use hostile_heap::Counting;
@@ -111,26 +111,35 @@ async fn hostile_hg11_refusals_waiting_for_their_audit_row_hold_no_stream() {
     );
     // The guest's streams are closed; the proxy's side of them ends a moment later.
     let bar = REFUSED * PER_WAITING;
-    let settle = Instant::now() + Duration::from_secs(5);
-    let mut waiting = HEAP.live().saturating_sub(before);
-    while waiting >= bar && Instant::now() < settle {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        waiting = HEAP.live().saturating_sub(before);
-    }
-    assert!(
-        waiting < bar,
-        "{REFUSED} answered refusals waiting for their audit rows hold {waiting} bytes (bar {bar})"
-    );
+    let waiting = puddle_test_kit::eventually(
+        &format!(
+            "{REFUSED} answered refusals waiting for their audit rows hold less than the bar of {bar} bytes"
+        ),
+        Duration::from_secs(5),
+        || {
+            let waiting = HEAP.live().saturating_sub(before);
+            if waiting < bar {
+                Ok(waiting)
+            } else {
+                Err(format!("{waiting} bytes held"))
+            }
+        },
+    )
+    .await;
 
     log.set_open(true);
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while log.refusals() < REFUSED {
-        assert!(
-            Instant::now() < deadline,
-            "only {} of {REFUSED} refusals reached the audit once the log opened",
-            log.refusals()
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    puddle_test_kit::eventually(
+        &format!("all {REFUSED} refusals reached the audit once the log opened"),
+        Duration::from_secs(20),
+        || {
+            let seen = log.refusals();
+            if seen >= REFUSED {
+                Ok(())
+            } else {
+                Err(format!("only {seen} of {REFUSED}"))
+            }
+        },
+    )
+    .await;
     eprintln!("{REFUSED} refusals waiting for the audit held {waiting} bytes");
 }

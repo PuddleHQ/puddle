@@ -1,0 +1,51 @@
+{
+  "name": "request-rules",
+  "workspaces": [
+    {
+      "name": "web-shop",
+      "repositories": [{ "url": "https://github.com/acme/web-shop.git" }],
+      "status": "running",
+      "ago_ms": 1209600000,
+      "disk_used_mib": 6144
+    },
+    {
+      "name": "docs-site",
+      "repositories": [{ "url": "https://github.com/acme/docs-site.git" }],
+      "status": "stopped",
+      "ago_ms": 604800000,
+      "disk_used_mib": 1536
+    }
+  ],
+  "rules": [
+    { "effect": "allow", "pattern": "api.example.com", "ago_ms": 864000000 }
+  ],
+  "request_rules": [
+    {
+      "host": "api.example.com",
+      "methods": ["DELETE"],
+      "path": "/repos/**",
+      "ago_ms": 7200000
+    },
+    {
+      "host": "*.example.org",
+      "methods": ["POST", "PUT"],
+      "path": "/upload/*",
+      "workspace": "docs-site",
+      "ago_ms": 3600000
+    }
+  ],
+  "connections": [
+    {
+      "workspace": "web-shop",
+      "host": "api.example.com",
+      "decision": "deny",
+      "reason": "request_rule",
+      "request_line": {
+        "method": "DELETE",
+        "path": "/repos/acme/web-shop",
+        "rule": 1
+      },
+      "ago_ms": 600000
+    }
+  ]
+}

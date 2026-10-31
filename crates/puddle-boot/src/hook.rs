@@ -10,6 +10,9 @@ use crate::assets::{AGENT_SUPERVISE_GUEST, BOOT_SH_GUEST};
 use crate::gate::{Gate, GateState, GatedSandbox};
 use crate::plan::BootPlan;
 
+/// The Kubernetes tools the hook looks for.
+const KUBERNETES_TOOLS: [&str; 3] = ["kind", "k3d", "minikube"];
+
 /// The most stderr a [`BootFailure`] keeps (the end of it, where the error is).
 pub const STDERR_LIMIT: usize = 8 * 1024;
 
@@ -82,6 +85,22 @@ impl BootReport {
         let major = parts.next()?.parse().ok()?;
         let minor = parts.next()?.parse().ok()?;
         Some((major, minor))
+    }
+
+    /// The Kubernetes tools the hook found on the guest's `PATH`, from `kind`, `k3d` and
+    /// `minikube` (`puddle-boot: kubernetes tools kind k3d`). Empty when there are none.
+    #[must_use]
+    pub fn kubernetes_tools(&self) -> Vec<&str> {
+        self.stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("puddle-boot: kubernetes tools "))
+            .map(|tools| {
+                tools
+                    .split_whitespace()
+                    .filter(|tool| KUBERNETES_TOOLS.contains(tool))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// The merged files the hook could not parse and so left as they were: each with the reason
@@ -394,6 +413,29 @@ mod tests {
             None
         );
         assert_eq!(BootReport::default().entrypoint_failure(), None);
+    }
+
+    #[test]
+    fn the_report_names_the_kubernetes_tools_the_hook_found() {
+        let said = |stdout: &str| BootReport {
+            duration: Duration::ZERO,
+            stdout: stdout.into(),
+        };
+        assert_eq!(
+            said("puddle-boot: ready\npuddle-boot: kubernetes tools kind minikube\n")
+                .kubernetes_tools(),
+            ["kind", "minikube"]
+        );
+        // A name the hook never looks for is not taken on trust.
+        assert_eq!(
+            said("puddle-boot: kubernetes tools k3d helm\n").kubernetes_tools(),
+            ["k3d"]
+        );
+        assert_eq!(
+            said("puddle-boot: ready\n").kubernetes_tools(),
+            [] as [&str; 0]
+        );
+        assert_eq!(BootReport::default().kubernetes_tools(), [] as [&str; 0]);
     }
 
     #[test]

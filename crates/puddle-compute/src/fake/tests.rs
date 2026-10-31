@@ -375,6 +375,8 @@ async fn a_checkout_must_look_like_a_git_directory_and_its_links_lead_nowhere() 
             .code,
         1
     );
+    // A path beside the checkout is not part of it.
+    assert_eq!(run(&sb, "cat", &["/puddle/other"]).await.status.code, 1);
     let out = sb
         .exec(ExecRequest::new("tee", ["/puddle/import/HEAD"]).with_stdin("x"))
         .await

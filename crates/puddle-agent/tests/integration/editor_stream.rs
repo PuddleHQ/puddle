@@ -105,6 +105,7 @@ async fn rig(tag: &str, editor: Option<(u16, Option<&str>)>) -> Rig {
         EditorConfig {
             server,
             password_file,
+            boot_id: dir.0.join("boot_id"),
         }
     });
     let config = Config {

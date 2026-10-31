@@ -441,6 +441,7 @@ impl Config {
                 EditorConfig {
                     server,
                     password_file,
+                    boot_id: PathBuf::from(crate::editor::BOOT_ID_FILE),
                 }
             });
         config.capture = capture_on.then_some(capture);

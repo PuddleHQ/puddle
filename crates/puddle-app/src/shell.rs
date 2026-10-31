@@ -259,7 +259,7 @@ fn sandbox_hooks<R: Runtime>(
 }
 
 /// The hook for a workspace's last window closing: the guest ends the editor's extension hosts and
-/// what they started (AT-37), so a closed window leaves no extension host behind. The window system
+/// what they started, so a closed window leaves no extension host behind. The window system
 /// calls it, so the guest is asked from the async runtime; a workspace that is stopping already
 /// has nothing to end.
 fn ends_extension_hosts(ends: EndExtensionHosts) -> Arc<dyn Fn(&WorkspaceName) + Send + Sync> {
@@ -358,23 +358,63 @@ fn open_probe<R: Runtime>(
     Ok(())
 }
 
-/// The exit hook, the quit sequence: close every window but the main one (the workspaces' editor
-/// windows), then stop the backend, which trims and stops every workspace before its API ends.
+/// How long the quit waits for the guests to end their extension hosts: the agent answers within
+/// about 4 s, and a guest that does not must not hold up the stop.
+const QUIT_CLEANUP_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The exit hook, the quit sequence: close every window but the main one (the workspaces'
+/// editor windows), have the guest of each workspace that had one end its extension hosts, then
+/// stop the backend, which trims and stops every workspace before its API ends.
 /// Says what the backend's shutdown did; `None` when there was no backend or it had stopped
 /// already, so the hook is safe to run twice.
 pub fn stop<R: Runtime>(app: &AppHandle<R>) -> Option<HostShutdown> {
+    // Before the windows go: their ends must not each ask the guest, the quit asks once below.
+    let with_editor = app
+        .try_state::<SandboxWindows>()
+        .map(|windows| windows.begin_quit())
+        .unwrap_or_default();
     for (label, window) in app.webview_windows() {
         if label != MAIN_LABEL {
             // A window that is already going away can't be closed again; nothing is lost.
             let _ = window.destroy();
         }
     }
-    let shutdown = tauri::async_runtime::block_on(app.try_state::<Backend>()?.shutdown())?;
+    let backend = app.try_state::<Backend>()?;
+    tauri::async_runtime::block_on(end_extension_hosts(
+        &backend.extension_hosts(),
+        with_editor,
+        QUIT_CLEANUP_WAIT,
+    ));
+    let shutdown = tauri::async_runtime::block_on(backend.shutdown())?;
     for warning in quit_warnings(&shutdown) {
         tracing::warn!("{warning}");
     }
     tracing::info!(steps = ?shutdown.steps, "stopped");
     Some(shutdown)
+}
+
+/// Asks each of `workspaces`' guests, all at once, to end the editor's extension hosts, and waits
+/// for the answers up to `wait`. A guest that cannot answer (the workspace already stopped, a
+/// connection gone) is logged and the quit goes on: nothing may fail because of the sandbox.
+async fn end_extension_hosts(
+    ends: &EndExtensionHosts,
+    workspaces: Vec<WorkspaceName>,
+    wait: std::time::Duration,
+) {
+    let asks = workspaces.into_iter().map(|workspace| async move {
+        match ends(workspace.clone()).await {
+            Ok(()) => tracing::debug!(%workspace, "extension hosts ended before the quit"),
+            Err(reason) => {
+                tracing::warn!(%workspace, %reason, "extension hosts not ended before the quit");
+            }
+        }
+    });
+    if tokio::time::timeout(wait, futures_util::future::join_all(asks))
+        .await
+        .is_err()
+    {
+        tracing::warn!("some extension hosts were not ended before the quit: no answer in time");
+    }
 }
 
 /// What the log says about a quit that did not go cleanly: each workspace whose disk was not
@@ -549,6 +589,26 @@ pub(crate) mod tests {
         assert_eq!(problems.list().len(), 0, "{:?}", problems.list());
     }
 
+    #[tokio::test]
+    async fn the_quit_asks_every_workspace_at_once_and_goes_on_past_a_refusal() {
+        let (ends, asked) = recording_ends();
+        let names = ["demo", "stopped", "other"].map(|n| WorkspaceName::new(n).unwrap());
+        end_extension_hosts(&ends, names.to_vec(), std::time::Duration::from_secs(5)).await;
+        let mut seen = asked.lock().unwrap().clone();
+        seen.sort();
+        assert_eq!(seen, ["demo", "other", "stopped"]);
+    }
+
+    #[tokio::test]
+    async fn a_guest_that_never_answers_holds_the_quit_up_only_for_the_wait() {
+        let ends: EndExtensionHosts = Arc::new(|_| Box::pin(std::future::pending()));
+        let demo = WorkspaceName::new("demo").unwrap();
+        let wait = std::time::Duration::from_millis(50);
+        let before = tokio::time::Instant::now();
+        end_extension_hosts(&ends, vec![demo], wait).await;
+        assert!(before.elapsed() >= wait);
+    }
+
     #[test]
     fn closing_a_popup_asks_nothing_and_the_last_window_asks_once() {
         let app = tauri::test::mock_app();
@@ -699,6 +759,8 @@ mod fixture_tests {
         reason = "helpers outside #[test] fns run only in tests; a panic is how a test fails"
     )]
 
+    use std::sync::Mutex;
+
     use tauri::test::{MockRuntime, mock_builder};
 
     use super::*;
@@ -734,6 +796,43 @@ mod fixture_tests {
         assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err());
         // The hook can run again (a second Exit event, or no backend at all).
         assert_eq!(stop(app.handle()), None);
+    }
+
+    #[test]
+    fn quitting_with_an_editor_window_open_asks_its_guest_once_while_the_host_still_runs() {
+        let app = app();
+        let backend = tauri::async_runtime::block_on(start_fixture(0));
+        let port = backend.url().port().unwrap();
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let sink = asked.clone();
+        let backend = backend.with_extension_hosts(Arc::new(move |workspace| {
+            // Whether the host's API still answers when the guest is asked: the cleanup comes
+            // before anything is stopped.
+            let up = std::net::TcpStream::connect(("127.0.0.1", port)).is_ok();
+            sink.lock().unwrap().push((workspace.to_string(), up));
+            Box::pin(async { Ok(()) })
+        }));
+        let problems = backend.problems().clone();
+        open(app.handle(), &fixture_options(), backend).unwrap();
+        let windows = SandboxWindows::new(sandbox_hooks(
+            app.handle(),
+            &problems,
+            app.state::<Backend>().extension_hosts(),
+        ));
+        let demo = WorkspaceName::new("demo").unwrap();
+        let editor = tauri::WebviewUrl::External("http://127.0.0.1:1/".parse().unwrap());
+        tauri::WebviewWindowBuilder::new(app.handle(), "vs-demo", editor)
+            .build()
+            .unwrap();
+        windows.opened(&demo);
+        app.manage(windows);
+
+        assert!(stop(app.handle()).is_some());
+        assert_eq!(*asked.lock().unwrap(), [("demo".to_owned(), true)]);
+        // A second exit event asks nobody again: the real window system may never report the
+        // destroyed windows back once the loop has ended.
+        assert_eq!(stop(app.handle()), None);
+        assert_eq!(asked.lock().unwrap().len(), 1);
     }
 
     #[test]

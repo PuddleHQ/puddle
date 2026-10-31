@@ -398,6 +398,16 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   run such as `cfg(windows)` lines), files absent from the report (listed as "not measured", never
   failed), branch or region detail inside a covered line, and whether a covered line is asserted.
   A pass means "a test ran it".
+- **Diff coverage before the slow gates (pre-push).** `scripts/check.sh diff-coverage-fast` runs the tests of only the
+  crates whose `.rs` files the change touches (`scripts/diff-coverage-crates.sh` names them) with coverage, then the same
+  diff-coverage tool on that report, so an added line no test runs fails in about half a minute (3 crates, warm build) to
+  a few minutes, and not after the whole `pre-push` set. It runs in its own target directory (`<target>/diff-coverage-fast`)
+  with the old test executables removed first, because a report reads every executable in a directory and one left
+  by an earlier run, built from older sources, brings its old line numbers. A change to `Cargo.toml`, `Cargo.lock`
+  or `.cargo/` names no crate; a `.rs` file outside `crates/` skips the gate (the full gate measures it). A line only another
+  crate's tests run is reported as uncovered here and cleared by the full `coverage` gate: cover it from its own crate,
+  or list it in `scripts/diff-coverage-exclusions.txt`. It leaves the later `coverage` gate and its `lcov.info`
+  alone, and `all` (CI) does not run it.
 - **Pure-logic crates stay at 100 % of their lines** (gate `coverage`, tool `ui/scripts/full-coverage.ts`). The
   crates listed in `scripts/full-coverage-crates.txt` (pure logic: no operating-system, network or VM code) fail the run on the first executable line
   under `src/` that no test of the workspace run executes, whatever the workspace total says. A crate joins the
@@ -477,10 +487,10 @@ replaced by its default, a `&&` turned into `||`) and runs the crate's tests; a 
 | Set | Gates | Runs |
 |---|---|---|
 | `fast` | fmt, typos, spdx, shellcheck, hooks, platform-literals, standalone, git-pins, silent-skips | pre-commit hook |
-| `pre-push` | every gate of `all` except `ui-e2e`, `advisories` and `ui-audit` | pre-push hook |
+| `pre-push` | `fast`, then `diff-coverage-fast`, then every other gate of `all` except `ui-e2e`, `advisories` and `ui-audit` | pre-push hook |
 | `all` (the default) | every gate, `ui-e2e`, `advisories` and `ui-audit` included | `ci.yml` (every push and PR, except `advisories` and `ui-audit`, see below), by hand |
 
-**Concurrent gates.** Within a set, `fast` runs first, one gate at a time, and a failure stops the run.
+**Concurrent gates.** Within a set, `fast` (and, in `pre-push`, `diff-coverage-fast` after it) runs first, one gate at a time, and a failure stops the run.
 The rest runs as up to three streams at once (`scripts/gate-sched.sh`): the Rust gates (`git-env`, `clippy`,
 `clippy-windows`, `openapi`, `doc`, `coverage`), the UI chain (`ui`, `ui-licences`, `ui-audit`, `ui-e2e`) and the
 read-only scans (`secrets`, `deny`, `advisories`, `notices`). `coverage` waits for `ui`, which builds the UI it tests against.

@@ -284,6 +284,12 @@ async fn a_clone_that_runs_out_of_time_fails_alone_and_a_lost_guest_fails_the_im
     assert_eq!(report.failed.len(), 1);
     assert_eq!(report.failed[0].1, "git did not finish within 600 s");
     assert!(report.created_volume);
+    // git was stopped part way, so its folder is removed for it.
+    assert!(
+        s.guest
+            .lines()
+            .contains(&"m--acme root rm -rf -- /workspaces/acme/api".to_owned())
+    );
 
     // The guest gone mid-import: the create fails, and the volume it made goes with it.
     let s = setup();

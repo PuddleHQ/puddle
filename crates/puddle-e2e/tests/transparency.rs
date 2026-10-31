@@ -203,6 +203,7 @@ async fn download(
     let started = Instant::now();
     let mut buf = vec![0u8; CHUNK];
     let (mut got, mut progress) = (0u64, Progress::new(&backoff));
+    // flake-ok: reads the download to its end, the loop must consume the input.
     loop {
         let n = loop {
             tokio::select! {
@@ -619,6 +620,7 @@ async fn a_client_reading_one_kibibyte_a_second_for_a_minute_is_not_cut_off() {
     let mut buf = [0u8; 1024];
     let mut slowest_other = Duration::ZERO;
     let mut ticker = tokio::time::interval(Duration::from_secs(1));
+    // flake-ok: a reader paced at one read per second for a minute, load generation not a wait.
     for second in 0..60u64 {
         ticker.tick().await;
         slow.read_exact(&mut buf).await.unwrap();

@@ -15,6 +15,7 @@ use puddle_secrets::{
     Credential, Fetch, Fetched, ReadLog, ReadUse, Secret, SecretCache, SourceError, SourceSpec,
 };
 use puddle_store::{Clock, ManualClock};
+use puddle_test_kit::eventually;
 
 use crate::common::{REPOS_PATH, Rig, T0, Tokens, binding, data, gh, identities, ok_json, stored};
 
@@ -464,10 +465,12 @@ async fn many_screens_asking_at_once_cause_one_read() {
             })
         })
         .collect();
-    while gate.arrived.load(Ordering::SeqCst) == 0 {
-        tokio::task::yield_now().await;
-    }
+    eventually("the first read arrived", Duration::from_secs(10), || {
+        gate.arrived.load(Ordering::SeqCst) != 0
+    })
+    .await;
     // Give the others every chance to arrive too before the first answer is let go.
+    // flake-ok: lets the other tasks run so a late arrival would show; there is no condition to poll
     for _ in 0..50 {
         tokio::task::yield_now().await;
     }
@@ -643,6 +646,7 @@ async fn a_tool_that_did_not_answer_in_time_is_a_sign_in_problem_with_its_name()
 
 /// Lets the tasks the test runtime holds run until they wait for something.
 async fn settle() {
+    // flake-ok: lets every task run until it is idle; there is no condition to poll
     for _ in 0..50 {
         tokio::task::yield_now().await;
     }

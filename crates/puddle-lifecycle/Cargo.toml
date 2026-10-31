@@ -28,6 +28,7 @@ windows-sys = { workspace = true, features = [
 ] }
 
 [dev-dependencies]
+puddle-test-kit = { workspace = true }
 microsandbox = { workspace = true }
 puddle-compute = { workspace = true, features = ["fake"] }
 puddle-compute-msb = { workspace = true }

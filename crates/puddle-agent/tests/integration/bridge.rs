@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use puddle_agent::bridge::{BridgeState, Probe};
 use puddle_agent::config::BridgeConfig;
+use puddle_test_kit::{eventually, eventually_async};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
@@ -145,23 +146,21 @@ async fn accepts(addr: SocketAddr) -> bool {
     let Ok(conn) = TcpStream::connect(addr).await else {
         return false;
     };
-    let deadline = tokio::time::Instant::now() + WAIT;
-    loop {
-        match conn.peer_addr() {
-            Ok(_) => return true,
+    eventually(
+        &format!("a connection to {addr} neither completed nor failed"),
+        WAIT,
+        || match conn.peer_addr() {
+            Ok(_) => Some(true),
             Err(err)
                 if err.kind() == std::io::ErrorKind::NotConnected
                     && conn.take_error().ok().flatten().is_none() =>
             {
-                assert!(
-                    tokio::time::Instant::now() < deadline,
-                    "a connection to {addr} neither completed nor failed"
-                );
-                tokio::time::sleep(Duration::from_millis(1)).await;
+                None
             }
-            Err(_) => return false,
-        }
-    }
+            Err(_) => Some(false),
+        },
+    )
+    .await
 }
 
 #[tokio::test]
@@ -213,14 +212,10 @@ async fn the_listener_stops_when_the_bridge_goes_away() {
     state_where(&mut state, |s| s.addr.is_none()).await;
     // Not at once: a child process that another test starts holds a copy of the listening socket
     // until it execs, and the kernel goes on accepting for the copy.
-    let deadline = tokio::time::Instant::now() + WAIT;
-    while accepts(addr).await {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "the closed bridge address still accepts"
-        );
-        tokio::time::sleep(POLL).await;
-    }
+    eventually_async("the closed bridge address still accepts", WAIT, || async {
+        !accepts(addr).await
+    })
+    .await;
     let mut rest = Vec::new();
     let ended = tokio::time::timeout(WAIT, open.read_to_end(&mut rest)).await;
     assert!(ended.is_ok(), "the connection survived its bridge");

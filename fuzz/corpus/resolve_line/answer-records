@@ -1,0 +1,1 @@
+{"result":"records","ttl":60,"records":[{"type":"srv","priority":1,"weight":2,"port":27017,"target":"h.example.net"},{"type":"txt","strings":["a=b"]},{"type":"mx","preference":10,"exchange":"mx.example.com"}]}

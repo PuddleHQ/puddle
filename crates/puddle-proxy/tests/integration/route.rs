@@ -835,15 +835,16 @@ async fn connections_over_the_workspace_limit_get_503_until_one_closes() {
     first.shutdown().await.unwrap();
     let _ = read_all(&mut first).await;
     drop(first);
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let (code, _) = guest.connect_to(&target).await;
-        if code == 200 {
-            break;
-        }
-        assert!(Instant::now() < deadline, "the slot was never freed");
-        tokio::task::yield_now().await;
-    }
+    let guest = tokio::sync::Mutex::new(guest);
+    puddle_test_kit::eventually_async(
+        "the closed connection's slot is freed",
+        Duration::from_secs(5),
+        || async {
+            let (code, _) = guest.lock().await.connect_to(&target).await;
+            code == 200
+        },
+    )
+    .await;
 }
 
 /// The refusal says why in its body and reaches the audit with its destination, so the user can
@@ -1419,11 +1420,12 @@ async fn an_agent_report_is_about_the_workspace_of_its_route_whatever_it_says() 
         control.write_all(&msg.to_line().unwrap()).await.unwrap();
     }
     control.flush().await.unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while reports.0.lock().unwrap().len() < 2 {
-        assert!(Instant::now() < deadline, "the reports never arrived");
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    puddle_test_kit::eventually(
+        "the two agent reports arrived",
+        Duration::from_secs(5),
+        || reports.0.lock().unwrap().len() >= 2,
+    )
+    .await;
     assert_eq!(
         *reports.0.lock().unwrap(),
         vec![
@@ -1468,12 +1470,12 @@ async fn the_guest_watcher_gets_the_link_and_the_ports_of_the_routes_workspace()
         .write_all(&AgentMessage::ports([8080, 3000]).to_line().unwrap())
         .await
         .unwrap();
-    for _ in 0..500 {
-        if !watched.ports.lock().unwrap().is_empty() && watched.link.lock().unwrap().is_some() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    puddle_test_kit::eventually(
+        "the ports and the link of the agent arrived",
+        Duration::from_secs(5),
+        || !watched.ports.lock().unwrap().is_empty() && watched.link.lock().unwrap().is_some(),
+    )
+    .await;
     assert_eq!(
         *watched.ports.lock().unwrap(),
         [(workspace("box"), vec![3000, 8080])]

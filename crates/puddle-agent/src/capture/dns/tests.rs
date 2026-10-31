@@ -2,6 +2,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use puddle_agent_proto::resolve::StandInReason;
+use puddle_test_kit::{eventually, eventually_async};
 
 use super::*;
 use crate::capture::table::in_range;
@@ -395,6 +396,7 @@ async fn lookups_on_the_host_never_exceed_the_limit_and_a_query_that_waits_too_l
         },
     );
     let mut set = JoinSet::new();
+    // flake-ok: spawns three queries staggered by a millisecond to fix their queue order, nothing is waited for
     for i in 0..3 {
         let stub = stub.clone();
         set.spawn(async move {
@@ -808,9 +810,12 @@ async fn udp_queries_over_the_limit_are_dropped_and_the_stub_carries_on() {
     let message = query_bytes(1, "a.example.com", TYPE_A, None);
     let (first, second) = tokio::join!(udp_query(&server, &message), async {
         // Arrives once the first is being answered.
-        while fake.asks.load(Ordering::SeqCst) == 0 {
-            tokio::task::yield_now().await;
-        }
+        eventually(
+            "the first query reached the host",
+            Duration::from_secs(10),
+            || fake.asks.load(Ordering::SeqCst) != 0,
+        )
+        .await;
         udp_query(&server, &message).await
     });
     assert!(first.is_some(), "the query that fit is answered");
@@ -873,24 +878,23 @@ async fn binding_waits_for_an_address_that_is_taken_and_then_serves() {
     tokio::time::resume();
     let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     // The server needs both UDP and TCP on `listen`: once it is up, a query is answered.
-    let mut answered = false;
-    for _ in 0..40 {
-        socket
-            .send_to(&query_bytes(7, "x.example.com", TYPE_A, None), listen)
-            .await
-            .unwrap();
-        let mut buf = vec![0u8; 1024];
-        if let Ok(Ok((n, _))) =
-            tokio::time::timeout(Duration::from_millis(100), socket.recv_from(&mut buf)).await
-            && decode(&buf[..n]).answers.len() == 1
-        {
-            answered = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    eventually_async(
+        "the stub answers a query on the freed address",
+        Duration::from_secs(10),
+        || async {
+            socket
+                .send_to(&query_bytes(7, "x.example.com", TYPE_A, None), listen)
+                .await
+                .unwrap();
+            let mut buf = vec![0u8; 1024];
+            matches!(
+                tokio::time::timeout(Duration::from_millis(100), socket.recv_from(&mut buf)).await,
+                Ok(Ok((n, _))) if decode(&buf[..n]).answers.len() == 1
+            )
+        },
+    )
+    .await;
     task.abort();
-    assert!(answered);
 }
 
 #[tokio::test]

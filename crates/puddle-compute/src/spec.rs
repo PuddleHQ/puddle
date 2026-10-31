@@ -120,7 +120,7 @@ impl FileMount {
 ///
 /// # Errors
 ///
-/// What is wrong, worded to follow "the checkout <path>".
+/// What is wrong, worded to follow `the checkout <path>`.
 pub fn check_checkout_dir(git_dir: &Path) -> Result<(), String> {
     if git_dir.file_name().is_none_or(|n| n != ".git") {
         return Err("is not a `.git` directory".into());

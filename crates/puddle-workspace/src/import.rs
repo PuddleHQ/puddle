@@ -413,7 +413,7 @@ git reset --quiet --hard
 
 impl Layout {
     /// The clone of the `n`-th import: `git clone --no-local --no-checkout --origin
-    /// puddle-checkout -- <source> <checkout>`, with [`import_env`]; an argument vector, never a
+    /// puddle-checkout -- <source> <checkout>`, with `import_env`; an argument vector, never a
     /// shell string.
     ///
     /// # Errors
@@ -443,7 +443,7 @@ impl Layout {
     }
 
     /// The step after [`Layout::import_request`]: [`FINISH_IMPORT_SH`] with the clone, the
-    /// source and `origin`'s address as its arguments, and [`import_env`].
+    /// source and `origin`'s address as its arguments, and `import_env`.
     ///
     /// # Errors
     ///

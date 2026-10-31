@@ -11,6 +11,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+dunce = { workspace = true }
 puddle-compute = { workspace = true }
 puddle-types = { workspace = true }
 thiserror = { workspace = true }

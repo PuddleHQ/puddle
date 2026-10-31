@@ -386,15 +386,15 @@ where
     let up = async {
         let copied = tokio::io::copy(&mut client_in, &mut server_out).await;
         let _ = server_out.shutdown().await;
-        copied
+        copied.map_err(socket_error)
     };
     let down = async {
         let copied = tokio::io::copy(&mut server_in, &mut client_out).await;
         let _ = client_out.shutdown().await;
-        copied
+        copied.map_err(socket_error)
     };
     tokio::pin!(up, down);
-    // A reset or a linger that runs out ends the socket like a close: nothing to report.
+    // A linger that runs out ends the socket like a close.
     tokio::select! {
         _ = &mut up => {
             drop(open);
@@ -404,6 +404,11 @@ where
             let _ = tokio::time::timeout(LINGER, &mut up).await;
         }
     }
+}
+
+/// Logs an error that ended one side of an editor socket (a reset ends it like a close).
+fn socket_error(err: std::io::Error) {
+    tracing::debug!(error = %err, "an editor socket ended with an error");
 }
 
 /// Removes the headers of the client's connection; an upgrade keeps the two that make it one.

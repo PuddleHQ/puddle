@@ -701,3 +701,4 @@ crates/xtask/src/source.rs | fn msb_inventory(&self, os: HostOs) -> Result<Inven
 crates/xtask/src/source.rs | let tree =\nrun(git_command() | the line only changed from Command::new("git") to the env-stripping helper (or a rustfmt re-wrap of that call); the code runs git against GitHub and no unit test does
 crates/xtask/src/source.rs | run(git_command()\n.arg("-C") | the line only changed from Command::new("git") to the env-stripping helper (or a rustfmt re-wrap of that call); the code runs git against GitHub and no unit test does
 ui/src/lib/stores/rule-sets.svelte.ts | onDecidedElsewhere: () => void live.refresh(), | the app-wide instance's badge hook; tests build their own store and check the hook with a counter (rule-sets.test.ts)
+crates/puddle-front/src/proxy.rs | tracing::debug!(error = %err, "an editor socket ended with an error"); | a log line for a socket reset mid-copy, which no test provokes on loopback; it ran in no test before either

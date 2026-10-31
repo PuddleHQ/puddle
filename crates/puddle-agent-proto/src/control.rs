@@ -494,10 +494,8 @@ mod tests {
             fine
         );
         let long = AgentMessage::editor_status(Some(&"\u{1b}".repeat(5000)));
-        let text = match &long {
-            AgentMessage::EditorStatus { problem } => problem.clone().unwrap_or_default(),
-            other => format!("{other:?}"),
-        };
+        let sent: serde_json::Value = serde_json::from_slice(&long.to_line().unwrap()).unwrap();
+        let text = sent["problem"].as_str().unwrap();
         assert_eq!(text.chars().count(), MAX_EDITOR_PROBLEM_CHARS);
         assert!(long.to_line().is_ok(), "the cut text fits a control line");
     }

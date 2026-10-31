@@ -353,6 +353,11 @@ pub(super) fn tls_config(
     let ca_key = rcgen::KeyPair::generate().unwrap();
     let mut ca = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
     ca.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    // A real root says it may sign certificates; Python 3.13 and newer refuse one that does not.
+    ca.key_usages = vec![
+        rcgen::KeyUsagePurpose::KeyCertSign,
+        rcgen::KeyUsagePurpose::CrlSign,
+    ];
     ca.distinguished_name
         .push(rcgen::DnType::CommonName, root_name);
     let ca_cert = ca.self_signed(&ca_key).unwrap();
@@ -362,6 +367,9 @@ pub(super) fn tls_config(
         rcgen::DnType::CommonName,
         names.first().cloned().unwrap_or_default(),
     );
+    // Names the issuer, as every public and company certificate does; Python 3.13 and newer refuse
+    // a chain without it.
+    leaf.use_authority_key_identifier_extension = true;
     leaf.not_before = rcgen::date_time_ymd(valid.0, 1, 1);
     leaf.not_after = rcgen::date_time_ymd(valid.1, 1, 1);
     let key = rcgen::KeyPair::generate().unwrap();

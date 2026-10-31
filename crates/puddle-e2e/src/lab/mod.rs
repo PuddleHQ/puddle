@@ -28,6 +28,7 @@
 mod git_host;
 mod interceptor;
 mod pac;
+mod pip_index;
 mod procs;
 #[cfg(unix)]
 mod squid;
@@ -43,6 +44,7 @@ use std::time::{Duration, Instant};
 pub use git_host::{GitHost, GitHostOptions, NameProxy, Seen, Versions, clean_git, git_available};
 pub use interceptor::{Interceptor, NtlmLeg, NtlmProxy, Root};
 pub use pac::{PacServer, failover_pac};
+pub use pip_index::pip_index;
 #[cfg(unix)]
 pub use squid::{Squid, SquidOptions};
 pub use web_host::{Responder, WebAnswer, WebHost, WebOptions};

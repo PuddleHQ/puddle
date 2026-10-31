@@ -99,7 +99,8 @@ fn token_answer(access: &str, refresh: &str) -> WebAnswer {
             "refresh_token": refresh,
             "scope": "user:inference user:profile",
         })
-        .to_string(),
+        .to_string()
+        .into_bytes(),
     }
 }
 
@@ -107,7 +108,7 @@ fn refusal() -> WebAnswer {
     WebAnswer {
         status: 400,
         content_type: "application/json",
-        body: r#"{"error":"invalid_grant"}"#.to_owned(),
+        body: br#"{"error":"invalid_grant"}"#.to_vec(),
     }
 }
 

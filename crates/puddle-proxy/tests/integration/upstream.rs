@@ -580,6 +580,74 @@ async fn hostile_a_guest_cannot_supply_proxy_credentials_or_a_second_request() {
     assert_eq!(host_header.1, "plain.test", "Host is the checked target");
 }
 
+/// With Puddle's own credential for the company proxy configured, a guest's `Proxy-Authorization`
+/// (on the `CONNECT` and on a plain request, in any case, twice) does not reach the proxy beside
+/// it or over it: the proxy sees Puddle's value only.
+#[tokio::test]
+async fn hostile_hg17_the_guests_proxy_authorization_never_reaches_the_company_proxy() {
+    let secret = fixture::canary("proxy");
+    let server = echo().await;
+    let proxy = FakeProxy::start(Behaviour::Basic {
+        user: "alice".into(),
+        password: secret.clone(),
+    })
+    .await;
+    proxy.resolve_name("site.test", server.addr);
+    let (up, _) = upstream(vec![via(&proxy)], basic("alice", &secret));
+    let rig = Rig::new(StaticResolver::new().with("site.test", &[LOCAL]), up, None);
+    rig.policy.allow(&host("site.test"));
+    let mut guest = rig.guest().await;
+    let own = format!("Basic {}", BASE64.encode(format!("alice:{secret}")));
+    let theirs = ["Basic Z3Vlc3Q6cHc=", "Bearer second-guest-value"];
+    let (code, _, mut tunnel) = guest
+        .request(&format!(
+            "CONNECT site.test:{port} HTTP/1.1\r\nHost: site.test:{port}\r\nProxy-Authorization: {}\r\nproxy-authorization: {}\r\n\r\n",
+            theirs[0],
+            theirs[1],
+            port = server.addr.port()
+        ))
+        .await;
+    assert_eq!(code, 200);
+    echo_through(&mut tunnel, b"signed in").await;
+    drop(tunnel);
+    let (code, _, mut body) = guest
+        .request(&format!(
+            "GET http://site.test:{port}/x HTTP/1.1\r\nHost: site.test\r\nProxy-Authorization: {}\r\nPROXY-AUTHORIZATION: {}\r\n\r\n",
+            theirs[0],
+            theirs[1],
+            port = server.addr.port()
+        ))
+        .await;
+    assert_eq!(code, 200);
+    let _ = read_to_end(&mut body).await;
+    let seen = proxy.seen();
+    let methods: Vec<_> = seen.iter().map(|s| s.method.as_str()).collect();
+    assert!(
+        methods.contains(&"CONNECT") && methods.contains(&"GET"),
+        "{methods:?}"
+    );
+    let mut answered = 0;
+    for request in &seen {
+        let values: Vec<_> = request
+            .headers
+            .iter()
+            .filter(|(name, _)| name == "proxy-authorization")
+            .map(|(_, value)| value.as_str())
+            .collect();
+        assert!(
+            values.iter().all(|value| *value == own),
+            "{} {}: {values:?}",
+            request.method,
+            request.target
+        );
+        answered += values.len();
+    }
+    assert!(
+        answered >= 2,
+        "both requests were signed in with Puddle's own value"
+    );
+}
+
 #[tokio::test]
 async fn hostile_a_hostile_company_proxy_cannot_hang_or_loop_the_workspace_proxy() {
     for behaviour in [Behaviour::Garbage, Behaviour::Silent, Behaviour::Always407] {

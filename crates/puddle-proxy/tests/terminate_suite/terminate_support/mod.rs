@@ -520,13 +520,28 @@ impl Injector for TestInjector {
 // The proxy under test.
 
 /// Resolves each name to fixed addresses (every `with` call for a name adds one), whatever the
-/// port.
+/// port. A name given a `later` answer (a rebinding resolver) gets it from the second lookup on,
+/// whatever it was asked for. Every lookup is counted.
 #[derive(Debug, Default)]
-pub(crate) struct Fixed(Mutex<HashMap<String, Vec<SocketAddr>>>);
+pub(crate) struct Fixed {
+    names: Mutex<HashMap<String, Vec<SocketAddr>>>,
+    later: Mutex<HashMap<String, Vec<SocketAddr>>>,
+    lookups: Arc<AtomicUsize>,
+}
 
 impl Fixed {
     pub(crate) fn with(self, name: &str, addr: SocketAddr) -> Self {
-        self.0
+        self.names
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(name.to_owned())
+            .or_default()
+            .push(addr);
+        self
+    }
+
+    pub(crate) fn then(self, name: &str, addr: SocketAddr) -> Self {
+        self.later
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .entry(name.to_owned())
@@ -542,12 +557,23 @@ impl Resolver for Fixed {
         name: &'a DomainName,
         _port: u16,
     ) -> BoxFuture<'a, io::Result<Vec<SocketAddr>>> {
-        let found = self
-            .0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(name.as_str())
-            .cloned();
+        let nth = self.lookups.fetch_add(1, Ordering::SeqCst);
+        let later = if nth > 0 {
+            self.later
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(name.as_str())
+                .cloned()
+        } else {
+            None
+        };
+        let found = later.or_else(|| {
+            self.names
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(name.as_str())
+                .cloned()
+        });
         Box::pin(async move {
             found.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no such name"))
         })
@@ -577,6 +603,8 @@ pub(crate) struct RigBuilder {
     pub(crate) injector: Arc<dyn Injector>,
     pub(crate) tls: Option<TlsClient>,
     pub(crate) names: Vec<(&'static str, SocketAddr)>,
+    /// What a name resolves to from the second lookup on.
+    pub(crate) later: Vec<(&'static str, SocketAddr)>,
     /// Which resolved addresses may be connected to (every one, unless a test brings the guard).
     pub(crate) address_check: Arc<dyn AddressCheck>,
     pub(crate) allow: Vec<&'static str>,
@@ -599,6 +627,7 @@ impl RigBuilder {
             injector: TestInjector::always(),
             tls: Some(pki.tls_client()),
             names: Vec::new(),
+            later: Vec::new(),
             address_check: Arc::new(AnyAddress),
             allow: vec!["bound.test"],
             upstream: None,
@@ -655,6 +684,12 @@ impl RigBuilder {
         self
     }
 
+    /// Makes `name` resolve to `addr` from the second lookup on: DNS rebinding.
+    pub(crate) fn rebinding(mut self, name: &'static str, addr: SocketAddr) -> Self {
+        self.later.push((name, addr));
+        self
+    }
+
     /// Decides which resolved addresses may be connected to, in place of letting every one
     /// through.
     pub(crate) fn address_check(mut self, check: Arc<dyn AddressCheck>) -> Self {
@@ -704,6 +739,10 @@ impl RigBuilder {
         for (name, addr) in &self.names {
             resolver = resolver.with(name, *addr);
         }
+        for (name, addr) in &self.later {
+            resolver = resolver.then(name, *addr);
+        }
+        let lookups = Arc::clone(&resolver.lookups);
         let ca = workspace_ca("box");
         let terminations = Arc::new(Terminations::new());
         let mut termination = Termination::new(
@@ -757,6 +796,7 @@ impl RigBuilder {
             terminations,
             injector: self.injector,
             interception: self.interception,
+            lookups,
             _roots: (root, other_root),
         }
     }
@@ -773,10 +813,16 @@ pub(crate) struct Rig {
     terminations: Arc<Terminations>,
     injector: Arc<dyn Injector>,
     interception: Interception,
+    lookups: Arc<AtomicUsize>,
     _roots: (IpcRoot, IpcRoot),
 }
 
 impl Rig {
+    /// How many times the proxy asked the resolver for a name.
+    pub(crate) fn lookups(&self) -> usize {
+        self.lookups.load(Ordering::SeqCst)
+    }
+
     /// Changes whether the running workspace `box` decrypts every host (and which names never),
     /// keeping its CA, injector and what it learned: the next connection sees the change.
     pub(crate) fn set_decrypting_all(&self, all: bool, never: &[&str]) {

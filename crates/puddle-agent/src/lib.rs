@@ -30,6 +30,9 @@
 //! The wire protocol is in `puddle-agent-proto`. Settings come from environment variables
 //! ([`config`]). The binary's `main` only parses the command line ([`cli`]) and starts an
 //! [`Agent`].
+//!
+//! Unsafe code exists only in the Linux `vsock` module, which says why; elsewhere it is forbidden.
+#![cfg_attr(not(target_os = "linux"), forbid(unsafe_code))]
 
 pub mod bridge;
 pub mod capture;

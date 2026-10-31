@@ -1093,3 +1093,269 @@ async fn a_workspace_that_never_set_a_switch_is_held_to_the_global_default_live(
         "push_denied"
     );
 }
+
+// Git LFS calls that write are writes whatever the method says, and the one that reads is a read
+// only when it is the POST Git LFS defines.
+
+#[tokio::test]
+async fn an_lfs_verify_or_unlock_is_a_push_whatever_its_method() {
+    let w = World::new();
+    w.identity("Personal", "github.com", &[], true, "CANARY-PERSONAL");
+    w.switches(true, false);
+    for method in ["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH"] {
+        for target in [
+            "/someone/big.git/info/lfs/objects/verify",
+            "/someone/big.git/info/lfs/locks/9/unlock",
+        ] {
+            let decision = w.decide("github.com", method, target, &[]).await;
+            assert_eq!(refusal(&decision).1, "push_denied", "{method} {target}");
+        }
+    }
+    assert_eq!(w.credentials.reads(), 0, "no credential was read");
+    // Listed for Push, the same calls go out with the credential.
+    w.list("github.com/someone/big", false, true);
+    for method in ["GET", "POST"] {
+        let decision = w
+            .decide(
+                "github.com",
+                method,
+                "/someone/big.git/info/lfs/objects/verify",
+                &[],
+            )
+            .await;
+        assert!(
+            injected(&decision, &token_header("CANARY-PERSONAL")),
+            "{method}: {decision:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_lfs_lock_listing_is_a_pull_only_as_a_post_and_every_other_method_is_decided_by_what_it_does()
+ {
+    let w = World::new();
+    w.identity("Personal", "github.com", &[], true, "CANARY-PERSONAL");
+    w.switches(true, false);
+    let verify = "/someone/big.git/info/lfs/locks/verify";
+    let post = w.decide("github.com", "POST", verify, &[]).await;
+    assert!(
+        injected(&post, &token_header("CANARY-PERSONAL")),
+        "{post:?}"
+    );
+    for method in ["PUT", "DELETE", "PATCH"] {
+        let decision = w.decide("github.com", method, verify, &[]).await;
+        assert_eq!(refusal(&decision).1, "push_denied", "{method}");
+    }
+    // A pull-only table lets the POST through and keeps the writes out.
+    w.switches(true, true);
+    w.list("github.com/someone/big", true, false);
+    let post = w.decide("github.com", "POST", verify, &[]).await;
+    assert!(
+        injected(&post, &token_header("CANARY-PERSONAL")),
+        "{post:?}"
+    );
+    for method in ["PUT", "DELETE"] {
+        let decision = w.decide("github.com", method, verify, &[]).await;
+        assert_eq!(refusal(&decision).1, "push_denied", "{method}");
+    }
+}
+
+// The switches decide a name the table cannot hold, for a pull as for a push.
+
+#[tokio::test]
+async fn a_name_the_table_cannot_hold_follows_the_switch_for_a_push_and_for_a_pull() {
+    let w = World::new();
+    w.identity("Personal", "github.com", &[], true, "CANARY-PERSONAL");
+    let push = ("POST", "/acme/a+b.git/git-receive-pack");
+    let pull = ("POST", "/acme/a+b.git/git-upload-pack");
+    for (only_push, only_pull) in [(false, false), (true, false), (false, true), (true, true)] {
+        w.switches(only_push, only_pull);
+        for ((method, target), only_listed, code) in [
+            (push, only_push, "push_denied"),
+            (pull, only_pull, "pull_denied"),
+        ] {
+            let decision = w.decide("github.com", method, target, &[]).await;
+            if only_listed {
+                assert_eq!(
+                    refusal(&decision).1,
+                    code,
+                    "{target} {only_push} {only_pull}"
+                );
+            } else {
+                assert!(
+                    injected(&decision, &token_header("CANARY-PERSONAL")),
+                    "{target} {only_push} {only_pull}: {decision:?}"
+                );
+            }
+        }
+    }
+}
+
+// Why a path is refused.
+
+#[tokio::test]
+async fn a_refused_path_says_which_spelling_it_cannot_read() {
+    let w = world();
+    for (target, why) in [
+        ("/acme/web.git/info\\refs", "a backslash"),
+        (
+            "/acme/web.git;x/info/refs?service=git-upload-pack",
+            "a path parameter (;)",
+        ),
+        ("/acme/web.git/git-upload-pack\u{1}", "a control character"),
+        ("/acme/web.git/git-upload-pack\u{7f}", "a control character"),
+        (
+            "/acme/we\u{e9}.git/git-upload-pack",
+            "a non-ASCII character",
+        ),
+        (
+            "/acme/we b.git/git-upload-pack",
+            "a character that must be percent-encoded",
+        ),
+        ("/acme/web.git/./git-upload-pack", "a dot segment"),
+        (
+            "/acme//web.git/git-upload-pack",
+            "an empty path segment (// or a trailing /)",
+        ),
+        (
+            "/acme/web%2egit/git-upload-pack",
+            "a percent-encoding that is not canonical",
+        ),
+    ] {
+        let decision = w.decide("github.com", "POST", target, &[]).await;
+        let (status, code, message) = refusal(&decision);
+        assert_eq!((status, code), (400, "bad_git_path"), "{target}");
+        assert!(message.contains(&format!("({why})")), "{target}: {message}");
+    }
+}
+
+// Where a repository's path ends.
+
+#[tokio::test]
+async fn a_repository_nested_as_deep_as_the_host_allows_is_read_and_one_deeper_is_refused() {
+    let w = World::new();
+    w.identity("Lab", "gitlab.example", &["group"], false, "CANARY-LAB");
+    w.switches(false, false);
+    let names = |count: usize| {
+        (1..=count)
+            .map(|n| format!("n{n}"))
+            .collect::<Vec<_>>()
+            .join("/")
+    };
+    let deepest = format!("/group/{}/git-upload-pack", names(21));
+    let decision = w.decide("gitlab.example", "POST", &deepest, &[]).await;
+    assert!(
+        injected(&decision, &token_header("CANARY-LAB")),
+        "{decision:?}"
+    );
+    let too_deep = format!("/group/{}/git-upload-pack", names(22));
+    let decision = w.decide("gitlab.example", "POST", &too_deep, &[]).await;
+    let (status, code, message) = refusal(&decision);
+    assert_eq!((status, code), (400, "bad_git_path"));
+    assert!(
+        message.contains("deeper than any Git host has"),
+        "{message}"
+    );
+}
+
+// A host with two names.
+
+#[tokio::test]
+async fn an_identity_bound_to_the_name_asked_for_covers_an_azure_devops_host_alias() {
+    let w = World::new();
+    w.identity(
+        "Old",
+        "contoso.visualstudio.com",
+        &["contoso"],
+        false,
+        "ADO-OLD",
+    );
+    w.switches(false, false);
+    let decision = w
+        .decide(
+            "contoso.visualstudio.com",
+            "GET",
+            "/proj/_git/repo/info/refs?service=git-upload-pack",
+            &[],
+        )
+        .await;
+    assert!(injected(&decision, &basic("", "ADO-OLD")), "{decision:?}");
+}
+
+// The bounds of the notice memory: an entry counts for exactly ten seconds, and a table full of
+// recent entries takes no more.
+
+#[tokio::test]
+async fn a_refusal_is_a_new_notice_exactly_when_ten_seconds_have_passed() {
+    tokio::time::pause();
+    let w = world();
+    let target = "/acme/other.git/git-receive-pack";
+    let _ = w.decide("github.com", "POST", target, &[]).await;
+    assert_eq!(w.events.take().len(), 1);
+    tokio::time::advance(Duration::from_millis(9_999)).await;
+    let _ = w.decide("github.com", "POST", target, &[]).await;
+    assert_eq!(w.events.take(), [], "still the same notice");
+    tokio::time::advance(Duration::from_millis(1)).await;
+    let _ = w.decide("github.com", "POST", target, &[]).await;
+    assert_eq!(w.events.take().len(), 1, "ten seconds on, it is new");
+}
+
+#[tokio::test]
+async fn a_full_notice_table_makes_room_exactly_when_its_entries_are_ten_seconds_old() {
+    tokio::time::pause();
+    let w = world();
+    for n in 0..256 {
+        let target = format!("/acme/other{n}.git/git-receive-pack");
+        let _ = w.decide("github.com", "POST", &target, &[]).await;
+    }
+    assert_eq!(w.events.take().len(), 256);
+    tokio::time::advance(Duration::from_millis(9_999)).await;
+    let _ = w
+        .decide("github.com", "POST", "/acme/late.git/git-receive-pack", &[])
+        .await;
+    assert_eq!(w.events.take(), [], "nothing old enough to forget yet");
+    tokio::time::advance(Duration::from_millis(1)).await;
+    let _ = w
+        .decide("github.com", "POST", "/acme/late.git/git-receive-pack", &[])
+        .await;
+    assert_eq!(w.events.take().len(), 1, "ten seconds on, room is made");
+}
+
+/// 256 owners send their own credential at once, then after `wait` a tool that was refused a
+/// credential by a `401` retries with its own: how many "no identity covers it" events follow.
+async fn no_identity_events_after_a_full_table(wait: Duration) -> usize {
+    let w = World::new();
+    for i in 0..256 {
+        let target = format!("/owner{i}/repo.git/info/refs?service=git-upload-pack");
+        let decision = w.decide("github.com", "GET", &target, &[OWN]).await;
+        assert_eq!(decision, InjectDecision::PassThrough);
+    }
+    tokio::time::advance(wait).await;
+    answered_401(&w.decide("github.com", "GET", PRIVATE, &[]).await);
+    let _ = w.decide("github.com", "GET", PRIVATE, &[OWN]).await;
+    later(Duration::from_secs(5)).await;
+    w.events.take().len()
+}
+
+#[tokio::test]
+async fn a_retry_is_remembered_once_the_old_ones_are_ten_seconds_old_and_not_before() {
+    tokio::time::pause();
+    // Entries younger than ten seconds fill the table: the retry cannot be remembered.
+    assert_eq!(
+        no_identity_events_after_a_full_table(Duration::from_secs(5)).await,
+        1
+    );
+    assert_eq!(
+        no_identity_events_after_a_full_table(Duration::from_millis(9_999)).await,
+        1
+    );
+    // From ten seconds on they are forgotten, so the retry is.
+    assert_eq!(
+        no_identity_events_after_a_full_table(Duration::from_secs(10)).await,
+        0
+    );
+    assert_eq!(
+        no_identity_events_after_a_full_table(Duration::from_secs(11)).await,
+        0
+    );
+}

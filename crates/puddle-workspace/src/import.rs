@@ -477,10 +477,11 @@ mod tests {
 
     #[test]
     fn a_layout_problem_keeps_its_reason() {
-        let WorkspaceError::Layout { reason } = layout("no such place") else {
-            unreachable!("layout makes only Layout errors");
-        };
-        assert_eq!(reason, "no such place");
+        let err = layout("no such place");
+        assert!(
+            matches!(&err, WorkspaceError::Layout { reason } if reason == "no such place"),
+            "{err:?}"
+        );
     }
 
     #[test]

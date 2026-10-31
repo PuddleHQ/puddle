@@ -214,9 +214,11 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   lists each rule with its count and the fix its error names): a hand-rolled wait helper (the row says whether it lacks a name or a bound), `file.lock()` in a
   test, `try_recv()`, a port picked and released, a name built from the clock, a wall-clock bar, records matched by
   position, a reserved name (`.test`, `example.com`) in a test that reaches the real resolver, and an awaited page read asserted once (the scan reads a variable; the ESLint selector reads `expect(await ...)`; a read kept as `(await loc.boundingBox())!` counts, a value derived from it does not). A site is accepted with `flake-ok: <why>` on its line or within three
-  lines above (in the UI also `eslint-disable-next-line no-restricted-syntax -- <why>`). The kinds are counted, not
-  failing, until their existing sites are fixed or reasoned; a rule then moves into `FLAKE_FAILING` and an unreasoned
-  site fails the `quality` gate like the others (`flake-n1`, `flake-w1`, `flake-w2`, `flake-o1`, `flake-a1`, `flake-t1`, `flake-d1`, the port rule and `flake-o2` already do). Two rules live in the linters: clippy's `disallowed-methods` names
+  lines above (in the UI also `eslint-disable-next-line no-restricted-syntax -- <why>`). Each rule is one file,
+  `scripts/flake-rules/<id>.rule`; the kinds are counted, not failing, until their existing sites are fixed or
+  reasoned; the rule's file then says `status: failing` and an unreasoned site fails the `quality` gate like the others
+  (`--flakes` shows which rules are failing). A new rule is a new file and a flip is one line in its own file, so
+  branches that each add or flip a rule merge without a conflict (`scripts/flake-rules-test.sh` proves it). Two rules live in the linters: clippy's `disallowed-methods` names
   `std::env::temp_dir` (workspace level `deny`; a site that must keep it says why in `#[expect(clippy::disallowed_methods, reason = ...)]`; `scripts/flake-lints-test.sh` runs the rule at `warn`),
   and an ESLint selector flags `expect(await ...)` in `ui/e2e` as an error (`ui/scripts/expect-poll-codemod.ts` converts a site to `await expect.poll(() => ...)`). Each rule's self-test replays the original
   code of a flake it would have caught (`scripts/flake-fixtures/`). A wait in a test goes through `puddle-test-kit`

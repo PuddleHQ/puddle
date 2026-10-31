@@ -1,0 +1,4 @@
+status: failing
+fixture: o2-density-measure.bad.ts.txt
+as: ui/e2e/x.spec.ts
+fix: an awaited page read asserted once runs before the page settles: use a web-first assertion (`await expect(locator).toHaveText(...)`) or `await expect.poll(() => read)`; for a read of something that must be absent a poll ends at its first empty read, so use `staysEmpty(page, read)` or `expectNoAxeViolations(page)` from e2e/support.ts; or `flake-ok: <why a one-shot read is meant>`

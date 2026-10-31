@@ -247,11 +247,7 @@ impl<R: Runtime> Tray<R> {
 /// Runs `make`, returning `None` if it panicked (the Linux library that draws the icon panics
 /// when it is not installed) without that panic writing a crash file: it is an answer, not a crash.
 fn guarded<T>(make: impl FnOnce() -> T) -> Option<T> {
-    let previous = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(make));
-    std::panic::set_hook(previous);
-    result.ok()
+    puddle_types::panic_hook::silenced(make)
 }
 
 #[cfg(test)]
@@ -483,5 +479,31 @@ mod tests {
         assert_eq!(guarded(|| 7), Some(7));
         let none: Option<u8> = guarded(|| panic!("no library"));
         assert_eq!(none, None);
+    }
+
+    // Raced before the swaps shared one lock (red 19 of 20 runs on 2 CPUs): the icon's restore
+    // overwrote a crash hook installed at the same moment. Each round drops the hook it chained:
+    // left in place they pile up, the closing panic runs all of them with a backtrace each, and
+    // 300 rounds took over 120 s under coverage.
+    #[test]
+    fn a_hook_installed_while_the_icon_is_made_survives_it() {
+        let data = tempfile::tempdir().unwrap();
+        for round in 0..300 {
+            let folder = data.path().join(round.to_string());
+            let barrier = std::sync::Barrier::new(2);
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    assert_eq!(guarded(|| 1), Some(1));
+                });
+                scope.spawn(|| {
+                    barrier.wait();
+                    crate::crash::install(folder.clone());
+                });
+            });
+            let _ = std::thread::spawn(|| panic!("after both")).join();
+            assert!(folder.exists(), "round {round}: the crash hook was lost");
+            drop(std::panic::take_hook());
+        }
     }
 }

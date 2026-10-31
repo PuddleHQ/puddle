@@ -1,0 +1,4 @@
+status: failing
+fixture: a1-positional-zip.bad.rs.txt
+as: crates/puddle-e2e/tests/proxy_agent_store.rs
+fix: records matched to expectations by position depend on an order the contract does not promise: find each record by its key, or `flake-ok: <why the order is promised>`

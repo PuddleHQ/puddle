@@ -45,6 +45,15 @@ exclude_re = [
     # `Store::rule_set` reads a user set directly; without that arm it lists every set and finds the
     # id, which returns the same set, or the same `UnknownRuleSet` error for an id that is not there.
     "sets\\.rs:\\d+:\\d+: delete match arm RuleSetId::User\\(user\\) in Store::rule_set",
+    # The default body of `SshTarget::failed` is `let _ = reason;`, so `()` is the same code.
+    'replace SshTarget::failed with \(\)',
+    # `SshEndpoint::drop` aborts the accept task, but dropping the endpoint also drops the `stop`
+    # sender, which makes the task's `stopped` receiver resolve, so the loop ends and shuts its
+    # sessions down either way; the abort only makes it prompt, which no test can time.
+    'replace <impl Drop for SshEndpoint>::drop with \(\)',
+    # `!matches!(written, Ok(Ok(())))` in `session` only decides whether to log that a refused
+    # client left before reading its refusal; the connection is dropped on both paths.
+    'endpoint\.rs:\d+:12: delete ! in session',
 ]
 
 # The first failing test decides a mutant: stop the rest. Without it, a mutant that makes a test

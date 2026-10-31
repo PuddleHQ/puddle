@@ -232,4 +232,66 @@ mod tests {
         assert_eq!(reason.len(), REASON_LIMIT);
         drop(server);
     }
+
+    /// A server that sends `first`, then `x` one byte per read for ever, and fails once more than
+    /// `cap` bytes were taken (so a reader that never stops ends the test instead of hanging it).
+    struct Endless {
+        first: std::collections::VecDeque<u8>,
+        taken: usize,
+        cap: usize,
+    }
+
+    impl AsyncRead for Endless {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            if self.taken >= self.cap {
+                return std::task::Poll::Ready(Err(std::io::Error::other("read past the cap")));
+            }
+            self.taken += 1;
+            let b = self.first.pop_front().unwrap_or(b'x');
+            buf.put_slice(&[b]);
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_refusal_without_a_line_end_is_read_up_to_exactly_the_limit() {
+        // 16 bytes of prefix and 4 bytes per character of the longest reason, plus the CRLF:
+        // written out, so a changed limit shows.
+        let mut server = Endless {
+            first: REFUSAL_PREFIX.bytes().collect(),
+            taken: 0,
+            cap: 100_000,
+        };
+        let head = read_head(&mut server).await.unwrap();
+        assert_eq!(server.taken, 16 + 1024 * 4 + 2);
+        assert_eq!(head, Head::Refused("x".repeat(1024)));
+    }
+
+    #[tokio::test]
+    async fn a_refusal_of_only_the_prefix_is_an_empty_reason() {
+        // The stream ends right after the prefix: nothing more is read to decide it is a refusal.
+        assert_eq!(
+            head_of(REFUSAL_PREFIX.as_bytes(), false).await,
+            Head::Refused(String::new())
+        );
+        assert_eq!(
+            head_of(REFUSAL_PREFIX.as_bytes(), true).await,
+            Head::Refused(String::new())
+        );
+    }
+
+    #[test]
+    fn a_separating_space_never_makes_the_reason_longer_than_the_limit() {
+        // The 1024th character would be a space with nothing after it.
+        let reason = format!("{} b", "a".repeat(1023));
+        assert_eq!(sanitize_reason(&reason), "a".repeat(1023));
+        // One character fewer: the space and the next character both fit.
+        let reason = format!("{} b", "a".repeat(1022));
+        assert_eq!(sanitize_reason(&reason), format!("{} b", "a".repeat(1022)));
+        assert_eq!(sanitize_reason(&reason).chars().count(), 1024);
+    }
 }

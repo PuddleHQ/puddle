@@ -176,7 +176,7 @@ async fn a_responder_answers_the_requests_it_wants_and_the_site_records_what_it_
         (seen.target == "/token").then(|| puddle_e2e::lab::WebAnswer {
             status: 418,
             content_type: "application/json",
-            body: format!("{{\"body\":{}}}", seen.body.len()),
+            body: format!("{{\"body\":{}}}", seen.body.len()).into_bytes(),
         })
     });
     let web = WebHost::start(

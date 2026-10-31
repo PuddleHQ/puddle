@@ -184,6 +184,49 @@ fn seed(host: &GitHost) {
     host.add_repo("someone/else", true);
 }
 
+/// The guest holds no token. Every place a secret could rest: the environment and command line
+/// of every process, every file on the disk (binary files too). The script holds the tokens in
+/// halves, so the search never finds itself.
+async fn assert_guest_holds_no_token(vm: &VmHost, sandbox: &WorkspaceName) {
+    let patterns = format!(
+        "w={work}; p={personal}; \
+         printf '%s\\n' \"$w\" \"$p\" \
+           \"$(printf 'x-access-token:%s' \"$w\" | base64 -w0)\" \
+           \"$(printf 'x-access-token:%s' \"$p\" | base64 -w0)\" \
+           \"$(printf '%s' \"$w\" | base64 -w0)\" \"$(printf '%s' \"$p\" | base64 -w0)\" > /dev/shm/.p; \
+         ",
+        work = split(WORK),
+        personal = split(PERSONAL)
+    );
+    let search = format!(
+        "{patterns} \
+         echo procs=$(cat /proc/[0-9]*/environ /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' '\\n' | grep -cFf /dev/shm/.p); \
+         echo files=$(grep -rlaFf /dev/shm/.p --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev --exclude=.p / 2>/dev/null | grep -v '^/dev/shm/.p$' | tr '\\n' ' '); \
+         rm -f /dev/shm/.p; echo done"
+    );
+    // The control first: a token planted in a file and in a process's environment must be found,
+    // or the search proves nothing.
+    let planted = format!(
+        "w={work}; printf '%s\\n' \"$w\" > /root/planted.txt; \
+         env PLANTED=\"$w\" sleep 120 & pid=$!; sleep 1; {search}; kill $pid; rm -f /root/planted.txt",
+        work = split(WORK),
+    );
+    let control = guest_within(&vm.runtime, sandbox, &planted, Duration::from_secs(600)).await;
+    assert!(
+        !control.contains("procs=0") && control.contains("/root/planted.txt"),
+        "the search must find a planted token in a process and in a file: {control}"
+    );
+    let found = guest_within(&vm.runtime, sandbox, &search, Duration::from_secs(600)).await;
+    assert!(
+        found.contains("procs=0"),
+        "a token is in a process: {found}"
+    );
+    assert!(
+        found.contains("files= done") || found.contains("files=\ndone"),
+        "a token is on the guest's disk: {found}"
+    );
+}
+
 /// Git through the real wiring, in the guest's own git: a workspace is created by cloning a
 /// private repository with a credential that is read from the host's secret store (the default
 /// injector, no stub), two identities share one host and each owner's repositories get their
@@ -352,46 +395,7 @@ async fn vm_git_clones_and_pushes_with_two_identities_and_the_guest_never_holds_
     );
     assert_eq!(fake.seen().len(), before, "none of them reached the host");
 
-    // the guest holds no token. Every place a secret could rest: the environment and
-    // command line of every process, every file on the disk (binary files too), the trace of
-    // the clone. The script holds the tokens in halves, so the search never finds itself.
-    let patterns = format!(
-        "w={work}; p={personal}; \
-         printf '%s\\n' \"$w\" \"$p\" \
-           \"$(printf 'x-access-token:%s' \"$w\" | base64 -w0)\" \
-           \"$(printf 'x-access-token:%s' \"$p\" | base64 -w0)\" \
-           \"$(printf '%s' \"$w\" | base64 -w0)\" \"$(printf '%s' \"$p\" | base64 -w0)\" > /dev/shm/.p; \
-         ",
-        work = split(WORK),
-        personal = split(PERSONAL)
-    );
-    let search = format!(
-        "{patterns} \
-         echo procs=$(cat /proc/[0-9]*/environ /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' '\\n' | grep -cFf /dev/shm/.p); \
-         echo files=$(grep -rlaFf /dev/shm/.p --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev --exclude=.p / 2>/dev/null | grep -v '^/dev/shm/.p$' | tr '\\n' ' '); \
-         rm -f /dev/shm/.p; echo done"
-    );
-    // The control first: a token planted in a file and in a process's environment must be found,
-    // or the search proves nothing.
-    let planted = format!(
-        "w={work}; printf '%s\\n' \"$w\" > /root/planted.txt; \
-         env PLANTED=\"$w\" sleep 120 & pid=$!; sleep 1; {search}; kill $pid; rm -f /root/planted.txt",
-        work = split(WORK),
-    );
-    let control = guest_within(&vm.runtime, &sandbox, &planted, Duration::from_secs(600)).await;
-    assert!(
-        !control.contains("procs=0") && control.contains("/root/planted.txt"),
-        "the search must find a planted token in a process and in a file: {control}"
-    );
-    let found = guest_within(&vm.runtime, &sandbox, &search, Duration::from_secs(600)).await;
-    assert!(
-        found.contains("procs=0"),
-        "a token is in a process: {found}"
-    );
-    assert!(
-        found.contains("files= done") || found.contains("files=\ndone"),
-        "a token is on the guest's disk: {found}"
-    );
+    assert_guest_holds_no_token(&vm, &sandbox).await;
     // The trace holds the traffic (and the redaction of any header git sent): none is ours.
     let trace = guest(
         &vm.runtime,
@@ -412,6 +416,83 @@ async fn vm_git_clones_and_pushes_with_two_identities_and_the_guest_never_holds_
         !audit.body.contains(WORK) && !audit.body.contains(PERSONAL),
         "a token reached the audit log"
     );
+    assert!(audit.body.contains("\"injected\":true"), "{}", audit.body);
+    let _ = net.proxy.connects();
+    let down = vm.host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
+/// Git with an empty environment, so it sees no proxy setting and no certificate variable: the
+/// capture carries its clone and its push to the bound host, the proxy adds the stored token to
+/// both, and the guest never holds it. This is the injected credential on captured traffic, the
+/// half of the story the proxy-variable test above cannot show.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_git_clone_and_push_with_no_proxy_setting_carry_the_injected_credential() {
+    let fake = git_host(NAME).await;
+    let net = internet(&[(NAME, &fake)]);
+    let vm = start_vm_host_platform("gitn", net.options, &net.platform, |_| {}).await;
+    let name = format!("{}-gitn", vm.settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    allow(&vm, &sandbox, &[NAME]);
+    vm.host
+        .store()
+        .create_identity(identity(
+            "Work",
+            vec![owned_stored(NAME, "acme", WORK, &vm, "nwork")],
+        ))
+        .unwrap();
+    create(&vm, &name, &format!("https://{NAME}/acme/web.git")).await;
+
+    // `env -i` leaves git no variable at all (no `HOME` either), so what reaches the fake host
+    // went through the capture. The trace goes to a file in the guest, searched below.
+    let before = fake.seen().len();
+    let script = "set -eu; rm -rf /tmp/n; mkdir /tmp/n; cd /tmp/n; \
+         g() { env -i PATH=/usr/bin:/bin git -c user.name=guest -c user.email=guest@example.org \"$@\"; }; \
+         [ \"$(env -i PATH=/usr/bin:/bin env | grep -ci proxy)\" = 0 ]; \
+         env -i PATH=/usr/bin:/bin GIT_TRACE_CURL=1 GIT_TRACE=1 git clone -q https://bound.invalid/acme/web.git web 2>/tmp/n/trace.txt; \
+         cd web; echo captured > captured.txt; g add captured.txt; g commit -q -m captured; \
+         g push -q origin HEAD:main; g rev-parse HEAD";
+    let pushed = guest(&vm.runtime, &sandbox, script).await;
+    assert_eq!(
+        head_of(&fake, "acme/web", "main"),
+        pushed.trim(),
+        "the push reached the host's repository"
+    );
+    let seen = fake.seen();
+    let requests = &seen[before..];
+    assert!(
+        requests.iter().any(|r| r.target.contains("upload-pack")),
+        "the clone reached the host: {requests:?}"
+    );
+    assert!(
+        requests.iter().any(|r| r.target.contains("receive-pack")),
+        "the push reached the host: {requests:?}"
+    );
+    for request in requests {
+        assert_eq!(
+            request.headers_named("authorization"),
+            [basic(WORK)],
+            "{} {}: the proxy added Work's token to captured traffic",
+            request.method,
+            request.target
+        );
+    }
+
+    assert_guest_holds_no_token(&vm, &sandbox).await;
+    let trace = guest(
+        &vm.runtime,
+        &sandbox,
+        "grep -ci 'authorization' /tmp/n/trace.txt || true",
+    )
+    .await;
+    assert_eq!(trace.trim(), "0", "git sent an Authorization of its own");
+    let api = Api::new(vm.host.url(), vm.host.token());
+    let audit = api
+        .get(&format!(
+            "/api/audit?workspace={name}&type=connection&limit=200"
+        ))
+        .await;
+    assert!(!audit.body.contains(WORK), "a token reached the audit log");
     assert!(audit.body.contains("\"injected\":true"), "{}", audit.body);
     let _ = net.proxy.connects();
     let down = vm.host.shutdown().await;

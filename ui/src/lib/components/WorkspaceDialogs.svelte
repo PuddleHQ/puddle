@@ -5,6 +5,7 @@
   import DeleteWorkspaceDialog from "./DeleteWorkspaceDialog.svelte";
   import DirectSshDialog from "./DirectSshDialog.svelte";
   import RenameWorkspaceDialog from "./RenameWorkspaceDialog.svelte";
+  import { editorProblems } from "#lib/stores/editor-problems.svelte.ts";
   import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
   import { workspaceActions as actions } from "#lib/stores/workspace-actions.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
@@ -33,6 +34,10 @@
   $effect(() => {
     if (actions.connectOpen) void globalSettings.load(true);
   });
+  // Whether the editor server could be installed is read while the step is open.
+  $effect(() => {
+    if (actions.connectOpen) return editorProblems.start();
+  });
 </script>
 
 <CreateWorkspaceDialog bind:open={actions.createOpen} />
@@ -42,6 +47,7 @@
     bind:open={actions.connectOpen}
     workspace={connecting}
     {server}
+    editorProblem={editorProblems.of(connecting.name)}
     onBrowser={actions.openBrowser}
     onDesktop={actions.openDesktop}
     onDirectSsh={(w, on) => actions.requestDirectSsh(w, on, true)}

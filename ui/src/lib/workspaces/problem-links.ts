@@ -24,6 +24,18 @@ export function startFolderProblemOf(
   return problems.find((p) => p.key === startFolderKey(workspace));
 }
 
+/** The key of the problem that says `workspace`'s browser editor server could not be installed. */
+export const editorInstallKey = (workspace: string): string =>
+  `editor-install:${workspace}`;
+
+/** The problem about `workspace`'s editor install, if the host lists one. */
+export function editorInstallProblemOf(
+  problems: readonly Problem[],
+  workspace: string,
+): Problem | undefined {
+  return problems.find((p) => p.key === editorInstallKey(workspace));
+}
+
 /** The page place for a problem about a workspace; `undefined` for one about nothing. */
 export function problemLink(problem: Problem): ProblemLink | undefined {
   const workspace = problem.workspace;

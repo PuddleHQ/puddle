@@ -6,7 +6,7 @@
 //! are behind a route; the guest is the agent's own yamux client.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use futures_util::StreamExt as _;
 use futures_util::stream;
@@ -16,6 +16,7 @@ use puddle_ipc::IpcRoot;
 use puddle_proxy::Proxy;
 use puddle_proxy::testing::{AnyAddress, StaticResolver};
 use puddle_store::{Actor, Limits, ManualClock, PendingState, Resolution, Store};
+use puddle_test_kit::cpu_time;
 use puddle_types::{NullSink, WorkspaceName};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -93,13 +94,16 @@ async fn hostile_hg12_a_hundred_thousand_unmatched_names_wait_and_are_never_deni
     assert_eq!((waiting, other.len()), (FLOOD, 0), "{other:?}");
 
     let cap = usize::try_from(Limits::default().max_open_rows).unwrap();
-    let measured = Instant::now();
-    let rows = store.open_pending(None).unwrap();
-    let groups = store.inbox().unwrap();
-    let took = measured.elapsed();
-    // flake-ok: a time bar on one query pair (the inbox over the capped open rows); it catches a
-    // per-row query, which costs seconds. Measured under 16 busy loops on 4 cores: 38 ms, a 5x margin.
-    assert!(took < Duration::from_millis(200), "the inbox took {took:?}");
+    let ((rows, groups), cpu) =
+        cpu_time(|| (store.open_pending(None).unwrap(), store.inbox().unwrap()));
+    eprintln!("inbox over the capped open rows: {cpu:?} of CPU");
+    // The bar is on this thread's CPU time, so the load of the flood tasks does not move it; it
+    // catches a per-row rescan of the open rows, which costs seconds (2.2 s planted). The same
+    // read took 5 ms on Linux; the Windows clock ticks in 15.6 ms steps, so 100 ms is far above it.
+    assert!(
+        cpu < Duration::from_millis(200),
+        "the inbox used {cpu:?} of CPU"
+    );
     assert_eq!(rows.len(), cap, "the open rows stay at the cap");
     assert_eq!(groups.iter().map(|g| g.rows.len()).sum::<usize>(), cap);
     // The request that waited first is still there and still answerable.

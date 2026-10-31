@@ -828,7 +828,7 @@ async fn attach_needs_a_running_workspace() {
 }
 
 #[tokio::test]
-async fn browser_attach_opens_the_window_through_the_launcher_and_returns_no_url() {
+async fn browser_attach_opens_the_window_through_the_launcher_and_answers_opened() {
     let api = start().await;
     running(&api, "web").await;
     let reply = api
@@ -839,10 +839,7 @@ async fn browser_attach_opens_the_window_through_the_launcher_and_returns_no_url
         )
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
-    assert_eq!(
-        reply.json(),
-        json!({"opened": true, "url": null, "message": null})
-    );
+    assert_eq!(reply.json(), json!({"opened": true, "message": null}));
     assert_eq!(
         api.launcher.browsers_opened(),
         [WorkspaceId::new("web").unwrap()]
@@ -869,10 +866,7 @@ async fn desktop_attach_opens_the_editor_when_direct_ssh_is_on() {
         )
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
-    assert_eq!(
-        reply.json(),
-        json!({"opened": true, "url": null, "message": null})
-    );
+    assert_eq!(reply.json(), json!({"opened": true, "message": null}));
     assert_eq!(api.launcher.opened(), [WorkspaceId::new("web").unwrap()]);
     api.running.shutdown().await;
 }
@@ -1003,7 +997,7 @@ async fn a_desktop_that_cannot_open_says_why() {
     assert_eq!(reply.status, 200);
     assert_eq!(
         reply.json(),
-        json!({"opened": false, "url": null, "message": "VS Code is not installed"})
+        json!({"opened": false, "message": "VS Code is not installed"})
     );
     api.running.shutdown().await;
 }
@@ -1023,7 +1017,7 @@ async fn a_browser_window_that_cannot_open_says_why() {
     assert_eq!(reply.status, 200);
     assert_eq!(
         reply.json(),
-        json!({"opened": false, "url": null, "message": "the editor gave no session"})
+        json!({"opened": false, "message": "the editor gave no session"})
     );
     api.running.shutdown().await;
 }

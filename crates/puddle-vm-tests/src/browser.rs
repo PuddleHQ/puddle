@@ -215,6 +215,7 @@ pub struct BrowserCookie {
     name: String,
     value: String,
     domain: String,
+    http_only: bool,
 }
 
 impl BrowserCookie {
@@ -229,7 +230,15 @@ impl BrowserCookie {
             name: name.into(),
             value: value.into(),
             domain: domain.into(),
+            http_only: true,
         }
+    }
+
+    /// The same cookie without `HttpOnly`: the page's script reads it.
+    #[must_use]
+    pub fn script_reads(mut self) -> Self {
+        self.http_only = false;
+        self
     }
 
     fn to_json(&self) -> Value {
@@ -238,7 +247,7 @@ impl BrowserCookie {
             "name": self.name,
             "value": self.value,
             "url": format!("http://{}/", self.domain),
-            "httpOnly": true,
+            "httpOnly": self.http_only,
             "sameSite": "Lax",
         })
     }
@@ -576,6 +585,10 @@ mod tests {
             cookie,
             json!({"name": "s", "value": "v", "url": "http://demo.localhost:4800/", "httpOnly": true, "sameSite": "Lax"})
         );
+        let readable = BrowserCookie::host_only("t", "v", "demo.localhost")
+            .script_reads()
+            .to_json();
+        assert_eq!(readable["httpOnly"], false);
     }
 
     #[test]

@@ -22,7 +22,7 @@
 //!
 //! The order of both sequences is part of the contract; see [`Step`], [`START_STEPS`] and
 //! [`SHUTDOWN_STEPS`].
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 mod agent_reports;
 mod boot;

@@ -344,6 +344,18 @@ jobs:
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
         run: scripts/check.sh ui-e2e
+      # The development certificate in the three browsers the runner image has: the trust dialog is
+      # answered No (each browser must show its certificate warning for the leaf), then Yes (each
+      # must load the page with no warning). The throwaway runner may take the click; a person's
+      # machine never does.
+      - name: development certificate in Edge, Chrome and Firefox (trust dialog answered No, then Yes)
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        shell: bash
+        env:
+          PUDDLE_REQUIRE_BROWSER_TRUST: "1"
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+        run: cargo test --workspace --all-features --locked --test windows_browsers -- --nocapture
       # The desktop shell starts on the installed WebView2 and its main window shows the SPA from
       # the in-process backend; driven over WebView2's DevTools Protocol, no extra tools. First on
       # the in-memory fixture (the first-run flow and a seeded request), then on the Puddle host.

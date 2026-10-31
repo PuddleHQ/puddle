@@ -27,8 +27,8 @@ raced in the past: a hand-rolled wait helper (every one outside the shared test 
 whether it lacks a name or a bound), `file.lock()`, `try_recv()`, a port picked
 and dropped, a name built from the clock, a wall-clock bar, records matched by position, an awaited page read
 asserted once, a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the resolver. A site is reasoned by `flake-ok: <why>` on the line or within three lines above. A rule is
-counted (`flake-<id>`, `flake-<id>-unreasoned`) until its sites are fixed or reasoned, then it is added to
-FLAKE_FAILING and an unreasoned site becomes a `noreason` row. Their self-test replays the original code of
+counted (`flake-<id>`, `flake-<id>-unreasoned`) until its sites are fixed or reasoned, then its `scripts/flake-rules/<id>.rule` says
+`status: failing` and an unreasoned site becomes a `noreason` row. Their self-test replays the original code of
 fixed flakes from `scripts/flake-fixtures/`.
 
 Context per Rust line: `test` (under tests/, benches/, examples/; in a `#[cfg(test)]` or
@@ -492,26 +492,42 @@ def kit_dependency_rows(texts, add):
                             f"{TEST_KIT} in [{kind}]: the shared test kit is a dev-dependency only; move it to [dev-dependencies] | {lines[at]}")
 
 
-# Flake-prone test shapes (counted; failing once the rule is in FLAKE_FAILING). Each rule has two kinds: `flake-<id>` for every
+# Flake-prone test shapes (counted; failing once the rule's file says so). Each rule has two kinds: `flake-<id>` for every
 # site and `flake-<id>-unreasoned` for the sites with no `flake-ok: <why>` comment on the line or within
 # three lines above (a UI line may carry `eslint-disable-next-line no-restricted-syntax -- <why>` instead).
-# A rule in FLAKE_FAILING also adds a `noreason` row per unreasoned site, so `--missing` and the `quality`
-# gate fail on it; flipping a rule from counted to failing is adding its id there, once its sites are fixed
-# or reasoned. The scan reads shapes, not truth: a reason is read by a reviewer, and a shape it cannot see
+# A failing rule also adds a `noreason` row per unreasoned site, so `--missing` and the `quality`
+# gate fail on it. Each rule is one file, `scripts/flake-rules/<id>.rule` (`status: counted|failing`, `fix:`, and the
+# `fixture:` and `as:` the self-test replays). Flipping a rule is a one-line edit of its own file and a new rule is a
+# new file, so two branches that each add or flip a rule never edit the same line (`scripts/flake-rules-test.sh`).
+# The scan reads shapes, not truth: a reason is read by a reviewer, and a shape it cannot see
 # (a producer that is synchronous, a wait anchored on something already true) needs a run under load.
-FLAKE_FAILING = {"a1", "d1", "n1", "o1", "o2", "p1", "t1", "w1", "w2"}
+FLAKE_RULES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "flake-rules")
+FLAKE_RULE_KEYS = ("status", "fix", "fixture", "as")
+
+
+def load_flake_rules(directory):
+    """Read `<id>.rule` files: one `key: value` per line, keys in FLAKE_RULE_KEYS, status counted or failing."""
+    rules = {}
+    for name in sorted(os.listdir(directory)):
+        if not name.endswith(".rule"):
+            continue
+        fields = {}
+        with open(os.path.join(directory, name), encoding="utf-8") as h:
+            for n, line in enumerate(h, 1):
+                key, sep, value = line.rstrip("\n").partition(": ")
+                if not sep or key not in FLAKE_RULE_KEYS or key in fields:
+                    raise SystemExit(f"{name}:{n}: want one `key: value` per line with keys {FLAKE_RULE_KEYS}, each once")
+                fields[key] = value
+        if sorted(fields) != sorted(FLAKE_RULE_KEYS) or fields["status"] not in ("counted", "failing"):
+            raise SystemExit(f"{name}: needs {FLAKE_RULE_KEYS} and `status: counted` or `status: failing`")
+        rules[name[:-len(".rule")]] = fields
+    return rules
+
+
+FLAKE_RULES = load_flake_rules(FLAKE_RULES_DIR)
+FLAKE_FAILING = {r for r, v in FLAKE_RULES.items() if v["status"] == "failing"}
+FLAKE_FIX = {r: v["fix"] for r, v in FLAKE_RULES.items()}
 FLAKE_OK = re.compile(r"flake-ok:\s*\S")
-FLAKE_FIX = {
-    "w1": "a wait helper outside the shared test kit: use `eventually(what, within, probe)` (it names the wait and bounds it below nextest's slow-timeout), or `flake-ok: <why>`",
-    "w2": "`file.lock()` in a test waits for ever when another process holds it: poll `try_lock` against the test's budget, or `flake-ok: <why>`",
-    "o1": "`try_recv()` reads a channel once, before another task has sent: use `next_event_within(what, d)` to wait for an event or `no_event_for(d)` to show none comes, or `flake-ok: <why the producer is synchronous>`",
-    "p1": "a port picked from a listener that is dropped can be taken before the caller binds it: bind port 0 and pass the listener, or let the child bind 0 and report the port, or `flake-ok: <why a retry is the only way>`",
-    "n1": "a name built from the clock or the pid collides across parallel runs: create the file or folder with `tempfile`, or `flake-ok: <why>`",
-    "t1": "a test that asserts real time stayed under a fixed Duration fails on a loaded machine: assert on virtual time, CPU time or a measured margin, or `flake-ok: <what the bar measures and why it holds under load>`",
-    "a1": "records matched to expectations by position depend on an order the contract does not promise: find each record by its key, or `flake-ok: <why the order is promised>`",
-    "d1": "a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the machine's resolver asks the real DNS and waits when it stalls: use a `.invalid` name (the proxy answers it at once, RFC 6761), or `flake-ok: <why this name must go to the resolver>`",
-    "o2": "an awaited page read asserted once runs before the page settles: use a web-first assertion (`await expect(locator).toHaveText(...)`) or `await expect.poll(() => read)`; for a read of something that must be absent a poll ends at its first empty read, so use `staysEmpty(page, read)` or `expectNoAxeViolations(page)` from e2e/support.ts; or `flake-ok: <why a one-shot read is meant>`",
-}
 FLAKE_WAIT_NAME = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(until\w*|eventually\w*|wait_for\w*|wait_until\w*|poll_until\w*)\b")
 FLAKE_WAIT_HOME = "crates/puddle-test-kit/"  # the kit's own helpers (the crate is that path) are the target, not a hit
 FLAKE_RESERVED = re.compile(r'"[^"]*(?<![@\w.-])(?:[a-z0-9-]+\.)*(?:[a-z0-9-]+\.(?:test|example)|example\.(?:com|net|org))(?![\w-]|\.[a-z0-9])', re.I)  # not `x.test.invalid` (a `.invalid` name) or `x.test.rs` (a file)
@@ -866,19 +882,7 @@ def flake_self_test():
     case("o2 a reason on the read covers its expects", "o2", {FLAKE_SPEC: value.replace("  const n", "  // flake-ok: the list is complete\n  const n")}, 2, 0)
 
     # A counted rule adds no `noreason` row; a rule flipped to failing adds one that opens with its fix.
-    bad = {
-        "o1": {FLAKE_HOST: read("o1-sign-in-event.bad.rs.txt")},
-        "w1": {FLAKE_HOST: read("w1-wait-helper.bad.rs.txt")},
-        "w2": {FLAKE_STORE: read("w2-store-lock.bad.rs.txt")},
-        "n1": {FLAKE_STORE: read("n1-clock-name.bad.rs.txt")},
-        "p1": {mod_rs: read("p1-free-port.bad.rs.txt")},
-        "a1": {"crates/puddle-e2e/tests/proxy_agent_store.rs": read("a1-positional-zip.bad.rs.txt")},
-        "t1": {store: read("t1-wall-clock-bar.bad.rs.txt")},
-        "o2": {FLAKE_SPEC: read("o2-density-measure.bad.ts.txt")},
-        "d1": {vm_test: read("d1-fake-site.bad.rs.txt")},
-    }
-    if sorted(bad) != sorted(FLAKE_FIX):
-        failures.append(f"every rule needs a failing-flip case: {sorted(set(FLAKE_FIX) ^ set(bad))}")
+    bad = {rule: {v["as"]: read(v["fixture"])} for rule, v in FLAKE_RULES.items()}
     for rule, files in bad.items():
         was_failing = rule in FLAKE_FAILING
         FLAKE_FAILING.discard(rule)
@@ -892,6 +896,15 @@ def flake_self_test():
                 FLAKE_FAILING.discard(rule)
         if not miss or not all(r[3].startswith(f"flake-{rule}: {FLAKE_FIX[rule]} | ") for r in miss):
             failures.append(f"{rule}: a failing rule adds noreason rows that open with the whole fix text: {miss}")
+    for label, text in (("an unknown status", "status: maybe\nfixture: a\nas: b\nfix: c\n"), ("a missing key", "status: failing\n"), ("a repeated key", "status: failing\nstatus: counted\nfixture: a\nas: b\nfix: c\n")):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "q1.rule"), "w", encoding="utf-8") as h:
+                h.write(text)
+            try:
+                load_flake_rules(d)
+                failures.append(f"rule file with {label} was accepted")
+            except SystemExit:
+                pass
     return failures
 
 

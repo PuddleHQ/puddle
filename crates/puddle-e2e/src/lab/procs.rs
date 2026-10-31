@@ -143,6 +143,7 @@ fn time_to_end(program: &str, args: &[&str], bound: Duration) -> String {
         Err(e) => return format!("a trivial program ({what}) did not start: {e}"),
     };
     let spawned = begun.elapsed();
+    // flake-ok: this measures how long the program takes to end and returns the figure, so it is not a wait that fails on a bound
     loop {
         if let Ok(Some(_)) = child.try_wait() {
             return format!(

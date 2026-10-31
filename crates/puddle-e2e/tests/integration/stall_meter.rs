@@ -150,6 +150,7 @@ async fn drain(listener: TcpListener, pause_after_first: Duration) {
     let (mut conn, _) = listener.accept().await.unwrap();
     let mut buf = vec![0u8; CHUNK];
     let mut first = true;
+    // flake-ok: reads until the sender closes, the loop must consume the input.
     loop {
         let n = conn.read(&mut buf).await.unwrap();
         if n == 0 {

@@ -40,6 +40,7 @@ mod front;
 mod git_hosts;
 mod host;
 mod injection;
+mod kubernetes;
 mod learned;
 mod logins;
 mod paths;

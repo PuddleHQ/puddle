@@ -304,7 +304,7 @@ async fn local_forward(rig: &Rig) {
         probe.local_addr().unwrap().port()
     };
     let forward = format!("{local_port}:127.0.0.1:9000");
-    let mut ssh = Command::new(tool("ssh"))
+    let ssh = Command::new(tool("ssh"))
         .current_dir(rig.dir.path())
         .args([
             "-F",
@@ -320,17 +320,23 @@ async fn local_forward(rig: &Rig) {
         .kill_on_drop(true)
         .spawn()
         .unwrap();
-    let mut conn = timeout(CLIENT_WAIT, async {
-        loop {
-            if let Ok(c) = TcpStream::connect(("127.0.0.1", local_port)).await {
-                break c;
+    let ssh = std::cell::RefCell::new(ssh);
+    let mut conn = puddle_test_kit::eventually_async(
+        "the forward's local port opens",
+        Duration::from_secs(100),
+        || async {
+            let connected = TcpStream::connect(("127.0.0.1", local_port)).await;
+            if connected.is_err() {
+                assert!(
+                    ssh.borrow_mut().try_wait().unwrap().is_none(),
+                    "ssh -L exited early"
+                );
             }
-            assert!(ssh.try_wait().unwrap().is_none(), "ssh -L exited early");
-            sleep(Duration::from_millis(100)).await;
-        }
-    })
-    .await
-    .expect("the forward's local port opens");
+            connected
+        },
+    )
+    .await;
+    let mut ssh = ssh.into_inner();
     let data = payload(1024 * 1024);
     let (mut r, mut w) = conn.split();
     let mut back = vec![0_u8; data.len()];
@@ -393,6 +399,7 @@ async fn vm_soak_ssh_idle_15_min() {
         .run("ssh", &["-F", &rig.cfg(), "box", "echo second"])
         .await;
     assert_eq!(probe.stdout, b"second\n", "{}", text(&probe));
+    // flake-ok: an idle window checked once a minute that the session stays up, not a wait for a condition
     while started.elapsed() < IDLE {
         sleep(Duration::from_secs(60)).await;
         assert!(

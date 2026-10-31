@@ -166,12 +166,12 @@ mod tests {
     }
 
     async fn calls_after(fake: &Fake, want: usize) -> Vec<String> {
-        for _ in 0..500 {
-            if fake.calls.lock().unwrap().len() >= want {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        puddle_test_kit::eventually(
+            &format!("{want} calls recorded"),
+            Duration::from_secs(5),
+            || fake.calls.lock().unwrap().len() >= want,
+        )
+        .await;
         let mut calls = fake.calls.lock().unwrap().clone();
         calls.sort();
         calls
@@ -257,7 +257,7 @@ mod tests {
         let calls = calls_after(&fake, 2).await;
         assert!(calls.contains(&"all".to_owned()), "{calls:?}");
         assert!(calls.contains(&"all env".to_owned()), "{calls:?}");
-        let calls = calls_after(&fake, 5).await;
+        let calls = calls_after(&fake, 3).await;
         assert!(calls.contains(&"all shell init".to_owned()), "{calls:?}");
         task.abort();
     }

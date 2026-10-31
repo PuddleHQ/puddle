@@ -40,7 +40,7 @@ pub(crate) fn link_cell() -> LinkCell {
 #[derive(Debug)]
 pub(crate) struct Forward {
     /// Why the last connection through it failed; cleared by the next one that worked.
-    pub(crate) last_error: Arc<Mutex<Option<String>>>,
+    pub(crate) last_error: Arc<Mutex<LastError>>,
     task: JoinHandle<()>,
     _registration: Registration,
 }
@@ -62,7 +62,7 @@ impl Forward {
     ) -> std::io::Result<Self> {
         let local = listener.local_addr()?;
         let registration = endpoints.register(local, EndpointKind::PinnedForward);
-        let last_error = Arc::new(Mutex::new(None));
+        let last_error = Arc::new(Mutex::new(LastError::default()));
         let task = tokio::spawn(serve(
             listener,
             guest_port,
@@ -91,6 +91,7 @@ impl Forward {
         self.last_error
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+            .problem
             .clone()
     }
 }
@@ -99,23 +100,26 @@ async fn serve(
     listener: TcpListener,
     guest_port: u16,
     link: watch::Receiver<Option<GuestLink>>,
-    last_error: Arc<Mutex<Option<String>>>,
+    last_error: Arc<Mutex<LastError>>,
     max_connections: usize,
 ) {
     let open = Arc::new(Semaphore::new(max_connections));
     let mut carried = tokio::task::JoinSet::new();
+    let mut ordinal = 0_u64;
     loop {
         tokio::select! {
             accepted = listener.accept() => match accepted {
                 Ok((client, _)) => {
+                    ordinal += 1;
+                    let ordinal = ordinal;
                     let Ok(permit) = Arc::clone(&open).try_acquire_owned() else {
                         reset(&client);
-                        note(&last_error, Some("too many connections through this forward at once".into()));
+                        note(&last_error, ordinal, Some("too many connections through this forward at once".into()));
                         continue;
                     };
                     let (link, last_error) = (link.clone(), Arc::clone(&last_error));
                     carried.spawn(async move {
-                        carry(client, guest_port, link, &last_error).await;
+                        carry(client, guest_port, ordinal, link, &last_error).await;
                         drop(permit);
                     });
                 }
@@ -133,8 +137,9 @@ async fn serve(
 async fn carry(
     mut client: TcpStream,
     guest_port: u16,
+    ordinal: u64,
     mut link: watch::Receiver<Option<GuestLink>>,
-    last_error: &Mutex<Option<String>>,
+    last_error: &Mutex<LastError>,
 ) {
     let link = match tokio::time::timeout(LINK_WAIT, link.wait_for(Option::is_some)).await {
         Ok(Ok(link)) => link.clone(),
@@ -143,6 +148,7 @@ async fn carry(
     let Some(link) = link else {
         note(
             last_error,
+            ordinal,
             Some("the workspace's agent is not connected".into()),
         );
         reset(&client);
@@ -151,12 +157,12 @@ async fn carry(
     let mut stream = match link.open_forward(guest_port).await {
         Ok(stream) => stream,
         Err(err) => {
-            note(last_error, Some(err.to_string()));
+            note(last_error, ordinal, Some(err.to_string()));
             reset(&client);
             return;
         }
     };
-    note(last_error, None);
+    note(last_error, ordinal, None);
     // A failed copy resets both ends: the client here, and the stream by being dropped.
     if let Err(err) = splice(&mut client, &mut stream).await {
         tracing::debug!(guest_port, error = %err, "a forwarded connection ended with an error");
@@ -170,6 +176,20 @@ fn reset(client: &TcpStream) {
     }
 }
 
-fn note(last_error: &Mutex<Option<String>>, problem: Option<String>) {
-    *last_error.lock().unwrap_or_else(PoisonError::into_inner) = problem;
+/// Why the newest connection that has reported failed, and which connection that was.
+#[derive(Debug, Default)]
+pub(crate) struct LastError {
+    ordinal: u64,
+    problem: Option<String>,
+}
+
+/// Records how connection number `ordinal` (counted in accept order) ended its set-up. A connection
+/// that reports late, after a newer one already did, must not overwrite the newer one's word: a
+/// slow success would otherwise wipe the "too many connections" the refused connection after it
+/// just noted.
+fn note(last_error: &Mutex<LastError>, ordinal: u64, problem: Option<String>) {
+    let mut last = last_error.lock().unwrap_or_else(PoisonError::into_inner);
+    if ordinal >= last.ordinal {
+        *last = LastError { ordinal, problem };
+    }
 }

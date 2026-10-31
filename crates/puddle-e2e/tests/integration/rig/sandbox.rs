@@ -104,24 +104,21 @@ pub(crate) fn allow(store: &Store, host: &str) {
 }
 
 pub(crate) async fn connection_records(store: &Store, count: usize) -> Vec<Value> {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let records: Vec<Value> = store
-            .audit_lines(0, 100_000)
-            .unwrap()
-            .into_iter()
-            .map(|(_, line)| serde_json::from_str::<Value>(&line).unwrap())
-            .filter(|v| v["type"] == "connection")
-            .collect();
-        if records.len() >= count || Instant::now() >= deadline {
-            assert!(
-                records.len() >= count,
-                "{count} records expected: {records:?}"
-            );
-            return records;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    puddle_test_kit::eventually(
+        &format!("{count} connection audit records"),
+        Duration::from_secs(5),
+        || {
+            let records: Vec<Value> = store
+                .audit_lines(0, 100_000)
+                .unwrap()
+                .into_iter()
+                .map(|(_, line)| serde_json::from_str::<Value>(&line).unwrap())
+                .filter(|v| v["type"] == "connection")
+                .collect();
+            (records.len() >= count).then_some(records)
+        },
+    )
+    .await
 }
 
 pub(crate) async fn status_and_body(

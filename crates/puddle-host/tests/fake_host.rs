@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use puddle_api::WorkspaceService as _;
 use puddle_api::{
     BrowserTarget, DesktopTarget, LaunchError, Launcher, UiAssets, UiFile, WorkspaceRecord,
 };
@@ -2843,6 +2844,13 @@ async fn a_taken_front_port_falls_back_to_another_that_is_then_kept() {
     let first = rig.start().await;
     let moved = front_port_of(&first);
     assert_ne!(moved, taken, "the held port cannot be the front's");
+    let notice = first
+        .problems()
+        .list()
+        .into_iter()
+        .find(|p| p.key == "front-port-moved")
+        .expect("the user is told the address moved");
+    assert!(notice.detail.contains(&moved.to_string()), "{notice:?}");
     assert_eq!(
         stored_front_port(&rig),
         Some(moved),
@@ -2854,6 +2862,14 @@ async fn a_taken_front_port_falls_back_to_another_that_is_then_kept() {
     // Next run the new port is the usual one, with the old one still taken.
     let second = rig.start().await;
     assert_eq!(front_port_of(&second), moved);
+    assert!(
+        second
+            .problems()
+            .list()
+            .iter()
+            .all(|p| p.key != "front-port-moved"),
+        "a port that is kept raises no notice"
+    );
     second.shutdown().await;
     drop(held);
 }
@@ -2925,7 +2941,7 @@ async fn a_forwarded_port_s_origin_reaches_that_guest_port_through_the_agent() {
         0,
         "the editor was not asked"
     );
-    // The agent's own ports (its proxy) are refused by the agent, as for a forward (AT-43): the
+    // The agent's own ports (its proxy) are refused by the agent, as for a forward: the
     // answer says so, where a free port would say that nothing listens.
     let proxy = window_gets(&origin.replacen("http://", "http://3128.", 1)).await;
     assert!(proxy.starts_with("HTTP/1.1 502"), "{proxy}");
@@ -4047,6 +4063,37 @@ async fn with_direct_ssh_off_there_is_no_ssh_endpoint_and_the_gate_says_no() {
         api.get("/api/workspaces/acme").await.json()["direct_ssh"],
         false
     );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_desktop_attach_with_unreadable_settings_says_so_instead_of_blaming_the_switch() {
+    let rig = Rig::new();
+    // The settings are read once and kept, so the damage is there from the start; the workspace
+    // names its memory, so the damaged file does not refuse the create.
+    damage_global_settings(&rig);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let body = json!({"name": "acme", "repositories": [{"url": REPO}], "memory_mib": 4096});
+    assert_eq!(
+        api.post("/api/workspaces", &body.to_string()).await.status,
+        202
+    );
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let attached = host
+        .workspaces()
+        .attach(
+            &WorkspaceId::new("acme").unwrap(),
+            puddle_api::AttachMode::Desktop,
+        )
+        .await
+        .unwrap();
+    assert!(!attached.opened);
+    let message = attached.message.unwrap();
+    assert!(message.contains("settings cannot be read"), "{message}");
+    assert!(!message.contains("allow it first"), "{message}");
+    assert!(rig.launcher.opened.lock().unwrap().is_empty());
     host.shutdown().await;
 }
 

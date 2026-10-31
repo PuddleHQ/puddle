@@ -530,7 +530,7 @@ FLAKE_FIX = {r: v["fix"] for r, v in FLAKE_RULES.items()}
 FLAKE_OK = re.compile(r"flake-ok:\s*\S")
 FLAKE_WAIT_NAME = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(until\w*|eventually\w*|wait_for\w*|wait_until\w*|poll_until\w*)\b")
 FLAKE_WAIT_HOME = "crates/puddle-test-kit/"  # the kit's own helpers (the crate is that path) are the target, not a hit
-FLAKE_RESERVED = re.compile(r'"[^"]*(?<![@\w.-])(?:[a-z0-9-]+\.)*(?:[a-z0-9-]+\.(?:test|example)|example\.(?:com|net|org))(?![\w-])', re.I)
+FLAKE_RESERVED = re.compile(r'"[^"]*(?<![@\w.-])(?:[a-z0-9-]+\.)*(?:[a-z0-9-]+\.(?:test|example)|example\.(?:com|net|org))(?![\w-]|\.[a-z0-9])', re.I)  # not `x.test.invalid` (a `.invalid` name) or `x.test.rs` (a file)
 FLAKE_REAL_DNS = re.compile(r"\b(?:web_internet|through_company_proxy|SystemResolver)\b")  # a test file where a connect can reach the OS resolver
 FLAKE_KIT_CALL = re.compile(r"\b(?:eventually\w*|next_event_\w+|no_event_\w+)\s*\(")
 FLAKE_CLOCK = re.compile(r"SystemTime::now\(\)|UNIX_EPOCH|as_nanos\(\)|subsec_nanos\(\)|\{nanos\}|\bnanos\b")
@@ -625,10 +625,21 @@ FLAKE_WEB_FIRST = re.compile(
 )
 
 
+def expect_argument(text):
+    """The text of an `expect(...)` argument, up to its closing parenthesis (or the end of the line)."""
+    depth = 1
+    for k, ch in enumerate(text):
+        depth += (ch == "(") - (ch == ")")
+        if depth == 0:
+            return text[:k]
+    return text
+
+
 def flake_e2e(lines, rows_add):
-    """Rule o2 in ui/e2e: an awaited page read asserted once (`expect(await read)`, or a read kept in a variable).
-    A reason on the line that reads into a variable covers every `expect` of that variable."""
-    awaited = {}  # variable -> (line of the read, whether that line carries a reason)
+    """Rule o2 in ui/e2e: a read of the page kept in a variable and asserted once (`const box = (await loc.boundingBox())!`,
+    then `expect(box.width)`: a non-null assertion says "there is a box now"; a plain `const n = await read` only counts for `expect(n)` itself). A reason on the line that reads into a variable covers every `expect` of that variable.
+    The inline `expect(await read)` is ESLint's (`ui/eslint.config.js`, an error), not this scan's."""
+    awaited = {}  # variable -> (whether that line carries a reason, whether an expect on any use of it counts)
 
     def reasoned(i):
         for k in range(max(0, i - 3), i + 1):
@@ -640,18 +651,19 @@ def flake_e2e(lines, rows_add):
     for i, line in enumerate(lines):
         if line.strip().startswith("//"):
             continue
-        m = re.search(r"\b(?:const|let)\s+(\w+)\s*=\s*await\s+(.*)", line)
+        m = re.search(r"\b(?:const|let)\s+(\w+)\s*=\s*\(?\s*await\s+(.*)", line)
         if m and FLAKE_PAGE_READ.search(m.group(2)):
-            awaited[m.group(1)] = (i, reasoned(i))
+            awaited[m.group(1)] = (reasoned(i), bool(re.search(r"\)\s*!\s*;?\s*$", line)))
         if re.search(r"^\s*(?:async\s+)?function\b|^\s*test\(", line):
             awaited.clear()
         for em in re.finditer(r"(?<![.\w])expect\((?!\s*\.)", line):
-            inner = line[em.end():].lstrip()
-            v = re.match(r"(\w+)\s*[,)]", inner)
-            if inner.startswith("await ") and FLAKE_PAGE_READ.search(inner):
-                flake_row(rows_add, "o2", i, line.strip(), reasoned(i))
-            elif v and v.group(1) in awaited and not FLAKE_WEB_FIRST.search(line[em.end():]):
-                flake_row(rows_add, "o2", i, line.strip(), reasoned(i) or awaited[v.group(1)][1])
+            argument = expect_argument(line[em.end():])
+            first = re.match(r"\s*(\w+)\s*(?:,|$)", argument)  # `expect(n)` or `expect(n, "message")`
+            used = [first.group(1)] if first and first.group(1) in awaited else []
+            if not used:  # `expect(box.width)`: only a read of the non-null form counts
+                used = [v for v in re.findall(r"(?<![.\w])(\w+)", re.sub(r"`[^`]*`|\"[^\"]*\"|'[^']*'", "", argument)) if v in awaited and awaited[v][1]]
+            if used and not FLAKE_WEB_FIRST.search(line[em.end():]):
+                flake_row(rows_add, "o2", i, line.strip(), reasoned(i) or awaited[used[0]][0])
 
 
 def flake_summary(rows):
@@ -845,20 +857,28 @@ def flake_self_test():
     case("d1 reasoned", "d1", {vm_test: reasoned(read("d1-fake-site.bad.rs.txt"), "const SITE")}, 1, 0)
     case("d1 example.com", "d1", {vm_test: 'use vm_support::web_internet;\nfn t() { run("curl https://api.example.com/"); }\n'}, 1, 1)
     case("d1 not a reserved name", "d1", {vm_test: 'use vm_support::web_internet;\nfn t() { run("curl https://notexample.com/ https://contest.org/ me@example.org"); }\n'}, 0, 0)
+    case("d1 a .invalid name that has test as a label is not reserved", "d1", {vm_test: 'use vm_support::web_internet;\nfn t() { run("curl https://api.test.invalid/ x.example.invalid"); }\n'}, 0, 0)
+    case("d1 a file name that ends in .test.rs is not a name", "d1", {vm_test: 'use vm_support::web_internet;\nconst F: &str = "tests/site.test.rs";\n'}, 0, 0)
+    case("d1 a name with a port or a trailing dot is one", "d1", {vm_test: 'use vm_support::web_internet;\nfn t() { run("curl http://site.test:8443/ http://other.example./"); }\n'}, 1, 1)
     case("d1 a test with a fake resolver", "d1", {"crates/puddle-proxy/tests/x.rs": 'fn t() { let n = "site.test"; }\n'}, 0, 0)
     case("d1 in production code", "d1", {"crates/x/src/lib.rs": 'use SystemResolver;\nconst DOC: &str = "site.test";\n'}, 0, 0)
     case("o2 variable", "o2", {FLAKE_SPEC: read("o2-density-measure.bad.ts.txt")}, 1, 1)
     case("o2 poll", "o2", {FLAKE_SPEC: read("o2-density-measure.good.ts.txt")}, 0, 0)
     case("o2 focus", "o2", {FLAKE_SPEC: read("o2-focus-read.bad.ts.txt")}, 1, 1)
+    # `expect(await read)` is ESLint's (an error in ui/eslint.config.js, proved by ui/scripts/flake-eslint.test.ts): the scan skips it.
     one_shot = 'test("x", async ({ page }) => {\n  expect(await measure(page, "main select")).toBeNull();\n});\n'
-    case("o2 inline", "o2", {FLAKE_SPEC: one_shot}, 1, 1)
-    case("o2 reasoned", "o2", {FLAKE_SPEC: reasoned(one_shot, "expect(await")}, 1, 0)
-    lint = one_shot.replace("  expect", "  // eslint-disable-next-line no-restricted-syntax -- the data is held\n  expect")
-    case("o2 eslint-disable with a reason", "o2", {FLAKE_SPEC: lint}, 1, 0)
+    case("o2 inline is ESLint's, not the scan's", "o2", {FLAKE_SPEC: one_shot}, 0, 0)
     held = 'test("x", async ({ page }) => {\n  const dialog = await openDialog(page);\n  await expect(dialog).toHaveCount(0);\n  await expect(dialog).not.toBeVisible();\n});\n'
     case("o2 a locator in a variable is a web-first assertion", "o2", {FLAKE_SPEC: held}, 0, 0)
     value = 'test("x", async ({ page }) => {\n  const n = await page.locator("li").count();\n  expect(n).toBeGreaterThan(0);\n  expect(n).toBeLessThan(9);\n});\n'
     case("o2 a count in a variable is read once per expect", "o2", {FLAKE_SPEC: value}, 2, 2)
+    kept = 'test("x", async ({ page }) => {\n  const box = (await page.locator("li").boundingBox())!;\n  expect(box.width).toBeGreaterThanOrEqual(24);\n  expect(box.x + box.width).toBeLessThanOrEqual(90);\n});\n'
+    case("o2 a non-null read in parentheses, asserted by property", "o2", {FLAKE_SPEC: kept}, 2, 2)
+    case("o2 a reason on a parenthesised read covers its expects", "o2", {FLAKE_SPEC: kept.replace("  const box", "  // flake-ok: laid out by the time the dialog opened\n  const box")}, 2, 0)
+    case("o2 a poll of the box passes", "o2", {FLAKE_SPEC: 'test("x", async ({ page }) => {\n  await expect.poll(async () => (await page.locator("li").boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(24);\n});\n'}, 0, 0)
+    case("o2 a parenthesised read inside a retry block is not kept", "o2", {FLAKE_SPEC: 'test("x", async ({ page }) => {\n  await expect(async () => {\n    const t = (await page.locator("li").textContent()) ?? "";\n    expect(t.length).toBe(3);\n  }).toPass();\n});\n'}, 0, 0)
+    case("o2 a variable named only in the message is not read", "o2", {FLAKE_SPEC: kept.replace("expect(box.width)", 'expect(24, "the box width")')}, 1, 1)
+    case("o2 a plain read asserted by property is not counted", "o2", {FLAKE_SPEC: 'test("x", async ({ page }) => {\n  const box = await page.locator("li").boundingBox();\n  expect(box?.width).toBe(3);\n});\n'}, 0, 0)
     case("o2 a reason on the read covers its expects", "o2", {FLAKE_SPEC: value.replace("  const n", "  // flake-ok: the list is complete\n  const n")}, 2, 0)
 
     # A counted rule adds no `noreason` row; a rule flipped to failing adds one that opens with its fix.

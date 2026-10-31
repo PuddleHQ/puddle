@@ -213,7 +213,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
 - **Test shapes that raced before** (the `flake-*` kinds of `scripts/quality-gate.py`, `scripts/quality-gate.py --flakes`
   lists each rule with its count and the fix its error names): a hand-rolled wait helper (the row says whether it lacks a name or a bound), `file.lock()` in a
   test, `try_recv()`, a port picked and released, a name built from the clock, a wall-clock bar, records matched by
-  position, and an awaited page read asserted once. A site is accepted with `flake-ok: <why>` on its line or within three
+  position, a reserved name (`.test`, `example.com`) in a test that reaches the real resolver, and an awaited page read asserted once (the scan reads a variable; the ESLint selector reads `expect(await ...)`; a read kept as `(await loc.boundingBox())!` counts, a value derived from it does not). A site is accepted with `flake-ok: <why>` on its line or within three
   lines above (in the UI also `eslint-disable-next-line no-restricted-syntax -- <why>`). Each rule is one file,
   `scripts/flake-rules/<id>.rule`; the kinds are counted, not failing, until their existing sites are fixed or
   reasoned; the rule's file then says `status: failing` and an unreasoned site fails the `quality` gate like the others
@@ -575,7 +575,8 @@ A failed job in a merge queue run cancels the rest of its merge group: every job
 `cancel-group` step (`ci/cancel-group.sh`, needs `actions: write` on the job), which cancels each run that has not
 completed on that queue branch, in all four workflows. Only a `failure` triggers it, never a skipped or cancelled job, and
 pull request and push runs are untouched. The result jobs still run `if: always()` and report red. A second failure in
-another job is cancelled with the rest and shows on the requeue. `actions: write` is job-wide, so on a pull request from
+another job is cancelled with the rest and shows on the requeue. Groups stacked on the failed group (their ref ends in its head sha, at every level) are cancelled too: GitHub
+rebuilds them but leaves their old runs going on runners nothing needs. `actions: write` is job-wide, so on a pull request from
 this repository (not a fork) the build code of those jobs holds a token that can cancel runs; it cannot write code.
 
 The `cancel-group` step first annotates the calling job with the failed job and step names (`merge group cancelled:

@@ -200,6 +200,20 @@ export async function staysEmpty(
   }
 }
 
+/** A poll of one side of a locator's box (0 while it has none): a box read once can be the one before layout settles. */
+export function boxSide(loc: Locator, side: "width" | "height") {
+  return expect.poll(async () => (await loc.boundingBox())?.[side] ?? 0);
+}
+
+/** A poll of how far `inner` ends inside `outer` (negative when it sticks out, or while either has no box yet). */
+export function insideBy(outer: Locator, inner: Locator, slack = 0) {
+  return expect.poll(async () => {
+    const edge = await outer.boundingBox();
+    const box = await inner.boundingBox();
+    return edge && box ? edge.x + edge.width + slack - (box.x + box.width) : -1;
+  });
+}
+
 /**
  * `axeViolations` once, on a page that has settled. A scan is a check of one state and costs
  * seconds on a loaded host, so it is not repeated; the caller waits for the state first (a

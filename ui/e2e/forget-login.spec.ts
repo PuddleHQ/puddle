@@ -4,7 +4,7 @@
 // dialog. Layout is checked by computed styles and box sizes, never by pictures.
 import type { Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { expectNoAxeViolations } from "./support";
+import { boxSide, expectNoAxeViolations, insideBy } from "./support";
 
 const notices = (page: Page) => page.getByRole("region", { name: "Notices" });
 const forgetButton = (page: Page) =>
@@ -105,19 +105,26 @@ test("a store that refuses shows its way out in the dialog and keeps the notice,
     };
   });
   expect(look.message).not.toBe(look.dialog);
-  const edge = (await dialog(page).boundingBox())!;
   const view = page.viewportSize()!;
-  expect(edge.x).toBeGreaterThanOrEqual(0);
-  expect(edge.x + edge.width).toBeLessThanOrEqual(view.width);
-  expect(edge.y + edge.height).toBeLessThanOrEqual(view.height);
+  await expect
+    .poll(async () => {
+      const edge = await dialog(page).boundingBox();
+      return edge
+        ? Math.min(
+            edge.x,
+            view.width - edge.x - edge.width,
+            view.height - edge.y - edge.height,
+          )
+        : -1;
+    })
+    .toBeGreaterThanOrEqual(0);
   for (const control of [
     dialog(page).getByRole("button", { name: "Cancel" }),
     dialog(page).getByRole("button", { name: "Forget login" }),
   ]) {
-    const box = (await control.boundingBox())!;
-    expect(box.width).toBeGreaterThanOrEqual(24);
-    expect(box.height).toBeGreaterThanOrEqual(24);
-    expect(box.x + box.width).toBeLessThanOrEqual(edge.x + edge.width);
+    await boxSide(control, "width").toBeGreaterThanOrEqual(24);
+    await boxSide(control, "height").toBeGreaterThanOrEqual(24);
+    await insideBy(dialog(page), control).toBeGreaterThanOrEqual(0);
   }
 
   // The store answers again: the same dialog, one more press.
@@ -136,11 +143,9 @@ test("the Forget button of a notice is a target big enough to hit and does not o
   const notice = page.locator(".notice", {
     has: page.getByRole("button", { name: "Forget Claude Code login" }),
   });
-  const edge = (await notice.boundingBox())!;
-  const box = (await forgetButton(page).boundingBox())!;
-  expect(box.width).toBeGreaterThanOrEqual(24);
-  expect(box.height).toBeGreaterThanOrEqual(24);
-  expect(box.x + box.width).toBeLessThanOrEqual(edge.x + edge.width);
+  await boxSide(forgetButton(page), "width").toBeGreaterThanOrEqual(24);
+  await boxSide(forgetButton(page), "height").toBeGreaterThanOrEqual(24);
+  await insideBy(notice, forgetButton(page)).toBeGreaterThanOrEqual(0);
   // The warning notice's border carries the warning colour; its Forget button is an ordinary button.
   const colours = await notice.evaluate((el) => ({
     border: getComputedStyle(el).borderTopColor,

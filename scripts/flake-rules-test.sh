@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Proves the flake-rule layout merges cleanly: one branch adds a rule, another adds a second rule, a third
-# flips a counted rule to failing, and `git merge-tree` merges all three with no conflict and keeps every
+# flips a counted rule (one the test adds to the base) to failing, and `git merge-tree` merges all three with no conflict and keeps every
 # change. A rule list kept in one set or one table would conflict on exactly these edits.
 # usage: scripts/flake-rules-test.sh
 set -eu
@@ -13,8 +13,8 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
-counted=$(cd "$root/scripts/flake-rules" && grep -l '^status: counted$' ./*.rule | head -n 1 | sed 's|^\./||')
-[ -n "$counted" ] || { echo "flake-rules-test: no counted rule to flip" >&2; exit 1; }
+# The base carries its own counted rule to flip, so the proof holds once every real rule is failing.
+counted=zz0.rule
 
 git init -q "$tmp/r"
 cd "$tmp/r"
@@ -22,6 +22,7 @@ git config user.email t@example.invalid
 git config user.name t
 mkdir -p scripts/flake-rules
 cp "$root"/scripts/flake-rules/*.rule scripts/flake-rules/
+printf 'status: counted\nfixture: x.bad.rs.txt\nas: crates/x/tests/t.rs\nfix: use the kit\n' >"scripts/flake-rules/$counted"
 git add -A
 git commit -q -m base
 git branch -q base

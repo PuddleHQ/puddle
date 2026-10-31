@@ -1,4 +1,4 @@
-status: counted
+status: failing
 fixture: d1-fake-site.bad.rs.txt
 as: crates/puddle-host/tests/vm_x.rs
 fix: a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the machine's resolver asks the real DNS and waits when it stalls: use a `.invalid` name (the proxy answers it at once, RFC 6761), or `flake-ok: <why this name must go to the resolver>`

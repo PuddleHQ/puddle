@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The real Windows certificate stores (Windows CI job): a root in `CurrentUser\Disallowed` is
 //! not exported, machine (Intune-style) and Group Policy roots are, and a `CurrentUser\Root`
-//! root is wherever the session may add one (not on the hosted runner, see below).
+//! root is wherever the session may add one (the development certificate's trust dialog is
+//! answered No and Yes on the runner by `ci/trust-dialog.ps1`, see `trust_dialog`).
 //!
 //! These tests change the stores of the user running them, so they only run where `CI` or
 //! `PUDDLE_STORE_TESTS` is set; elsewhere they pass without doing anything. Every certificate
@@ -20,6 +21,7 @@ use std::ffi::OsStr;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use puddle_certs::{
@@ -516,6 +518,8 @@ use puddle_certs::devcert::{
     DevCertManager, DevCertStatus, DevCertTrust, KeyAccess, Origin, WindowsTrust,
 };
 
+mod trust_dialog;
+
 /// A certificate with the ASP.NET marker and a CNG key in `CurrentUser\My`, made like `dotnet
 /// dev-certs` makes its own. `policy` is `New-SelfSignedCertificate`'s `-KeyExportPolicy`:
 /// `Exportable` allows plain export, `ExportableEncrypted` and `NonExportable` do not.
@@ -674,49 +678,75 @@ fn the_machine_roots_count_as_trusted_and_an_unknown_certificate_does_not() {
     assert!(!WindowsTrust.is_trusted(&test_root("never").der).unwrap());
 }
 
-/// The generated leaf is offered to `CurrentUser\Root`. A person is asked once there; the hosted
-/// runner is refused ("UI is not allowed"), so this only checks that every answer is a reported
-/// state with the leaf still handed over, and removes the leaf if the runner did add it.
-///
-/// Ignored on the runner: the add is in-process (`CertAddCertificateContextToStore`), so unlike
-/// the PowerShell import it is not refused: it opens the Windows confirmation dialog on the
-/// runner's desktop and waits for a click nobody gives (the first CI run hit the 120 s limit).
-/// That the dialog is the only thing in the way is a person's check: run it by hand on a
-/// workstation and click No or Yes. The states themselves are tested over a fake store.
+/// The generated leaf is offered to `CurrentUser\Root`, which opens Windows's confirmation
+/// dialog on the desktop and waits for a click. `ci/trust-dialog.ps1` reads that dialog through
+/// UI Automation and presses the button each test names (see `trust_dialog`), so both answers are
+/// run here, on the hosted runner too.
 #[test]
-#[ignore = "adding the leaf to CurrentUser\\Root opens a confirmation dialog nobody clicks on a hosted runner; run it by hand on a workstation with --run-ignored"]
-fn asking_for_trust_ends_in_a_reported_state_never_a_crash() {
+fn declining_the_trust_dialog_reports_trust_declined_and_leaves_the_store_alone() {
+    let Some(_stores) = enabled() else {
+        return;
+    };
+    let before = trust_dialog::current_user_root();
+    let data = tempfile::tempdir().unwrap();
+    let manager = Arc::new(DevCertManager::new(data.path(), WindowsTrust));
+    let answered = trust_dialog::ensure_answered(&manager, trust_dialog::Answer::No)
+        .unwrap_or_else(|e| panic!("{e}"));
+    let thumbprint = trust_dialog::thumbprint(answered.report.material.cert_der());
+    let _remove = trust_dialog::RootGuard::new(&thumbprint);
+    eprintln!("dialog:\n{}", answered.dialog);
+
+    assert_eq!(answered.report.status, DevCertStatus::TrustDeclined);
+    assert_eq!(answered.report.material.origin, Origin::Generated);
+    trust_dialog::assert_dialog_names(&answered.dialog, &thumbprint);
+    assert_eq!(
+        trust_dialog::current_user_root(),
+        before,
+        "No must leave CurrentUser\\Root as it was"
+    );
+}
+
+#[test]
+fn trusting_the_leaf_in_the_dialog_adds_it_to_current_user_root() {
     let Some(_stores) = enabled() else {
         return;
     };
     let data = tempfile::tempdir().unwrap();
-    let manager = DevCertManager::new(data.path(), WindowsTrust);
-    let report = manager.ensure(SystemTime::now()).unwrap();
-    // Remove the leaf from the trusted roots again, whatever the outcome.
-    let thumbprint = powershell(&format!(
-        "$f = Join-Path $env:TEMP 'puddle-leaf-{}.cer'; [IO.File]::WriteAllBytes($f, [byte[]]({})); \
-         (New-Object Security.Cryptography.X509Certificates.X509Certificate2($f)).Thumbprint; Remove-Item $f",
-        std::process::id(),
-        report
-            .material
-            .cert_der()
-            .iter()
-            .map(u8::to_string)
-            .collect::<Vec<_>>()
-            .join(",")
-    ))
-    .unwrap()
-    .trim()
-    .to_owned();
-    let _ = powershell(&format!(
-        "Remove-Item -LiteralPath 'Cert:\\CurrentUser\\Root\\{thumbprint}' -ErrorAction SilentlyContinue"
-    ));
-    eprintln!("status {:?}, detail {:?}", report.status, report.detail);
-    assert!(matches!(
-        report.status,
-        DevCertStatus::Trusted | DevCertStatus::TrustDeclined | DevCertStatus::TrustFailed
-    ));
-    assert_eq!(report.material.origin, Origin::Generated);
+    let manager = Arc::new(DevCertManager::new(data.path(), WindowsTrust));
+    let answered = trust_dialog::ensure_answered(&manager, trust_dialog::Answer::Yes)
+        .unwrap_or_else(|e| panic!("{e}"));
+    let der = answered.report.material.cert_der().to_vec();
+    let thumbprint = trust_dialog::thumbprint(&der);
+    let remove = trust_dialog::RootGuard::new(&thumbprint);
+    eprintln!("dialog:\n{}", answered.dialog);
+
+    assert_eq!(answered.report.status, DevCertStatus::Trusted);
+    assert_eq!(answered.report.material.origin, Origin::Generated);
+    trust_dialog::assert_dialog_names(&answered.dialog, &thumbprint);
+    assert!(
+        trust_dialog::current_user_root().contains(&der),
+        "the leaf is in CurrentUser\\Root after Yes"
+    );
+    assert!(WindowsTrust.is_trusted(&der).unwrap());
+
+    remove.remove();
+    assert!(
+        !trust_dialog::current_user_root().contains(&der),
+        "the test removed the leaf again"
+    );
+}
+
+/// A dialog that never opens is a named failure of the answerer, never a pass: the script is
+/// pointed at this process, which has no dialog.
+#[test]
+fn the_answerer_names_a_dialog_that_never_appears() {
+    let Some(_stores) = enabled() else {
+        return;
+    };
+    let err = trust_dialog::run_answerer("Yes", std::process::id(), 2, None)
+        .expect_err("no dialog is open, so the answerer must fail");
+    assert!(err.contains("NO DIALOG titled 'Security Warning'"), "{err}");
+    assert!(err.contains("exit code: 1"), "{err}");
 }
 
 // ---- a hung call fails fast and names itself ---------------------------------------------------

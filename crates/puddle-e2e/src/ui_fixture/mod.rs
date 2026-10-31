@@ -55,9 +55,9 @@ pub mod scenario;
 pub use scenario::{CheckoutSeed, RemoteNoteSeed};
 pub use scenario::{
     ConnectionSeed, CredentialsSeed, DecisionSeed, EffectSeed, EnvKindSeed, EnvSeed, GitRepoSeed,
-    GitSeed, KeptLoginSeed, ProblemSeed, RepoItemSeed, RepoListSeed, RepoNoteSeed, RepoProblemSeed,
-    RepoSeed, RequestLineSeed, RequestRuleSeed, RequestSeed, RuleSeed, Scenario, SettingsSeed,
-    StatusSeed, Step, UnsavedSeed, WorkspaceOperationSeed, WorkspaceSeed,
+    GitSeed, KeptLoginSeed, ProblemSeed, ProfileSeed, RepoItemSeed, RepoListSeed, RepoNoteSeed,
+    RepoProblemSeed, RepoSeed, RequestLineSeed, RequestRuleSeed, RequestSeed, RuleSeed, Scenario,
+    SettingsSeed, StatusSeed, Step, UnsavedSeed, WorkspaceOperationSeed, WorkspaceSeed,
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
@@ -535,6 +535,7 @@ impl State {
         self.credentials_seed(&scenario.credentials)?;
         self.repos
             .set_lists(repos::lists(&scenario.repo_lists, &identities, start)?);
+        self.repos.set_profiles(&scenario.profiles)?;
         if let Some(global) = &scenario.settings.global {
             self.settings
                 .save_global(global.clone())

@@ -252,6 +252,26 @@ fn a_name_over_255_bytes_is_a_malformed_question() {
 }
 
 #[test]
+fn a_name_of_255_bytes_is_taken_and_one_byte_more_is_a_malformed_question() {
+    let label = "a".repeat(63);
+    // Three 63-byte labels and one of 61: 4 length bytes, 250 name bytes and the root's zero.
+    let longest = format!("{label}.{label}.{label}.{}", "b".repeat(61));
+    let query = parse_query(&query_bytes(3, &longest, TYPE_A, None)).unwrap();
+    assert_eq!(query.name, QueryName::Plain(longest.clone()));
+    assert_eq!(longest.len(), 253);
+    // The last label one byte longer: the length check must count the label it is about to read.
+    let over = format!("{longest}b");
+    assert_eq!(
+        parse_query(&query_bytes(3, &over, TYPE_A, None)),
+        Err(Reject::Answer {
+            id: 3,
+            rcode: Rcode::FormErr,
+            recursion_desired: true
+        })
+    );
+}
+
+#[test]
 fn an_error_response_is_a_bare_header_with_the_query_id() {
     let r = error_response(0x1234, Rcode::FormErr, true);
     assert_eq!(r.len(), 12);

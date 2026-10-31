@@ -248,7 +248,7 @@ async fn vm_hostile_hg44_a_rewritten_root_disk_journal_attaches_no_file_outside_
 
     let o = rt.create(other).await.expect("create the other workspace");
     o.stop().await.unwrap();
-    let sb = rt.create(s).await.expect("create");
+    let mut sb = rt.create(s).await.expect("create");
     let read = sh(&sb, &format!("cat {GUEST_JOURNAL}")).await;
     assert_eq!(
         read.status.code,
@@ -273,9 +273,8 @@ async fn vm_hostile_hg44_a_rewritten_root_disk_journal_attaches_no_file_outside_
         if round > 0 {
             // The journal msb wrote, back in place: the start must go through.
             std::fs::write(&host_journal, &original).unwrap();
-            rt.start(&n).await.expect("a start with msb's own journal");
+            sb = rt.start(&n).await.expect("a start with msb's own journal");
         }
-        let sb = rt.get(&n).await.unwrap();
         forge_journal(&sb, &journal, &own, target).await;
         sb.stop().await.unwrap();
         let landed = std::fs::read_to_string(&host_journal).unwrap();

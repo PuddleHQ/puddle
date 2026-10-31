@@ -563,6 +563,36 @@ describe("the overview", () => {
     render(Overview);
     await screen.findByText("Status");
     expect(screen.queryByText(/could not be installed/)).toBeNull();
+    expect(screen.queryByText(/could not update/)).toBeNull();
+  });
+
+  it("says on the workspace's page that its browser editor could not update, and that the editor keeps working", async () => {
+    api.problems = [
+      {
+        key: "editor-update:demo",
+        workspace: "demo",
+        title:
+          "The browser editor in demo could not update: the newer build exited before it started, so the previous one runs again",
+        detail: "The editor keeps working on the build it has.",
+      },
+      {
+        key: "editor-update:other",
+        workspace: "other",
+        title: "The browser editor in other could not update: no",
+        detail: "x",
+      },
+    ];
+    await load();
+    render(Overview);
+    expect(
+      await screen.findByText(
+        /in demo could not update: the newer build exited/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/The editor keeps working on the build it has/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/in other could not update/)).toBeNull();
   });
 
   it("says a workspace with no volume can be restored or deleted, and that deleting loses nothing", async () => {

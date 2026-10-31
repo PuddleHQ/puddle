@@ -555,6 +555,28 @@ mod tests {
         assert!(reason(&overlap).contains("overlap"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_checkout_dir_that_is_a_link_or_no_directory_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("real");
+        std::fs::create_dir_all(&real).unwrap();
+        let linked = tmp.path().join("a");
+        std::fs::create_dir_all(&linked).unwrap();
+        std::os::unix::fs::symlink(&real, linked.join(".git")).unwrap();
+        assert_eq!(
+            check_checkout_dir(&linked.join(".git")),
+            Err("is a link".into())
+        );
+        let socket = tmp.path().join("b");
+        std::fs::create_dir_all(&socket).unwrap();
+        let _listener = std::os::unix::net::UnixListener::bind(socket.join(".git")).unwrap();
+        assert_eq!(
+            check_checkout_dir(&socket.join(".git")),
+            Err("is not a directory".into())
+        );
+    }
+
     #[test]
     fn validate_rejects_overlapping_mounts() {
         let nested = base()

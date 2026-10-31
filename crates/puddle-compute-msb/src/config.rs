@@ -277,7 +277,7 @@ impl MsbConfig {
                 return Err(ComputeError::InvalidSpec {
                     reason: format!(
                         "sandbox `{name}` mounts {}, which is outside the guest share (a checkout); \
-                         a sandbox that mounts a checkout is only for its create and is never started again",
+                         a sandbox that mounts a checkout is only for its create and is never started again; remove it",
                         host.display()
                     ),
                 });
@@ -494,7 +494,20 @@ mod tests {
             quota_mib: None,
         };
         let mut config = SandboxConfig::default();
-        config.spec.mounts = vec![bind(share.join("boot")), bind(share.join("gone-file"))];
+        let named = VolumeMount::Named {
+            name: "ws-a".into(),
+            guest: "/w".into(),
+            create: None,
+            options: microsandbox::sandbox::MountOptions::default(),
+            stat_virtualization: microsandbox::sandbox::StatVirtualization::Strict,
+            host_permissions: microsandbox::sandbox::HostPermissions::Private,
+            follow_root_symlinks: false,
+        };
+        config.spec.mounts = vec![
+            named,
+            bind(share.join("boot")),
+            bind(share.join("gone-file")),
+        ];
         c.check_restart("ws", &config).unwrap();
         config
             .spec

@@ -109,6 +109,13 @@ fn database_files(dir: &Path, now: SystemTime) -> String {
 }
 
 impl MsbRuntime {
+    /// Every file mount of `spec` against the mount rules of [`MsbConfig::check_mount_source`].
+    fn check_mounts(&self, spec: &SandboxSpec) -> Result<(), ComputeError> {
+        spec.file_mounts
+            .iter()
+            .try_for_each(|m| self.inner.config.check_mount_source(&m.host, m.kind))
+    }
+
     /// Opens msb's database in `config.home` (created if missing), after writing its
     /// `config.json` with the runtime pair. Also creates the guest-share root.
     ///
@@ -399,11 +406,7 @@ impl Runtime for MsbRuntime {
     ) -> impl Future<Output = Result<MsbSandbox, ComputeError>> + Send {
         Box::pin(async move {
             spec.validate()?;
-            for mount in &spec.file_mounts {
-                self.inner
-                    .config
-                    .check_mount_source(&mount.host, mount.kind)?;
-            }
+            self.check_mounts(&spec)?;
             let name = spec.name.clone();
             if self.record(name.as_str()).await?.is_some() {
                 return Err(ComputeError::AlreadyExists {
@@ -420,11 +423,7 @@ impl Runtime for MsbRuntime {
             self.pull_image(&spec.image).await?;
             // Checked again right before msb opens them: a pull can take minutes, and a checkout
             // is a folder the user's own programs may change meanwhile.
-            for mount in &spec.file_mounts {
-                self.inner
-                    .config
-                    .check_mount_source(&mount.host, mount.kind)?;
-            }
+            self.check_mounts(&spec)?;
             match self.sdk(spec::builder(&spec).create()).await {
                 Ok(sdk) => self.handle_for(&name, sdk).await,
                 Err(e) => {

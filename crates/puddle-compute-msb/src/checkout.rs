@@ -98,13 +98,18 @@ fn on_local_drive(path: &Path) -> bool {
 /// ignore case, the components are compared without case, so another spelling of a protected
 /// folder is still that folder.
 fn within(path: &Path, root: &Path) -> bool {
-    if cfg!(any(windows, target_os = "macos")) {
-        let fold = |p: &Path| -> Vec<String> {
+    within_as(path, root, cfg!(any(windows, target_os = "macos")))
+}
+
+/// [`within`], comparing without case when `fold`.
+fn within_as(path: &Path, root: &Path, fold: bool) -> bool {
+    if fold {
+        let folded = |p: &Path| -> Vec<String> {
             p.components()
                 .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
                 .collect()
         };
-        fold(path).starts_with(&fold(root))
+        folded(path).starts_with(&folded(root))
     } else {
         path.starts_with(root)
     }
@@ -360,6 +365,8 @@ mod tests {
         let roots: Vec<&Path> = protected.iter().map(PathBuf::as_path).collect();
         let uid = std::fs::symlink_metadata(&git).unwrap().uid();
         check_as(&git, &roots, Some(uid)).unwrap();
+        // Where the owner is not compared (Windows), another owner passes.
+        check_as(&git, &roots, None).unwrap();
         // What `check` itself compares with: the user the tests run as owns what they made.
         check(&git, &roots).unwrap();
         let other = uid.wrapping_add(1);
@@ -401,5 +408,9 @@ mod tests {
             Path::new("/Users/u/Library/Application Support/puddle2"),
             root
         ));
+        assert!(within_as(other_case, root, true));
+        assert!(!within_as(other_case, root, false));
+        let neighbour = Path::new("/Users/u/Library/Application Support/puddle2");
+        assert!(!within_as(neighbour, root, true));
     }
 }

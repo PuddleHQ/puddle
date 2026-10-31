@@ -1,0 +1,4 @@
+status: failing
+fixture: t1-wall-clock-bar.bad.rs.txt
+as: crates/puddle-store/tests/events_and_audit_query.rs
+fix: a test that asserts real time stayed under a fixed Duration fails on a loaded machine: assert on virtual time, CPU time or a measured margin, or `flake-ok: <what the bar measures and why it holds under load>`

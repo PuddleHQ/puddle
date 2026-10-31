@@ -1,0 +1,4 @@
+status: failing
+fixture: n1-clock-name.bad.rs.txt
+as: crates/puddle-certs/tests/windows_store.rs
+fix: a name built from the clock or the pid collides across parallel runs: create the file or folder with `tempfile`, or `flake-ok: <why>`

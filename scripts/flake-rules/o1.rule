@@ -1,0 +1,4 @@
+status: failing
+fixture: o1-sign-in-event.bad.rs.txt
+as: crates/puddle-host/tests/fake_host.rs
+fix: `try_recv()` reads a channel once, before another task has sent: use `next_event_within(what, d)` to wait for an event or `no_event_for(d)` to show none comes, or `flake-ok: <why the producer is synchronous>`

@@ -17,6 +17,32 @@ use crate::runtime::{MsbRuntime, status};
 /// How long [`Sandbox::stop`] waits for a graceful shutdown before killing the VM.
 pub(crate) const STOP_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How long the guest's processes get to exit after their SIGTERM before a stop goes ahead and the
+/// runtime ends what is left (`docker stop` gives a container the same).
+pub(crate) const TERM_GRACE: Duration = Duration::from_secs(10);
+
+/// Slack on top of [`TERM_GRACE`] for the exec that gives the SIGTERM: a guest that does not
+/// answer at all costs the stop no more than the two together.
+const TERM_SLACK: Duration = Duration::from_secs(2);
+
+/// `guest_term.sh`: gives every process of the guest one SIGTERM and waits for them to exit.
+const GUEST_TERM_SH: &str = include_str!("guest_term.sh");
+
+/// The exec [`Sandbox::stop`] runs before the stop itself (why: the script's header).
+fn term_request() -> ExecRequest {
+    ExecRequest::new(
+        "sh",
+        [
+            "-c".to_owned(),
+            GUEST_TERM_SH.to_owned(),
+            "puddle-term".to_owned(),
+            TERM_GRACE.as_secs().to_string(),
+        ],
+    )
+    .as_user("root")
+    .with_timeout(TERM_GRACE + TERM_SLACK)
+}
+
 /// Slack on top of an exec's own timeout before the adapter gives up waiting for the SDK.
 const EXEC_GRACE: Duration = Duration::from_secs(30);
 
@@ -129,6 +155,33 @@ impl MsbSandbox {
     }
 }
 
+impl MsbSandbox {
+    /// Gives the guest's processes their SIGTERM and up to [`TERM_GRACE`] to exit. Best effort:
+    /// whatever goes wrong here, the stop goes ahead and the runtime ends what is left.
+    async fn term_guest_processes(&self) {
+        let ran = tokio::time::timeout(TERM_GRACE + TERM_SLACK, self.exec(term_request())).await;
+        if let Some(problem) = term_problem(ran.ok()) {
+            tracing::warn!(sandbox = %self.name, "{problem}; the stop goes ahead");
+        }
+    }
+}
+
+/// What went wrong with the SIGTERM step, from its result (`None` when the guest did not answer in
+/// time); `None` when every process exited within the grace period.
+fn term_problem(ran: Option<Result<ExecOutput, ComputeError>>) -> Option<String> {
+    match ran {
+        Some(Ok(out)) if out.status.success() => None,
+        Some(Ok(out)) => Some(format!(
+            "guest processes still ran after their SIGTERM and the grace period ({})",
+            out.stdout_text().trim()
+        )),
+        Some(Err(e)) => Some(format!(
+            "could not give the guest's processes their SIGTERM: {e}"
+        )),
+        None => Some("the guest did not answer the SIGTERM step in time".to_owned()),
+    }
+}
+
 // Every method boxes its future: the SDK's futures are large, and callers nest them (the
 // contract suite overflowed a test thread's stack with them inline).
 impl Sandbox for MsbSandbox {
@@ -174,6 +227,7 @@ impl Sandbox for MsbSandbox {
                     sandbox: self.name.to_string(),
                 });
             }
+            self.term_guest_processes().await;
             match self
                 .runtime
                 .sdk(self.sdk.stop_with_timeout(STOP_TIMEOUT))
@@ -292,6 +346,54 @@ mod tests {
     use microsandbox::protocol::exec::{ExecFailed, ExecFailureKind};
 
     use super::*;
+
+    #[test]
+    fn the_sigterm_step_runs_the_script_as_root_with_the_grace_period() {
+        let request = term_request();
+        assert_eq!(request.program, "sh");
+        assert_eq!(
+            request.args,
+            ["-c", GUEST_TERM_SH, "puddle-term", "10"].map(str::to_owned)
+        );
+        assert_eq!(request.user.as_deref(), Some("root"));
+        assert_eq!(request.timeout, Duration::from_secs(12));
+    }
+
+    /// The script only ever runs in a guest (it signals every process it can see), so here it is
+    /// only parsed.
+    #[cfg(unix)]
+    #[test]
+    fn the_sigterm_script_parses() {
+        let out = std::process::Command::new("sh")
+            .args(["-n", "-c", GUEST_TERM_SH])
+            .output()
+            .expect("run sh -n");
+        assert!(out.status.success(), "{out:?}");
+    }
+
+    #[test]
+    fn the_sigterm_step_says_what_went_wrong() {
+        assert_eq!(term_problem(Some(Ok(ExecOutput::new(0, "", "")))), None);
+        assert_eq!(
+            term_problem(Some(Ok(ExecOutput::new(1, "left: 41 dockerd\n", "")))).as_deref(),
+            Some(
+                "guest processes still ran after their SIGTERM and the grace period (left: 41 dockerd)"
+            )
+        );
+        let gone = ComputeError::StaleHandle {
+            sandbox: "w".to_owned(),
+        };
+        assert_eq!(
+            term_problem(Some(Err(gone.clone()))),
+            Some(format!(
+                "could not give the guest's processes their SIGTERM: {gone}"
+            ))
+        );
+        assert_eq!(
+            term_problem(None).as_deref(),
+            Some("the guest did not answer the SIGTERM step in time")
+        );
+    }
 
     fn failed(kind: ExecFailureKind) -> ExecFailed {
         ExecFailed {

@@ -295,14 +295,15 @@ async fn assert_pulls_are_audited(store: &Store, token: &str) {
         origin: Some(ConnectionOrigin::Puddle),
         ..AuditFilter::default()
     };
-    let mut records = Vec::new();
-    for _ in 0..100 {
-        records = connection_records(store, &puddle_only);
-        if records.iter().any(|r| r.bytes_down > 0) {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
+    let records = puddle_test_kit::eventually(
+        "the pull proxy wrote an audit record with bytes down",
+        std::time::Duration::from_secs(5),
+        || {
+            let records = connection_records(store, &puddle_only);
+            records.iter().any(|r| r.bytes_down > 0).then_some(records)
+        },
+    )
+    .await;
     assert!(!records.is_empty(), "the pull proxy wrote no audit record");
     for record in &records {
         assert_eq!(record.workspace_id, None);

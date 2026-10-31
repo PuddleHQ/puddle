@@ -19,6 +19,7 @@ use puddle_compute::fake::{Call, ExecContext, FakeRuntime, Fault, Op};
 use puddle_compute::{
     ComputeError, ExecOutput, ExecRequest, FileMount, ImageConfig, Runtime, Sandbox, SandboxSpec,
 };
+use puddle_test_kit::eventually;
 use puddle_types::{
     GuestFile, GuestPath, ImageRef, MergeEntry, MergeFormat, MergeSpec, SandboxName,
     WorkspaceStatus,
@@ -122,9 +123,10 @@ async fn callers_wait_while_booting_then_pass() {
         tokio::spawn(async move { BootHook::new().create(&rt, spec("b"), &plan(), &gate).await })
     };
     // An SSH endpoint holding the gate sees `Booting` and waits instead of being refused.
-    while gate.state() != GateState::Booting {
-        tokio::task::yield_now().await;
-    }
+    eventually("the gate is booting", Duration::from_secs(10), || {
+        gate.state() == GateState::Booting
+    })
+    .await;
     gate.wait_ready(Duration::from_secs(10)).await.unwrap();
     let sb = booting.await.unwrap().unwrap();
     assert_eq!(exec_calls(&rt.calls()).len(), 1, "only the hook ran so far");

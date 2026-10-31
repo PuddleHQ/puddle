@@ -237,6 +237,62 @@ async fn vm_host_boots_a_workspace_with_the_cpus_the_settings_name() {
     assert!(down.sandboxes.all_stopped(), "{down:?}");
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_warns_at_a_start_that_finds_kind_in_the_guest() {
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host("kube").await;
+    let name = format!("{}-kube", settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let key = format!("kubernetes:{name}");
+    let raised = || host.problems().list().iter().any(|p| p.key == key);
+    assert!(!raised(), "{:?}", host.problems().list());
+
+    // A stub `kind` on the PATH the hook reads, found by the next start.
+    guest(
+        &runtime,
+        &sandbox,
+        "printf '#!/bin/sh\\nexit 0\\n' > /usr/local/bin/kind && chmod +x /usr/local/bin/kind",
+    )
+    .await;
+    api.post(&format!("/api/workspaces/{name}/stop"), "").await;
+    let end = events
+        .until(ended(name_static), Duration::from_secs(120))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    api.post(&format!("/api/workspaces/{name}/start"), "").await;
+    let end = events
+        .until(ended(name_static), Duration::from_secs(300))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let problems = host.problems().list();
+    let problem = problems.iter().find(|p| p.key == key);
+    assert!(
+        problem.is_some_and(|p| p.detail.contains("kind is installed")),
+        "{problems:?}"
+    );
+
+    let down = host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
 /// A second small public repository on the same host.
 const SECOND_REPO: &str = "https://github.com/octocat/Spoon-Knife.git";
 /// A host the rules allow that resolves nowhere, so a clone from it fails like an unreachable
@@ -672,19 +728,18 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
     host.store()
         .attach_identity(&sandbox, lab.id, None)
         .unwrap();
-    let mut decrypted = false;
-    for _ in 0..100 {
-        let now = host.workspaces().termination(&sandbox).unwrap();
-        if now
-            .set()
-            .contains(&puddle_types::Host::parse_normalised(SECOND).unwrap())
-        {
-            decrypted = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert!(decrypted, "second.invalid never joined the decrypt set");
+    puddle_test_kit::eventually_async(
+        "second.invalid joined the decrypt set",
+        Duration::from_secs(10),
+        || async {
+            host.workspaces()
+                .termination(&sandbox)
+                .unwrap()
+                .set()
+                .contains(&puddle_types::Host::parse_normalised(SECOND).unwrap())
+        },
+    )
+    .await;
     assert_eq!(
         host.workspaces()
             .termination(&sandbox)
@@ -695,20 +750,24 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
     );
     let gitlab = guest(&runtime, &sandbox, &issuer_script(SECOND)).await;
     assert!(gitlab.contains(&ca_name), "{gitlab}");
-    let mut author = String::new();
-    for _ in 0..60 {
-        author = guest(
-            &runtime,
-            &sandbox,
-            &email("https://second.invalid/lab/project"),
-        )
-        .await;
-        if author.trim() == "lab@example.org" {
-            break;
-        }
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
-    assert_eq!(author.trim(), "lab@example.org");
+    puddle_test_kit::eventually_async(
+        "second.invalid's author is lab@example.org",
+        Duration::from_secs(60),
+        || async {
+            let author = guest(
+                &runtime,
+                &sandbox,
+                &email("https://second.invalid/lab/project"),
+            )
+            .await;
+            if author.trim() == "lab@example.org" {
+                Ok(())
+            } else {
+                Err(format!("author {author:?}"))
+            }
+        },
+    )
+    .await;
     // Work's remotes keep Work's author; site.invalid is still spliced.
     assert_eq!(
         guest(
@@ -890,18 +949,12 @@ async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
             })
             .count()
     };
-    let mut recorded = 0;
-    for _ in 0..50 {
-        recorded = allowed_to_h3_host();
-        if recorded > 0 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert!(
-        recorded > 0,
-        "no allowed connection to {H3_HOST}:443 in the audit"
-    );
+    let recorded = puddle_test_kit::eventually_async(
+        &format!("an allowed connection to {H3_HOST}:443 in the audit"),
+        Duration::from_secs(5),
+        || async { Some(allowed_to_h3_host()).filter(|n| *n > 0) },
+    )
+    .await;
 
     // The same curl with no proxy at all: its name resolves to a stand-in through the stub, the
     // QUIC attempt to it is refused at once, and the TCP fallback is redirected to the proxy and
@@ -930,18 +983,12 @@ async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
         captured.contains("Connected to h3.invalid (198.1"),
         "{captured}"
     );
-    let mut after = recorded;
-    for _ in 0..50 {
-        after = allowed_to_h3_host();
-        if after > recorded {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert!(
-        after > recorded,
-        "the captured fallback left no connection record ({recorded} before, {after} after)"
-    );
+    puddle_test_kit::eventually_async(
+        &format!("the captured fallback left a connection record (was {recorded})"),
+        Duration::from_secs(5),
+        || async { allowed_to_h3_host() > recorded },
+    )
+    .await;
 
     // A client that tries QUIC and ignores the proxy fails at once instead of waiting.
     let direct = guest(
@@ -1017,15 +1064,18 @@ async fn record_where(
     host: &str,
     wanted: impl Fn(&serde_json::Value) -> bool,
 ) -> serde_json::Value {
-    let mut seen = Vec::new();
-    for _ in 0..60 {
-        seen = connections(api, workspace, host).await;
-        if let Some(found) = seen.iter().find(|r| wanted(r)) {
-            return found.clone();
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-    unreachable!("no matching connection record for {host}: {seen:#?}")
+    puddle_test_kit::eventually_async(
+        &format!("a matching connection record for {host}"),
+        Duration::from_secs(30),
+        || async {
+            let seen = connections(api, workspace, host).await;
+            seen.iter()
+                .find(|r| wanted(r))
+                .cloned()
+                .ok_or_else(|| format!("{seen:#?}"))
+        },
+    )
+    .await
 }
 
 /// The connection records of `workspace` to `host`, newest first.
@@ -1246,21 +1296,16 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
     let foreign = format!("puddle-secret-PROBE_A-{}", "0123456789abcdef".repeat(2));
     assert_ne!(foreign, stand_a);
     guest(&runtime, &sandbox, &curl(ALPHA, "X-Foreign", &foreign)).await;
-    let mut foreign_seen = false;
-    for _ in 0..60 {
-        let (seen, _) = requests();
-        foreign_seen = seen
-            .iter()
-            .any(|r| r.headers_named("x-foreign") == [foreign.as_str()]);
-        if foreign_seen {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-    assert!(
-        foreign_seen,
-        "{ALPHA} did not get the foreign stand-in as it came"
-    );
+    puddle_test_kit::eventually_async(
+        &format!("{ALPHA} got the foreign stand-in as it came"),
+        Duration::from_secs(30),
+        || async {
+            let (seen, _) = requests();
+            seen.iter()
+                .any(|r| r.headers_named("x-foreign") == [foreign.as_str()])
+        },
+    )
+    .await;
 
     // A secret added to the running workspace: its host is decrypted from the next connection,
     // with the same CA and no restart.
@@ -1276,19 +1321,18 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
         json!({"kind": "secret", "value": SECRET_C, "hosts": [GAMMA]}),
     )
     .await;
-    let mut decrypted = false;
-    for _ in 0..100 {
-        let now = host.workspaces().termination(&sandbox).unwrap();
-        if now
-            .set()
-            .contains(&puddle_types::Host::parse_normalised(GAMMA).unwrap())
-        {
-            decrypted = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert!(decrypted, "gamma.invalid never joined the decrypt set");
+    puddle_test_kit::eventually_async(
+        "gamma.invalid joined the decrypt set",
+        Duration::from_secs(10),
+        || async {
+            host.workspaces()
+                .termination(&sandbox)
+                .unwrap()
+                .set()
+                .contains(&puddle_types::Host::parse_normalised(GAMMA).unwrap())
+        },
+    )
+    .await;
     assert_eq!(
         host.workspaces()
             .termination(&sandbox)
@@ -1308,19 +1352,19 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
 
     // Removing it takes the host out again, and its value out of the credential store.
     assert_eq!(api.delete("/api/env/PROBE_C", None).await.status, 204);
-    let mut spliced = false;
-    for _ in 0..100 {
-        let now = host.workspaces().termination(&sandbox).unwrap();
-        if !now
-            .set()
-            .contains(&puddle_types::Host::parse_normalised(GAMMA).unwrap())
-        {
-            spliced = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert!(spliced, "gamma.invalid stayed in the decrypt set");
+    puddle_test_kit::eventually_async(
+        "gamma.invalid left the decrypt set",
+        Duration::from_secs(10),
+        || async {
+            !host
+                .workspaces()
+                .termination(&sandbox)
+                .unwrap()
+                .set()
+                .contains(&puddle_types::Host::parse_normalised(GAMMA).unwrap())
+        },
+    )
+    .await;
     assert_eq!(secrets.ids().len(), 2);
     let net = guest(&runtime, &sandbox, &issuer_script(GAMMA)).await;
     assert!(!net.to_lowercase().contains("puddle"), "{net}");
@@ -2415,6 +2459,7 @@ async fn refusal_matrix(
             continue;
         }
         let mut reason = "no connection record".to_owned();
+        // flake-ok: a missing record is a result this report prints, not a failure
         for _ in 0..40 {
             let records = audit_connections(&vm.host);
             if count(&records) > before {
@@ -2907,6 +2952,7 @@ async fn end_hosts_when_connected(
     (puddle_agent_proto::host_control::HostReply, Duration),
     puddle_host::EndExtensionHostsError,
 > {
+    // flake-ok: retries the call until the agent connects; any other error is returned as is
     for _ in 0..60 {
         let started = std::time::Instant::now();
         match host.workspaces().end_extension_hosts(sandbox).await {
@@ -2963,35 +3009,23 @@ async fn vm_host_ending_the_extension_hosts_takes_the_debuggees_with_them_and_le
 
     guest(&runtime, &sandbox, START_STANDINS).await;
     // Wait until every stand-in runs its child.
-    let mut counts = String::new();
-    for _ in 0..60 {
-        counts = guest(&runtime, &sandbox, COUNT_STANDINS).await;
+    puddle_test_kit::eventually_async("the stand-ins started", Duration::from_secs(30), || async {
+        let counts = guest(&runtime, &sandbox, COUNT_STANDINS).await;
         if counts.contains("hosts=20 debuggees=20 jobs=1 orphans=0 pty=1") {
-            break;
+            Ok(())
+        } else {
+            Err(counts)
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-    assert!(
-        counts.contains("hosts=20 debuggees=20 jobs=1 orphans=0 pty=1"),
-        "the stand-ins did not start: {counts}{}",
-        guest(
-            &runtime,
-            &sandbox,
-            "cat /tmp/standins.log; ps -eo pid,ppid,args | head -40"
-        )
-        .await
-    );
+    })
+    .await;
 
     guest(&runtime, &sandbox, START_ORPHAN).await;
-    for _ in 0..20 {
-        if guest(&runtime, &sandbox, COUNT_STANDINS)
+    puddle_test_kit::eventually_async("the orphan runs", Duration::from_secs(4), || async {
+        guest(&runtime, &sandbox, COUNT_STANDINS)
             .await
             .contains("orphans=1")
-        {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
+    })
+    .await;
 
     let (reply, took) = end_hosts_when_connected(&host, &sandbox)
         .await
@@ -3403,23 +3437,25 @@ async fn vm_host_shell_init_is_checked_read_only_sourced_by_login_shells_and_res
     let saved = save("export PUDDLE_SHELL_INIT_PROBE='from the shell init'\nshell_init_probe() { echo probed; }\n").await;
     assert_eq!(saved.status, 200, "{}", saved.body);
     assert_eq!(saved.json()["checked"], true, "{}", saved.body);
-    let mut seen = String::new();
-    for _ in 0..100 {
-        seen = guest(
-            &runtime,
-            &sandbox,
-            "bash -lc 'printenv PUDDLE_SHELL_INIT_PROBE; shell_init_probe' 2>&1 || true",
-        )
-        .await;
-        if seen.contains("from the shell init") {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert!(
-        seen.contains("from the shell init") && seen.contains("probed"),
-        "a login shell did not source the saved script: {seen}"
-    );
+    let seen = puddle_test_kit::eventually_async(
+        "a login shell sourced the saved script",
+        Duration::from_secs(10),
+        || async {
+            let seen = guest(
+                &runtime,
+                &sandbox,
+                "bash -lc 'printenv PUDDLE_SHELL_INIT_PROBE; shell_init_probe' 2>&1 || true",
+            )
+            .await;
+            if seen.contains("from the shell init") {
+                Ok(seen)
+            } else {
+                Err(seen)
+            }
+        },
+    )
+    .await;
+    assert!(seen.contains("probed"), "{seen}");
     // The shell's output stays clean, which is what the check protects.
     let clean = guest(&runtime, &sandbox, "bash -lc true 2>&1; echo end").await;
     assert_eq!(
@@ -3439,20 +3475,24 @@ async fn vm_host_shell_init_is_checked_read_only_sourced_by_login_shells_and_res
     let live = |wanted: &'static str| {
         let (runtime, sandbox) = (&runtime, &sandbox);
         async move {
-            let mut now = String::new();
-            for _ in 0..100 {
-                now = guest(
-                    runtime,
-                    sandbox,
-                    "bash -lc 'echo \"[${SHELL_INIT_LIVE_PROBE-unset}]\"'",
-                )
-                .await;
-                if now.trim() == wanted {
-                    return;
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-            panic!("a new login shell sees {now:?}, wanted {wanted}");
+            puddle_test_kit::eventually_async(
+                &format!("a new login shell sees {wanted}"),
+                Duration::from_secs(10),
+                || async {
+                    let now = guest(
+                        runtime,
+                        sandbox,
+                        "bash -lc 'echo \"[${SHELL_INIT_LIVE_PROBE-unset}]\"'",
+                    )
+                    .await;
+                    if now.trim() == wanted {
+                        Ok(())
+                    } else {
+                        Err(format!("saw {now:?}"))
+                    }
+                },
+            )
+            .await;
         }
     };
     live("[added while running]").await;
@@ -3497,20 +3537,21 @@ async fn vm_host_shell_init_is_checked_read_only_sourced_by_login_shells_and_res
     // The variable change above runs the boot plan again in the guest, and that run is still
     // writing Puddle's files when the new value is first visible: it would put the loader back
     // over the replacement. The hook writes `boot.done` last, so wait for it.
-    let mut settled = String::new();
-    for _ in 0..100 {
-        settled = guest(
-            &runtime,
-            &sandbox,
-            "if [ -f /run/puddle/boot.done ]; then echo settled; else echo running; fi",
-        )
-        .await;
-        if settled.trim() == "settled" {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert_eq!(settled.trim(), "settled", "the boot plan did not finish");
+    puddle_test_kit::eventually_async(
+        "the boot plan finished",
+        Duration::from_secs(10),
+        || async {
+            guest(
+                &runtime,
+                &sandbox,
+                "if [ -f /run/puddle/boot.done ]; then echo settled; else echo running; fi",
+            )
+            .await
+            .trim()
+                == "settled"
+        },
+    )
+    .await;
     guest(
         &runtime,
         &sandbox,
@@ -3827,20 +3868,21 @@ async fn vm_host_ports_are_listed_forwarded_and_pinned_across_a_restart() {
             .collect()
     };
     let started = std::time::Instant::now();
-    let view = loop {
-        let view = api.get(&path).await.json();
-        let ports = listed(&view);
-        if ports.contains(&8000) && ports.contains(&8001) {
-            break view;
-        }
-        // flake-ok: a poll deadline, not a bar: the loop ends the first time both listeners are
-        // reported (the agent polls every 100 ms) and the 60 s only ends a report that never comes.
-        assert!(
-            started.elapsed() < Duration::from_secs(60),
-            "the guest's listeners were not reported: {view}"
-        );
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    };
+    // The agent polls every 100 ms, so 60 s only ends a report that never comes.
+    let view = puddle_test_kit::eventually_async(
+        "the guest's listeners were reported",
+        Duration::from_secs(60),
+        || async {
+            let view = api.get(&path).await.json();
+            let ports = listed(&view);
+            if ports.contains(&8000) && ports.contains(&8001) {
+                Ok(view)
+            } else {
+                Err(view.to_string())
+            }
+        },
+    )
+    .await;
     eprintln!("ports reported after {:?}", started.elapsed());
     assert_eq!(view["running"], true);
     let ports = listed(&view);

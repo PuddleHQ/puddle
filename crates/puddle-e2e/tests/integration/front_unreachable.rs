@@ -16,7 +16,6 @@
 //! can fail.
 #![expect(
     clippy::expect_used,
-    clippy::panic,
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
@@ -142,13 +141,10 @@ async fn rig() -> Rig {
 
 async fn ports_started(ports: &Ports, workspace: &WorkspaceName) {
     ports.started(workspace).await;
-    for _ in 0..500 {
-        if ports.guest_link(workspace).is_some() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("the agent did not say hello");
+    puddle_test_kit::eventually("the agent said hello", Duration::from_secs(5), || {
+        ports.guest_link(workspace).is_some()
+    })
+    .await;
 }
 
 async fn front_for(rig: &Rig, endpoints: &PuddleEndpoints) -> (Front, tempfile::TempDir) {

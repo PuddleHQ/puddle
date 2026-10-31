@@ -66,8 +66,8 @@ pub(crate) enum JournalProblem {
         /// The path as the journal gives it.
         path: PathBuf,
     },
-    /// A named file steps up with `..`.
-    #[error("msb's root-disk journal names {path:?}, which steps out with `..`")]
+    /// A named file uses `..` below the sandbox's folder.
+    #[error("msb's root-disk journal names {path:?}, which uses `..` inside the sandbox's folder")]
     ParentStep {
         /// The path as the journal gives it.
         path: PathBuf,
@@ -99,12 +99,18 @@ pub(crate) enum JournalProblem {
 ///
 /// As [`check`].
 pub(crate) fn check_before_start(sandbox_dir: &Path) -> Result<(), ComputeError> {
-    check(sandbox_dir).map_err(|problem| ComputeError::Runtime {
-        op: "start",
-        message: format!(
-            "refused, {problem}: a process in the sandbox can write that journal, so the start \
-             would attach whatever file it names as the writable root disk; nothing was attached"
-        ),
+    check(sandbox_dir).map_err(|problem| {
+        let why = if matches!(problem, JournalProblem::Unreadable { .. }) {
+            "which files the start would attach cannot be told, so nothing was attached"
+        } else {
+            "a process in the sandbox can write that journal, and the start would attach what it \
+             names as the writable root disk, so nothing was attached; removing the sandbox and \
+             creating it again gives it a fresh root disk (its volumes are kept)"
+        };
+        ComputeError::Runtime {
+            op: "start",
+            message: format!("refused, {problem}: {why}"),
+        }
     })
 }
 
@@ -153,15 +159,14 @@ pub(crate) fn check(sandbox_dir: &Path) -> Result<(), JournalProblem> {
 ///
 /// The part above the sandbox's folder is compared resolved, not as written: msb writes the
 /// folder the way it was given (on Windows maybe without the `\\?\` prefix or with short names,
-/// anywhere maybe below a linked parent folder), and that is not the guest's to choose. Below the
-/// folder, every part must be a plain folder or file. A part that cannot be read (missing, or
+/// anywhere maybe below a linked parent folder or with a `..`), and that is not the guest's to
+/// choose. The anchor is resolved the way msb's open resolves it, so whatever follows it starts
+/// in the sandbox's folder. Below the folder, no part may be `..` and every part must be a plain
+/// folder or file. A part that cannot be read (missing, or
 /// below a file) ends the walk: msb runs as the same user and cannot open anything below it either.
 fn confined(path: PathBuf, sandbox: &Path) -> Result<(), JournalProblem> {
     if !path.is_absolute() {
         return Err(JournalProblem::Relative { path });
-    }
-    if path.components().any(|c| c == Component::ParentDir) {
-        return Err(JournalProblem::ParentStep { path });
     }
     let Some(below) = path
         .ancestors()
@@ -173,6 +178,9 @@ fn confined(path: PathBuf, sandbox: &Path) -> Result<(), JournalProblem> {
             sandbox: sandbox.to_path_buf(),
         });
     };
+    if below.components().any(|c| c == Component::ParentDir) {
+        return Err(JournalProblem::ParentStep { path });
+    }
     let mut at = sandbox.to_path_buf();
     for part in below.components() {
         at.push(part);
@@ -323,13 +331,32 @@ mod tests {
             Err(JournalProblem::ParentStep { path: escape })
         );
 
-        // Even a `..` that lands back inside is refused: msb never writes one.
-        let back_in = home.mine().join("runtime").join("..").join("upper.ext4");
+        // A `..` that resolves back into the folder is part of the anchor, resolved the way
+        // msb's open resolves it, so the path stays inside and passes.
+        fs::create_dir(home.mine().join("runtime").join(".compact-x")).unwrap();
+        let back_in = home
+            .mine()
+            .join("runtime")
+            .join(".compact-x")
+            .join("..")
+            .join("..")
+            .join("upper.ext4");
         home.journal(&[&back_in], None);
-        assert!(matches!(
-            check(&home.mine()),
-            Err(JournalProblem::ParentStep { .. })
-        ));
+        assert_eq!(check(&home.mine()), Ok(()));
+    }
+
+    #[test]
+    fn a_home_spelled_with_dot_dot_passes() {
+        // msb writes the folder the way it was given; a `..` above the sandbox is not the guest's.
+        let home = Home::new();
+        let spelled = home
+            .sandboxes
+            .join("other")
+            .join("..")
+            .join("mine")
+            .join("upper.ext4");
+        home.journal(&[&spelled], None);
+        assert_eq!(check(&home.mine()), Ok(()));
     }
 
     #[test]
@@ -398,6 +425,14 @@ mod tests {
             "{message}"
         );
         assert!(message.contains("nothing was attached"), "{message}");
+        assert!(message.contains("creating it again"), "{message}");
+
+        home.write_journal(b"not json");
+        let Err(ComputeError::Runtime { message, .. }) = check_before_start(&home.mine()) else {
+            panic!("the start must be refused");
+        };
+        assert!(message.contains("cannot be told"), "{message}");
+        assert!(!message.contains("can write that journal"), "{message}");
     }
 
     #[test]

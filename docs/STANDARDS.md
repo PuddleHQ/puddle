@@ -310,6 +310,11 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   test. A page's budget is a limit on a hang, never a bar on speed.
 - **Redaction:** tests that handle a credential use a canary value and assert it never appears in
   logs, errors, audit entries or the guest's view.
+- **Run tests with `cargo nextest run`, not `cargo test`.** The gates run nextest, one process per test.
+  Plain `cargo test` runs a crate's tests in one shared process, and some suites (for example
+  `cargo test -p puddle-agent`) flake there under load, a failure nextest's one-process-per-test run does not show. Reproduce
+  and check a failure with `cargo nextest run -p <crate>`; doctests are the one thing nextest does not run
+  (`cargo test --doc`).
 - **Flaky tests:** nextest never retries (`retries = 0`); only the Windows nightly retries once, to list flakes. A test that fails without a code change
   is fixed or quarantined within a day (still runs, doesn't gate, linked issue, max 14 days).
   Proxy, transparency and security tests can't be quarantined: a flaky one is the bug.
@@ -659,6 +664,10 @@ and in `ci.yml` (Linux); every one but `ui-e2e` is also in the `pre-push` set; `
   test). A new API service gets its fake and a scenario field in `Fixture::build_state`; a new event needs
   nothing (an `Event` in JSON is a step). The `history` step writes N connection records over a week
   (the activity screen's long-log test).
+  The binary embeds `ui/build` when it is compiled (`embedded-ui`, `#[allow_missing = true]`), so a fixture built before
+  `ui/build` exists embeds nothing and answers every page with 404. Run `npm run build` in `ui/` first; a shared build
+  cache (mbx, above) can hand back the empty-embed build, so after the UI build change a `puddle-api` source file
+  to force a recompile.
 - **Coverage** (`ui/vite.config.ts`): the thresholds are `ui/coverage-baseline.json` (§9), `src/lib/**` 100 % of lines, functions and statements; `src/lib/api/**` (client,
   event stream), `src/lib/decision/**` (the four-outcome model), `src/lib/rules/**` (filter, sort, expiry),
   `src/lib/audit/**` (filters, the address, how a record reads, the drawn window) and `src/lib/workspaces/**` (what each state allows, form checks, settings choices) and `src/lib/settings/**` (consent wording, global settings choices) and `src/lib/network/**` (the network report in words, with a fix per problem) and `src/lib/notify/**` (notice list, event watcher) and `src/lib/identities/**` (how a source and its coverage read, the checks a form makes, clone addresses) ≥ 95 % lines, ≥ 90 % branches.

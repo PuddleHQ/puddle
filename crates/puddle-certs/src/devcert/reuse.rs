@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Which existing ASP.NET development certificate Puddle reuses (HS-24).
+//! Which existing ASP.NET development certificate Puddle reuses.
 //!
 //! A certificate is reused only if it carries the marker, is a leaf, is valid now and for at
 //! least [`RENEW_WITHIN`] more, is valid for loopback names only, has a private key that can be exported, and is already trusted.

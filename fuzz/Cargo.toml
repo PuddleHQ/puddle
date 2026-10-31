@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# cargo-fuzz targets for what a guest's first bytes reach (docs/arch/threat-model.md, HG-10). Not a
+# cargo-fuzz targets for what a guest's first bytes reach. Not a
 # member of the root workspace (it needs a nightly toolchain and libFuzzer), so the stable gates
 # never build it; `.github/workflows/fuzz.yml` runs it nightly. Each target's checked-in corpus under
 # `corpus/` is replayed on stable by the crates' own tests (`fuzz_corpus`).

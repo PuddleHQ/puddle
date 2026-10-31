@@ -1224,7 +1224,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         );
     }
 
-    /// Looks in the guest for the start folder (storage ST-55). A missing one never fails anything:
+    /// Looks in the guest for the start folder. A missing one never fails anything:
     /// terminals and the editor open the volume root, and a problem on the workspace names the
     /// folder and the ways out until it exists or the setting changes. `None` for the volume
     /// root, or when the guest could not be asked (the problem stays as it was).
@@ -1852,8 +1852,17 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Why the editor cannot be opened, for the user.
     async fn desktop_target(&self, record: &WorkspaceRecord) -> Result<DesktopTarget, String> {
         let name = &record.name;
-        if !self.direct_ssh_allowed(name) {
-            return Err("direct SSH is off for this workspace; allow it first".to_owned());
+        match self.direct_ssh_setting(name) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err("direct SSH is off for this workspace; allow it first".to_owned());
+            }
+            Err(reason) => {
+                tracing::warn!(workspace = %name, %reason, "direct SSH stays off: the settings cannot be read");
+                return Err(format!(
+                    "the settings cannot be read ({reason}); direct SSH counts as off until they can"
+                ));
+            }
         }
         let live = self.inner.live.lock().await;
         let entry = live.get(name);
@@ -1935,7 +1944,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// Asks the launcher to open `record`'s editor in a window of its own. A launcher with no
     /// window (the default, so `puddle serve`) says the editor opens from the desktop app: the
-    /// password is held back from anything but a shell (AT-34).
+    /// password is held back from anything but a shell.
     async fn attach_browser(&self, record: &WorkspaceRecord) -> Attached {
         let name = &record.name;
         let target = BrowserTarget {

@@ -323,7 +323,7 @@ async fn vm_git_clones_and_pushes_with_two_identities_and_the_guest_never_holds_
         "no push request reached the host"
     );
 
-    // HG-18: a path that names a repository two ways is a 400, and the host never hears of it.
+    // a path that names a repository two ways is a 400, and the host never hears of it.
     let before = fake.seen().len();
     let codes = guest(
         &vm.runtime,
@@ -348,7 +348,7 @@ async fn vm_git_clones_and_pushes_with_two_identities_and_the_guest_never_holds_
     );
     assert_eq!(fake.seen().len(), before, "none of them reached the host");
 
-    // HG-14: the guest holds no token. Every place a secret could rest: the environment and
+    // the guest holds no token. Every place a secret could rest: the environment and
     // command line of every process, every file on the disk (binary files too), the trace of
     // the clone. The script holds the tokens in halves, so the search never finds itself.
     let patterns = format!(
@@ -514,7 +514,7 @@ async fn vm_git_the_ca_holds_no_key_and_two_workspaces_share_neither_ca_nor_cred
         after.last()
     );
 
-    // HG-21: the CA names no constraint and is pathLen 0, and no private key on A's disk is the
+    // the CA names no constraint and is pathLen 0, and no private key on A's disk is the
     // CA's. (Other keys exist in a distribution image: the check is by public key, not by
     // "no key at all".)
     let shape = guest(

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The negative control of the boot-mounts hostile test (`vm_hostile_boot.rs`, the HG-23 case): the
+//! The negative control of the boot-mounts hostile test (`vm_hostile_boot.rs`): the
 //! judgement that test relies on must fail when the share is writable, or a green VM run would
 //! prove nothing. These tests need no VM, so they run in every gate (the VM test's binary is
 //! `vm_*` and runs only under the VM profile).

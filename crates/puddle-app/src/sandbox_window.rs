@@ -29,7 +29,7 @@ pub mod signin;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_settings::{ClipboardRead, Effective};
@@ -266,6 +266,9 @@ struct Inner {
     forward_open: Mutex<HashMap<WorkspaceName, usize>>,
     /// Source of the popup labels.
     popups: AtomicUsize,
+    /// Set once the quit has begun: the windows' ends no longer run the hook, because the quit
+    /// asks the guests itself and waits for them.
+    quitting: AtomicBool,
     /// The cookie the last sign-in gave a workspace, with the password it was for: the editor's
     /// login limits how often one can sign in, and a window reopened a moment later must not hit it.
     sessions: Mutex<HashMap<WorkspaceName, (String, SessionCookie)>>,
@@ -281,6 +284,7 @@ impl SandboxWindows {
                 open: Mutex::new(HashMap::new()),
                 forward_open: Mutex::new(HashMap::new()),
                 popups: AtomicUsize::new(0),
+                quitting: AtomicBool::new(false),
                 sessions: Mutex::new(HashMap::new()),
             }),
         }
@@ -331,6 +335,25 @@ impl SandboxWindows {
         open.retain(|_, count| *count > 0);
     }
 
+    /// Starts the quit: from now on a window's end does not run the last-closed hook, and the
+    /// windows count as gone. Says which workspaces had an editor window open, sorted, for the
+    /// caller to clean up after closing the windows; a second call says none. A window opened
+    /// after this is not covered.
+    pub fn begin_quit(&self) -> Vec<WorkspaceName> {
+        self.inner.quitting.store(true, Ordering::SeqCst);
+        let mut open: Vec<_> = std::mem::take(
+            &mut *self
+                .inner
+                .open
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        )
+        .into_keys()
+        .collect();
+        open.sort();
+        open
+    }
+
     pub(crate) fn opened(&self, workspace: &WorkspaceName) {
         *self
             .inner
@@ -361,7 +384,7 @@ impl SandboxWindows {
                 None => false,
             }
         };
-        if last {
+        if last && !self.inner.quitting.load(Ordering::SeqCst) {
             (self.inner.hooks.last_closed)(workspace);
         }
     }
@@ -1133,6 +1156,22 @@ mod tests {
         assert_eq!(*ended.lock().unwrap(), ["alpha"]);
         windows.closed(&b);
         assert_eq!(*ended.lock().unwrap(), ["alpha", "beta"]);
+    }
+
+    #[test]
+    fn once_the_quit_has_begun_a_last_window_ends_without_the_hook_and_the_open_ones_are_named() {
+        let Fixture { windows, ended } = fixture();
+        let (a, b) = (workspace("beta"), workspace("alpha"));
+        windows.opened(&a);
+        windows.opened(&b);
+        windows.opened(&b);
+        assert_eq!(windows.begin_quit(), [b.clone(), a.clone()]);
+        windows.closed(&a);
+        windows.closed(&b);
+        windows.closed(&b);
+        assert!(ended.lock().unwrap().is_empty(), "the quit asks itself");
+        assert_eq!((windows.open_count(&a), windows.open_count(&b)), (0, 0));
+        assert_eq!(windows.begin_quit(), []);
     }
 
     fn target(name: &str, data: &Path, cookie: Option<SessionCookie>) -> Target {

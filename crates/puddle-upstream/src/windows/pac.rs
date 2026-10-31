@@ -351,6 +351,7 @@ fn collect(resolver: &Handle) -> Result<Vec<Hop>, PacError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicBool;
 
     /// Tests that count `PENDING`'s entries run one at a time: the table is process-wide.
     static COUNTING: Mutex<()> = Mutex::new(());
@@ -406,17 +407,16 @@ mod tests {
     }
 
     /// Sets a flag when dropped, to show whether a buffer was freed.
-    struct Freed(Arc<std::sync::atomic::AtomicBool>);
+    struct Freed(Arc<AtomicBool>);
 
     impl Drop for Freed {
         fn drop(&mut self) {
-            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.0.store(true, Ordering::SeqCst);
         }
     }
 
     #[test]
     fn buffers_are_held_until_the_close_is_reported_and_then_freed() {
-        use std::sync::atomic::{AtomicBool, Ordering};
         let _serial = COUNTING.lock().unwrap_or_else(PoisonError::into_inner);
         let slot = Arc::new(Slot::default());
         let freed = Arc::new(AtomicBool::new(false));
@@ -433,7 +433,6 @@ mod tests {
 
     #[test]
     fn buffers_are_leaked_when_the_close_never_comes() {
-        use std::sync::atomic::{AtomicBool, Ordering};
         let _serial = COUNTING.lock().unwrap_or_else(PoisonError::into_inner);
         let slot = Slot::default();
         let freed = Arc::new(AtomicBool::new(false));

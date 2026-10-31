@@ -611,7 +611,7 @@ mod tests {
     #[test]
     fn an_ace_cut_off_inside_its_sid_is_refused() {
         let whole_struct = size_of::<ACCESS_ALLOWED_ACE>();
-        // Exactly the struct, 4 bytes of a SID that claims 5 sub-authorities: the old check passed it.
+        // Exactly the struct, 4 bytes of a SID that claims 5 sub-authorities.
         let cut = ace_bytes_of(5, 64);
         assert_eq!(
             allowed_sid(&as_bytes(&cut)[..whole_struct]),

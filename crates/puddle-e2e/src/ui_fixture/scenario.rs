@@ -9,8 +9,9 @@
 use std::collections::BTreeMap;
 
 use puddle_api::wire::{
-    CredentialSource, DoctorReport, FoundAccount, FoundVia, IdentityRequest, NetworkHealth,
-    RepoListState, RepoNoteCode, RepoProblemCode, RepoRole, RepoVisibility, SignInStarted,
+    CredentialSource, DevCertificate, DoctorReport, FoundAccount, FoundVia, IdentityRequest,
+    NetworkHealth, RepoListState, RepoNoteCode, RepoProblemCode, RepoRole, RepoVisibility,
+    SignInStarted,
 };
 use puddle_types::Event;
 use serde::{Deserialize, Serialize};
@@ -85,6 +86,10 @@ pub struct Scenario {
     /// What `GET /api/doctor` reports at start; a healthy machine when left out.
     #[serde(default)]
     pub doctor: Option<DoctorReport>,
+    /// Where the development certificate stands at start; "not checked" when left out. Pressing
+    /// "Trust it now" answers `trusted` unless a `dev_certificate` step says otherwise.
+    #[serde(default)]
+    pub dev_certificate: Option<DevCertificate>,
     /// Leaves the first-run flow still to run. Left out, the scenario starts as an install the
     /// user has already been through, so the app opens on its start screen.
     #[serde(default)]
@@ -752,6 +757,18 @@ pub enum Step {
     ReleaseRepos,
     /// Replaces what the system check reports from now on.
     Doctor(Box<DoctorReport>),
+    /// Sets where the development certificate stands and what the next presses of "Trust it now"
+    /// come to (a yes, a no, a failure with the system's words).
+    DevCertificate {
+        /// The state from now on.
+        state: DevCertificate,
+        /// What trusting answers and leaves as the state; `trusted` when left out.
+        #[serde(default)]
+        trust_answer: Option<DevCertificate>,
+        /// The system's words that go with a failed answer.
+        #[serde(default)]
+        detail: Option<String>,
+    },
     /// Raises a background problem, as the host does for a clone that failed, or replaces the one
     /// with the same key. The list at `GET /api/problems` and `problems_changed` follow.
     Problem(ProblemSeed),

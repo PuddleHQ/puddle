@@ -7,7 +7,7 @@ import {
   type Page,
 } from "@playwright/test";
 import { readFileSync } from "node:fs";
-import { throttleCpu } from "./cpu-throttle.ts";
+import { slowdown, throttleCpu } from "./cpu-throttle.ts";
 
 function connection(): { url: string; token: string } {
   const file = process.env["PUDDLE_E2E_CONNECTION"];
@@ -124,6 +124,17 @@ export async function expectFocused(
 }
 
 /**
+ * What one axe scan adds to the test's time limit. The default 30 s is the limit of a test of one
+ * screen, and a scan is the dearest step of one: about 1 s on a quiet machine and 8 to 12 s from the
+ * click that opened the state to the scan's answer on a starved one (WebKit on 2 CPUs under 8 busy
+ * loops, the stress job's starving), where a walk of two scans took 21 to 29 s and 2 of 48 ran
+ * over 30 s. The gate run that failed was at load 335 on 40 cores. A test asserts nothing about
+ * time there, so its limit only guards a hang: each scan brings 30 s (2.5 times the worst
+ * measured), and each wait inside a walk keeps its own 15 s that names what the page did not show.
+ */
+export const AXE_SCAN_ALLOWANCE_MS = 30_000;
+
+/**
  * axe with the tags the project's bar names (WCAG 2.0 to 2.2, A and AA).
  *
  * A scan used to cost 1 to 2 s on an idle machine for a page of 200 to 400 elements and 3 to 5 s on the
@@ -134,6 +145,9 @@ export async function expectFocused(
  * unchanged.
  */
 export async function axeViolations(page: Page) {
+  // A scan runs in the middle of a test, so the limit grows when the scan starts (and by the factor the stress job declared).
+  const info = base.info();
+  info.setTimeout(info.timeout + AXE_SCAN_ALLOWANCE_MS * slowdown());
   // Legacy mode does not look into cross-origin frames: the app has none, and a page that gains
   // one must say so here instead of passing unscanned.
   if (page.frames().length > 1)

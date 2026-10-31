@@ -44,8 +44,9 @@ use crate::workspaces::{NoWorkspaces, WorkspaceService};
 const MAX_BODY_BYTES: usize = 64 * 1024;
 
 /// How long the routes of [`slow_router`] may take: the system check's test boot (up to about 30
-/// s), and a few checks queued behind each other.
-const SLOW_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+/// s) and a few checks queued behind each other, or the trust route's wait for the user, which
+/// gives up after two minutes on its own.
+const SLOW_REQUEST_TIMEOUT: Duration = Duration::from_secs(150);
 
 /// How long a client may take to send a request's headers.
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);

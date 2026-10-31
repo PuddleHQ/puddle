@@ -187,9 +187,71 @@ fn hostile_hg37_a_flood_of_reports_changes_each_problem_a_bounded_number_of_time
 }
 
 fn editor(problem: Option<&str>) -> AgentReport {
+    editor_of(EditorProblemKind::Install, problem)
+}
+
+fn editor_of(kind: EditorProblemKind, problem: Option<&str>) -> AgentReport {
     AgentReport::EditorStatus {
+        kind,
         problem: problem.map(str::to_owned),
     }
+}
+
+#[test]
+fn an_editor_update_problem_is_its_own_problem_beside_the_install_one() {
+    let (sink, problems, desk) = desk();
+    let box_ = name("box");
+    desk.begin(&box_);
+    let _ = sink.take();
+    desk.report(&box_, editor_of(EditorProblemKind::Update, None));
+    assert_eq!(changes(&sink), 0, "nothing was wrong");
+    desk.report(&box_, editor(Some("the download keeps failing")));
+    desk.report(
+        &box_,
+        editor_of(
+            EditorProblemKind::Update,
+            Some("the newer build exited before it started, so the previous one runs again"),
+        ),
+    );
+    let raised = problems.list();
+    assert_eq!(raised.len(), 2);
+    let update = raised
+        .iter()
+        .find(|p| p.key == "editor-update:box")
+        .unwrap();
+    assert_eq!(
+        update.title,
+        "The browser editor in box could not update: the newer build exited before it started, so the previous one runs again"
+    );
+    assert!(
+        update.detail.contains("keeps working on the build it has"),
+        "{}",
+        update.detail
+    );
+    assert_eq!(update.workspace, Some(box_.clone()));
+    // Ending the update problem leaves the install one.
+    desk.report(&box_, editor_of(EditorProblemKind::Update, None));
+    let left = problems.list();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].key, "editor-install:box");
+    // A stop ends what is left of both.
+    desk.report(
+        &box_,
+        editor_of(EditorProblemKind::Update, Some("a newer build was refused")),
+    );
+    desk.end(&box_);
+    assert_eq!(problems.list(), Vec::<Problem>::new());
+}
+
+#[test]
+fn an_editor_report_of_a_kind_this_host_does_not_know_raises_nothing() {
+    let (sink, problems, desk) = desk();
+    let box_ = name("box");
+    desk.begin(&box_);
+    let _ = sink.take();
+    desk.report(&box_, editor_of(EditorProblemKind::Unknown, Some("x")));
+    assert_eq!(changes(&sink), 0);
+    assert_eq!(problems.list(), Vec::<Problem>::new());
 }
 
 #[test]
@@ -264,4 +326,30 @@ fn hostile_hg37_a_flood_of_editor_reports_changes_the_problem_a_bounded_number_o
     }
     assert!(changes(&sink) <= 2 * usize::from(MAX_EDITOR_CHANGES));
     assert!(problems.list().len() <= 1);
+}
+
+#[test]
+fn hostile_hg37_a_flood_of_editor_update_reports_is_bounded_apart_from_the_install_ones() {
+    let (sink, problems, desk) = desk();
+    let box_ = name("box");
+    desk.begin(&box_);
+    let _ = sink.take();
+    for i in 0..100_000_u32 {
+        desk.report(
+            &box_,
+            editor_of(EditorProblemKind::Update, Some(&format!("cause {i}"))),
+        );
+        if i % 3 == 0 {
+            desk.report(&box_, editor_of(EditorProblemKind::Update, None));
+        }
+    }
+    assert!(changes(&sink) <= 2 * usize::from(MAX_EDITOR_CHANGES));
+    // The flood of one kind does not use up the other's changes.
+    desk.report(&box_, editor(Some("the install is refused")));
+    assert!(
+        problems
+            .list()
+            .iter()
+            .any(|p| p.key == "editor-install:box")
+    );
 }

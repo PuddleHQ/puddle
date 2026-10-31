@@ -23,9 +23,9 @@ use puddle_ca::{CaBuilder, WorkspaceCa};
 use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{AnyAddress, CollectingConnectionLog, StaticPolicy};
 use puddle_proxy::{
-    BoxFuture, InjectContext, InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector,
-    Interception, Proxy, ProxyConfig, RequestView, Resolver, Route, SecretValue, StandIns,
-    Termination, TerminationSet, Terminations,
+    AddressCheck, BoxFuture, InjectContext, InjectDecision, InjectRefusal, InjectedHeader,
+    Injection, Injector, Interception, Proxy, ProxyConfig, RequestView, Resolver, Route,
+    SecretValue, StandIns, Termination, TerminationSet, Terminations,
 };
 use puddle_types::{ConnectionEvent, DomainName, Host, NullSink, WorkspaceName};
 use puddle_upstream::TlsClient;
@@ -358,6 +358,7 @@ async fn serve_http<S: AsyncRead + AsyncWriteExt + Unpin>(
         let stream = reader.get_mut();
         match reply.trickle {
             Some(pause) => {
+                // flake-ok: simulated trickling server, the pause between bytes is the behaviour under test.
                 for byte in &reply.bytes {
                     if stream.write_all(&[*byte]).await.is_err() || stream.flush().await.is_err() {
                         return;
@@ -518,16 +519,19 @@ impl Injector for TestInjector {
 // ---------------------------------------------------------------------------------------------
 // The proxy under test.
 
-/// Resolves each name to a fixed loopback address, whatever the port.
+/// Resolves each name to fixed addresses (every `with` call for a name adds one), whatever the
+/// port.
 #[derive(Debug, Default)]
-pub(crate) struct Fixed(Mutex<HashMap<String, SocketAddr>>);
+pub(crate) struct Fixed(Mutex<HashMap<String, Vec<SocketAddr>>>);
 
 impl Fixed {
     pub(crate) fn with(self, name: &str, addr: SocketAddr) -> Self {
         self.0
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(name.to_owned(), addr);
+            .entry(name.to_owned())
+            .or_default()
+            .push(addr);
         self
     }
 }
@@ -543,11 +547,9 @@ impl Resolver for Fixed {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .get(name.as_str())
-            .copied();
+            .cloned();
         Box::pin(async move {
-            found
-                .map(|a| vec![a])
-                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no such name"))
+            found.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no such name"))
         })
     }
 }
@@ -575,6 +577,8 @@ pub(crate) struct RigBuilder {
     pub(crate) injector: Arc<dyn Injector>,
     pub(crate) tls: Option<TlsClient>,
     pub(crate) names: Vec<(&'static str, SocketAddr)>,
+    /// Which resolved addresses may be connected to (every one, unless a test brings the guard).
+    pub(crate) address_check: Arc<dyn AddressCheck>,
     pub(crate) allow: Vec<&'static str>,
     pub(crate) upstream: Option<puddle_proxy::Upstream>,
     /// The stand-ins of the first workspace, `box`, and of the second, `other`.
@@ -595,6 +599,7 @@ impl RigBuilder {
             injector: TestInjector::always(),
             tls: Some(pki.tls_client()),
             names: Vec::new(),
+            address_check: Arc::new(AnyAddress),
             allow: vec!["bound.test"],
             upstream: None,
             stand_ins: (Arc::new(StandIns::new()), Arc::new(StandIns::new())),
@@ -647,6 +652,13 @@ impl RigBuilder {
 
     pub(crate) fn name(mut self, name: &'static str, addr: SocketAddr) -> Self {
         self.names.push((name, addr));
+        self
+    }
+
+    /// Decides which resolved addresses may be connected to, in place of letting every one
+    /// through.
+    pub(crate) fn address_check(mut self, check: Arc<dyn AddressCheck>) -> Self {
+        self.address_check = check;
         self
     }
 
@@ -720,7 +732,7 @@ impl RigBuilder {
         let mut proxy = Proxy::new(policy.clone(), Arc::new(NullSink))
             .with_connection_log(log.clone())
             .with_resolver(Arc::new(resolver))
-            .with_address_check(Arc::new(AnyAddress))
+            .with_address_check(self.address_check)
             .with_config(self.config)
             .with_termination(
                 Arc::clone(&terminations) as Arc<dyn puddle_proxy::TerminationSource>,
@@ -821,14 +833,12 @@ impl Rig {
     /// Waits until the proxy has seen `count` of its connections to real servers end, so a test
     /// that cut one knows the next request finds the connection gone.
     pub(crate) async fn upstream_ended(&self, count: u64) {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        while self.proxy.upstream_connections_ended() < count {
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "the proxy never saw {count} upstream connection(s) end"
-            );
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        puddle_test_kit::eventually(
+            &format!("the proxy saw {count} upstream connection(s) end"),
+            Duration::from_secs(5),
+            || self.proxy.upstream_connections_ended() >= count,
+        )
+        .await;
     }
 
     pub(crate) async fn events(&self, count: usize) -> Vec<ConnectionEvent> {

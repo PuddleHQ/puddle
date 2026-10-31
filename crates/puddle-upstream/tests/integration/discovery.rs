@@ -415,6 +415,7 @@ async fn change_notifications_are_debounced_into_one_epoch() {
     assert!(os.is_watched());
     d.route(&https("a.test")).await;
     // A proxy client that flaps the setting ten times in a second:
+    // flake-ok: simulates a client flapping the setting every 100 ms; nothing is waited for
     for _ in 0..10 {
         assert!(os.fire_change());
         tokio::time::sleep(Duration::from_millis(100)).await;

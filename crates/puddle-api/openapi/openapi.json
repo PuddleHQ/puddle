@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.24.0"
+    "version": "0.25.0"
   },
   "paths": {
     "/api/app-icons": {
@@ -15268,7 +15268,8 @@
           "notify_oom",
           "notify_unexpected_stop",
           "confirm_global_rules",
-          "inbox_shortcuts"
+          "inbox_shortcuts",
+          "start_at_login"
         ],
         "properties": {
           "app_icon": {
@@ -15409,6 +15410,13 @@
               "null"
             ],
             "description": "The system sound with a notification (default off)."
+          },
+          "start_at_login": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Start Puddle when the user signs in to the computer (default off)."
           },
           "theme": {
             "oneOf": [

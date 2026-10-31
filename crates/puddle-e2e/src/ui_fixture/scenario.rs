@@ -40,6 +40,9 @@ pub struct Scenario {
     /// Rules, created first and in this order.
     #[serde(default)]
     pub rules: Vec<RuleSeed>,
+    /// Rules on method and path, created after the rules and in this order.
+    #[serde(default)]
+    pub request_rules: Vec<RequestRuleSeed>,
     /// Requests workspaces made, decided in this order (a matching rule decides, else a pending
     /// row opens), each leaving its `connection` audit record.
     #[serde(default)]
@@ -127,6 +130,25 @@ pub struct RuleSeed {
     /// Expires this long after it was created (ms); left out is permanent.
     #[serde(default)]
     pub expires_in_ms: Option<u64>,
+}
+
+/// A rule on method and path to create.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RequestRuleSeed {
+    /// `host` or `*.suffix.example.com`.
+    pub host: String,
+    /// The methods it refuses; none for every method.
+    #[serde(default)]
+    pub methods: Vec<String>,
+    /// The path pattern, such as `/repos/**`.
+    pub path: String,
+    /// The one workspace it applies to; left out is every workspace.
+    #[serde(default)]
+    pub workspace: Option<String>,
+    /// Created this long before now (ms).
+    #[serde(default)]
+    pub ago_ms: u64,
 }
 
 /// Allow or deny.
@@ -537,10 +559,14 @@ pub struct ConnectionSeed {
     /// What happened.
     pub decision: DecisionSeed,
     /// Why, as the audit log's `reason` code: `rule` (default for allow and deny), `no_rule`
-    /// (default for pending), `puddle_endpoint`, `ssh_unsupported` or `local_address` (default
-    /// for blocked).
+    /// (default for pending), `request_rule`, `puddle_endpoint`, `ssh_unsupported` or
+    /// `local_address` (default for blocked).
     #[serde(default)]
     pub reason: Option<String>,
+    /// The request the proxy read, and the rule on method and path that refused it (reason
+    /// `request_rule`).
+    #[serde(default)]
+    pub request_line: Option<RequestLineSeed>,
     /// Bytes from the workspace.
     #[serde(default)]
     pub bytes_up: u64,
@@ -550,6 +576,19 @@ pub struct ConnectionSeed {
     /// Recorded this long before now (ms).
     #[serde(default)]
     pub ago_ms: u64,
+}
+
+/// A request the proxy read in clear, and the rule on method and path that refused it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RequestLineSeed {
+    /// `GET`, `DELETE`, ...
+    pub method: String,
+    /// The request target; only its path is kept.
+    pub path: String,
+    /// The id of the rule on method and path that refused it, when one did.
+    #[serde(default)]
+    pub rule: Option<i64>,
 }
 
 /// The audit log's connection decisions.

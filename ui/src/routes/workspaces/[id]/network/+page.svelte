@@ -5,6 +5,7 @@
   import DecisionFlow from "#lib/components/DecisionFlow.svelte";
   import LoadNotice from "#lib/components/LoadNotice.svelte";
   import RequestRow from "#lib/components/RequestRow.svelte";
+  import RequestRulesSection from "#lib/components/RequestRulesSection.svelte";
   import RuleTable from "#lib/components/RuleTable.svelte";
   import WorkspaceSets from "#lib/components/WorkspaceSets.svelte";
   import { DEFAULT_SORT, isOwn, view, workspaceOf } from "#lib/rules/model.ts";
@@ -143,6 +144,8 @@
       </p>
     {/if}
   </section>
+
+  <RequestRulesSection workspace={workspace.name} {now} />
 
   <WorkspaceSets workspace={workspace.name} />
 

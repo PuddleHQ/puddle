@@ -601,6 +601,81 @@ async fn hostile_hg09_a_second_request_after_the_first_answer_is_never_looked_at
     );
 }
 
+/// A request whose framing two readers would read differently is refused with a `400` before
+/// anything connects: the second request hidden in its body never reaches a server and is never
+/// judged, so no rule needs to know about `evil.test`.
+#[tokio::test]
+async fn hostile_hg09_a_request_hidden_in_an_ambiguous_plain_body_is_refused_before_anything_connects()
+ {
+    let web = TcpListener::bind((LOCAL, 0)).await.unwrap();
+    let port = web.local_addr().unwrap().port();
+    let rig = Rig::with_resolver(
+        &ProxyConfig::default(),
+        StaticResolver::new()
+            .with("web.test", &[LOCAL])
+            .with("evil.test", &[LOCAL]),
+    );
+    rig.policy.allow(&host("web.test"));
+    let hidden = format!("GET http://evil.test:{port}/ HTTP/1.1\r\nHost: evil.test\r\n\r\n");
+    for framing in [
+        "Content-Length: 4\r\nTransfer-Encoding: chunked",
+        "Content-Length: 4\r\nContent-Length: 5",
+        "Transfer-Encoding: chunked, gzip",
+        "Transfer-Encoding: gzip",
+    ] {
+        let mut guest = rig.guest().await;
+        let mut stream = guest.stream().await;
+        let request = format!(
+            "POST http://web.test:{port}/ HTTP/1.1\r\nHost: web.test\r\n{framing}\r\n\r\n0\r\n\r\n{hidden}"
+        );
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let back = tokio::time::timeout(Duration::from_secs(5), read_all(&mut stream))
+            .await
+            .unwrap_or_else(|_| panic!("{framing}: no answer, the request was forwarded"))
+            .unwrap_or_default();
+        let back = String::from_utf8_lossy(&back).into_owned();
+        assert!(back.starts_with("HTTP/1.1 400"), "{framing}: {back}");
+    }
+    let accepted = tokio::time::timeout(Duration::from_millis(300), web.accept()).await;
+    assert!(accepted.is_err(), "a server was connected to");
+    assert_eq!(rig.policy.pending().len(), 0);
+}
+
+/// A guest's `Proxy-Authorization` is addressed to Puddle's proxy: the server behind it never sees
+/// it, and the guest's own `Authorization` goes through once, as sent.
+#[tokio::test]
+async fn hostile_hg17_the_guests_proxy_authorization_never_reaches_a_plain_http_server() {
+    let response = "HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok";
+    let (server, received) = http_server(response, 0).await;
+    let rig = Rig::with_resolver(
+        &ProxyConfig::default(),
+        StaticResolver::new().with("web.test", &[LOCAL]),
+    );
+    rig.policy.allow(&host("web.test"));
+    let mut guest = rig.guest().await;
+    let mut stream = guest.stream().await;
+    let request = format!(
+        "GET http://web.test:{}/ HTTP/1.1\r\nHost: web.test\r\nProxy-Authorization: Basic Z3Vlc3Q6cHc=\r\nproxy-authorization: Bearer second\r\nProxy-Connection: keep-alive\r\nAuthorization: Bearer mine\r\n\r\n",
+        server.port()
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let back = String::from_utf8(read_all(&mut stream).await.unwrap()).unwrap();
+    assert_eq!(back, response);
+    let (head, _) = received.await.unwrap();
+    let lower = head.to_ascii_lowercase();
+    assert!(
+        !lower.contains("proxy-authorization")
+            && !lower.contains("z3vlc3q6cha=")
+            && !lower.contains("second"),
+        "{head}"
+    );
+    assert_eq!(
+        lower.matches("authorization: bearer mine\r\n").count(),
+        1,
+        "{head}"
+    );
+}
+
 /// Through the route: a name that resolves to a refused address and an allowed one is
 /// connected to the allowed one only, and the audit row names that address, not the refused one.
 #[tokio::test]
@@ -760,15 +835,16 @@ async fn connections_over_the_workspace_limit_get_503_until_one_closes() {
     first.shutdown().await.unwrap();
     let _ = read_all(&mut first).await;
     drop(first);
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let (code, _) = guest.connect_to(&target).await;
-        if code == 200 {
-            break;
-        }
-        assert!(Instant::now() < deadline, "the slot was never freed");
-        tokio::task::yield_now().await;
-    }
+    let guest = tokio::sync::Mutex::new(guest);
+    puddle_test_kit::eventually_async(
+        "the closed connection's slot is freed",
+        Duration::from_secs(5),
+        || async {
+            let (code, _) = guest.lock().await.connect_to(&target).await;
+            code == 200
+        },
+    )
+    .await;
 }
 
 /// The refusal says why in its body and reaches the audit with its destination, so the user can
@@ -1344,11 +1420,12 @@ async fn an_agent_report_is_about_the_workspace_of_its_route_whatever_it_says() 
         control.write_all(&msg.to_line().unwrap()).await.unwrap();
     }
     control.flush().await.unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while reports.0.lock().unwrap().len() < 2 {
-        assert!(Instant::now() < deadline, "the reports never arrived");
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    puddle_test_kit::eventually(
+        "the two agent reports arrived",
+        Duration::from_secs(5),
+        || reports.0.lock().unwrap().len() >= 2,
+    )
+    .await;
     assert_eq!(
         *reports.0.lock().unwrap(),
         vec![
@@ -1393,12 +1470,12 @@ async fn the_guest_watcher_gets_the_link_and_the_ports_of_the_routes_workspace()
         .write_all(&AgentMessage::ports([8080, 3000]).to_line().unwrap())
         .await
         .unwrap();
-    for _ in 0..500 {
-        if !watched.ports.lock().unwrap().is_empty() && watched.link.lock().unwrap().is_some() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    puddle_test_kit::eventually(
+        "the ports and the link of the agent arrived",
+        Duration::from_secs(5),
+        || !watched.ports.lock().unwrap().is_empty() && watched.link.lock().unwrap().is_some(),
+    )
+    .await;
     assert_eq!(
         *watched.ports.lock().unwrap(),
         [(workspace("box"), vec![3000, 8080])]

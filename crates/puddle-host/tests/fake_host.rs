@@ -430,17 +430,12 @@ impl Guest {
 
     /// Waits until the hook has run `n` times in all.
     async fn boots_reach(&self, n: usize) {
-        for _ in 0..500 {
-            if self.boots() >= n {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        assert!(
-            self.boots() >= n,
-            "the boot hook ran {} times, not {n}",
-            self.boots()
-        );
+        eventually(
+            &format!("the boot hook ran {n} times"),
+            Duration::from_secs(10),
+            || self.boots() >= n,
+        )
+        .await;
     }
 }
 
@@ -1780,12 +1775,10 @@ async fn a_stopped_workspace_lists_the_checkouts_it_had_and_refuses_an_add() {
     let mut events = api.events().await;
     create(&api, &mut events, "adds").await;
     // The listing after the start is made in the background: wait for it.
-    for _ in 0..500 {
-        if !rig.guest.listings.lock().unwrap().is_empty() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    eventually("the background listing", Duration::from_secs(10), || {
+        !rig.guest.listings.lock().unwrap().is_empty()
+    })
+    .await;
     api.post("/api/workspaces/adds/stop", "").await;
     events.until(ended("adds"), Duration::from_secs(20)).await;
     let listings = rig.guest.listings.lock().unwrap().len();
@@ -1949,9 +1942,10 @@ async fn calls_that_wait_for_a_listing_share_the_one_that_starts_after_they_aske
         tokio::spawn(async move { checkouts_of(&api, "adds").await })
     };
     let first = ask(&host);
-    while !rig.guest.listing_waits.load(Ordering::SeqCst) {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    eventually("the listing is held", Duration::from_secs(10), || {
+        rig.guest.listing_waits.load(Ordering::SeqCst)
+    })
+    .await;
     tokio::time::sleep(Duration::from_millis(20)).await;
     let (second, third) = (ask(&host), ask(&host));
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -4761,27 +4755,21 @@ async fn an_image_pull_is_audited_as_puddles_own_connection() {
     assert!(head.starts_with(b"HTTP/1.1 200"), "{head:?}");
     drop(stream);
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        let records: Vec<serde_json::Value> = host
-            .store()
-            .audit_lines(0, 1000)
-            .unwrap()
-            .into_iter()
-            .filter_map(|(_, line)| serde_json::from_str(&line).ok())
-            .filter(|v: &serde_json::Value| v["type"] == "connection")
-            .collect();
-        if let Some(record) = records.first() {
-            assert!(record["workspace"].is_null(), "{record}");
-            assert_eq!(record["origin"], "puddle", "{record}");
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "no audit record for the pull"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    let record = eventually(
+        "an audit record for the pull",
+        Duration::from_secs(5),
+        || {
+            host.store()
+                .audit_lines(0, 1000)
+                .unwrap()
+                .into_iter()
+                .filter_map(|(_, line)| serde_json::from_str(&line).ok())
+                .find(|v: &serde_json::Value| v["type"] == "connection")
+        },
+    )
+    .await;
+    assert!(record["workspace"].is_null(), "{record}");
+    assert_eq!(record["origin"], "puddle", "{record}");
     host.shutdown().await;
 }
 
@@ -6277,6 +6265,37 @@ async fn a_git_too_old_for_the_author_rules_is_a_problem_until_it_is_updated() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn kubernetes_tools_are_a_problem_until_a_start_finds_none() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    assert!(!has_problem(&host, "kubernetes:acme"));
+
+    // The start after kind and k3d were installed says so, and what to do.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    *rig.guest.boot_says.lock().unwrap() = "puddle-boot: kubernetes tools kind k3d\n".to_owned();
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let problem = problem_of(&host, "kubernetes:acme");
+    assert_eq!(problem.title, "Kubernetes Services do not work in acme");
+    assert!(
+        problem.detail.contains("kind, k3d") && problem.detail.contains("port forward"),
+        "{}",
+        problem.detail
+    );
+
+    // A stopped workspace has none.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(!has_problem(&host, "kubernetes:acme"));
+
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_git_too_old_is_noticed_at_a_start_too_but_only_when_author_rules_exist() {
     let rig = Rig::new();
     let host = rig.start().await;
@@ -7530,17 +7549,12 @@ async fn locks_that_could_not_be_removed_one_by_one_are_listed_in_the_problem() 
 
 /// Waits until the host has read its stored proxy sign-ins (it does so off the start-up path).
 async fn proxy_sign_ins_loaded(host: &Host<FakeRuntime>, count: usize) {
-    for _ in 0..200 {
-        if host.proxy_passwords().proxies().len() == count {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    assert_eq!(
-        host.proxy_passwords().proxies().len(),
-        count,
-        "the proxy sign-ins were not loaded"
-    );
+    eventually(
+        &format!("{count} proxy sign-ins loaded"),
+        Duration::from_secs(5),
+        || host.proxy_passwords().proxies().len() == count,
+    )
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -7644,19 +7658,17 @@ async fn a_credential_store_that_cannot_be_read_at_start_is_a_problem_until_the_
     let rig = Rig::new();
     rig.secrets.break_it();
     let host = rig.start().await;
-    let mut raised = false;
-    for _ in 0..200 {
-        raised = host
-            .problems()
-            .list()
-            .iter()
-            .any(|p| p.key == "proxy-sign-in-store");
-        if raised {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    assert!(raised, "{:?}", host.problems().list());
+    eventually(
+        "the sign-in store problem raised",
+        Duration::from_secs(5),
+        || {
+            host.problems()
+                .list()
+                .iter()
+                .any(|p| p.key == "proxy-sign-in-store")
+        },
+    )
+    .await;
     host.shutdown().await;
     drop(host);
 
@@ -8149,20 +8161,20 @@ async fn a_check_that_cannot_run_is_not_a_verdict_on_the_script() {
 
 /// Waits for the problem `key` to be there (or gone) in the problem list, and says what it is.
 async fn problem_is(api: &Api, key: &str, present: bool) -> Option<(String, String)> {
-    let mut found = None;
-    for _ in 0..500 {
-        found = problems_of(api)
-            .await
-            .into_iter()
-            .find(|p| p.0 == key)
-            .map(|p| (p.2, p.3));
-        if found.is_some() == present {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert_eq!(found.is_some(), present, "the problem {key}: {found:?}");
-    found
+    let state = if present { "present" } else { "gone" };
+    puddle_test_kit::eventually_async(
+        &format!("the problem {key} {state}"),
+        Duration::from_secs(10),
+        || async {
+            let found = problems_of(api)
+                .await
+                .into_iter()
+                .find(|p| p.0 == key)
+                .map(|p| (p.2, p.3));
+            (found.is_some() == present).then_some(found)
+        },
+    )
+    .await
 }
 
 /// Puts a plain file where the workspace's shell init folder is (or was), so nothing can be
@@ -8852,7 +8864,7 @@ async fn an_entrypoint_that_dies_later_and_failing_lookups_are_problems_the_gues
 #[tokio::test(flavor = "multi_thread")]
 async fn a_refused_editor_download_is_a_problem_on_its_workspace_until_an_install_works_or_it_stops()
  {
-    use puddle_agent_proto::AgentMessage;
+    use puddle_agent_proto::{AgentMessage, EditorProblemKind};
     let rig = Rig::new();
     let host = rig.start().await;
     let api = api(&host);
@@ -8863,9 +8875,10 @@ async fn a_refused_editor_download_is_a_problem_on_its_workspace_until_an_instal
     let session = agent_says(
         &rig,
         "acme",
-        &[AgentMessage::editor_status(Some(
-            "the download does not match the checksum Microsoft published for it",
-        ))],
+        &[AgentMessage::editor_status(
+            EditorProblemKind::Install,
+            Some("the download does not match the checksum Microsoft published for it"),
+        )],
     )
     .await;
     let (title, detail) = problem_is(&api, "editor-install:acme", true).await.unwrap();
@@ -8884,7 +8897,15 @@ async fn a_refused_editor_download_is_a_problem_on_its_workspace_until_an_instal
     );
 
     // The install worked on a later try: the agent says so and the problem ends.
-    let fixed = agent_says(&rig, "acme", &[AgentMessage::editor_status(None)]).await;
+    let fixed = agent_says(
+        &rig,
+        "acme",
+        &[AgentMessage::editor_status(
+            EditorProblemKind::Install,
+            None,
+        )],
+    )
+    .await;
     assert!(
         problem_is(&api, "editor-install:acme", false)
             .await
@@ -8896,7 +8917,10 @@ async fn a_refused_editor_download_is_a_problem_on_its_workspace_until_an_instal
     let again = agent_says(
         &rig,
         "acme",
-        &[AgentMessage::editor_status(Some("refused again"))],
+        &[AgentMessage::editor_status(
+            EditorProblemKind::Install,
+            Some("refused again"),
+        )],
     )
     .await;
     problem_is(&api, "editor-install:acme", true).await.unwrap();
@@ -8908,6 +8932,58 @@ async fn a_refused_editor_download_is_a_problem_on_its_workspace_until_an_instal
             .is_none()
     );
     again.abort();
+    session.abort();
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_newer_editor_build_that_was_refused_is_a_problem_beside_the_install_one_until_a_look_works()
+ {
+    use puddle_agent_proto::{AgentMessage, EditorProblemKind};
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+
+    let session = agent_says(
+        &rig,
+        "acme",
+        &[AgentMessage::editor_status(
+            EditorProblemKind::Update,
+            Some("a newer build was refused: the download does not match the checksum Microsoft published for it"),
+        )],
+    )
+    .await;
+    let (title, detail) = problem_is(&api, "editor-update:acme", true).await.unwrap();
+    assert_eq!(
+        title,
+        "The browser editor in acme could not update: a newer build was refused: the download does not match the checksum Microsoft published for it"
+    );
+    assert!(
+        detail.contains("keeps working on the build it has"),
+        "{detail}"
+    );
+    assert!(
+        problem_is(&api, "editor-install:acme", false)
+            .await
+            .is_none(),
+        "the editor itself is installed"
+    );
+
+    // A later look worked: the agent says so and the problem ends.
+    let fixed = agent_says(
+        &rig,
+        "acme",
+        &[AgentMessage::editor_status(EditorProblemKind::Update, None)],
+    )
+    .await;
+    assert!(
+        problem_is(&api, "editor-update:acme", false)
+            .await
+            .is_none()
+    );
+    fixed.abort();
     session.abort();
     host.shutdown().await;
 }

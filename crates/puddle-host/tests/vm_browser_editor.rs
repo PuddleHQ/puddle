@@ -280,16 +280,15 @@ async fn counts_until(
     what: &str,
     done: impl Fn(&str) -> bool,
 ) -> String {
-    let mut line = String::new();
-    for _ in 0..240 {
-        line = guest(runtime, sandbox, COUNT).await;
+    puddle_test_kit::eventually_async(what, Duration::from_secs(90), || async {
+        let line = guest(runtime, sandbox, COUNT).await;
         if done(&line) {
-            return line;
+            Ok(line)
+        } else {
+            Err(format!("the guest shows {line}"))
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-    let processes = guest(runtime, sandbox, "ps -eo pid,ppid,user,args | cut -c1-220").await;
-    panic!("{what}: the guest still shows {line}\n{processes}");
+    })
+    .await
 }
 
 /// Waits until the front counts some window of `workspace` (`open`) or none; a limit on a hang

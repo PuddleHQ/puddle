@@ -93,19 +93,20 @@ async fn hostile_hg11_a_hundred_thousand_streams_over_the_cap_are_each_refused_a
     );
     // The held streams were never answered (their heads are unfinished) and held the cap until the
     // child ended; now the workspace connects again.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let mut guest = Guest::connect(&rig.attacked).await;
-    loop {
-        let (code, _) = guest.connect_status(rig.echo).await;
-        if code == 200 {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the workspace never connected again after its held streams ended (last answer {code})"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    let guest = tokio::sync::Mutex::new(Guest::connect(&rig.attacked).await);
+    puddle_test_kit::eventually_async(
+        "the workspace connects again after its held streams ended",
+        Duration::from_secs(10),
+        || async {
+            let (code, _) = guest.lock().await.connect_status(rig.echo).await;
+            if code == 200 {
+                Ok(())
+            } else {
+                Err(format!("last answer {code}"))
+            }
+        },
+    )
+    .await;
 }
 
 /// The child's part: CAP streams that stop halfway through their head hold the workspace at its

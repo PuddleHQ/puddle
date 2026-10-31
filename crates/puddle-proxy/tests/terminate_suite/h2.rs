@@ -376,13 +376,12 @@ async fn an_idle_h2_connection_is_closed_after_the_keepalive_timeout() {
     let mut guest = rig.guest().await;
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     assert_eq!(client.get("bound.test", "/").await.status, 200);
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        while !client.sender.is_closed() {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
-    })
-    .await
-    .expect("the idle connection is closed");
+    puddle_test_kit::eventually(
+        "the idle connection is closed",
+        std::time::Duration::from_secs(10),
+        || client.sender.is_closed(),
+    )
+    .await;
 }
 
 // ---------------------------------------------------------------------------------------------

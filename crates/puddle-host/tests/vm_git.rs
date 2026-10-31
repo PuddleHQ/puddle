@@ -265,21 +265,25 @@ async fn vm_git_clones_and_pushes_with_two_identities_and_the_guest_never_holds_
     );
     // The other owner gets the other identity, from the same host: its credential for the
     // clone, its author for the commit (the author rules follow the attach in the running guest).
-    let mut author = String::new();
-    for _ in 0..60 {
-        author = guest(
-            &vm.runtime,
-            &sandbox,
-            "set -eu; cd /tmp/k; rm -rf else; git clone -q https://bound.invalid/someone/else.git else; \
-             git -C else config user.email",
-        )
-        .await;
-        if author.trim() == "personal@example.org" {
-            break;
-        }
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
-    assert_eq!(author.trim(), "personal@example.org", "{author}");
+    puddle_test_kit::eventually_async(
+        "the other owner's author identity in the guest",
+        Duration::from_secs(60),
+        || async {
+            let author = guest(
+                &vm.runtime,
+                &sandbox,
+                "set -eu; cd /tmp/k; rm -rf else; git clone -q https://bound.invalid/someone/else.git else; \
+                 git -C else config user.email",
+            )
+            .await;
+            if author.trim() == "personal@example.org" {
+                Ok(())
+            } else {
+                Err(format!("author {author:?}"))
+            }
+        },
+    )
+    .await;
     let seen = fake.seen();
     for request in seen.iter().skip(first) {
         let wanted = if request.target.starts_with("/someone/") {

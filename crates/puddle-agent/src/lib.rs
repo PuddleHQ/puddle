@@ -135,8 +135,9 @@ impl Agent {
         };
         if let (Some(editor), Some(control)) = (config.editor.clone(), upstream.editor_control()) {
             tasks.spawn(exthost::sweep_loop(1));
-            tasks.spawn(editor::forward_install_problem(
+            tasks.spawn(editor::forward_editor_problems(
                 control.install_problem(),
+                control.update_problem(),
                 tx.clone(),
             ));
             tasks.spawn(editor::run(editor, control));

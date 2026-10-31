@@ -139,6 +139,7 @@ impl Backoff {
         let (shared, stopped) = (Arc::clone(&nanos), Arc::clone(&stop));
         let thread = std::thread::spawn(move || {
             let mut accrual = Accrual::default();
+            // flake-ok: a sampler paced at a fixed interval until stopped, not a wait for a condition.
             while !stopped.load(Ordering::Relaxed) {
                 let Ok(table) = std::fs::read_to_string("/proc/net/tcp") else {
                     return;

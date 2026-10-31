@@ -59,7 +59,8 @@ struct Reply {
 
 impl Reply {
     fn json(&self) -> Value {
-        serde_json::from_str(&self.body).unwrap_or_else(|e| panic!("{e}: {:?}", self.body))
+        serde_json::from_str(&self.body)
+            .unwrap_or_else(|e| panic!("{e}: reply of {} bytes is not JSON", self.body.len()))
     }
 }
 
@@ -1223,10 +1224,15 @@ async fn the_certificate_is_not_checked_until_a_scenario_or_a_step_sets_it_and_t
         "needs_trust"
     );
     // The default answer is a yes.
-    let trusted = run.api("POST", "/api/dev-certificate/trust", None).await;
-    assert_eq!(trusted.status, 200, "{}", trusted.body);
+    let answer = run.api("POST", "/api/dev-certificate/trust", None).await;
     assert_eq!(
-        trusted.json(),
+        answer.status,
+        200,
+        "trust answered with {} body bytes",
+        answer.body.len()
+    );
+    assert_eq!(
+        answer.json(),
         json!({"dev_certificate": "trusted", "detail": null, "waiting": false})
     );
     assert_eq!(dev_certificate(run.get("/api/first-run").await), "trusted");

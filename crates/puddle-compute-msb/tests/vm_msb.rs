@@ -329,7 +329,7 @@ async fn vm_a_stop_lets_a_detached_daemon_shut_down_cleanly() {
     cleanup(&rt, &[&n]).await;
     stopped.unwrap();
     assert!(!forced);
-    assert_eq!(seen.stdout_text().trim(), "clean", "{seen:?}");
+    assert_eq!(seen.stdout_text().trim(), "clean", "{}", seen.stderr_text());
 }
 
 /// The other side: a process that ignores SIGTERM holds the stop only for the grace period, and

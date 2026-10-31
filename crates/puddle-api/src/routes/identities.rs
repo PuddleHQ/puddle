@@ -8,7 +8,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use puddle_secrets::{SourceSpec, StoredId, TokenScope};
-use puddle_store::{CredentialBinding, IdentityId, Store};
+use puddle_store::{CredentialBinding, IdentityId};
 use puddle_types::{WorkspaceId, WorkspaceName};
 
 use crate::ApiErrorBody;
@@ -22,13 +22,17 @@ use crate::wire::{
     WorkspaceSwitchesRequest,
 };
 
-fn view(store: &Store, identity: puddle_store::Identity) -> Result<IdentityView, ApiError> {
-    let workspaces = store.identity_workspaces(identity.id)?;
-    Ok(IdentityView::from_store(identity, workspaces))
+fn view(state: &AppState, identity: puddle_store::Identity) -> Result<IdentityView, ApiError> {
+    let workspaces = state.store.identity_workspaces(identity.id)?;
+    Ok(IdentityView::from_store(
+        identity,
+        workspaces,
+        state.credentials.as_ref(),
+    ))
 }
 
 fn git_view(
-    store: &Store,
+    state: &AppState,
     workspace: WorkspaceName,
     git: puddle_store::WorkspaceGit,
 ) -> Result<WorkspaceGitView, ApiError> {
@@ -37,7 +41,7 @@ fn git_view(
         identities: git
             .identities
             .into_iter()
-            .map(|identity| view(store, identity))
+            .map(|identity| view(state, identity))
             .collect::<Result<_, _>>()?,
         repos: git.repos.into_iter().map(GitRepoView::from_store).collect(),
         only_push_listed: git.only_push_listed,
@@ -110,7 +114,7 @@ pub(crate) async fn list_identities(
             .store
             .identities()?
             .into_iter()
-            .map(|identity| view(&state.store, identity))
+            .map(|identity| view(&state, identity))
             .collect::<Result<_, _>>()?;
         Ok(IdentityList { identities })
     })
@@ -137,7 +141,7 @@ pub(crate) async fn create_identity(
     let draft = body.into_draft()?;
     let made = blocking(move || {
         let identity = state.store.create_identity(draft)?;
-        view(&state.store, identity)
+        view(&state, identity)
     })
     .await?;
     Ok((StatusCode::CREATED, Json(made)))
@@ -160,7 +164,7 @@ pub(crate) async fn get_identity(
 ) -> Result<Json<IdentityView>, ApiError> {
     let found = blocking(move || {
         let identity = state.store.identity(IdentityId(id))?;
-        view(&state.store, identity)
+        view(&state, identity)
     })
     .await?;
     Ok(Json(found))
@@ -189,11 +193,11 @@ pub(crate) async fn update_identity(
     crate::extract::Json(body): crate::extract::Json<IdentityRequest>,
 ) -> Result<Json<IdentityView>, ApiError> {
     let draft = body.into_draft()?;
-    let store = Arc::clone(&state.store);
+    let held = state.clone();
     let (updated, before) = blocking(move || {
-        let before = store.identity(IdentityId(id))?.credentials;
-        let identity = store.update_identity(IdentityId(id), draft)?;
-        Ok((view(&store, identity)?, before))
+        let before = held.store.identity(IdentityId(id))?.credentials;
+        let identity = held.store.update_identity(IdentityId(id), draft)?;
+        Ok((view(&held, identity)?, before))
     })
     .await?;
     // A token the identity read before and no longer does goes now, not at the next start. A
@@ -251,7 +255,7 @@ pub(crate) async fn set_default_identity(
 ) -> Result<Json<IdentityView>, ApiError> {
     let found = blocking(move || {
         let identity = state.store.set_default_identity(IdentityId(id))?;
-        view(&state.store, identity)
+        view(&state, identity)
     })
     .await?;
     Ok(Json(found))
@@ -278,7 +282,7 @@ pub(crate) async fn reorder_identities(
             .store
             .reorder_identities(&ids)?
             .into_iter()
-            .map(|identity| view(&state.store, identity))
+            .map(|identity| view(&state, identity))
             .collect::<Result<_, _>>()?;
         Ok(IdentityList { identities })
     })
@@ -340,7 +344,7 @@ pub(crate) async fn get_workspace_git(
     let name = workspace(&state, &id).await?;
     let found = blocking(move || {
         let git = state.store.workspace_git(&name)?;
-        git_view(&state.store, name, git)
+        git_view(&state, name, git)
     })
     .await?;
     Ok(Json(found))
@@ -370,7 +374,7 @@ pub(crate) async fn set_workspace_identities(
     let ids: Vec<_> = body.ids.into_iter().map(IdentityId).collect();
     let set = blocking(move || {
         let git = state.store.set_workspace_identities(&name, &ids)?;
-        git_view(&state.store, name, git)
+        git_view(&state, name, git)
     })
     .await?;
     Ok(Json(set))
@@ -403,7 +407,7 @@ pub(crate) async fn attach_identity(
         let git = state
             .store
             .attach_identity(&name, IdentityId(body.identity), position)?;
-        git_view(&state.store, name, git)
+        git_view(&state, name, git)
     })
     .await?;
     Ok(Json(set))
@@ -430,7 +434,7 @@ pub(crate) async fn detach_identity(
     let name = workspace(&state, &id).await?;
     let set = blocking(move || {
         let git = state.store.detach_identity(&name, IdentityId(identity))?;
-        git_view(&state.store, name, git)
+        git_view(&state, name, git)
     })
     .await?;
     Ok(Json(set))
@@ -459,7 +463,7 @@ pub(crate) async fn set_git_switches(
     let (push, pull) = body.changes()?;
     let set = blocking(move || {
         let git = state.store.change_git_switches(&name, push, pull)?;
-        git_view(&state.store, name, git)
+        git_view(&state, name, git)
     })
     .await?;
     Ok(Json(set))

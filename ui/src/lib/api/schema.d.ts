@@ -2121,6 +2121,11 @@ export interface components {
             readable: boolean;
         };
         /**
+         * @description What asked for a read of a credential.
+         * @enum {string}
+         */
+        CheckedBy: "injection" | "repository_list" | "test";
+        /**
          * @description One checkout found directly under the workspace's volume root. Every string except `entry`
          *     came from the guest: escape it when rendering.
          */
@@ -2978,6 +2983,19 @@ export interface components {
             /** @description Where its value comes from. */
             source: components["schemas"]["CredentialSource"];
         };
+        /**
+         * @description A credential of an identity as the host shows it: the reference and what the last read of it
+         *     came to.
+         */
+        IdentityCredentialView: {
+            /** @description What it covers. */
+            covers: components["schemas"]["CredentialCoverage"];
+            /** @description The Git host (`github.com`, `dev.azure.com`). */
+            host: string;
+            last_check: components["schemas"]["LastCheck"] | null;
+            /** @description Where its value comes from. */
+            source: components["schemas"]["CredentialSource"];
+        };
         /** @description What deleting an identity changed. */
         IdentityDeleted: {
             /** @description The workspaces it was taken off. */
@@ -3027,8 +3045,8 @@ export interface components {
              * @description Epoch ms it was made.
              */
             created_at: number;
-            /** @description Its credentials, as references. */
-            credentials: components["schemas"]["IdentityCredential"][];
+            /** @description Its credentials, as references, with the last read of each. */
+            credentials: components["schemas"]["IdentityCredentialView"][];
             /**
              * Format: int64
              * @description Its number.
@@ -3123,6 +3141,22 @@ export interface components {
              * @description How many events were dropped.
              */
             missed: number;
+        };
+        /** @description What the last read of a credential came to, wherever the read came from. Never the value. */
+        LastCheck: {
+            /** @description What asked for it. */
+            by: components["schemas"]["CheckedBy"];
+            /**
+             * Format: int64
+             * @description Epoch ms the read finished.
+             */
+            checked_at: number;
+            /** @description True when the way out is for the user to sign in. */
+            needs_sign_in: boolean;
+            /** @description Why not, in words; `null` when it is readable. */
+            problem: string | null;
+            /** @description True when the source gave a value. */
+            readable: boolean;
         };
         /**
          * @description A host Puddle stopped decrypting in a workspace because a tool there refused Puddle's

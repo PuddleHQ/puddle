@@ -1,10 +1,10 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
-  import { statusWord, type Check } from "#lib/identities/model.ts";
+  import { seenText, statusWord, type Check } from "#lib/identities/model.ts";
 
   // What the last check of a credential came to. The word carries the meaning; the colour only
   // repeats it.
-  let { check }: { check: Check } = $props();
+  let { check, now = Date.now() }: { check: Check; now?: number } = $props();
 
   const tone = $derived(
     check.state === "ok"
@@ -17,7 +17,11 @@
   );
 </script>
 
-<span class="chip {tone}" data-check={check.state}>{statusWord(check)}</span>
+<span
+  class="chip {tone}"
+  data-check={check.state}
+  title={seenText(check, now) || undefined}>{statusWord(check)}</span
+>
 
 <style>
   .chip {

@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The guest agents' reports about their own workspaces (an entrypoint that exited, stub DNS
-//! trouble, an editor server that could not be installed or updated), made background problems.
+//! trouble, an editor server that could not be installed or updated, capture rules the guest tore
+//! down or that cannot be installed), made background problems.
 //!
 //! A report is the guest's claim and the guest is untrusted, so a report can only raise one of
 //! four problems of the workspace whose route carried it, with text written here. Reports count
 //! only between a start and a stop, and each run of a workspace changes each problem a bounded
 //! number of times, whatever the guest sends: the entrypoint problem once, the DNS one once per
-//! kind, each editor one at most [`MAX_EDITOR_CHANGES`] times.
+//! kind, each editor one at most [`MAX_REASON_CHANGES`] times.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -23,8 +24,8 @@ fn entrypoint_key(name: &WorkspaceName) -> String {
     format!("entrypoint:{name}")
 }
 
-/// How often one run of a workspace may change the text of each editor problem.
-const MAX_EDITOR_CHANGES: u8 = 4;
+/// How often one run of a workspace may change the text of each problem that names a reason.
+const MAX_REASON_CHANGES: u8 = 4;
 
 /// The key of the problem about the browser editor's install in `name`.
 pub(crate) fn editor_install_key(name: &WorkspaceName) -> String {
@@ -34,6 +35,16 @@ pub(crate) fn editor_install_key(name: &WorkspaceName) -> String {
 /// The key of the problem about the browser editor's updates in `name`.
 fn editor_update_key(name: &WorkspaceName) -> String {
     format!("editor-update:{name}")
+}
+
+/// The key of the problem about capture rules the guest tore down in `name`.
+fn capture_tamper_key(name: &WorkspaceName) -> String {
+    format!("capture-tamper:{name}")
+}
+
+/// The key of the problem about capture rules that cannot be installed in `name`.
+fn capture_unavailable_key(name: &WorkspaceName) -> String {
+    format!("capture-unavailable:{name}")
 }
 
 /// The key of the problem about the stub DNS of `name`.
@@ -92,6 +103,37 @@ fn editor_update_problem(name: &WorkspaceName, reason: &str) -> Problem {
     .about(name.clone())
 }
 
+/// The problem for capture rules the guest deleted or edited; the agent put them back each time.
+/// No count in the text: a moving count would bring the notice back after the user dismissed it
+/// (the host log has every event).
+fn capture_tamper_problem(name: &WorkspaceName) -> Problem {
+    Problem::new(
+        capture_tamper_key(name),
+        format!("Something in {name} deleted Puddle's capture rules; Puddle put them back"),
+        "Since the workspace started, a process in it removed or changed the firewall rules that \
+         send its network traffic through Puddle. Puddle restored them each time, so tools that \
+         ignore proxy settings kept working through the proxy. A tool that flushes the firewall \
+         (an `nft flush ruleset` in a setup script, a firewall manager) does this. This goes away \
+         when the workspace stops or starts again."
+            .to_owned(),
+    )
+    .about(name.clone())
+}
+
+/// The problem for capture rules that cannot be installed; `reason` is the agent's cleaned text.
+fn capture_unavailable_problem(name: &WorkspaceName, reason: &str) -> Problem {
+    Problem::new(
+        capture_unavailable_key(name),
+        format!("Tools in {name} that ignore proxy settings are offline: {reason}"),
+        "Puddle could not install the rules that send the workspace's network traffic through it, \
+         so tools that ignore the HTTP proxy settings cannot reach the network. Tools that use the \
+         settings are not affected. Puddle keeps trying; this goes away when the rules install, or \
+         when the workspace stops or starts again."
+            .to_owned(),
+    )
+    .about(name.clone())
+}
+
 /// What a kind of stub DNS trouble means for the tools in the workspace, or `None` when the client
 /// asks again and usually gets its answer (only the host log hears of it).
 fn stub_dns_effect(kind: StubDnsTrouble) -> Option<&'static str> {
@@ -137,21 +179,25 @@ struct Run {
     /// The DNS trouble kinds the problem names.
     dns: BTreeSet<StubDnsTrouble>,
     /// The editor's install problem.
-    install: EditorSlot,
+    install: ReasonSlot,
     /// The editor's update problem.
-    update: EditorSlot,
+    update: ReasonSlot,
+    /// The tamper problem was raised in this run.
+    tampered: bool,
+    /// The capture-unavailable problem.
+    unavailable: ReasonSlot,
 }
 
-/// What one run has reported of one editor problem.
+/// What one run has reported of one problem that names a reason.
 #[derive(Debug, Default)]
-struct EditorSlot {
+struct ReasonSlot {
     /// The reason the problem names now, `None` while there is none.
     reason: Option<String>,
     /// How often the problem's text changed in this run.
     changes: u8,
 }
 
-/// What a report did to an [`EditorSlot`].
+/// What a report did to a [`ReasonSlot`].
 enum Slot {
     /// Nothing the user would see.
     Same,
@@ -159,17 +205,17 @@ enum Slot {
     Ended,
     /// The problem has this reason now.
     Raised(String),
-    /// The run already changed it [`MAX_EDITOR_CHANGES`] times.
+    /// The run already changed it [`MAX_REASON_CHANGES`] times.
     Limited,
 }
 
-impl EditorSlot {
+impl ReasonSlot {
     fn report(&mut self, problem: Option<String>) -> Slot {
         match problem {
             None if self.reason.take().is_some() => Slot::Ended,
             None => Slot::Same,
             Some(reason) if self.reason.as_deref() == Some(reason.as_str()) => Slot::Same,
-            Some(_) if self.changes >= MAX_EDITOR_CHANGES => Slot::Limited,
+            Some(_) if self.changes >= MAX_REASON_CHANGES => Slot::Limited,
             Some(reason) => {
                 self.changes += 1;
                 self.reason = Some(reason.clone());
@@ -185,8 +231,10 @@ impl Run {
             taking: true,
             entrypoint: false,
             dns: BTreeSet::new(),
-            install: EditorSlot::default(),
-            update: EditorSlot::default(),
+            install: ReasonSlot::default(),
+            update: ReasonSlot::default(),
+            tampered: false,
+            unavailable: ReasonSlot::default(),
         }
     }
 }
@@ -218,6 +266,8 @@ impl ReportDesk {
         self.problems.clear(&stub_dns_key(name));
         self.problems.clear(&editor_install_key(name));
         self.problems.clear(&editor_update_key(name));
+        self.problems.clear(&capture_tamper_key(name));
+        self.problems.clear(&capture_unavailable_key(name));
     }
 
     /// A stop of `name` was accepted: what its guest reports from now (its entrypoint ended by the
@@ -235,7 +285,7 @@ impl ReportDesk {
         }
     }
 
-    /// `name` no longer runs: the DNS and editor problems are about a machine that is gone (the
+    /// `name` no longer runs: the DNS, editor and capture problems are about a machine that is gone (the
     /// agent of the next start tells again). The entrypoint problem stays until the next start,
     /// because the image still has the fault.
     pub(crate) fn end(&self, name: &WorkspaceName) {
@@ -243,6 +293,8 @@ impl ReportDesk {
         self.problems.clear(&stub_dns_key(name));
         self.problems.clear(&editor_install_key(name));
         self.problems.clear(&editor_update_key(name));
+        self.problems.clear(&capture_tamper_key(name));
+        self.problems.clear(&capture_unavailable_key(name));
     }
 
     /// `name` was deleted: both problems end.
@@ -255,6 +307,7 @@ impl ReportDesk {
 impl AgentReports for ReportDesk {
     fn report(&self, workspace: &WorkspaceName, report: AgentReport) {
         let mut end_editor = None;
+        let mut end_unavailable = false;
         let raise = {
             let mut runs = self.runs();
             let Some(run) = runs.get_mut(workspace).filter(|run| run.taking) else {
@@ -301,9 +354,32 @@ impl AgentReports for ReportDesk {
                         Slot::Raised(reason) => Some(editor_update_problem(workspace, &reason)),
                     }
                 }
+                AgentReport::CaptureTampered { .. } => {
+                    (!std::mem::replace(&mut run.tampered, true))
+                        .then(|| capture_tamper_problem(workspace))
+                }
+                AgentReport::CaptureUnavailable { reason } => {
+                    match run.unavailable.report(reason) {
+                        Slot::Same => None,
+                        Slot::Ended => {
+                            end_unavailable = true;
+                            None
+                        }
+                        Slot::Limited => {
+                            tracing::info!(%workspace, "a capture-unavailable report past the limit for one run ignored");
+                            None
+                        }
+                        Slot::Raised(reason) => {
+                            Some(capture_unavailable_problem(workspace, &reason))
+                        }
+                    }
+                }
                 _ => None,
             }
         };
+        if end_unavailable {
+            self.problems.clear(&capture_unavailable_key(workspace));
+        }
         match end_editor {
             Some(EditorProblemKind::Install) => {
                 self.problems.clear(&editor_install_key(workspace));

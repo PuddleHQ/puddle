@@ -1502,22 +1502,16 @@ async fn shutdown_returns_only_once_nothing_accepts_on_the_route_any_more() {
     assert!(listening(&path).await);
     let Rig { route, root, .. } = rig;
     route.shutdown().await;
-    // A blocking connect cannot yield, so a shutdown that only asked the task to stop (which
-    // then ends at its next poll) would still be listening here. A Windows pipe has no such
-    // probe, and its idle instances stop listening only once the runtime has dropped the aborted
-    // acceptors, so there the check is bounded polling.
+    // A blocking connect cannot yield, so a shutdown that only asked the task to stop would
+    // still be listening here. The Windows probe has no blocking form, but shutdown closes the
+    // pipe instances before it returns, so one attempt is enough.
     #[cfg(unix)]
     assert!(
         std::os::unix::net::UnixStream::connect(&path).is_err(),
         "the listener outlived shutdown"
     );
     #[cfg(not(unix))]
-    puddle_test_kit::eventually_async(
-        "nothing accepts on the route after shutdown",
-        Duration::from_secs(10),
-        || async { !listening(&path).await },
-    )
-    .await;
+    assert!(!listening(&path).await, "the listener outlived shutdown");
     drop(root);
 }
 

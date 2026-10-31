@@ -3,10 +3,14 @@
 // how a source is worded, what a credential covers, what the last check of it came to, and the
 // checks a form makes before it asks. Nothing here holds a secret; a credential is a reference.
 import type { components } from "#lib/api/schema.d.ts";
+import { relativeTime } from "#lib/format/relative-time.ts";
 
 export type Identity = components["schemas"]["IdentityView"];
 export type GitDefaults = components["schemas"]["GitDefaultsView"];
-export type Credential = components["schemas"]["IdentityCredential"];
+export type Credential = components["schemas"]["IdentityCredentialView"];
+/** A credential as a form edits it and a request carries it: no record of reads. */
+export type CredentialDraft = components["schemas"]["IdentityCredential"];
+export type LastCheck = components["schemas"]["LastCheck"];
 export type Source = components["schemas"]["CredentialSource"];
 export type Coverage = components["schemas"]["CredentialCoverage"];
 export type FoundAccount = components["schemas"]["FoundAccount"];
@@ -55,21 +59,27 @@ export function coverageText(covers: Coverage, host: string): string {
 }
 
 /** The credential as a chip: `gh · tijs-work · github.com: acme, acme-labs`. */
-export function credentialChip(credential: Credential): string {
+export function credentialChip(credential: CredentialDraft): string {
   return `${sourceLabel(credential.source)} · ${credential.host}: ${coverageText(credential.covers, credential.host)}`;
 }
 
-/** What the page remembers about a credential between checks. */
+/** When a credential was last read and what asked for it, as the host recorded it. */
+export interface Seen {
+  at: number;
+  by: LastCheck["by"];
+}
+
+/** What the page knows about a credential: its last read (the host keeps it), or a test in flight. */
 export type Check =
   | { state: "untested" }
   | { state: "checking" }
-  | { state: "ok" }
-  | { state: "problem"; message: string; needsSignIn: boolean };
+  | { state: "ok"; seen?: Seen }
+  | { state: "problem"; message: string; needsSignIn: boolean; seen?: Seen };
 
 export const UNTESTED: Check = { state: "untested" };
 
 /** The key a credential's check is kept under. */
-export function credentialKey(credential: Credential): string {
+export function credentialKey(credential: CredentialDraft): string {
   return `${credential.host}|${describeSource(credential.source)}`;
 }
 
@@ -81,6 +91,33 @@ export function checkOf(result: CheckResult): Check {
         message: result.problem ?? "Puddle can't read it",
         needsSignIn: result.needs_sign_in,
       };
+}
+
+/** The check the host recorded for a credential's last read, `UNTESTED` when it was never read. */
+export function checkFromLast(last: LastCheck | null): Check {
+  if (last === null) return UNTESTED;
+  const seen: Seen = { at: last.checked_at, by: last.by };
+  return last.readable
+    ? { state: "ok", seen }
+    : {
+        state: "problem",
+        message: last.problem ?? "Puddle can't read it",
+        needsSignIn: last.needs_sign_in,
+        seen,
+      };
+}
+
+const BY: Record<LastCheck["by"], string> = {
+  injection: "a workspace's request",
+  repository_list: "a repository list",
+  test: "a test",
+};
+
+/** "Checked 4 minutes ago by a workspace's request"; empty when the check has no record. */
+export function seenText(check: Check, now: number): string {
+  if (check.state !== "ok" && check.state !== "problem") return "";
+  if (!check.seen) return "";
+  return `Checked ${relativeTime(check.seen.at, now)} by ${BY[check.seen.by]}`;
 }
 
 export function statusWord(check: Check): string {
@@ -356,11 +393,15 @@ export function usedBy(identity: Identity): string {
 /** The request that saves `identity` as it is, with one credential list replaced. */
 export function requestOf(
   identity: Identity,
-  credentials: Credential[] = identity.credentials,
+  credentials: readonly CredentialDraft[] = identity.credentials,
 ): IdentityRequest {
   return {
     label: identity.label,
     author: { ...identity.author },
-    credentials,
+    credentials: credentials.map(({ host, source, covers }) => ({
+      host,
+      source,
+      covers,
+    })),
   };
 }

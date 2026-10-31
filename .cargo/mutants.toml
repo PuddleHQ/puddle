@@ -31,6 +31,16 @@ exclude_re = [
     "git_path\\.rs:\\d+:\\d+: replace \\| with \\^ in decode_lossy",
     # The default body of `Policy::lookup` is `Ok(None)`, so replacing it with `Ok(None)` is the same code.
     'replace Policy::lookup -> Result<Option<Decision>, PolicyError> with Ok\(None\)',
+    # `keyword` returns `Some("")` for a blank line and `Some("#...")` for a comment when `||` becomes
+    # `&&`; both callers only ask whether the word is `include`, `host` or `match`, which neither is.
+    'sshconfig\.rs:\d+:\d+: replace \|\| with && in keyword',
+    # `starts_line` is always asked with `after` at the `{` of the object, so when the last line
+    # break lies before `after` the text between it and `pos` holds that `{`, which is not blank, and the
+    # answer is `false` either way.
+    'replace match guard n >= after with true in starts_line',
+    # `eol` is the offset of a line break or the end of the text, and no comment starts there, so
+    # `c.start < eol` and `c.start <= eol` agree.
+    'json\.rs:\d+:34: replace < with <= in insert',
 ]
 
 # The first failing test decides a mutant: stop the rest. Without it, a mutant that makes a test

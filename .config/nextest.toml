@@ -98,3 +98,15 @@ slow-timeout = { period = "60s", terminate-after = 5 }
 filter = "test(/a_hundred_thousand_|hostile_hg1[12]_a_hundred_thousand/)"
 test-group = "flood"
 slow-timeout = { period = "60s", terminate-after = 5 }
+
+# The merge engine scans a file in loops. A scanner that stops advancing (a mutant, or a bug) hangs
+# every test that reaches it, and with only a few test threads those hung tests hold every slot, so the
+# test that would fail fast never starts and the mutation run reports a timeout instead of a kill.
+# These tests take about a second together, so one that runs for 10 s is hung.
+[[profile.default.overrides]]
+filter = "package(puddle-types) & (test(/^merge::/) | binary(merge_edges))"
+slow-timeout = { period = "10s", terminate-after = 1 }
+
+[[profile.ci.overrides]]
+filter = "package(puddle-types) & (test(/^merge::/) | binary(merge_edges))"
+slow-timeout = { period = "10s", terminate-after = 1 }

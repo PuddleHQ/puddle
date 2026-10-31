@@ -64,6 +64,7 @@ use crate::git_hosts::{
     old_git_problem,
 };
 use crate::injection::Injection;
+use crate::kubernetes::{kubernetes_key, kubernetes_problem};
 
 #[path = "repositories.rs"]
 mod repositories;
@@ -1150,6 +1151,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         GitProblem::LeftOut.settle(&self.inner.problems, name, left_out_problem(name, wanted));
     }
 
+    /// After a boot: Kubernetes tools in the guest are a problem on the workspace, since its
+    /// kernel cannot route their Services. A stop ends it, so a start that finds none has none.
+    fn settle_kubernetes(&self, name: &WorkspaceName, report: &puddle_boot::BootReport) {
+        if let Some(problem) = kubernetes_problem(name, &report.kubernetes_tools()) {
+            self.inner.problems.raise(problem);
+        }
+    }
+
     /// After the hook ran with `wanted` authors: a guest whose git is too old for the author rules
     /// is a problem on the workspace.
     fn settle_git_version(
@@ -1803,6 +1812,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.report_locks(name, locks);
         self.settle_shell_init(name, &gated).await;
         self.settle_entrypoint(name, gated.boot_report());
+        self.settle_kubernetes(name, gated.boot_report());
         let authors = inner
             .live
             .lock()
@@ -2167,6 +2177,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.inner.injection.end(name);
         self.inner.problems.clear(&problem_key("ssh", name));
         GitProblem::clear_all(&self.inner.problems, name);
+        self.inner.problems.clear(&kubernetes_key(name));
         let (ssh, route) = {
             let mut live = self.inner.live.lock().await;
             if drop_route {

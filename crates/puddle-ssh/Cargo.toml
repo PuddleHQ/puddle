@@ -19,6 +19,7 @@ tokio = { workspace = true, features = ["io-util", "macros", "rt", "sync", "time
 tracing = { workspace = true }
 
 [dev-dependencies]
+puddle-test-kit = { workspace = true }
 puddle-compute = { workspace = true, features = ["fake"] }
 puddle-types = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "test-util", "time"] }

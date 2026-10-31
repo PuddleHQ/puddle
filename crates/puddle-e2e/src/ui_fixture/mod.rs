@@ -262,6 +262,7 @@ impl Fixture {
     async fn bind(&self) -> Result<(), String> {
         let mut state = self.state.lock().await;
         let mut last = String::new();
+        // flake-ok: retries the bind (an operation) and returns its last error, which the kit's waits would panic on.
         for _ in 0..100 {
             let services = Services::new(
                 state.store.clone(),
@@ -441,6 +442,7 @@ impl Fixture {
 pub fn watch_drop_dir(fixture: Arc<Fixture>, dir: PathBuf) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let _ = tokio::fs::create_dir_all(&dir).await;
+        // flake-ok: a poller that runs until the task is aborted, not a wait for a condition.
         loop {
             drain_drop_dir(&fixture, &dir).await;
             tokio::time::sleep(Duration::from_millis(100)).await;

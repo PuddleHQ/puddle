@@ -230,8 +230,10 @@ fn environment_router() -> OpenApiRouter<AppState> {
         .routes(routes!(logins::forget_login))
 }
 
-/// The routes that may take far longer than the rest (the system check boots a test machine), so
-/// they get their own, longer time limit.
+/// The routes that may take far longer than the rest (the system check boots a test machine, the
+/// certificate's trust waits for the user), so they get their own, longer time limit.
 pub(crate) fn slow_router() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().routes(routes!(doctor::doctor))
+    OpenApiRouter::new()
+        .routes(routes!(doctor::doctor))
+        .routes(routes!(first_run::trust_dev_certificate))
 }

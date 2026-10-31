@@ -83,6 +83,14 @@ impl puddle_api::DevCertService for NoDevCert {
     fn status(&self) -> puddle_api::wire::DevCertificate {
         puddle_api::wire::DevCertificate::NotChecked
     }
+
+    fn trust(&self) -> puddle_api::wire::DevCertTrustResult {
+        puddle_api::wire::DevCertTrustResult {
+            dev_certificate: puddle_api::wire::DevCertificate::NotChecked,
+            detail: None,
+            waiting: false,
+        }
+    }
 }
 
 /// What the host takes in a test: no system proxy settings, no credential store, no certificate

@@ -59,7 +59,8 @@ struct Reply {
 
 impl Reply {
     fn json(&self) -> Value {
-        serde_json::from_str(&self.body).unwrap_or_else(|e| panic!("{e}: {:?}", self.body))
+        serde_json::from_str(&self.body)
+            .unwrap_or_else(|e| panic!("{e}: reply of {} bytes is not JSON", self.body.len()))
     }
 }
 
@@ -1317,6 +1318,62 @@ async fn the_system_check_is_healthy_until_a_scenario_or_a_step_says_otherwise()
         .unwrap_err()
         .to_string();
     assert!(err.contains("oks"), "{err}");
+}
+
+#[tokio::test]
+async fn the_certificate_is_not_checked_until_a_scenario_or_a_step_sets_it_and_trusting_follows_the_step()
+ {
+    let run = start("first-run").await;
+    let dev_certificate = |reply: Reply| reply.json()["dev_certificate"].clone();
+    assert_eq!(
+        dev_certificate(run.get("/api/first-run").await),
+        "not_checked"
+    );
+
+    let step = json!({"do": "dev_certificate", "state": "needs_trust"});
+    assert_eq!(
+        run.control("POST", "/control/step", Some(&step))
+            .await
+            .status,
+        204
+    );
+    assert_eq!(
+        dev_certificate(run.get("/api/first-run").await),
+        "needs_trust"
+    );
+    // The default answer is a yes.
+    let answer = run.api("POST", "/api/dev-certificate/trust", None).await;
+    assert_eq!(
+        answer.status,
+        200,
+        "trust answered with {} body bytes",
+        answer.body.len()
+    );
+    assert_eq!(
+        answer.json(),
+        json!({"dev_certificate": "trusted", "detail": null, "waiting": false})
+    );
+    assert_eq!(dev_certificate(run.get("/api/first-run").await), "trusted");
+
+    let refused = json!({
+        "do": "dev_certificate", "state": "needs_trust",
+        "trust_answer": "trust_failed", "detail": "os error 5"
+    });
+    run.control("POST", "/control/step", Some(&refused)).await;
+    let failed = run.api("POST", "/api/dev-certificate/trust", None).await;
+    assert_eq!(
+        failed.json(),
+        json!({"dev_certificate": "trust_failed", "detail": "os error 5", "waiting": false})
+    );
+
+    let seeded = json!({"name": "untrusted", "dev_certificate": "needs_trust"}).to_string();
+    let run2 = start_scenario(serde_json::from_str(&seeded).unwrap()).await;
+    assert_eq!(
+        dev_certificate(run2.get("/api/first-run").await),
+        "needs_trust"
+    );
+    run.fixture.shutdown().await;
+    run2.fixture.shutdown().await;
 }
 
 #[tokio::test]

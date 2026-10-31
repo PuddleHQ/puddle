@@ -97,6 +97,14 @@ pub(crate) async fn start_with_dev_cert(dev_cert: Arc<dyn DevCertService>) -> Ap
     .await
 }
 
+/// An API with this `config` reporting the development certificate's state through `dev_cert`.
+pub(crate) async fn start_with_config_and_dev_cert(
+    config: ApiConfig,
+    dev_cert: Arc<dyn DevCertService>,
+) -> Api {
+    start_inner(config, true, None, None, None, true, Some(dev_cert)).await
+}
+
 /// An API whose services have no workspaces implementation (what `Services::new` gives).
 pub(crate) async fn start_without_workspaces() -> Api {
     start_inner(ApiConfig::default(), false, None, None, None, true, None).await

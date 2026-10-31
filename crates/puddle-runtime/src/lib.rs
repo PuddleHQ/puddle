@@ -32,6 +32,7 @@
 //!
 //! - `dev-override`: honours `PUDDLE_DEV_ANY_RUNTIME=1` ([`DevOverride`]). Off by default; a
 //!   release build with it on doesn't compile, and a test fails if any workspace crate enables it.
+#![forbid(unsafe_code)]
 
 mod env;
 mod error;

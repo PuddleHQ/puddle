@@ -20,7 +20,7 @@ use puddle_types::{CpuCount, ImageRef, MemoryMib, SandboxName, VolumeName, Works
 use crate::error::{map, runtime};
 use crate::sandbox::{MsbSandbox, boot_id};
 use crate::volume::{Mounter, holders, info, mounted_volumes, mounter};
-use crate::{MsbConfig, OWNER_LABEL, OWNER_LABEL_VALUE, image, logs, spec};
+use crate::{MsbConfig, OWNER_LABEL, OWNER_LABEL_VALUE, image, logs, root_disk, spec};
 
 struct Inner {
     config: MsbConfig,
@@ -462,6 +462,7 @@ impl Runtime for MsbRuntime {
                     .map(|v| (v, None))
                     .collect();
             self.check_volumes(name.as_str(), &mounts).await?;
+            root_disk::check_before_start(&self.sandbox_dir(name.as_str()))?;
             match self.sdk(Sandbox::start(name.as_str())).await {
                 Ok(sdk) => self.handle_for(name, sdk).await,
                 Err(e) => {

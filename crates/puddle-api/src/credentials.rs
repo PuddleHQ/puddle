@@ -7,7 +7,7 @@
 //! No method returns a secret value. A pasted token goes in and is never read back through here;
 //! the injector and the host-side API calls read it through `puddle-secrets` directly.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use futures_util::future::BoxFuture;
@@ -239,7 +239,8 @@ impl CredentialService for HostCredentials {
 
 /// Answers from what a test or the UI fixture put in it: the accounts "found", which credentials
 /// are readable, the code a sign-in shows. A sign-in makes the credential readable, as a finished
-/// one would. Pasted tokens are kept by id only so a test can see that one was stored or removed.
+/// one would. Pasted tokens are kept by id, with their value, so a test can see that one was stored
+/// or removed and a fake host can answer for the token behind an id.
 #[derive(Default)]
 pub struct FakeCredentials {
     state: Mutex<FakeState>,
@@ -250,7 +251,7 @@ struct FakeState {
     found: Option<Discovery>,
     unreadable: HashMap<SourceSpec, SourceError>,
     sign_in: SignInStart,
-    tokens: HashSet<String>,
+    tokens: HashMap<String, String>,
     next_token: u64,
     sign_ins: Vec<SourceSpec>,
 }
@@ -294,9 +295,20 @@ impl FakeCredentials {
     /// The ids of the tokens kept, in no order.
     #[must_use]
     pub fn tokens(&self) -> Vec<String> {
-        let mut ids: Vec<_> = self.state().tokens.iter().cloned().collect();
+        let mut ids: Vec<_> = self.state().tokens.keys().cloned().collect();
         ids.sort();
         ids
+    }
+
+    /// Forgets every kept token (a UI fixture reset starts with none).
+    pub fn forget_all_tokens(&self) {
+        self.state().tokens.clear();
+    }
+
+    /// The value kept under `id`, for a fake host that answers by the token behind a source.
+    #[must_use]
+    pub fn token_value(&self, id: &str) -> Option<String> {
+        self.state().tokens.get(id).cloned()
     }
 
     /// The sources a sign-in was started for, in order.
@@ -331,7 +343,7 @@ impl CredentialService for FakeCredentials {
             let mut state = self.state();
             state.next_token += 1;
             let id = format!("tok-fake-{}", state.next_token);
-            state.tokens.insert(id.clone());
+            state.tokens.insert(id.clone(), token.expose().to_owned());
             let id =
                 StoredId::new(id).map_err(|err| CredentialsError::Internal(err.to_string()))?;
             Ok(SourceSpec::Stored { id, scope })
@@ -384,6 +396,31 @@ mod tests {
             "gh is not installed or not on PATH"
         );
         assert!(said(SignInError::NothingToSignIn).starts_with("a pasted token has nothing"));
+    }
+
+    #[tokio::test]
+    async fn the_fake_keeps_a_pasted_value_under_its_id_until_forgotten() {
+        let fake = FakeCredentials::new();
+        fake.store_token(
+            TokenScope {
+                host: puddle_secrets::HostName::new("github.com").unwrap(),
+                org: None,
+            },
+            Secret::new("ghp_0123456789abcdef".into()),
+        )
+        .await
+        .unwrap();
+        let [kept] = fake.tokens().try_into().unwrap();
+        let id = StoredId::new(kept).unwrap();
+        assert_eq!(fake.tokens(), [id.as_str()]);
+        assert_eq!(
+            fake.token_value(id.as_str()).as_deref(),
+            Some("ghp_0123456789abcdef")
+        );
+        fake.forget_token(id.clone()).await.unwrap();
+        assert_eq!(fake.token_value(id.as_str()), None);
+        fake.forget_all_tokens();
+        assert_eq!(fake.tokens(), Vec::<String>::new());
     }
 
     #[test]

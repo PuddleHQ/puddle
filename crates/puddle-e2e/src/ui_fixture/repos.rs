@@ -5,33 +5,58 @@
 
 use futures_util::future::BoxFuture;
 use puddle_api::wire::{RepoListState, RepoNoteCode, RepoProblemCode, RepoRole, RepoVisibility};
-use puddle_api::{FakeRepos, RepoService, ReposError};
+use puddle_api::{FakeCredentials, FakeRepos, RepoService, ReposError};
 use puddle_repos::{
-    ListState, Note, NoteKind, Problem, ProblemKind, ProfileRead, Read, Repository, Role,
+    ListState, Note, NoteKind, Problem, ProblemKind, Profile, ProfileRead, Read, Repository, Role,
     SourceList, Visibility,
 };
 use puddle_secrets::SourceSpec;
 use puddle_store::{Identity, IdentityId};
+use std::sync::{Arc, Mutex, PoisonError};
+
 use tokio::sync::watch;
 
-use super::scenario::{RepoItemSeed, RepoListSeed};
+use super::scenario::{ProfileSeed, RepoItemSeed, RepoListSeed};
 
 /// A [`FakeRepos`] whose answers wait while it is held.
 pub(super) struct HeldRepos {
     inner: FakeRepos,
     held: watch::Sender<bool>,
+    credentials: Arc<FakeCredentials>,
+    /// What the host says about each pasted token, by the token's value.
+    by_token: Mutex<Vec<(String, ProfileRead)>>,
 }
 
 impl HeldRepos {
-    pub(super) fn new() -> Self {
+    /// `credentials` is where pasted tokens are kept; a source naming one is answered by the
+    /// token's value.
+    pub(super) fn new(credentials: Arc<FakeCredentials>) -> Self {
         Self {
             inner: FakeRepos::new(),
             held: watch::channel(false).0,
+            credentials,
+            by_token: Mutex::new(Vec::new()),
         }
     }
 
     pub(super) fn set_lists(&self, lists: Vec<SourceList>) {
         self.inner.set_lists(lists);
+    }
+
+    pub(super) fn set_profiles(&self, profiles: &[ProfileSeed]) -> Result<(), String> {
+        let mut by_token = self.by_token.lock().unwrap_or_else(PoisonError::into_inner);
+        by_token.clear();
+        for seed in profiles {
+            let read = profile_read(seed);
+            match (&seed.source, &seed.token) {
+                (Some(source), None) => self.inner.set_profile(source.clone().into_spec()?, read),
+                (None, Some(token)) => by_token.push((token.clone(), read)),
+                _ => {
+                    return Err("a profile seed names a `source` or a `token`, not both".to_owned());
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Keeps every answer from now on waiting.
@@ -60,7 +85,23 @@ impl RepoService for HeldRepos {
     }
 
     fn profile(&self, source: SourceSpec) -> BoxFuture<'_, Result<ProfileRead, ReposError>> {
-        self.inner.profile(source)
+        let seeded = match &source {
+            SourceSpec::Stored { id, .. } => {
+                self.credentials.token_value(id.as_str()).and_then(|value| {
+                    self.by_token
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .iter()
+                        .find(|(token, _)| *token == value)
+                        .map(|(_, read)| read.clone())
+                })
+            }
+            _ => None,
+        };
+        match seeded {
+            Some(read) => Box::pin(async move { Ok(read) }),
+            None => self.inner.profile(source),
+        }
     }
 }
 
@@ -184,5 +225,30 @@ fn note(code: RepoNoteCode) -> NoteKind {
         RepoNoteCode::AuthorUnavailable => NoteKind::AuthorUnavailable,
         RepoNoteCode::OrganisationsUnavailable => NoteKind::OrganisationsUnavailable,
         RepoNoteCode::HostLimitReached => NoteKind::HostLimitReached,
+    }
+}
+
+fn profile_read(seed: &ProfileSeed) -> ProfileRead {
+    ProfileRead {
+        profile: Profile {
+            account: seed.account.clone(),
+            name: seed.name.clone(),
+            email: seed.email.clone(),
+            organisations: seed.organisations.clone(),
+            notes: seed
+                .notes
+                .iter()
+                .map(|n| Note {
+                    kind: note(n.code),
+                    message: n.message.clone(),
+                })
+                .collect(),
+        },
+        problem: seed.problem.as_ref().map(|p| Problem {
+            kind: problem(p.code),
+            message: p.message.clone(),
+            retry_at: None,
+            needs_sign_in: p.needs_sign_in,
+        }),
     }
 }

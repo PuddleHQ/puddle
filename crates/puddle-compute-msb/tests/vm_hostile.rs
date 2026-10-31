@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Hostile-guest cases at tier V that need only the msb adapter: a root process in the guest
-//! tries to reach the network and every vsock address and port. Each test boots
-//! a real microVM, so they run only under the VM profile (`vm_` prefix).
+//! tries to reach the network and every vsock address and port, and to make the host attach a
+//! file of its choosing as its root disk. Each test boots a real microVM, so they run only under
+//! the VM profile (`vm_` prefix).
 mod support;
 
+use std::io::Read as _;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use puddle_compute::{ExecRequest, Runtime, Sandbox, VsockRoute};
+use puddle_compute::{ComputeError, ExecRequest, Runtime, Sandbox, VsockRoute};
 use puddle_ipc::IpcRoot;
 use support::{cleanup, collect_lines, sh, spec, vsock_sweep};
 
@@ -167,4 +170,139 @@ async fn vm_hostile_hg02_only_the_routed_vsock_port_accepts() {
         );
     }
     assert_eq!(lines.await.unwrap(), ["hello-hg02"]);
+}
+
+/// The guest-side view of msb's root-disk journal: msb shares the sandbox's runtime folder with
+/// the guest, writable, at this path.
+const GUEST_JOURNAL: &str = "/.msb/root-disk.json";
+
+/// The SHA-256 of a file, read in pieces (a root disk is gigabytes, sparse).
+#[expect(
+    clippy::unwrap_used,
+    reason = "a file the test cannot read fails the test"
+)]
+fn sha256_file(path: &Path) -> String {
+    use sha2::{Digest, Sha256};
+    let mut file = std::fs::File::open(path).unwrap();
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0_u8; 1 << 20];
+    loop {
+        let n = file.read(&mut buf).unwrap();
+        let Some(piece) = buf.get(..n).filter(|p| !p.is_empty()) else {
+            break;
+        };
+        hasher.update(piece);
+    }
+    support::mount_attack::hex(&hasher.finalize())
+}
+
+/// As root in the guest, replaces the journal's first layer with `target` and its launch base
+/// with the sandbox's own disk (`own`), which is what msb compares with the sandbox's config.
+#[expect(
+    clippy::indexing_slicing,
+    clippy::expect_used,
+    reason = "a journal not in msb's shape, or a failed exec, fails the test"
+)]
+async fn forge_journal<S: Sandbox>(sb: &S, journal: &serde_json::Value, own: &Path, target: &Path) {
+    let mut forged = journal.clone();
+    forged["layers"][0]["path"] = serde_json::json!(target);
+    forged["launch_base"] = serde_json::json!(own);
+    let out = sb
+        .exec(
+            ExecRequest::new(
+                "sh",
+                [
+                    "-c".to_owned(),
+                    format!(r#"printf '%s' "$1" > {GUEST_JOURNAL}"#),
+                    "sh".to_owned(),
+                    forged.to_string(),
+                ],
+            )
+            .as_user("root"),
+        )
+        .await
+        .expect("exec");
+    assert_eq!(
+        out.status.code,
+        0,
+        "the guest could not write the journal: {}",
+        out.stderr_text()
+    );
+}
+
+/// Guest root rewrites msb's root-disk journal so that the next start would attach another
+/// workspace's disk, and then a host file, as its writable root disk. After each stop the start
+/// is refused with the adapter's named problem, and both files hash the same as before. Between
+/// the two, the journal msb wrote is put back and the start goes through: a stopped and started
+/// sandbox with its own journal is not refused.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_hostile_hg44_a_rewritten_root_disk_journal_attaches_no_file_outside_the_sandbox() {
+    let settings = support::settings();
+    let rt = support::runtime(&settings).await;
+    let other = spec(&settings, "hg44-other");
+    let other_name = other.name.clone();
+    let s = spec(&settings, "hg44");
+    let n = s.name.clone();
+    let host_file = settings.home().join("hg44-host-file");
+    std::fs::write(&host_file, b"a host file no guest may write\n").unwrap();
+
+    let o = rt.create(other).await.expect("create the other workspace");
+    o.stop().await.unwrap();
+    let sb = rt.create(s).await.expect("create");
+    let read = sh(&sb, &format!("cat {GUEST_JOURNAL}")).await;
+    assert_eq!(
+        read.status.code,
+        0,
+        "no journal in the guest: {}",
+        read.stderr_text()
+    );
+    let journal: serde_json::Value = serde_json::from_str(&read.stdout_text()).unwrap();
+    let own = PathBuf::from(journal["layers"][0]["path"].as_str().unwrap());
+    let sandbox_dir = own.parent().unwrap().to_path_buf();
+    let host_journal = sandbox_dir.join("runtime").join("root-disk.json");
+    let original = std::fs::read(&host_journal).unwrap();
+    let other_disk = sandbox_dir
+        .parent()
+        .unwrap()
+        .join(other_name.as_str())
+        .join("upper.ext4");
+    assert!(other_disk.is_file(), "no disk at {}", other_disk.display());
+
+    let mut outcomes = Vec::new();
+    for (round, target) in [&other_disk, &host_file].into_iter().enumerate() {
+        if round > 0 {
+            // The journal msb wrote, back in place: the start must go through.
+            std::fs::write(&host_journal, &original).unwrap();
+            rt.start(&n).await.expect("a start with msb's own journal");
+        }
+        let sb = rt.get(&n).await.unwrap();
+        forge_journal(&sb, &journal, &own, target).await;
+        sb.stop().await.unwrap();
+        let landed = std::fs::read_to_string(&host_journal).unwrap();
+        let before = sha256_file(target);
+        let started = rt.start(&n).await;
+        let after = sha256_file(target);
+        outcomes.push((target.clone(), landed, started.err(), before, after));
+    }
+    cleanup(&rt, &[&n, &other_name]).await;
+    // The run's home is removed with the run; this only tidies early.
+    let _ = std::fs::remove_file(&host_file);
+    for (target, landed, refused, before, after) in outcomes {
+        let target_json = serde_json::json!(target).to_string();
+        assert!(
+            landed.contains(&target_json),
+            "the guest's journal did not reach the host: {landed}"
+        );
+        match refused {
+            Some(ComputeError::Runtime {
+                op: "start",
+                message,
+            }) if message.contains("outside the sandbox's folder") => {}
+            other => panic!(
+                "the start with a journal naming {} was not refused by the check: {other:?}",
+                target.display()
+            ),
+        }
+        assert_eq!(before, after, "{} changed", target.display());
+    }
 }

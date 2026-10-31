@@ -29,12 +29,16 @@
 //!
 //! - `testing`: [`testing::AllowAll`], a [`host::StreamHandler`] that serves every `CONNECT`
 //!   without a policy, for integration tests of the agent. Never use it in product code.
+//! - `fuzzing`: the lookup lines the host reads from the guest, behind an entry point that checks
+//!   its own invariants (the `fuzzing` module), for the cargo-fuzz targets. Never use it in product code.
 #![forbid(unsafe_code)]
 
 pub mod control;
 pub mod editor;
 pub mod editor_stream;
 pub mod forward;
+#[cfg(feature = "fuzzing")]
+pub mod fuzzing;
 pub mod host;
 pub mod host_control;
 pub mod kind;
@@ -46,7 +50,7 @@ pub mod ssh;
 pub mod testing;
 pub mod yamux;
 
-pub use control::{AgentMessage, StubDnsTrouble};
+pub use control::{AgentMessage, EditorProblemKind, StubDnsTrouble};
 
 /// The yamux crate both sides use, so callers name the same types.
 pub use tokio_yamux;

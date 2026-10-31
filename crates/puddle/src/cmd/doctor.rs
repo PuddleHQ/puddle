@@ -3,8 +3,10 @@
 //! the way, with the exact fix for each problem ([`puddle_doctor`]). Exit code 0 when nothing
 //! failed, 1 when something must be fixed first, so scripts can gate on it.
 
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use puddle_doctor::boot::boot_logs_dir;
 use puddle_doctor::{Options, Probe, Report, SystemProbe, diagnose};
 
 use crate::cli::{Command, UsageError};
@@ -55,6 +57,7 @@ pub fn run(args: DoctorArgs) -> ExitCode {
     let probe = match std::env::current_exe()
         .map_err(|e| e.to_string())
         .and_then(|exe| SystemProbe::installed(&exe).map_err(|e| e.to_string()))
+        .map(|probe| keeping_logs(probe, data_folder(puddle_fs::data_dir()).as_deref()))
     {
         Ok(probe) => probe,
         Err(e) => {
@@ -65,6 +68,28 @@ pub fn run(args: DoctorArgs) -> ExitCode {
     let (output, code) = report(&probe, args);
     print!("{output}");
     code
+}
+
+/// Puddle's data folder, or `None` after saying on stderr that a failed boot's logs then go
+/// unkept.
+#[expect(clippy::print_stderr, reason = "a diagnostic note beside the report")]
+fn data_folder(found: Result<PathBuf, puddle_fs::DataDirError>) -> Option<PathBuf> {
+    match found {
+        Ok(dir) => Some(dir),
+        Err(e) => {
+            eprintln!("puddle: a failed test boot's logs will not be kept: {e}");
+            None
+        }
+    }
+}
+
+/// `probe`, keeping a failed test boot's logs in the data folder (`data`) like the system check
+/// in the app does. Without a data folder nothing is kept.
+fn keeping_logs(probe: SystemProbe, data: Option<&Path>) -> SystemProbe {
+    match data {
+        Some(data) => probe.with_keep_boot_logs(boot_logs_dir(data)),
+        None => probe,
+    }
 }
 
 /// The report on `probe` as the text to print and the exit code.
@@ -95,12 +120,11 @@ fn exit_code(report: &Report) -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use std::time::Duration;
 
     use puddle_doctor::{
-        BootFacts, CodeIntegrityFacts, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, Os,
-        ProcessOutcome, RuntimeFacts, RuntimeState,
+        BootFacts, CodeIntegrityFacts, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts,
+        KeptLogs, Os, ProcessOutcome, RuntimeFacts, RuntimeState,
     };
 
     use super::*;
@@ -108,6 +132,8 @@ mod tests {
 
     struct Fake {
         runtime_ready: bool,
+        /// Makes the test boot fail, with these logs kept.
+        failed_boot_kept: Option<KeptLogs>,
     }
 
     impl Probe for Fake {
@@ -151,6 +177,17 @@ mod tests {
             }
         }
         fn boot(&self, _limit: Duration) -> BootFacts {
+            if let Some(kept) = &self.failed_boot_kept {
+                return BootFacts::Ran {
+                    outcome: ProcessOutcome::Exited {
+                        code: Some(1),
+                        stdout_first_line: String::new(),
+                        stderr_tail: String::new(),
+                        elapsed: Duration::from_millis(900),
+                    },
+                    kept_logs: Some(kept.clone()),
+                };
+            }
             BootFacts::Ran {
                 outcome: ProcessOutcome::Exited {
                     code: Some(puddle_doctor::PROBE_EXIT_CODE),
@@ -203,6 +240,7 @@ mod tests {
         let (text, code) = report(
             &Fake {
                 runtime_ready: true,
+                failed_boot_kept: None,
             },
             DoctorArgs::default(),
         );
@@ -220,6 +258,7 @@ mod tests {
         let (json, code) = report(
             &Fake {
                 runtime_ready: false,
+                failed_boot_kept: None,
             },
             args,
         );
@@ -246,9 +285,85 @@ mod tests {
         let (text, _) = report(
             &Fake {
                 runtime_ready: true,
+                failed_boot_kept: None,
             },
             args,
         );
         assert!(text.contains("not checked: --no-boot"), "{text}");
+    }
+
+    fn failed_boot_report(json: bool) -> String {
+        let probe = Fake {
+            runtime_ready: true,
+            failed_boot_kept: Some(KeptLogs::Kept {
+                dir: PathBuf::from("/data/puddle/doctor-boot-logs/puddle-doctor-boot-1"),
+                failed: vec![],
+            }),
+        };
+        let args = DoctorArgs {
+            json,
+            no_boot: false,
+        };
+        report(&probe, args).0
+    }
+
+    #[test]
+    fn a_failed_boot_names_where_its_logs_are_kept_in_the_text_report() {
+        let text = failed_boot_report(false);
+        // The text report wraps long lines, so the folder is on its own line.
+        assert!(text.contains("logs of this boot are kept in"), "{text}");
+        assert!(
+            text.contains("/data/puddle/doctor-boot-logs/puddle-doctor-boot-1"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_failed_boot_names_where_its_logs_are_kept_in_the_json_report() {
+        let json = failed_boot_report(true);
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let boot = v["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == "test_boot")
+            .unwrap();
+        assert!(
+            boot["detail"]
+                .as_str()
+                .unwrap()
+                .contains("kept in /data/puddle/doctor-boot-logs/"),
+            "{boot}"
+        );
+    }
+
+    fn installed_probe() -> SystemProbe {
+        SystemProbe::installed(Path::new("/opt/puddle/puddle")).unwrap()
+    }
+
+    #[test]
+    fn the_command_keeps_failed_boot_logs_in_the_data_folder() {
+        let probe = keeping_logs(installed_probe(), Some(Path::new("/data/puddle")));
+        assert_eq!(
+            probe.keep_boot_logs_dir(),
+            Some(Path::new("/data/puddle/doctor-boot-logs"))
+        );
+    }
+
+    #[test]
+    fn a_missing_data_folder_is_none_and_a_found_one_is_used() {
+        assert_eq!(data_folder(Err(puddle_fs::DataDirError::NoBase)), None);
+        assert_eq!(
+            data_folder(Ok(PathBuf::from("/data/puddle"))),
+            Some(PathBuf::from("/data/puddle"))
+        );
+    }
+
+    #[test]
+    fn without_a_data_folder_nothing_is_kept() {
+        assert_eq!(
+            keeping_logs(installed_probe(), None).keep_boot_logs_dir(),
+            None
+        );
     }
 }

@@ -237,6 +237,62 @@ async fn vm_host_boots_a_workspace_with_the_cpus_the_settings_name() {
     assert!(down.sandboxes.all_stopped(), "{down:?}");
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_warns_at_a_start_that_finds_kind_in_the_guest() {
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host("kube").await;
+    let name = format!("{}-kube", settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let key = format!("kubernetes:{name}");
+    let raised = || host.problems().list().iter().any(|p| p.key == key);
+    assert!(!raised(), "{:?}", host.problems().list());
+
+    // A stub `kind` on the PATH the hook reads, found by the next start.
+    guest(
+        &runtime,
+        &sandbox,
+        "printf '#!/bin/sh\\nexit 0\\n' > /usr/local/bin/kind && chmod +x /usr/local/bin/kind",
+    )
+    .await;
+    api.post(&format!("/api/workspaces/{name}/stop"), "").await;
+    let end = events
+        .until(ended(name_static), Duration::from_secs(120))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    api.post(&format!("/api/workspaces/{name}/start"), "").await;
+    let end = events
+        .until(ended(name_static), Duration::from_secs(300))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let problems = host.problems().list();
+    let problem = problems.iter().find(|p| p.key == key);
+    assert!(
+        problem.is_some_and(|p| p.detail.contains("kind is installed")),
+        "{problems:?}"
+    );
+
+    let down = host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
 /// A second small public repository on the same host.
 const SECOND_REPO: &str = "https://github.com/octocat/Spoon-Knife.git";
 /// A host the rules allow that resolves nowhere, so a clone from it fails like an unreachable

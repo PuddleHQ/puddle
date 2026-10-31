@@ -622,7 +622,11 @@ impl<R: Runtime + Clone> Host<R> {
         .with_secret_store(vault.clone())
         .with_credentials(Arc::new(HostCredentials::new(ToolPaths::resolve(), vault)))
         .with_repos(injecting.repos(&egress.chain, &clock, connections.clone(), &events))
-        .with_doctor(system_doctor(&config.layout, &config.expected_runtime))
+        .with_doctor(system_doctor(
+            &config.layout,
+            &config.paths,
+            &config.expected_runtime,
+        ))
         .with_dev_cert(dev_cert)
         .with_ports(Arc::new(HostPorts::new(ports)))
         .with_learned(Arc::new(HostLearned::new(injecting.terminations.clone())))

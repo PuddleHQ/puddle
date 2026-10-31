@@ -6285,6 +6285,37 @@ async fn a_git_too_old_for_the_author_rules_is_a_problem_until_it_is_updated() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn kubernetes_tools_are_a_problem_until_a_start_finds_none() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    assert!(!has_problem(&host, "kubernetes:acme"));
+
+    // The start after kind and k3d were installed says so, and what to do.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    *rig.guest.boot_says.lock().unwrap() = "puddle-boot: kubernetes tools kind k3d\n".to_owned();
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let problem = problem_of(&host, "kubernetes:acme");
+    assert_eq!(problem.title, "Kubernetes Services do not work in acme");
+    assert!(
+        problem.detail.contains("kind, k3d") && problem.detail.contains("port forward"),
+        "{}",
+        problem.detail
+    );
+
+    // A stopped workspace has none.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(!has_problem(&host, "kubernetes:acme"));
+
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_git_too_old_is_noticed_at_a_start_too_but_only_when_author_rules_exist() {
     let rig = Rig::new();
     let host = rig.start().await;
@@ -8860,7 +8891,7 @@ async fn an_entrypoint_that_dies_later_and_failing_lookups_are_problems_the_gues
 #[tokio::test(flavor = "multi_thread")]
 async fn a_refused_editor_download_is_a_problem_on_its_workspace_until_an_install_works_or_it_stops()
  {
-    use puddle_agent_proto::AgentMessage;
+    use puddle_agent_proto::{AgentMessage, EditorProblemKind};
     let rig = Rig::new();
     let host = rig.start().await;
     let api = api(&host);
@@ -8871,9 +8902,10 @@ async fn a_refused_editor_download_is_a_problem_on_its_workspace_until_an_instal
     let session = agent_says(
         &rig,
         "acme",
-        &[AgentMessage::editor_status(Some(
-            "the download does not match the checksum Microsoft published for it",
-        ))],
+        &[AgentMessage::editor_status(
+            EditorProblemKind::Install,
+            Some("the download does not match the checksum Microsoft published for it"),
+        )],
     )
     .await;
     let (title, detail) = problem_is(&api, "editor-install:acme", true).await.unwrap();
@@ -8892,7 +8924,15 @@ async fn a_refused_editor_download_is_a_problem_on_its_workspace_until_an_instal
     );
 
     // The install worked on a later try: the agent says so and the problem ends.
-    let fixed = agent_says(&rig, "acme", &[AgentMessage::editor_status(None)]).await;
+    let fixed = agent_says(
+        &rig,
+        "acme",
+        &[AgentMessage::editor_status(
+            EditorProblemKind::Install,
+            None,
+        )],
+    )
+    .await;
     assert!(
         problem_is(&api, "editor-install:acme", false)
             .await
@@ -8904,7 +8944,10 @@ async fn a_refused_editor_download_is_a_problem_on_its_workspace_until_an_instal
     let again = agent_says(
         &rig,
         "acme",
-        &[AgentMessage::editor_status(Some("refused again"))],
+        &[AgentMessage::editor_status(
+            EditorProblemKind::Install,
+            Some("refused again"),
+        )],
     )
     .await;
     problem_is(&api, "editor-install:acme", true).await.unwrap();
@@ -8916,6 +8959,58 @@ async fn a_refused_editor_download_is_a_problem_on_its_workspace_until_an_instal
             .is_none()
     );
     again.abort();
+    session.abort();
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_newer_editor_build_that_was_refused_is_a_problem_beside_the_install_one_until_a_look_works()
+ {
+    use puddle_agent_proto::{AgentMessage, EditorProblemKind};
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+
+    let session = agent_says(
+        &rig,
+        "acme",
+        &[AgentMessage::editor_status(
+            EditorProblemKind::Update,
+            Some("a newer build was refused: the download does not match the checksum Microsoft published for it"),
+        )],
+    )
+    .await;
+    let (title, detail) = problem_is(&api, "editor-update:acme", true).await.unwrap();
+    assert_eq!(
+        title,
+        "The browser editor in acme could not update: a newer build was refused: the download does not match the checksum Microsoft published for it"
+    );
+    assert!(
+        detail.contains("keeps working on the build it has"),
+        "{detail}"
+    );
+    assert!(
+        problem_is(&api, "editor-install:acme", false)
+            .await
+            .is_none(),
+        "the editor itself is installed"
+    );
+
+    // A later look worked: the agent says so and the problem ends.
+    let fixed = agent_says(
+        &rig,
+        "acme",
+        &[AgentMessage::editor_status(EditorProblemKind::Update, None)],
+    )
+    .await;
+    assert!(
+        problem_is(&api, "editor-update:acme", false)
+            .await
+            .is_none()
+    );
+    fixed.abort();
     session.abort();
     host.shutdown().await;
 }

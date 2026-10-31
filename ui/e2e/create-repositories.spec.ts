@@ -51,7 +51,7 @@ async function openList(page: Page, backend: Backend) {
 }
 
 const card = (page: Page, name: string): Locator =>
-  page.getByRole("article", { name });
+  page.getByRole("article", { name, exact: true });
 const dialogOf = (page: Page): Locator =>
   page.getByRole("dialog", { name: "New workspace" });
 const rowOf = (page: Page, n: number): Locator =>

@@ -341,6 +341,8 @@
   title="New workspace"
   description="Puddle clones your repositories into a fresh workspace with its own disk."
   onClose={reset}
+  openFocus={() =>
+    rows[0] ? document.getElementById(rowId(rows[0], "url")) : null}
 >
   <form onsubmit={submit} novalidate>
     {#if rows.length === 0}

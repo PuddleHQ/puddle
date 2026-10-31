@@ -91,6 +91,14 @@ describe("CreateWorkspaceDialog", () => {
     );
   });
 
+  it("puts focus on the address when it opens, not on the source choice", async () => {
+    mount();
+    await screen.findByRole("dialog", { name: "New workspace" });
+    await vi.waitFor(() =>
+      expect(document.activeElement).toBe(field("Git repository (HTTPS)")),
+    );
+  });
+
   it("starts from a folder on this computer: only the folder is needed, and the origin fills in the address", async () => {
     const { create, onCreated } = mount();
     await screen.findByRole("dialog");

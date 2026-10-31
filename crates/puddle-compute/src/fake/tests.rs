@@ -341,6 +341,50 @@ async fn a_directory_mount_shows_its_tree_read_only() {
 }
 
 #[tokio::test]
+async fn a_checkout_must_look_like_a_git_directory_and_its_links_lead_nowhere() {
+    let rt = FakeRuntime::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let work = tmp.path().join("api");
+    let git = work.join(".git");
+    std::fs::create_dir_all(git.join("objects")).unwrap();
+    std::fs::create_dir_all(git.join("refs")).unwrap();
+    std::fs::write(git.join("HEAD"), b"ref: refs/heads/main\n").unwrap();
+    std::fs::write(work.join(".env"), b"SECRET=1\n").unwrap();
+    let mount = |host: &std::path::Path| {
+        spec("import").with_file_mount(FileMount::checkout(host, path("/puddle/import")))
+    };
+    // The working tree is no checkout mount, whatever the caller meant.
+    let err = rt.create(mount(&work)).await.unwrap_err().to_string();
+    assert!(err.contains("is not a `.git` directory"), "{err}");
+    std::fs::write(git.join("commondir"), b"../..\n").unwrap();
+    let err = rt.create(mount(&git)).await.unwrap_err().to_string();
+    assert!(err.contains("linked worktree"), "{err}");
+    std::fs::remove_file(git.join("commondir")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(work.join(".env"), git.join("escape")).unwrap();
+    let sb = rt.create(mount(&git)).await.unwrap();
+    assert_eq!(
+        run(&sb, "cat", &["/puddle/import/HEAD"]).await.stdout,
+        b"ref: refs/heads/main\n"
+    );
+    #[cfg(unix)]
+    assert_eq!(
+        run(&sb, "cat", &["/puddle/import/escape"])
+            .await
+            .status
+            .code,
+        1
+    );
+    // A path beside the checkout is not part of it.
+    assert_eq!(run(&sb, "cat", &["/puddle/other"]).await.status.code, 1);
+    let out = sb
+        .exec(ExecRequest::new("tee", ["/puddle/import/HEAD"]).with_stdin("x"))
+        .await
+        .unwrap();
+    assert!(out.stderr_text().contains("Read-only file system"));
+}
+
+#[tokio::test]
 async fn writes_into_a_removed_volume_fail() {
     let rt = FakeRuntime::new();
     let s = spec("a")

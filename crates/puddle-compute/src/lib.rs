@@ -59,4 +59,5 @@ pub use runtime::{
 };
 pub use spec::{
     DiskSize, FileMount, MountKind, NetworkPolicy, OwnedDisk, SandboxSpec, VolumeMount, VsockRoute,
+    check_checkout_dir,
 };

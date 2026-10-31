@@ -10,6 +10,8 @@
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=ci/fetch-retry.sh
+. "$here/fetch-retry.sh"
 [ "$#" -eq 1 ] || { echo "usage: $0 <dest-dir>" >&2; exit 2; }
 dest=$1
 
@@ -60,22 +62,7 @@ if [ -n "${GITLEAKS_CACHE_DIR:-}" ] && [ -f "$GITLEAKS_CACHE_DIR/$asset" ]; then
 fi
 
 if [ -z "$cached" ]; then
-    # github.com has refused connections from one runner for over a minute (3 tries, 20 s apiece,
-    # failed a queue run), and a runner that cannot connect now usually can in a few minutes, so
-    # wait longer between tries: 10, 20, 40 and 60 s, about 4 minutes in all with the timeouts.
-    tries=5
-    attempt=1
-    while :; do
-        rc=0
-        curl -fsSL --connect-timeout 20 --max-time 300 -o "$archive" "$url" || rc=$?
-        [ "$rc" -ne 0 ] || break
-        [ "$attempt" -lt "$tries" ] || fail "download failed $tries times (last curl exit code $rc): $url"
-        delay=$((10 * (1 << (attempt - 1))))
-        [ "$delay" -le 60 ] || delay=60
-        echo "fetch-gitleaks: download attempt $attempt failed (curl exit code $rc), retrying in ${delay}s (infrastructure retry)" >&2
-        attempt=$((attempt + 1))
-        sleep "$delay"
-    done
+    download fetch-gitleaks "$url" "$archive" 300
 fi
 got=$(hash_of "$archive")
 [ "$got" = "$want" ] || fail "checksum mismatch for $asset: got $got, pinned $want"

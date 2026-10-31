@@ -109,6 +109,13 @@ fn database_files(dir: &Path, now: SystemTime) -> String {
 }
 
 impl MsbRuntime {
+    /// Every file mount of `spec` against the mount rules of [`MsbConfig::check_mount_source`].
+    fn check_mounts(&self, spec: &SandboxSpec) -> Result<(), ComputeError> {
+        spec.file_mounts
+            .iter()
+            .try_for_each(|m| self.inner.config.check_mount_source(&m.host, m.kind))
+    }
+
     /// Opens msb's database in `config.home` (created if missing), after writing its
     /// `config.json` with the runtime pair. Also creates the guest-share root.
     ///
@@ -399,11 +406,7 @@ impl Runtime for MsbRuntime {
     ) -> impl Future<Output = Result<MsbSandbox, ComputeError>> + Send {
         Box::pin(async move {
             spec.validate()?;
-            for mount in &spec.file_mounts {
-                self.inner
-                    .config
-                    .check_mount_source(&mount.host, mount.kind)?;
-            }
+            self.check_mounts(&spec)?;
             let name = spec.name.clone();
             if self.record(name.as_str()).await?.is_some() {
                 return Err(ComputeError::AlreadyExists {
@@ -418,6 +421,9 @@ impl Runtime for MsbRuntime {
             self.check_volumes(name.as_str(), &spec_mounts(&spec))
                 .await?;
             self.pull_image(&spec.image).await?;
+            // Checked again right before msb opens them: a pull can take minutes, and a checkout
+            // is a folder the user's own programs may change meanwhile.
+            self.check_mounts(&spec)?;
             match self.sdk(spec::builder(&spec).create()).await {
                 Ok(sdk) => self.handle_for(&name, sdk).await,
                 Err(e) => {
@@ -449,6 +455,7 @@ impl Runtime for MsbRuntime {
                     status: current,
                 });
             }
+            MsbConfig::check_restart(&self.inner.config, name.as_str(), record.config())?;
             let mounts: Vec<(String, Option<u32>)> =
                 mounted_volumes(name.as_str(), record.config())?
                     .into_iter()
@@ -865,6 +872,56 @@ mod tests {
         assert!(wrong.contains("is not a directory"), "{wrong}");
         let wrong = refusal(FileMount::read_only(share.join("tree"), guest())).await;
         assert!(wrong.contains("is not a file"), "{wrong}");
+        drop(rt);
+    }
+
+    #[tokio::test]
+    async fn create_refuses_a_checkout_that_breaks_its_rule_or_has_a_route_before_any_vm_work() {
+        use puddle_compute::{FileMount, SandboxSpec, VsockRoute};
+        use puddle_types::GuestPath;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let base = dunce::canonicalize(tmp.path()).unwrap();
+        let home = base.join("data").join("msb");
+        let share = base.join("data").join("guest-share");
+        std::fs::create_dir_all(&share).unwrap();
+        let git_dir = |at: &Path| {
+            let git = at.join(".git");
+            std::fs::create_dir_all(git.join("objects")).unwrap();
+            std::fs::create_dir_all(git.join("refs")).unwrap();
+            std::fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+            git
+        };
+        let checkout = git_dir(&base.join("api"));
+        let in_data = git_dir(&base.join("data").join("settings"));
+        let config = MsbConfig::new(&home, "/no/msb", "/no/libkrunfw", &share)
+            .with_protected_dir(base.join("data"));
+        let rt = MsbRuntime::open(config).await.unwrap();
+        let spec = |git: &Path| {
+            SandboxSpec::new(
+                SandboxName::new("import").unwrap(),
+                ImageRef::new("debian:12").unwrap(),
+            )
+            .with_file_mount(FileMount::checkout(
+                git,
+                GuestPath::new("/puddle/import/0").unwrap(),
+            ))
+        };
+        let refusal = |spec: SandboxSpec| {
+            let rt = &rt;
+            async move { rt.create(spec).await.err().unwrap().to_string() }
+        };
+        let routed =
+            refusal(spec(&checkout).with_route(VsockRoute::new(5000, "/run/p.sock"))).await;
+        assert!(
+            routed.contains("may only go to a sandbox with no route"),
+            "{routed}"
+        );
+        let inside = refusal(spec(&in_data)).await;
+        assert!(inside.contains("lies inside Puddle's folder"), "{inside}");
+        let climbing = base.join("api").join("..").join("api").join(".git");
+        let climbing = refusal(spec(&climbing)).await;
+        assert!(climbing.contains("canonical path"), "{climbing}");
         drop(rt);
     }
 

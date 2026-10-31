@@ -416,6 +416,13 @@ mod tests {
         }
     }
 
+    fn kept_dir(kept: &KeptLogs) -> &Path {
+        match kept {
+            KeptLogs::Kept { dir, .. } => dir,
+            KeptLogs::NotKept { detail } => Path::new(detail),
+        }
+    }
+
     fn kept_names(dir: &Path) -> Vec<String> {
         let mut names: Vec<_> = std::fs::read_dir(dir)
             .unwrap()
@@ -471,14 +478,8 @@ mod tests {
             .collect();
         let names = kept_names(keep.path());
         assert_eq!(names.len(), KEPT_BOOT_LOGS, "{names:?}");
-        let KeptLogs::Kept { dir: oldest, .. } = &kept[0] else {
-            panic!("{kept:?}")
-        };
-        assert!(!oldest.exists());
-        let KeptLogs::Kept { dir: newest, .. } = &kept[3] else {
-            panic!("{kept:?}")
-        };
-        assert!(newest.join("logs/runtime.log").is_file());
+        assert!(!kept_dir(&kept[0]).exists());
+        assert!(kept_dir(&kept[3]).join("logs/runtime.log").is_file());
     }
 
     #[cfg(unix)]
@@ -490,9 +491,7 @@ mod tests {
         std::fs::create_dir_all(&logs).unwrap();
         let data = tempfile::tempdir().unwrap();
         let keep = boot_logs_dir(data.path());
-        let KeptLogs::Kept { dir, .. } = keep_boot_logs(home.path(), &keep) else {
-            panic!("not kept")
-        };
+        let dir = kept_dir(&keep_boot_logs(home.path(), &keep)).to_path_buf();
         for folder in [&keep, &dir] {
             let mode = std::fs::metadata(folder).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o700, "{}", folder.display());
@@ -509,6 +508,12 @@ mod tests {
             "{kept:?}"
         );
         assert_eq!(std::fs::read_dir(keep.path()).unwrap().count(), 0);
+        // A boot that kept nothing has no folder, only the reason.
+        assert!(
+            kept_dir(&kept)
+                .to_string_lossy()
+                .contains("msb wrote no logs")
+        );
     }
 
     #[test]

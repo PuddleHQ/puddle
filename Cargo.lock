@@ -6110,6 +6110,7 @@ dependencies = [
  "url",
  "webview2-com",
  "windows",
+ "winreg",
  "zbus 6.1.0",
 ]
 

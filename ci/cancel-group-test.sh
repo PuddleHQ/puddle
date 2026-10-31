@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Self-test of ci/cancel-group.sh with a fake `gh` over a table of runs ("<branch> <id> <status>" lines in
-# $FAKE_RUNS). `gh run list` answers the non-completed runs of --branch (what the real --jq prints); `gh run
+# Self-test of ci/cancel-group.sh with a fake `gh` over a table of runs ("<branch> <id> <status> [<head sha>]" lines
+# in $FAKE_RUNS). `gh run list --branch` answers the ids of the non-completed runs of that branch, without --branch
+# the "<branch> <id> <head sha>" lines of all of them (what the real --jq prints); `gh run
 # cancel` logs the id and marks the run completed (a cancelled run is completed), or fails for the ids in $FAKE_REFUSE. Prints ok only when
 # every case passes.
 set -uo pipefail
@@ -22,7 +23,11 @@ case "$1 $2" in
 "run list")
     branch=""
     while [ "$#" -gt 0 ]; do [ "$1" = --branch ] && branch=$2; shift; done
-    awk -v b="$branch" '$1 == b && $3 != "completed" { print $2 }' "$FAKE_RUNS"
+    if [ -n "$branch" ]; then
+        awk -v b="$branch" '$1 == b && $3 != "completed" { print $2 }' "$FAKE_RUNS"
+    else
+        awk '$3 != "completed" { print $1, $2, $4 }' "$FAKE_RUNS"
+    fi
     ;;
 "run cancel")
     case " ${FAKE_REFUSE:-} " in *" $3 "*) exit 1 ;; esac
@@ -45,6 +50,16 @@ OTHER=gh-readonly-queue/develop/pr-8-bbb
 # Runs of group G: own run 101 (in progress), 102 queued, 103 completed green, 104 in progress; group OTHER: 201.
 table() {
     printf '%s 101 in_progress\n%s 102 queued\n%s 103 completed\n%s 104 in_progress\n%s 201 in_progress\n' "$G" "$G" "$G" "$G" "$OTHER" >"$tmp/runs"
+}
+
+# Stacked groups: S1 is built on G's head (its ref ends in G's head sha), S2 on S1's head, S3 on an unrelated head.
+S1=gh-readonly-queue/develop/pr-9-headG
+S2=gh-readonly-queue/develop/pr-10-headS1
+S3=gh-readonly-queue/develop/pr-11-elsewhere
+stacked_table() {
+    table
+    printf '%s 301 in_progress headS1\n%s 302 queued headS1\n%s 303 completed headS1\n%s 401 in_progress headS2\n%s 501 in_progress headS3\n%s 601 in_progress headS4\n' \
+        "$S1" "$S1" "$S1" "$S2" "$S3" gh-readonly-queue/develop/pr-12-headG2 >>"$tmp/runs"
 }
 
 # call <args...>: runs the script on a fresh log, with the fake gh and the table in place; prints the cancelled ids.
@@ -76,6 +91,23 @@ grep -qx "$OTHER 201 in_progress" "$tmp/runs" || bad "touched the other group's 
 table
 got=$(call merge_group failure "refs/heads/$G" 104)
 expect "own run is whichever run id is passed" "101 102 104" "$got"
+
+stacked_table
+got=$(call merge_group failure "refs/heads/$G" 101 headG)
+expect "stacked groups, every level, are cancelled before the own run" "102 104 301 302 401 101" "$got"
+grep -qE '^run cancel (303|501|201|601)' "$tmp/log" && bad "cancelled a completed or unrelated run"
+
+stacked_table
+got=$(call merge_group failure "refs/heads/$G" 101)
+expect "without a head sha the stacked groups are left alone" "102 104 101" "$got"
+
+stacked_table
+got=$(call merge_group failure "refs/heads/$G" 101 nomatch)
+expect "a head sha nobody is stacked on cancels only the group" "102 104 101" "$got"
+
+printf '%s 101 completed headG\n%s 301 in_progress headS1\n' "$G" "$S1" >"$tmp/runs"
+got=$(call merge_group failure "refs/heads/$G" 101 headG)
+expect "stacked run while the own group has nothing left" "301" "$got"
 
 for st in skipped cancelled success; do
     table

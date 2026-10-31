@@ -573,7 +573,8 @@ A failed job in a merge queue run cancels the rest of its merge group: every job
 `cancel-group` step (`ci/cancel-group.sh`, needs `actions: write` on the job), which cancels each run that has not
 completed on that queue branch, in all four workflows. Only a `failure` triggers it, never a skipped or cancelled job, and
 pull request and push runs are untouched. The result jobs still run `if: always()` and report red. A second failure in
-another job is cancelled with the rest and shows on the requeue. `actions: write` is job-wide, so on a pull request from
+another job is cancelled with the rest and shows on the requeue. Groups stacked on the failed group (their ref ends in its head sha, at every level) are cancelled too: GitHub
+rebuilds them but leaves their old runs going on runners nothing needs. `actions: write` is job-wide, so on a pull request from
 this repository (not a fork) the build code of those jobs holds a token that can cancel runs; it cannot write code.
 
 The `cancel-group` step first annotates the calling job with the failed job and step names (`merge group cancelled:

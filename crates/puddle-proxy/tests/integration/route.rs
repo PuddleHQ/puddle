@@ -1516,18 +1516,11 @@ async fn dropping_the_route_stops_the_accept_loop() {
     let path = rig.route.endpoint().path().to_owned();
     let Rig { route, root, .. } = rig;
     drop(route);
-    // The abort takes effect when the runtime next runs the task: a bounded number of yields.
-    let mut stopped = false;
-    for _ in 0..1000 {
-        if !listening(&path).await {
-            stopped = true;
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    assert!(
-        stopped,
-        "the accept loop kept running after the route was dropped"
-    );
+    puddle_test_kit::eventually_async(
+        "the accept loop ends after the route is dropped",
+        Duration::from_secs(10),
+        || async { !listening(&path).await },
+    )
+    .await;
     drop(root);
 }

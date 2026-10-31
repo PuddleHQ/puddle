@@ -370,6 +370,37 @@ pub(crate) async fn guest_within(
     script: &str,
     timeout: Duration,
 ) -> String {
+    guest_with_third_party(runtime, sandbox, script, timeout, None).await
+}
+
+/// [`guest`] for a script that reaches a live third party on purpose (`hosts`, for example a
+/// package mirror): a timeout or a failure then says that host is the thing to check.
+pub(crate) async fn guest_live(
+    runtime: &MsbRuntime,
+    sandbox: &WorkspaceName,
+    script: &str,
+    hosts: &str,
+) -> String {
+    guest_with_third_party(
+        runtime,
+        sandbox,
+        script,
+        Duration::from_secs(120),
+        Some(hosts),
+    )
+    .await
+}
+
+async fn guest_with_third_party(
+    runtime: &MsbRuntime,
+    sandbox: &WorkspaceName,
+    script: &str,
+    timeout: Duration,
+    hosts: Option<&str>,
+) -> String {
+    let note = hosts.map_or_else(String::new, |h| {
+        format!(" (this test reaches the live third party {h}; an outage there fails it)")
+    });
     let handle = runtime.get(&sandbox.sandbox_name()).await.unwrap();
     let out = handle
         .exec(
@@ -378,10 +409,11 @@ pub(crate) async fn guest_within(
                 .with_timeout(timeout),
         )
         .await
+        .map_err(|e| format!("the guest script failed to finish: {e}{note}\n{script}"))
         .unwrap();
     assert!(
         out.status.success(),
-        "{script}\n{}{}",
+        "{script}\n{}{}{note}",
         out.stdout_text(),
         out.stderr_text()
     );

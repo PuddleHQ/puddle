@@ -53,7 +53,7 @@ pub mod sockets;
 pub use browser::{
     BROWSER_MODULES_VAR, BrowserClient, NODE_VAR, Node, NodeOutput, PageOutcome, PageRequest,
 };
-pub use env::{Settings, VmEnv, test_owner, within};
+pub use env::{Settings, VmEnv, create_from_registry, registry_of, test_owner, within};
 pub use error::HarnessError;
 pub use prefix::RunPrefix;
 pub use runtime::{AMBIENT_MSB_VARS, RuntimePair, refuse_ambient_msb_vars};

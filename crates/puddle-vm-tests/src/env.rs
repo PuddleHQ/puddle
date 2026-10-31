@@ -406,12 +406,88 @@ pub async fn within<T>(
         .map_err(|_| HarnessError::Timeout { what, limit })
 }
 
+/// The registry host an image reference pulls from: the part before the first `/` when it looks
+/// like a host (a dot, a port or `localhost`), else Docker Hub.
+#[must_use]
+pub fn registry_of(image: &str) -> &str {
+    match image.split_once('/') {
+        Some((host, _)) if host.contains('.') || host.contains(':') || host == "localhost" => host,
+        _ => "registry-1.docker.io",
+    }
+}
+
+/// Awaits `creation` (a sandbox create from `image`) within `limit`. The image is pulled from its
+/// public registry on purpose (a registry fake would not exercise the image the tests are about),
+/// so a failure names that registry.
+///
+/// # Errors
+///
+/// [`HarnessError::ImagePull`] when the creation fails or the budget runs out.
+pub async fn create_from_registry<T, E: std::fmt::Display>(
+    image: &str,
+    limit: Duration,
+    creation: impl Future<Output = Result<T, E>>,
+) -> Result<T, HarnessError> {
+    let fail = |detail: String| HarnessError::ImagePull {
+        image: image.to_owned(),
+        registry: registry_of(image).to_owned(),
+        detail,
+    };
+    match tokio::time::timeout(limit, creation).await {
+        Ok(Ok(created)) => Ok(created),
+        Ok(Err(e)) => Err(fail(e.to_string())),
+        Err(_) => Err(fail(format!("no answer within {limit:?}"))),
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use puddle_runtime::HostOs;
     use std::collections::HashMap;
 
     use super::*;
+
+    #[test]
+    fn a_registry_is_the_host_part_of_the_reference_or_docker_hub() {
+        assert_eq!(registry_of("node:22-bookworm"), "registry-1.docker.io");
+        assert_eq!(registry_of("denoland/deno:debian"), "registry-1.docker.io");
+        assert_eq!(
+            registry_of("mcr.microsoft.com/dotnet/sdk:10.0"),
+            "mcr.microsoft.com"
+        );
+        assert_eq!(registry_of("localhost:5000/x"), "localhost:5000");
+    }
+
+    #[tokio::test]
+    async fn a_failed_creation_names_the_registry_and_the_cause() {
+        let failed = create_from_registry::<(), _>("node:22", Duration::from_secs(5), async {
+            Err("manifest unknown")
+        })
+        .await
+        .unwrap_err();
+        let text = failed.to_string();
+        assert!(text.contains("registry-1.docker.io"), "{text}");
+        assert!(text.contains("manifest unknown"), "{text}");
+        let ok = create_from_registry("node:22", Duration::from_secs(5), async {
+            Ok::<_, String>(7)
+        })
+        .await;
+        assert_eq!(ok.unwrap(), 7);
+    }
+
+    #[tokio::test]
+    async fn a_creation_that_never_answers_names_the_registry_and_the_budget() {
+        let hung = create_from_registry::<(), String>(
+            "mcr.microsoft.com/dotnet/sdk:10.0",
+            Duration::from_millis(50),
+            std::future::pending(),
+        )
+        .await
+        .unwrap_err();
+        let text = hung.to_string();
+        assert!(text.contains("mcr.microsoft.com"), "{text}");
+        assert!(text.contains("50ms"), "{text}");
+    }
 
     #[test]
     fn the_metrics_segment_name_matches_msbs_hash_of_the_home() {

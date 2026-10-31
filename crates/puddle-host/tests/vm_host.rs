@@ -1365,7 +1365,7 @@ fn login_service(seen: &puddle_e2e::lab::Seen) -> Option<puddle_e2e::lab::WebAns
     Some(puddle_e2e::lab::WebAnswer {
         status,
         content_type: "application/json",
-        body: body.to_owned(),
+        body: body.as_bytes().to_vec(),
     })
 }
 

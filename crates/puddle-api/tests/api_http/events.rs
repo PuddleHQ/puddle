@@ -3,6 +3,7 @@
 
 use std::time::Duration;
 
+use puddle_test_kit::eventually;
 use puddle_types::{Event, EventSink, WorkspaceName, WorkspaceStatus};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -39,13 +40,10 @@ impl Stream {
             s.buf
         );
         // Wait until the handler subscribed, so no event emitted next is missed.
-        tokio::time::timeout(STEP, async {
-            while api.events.subscribers() == 0 {
-                tokio::task::yield_now().await;
-            }
+        eventually("the handler subscribed", STEP, || {
+            api.events.subscribers() != 0
         })
-        .await
-        .expect("subscribed");
+        .await;
         s
     }
 

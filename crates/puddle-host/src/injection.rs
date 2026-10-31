@@ -1400,12 +1400,10 @@ mod tests {
             account: AccountName::new("me").unwrap(),
         };
         assert!(secrets.get(&spec).await.is_err());
-        for _ in 0..200 {
-            if !events.0.lock().unwrap().is_empty() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        puddle_test_kit::eventually("a sign-in notice forwarded", Duration::from_secs(2), || {
+            !events.0.lock().unwrap().is_empty()
+        })
+        .await;
         assert_eq!(
             *events.0.lock().unwrap(),
             [Event::CredentialSignInNeeded {
@@ -1457,6 +1455,7 @@ mod tests {
         let events = Arc::new(Events::default());
         let task = forward_sign_in_needed(&secrets, events.clone());
         let total = MAX_SIGN_IN_SOURCES + 10;
+        // flake-ok: paced flood on the paused clock, one source per tick
         for i in 0..total {
             let spec = SourceSpec::Gh {
                 host: HostName::new(format!("host{i}.example")).unwrap(),
@@ -1485,12 +1484,10 @@ mod tests {
             };
             assert!(secrets.get(&spec).await.is_err());
         }
-        for _ in 0..200 {
-            if events.0.lock().unwrap().len() >= 16 {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        puddle_test_kit::eventually("16 notices forwarded", Duration::from_secs(2), || {
+            events.0.lock().unwrap().len() >= 16
+        })
+        .await;
         let seen = events.0.lock().unwrap().len();
         assert!((1..40).contains(&seen), "{seen} notices");
         task.abort();
@@ -1534,12 +1531,10 @@ mod tests {
         assert!(matches!(&decision, InjectDecision::Refuse(refusal)
                 if refusal.code() == "credential_unavailable"
                     && refusal.message().contains("sign in to it in Puddle")));
-        for _ in 0..200 {
-            if !events.0.lock().unwrap().is_empty() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        puddle_test_kit::eventually("a sign-in notice forwarded", Duration::from_secs(2), || {
+            !events.0.lock().unwrap().is_empty()
+        })
+        .await;
         // Absence window: no second sign-in notice follows the first.
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert_eq!(

@@ -54,6 +54,11 @@
 
         <InstallExecuteSequence>
             <RemoveShortcuts>Installed AND NOT UPGRADINGPRODUCTCODE</RemoveShortcuts>
+            <!-- The "Start Puddle when I sign in" entry is written by the program itself (its Settings
+                 switch), so the installer does not own it and Windows Installer would not remove it.
+                 An uninstall deletes it, or every sign-in would start a program that is gone; an
+                 upgrade (UPGRADINGPRODUCTCODE) keeps it. ci/msi-install-test.ps1 checks both. -->
+            <Custom Action="RemoveStartAtSignIn" After="RemoveFiles">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
         </InstallExecuteSequence>
 
         <Media Id="1" Cabinet="app.cab" EmbedCab="yes" />
@@ -86,6 +91,7 @@
         <!-- Launch checkbox on the last page. -->
         <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="!(loc.LaunchApp)" />
         <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1"/>
+        <CustomAction Id="RemoveStartAtSignIn" Directory="TARGETDIR" ExeCommand="&quot;[SystemFolder]reg.exe&quot; delete &quot;HKCU\Software\Microsoft\Windows\CurrentVersion\Run&quot; /v &quot;{{product_name}}&quot; /f" Impersonate="yes" Return="ignore" />
         <CustomAction Id="LaunchApplication" Impersonate="yes" FileKey="Path" ExeCommand="" Return="asyncNoWait" />
 
         <UI>

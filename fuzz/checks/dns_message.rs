@@ -13,7 +13,7 @@ use puddle_agent::capture::wire::{self, QueryName, Rcode, Rdata, Record, Reject}
 /// When a name the parser called plain has a character outside letters, digits, `-`, `_` and `.`
 /// or is longer than a DNS name, when an answer does not echo the message id, answers a query
 /// without the response bit, or a UDP answer is bigger than the client allowed.
-pub fn dns_message(bytes: &[u8]) {
+pub(crate) fn dns_message(bytes: &[u8]) {
     // The id and the high flag byte of a message.
     let head = |msg: &[u8]| -> Option<(u16, u8)> {
         let &[a, b, flags, ..] = msg else {

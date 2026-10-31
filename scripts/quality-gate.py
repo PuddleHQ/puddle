@@ -14,7 +14,8 @@ A site needs its reason in place: `// SAFETY:` above an unsafe block or impl (`#
 on or above an `.unwrap()` outside tests, a non-empty `.expect("...")` message, `# why` after a
 shellcheck disable (in `*.sh` and in the `run:` blocks of workflow YAML), ` -- why` after eslint-disable (text after @ts-expect-error / svelte-ignore),
 `reason` on a deny.toml advisory ignore, a reason column on a coverage exclusion, and a comment on or
-within three lines above a fixed sleep in a test (not in a polling loop, not in a `start_paused` test); it checks that a comment is there, not what it says. A TODO, HACK,
+within three lines above a fixed sleep in a test (not in a polling loop, not in a `start_paused` test), and
+`#![forbid(unsafe_code)]` or `#![expect(unsafe_code, reason = "...")]` in each crate's `lib.rs` and `main.rs`; it checks that a comment is there, not what it says. A TODO, HACK,
 FIXME or XXX must name where it is tracked: `TODO(owner)`, an issue number (`#123`) or a URL. Those
 gaps are the `noreason` rows (`scripts/check.sh quality` fails on any). There is no baseline file and
 no count to hold: a new site with a good reason is fine, a site without one fails.
@@ -465,7 +466,42 @@ def scan(root):
         if re.match(r"\s*[\w:]+\s*=\s*(\"allow\"|\{\s*level\s*=\s*\"allow\")", line):
             add("cargo-lint-allow", "config", "Cargo.toml", i, line)
     kit_dependency_rows(texts, add)
+    crate_root_rows(texts, stripped, add)
     return rows
+
+
+# Every crate root (`crates/<name>/src/lib.rs` or `main.rs`, each its own compilation unit) says what it does
+# about unsafe code: `#![forbid(unsafe_code)]` (also under `cfg_attr(<cfg>, forbid(unsafe_code))` for a crate
+# that has FFI on one platform only) or `#![expect(unsafe_code, reason = "...")]`. The workspace lint is only
+# `deny`, which a nested `#[allow]` lifts silently; `forbid` makes the absence of unsafe a compiler guarantee.
+CRATE_ROOT = re.compile(r"^crates/[^/]+/src/(?:lib|main)\.rs$")
+INNER_ATTR = re.compile(r"#!\[")
+
+
+def crate_root_rows(texts, stripped, add):
+    for f, (code, _) in stripped.items():
+        if not CRATE_ROOT.match(f):
+            continue
+        raw = texts[f]
+        ok = False
+        for i, line in enumerate(code):
+            if not INNER_ATTR.search(line):
+                continue
+            # The attribute runs to its closing bracket, over as many lines as it takes.
+            end = i
+            while end + 1 < len(code) and code[end].count("[") > code[end].count("]") + sum(
+                    code[k].count("]") - code[k].count("[") for k in range(i, end)):
+                end += 1
+            masked = " ".join(code[i:end + 1])
+            text = " ".join(raw[i:end + 1])
+            if re.search(r"\bforbid\(\s*unsafe_code\s*\)", masked):
+                ok = True
+            elif re.search(r"\bexpect\(\s*unsafe_code\b", masked) and re.search(r'reason\s*=\s*"[^"]*\w[^"]*"', text):
+                ok = True
+        if not ok:
+            add("no-forbid", "prod", f, 0, "crate root")
+            add("noreason", "prod", f, 0,
+                "crate root: neither `#![forbid(unsafe_code)]` nor `#![expect(unsafe_code, reason = \"...\")]` | " + (raw[0] if raw else ""))
 
 
 # The shared test kit (crates/puddle-test-kit) is a dev-dependency only: a product crate that lists it under
@@ -803,6 +839,55 @@ def kit_self_test():
     return [] if flagged == want else [f"flagged {flagged}, wanted {want}"]
 
 
+ROOT_CASES = {
+    "forbid": "#![forbid(unsafe_code)]\n",
+    "cfg_forbid": "#![cfg_attr(not(windows), forbid(unsafe_code))]\n",
+    "expect": '#![expect(\n    unsafe_code,\n    reason = "FFI to libc"\n)]\n',
+    "expect_empty_reason": '#![expect(unsafe_code, reason = "")]\n',
+    "expect_no_reason": "#![expect(unsafe_code)]\n",
+    "deny_only": "#![deny(unsafe_code)]\n",
+    "commented": "// #![forbid(unsafe_code)]\n",
+    "in_string": 'const S: &str = "#![forbid(unsafe_code)]";\n',
+    "other_attr": "#![warn(missing_docs)]\n",
+    "bare": "pub fn f() {}\n",
+}
+ROOT_BAD = {"expect_empty_reason", "expect_no_reason", "deny_only", "commented", "in_string", "other_attr", "bare"}
+
+
+def root_self_test():
+    """The rule fails for a root without the attribute and passes once the attribute is there: each bad
+    case is flagged, then the same crate with `#![forbid(unsafe_code)]` added is not; a main.rs and a
+    nested module file are read as the rule says."""
+    import tempfile
+    problems = []
+    with tempfile.TemporaryDirectory() as d:
+        for name, text in ROOT_CASES.items():
+            os.makedirs(os.path.join(d, f"crates/{name}/src"))
+            with open(os.path.join(d, f"crates/{name}/src/lib.rs"), "w", encoding="utf-8") as h:
+                h.write(text + "pub fn f() {}\n")
+        os.makedirs(os.path.join(d, "crates/bin/src"))
+        with open(os.path.join(d, "crates/bin/src/main.rs"), "w", encoding="utf-8") as h:
+            h.write("fn main() {}\n")
+        with open(os.path.join(d, "crates/bin/src/other.rs"), "w", encoding="utf-8") as h:
+            h.write("pub fn g() {}\n")
+        flagged = {r[2].split("/")[1] for r in scan(d) if r[0] == "no-forbid"}
+        want = ROOT_BAD | {"bin"}
+        if flagged != want:
+            problems.append(f"crate root rule flagged {sorted(flagged)}, want {sorted(want)}")
+        for name in want:
+            for fname in ("lib.rs", "main.rs"):
+                path = os.path.join(d, f"crates/{name}/src/{fname}")
+                if os.path.exists(path):
+                    with open(path, encoding="utf-8") as h:
+                        body = h.read()
+                    with open(path, "w", encoding="utf-8") as h:
+                        h.write("#![forbid(unsafe_code)]\n" + body)
+        after = [r for r in scan(d) if r[0] == "no-forbid" or "crate root" in r[3]]
+        if after:
+            problems.append(f"crate root rule still flags after the fix: {after}")
+    return problems
+
+
 def flake_self_test():
     """Replay the original code of fixed flakes (scripts/flake-fixtures/, `.txt` so no gate scans them as
     code): each rule must flag the code that flaked, pass the fix where the fix leaves the shape
@@ -946,7 +1031,7 @@ def self_test():
     with tempfile.TemporaryDirectory() as d:
         os.makedirs(os.path.join(d, "crates/x/src"))
         with open(os.path.join(d, "crates/x/src/lib.rs"), "w") as h:
-            h.write(SELF_TEST)
+            h.write("#![forbid(unsafe_code)]\n" + SELF_TEST)
         os.makedirs(os.path.join(d, ".github/workflows"))
         with open(os.path.join(d, ".github/workflows/ci.yml"), "w") as h:
             h.write(SELF_TEST_YAML)
@@ -960,6 +1045,10 @@ def self_test():
     bad_kit = kit_self_test()
     if bad_kit:
         print("self-test FAIL test kit dependency:\n  " + "\n  ".join(bad_kit))
+        return 1
+    bad_root = root_self_test()
+    if bad_root:
+        print("self-test FAIL crate roots:\n  " + "\n  ".join(bad_root))
         return 1
     bad_flake = flake_self_test()
     if bad_flake:

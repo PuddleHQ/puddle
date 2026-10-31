@@ -89,6 +89,13 @@
   ],
   "profiles": [
     {
+      "token": "ghp_e2ePastedLookup0123456789",
+      "account": "tijs-pasted",
+      "name": "Tijs Pasted",
+      "email": "7+tijs-pasted@users.noreply.github.com",
+      "organisations": ["pasted-org"]
+    },
+    {
       "source": { "kind": "gh", "host": "github.com", "account": "tijs-demo" },
       "account": "tijs-demo",
       "name": "Tijs Demo",

@@ -44,4 +44,62 @@ printf '1.0.0 other %s\n' "$sum" >"$pins"
 if "$tmp/ci/fetch-code-server.sh" "$tmp/none" 9.9.9 2>"$tmp/err"; then fail "an unpinned version was accepted"; fi
 grep -q "nothing pinned" "$tmp/err" || fail "the missing pin is not named"
 
+# A release server that fails its first N requests (a dropped connection, the way a stream error looks
+# to curl), then serves the folder. It logs one line per request.
+cat >"$tmp/flaky.py" <<'PY'
+import functools, http.server, sys
+
+root, fails, log = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+seen = 0
+
+
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        global seen
+        seen += 1
+        with open(log, "a") as f:
+            f.write("%d %s\n" % (seen, self.path))
+        if seen <= fails:
+            self.connection.close()
+            return
+        super().do_GET()
+
+    def log_message(self, *args):
+        pass
+
+
+server = http.server.HTTPServer(("127.0.0.1", 0), functools.partial(Handler, directory=root))
+print(server.server_address[1], flush=True)
+server.serve_forever()
+PY
+serve() { # serve <fails> <name>: starts the server, sets $port and $srv_pid
+    : >"$tmp/$2.log"
+    python3 -I "$tmp/flaky.py" "$tmp/site" "$1" "$tmp/$2.log" >"$tmp/$2.port" &
+    srv_pid=$!
+    n=0
+    until [ -s "$tmp/$2.port" ]; do
+        n=$((n + 1))
+        [ "$n" -lt 200 ] || fail "the fake server did not start"
+        kill -0 "$srv_pid" 2>/dev/null || fail "the fake server died"
+        sleep 0.05
+    done
+    port=$(cat "$tmp/$2.port")
+}
+printf '9.9.9 %s %s\n' "$asset" "$sum" >"$pins"
+export CODE_SERVER_RETRY_BASE_S=0
+
+serve 2 twice
+CODE_SERVER_BASE_URL="http://127.0.0.1:$port" "$tmp/ci/fetch-code-server.sh" "$tmp/retried" 2>"$tmp/err" || { kill "$srv_pid"; fail "a server that fails twice was not survived: $(cat "$tmp/err")"; }
+kill "$srv_pid"
+[ "$(wc -l <"$tmp/twice.log")" -eq 3 ] || fail "expected 3 requests, saw $(wc -l <"$tmp/twice.log")"
+[ "$(grep -c 'download attempt . of 8 failed (curl exit' "$tmp/err")" -eq 2 ] || fail "the two failed tries are not printed with curl's exit code"
+[ -f "$tmp/retried/lib/node" ] || fail "no install after retries"
+
+serve 99 always
+if CODE_SERVER_ATTEMPTS=3 CODE_SERVER_BASE_URL="http://127.0.0.1:$port" "$tmp/ci/fetch-code-server.sh" "$tmp/never" 2>"$tmp/err"; then kill "$srv_pid"; fail "a server that always fails was accepted"; fi
+kill "$srv_pid"
+[ "$(wc -l <"$tmp/always.log")" -eq 3 ] || fail "expected exactly 3 tries, saw $(wc -l <"$tmp/always.log")"
+grep -q '^::error title=code-server download failed::3 tries failed for .*curl exit' "$tmp/err" || fail "the final failure has no annotation naming curl's exit code"
+unset CODE_SERVER_RETRY_BASE_S
+
 echo "fetch-code-server-test: ok"

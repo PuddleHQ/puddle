@@ -182,8 +182,10 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   all denied in CI with `-D warnings`. To silence one, use `#[expect(lint, reason = "…")]` on the
   smallest item; never `#[allow]` (itself linted), never crate-wide without a written reason.
   Tests may unwrap, expect, panic and index (`clippy.toml`).
-- **Unsafe:** every crate root says `#![forbid(unsafe_code)]`. A crate that needs FFI (Windows
-  pipe DACLs, say) removes the `forbid`, keeps the workspace `deny`, and puts each `unsafe` block
+- **Unsafe:** every crate root (`lib.rs` and `main.rs`) says `#![forbid(unsafe_code)]`, and the quality
+  gate fails a root that does not. A crate that needs FFI on one platform (Windows pipe DACLs, say) says
+  `#![cfg_attr(not(windows), forbid(unsafe_code))]`; one that needs it everywhere says
+  `#![expect(unsafe_code, reason = "…")]`. Either way it keeps the workspace `deny` and puts each `unsafe` block
   in one small module behind `#[expect(unsafe_code, reason = "…")]` with a `// SAFETY:` comment
   (`undocumented_unsafe_blocks` is on) and tests for it.
 - **No panics in product code.** Return errors. `expect` only for true invariants, with

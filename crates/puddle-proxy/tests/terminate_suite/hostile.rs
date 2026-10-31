@@ -644,6 +644,87 @@ async fn hostile_hg08_a_bound_host_with_a_mixed_answer_is_connected_at_the_allow
     assert!(!captured_logs().contains(CANARY));
 }
 
+#[tokio::test]
+async fn hostile_hg07_a_bound_host_that_rebinds_is_connected_at_the_checked_address_every_time() {
+    // The server closes after every answer, so each request on the one guest connection needs a
+    // new upstream connection. The name is looked up once, at the `CONNECT`: a proxy that looked
+    // it up again (or kept the name and not the checked address) would take the second answer.
+    let pki = Pki::new();
+    let server = FakeServer::tls(
+        pki.server_config("bound.test", Flaw::None),
+        Arc::new(|_| Reply::ok("hello").closing()),
+    )
+    .await;
+    let trap = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let injector = TestInjector::always();
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .rebinding("bound.test", trap.local_addr().unwrap())
+        .injector(injector.clone())
+        .build();
+    let mut guest = rig.guest().await;
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    for path in ["/1", "/2", "/3"] {
+        assert_eq!(client.get("bound.test", path).await.status, 200, "{path}");
+    }
+    assert_eq!(rig.lookups(), 1, "the name was asked for again");
+    assert_eq!(server.accepted(), 3, "one upstream connection per request");
+    assert_eq!(server.recorded().len(), 3);
+    assert!(
+        futures_util::FutureExt::now_or_never(trap.accept()).is_none(),
+        "the rebound address was connected to"
+    );
+    assert_eq!(injector.calls(), 3);
+    drop(client);
+    let event = &rig.events(1).await[0];
+    assert_eq!(event.resolved_ip, Some(server.addr.ip()));
+    assert!(!captured_logs().contains(CANARY));
+}
+
+// Plain HTTP to a bound host ---------------------------------------------------------------
+
+#[tokio::test]
+async fn hostile_hg15_a_plain_http_request_for_a_bound_host_never_asks_the_injector() {
+    // Only a `CONNECT` to port 443 of a bound name is decrypted. A plain absolute-form request
+    // for the same name, on port 80 or on 443, is forwarded as it is (the guest's own header
+    // included), so no credential is injected into a request that is not on a verified TLS
+    // session. The server's address is the resolver's, so port 443 here is only a name.
+    let pki = Pki::new();
+    let plain = FakeServer::plain(ok_handler()).await;
+    let injector = TestInjector::always();
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", plain.addr)
+        .injector(injector.clone())
+        .build();
+    let mut guest = rig.guest().await;
+    for port in [80, 443] {
+        let mut stream = guest.control.open_stream().await.unwrap();
+        let request = format!(
+            "GET http://bound.test:{port}/p HTTP/1.1\r\nHost: bound.test\r\nAuthorization: Bearer mine\r\n\r\n"
+        );
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut reader = tokio::io::BufReader::new(stream);
+        let response = tokio::time::timeout(
+            Duration::from_secs(5),
+            terminate_support::read_response(&mut reader, "GET"),
+        )
+        .await
+        .expect("an answer")
+        .unwrap_or_else(|| panic!("no answer on port {port}"));
+        assert_eq!(response.status, 200, "port {port}");
+    }
+    assert_eq!(injector.calls(), 0);
+    let seen = plain.recorded();
+    assert_eq!(seen.len(), 2);
+    for request in &seen {
+        assert_eq!(request.headers_named("authorization"), ["Bearer mine"]);
+        assert!(!format!("{request:?}").contains(CANARY));
+    }
+    assert!(!captured_logs().contains(CANARY));
+}
+
 // A redirect and the follow-up --------------------------------------------------------------
 
 #[tokio::test]

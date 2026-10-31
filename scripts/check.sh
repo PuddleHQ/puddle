@@ -3,13 +3,14 @@
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
 #   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, silent-skips, quality, secrets, clippy, clippy-windows, deny, advisories, notices, openapi, test, doc, coverage,
-#   coverage-ratchet, diff-coverage, coverage-determinism, mutants,
+#   coverage-ratchet, diff-coverage, diff-coverage-fast, coverage-determinism, mutants,
 #   ui, ui-licences, ui-audit, ui-e2e
 #   fast     = fmt typos spdx shellcheck hooks platform-literals standalone git-pins silent-skips   (pre-commit hook)
 #   all      = fast quality git-env secrets clippy clippy-windows deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage
 #              (CI, the nightly run, by hand; coverage runs the tests, and must follow `ui`: the embedded UI is built there)
 #   pre-push = every gate of `all` except ui-e2e, the slowest one, and advisories and ui-audit, which depend on
-#              the day's advisory databases and not on the change (pre-push hook; CI still runs ui-e2e after the push)
+#              the day's advisory databases and not on the change, plus diff-coverage-fast right after the fast gates
+#              (pre-push hook; CI still runs ui-e2e after the push)
 #   `scripts/check.sh --list <set>` prints a set's gates, one per line, without running anything.
 # Several gates run at the same time (scripts/gate-sched.sh): after the `fast` gates, which run first and
 # stop the run on a failure, the compile-and-test gates, the UI chain (ui ui-licences ui-audit ui-e2e) and
@@ -168,7 +169,7 @@ run_gate() {
         git ls-files -z -- '*.sh' '.githooks/*' | xargs -0 shellcheck
         ;;
     hooks)
-        scripts/pre-push-test.sh && scripts/mutants-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
+        scripts/pre-push-test.sh && scripts/diff-coverage-crates-test.sh && scripts/mutants-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
             scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/coverage-cargo-test.sh && scripts/coverage-determinism.sh --self-test && scripts/flake-lints-test.sh && scripts/flake-rules-test.sh &&
             ci/fetch-msb-test.sh && ci/fetch-gitleaks-test.sh && ci/fetch-code-server-test.sh && ci/fetch-tauri-cli-test.sh && ci/check-runtime-layout-test.sh &&
             ci/scope-test.sh && ci/apt-setup-test.sh && ci/advisories-issue-test.sh && ci/quality-issue-test.sh && ci/lab-override-check-test.sh && ci/cache-drop-test.sh &&
@@ -370,6 +371,57 @@ run_gate() {
         # on pull requests and nightly). A surviving mutant needs a better test. docs/STANDARDS.md, "Mutation testing".
         scripts/mutants.sh diff "$(diff_base)"
         ;;
+    diff-coverage-fast)
+        # The Rust half of the diff-coverage gate on the crates the change touches, before the slow gates:
+        # their tests with coverage, then the lines the change adds against that report. A line only another
+        # crate's tests run shows up as uncovered here; the full `coverage` gate then decides (it measures the
+        # whole workspace), so a failure here that the full gate would clear is a line to list or to test
+        # from its own crate. Untracked new files are invisible to git diff; `git add -N <file>` first.
+        base=$(diff_base)
+        if [ -z "$base" ]; then
+            echo "diff-coverage-fast: no base commit to measure the diff from; run \`git fetch origin develop\`" >&2
+            exit 1
+        fi
+        crates=$(scripts/diff-coverage-crates.sh "$base")
+        if [ -z "$crates" ]; then
+            echo "diff-coverage-fast: no Rust file changed; nothing to measure"
+            exit 0
+        fi
+        if [ "$crates" = "*" ]; then
+            echo "diff-coverage-fast: a Rust file outside crates/ changed; the coverage gate measures it"
+            exit 0
+        fi
+        packages=
+        for c in $crates; do
+            [ -z "$skip_app" ] || [ "$c" != puddle-app ] || continue
+            packages="$packages -p $c"
+        done
+        if [ -z "$packages" ]; then
+            echo "diff-coverage-fast: only puddle-app changed and it is skipped here; CI measures it"
+            exit 0
+        fi
+        # Its own target directory, and the old test binaries removed from it first: a report reads every
+        # executable in the directory, so a binary left by an earlier run of other crates, built from older
+        # sources, would put the old line numbers into this report. Cargo links the missing ones again; every
+        # library stays built for the next run. The full coverage gate's directory (and its lcov.info) is never touched.
+        target=${CARGO_TARGET_DIR:-target}/diff-coverage-fast
+        echo "diff-coverage-fast: tests with coverage for:$packages"
+        find "$target/llvm-cov-target/debug" -maxdepth 2 -type f -perm -u+x ! -name '*.so' ! -name '*.d' -delete 2>/dev/null || true
+        # shellcheck disable=SC2086 # $packages is a list of `-p <crate>` pairs
+        CARGO_TARGET_DIR=$target scripts/coverage-run.sh "$plain_cargo" $packages --all-features --locked \
+            --profile "${NEXTEST_PROFILE:-default}"
+        CARGO_TARGET_DIR=$target "$plain_cargo" llvm-cov report --lcov --output-path "$target/lcov.info"
+        # The exclusion notes ("matched nothing in this diff") list every entry of the file that this change does
+        # not touch: hundreds of lines, so only their count is printed.
+        rc=0
+        report=$(diff_coverage "diff-coverage-fast (rust)" "$target/lcov.info" .rs 2>&1) || rc=$?
+        printf '%s\n' "$report" | grep -v 'matched nothing in this diff' || true
+        echo "diff-coverage-fast: $(printf '%s\n' "$report" | grep -c 'matched nothing in this diff' || true) exclusion note(s) for untouched code left out"
+        if [ "$rc" != 0 ]; then
+            echo "diff-coverage-fast: only the tests of$packages ran; a line another crate's tests run is reported here and cleared by the full coverage gate" >&2
+            exit "$rc"
+        fi
+        ;;
     diff-coverage)
         # By hand, after `coverage` and `ui` ran: both reports against the base. Untracked new
         # files are invisible to git diff; `git add -N <file>` first.
@@ -386,8 +438,10 @@ run_gate() {
 # The gate sets, in run order. `pre-push` is derived from `all`, so a gate added to `all` is in it too.
 fast_gates="fmt typos spdx shellcheck hooks platform-literals standalone git-pins silent-skips"
 all_gates="$fast_gates quality git-env secrets clippy clippy-windows deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage"
-pre_push_gates=
+# After the fast gates and before the slow ones: a change whose added lines no test runs fails in minutes.
+pre_push_gates=$fast_gates" diff-coverage-fast"
 for g in $all_gates; do
+    case " $fast_gates " in *" $g "*) continue ;; esac
     case $g in ui-e2e | advisories | ui-audit) ;; *) pre_push_gates="$pre_push_gates $g" ;; esac
 done
 
@@ -439,6 +493,7 @@ before_concurrent() {
 
 # shellcheck source=scripts/gate-sched.sh
 . scripts/gate-sched.sh
-serial_gates=$fast_gates
+# The serial prefix. diff-coverage-fast is in it, so in the pre-push set it fails the run before the streams start.
+serial_gates="$fast_gates diff-coverage-fast"
 # shellcheck disable=SC2086 # the gate names are words by design
 run_gates $requested

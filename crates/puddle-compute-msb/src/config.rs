@@ -193,9 +193,13 @@ impl MsbConfig {
         }
     }
 
-    /// The checkout rule (see [`crate::checkout`]), with the msb home, the guest share and every
+    /// The checkout rule (see `crate::checkout`), with the msb home, the guest share and every
     /// [`MsbConfig::protected_dirs`] folder protected.
-    fn check_checkout(&self, host: &Path) -> Result<(), ComputeError> {
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::InvalidSpec`] naming what is wrong with the folder.
+    pub fn check_checkout(&self, host: &Path) -> Result<(), ComputeError> {
         // Without the data folder named, a checkout inside it would pass: fail closed.
         if self.protected_dirs.is_empty() {
             return Err(ComputeError::InvalidSpec {
@@ -254,12 +258,16 @@ impl MsbConfig {
     /// Refuses to start sandbox `name` again when its stored configuration binds a host path
     /// outside the guest share: only a checkout mount does, and a sandbox with one is made for
     /// the one boot of its create. Its source was checked at that create; a start would bind
-    /// whatever the path holds by now, unchecked.
-    pub(crate) fn check_restart(
+    /// whatever the path holds by now, unchecked. A stored configuration that can't be read
+    /// passes here: the volume check that follows refuses it with its own reason.
+    pub(crate) fn check_restart<E>(
         &self,
         name: &str,
-        config: &SandboxConfig,
+        stored: Result<SandboxConfig, E>,
     ) -> Result<(), ComputeError> {
+        let Ok(config) = stored else {
+            return Ok(());
+        };
         let root = self.guest_share.canonicalize().ok();
         for mount in &config.spec.mounts {
             let VolumeMount::Bind { host, .. } = mount else {
@@ -508,19 +516,32 @@ mod tests {
             bind(share.join("boot")),
             bind(share.join("gone-file")),
         ];
-        c.check_restart("ws", &config).unwrap();
+        c.check_restart("ws", Ok::<_, String>(config.clone()))
+            .unwrap();
         config
             .spec
             .mounts
             .push(bind(dir.0.join("api").join(".git")));
-        let err = c.check_restart("ws", &config).unwrap_err().to_string();
+        let err = c
+            .check_restart("ws", Ok::<_, String>(config.clone()))
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("never started again"), "{err}");
         // A source that is gone and was never in the share is refused too.
         config.spec.mounts = vec![bind(dir.0.join("gone").join(".git"))];
-        assert!(c.check_restart("ws", &config).is_err());
+        assert!(
+            c.check_restart("ws", Ok::<_, String>(config.clone()))
+                .is_err()
+        );
+        // A stored configuration that can't be read is left to the volume check after it.
+        c.check_restart("ws", Err::<SandboxConfig, _>("unreadable"))
+            .unwrap();
         // `..` out of the share is resolved, not taken by its spelling.
         config.spec.mounts = vec![bind(share.join("..").join("api").join(".git"))];
-        assert!(c.check_restart("ws", &config).is_err());
+        assert!(
+            c.check_restart("ws", Ok::<_, String>(config.clone()))
+                .is_err()
+        );
     }
 
     #[cfg(unix)]

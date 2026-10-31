@@ -20,7 +20,7 @@ use puddle_types::{CpuCount, ImageRef, MemoryMib, SandboxName, VolumeName, Works
 use crate::error::{map, runtime};
 use crate::sandbox::{MsbSandbox, boot_id};
 use crate::volume::{Mounter, holders, info, mounted_volumes, mounter};
-use crate::{MsbConfig, OWNER_LABEL, OWNER_LABEL_VALUE, image, logs, spec};
+use crate::{MsbConfig, OWNER_LABEL, OWNER_LABEL_VALUE, image, logs, root_disk, spec};
 
 struct Inner {
     config: MsbConfig,
@@ -387,9 +387,7 @@ impl Runtime for MsbRuntime {
     }
 
     fn check_checkout(&self, git_dir: &Path) -> Result<(), ComputeError> {
-        self.inner
-            .config
-            .check_mount_source(git_dir, puddle_compute::MountKind::Checkout)
+        self.inner.config.check_checkout(git_dir)
     }
 
     fn pull_image(
@@ -461,15 +459,14 @@ impl Runtime for MsbRuntime {
                     status: current,
                 });
             }
-            if let Ok(config) = record.config() {
-                self.inner.config.check_restart(name.as_str(), &config)?;
-            }
+            MsbConfig::check_restart(&self.inner.config, name.as_str(), record.config())?;
             let mounts: Vec<(String, Option<u32>)> =
                 mounted_volumes(name.as_str(), record.config())?
                     .into_iter()
                     .map(|v| (v, None))
                     .collect();
             self.check_volumes(name.as_str(), &mounts).await?;
+            root_disk::check_before_start(&self.sandbox_dir(name.as_str()))?;
             match self.sdk(Sandbox::start(name.as_str())).await {
                 Ok(sdk) => self.handle_for(name, sdk).await,
                 Err(e) => {

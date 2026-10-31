@@ -2596,6 +2596,9 @@ async fn a_browser_attach_gives_the_window_the_front_the_settings_and_a_way_to_t
         !target.settings.zoom_hotkeys.value,
         "the workspace's own setting reaches the window"
     );
+    // No window has connected to the editor, so the front counts none.
+    let acme = WorkspaceName::new("acme").unwrap();
+    assert_eq!(host.editor_windows().connected(&acme), 0);
     // code-server asks for a password: the window reads it when it signs in, from the guest's file.
     // The agent may say hello after the window asked: the sign-in waits for it.
     let login = target.login.expect("code-server asks for a password");
@@ -9404,6 +9407,24 @@ async fn a_checkout_git_refuses_is_a_problem_and_a_boot_that_fails_after_the_imp
         rig.guest
             .commands()
             .contains(&"m--unbooted import".to_owned())
+    );
+
+    // The volume cannot be removed either: the failure says so and names the volume left.
+    rig.runtime.inject(
+        Op::RemoveVolume,
+        Fault::once(puddle_compute::ComputeError::Runtime {
+            op: "remove_volume",
+            message: "the disk is busy".into(),
+        }),
+    );
+    let reply = api.post("/api/workspaces", &body("stuck")).await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events.until(ended("stuck"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    assert!(
+        end.to_string()
+            .contains("the new volume ws-stuck was not removed"),
+        "{end}"
     );
     host.shutdown().await;
 }

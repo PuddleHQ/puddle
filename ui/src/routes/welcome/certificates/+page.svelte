@@ -5,11 +5,33 @@
   import { networkHealth } from "#lib/stores/network-health.svelte.ts";
   import StatusMark from "#lib/welcome/StatusMark.svelte";
   import StepHeading from "#lib/welcome/StepHeading.svelte";
-  import { devCertificateLine, rootsLine } from "#lib/welcome/certificates.ts";
+  import {
+    canTrust,
+    devCertificateLine,
+    rootsLine,
+    trustNote,
+  } from "#lib/welcome/certificates.ts";
   import { around } from "#lib/welcome/steps.ts";
   import "#lib/theme/controls.css";
 
   onMount(() => void firstRun.load());
+
+  const status = $derived(firstRun.state?.dev_certificate);
+  const note = $derived(
+    trustNote({
+      trusting: firstRun.trusting,
+      error: firstRun.trustError,
+      result: firstRun.trustResult,
+      status,
+    }),
+  );
+  let noteEl: HTMLElement | undefined = $state();
+
+  async function trust() {
+    await firstRun.trust();
+    // The button goes away on a yes: keep the keyboard where the outcome is read.
+    if (!canTrust(firstRun.state?.dev_certificate)) noteEl?.focus();
+  }
 
   const lines = $derived([
     devCertificateLine(firstRun.state?.dev_certificate),
@@ -37,6 +59,20 @@
     </li>
   {/each}
 </ul>
+<div class="trust">
+  {#if canTrust(status) || firstRun.trusting}
+    <button
+      type="button"
+      class="btn"
+      disabled={firstRun.trusting}
+      aria-busy={firstRun.trusting}
+      onclick={() => void trust()}
+    >
+      {firstRun.trusting ? "Waiting for Windows…" : "Trust it now"}
+    </button>
+  {/if}
+  <p class="note" role="status" tabindex="-1" bind:this={noteEl}>{note}</p>
+</div>
 <p class="more">
   Puddle shows this once. The details are in
   <a href="/settings/network-health">Settings &rsaquo; Network health</a>.
@@ -71,7 +107,14 @@
   .title {
     font-weight: 600;
   }
+  .trust {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
   .text,
+  .note,
   .more {
     color: var(--color-text-muted);
   }

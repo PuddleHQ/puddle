@@ -35,9 +35,7 @@ use crate::layout::Layout;
 ///
 /// [`WorkspaceError::Layout`] (never: the path is fixed).
 pub fn import_mount(n: usize) -> Result<GuestPath, WorkspaceError> {
-    GuestPath::new(&format!("/puddle/import/{n}/.git")).map_err(|e| WorkspaceError::Layout {
-        reason: e.to_string(),
-    })
+    GuestPath::new(&format!("/puddle/import/{n}/.git")).map_err(layout)
 }
 
 /// The largest `.git/config` Puddle reads for the origin; a larger one has no origin it uses.
@@ -125,6 +123,12 @@ impl LocalCheckout {
 
 /// The git config file `config` as text: a plain file (checked on the open file, so a swap for a
 /// link or a device in between does not count) of at most [`MAX_CONFIG_BYTES`].
+fn layout(e: impl std::fmt::Display) -> WorkspaceError {
+    WorkspaceError::Layout {
+        reason: e.to_string(),
+    }
+}
+
 fn read_config(config: &Path) -> Result<String, String> {
     if !std::fs::symlink_metadata(config).is_ok_and(|m| m.is_file()) {
         return Err("it has no config file, so no origin remote".into());
@@ -369,11 +373,7 @@ pub(crate) fn import_env(n: usize) -> Result<GuestEnv, WorkspaceError> {
         ("maintenance.auto", "false".to_owned()),
     ];
     let mut env = GuestEnv::new();
-    let mut set = |name: &str, value: &str| {
-        env.set(name, value).map_err(|e| WorkspaceError::Layout {
-            reason: e.to_string(),
-        })
-    };
+    let mut set = |name: &str, value: &str| env.set(name, value).map_err(layout);
     set("GIT_CONFIG_COUNT", &settings.len().to_string())?;
     for (i, (key, value)) in settings.iter().enumerate() {
         set(&format!("GIT_CONFIG_KEY_{i}"), key)?;
@@ -476,6 +476,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_layout_problem_keeps_its_reason() {
+        let err = layout("no such place");
+        assert!(
+            matches!(&err, WorkspaceError::Layout { reason } if reason == "no such place"),
+            "{err:?}"
+        );
+    }
+
+    #[test]
     fn the_origin_is_the_first_url_of_its_section_in_any_spelling() {
         let text = "\u{feff}[core]\n\tbare = false\n[remote \"upstream\"]\n\turl = https://example.org/up.git\n\
                     [Remote \"origin\"]  # mine\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n\
@@ -489,6 +498,15 @@ mod tests {
             Ok("git@github.com:acme/api.git")
         );
         let none = |text: &str| origin_url(text).unwrap_err();
+        // A line without an `=` and a header that never closes are skipped, not read.
+        assert_eq!(
+            origin_url("[remote \"origin\"]\n\tnot a setting\n\turl = https://x/y\n").as_deref(),
+            Ok("https://x/y")
+        );
+        assert_eq!(
+            none("[remote \"origin\"\nurl = https://x/y\n"),
+            "it has no origin remote"
+        );
         // The subsection name is exact; nothing else counts.
         assert_eq!(
             none("[remote \"Origin\"]\nurl = https://x/y\n"),

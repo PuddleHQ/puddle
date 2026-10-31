@@ -328,8 +328,9 @@ async fn windows_become(windows: &puddle_front::Windows, workspace: &WorkspaceNa
 /// checkouts; the front counts the window. Closing the window ends the guest's real extension
 /// host (the shell's last-window cleanup) and keeps the terminal host; opening it again within the
 /// grace finds the editor with the kept session (no second sign-in). A stop closes the window
-/// before the guest goes; after the next start the editor opens the multi-root file, one root per
-/// checkout and the volume, with a new password and so a new sign-in.
+/// before the guest goes; after the next start the window opens signed in again (a new sign-in only
+/// when the password changed), and once the server starts again it opens the multi-root file the
+/// attach wrote, one root per checkout and the volume.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_close_ends_the_extension_hosts()
@@ -506,8 +507,9 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     assert!(!shell.pages.lock().unwrap().contains_key(&name));
     windows_become(windows, &sandbox, false).await;
 
-    // After the start the password is new, so the shell signs in again; the server opened what it
-    // was started with, the volume.
+    // After the start the shell signs in again if the password changed, and only then; the window
+    // opens signed in either way.
+    let before = guest(&runtime, &sandbox, "cat /run/puddle/editor-password").await;
     let start = api.post(&format!("/api/workspaces/{name}/start"), "").await;
     assert_eq!(start.status, 202, "{}", start.body);
     let end = events
@@ -515,11 +517,17 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
         .await;
     assert_eq!(end["step"], "done", "{end}");
     guest(&runtime, &sandbox, EDITOR_UP).await;
+    let after = guest(&runtime, &sandbox, "cat /run/puddle/editor-password").await;
+    let sign_ins = if after == before { 1 } else { 2 };
     attach().await;
     shell
         .wait(&name, EXPLORER_READY, "true", WORKBENCH_BUDGET)
         .await;
-    assert_eq!(*shell.sign_ins.lock().unwrap(), 2);
+    assert_eq!(
+        shell.wait(&name, "true", WHERE, PAGE_BUDGET).await["login"],
+        false
+    );
+    assert_eq!(*shell.sign_ins.lock().unwrap(), sign_ins);
 
     // The attach wrote the multi-root file; the server started again (as the agent starts it when
     // it exits) opens it: one root per checkout and the volume, with the same password.
@@ -546,7 +554,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
         roots.contains(&"api") && roots.contains(&"web") && roots.len() == 3,
         "{rows}"
     );
-    assert_eq!(*shell.sign_ins.lock().unwrap(), 2);
+    assert_eq!(*shell.sign_ins.lock().unwrap(), sign_ins);
 
     host.shutdown().await;
     drop(host);

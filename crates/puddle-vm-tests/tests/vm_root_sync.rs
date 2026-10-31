@@ -7,10 +7,10 @@
 //! and without Puddle's env, and the image's own roots are still in the bundle. A second step
 //! run changes nothing.
 //!
-//! The steps are applied by plain exec, in `boot.sh`'s order, not through `boot.sh` itself: on
-//! a real msb VM `boot.sh` currently stops at its first sysctl (`fs.inotify.max_user_instances
-//! is '1' after setting it to 1024`), which is the boot hook's VM bar.
-//! The fake-root test `puddle-certs/tests/boot_trust.rs` covers the same plan through `boot.sh`.
+//! The steps are applied by plain exec, in `boot.sh`'s order, not through `boot.sh` itself, so
+//! this test stays about the trust plan. `puddle-boot/tests/vm_boot.rs` runs `boot.sh` on real
+//! VMs. The fake-root test `puddle-certs/tests/boot_trust.rs` covers the same plan through
+//! `boot.sh` without a VM.
 #![expect(
     clippy::unwrap_used,
     clippy::indexing_slicing,

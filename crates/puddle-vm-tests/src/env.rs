@@ -427,13 +427,22 @@ pub async fn create_from_registry(
     limit: Duration,
     builder: SandboxBuilder,
 ) -> Result<Sandbox, HarnessError> {
+    pulling(image, limit, builder.create()).await
+}
+
+/// [`create_from_registry`] for any creation future, so the failure text is testable without a VM.
+async fn pulling<T, E: std::fmt::Display>(
+    image: &str,
+    limit: Duration,
+    creation: impl Future<Output = Result<T, E>>,
+) -> Result<T, HarnessError> {
     let fail = |detail: String| HarnessError::ImagePull {
         image: image.to_owned(),
         registry: registry_of(image).to_owned(),
         detail,
     };
-    match tokio::time::timeout(limit, builder.create()).await {
-        Ok(Ok(sandbox)) => Ok(sandbox),
+    match tokio::time::timeout(limit, creation).await {
+        Ok(Ok(created)) => Ok(created),
         Ok(Err(e)) => Err(fail(e.to_string())),
         Err(_) => Err(fail(format!("no answer within {limit:?}"))),
     }
@@ -457,14 +466,35 @@ pub(crate) mod tests {
         assert_eq!(registry_of("localhost:5000/x"), "localhost:5000");
     }
 
-    #[test]
-    fn the_pull_error_names_the_registry() {
-        let e = HarnessError::ImagePull {
-            image: "node:22".into(),
-            registry: registry_of("node:22").into(),
-            detail: "boom".into(),
-        };
-        assert!(e.to_string().contains("registry-1.docker.io"), "{e}");
+    #[tokio::test]
+    async fn a_failed_creation_names_the_registry_and_the_cause() {
+        let failed = pulling::<(), _>("node:22", Duration::from_secs(5), async {
+            Err("manifest unknown")
+        })
+        .await
+        .unwrap_err();
+        let text = failed.to_string();
+        assert!(text.contains("registry-1.docker.io"), "{text}");
+        assert!(text.contains("manifest unknown"), "{text}");
+        let ok = pulling("node:22", Duration::from_secs(5), async {
+            Ok::<_, String>(7)
+        })
+        .await;
+        assert_eq!(ok.unwrap(), 7);
+    }
+
+    #[tokio::test]
+    async fn a_creation_that_never_answers_names_the_registry_and_the_budget() {
+        let hung = pulling::<(), String>(
+            "mcr.microsoft.com/dotnet/sdk:10.0",
+            Duration::from_millis(50),
+            std::future::pending(),
+        )
+        .await
+        .unwrap_err();
+        let text = hung.to_string();
+        assert!(text.contains("mcr.microsoft.com"), "{text}");
+        assert!(text.contains("50ms"), "{text}");
     }
 
     #[test]

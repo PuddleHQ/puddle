@@ -455,9 +455,7 @@ impl Runtime for MsbRuntime {
                     status: current,
                 });
             }
-            if let Ok(config) = record.config() {
-                self.inner.config.check_restart(name.as_str(), &config)?;
-            }
+            MsbConfig::check_restart(&self.inner.config, name.as_str(), record.config())?;
             let mounts: Vec<(String, Option<u32>)> =
                 mounted_volumes(name.as_str(), record.config())?
                     .into_iter()

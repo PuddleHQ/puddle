@@ -11,6 +11,7 @@ import {
   checkOf,
   credentialKey,
   describeSource,
+  type AccountProfile,
   type Check,
   type Credential,
   type FoundAccounts,
@@ -313,6 +314,24 @@ export class IdentitiesStore {
       return checkOf(data);
     } catch {
       return { state: "problem", message: DOWN, needsSignIn: false };
+    }
+  }
+
+  /** Asks the Git host who a credential's account is; the answer may carry its own problem. */
+  async profileOf(source: Source): Promise<Result<AccountProfile>> {
+    try {
+      const { data, error } = await this.#api.POST("/api/credentials/profile", {
+        body: { source },
+      });
+      if (!data) {
+        return {
+          ok: false,
+          message: this.#refused(error, "Puddle couldn't look up the account"),
+        };
+      }
+      return { ok: true, value: data };
+    } catch {
+      return { ok: false, message: DOWN };
     }
   }
 

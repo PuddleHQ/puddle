@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from "vitest";
-import { credential, identity } from "#lib/testing/fake-identities.ts";
+import { credential, identity, profile } from "#lib/testing/fake-identities.ts";
 import {
+  authorDiffers,
+  authorFill,
   authorProblem,
   checkFromLast,
   checkOf,
@@ -13,6 +15,8 @@ import {
   credentialKey,
   describeSource,
   foundLabel,
+  hasAuthor,
+  hasOwner,
   hostProblem,
   identityProblem,
   identityStatus,
@@ -26,6 +30,7 @@ import {
   sourceLabel,
   sourceOf,
   statusWord,
+  toggleOwner,
   tokenProblem,
   UNTESTED,
   usedBy,
@@ -369,5 +374,60 @@ describe("the host's record of a read", () => {
       credentials: [credential({ last_check: last })],
     });
     expect(requestOf(one).credentials[0]).not.toHaveProperty("last_check");
+  });
+});
+
+describe("what an account offers an identity", () => {
+  const mine = profile({ name: "Tijs", email: "1+tijs@users.noreply.example" });
+
+  it("fills only empty author fields unless the user pressed the button", () => {
+    const empty = { name: "", email: "" };
+    expect(authorFill(empty, mine, false)).toEqual({
+      name: "Tijs",
+      email: "1+tijs@users.noreply.example",
+    });
+    expect(authorFill({ name: "  ", email: "" }, mine, false).name).toBe(
+      "Tijs",
+    );
+    const typed = { name: "Tijs V", email: "" };
+    expect(authorFill(typed, mine, false)).toEqual({
+      name: "Tijs V",
+      email: "1+tijs@users.noreply.example",
+    });
+    expect(authorFill(typed, mine, true).name).toBe("Tijs");
+  });
+
+  it("keeps a field the host left out, even when forced", () => {
+    const onlyName = profile({ name: "Tijs" });
+    expect(
+      authorFill({ name: "x", email: "me@example.com" }, onlyName, true),
+    ).toEqual({ name: "Tijs", email: "me@example.com" });
+    expect(authorFill({ name: "x", email: "y" }, profile(), true)).toEqual({
+      name: "x",
+      email: "y",
+    });
+  });
+
+  it("knows whether a profile has an author and whether using it would change anything", () => {
+    expect(hasAuthor(profile())).toBe(false);
+    expect(hasAuthor(profile({ name: " " }))).toBe(false);
+    expect(hasAuthor(profile({ email: "a@b" }))).toBe(true);
+    expect(
+      authorDiffers(
+        { name: "Tijs", email: "1+tijs@users.noreply.example" },
+        mine,
+      ),
+    ).toBe(false);
+    expect(authorDiffers({ name: "Other", email: "" }, mine)).toBe(true);
+  });
+
+  it("adds and takes out an owner without case or duplicates", () => {
+    expect(hasOwner("acme, Labs", "labs")).toBe(true);
+    expect(hasOwner("acme", "labs")).toBe(false);
+    expect(hasOwner("not valid!, labs", "labs")).toBe(true);
+    expect(toggleOwner("", "acme")).toBe("acme");
+    expect(toggleOwner("acme", "labs")).toBe("acme, labs");
+    expect(toggleOwner("acme, Labs", "labs")).toBe("acme");
+    expect(toggleOwner("acme", "ACME")).toBe("");
   });
 });

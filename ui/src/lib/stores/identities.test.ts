@@ -5,6 +5,7 @@ import {
   FakeIdentities,
   ghSource,
   identity,
+  profile,
 } from "#lib/testing/fake-identities.ts";
 import { FakeSource } from "#lib/testing/fake-inbox.ts";
 import { describeSource } from "#lib/identities/model.ts";
@@ -138,6 +139,10 @@ describe("changing identities", () => {
       message: down,
     });
     expect(await store.signIn(ghSource())).toEqual({
+      ok: false,
+      message: down,
+    });
+    expect(await store.profileOf(ghSource())).toEqual({
       ok: false,
       message: down,
     });
@@ -562,5 +567,29 @@ describe("staying current", () => {
     const reads = api.calls.length;
     await vi.advanceTimersByTimeAsync(120_000);
     expect(api.calls.length).toBe(reads);
+  });
+});
+
+describe("who an account is", () => {
+  it("answers the profile the host gave, or the host's own problem inside it", async () => {
+    api.profiles[describeSource(ghSource("me"))] = profile({
+      account: "me",
+      name: "Me",
+      organisations: ["acme"],
+    });
+    const store = make();
+    const known = await store.profileOf(ghSource("me"));
+    expect(known.ok && known.value).toMatchObject({ name: "Me" });
+    const unknown = await store.profileOf(ghSource("nobody"));
+    expect(unknown.ok && unknown.value.problem?.code).toBe("unreachable");
+  });
+
+  it("words a refusal of the request itself", async () => {
+    const store = make();
+    api.refuse = { status: 503, message: "the service is not available" };
+    expect(await store.profileOf(ghSource())).toEqual({
+      ok: false,
+      message: "The service is not available.",
+    });
   });
 });

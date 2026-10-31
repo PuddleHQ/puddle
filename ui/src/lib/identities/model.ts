@@ -16,6 +16,7 @@ export type Coverage = components["schemas"]["CredentialCoverage"];
 export type FoundAccount = components["schemas"]["FoundAccount"];
 export type FoundAccounts = components["schemas"]["FoundAccounts"];
 export type IdentityRequest = components["schemas"]["IdentityRequest"];
+export type AccountProfile = components["schemas"]["AccountProfile"];
 export type CheckResult = components["schemas"]["CheckResult"];
 
 /**
@@ -216,6 +217,70 @@ export function coverageProblem(covers: Coverage): string | null {
   return covers.owners.length === 0 && !covers.rest_of_host
     ? "Name an owner or organisation, or tick the rest of the host."
     : null;
+}
+
+/** The author as typed in the dialog. */
+export interface Author {
+  name: string;
+  email: string;
+}
+
+/** Whether a profile says anything that fits the author fields. */
+export function hasAuthor(profile: AccountProfile): boolean {
+  return (
+    (profile.name ?? "").trim() !== "" || (profile.email ?? "").trim() !== ""
+  );
+}
+
+/**
+ * The author after taking a profile's name and address. Without `force` only an empty field is
+ * filled, so text the user typed is never replaced; with it (the user pressed the button) both
+ * fields take what the host said, and a field the host left out keeps its text.
+ */
+export function authorFill(
+  current: Author,
+  profile: AccountProfile,
+  force: boolean,
+): Author {
+  const name = (profile.name ?? "").trim();
+  const email = (profile.email ?? "").trim();
+  const take = (now: string, offered: string) =>
+    offered !== "" && (force || now.trim() === "") ? offered : now;
+  return {
+    name: take(current.name, name),
+    email: take(current.email, email),
+  };
+}
+
+/** Whether pressing the button would change the author. */
+export function authorDiffers(
+  current: Author,
+  profile: AccountProfile,
+): boolean {
+  const next = authorFill(current, profile, true);
+  return next.name !== current.name || next.email !== current.email;
+}
+
+/** Whether an owner is already in the owners text (names compare without case). */
+export function hasOwner(text: string, owner: string): boolean {
+  const parsed = parseOwners(text);
+  const wanted = owner.toLowerCase();
+  return parsed.ok
+    ? parsed.owners.includes(wanted)
+    : text
+        .toLowerCase()
+        .split(/[\s,]+/)
+        .includes(wanted);
+}
+
+/** The owners text with `owner` added, or taken out when it is there already. */
+export function toggleOwner(text: string, owner: string): string {
+  const wanted = owner.toLowerCase();
+  const words = text.split(/[\s,]+/).filter((w) => w !== "");
+  if (hasOwner(text, owner)) {
+    return words.filter((w) => w.toLowerCase() !== wanted).join(", ");
+  }
+  return [...words, owner].join(", ");
 }
 
 export const MAX_LABEL = 64;

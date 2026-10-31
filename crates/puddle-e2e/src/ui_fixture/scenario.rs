@@ -66,6 +66,10 @@ pub struct Scenario {
     /// The repository lists the fake Git hosts answer with, one per credential of an identity.
     #[serde(default)]
     pub repo_lists: Vec<RepoListSeed>,
+    /// What the fake Git hosts say about each credential's account (name, address, organisations);
+    /// a credential left out answers that the host could not be reached.
+    #[serde(default)]
+    pub profiles: Vec<ProfileSeed>,
     /// How long the fake workspace service pauses between the steps of an operation (create,
     /// start, ...), in ms. Zero (the default) runs them back to back; tests that need to look
     /// at the busy state use the `hold_workspaces` step instead.
@@ -407,6 +411,37 @@ pub struct RepoListSeed {
     /// The repositories.
     #[serde(default)]
     pub repos: Vec<RepoItemSeed>,
+}
+
+/// What a Git host says about one credential's account.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileSeed {
+    /// The credential it answers for (set this or `token`).
+    #[serde(default)]
+    pub source: Option<CredentialSource>,
+    /// The pasted token it answers for, whatever id the fixture kept it under (set this or
+    /// `source`). A token the UI keeps while the user types is only known by its value.
+    #[serde(default)]
+    pub token: Option<String>,
+    /// The account name on the host.
+    #[serde(default)]
+    pub account: Option<String>,
+    /// The display name.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// The address commits use.
+    #[serde(default)]
+    pub email: Option<String>,
+    /// The organisations the account belongs to.
+    #[serde(default)]
+    pub organisations: Vec<String>,
+    /// What is missing or limited.
+    #[serde(default)]
+    pub notes: Vec<RepoNoteSeed>,
+    /// Why the profile could not be read.
+    #[serde(default)]
+    pub problem: Option<RepoProblemSeed>,
 }
 
 /// Why a list could not be read.

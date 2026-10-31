@@ -1,17 +1,21 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import {
     coverageOf,
     coverageProblem,
     describeSource,
     foundLabel,
+    hasAuthor,
+    hasOwner,
     hostProblem,
     needsOrg,
     orgProblem,
     parseOwners,
     sourceOf,
+    toggleOwner,
     tokenProblem,
+    type AccountProfile,
     type CredentialDraft,
     type FoundAccount,
     type Source,
@@ -27,12 +31,15 @@
     existing,
     onAdd,
     onCancel,
+    onProfile,
   }: {
     store: IdentitiesStore;
     existing: readonly CredentialDraft[];
     /** `stored` is the source of a token that was just kept, so the dialog can remove it again if the identity is not saved. */
     onAdd: (credential: CredentialDraft, stored: Source | null) => void;
     onCancel: () => void;
+    /** The account's name and address when the Git host gave them, for the author fields. */
+    onProfile: (profile: AccountProfile) => void;
   } = $props();
 
   const id = $props.id();
@@ -46,6 +53,16 @@
   let problem = $state<{ field: string; message: string } | null>(null);
   let busy = $state(false);
   let root = $state<HTMLElement>();
+  /** What the Git host said of the chosen or looked-up account; looking is never required to save. */
+  let lookup = $state<
+    | { state: "idle" }
+    | { state: "looking" }
+    | { state: "failed"; message: string }
+    | { state: "ready"; profile: AccountProfile }
+  >({ state: "idle" });
+  let lookups = 0;
+  /** A pasted token kept so the account could be asked about it; reused by Add credential. */
+  let kept: { key: string; source: Source; used: boolean } | null = null;
 
   const usable = $derived(
     (store.found?.accounts ?? []).filter((a) => sourceOf(a) !== null),
@@ -59,6 +76,61 @@
       : host.trim() || "this host",
   );
 
+  onDestroy(() => {
+    if (kept && !kept.used) void store.forgetToken(kept.source);
+  });
+
+  async function look(source: Source) {
+    const mine = ++lookups;
+    lookup = { state: "looking" };
+    const answer = await store.profileOf(source);
+    if (mine !== lookups) return;
+    if (!answer.ok) {
+      lookup = { state: "failed", message: answer.message };
+      return;
+    }
+    lookup = { state: "ready", profile: answer.value };
+    if (hasAuthor(answer.value)) onProfile(answer.value);
+  }
+
+  function forget() {
+    lookups++;
+    lookup = { state: "idle" };
+  }
+
+  const pastedKey = () =>
+    `${host.trim().toLowerCase()}|${needsOrg(host) ? org.trim() : ""}|${token}`;
+
+  /** Keeps the pasted token (the account can only be asked about a kept one) and asks the host. */
+  async function lookUpPasted() {
+    problem = null;
+    const hostError = hostProblem(host);
+    if (hostError) return fail("host", hostError);
+    if (needsOrg(host)) {
+      const orgError = orgProblem(org);
+      if (orgError) return fail("org", orgError);
+    }
+    const tokenError = tokenProblem(token);
+    if (tokenError) return fail("token", tokenError);
+    const key = pastedKey();
+    if (kept?.key !== key) {
+      busy = true;
+      try {
+        const answer = await store.storeToken(
+          host.trim().toLowerCase(),
+          needsOrg(host) ? org.trim() : null,
+          token,
+        );
+        if (!answer.ok) return fail("token", answer.message);
+        if (kept) void store.forgetToken(kept.source);
+        kept = { key, source: answer.value, used: false };
+      } finally {
+        busy = false;
+      }
+    }
+    if (kept) await look(kept.source);
+  }
+
   onMount(() => {
     if (store.found === null) void store.loadFound();
   });
@@ -68,11 +140,14 @@
     const covers = coverageOf(account);
     ownersText = covers.owners.join(", ");
     rest = covers.rest_of_host;
+    const source = sourceOf(account);
+    if (source) void look(source);
   }
 
   function switchMode(next: "found" | "paste") {
     mode = next;
     problem = null;
+    forget();
     if (next === "paste") {
       ownersText = "";
       rest = true;
@@ -120,17 +195,22 @@
     }
 
     let stored: Source | null = null;
-    if (mode === "paste") {
+    if (mode === "paste" && kept?.key === pastedKey()) {
+      kept.used = true;
+      source = kept.source;
+      stored = kept.source;
+      token = "";
+    } else if (mode === "paste") {
       busy = true;
       try {
-        const kept = await store.storeToken(
+        const answer = await store.storeToken(
           credentialHost,
           needsOrg(credentialHost) ? org.trim() : null,
           token,
         );
-        if (!kept.ok) return fail("token", kept.message);
-        source = kept.value;
-        stored = kept.value;
+        if (!answer.ok) return fail("token", answer.message);
+        source = answer.value;
+        stored = answer.value;
         token = "";
       } finally {
         busy = false;
@@ -256,6 +336,60 @@
         Puddle keeps it in your operating system's credential store and never
         shows it again.
       </p>
+      <div>
+        <button
+          type="button"
+          class="btn"
+          disabled={busy || lookup.state === "looking"}
+          onclick={lookUpPasted}>Look up this account</button
+        >
+      </div>
+    </div>
+  {/if}
+
+  {#if lookup.state !== "idle"}
+    <div class="profile" aria-live="polite">
+      {#if lookup.state === "looking"}
+        <p class="hint">Asking {coverHost} who this is&hellip;</p>
+      {:else if lookup.state === "failed"}
+        <p class="hint">
+          {lookup.message} You can still add the credential and type the author yourself.
+        </p>
+      {:else}
+        {@const found = lookup.profile}
+        {#if found.problem}
+          <p class="hint">{found.problem.message}</p>
+        {:else if hasAuthor(found)}
+          <p class="hint">
+            {found.account ?? "This account"} on {coverHost}: {found.name ??
+              "no name"}{found.email ? ` <${found.email}>` : ""}.
+          </p>
+        {/if}
+        {#if !found.problem && !hasAuthor(found) && needsOrg(coverHost)}
+          <p class="hint">
+            Azure DevOps doesn't tell Puddle who you are: type the author name
+            and address yourself.
+          </p>
+        {/if}
+        {#each found.notes as note, index (index)}
+          <p class="hint">{note.message}</p>
+        {/each}
+        {#if found.organisations.length > 0}
+          <div class="orgs" role="group" aria-label="Organisations to cover">
+            <span class="hint">Cover an organisation:</span>
+            {#each found.organisations as organisation (organisation)}
+              <button
+                type="button"
+                class="btn chipbtn"
+                aria-pressed={hasOwner(ownersText, organisation)}
+                onclick={() =>
+                  (ownersText = toggleOwner(ownersText, organisation))}
+                >{organisation}</button
+              >
+            {/each}
+          </div>
+        {/if}
+      {/if}
     </div>
   {/if}
 
@@ -360,6 +494,20 @@
     margin: 0;
     color: var(--color-danger);
     font-size: var(--text-sm);
+  }
+  .profile {
+    display: grid;
+    gap: var(--space-1);
+  }
+  .orgs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .chipbtn[aria-pressed="true"] {
+    border-color: var(--color-accent);
+    font-weight: 600;
   }
   .chip {
     padding: 0 var(--space-2);

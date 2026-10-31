@@ -390,6 +390,7 @@ pub struct Host<R: Runtime + Clone> {
     settings: Arc<dyn SettingsRepo>,
     endpoints: PuddleEndpoints,
     workspaces: HostWorkspaces<R>,
+    editor_windows: puddle_front::Windows,
     lifecycle: Arc<Lifecycle<R>>,
     grace: std::time::Duration,
     api: AsyncMutex<Option<RunningApi>>,
@@ -604,9 +605,10 @@ impl<R: Runtime + Clone> Host<R> {
             &status,
         )?;
         let (git_changes, sign_in_notices) = injecting.watch(&service, &events);
+        let editor_windows = front.windows().clone();
         let editor_updates = AbortOnDrop(crate::editor_updates::spawn(
             service.clone(),
-            front.windows().clone(),
+            editor_windows.clone(),
         ));
         steps.push(Step::WorkspacesReady);
 
@@ -648,6 +650,7 @@ impl<R: Runtime + Clone> Host<R> {
             settings,
             endpoints,
             workspaces: service,
+            editor_windows,
             lifecycle,
             grace: config.operations_grace,
             api: AsyncMutex::new(Some(served.api)),
@@ -730,6 +733,13 @@ impl<R: Runtime + Clone> Host<R> {
     #[must_use]
     pub fn workspaces(&self) -> &HostWorkspaces<R> {
         &self.workspaces
+    }
+
+    /// The browser editor windows the front counts per workspace: a window keeps a connection to
+    /// its editor while it is open. A server update waits until a workspace has none.
+    #[must_use]
+    pub fn editor_windows(&self) -> &puddle_front::Windows {
+        &self.editor_windows
     }
 
     /// What reconcile found and did at start.

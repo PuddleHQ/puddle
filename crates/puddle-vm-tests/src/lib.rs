@@ -51,7 +51,8 @@ mod runtime;
 pub mod sockets;
 
 pub use browser::{
-    BROWSER_MODULES_VAR, BrowserClient, NODE_VAR, Node, NodeOutput, PageOutcome, PageRequest,
+    BROWSER_MODULES_VAR, BrowserClient, BrowserCookie, BrowserSession, NODE_VAR, Node, NodeOutput,
+    PageId, PageOutcome, PageRequest,
 };
 pub use env::{Settings, VmEnv, create_from_registry, registry_of, test_owner, within};
 pub use error::HarnessError;

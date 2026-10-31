@@ -3,6 +3,7 @@
 // tests, in the shape openapi-fetch returns them. It keeps real state (so a change shows up in the
 // next read) and refuses a collision the way the host does. Not shipped (tests import it).
 import type {
+  AccountProfile,
   Credential,
   CredentialDraft,
   FoundAccounts,
@@ -35,6 +36,18 @@ export function credential(
 /** What the host answers for a credential it has not read yet. */
 function withoutRecord(drafts: CredentialDraft[]): Credential[] {
   return drafts.map((c) => ({ ...c, last_check: null }));
+}
+
+export function profile(over: Partial<AccountProfile> = {}): AccountProfile {
+  return {
+    account: null,
+    name: null,
+    email: null,
+    notes: [],
+    organisations: [],
+    problem: null,
+    ...over,
+  };
 }
 
 export function identity(id: number, over: Partial<Identity> = {}): Identity {
@@ -93,6 +106,10 @@ export class FakeIdentities {
   };
   /** What a sign-in does to `unreadable`: it makes the credential readable, as a finished one does. */
   signInFixes = true;
+  /** What the Git host says of an account, by `describeSource`; a source left out answers a problem. */
+  profiles: Record<string, AccountProfile> = {};
+  /** When set, a profile answer waits for it (a slow host). */
+  profileGate: Promise<void> | null = null;
   tokens: string[] = [];
   calls: string[] = [];
   bodies: unknown[] = [];
@@ -194,6 +211,21 @@ export class FakeIdentities {
     if (this.refuse) return this.reply(this.refuse.status);
     const body = init.body ?? {};
     switch (path) {
+      case "/api/credentials/profile": {
+        await this.profileGate;
+        const line = describeSource(body["source"] as Source);
+        return this.reply(
+          200,
+          this.profiles[line] ??
+            profile({
+              problem: {
+                code: "unreachable",
+                message: "the host could not be reached",
+                needs_sign_in: false,
+              },
+            }),
+        );
+      }
       case "/api/identities": {
         const made = identity(this.#id++, {
           label: String(body["label"]),

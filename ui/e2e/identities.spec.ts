@@ -178,6 +178,77 @@ test("adds an identity from an account found on this computer", async ({
   await expect(page.getByText("Added Side project.")).toBeVisible();
 });
 
+test("fills the author and offers the organisations from the account, and shows the host's words as text", async ({
+  page,
+  backend,
+}) => {
+  await open(page, backend);
+  await page.getByRole("button", { name: "Add identity" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Add identity" });
+  await dialog.getByLabel("Identity name").fill("Demo");
+  await dialog.getByLabel("Author name").fill("Tijs V");
+  await dialog.getByRole("button", { name: "Add a credential" }).click();
+  await dialog.getByLabel(/tijs-demo on github.com/).check();
+  // The empty address is filled; the typed name stays until the button is pressed.
+  await expect(dialog.getByLabel("Author email")).toHaveValue(
+    "4242+tijs-demo@users.noreply.github.com",
+  );
+  await expect(dialog.getByLabel("Author name")).toHaveValue("Tijs V");
+  await dialog
+    .getByRole("button", { name: "Use this account's name and address" })
+    .click();
+  await expect(dialog.getByLabel("Author name")).toHaveValue("Tijs Demo");
+  await dialog.getByRole("button", { name: "demo-labs" }).click();
+  await expect(dialog.getByLabel(/Owners or organisations/)).toHaveValue(
+    "demo-labs",
+  );
+  await expect(dialog).toContainText(
+    "Organisations that require single sign-on may be missing.",
+  );
+  await dialog.getByRole("button", { name: "Add credential" }).click();
+  await dialog.getByRole("button", { name: "Add identity" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(row(page, "Demo")).toContainText(
+    "Tijs Demo <4242+tijs-demo@users.noreply.github.com>",
+  );
+});
+
+test("a profile the host could not read shows its problem as plain text and never blocks adding the credential", async ({
+  page,
+  backend,
+}) => {
+  await open(page, backend);
+  await page.getByRole("button", { name: "Add identity" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Add identity" });
+  await dialog.getByRole("button", { name: "Add a credential" }).click();
+  await dialog.getByLabel(/tijs-old on github.com/).check();
+  await expect(dialog).toContainText(
+    "GitHub did not accept the login <b>tijs-old</b>.",
+  );
+  await expect(dialog.getByLabel("Author name")).toHaveValue("");
+  await dialog.getByRole("button", { name: "Add credential" }).click();
+  await expect(dialog).toContainText("gh · tijs-old · github.com");
+});
+
+test("an Azure DevOps account says its author must be typed and offers its organisation", async ({
+  page,
+  backend,
+}) => {
+  await open(page, backend);
+  await page.getByRole("button", { name: "Add identity" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Add identity" });
+  await dialog.getByRole("button", { name: "Add a credential" }).click();
+  await dialog.getByLabel(/tijs@contoso.example on dev.azure.com/).check();
+  await expect(dialog).toContainText(
+    "type the author name and address yourself",
+  );
+  await expect(dialog.getByRole("button", { name: "contoso" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(dialog.getByLabel("Author name")).toHaveValue("");
+});
+
 test("a pasted token is write-only: it is kept by id and never appears in any answer", async ({
   page,
   backend,
@@ -216,6 +287,81 @@ test("a pasted token is write-only: it is kept by id and never appears in any an
   expect(text).not.toContain(secret);
   // eslint-disable-next-line no-restricted-syntax -- absence: the settled state is asserted above, and a poll of a negative passes on its first read too
   expect(await page.content()).not.toContain(secret);
+});
+
+const PASTED = "ghp_e2ePastedLookup0123456789";
+
+/** Opens the editor on a pasted GitHub token, typed and not yet looked up. */
+async function pasteToken(page: Page, backend: Backend, token = PASTED) {
+  await open(page, backend);
+  await page.getByRole("button", { name: "Add identity" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Add identity" });
+  await dialog.getByRole("button", { name: "Add a credential" }).click();
+  await dialog.getByLabel("Paste a token").check();
+  await dialog.getByLabel("Git host").fill("github.com");
+  await dialog.getByLabel("Token", { exact: true }).fill(token);
+  return dialog;
+}
+
+test("looking up a pasted token keeps it, fills the author, and adding the credential reuses that entry", async ({
+  page,
+  backend,
+  request,
+}) => {
+  const dialog = await pasteToken(page, backend);
+  expect((await backend.control.state()).kept_tokens).toEqual([]);
+  await dialog.getByRole("button", { name: "Look up this account" }).click();
+  await expect(dialog).toContainText("tijs-pasted on github.com: Tijs Pasted");
+  await expect(dialog.getByLabel("Author email")).toHaveValue(
+    "7+tijs-pasted@users.noreply.github.com",
+  );
+  await expect(
+    dialog.getByRole("button", { name: "pasted-org" }),
+  ).toBeVisible();
+  const [kept] = (await backend.control.state()).kept_tokens;
+  expect(kept).toBeTruthy();
+  await dialog.getByLabel("Identity name").fill("Pasted");
+  await dialog.getByRole("button", { name: "Add credential" }).click();
+  await dialog.getByRole("button", { name: "Add identity" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(row(page, "Pasted")).toContainText(
+    "Tijs Pasted <7+tijs-pasted@users.noreply.github.com>",
+  );
+  expect((await backend.control.state()).kept_tokens).toEqual([kept]);
+  const answer = await request.get("/api/identities", {
+    headers: { Authorization: `Bearer ${backend.token}` },
+  });
+  const text = await answer.text();
+  expect(text).toContain(`"id":"${kept}"`);
+  expect(text).not.toContain(PASTED);
+});
+
+test("a changed token replaces the kept entry, and an unadded kept token is removed when the editor closes", async ({
+  page,
+  backend,
+}) => {
+  const dialog = await pasteToken(page, backend);
+  const lookUp = dialog.getByRole("button", { name: "Look up this account" });
+  await lookUp.click();
+  await expect(dialog).toContainText("tijs-pasted on github.com");
+  const [first] = (await backend.control.state()).kept_tokens;
+  await dialog
+    .getByLabel("Token", { exact: true })
+    .fill("ghp_someOtherToken0123456789");
+  await lookUp.click();
+  await expect(dialog).toContainText(
+    "the fake host has no profile for this credential",
+  );
+  await expect
+    .poll(async () => (await backend.control.state()).kept_tokens)
+    .toHaveLength(1);
+  const [second] = (await backend.control.state()).kept_tokens;
+  expect(second).not.toBe(first);
+  await dialog.getByRole("button", { name: "Cancel" }).first().click();
+  await expect(dialog.getByLabel("Paste a token")).toBeHidden();
+  await expect
+    .poll(async () => (await backend.control.state()).kept_tokens)
+    .toEqual([]);
 });
 
 test("checks a form before it asks and keeps focus on the first problem", async ({

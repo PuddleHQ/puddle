@@ -8,12 +8,14 @@ import {
   within,
 } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describeSource } from "#lib/identities/model.ts";
 import { IdentitiesStore } from "#lib/stores/identities.svelte.ts";
 import {
   credential,
   FakeIdentities,
   ghSource,
   identity,
+  profile,
 } from "#lib/testing/fake-identities.ts";
 import IdentityDialog from "./IdentityDialog.svelte";
 
@@ -278,5 +280,89 @@ describe("editing an identity", () => {
     mount({ mode: "edit", identity: store.identities[0] as never });
     await fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(onSaved).toHaveBeenCalled());
+  });
+});
+
+describe("the author from the account", () => {
+  const mine = profile({
+    name: "Tijs Work",
+    email: "1+tijs-work@users.noreply.github.com",
+  });
+
+  async function pick() {
+    api.profiles[describeSource(ghSource("tijs-work"))] = mine;
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Add a credential" }),
+    );
+    await fireEvent.click(
+      await screen.findByLabelText(/tijs-work on github.com/),
+    );
+  }
+
+  it("fills an empty author and offers nothing more once it matches", async () => {
+    mount({ mode: "create" });
+    await pick();
+    await waitFor(() =>
+      expect(screen.getByLabelText("Author name")).toHaveValue("Tijs Work"),
+    );
+    expect(screen.getByLabelText("Author email")).toHaveValue(
+      "1+tijs-work@users.noreply.github.com",
+    );
+    expect(
+      screen.queryByRole("button", {
+        name: "Use this account's name and address",
+      }),
+    ).toBeNull();
+  });
+
+  it("leaves typed text alone and replaces it only when the button is pressed", async () => {
+    mount({ mode: "create" });
+    await type("Author name", "Tijs V");
+    await pick();
+    const use = await screen.findByRole("button", {
+      name: "Use this account's name and address",
+    });
+    expect(screen.getByLabelText("Author name")).toHaveValue("Tijs V");
+    // The empty address was filled, the typed name was not.
+    expect(screen.getByLabelText("Author email")).toHaveValue(
+      "1+tijs-work@users.noreply.github.com",
+    );
+    await fireEvent.click(use);
+    expect(screen.getByLabelText("Author name")).toHaveValue("Tijs Work");
+    expect(
+      screen.queryByRole("button", {
+        name: "Use this account's name and address",
+      }),
+    ).toBeNull();
+  });
+
+  it("offers an account's name to an identity that already has an author, and forgets it on reopening", async () => {
+    api.identities = [identity(1, { label: "Work" })];
+    await store.refresh();
+    const view = mount({ mode: "edit", identity: api.identities[0] as never });
+    await pick();
+    await screen.findByRole("button", {
+      name: "Use this account's name and address",
+    });
+    expect(screen.getByLabelText("Author name")).toHaveValue("Name 1");
+    await view.rerender({ open: false });
+    await view.rerender({ open: true });
+    expect(
+      screen.queryByRole("button", {
+        name: "Use this account's name and address",
+      }),
+    ).toBeNull();
+  });
+
+  it("saves without the account's answer", async () => {
+    api.profileGate = new Promise<void>(() => {});
+    mount({ mode: "create" });
+    await type("Identity name", "Work");
+    await type("Author name", "Me");
+    await type("Author email", "me@example.com");
+    await pick();
+    await fireEvent.click(screen.getByRole("button", { name: "Add identity" }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(store.identities).toHaveLength(1);
   });
 });

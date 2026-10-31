@@ -6332,6 +6332,7 @@ name = "puddle-host"
 version = "0.0.0"
 dependencies = [
  "base64 0.23.1",
+ "dunce",
  "ed25519-dalek",
  "futures-util",
  "getrandom 0.4.3",
@@ -6689,6 +6690,7 @@ dependencies = [
 name = "puddle-workspace"
 version = "0.0.0"
 dependencies = [
+ "dunce",
  "microsandbox",
  "proptest",
  "puddle-boot",

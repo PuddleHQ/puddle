@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.24.0"
+    "version": "0.25.0"
   },
   "paths": {
     "/api/app-icons": {
@@ -12873,9 +12873,6 @@
       "NewRepositoryRequest": {
         "type": "object",
         "description": "One repository of `POST /api/workspaces`.",
-        "required": [
-          "url"
-        ],
         "properties": {
           "directory": {
             "type": [
@@ -12891,6 +12888,13 @@
             ],
             "format": "int64",
             "description": "The identity that serves it (`id` of `GET /api/identities`); left out or `null` is the\nidentity that covers its owner, else the default identity."
+          },
+          "local_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A git checkout on this computer to start from, as an absolute path to its folder (or its\n`.git`). Only its `.git` directory is read, read-only, by a short-lived sandbox with no\nnetwork that clones it: every commit, branch and tag comes along; uncommitted changes and\nuntracked files (an `.env`) stay on this computer. The clone's `origin` is `url`. A\nworktree's or submodule's `.git` file and a bare repository are refused with the reason."
           },
           "pull": {
             "type": [
@@ -12908,7 +12912,7 @@
           },
           "url": {
             "type": "string",
-            "description": "The repository to clone, as an `https://` URL without credentials. SSH remotes\n(`git@host:path`, `ssh://`) are refused with a message saying so."
+            "description": "The repository to clone, as an `https://` URL without credentials. SSH remotes\n(`git@host:path`, `ssh://`) are refused with a message saying so. With `local_path` it\nmay be left out or empty: the checkout's `origin` remote gives it (an SSH remote of\nGitHub, GitLab, Bitbucket or Azure DevOps in its HTTPS form)."
           }
         },
         "additionalProperties": false

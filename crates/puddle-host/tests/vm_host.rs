@@ -338,6 +338,229 @@ async fn vm_host_clones_each_repository_and_one_that_cannot_be_reached_fails_alo
     host.shutdown().await;
 }
 
+/// Runs `git` on this computer to build a fixture, before anything hostile is put in it.
+fn host_git(dir: &std::path::Path, args: &[&str]) {
+    let out = std::process::Command::new("git")
+        .args([
+            "-c",
+            "user.name=Puddle Test",
+            "-c",
+            "user.email=test@puddle.invalid",
+        ])
+        .args([
+            "-c",
+            "init.defaultBranch=main",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("git on the host");
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Every file below `dir` with its bytes and modification time.
+fn host_files(dir: &std::path::Path) -> Vec<(std::path::PathBuf, Vec<u8>, std::time::SystemTime)> {
+    let mut out = Vec::new();
+    let mut todo = vec![dir.to_path_buf()];
+    while let Some(d) = todo.pop() {
+        for entry in std::fs::read_dir(&d).unwrap() {
+            let p = entry.unwrap().path();
+            if p.is_dir() {
+                todo.push(p);
+            } else {
+                let modified = std::fs::metadata(&p).unwrap().modified().unwrap();
+                out.push((p.clone(), std::fs::read(&p).unwrap(), modified));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// A workspace starts from a real checkout on this computer: every branch (an unpushed one
+/// included), tag and the upstream of the checked-out branch arrive; uncommitted and untracked
+/// files do not; `origin` is the address given. The checkout's `.git` is hostile (a hook, a
+/// file-system monitor, an SSH command and an include that would each leave a mark): nothing of
+/// it runs, in the guest or here, and no file of the checkout changes.
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_starts_a_workspace_from_a_checkout_on_this_computer() {
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host("local").await;
+    let tmp = tempfile::Builder::new()
+        .prefix("puddle-vm-local-")
+        .tempdir()
+        .unwrap();
+    let base = dunce::canonicalize(tmp.path()).unwrap();
+    let work = base.join("shop");
+    std::fs::create_dir_all(&work).unwrap();
+    host_git(&work, &["init", "-q"]);
+    std::fs::write(work.join("README.md"), "one\n").unwrap();
+    host_git(&work, &["add", "README.md"]);
+    host_git(&work, &["commit", "-q", "-m", "one"]);
+    host_git(&work, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    std::fs::write(work.join("README.md"), "two\n").unwrap();
+    host_git(&work, &["commit", "-q", "-am", "two"]);
+    host_git(&work, &["tag", "v1"]);
+    host_git(&work, &["checkout", "-q", "-b", "feature"]);
+    std::fs::write(work.join("feature.txt"), "unpushed\n").unwrap();
+    host_git(&work, &["add", "feature.txt"]);
+    host_git(&work, &["commit", "-q", "-m", "feature"]);
+    host_git(&work, &["checkout", "-q", "main"]);
+    // Uncommitted and untracked work stays here.
+    std::fs::write(work.join("README.md"), "uncommitted\n").unwrap();
+    std::fs::write(work.join(".env"), "SECRET=never-in-a-guest\n").unwrap();
+    // The hostile part: each would leave a mark in the folder it runs in (the guest's clone or
+    // this checkout) and one beside the checkout here.
+    let here = base.join("RAN-HERE");
+    let mark = format!("touch ./RAN-IN-CLONE ../RAN-BESIDE '{}'", here.display());
+    let git_dir = work.join(".git");
+    let config = format!(
+        "{}[core]\n\tfsmonitor = \"{mark}; false\"\n\tsshCommand = \"{mark}; false\"\n\
+         [include]\n\tpath = {}\n",
+        std::fs::read_to_string(git_dir.join("config")).unwrap(),
+        git_dir.join("extra").display()
+    );
+    std::fs::write(git_dir.join("config"), config).unwrap();
+    std::fs::write(
+        git_dir.join("extra"),
+        format!(
+            "[core]\n\thooksPath = {}\n",
+            git_dir.join("hooks").display()
+        ),
+    )
+    .unwrap();
+    for hook in [
+        "post-checkout",
+        "post-merge",
+        "reference-transaction",
+        "pre-auto-gc",
+    ] {
+        let path = git_dir.join("hooks").join(hook);
+        std::fs::write(&path, format!("#!/bin/sh\n{mark}\n")).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+    let before = host_files(&base);
+
+    let name = format!("{}-local", settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    let address = "https://git.example.invalid/acme/shop.git";
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "memory_mib": 1024, "repositories": [
+                {"local_path": work.display().to_string(), "url": address}
+            ]})
+            .to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let end = events
+        .until(ended(name_static), Duration::from_mins(15))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let problems = api.get("/api/problems").await.json();
+    assert!(
+        !problems["problems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["workspace"] == name),
+        "{problems}"
+    );
+
+    let clone = format!("/workspaces/{name}/shop");
+    let refs = guest(
+        &runtime,
+        &sandbox,
+        &format!("git -C {clone} for-each-ref --format='%(refname)' | sort"),
+    )
+    .await;
+    assert_eq!(
+        refs.lines().collect::<Vec<_>>(),
+        [
+            "refs/heads/feature",
+            "refs/heads/main",
+            "refs/remotes/origin/main",
+            "refs/tags/v1"
+        ],
+        "{refs}"
+    );
+    let state = guest(
+        &runtime,
+        &sandbox,
+        &format!(
+            "cd {clone} && git remote -v && git status -sb && cat README.md && \
+             git log --format=%s feature && ls -A && \
+             echo \"fsmonitor=$(git config --get core.fsmonitor) hooksPath=$(git config --get core.hooksPath)\" && \
+             ls -A .. && ls /puddle/import 2>&1"
+        ),
+    )
+    .await;
+    assert!(
+        state.contains(&format!("origin\t{address} (fetch)")),
+        "{state}"
+    );
+    assert!(
+        state.contains(&format!("origin\t{address} (push)")),
+        "{state}"
+    );
+    assert!(!state.contains("puddle-checkout"), "{state}");
+    assert!(state.contains("## main...origin/main [ahead 1]"), "{state}");
+    assert!(
+        state.contains("two\n"),
+        "the committed README arrived: {state}"
+    );
+    assert!(!state.contains("uncommitted"), "{state}");
+    assert!(
+        state.contains("feature\ntwo\none\n"),
+        "the unpushed branch arrived: {state}"
+    );
+    assert!(
+        !state.contains(".env"),
+        "an untracked file reached the guest: {state}"
+    );
+    assert!(
+        state.contains("fsmonitor= hooksPath=\n"),
+        "the checkout's config came along: {state}"
+    );
+    assert!(
+        !state.contains("RAN-"),
+        "something of the checkout ran: {state}"
+    );
+    assert!(
+        state.contains("No such file or directory"),
+        "/puddle/import is in the workspace: {state}"
+    );
+    // The workspace's own sandbox mounts nothing of this computer's.
+    let mounts = guest(&runtime, &sandbox, "cat /proc/mounts").await;
+    assert!(!mounts.contains(&base.display().to_string()), "{mounts}");
+
+    assert!(
+        !here.exists(),
+        "something of the checkout ran on this computer"
+    );
+    assert_eq!(host_files(&base), before, "the checkout changed");
+    host.shutdown().await;
+}
+
 /// Boots the killed `sandbox` straight from the runtime and checks that each checkout passes
 /// `git fsck --full` and has a HEAD, then stops it again.
 async fn checkouts_are_whole(runtime: &MsbRuntime, sandbox: &WorkspaceName, dirs: &[&str]) {

@@ -53,7 +53,7 @@ impl Guest {
                 r.args.join(" ")
             ));
             if r.program == "git" && r.args.contains(&"clone".to_owned()) {
-                let src = &r.args[r.args.len() - 2];
+                let src = r.args.iter().rev().nth(1).unwrap();
                 let head = ctx
                     .read(&GuestPath::new(&format!("{src}/.git/HEAD")).unwrap())
                     .unwrap();
@@ -125,7 +125,7 @@ async fn each_checkout_is_cloned_in_a_sandbox_with_no_route_that_is_gone_afterwa
         .await
         .unwrap();
     assert!(report.created_volume);
-    assert!(report.failed.is_empty());
+    assert_eq!(report.failed, []);
     // The clones read the checkouts' own `.git` through the mounts, in order.
     assert_eq!(
         *s.guest.heads.lock().unwrap(),
@@ -190,10 +190,10 @@ async fn the_working_tree_is_never_what_is_mounted() {
         err.to_string().contains("is not a `.git` directory"),
         "{err}"
     );
-    assert!(s.guest.lines().is_empty());
+    assert_eq!(s.guest.lines(), Vec::<String>::new());
     assert_eq!(sandboxes(&s.rt).await, Vec::<String>::new());
     // The volume it would have made is not left behind.
-    assert!(s.rt.list_volumes().await.unwrap().is_empty());
+    assert_eq!(s.rt.list_volumes().await.unwrap(), []);
 }
 
 #[tokio::test]
@@ -263,7 +263,7 @@ async fn a_volume_that_exists_is_kept_and_a_failed_boot_removes_only_a_new_one()
         .await
         .unwrap_err();
     assert!(matches!(err, WorkspaceError::Runtime { .. }), "{err}");
-    assert!(s.rt.list_volumes().await.unwrap().is_empty());
+    assert_eq!(s.rt.list_volumes().await.unwrap(), []);
     // A second run (the volume made by an earlier step) reports it did not make it.
     s.rt.create_volume(puddle_compute::VolumeSpec {
         name: s.id.volume_name(),

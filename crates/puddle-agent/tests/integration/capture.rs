@@ -247,17 +247,23 @@ async fn run(program: &str, args: &[&str], limit: Duration) -> (bool, String) {
 
 /// [`run`] with the exit status (`None` when a signal ended the program).
 async fn run_code(program: &str, args: &[&str], limit: Duration) -> (Option<i32>, String) {
-    let output = tokio::time::timeout(
-        limit,
-        Command::new(program)
-            .args(args)
-            .stdin(Stdio::null())
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await
-    .unwrap_or_else(|_| panic!("{program} {args:?} did not finish in {limit:?}"))
-    .unwrap_or_else(|e| panic!("{program}: {e}"));
+    tokio::time::timeout(limit, attempt(program, args))
+        .await
+        .unwrap_or_else(|_| panic!("{program} {args:?} did not finish in {limit:?}"))
+}
+
+/// One run of a command with no limit of its own, for the probe of an `eventually_async` wait: the
+/// wait bounds the attempt and drops it at the end (`kill_on_drop` kills the child), so a program
+/// that starts late on a loaded machine is one more attempt. [`run`] would panic at its own limit
+/// inside the wait's bound and never give the retry its second attempt.
+async fn attempt(program: &str, args: &[&str]) -> (Option<i32>, String) {
+    let output = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .kill_on_drop(true)
+        .output()
+        .await
+        .unwrap_or_else(|e| panic!("{program}: {e}"));
     (
         output.status.code(),
         format!(
@@ -344,14 +350,12 @@ const WAIT: Duration = Duration::from_secs(15);
 /// the wait and drops, and so kills, the attempt that is still running at the end of it.
 async fn ready() {
     eventually_async("the capture table and the stub", WAIT, || async {
-        let answer = Command::new("dig")
-            .args(["+short", "+time=1", "+tries=1", "@198.18.0.1", "ready.test"])
-            .stdin(Stdio::null())
-            .kill_on_drop(true)
-            .output()
-            .await
-            .unwrap_or_else(|e| panic!("dig: {e}"));
-        String::from_utf8_lossy(&answer.stdout).starts_with("198.18.")
+        let (_, answer) = attempt(
+            "dig",
+            &["+short", "+time=1", "+tries=1", "@198.18.0.1", "ready.test"],
+        )
+        .await;
+        answer.starts_with("198.18.")
             && puddle_agent::capture::nft::read().is_ok_and(|t| t.is_some())
     })
     .await;
@@ -649,13 +653,7 @@ async fn a_guest_that_deletes_or_edits_the_table_is_restored_and_reported() {
 
     ok("nft", &["delete", "table", "inet", "puddle"]).await;
     eventually_async("the table to come back", WAIT, || async {
-        run(
-            "nft",
-            &["list", "table", "inet", "puddle"],
-            Duration::from_secs(5),
-        )
-        .await
-        .0
+        attempt("nft", &["list", "table", "inet", "puddle"]).await.0 == Some(0)
     })
     .await;
     eventually_async(
@@ -760,10 +758,9 @@ async fn the_rules_outlive_the_agent_and_come_back_with_the_same_stand_ins() {
 
     let mut agent = start();
     eventually_async("the restarted agent to answer", WAIT, || async {
-        run(
+        attempt(
             "dig",
             &["+short", "+time=1", "+tries=1", "@198.18.0.1", "db.test"],
-            Duration::from_secs(5),
         )
         .await
         .1 == first
@@ -881,13 +878,7 @@ async fn capture_leaves_dockers_own_tables_alone_whichever_starts_first() {
     let theirs_now = theirs().await;
     ok("nft", &["delete", "table", "inet", "puddle"]).await;
     eventually_async("the table to come back", WAIT, || async {
-        run(
-            "nft",
-            &["list", "table", "inet", "puddle"],
-            Duration::from_secs(5),
-        )
-        .await
-        .0
+        attempt("nft", &["list", "table", "inet", "puddle"]).await.0 == Some(0)
     })
     .await;
     assert_eq!(theirs_now, theirs().await);
@@ -959,12 +950,7 @@ async fn a_default_route_that_moves_gets_the_rules_rewritten_for_the_new_interfa
         ok("ip", args).await;
     }
     eventually_async("the rules to follow the default route", WAIT, || async {
-        let (_, text) = run(
-            "nft",
-            &["list", "table", "inet", "puddle"],
-            Duration::from_secs(5),
-        )
-        .await;
+        let (_, text) = attempt("nft", &["list", "table", "inet", "puddle"]).await;
         text.contains("oifname \"eth1\"") && !text.contains("oifname \"eth0\"")
     })
     .await;

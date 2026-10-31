@@ -470,11 +470,11 @@ def scan(root):
     return rows
 
 
-# Every crate root (`crates/<name>/src/lib.rs` or `main.rs`, each its own compilation unit) says what it does
+# Every crate root (`crates/<name>/src/lib.rs`, `main.rs`, each bin target `src/bin/*.rs` and `build.rs`, each its own compilation unit) says what it does
 # about unsafe code: `#![forbid(unsafe_code)]` (also under `cfg_attr(<cfg>, forbid(unsafe_code))` for a crate
 # that has FFI on one platform only) or `#![expect(unsafe_code, reason = "...")]`. The workspace lint is only
 # `deny`, which a nested `#[allow]` lifts silently; `forbid` makes the absence of unsafe a compiler guarantee.
-CRATE_ROOT = re.compile(r"^crates/[^/]+/src/(?:lib|main)\.rs$")
+CRATE_ROOT = re.compile(r"^crates/[^/]+/(?:src/(?:lib|main|bin/[^/]+)|build)\.rs$")
 INNER_ATTR = re.compile(r"#!\[")
 
 
@@ -865,13 +865,23 @@ def root_self_test():
             os.makedirs(os.path.join(d, f"crates/{name}/src"))
             with open(os.path.join(d, f"crates/{name}/src/lib.rs"), "w", encoding="utf-8") as h:
                 h.write(text + "pub fn f() {}\n")
+        # Bin targets and build scripts: a bad and a good one each (a crate whose lib.rs is fine).
+        for crate, attr in (("binbad", ""), ("bingood", "#![forbid(unsafe_code)]\n")):
+            os.makedirs(os.path.join(d, f"crates/{crate}/src/bin"))
+            for rel in ("src/lib.rs", "src/bin/tool.rs", "build.rs"):
+                with open(os.path.join(d, f"crates/{crate}/{rel}"), "w", encoding="utf-8") as h:
+                    h.write("#![forbid(unsafe_code)]\nfn main() {}\n" if rel == "src/lib.rs" else attr + "fn main() {}\n")
+        flagged_files = {r[2].split(":")[0] for r in scan(d) if r[0] == "no-forbid"}
+        if {f for f in flagged_files if f.startswith(("crates/binbad/", "crates/bingood/"))} != {
+                "crates/binbad/src/bin/tool.rs", "crates/binbad/build.rs"}:
+            problems.append(f"bin/build.rs rule flagged {sorted(flagged_files)}")
         os.makedirs(os.path.join(d, "crates/bin/src"))
         with open(os.path.join(d, "crates/bin/src/main.rs"), "w", encoding="utf-8") as h:
             h.write("fn main() {}\n")
         with open(os.path.join(d, "crates/bin/src/other.rs"), "w", encoding="utf-8") as h:
             h.write("pub fn g() {}\n")
         flagged = {r[2].split("/")[1] for r in scan(d) if r[0] == "no-forbid"}
-        want = ROOT_BAD | {"bin"}
+        want = ROOT_BAD | {"bin", "binbad"}
         if flagged != want:
             problems.append(f"crate root rule flagged {sorted(flagged)}, want {sorted(want)}")
         for name in want:
@@ -882,6 +892,12 @@ def root_self_test():
                         body = h.read()
                     with open(path, "w", encoding="utf-8") as h:
                         h.write("#![forbid(unsafe_code)]\n" + body)
+        for rel in ("src/bin/tool.rs", "build.rs"):
+            path = os.path.join(d, f"crates/binbad/{rel}")
+            with open(path, encoding="utf-8") as h:
+                body = h.read()
+            with open(path, "w", encoding="utf-8") as h:
+                h.write("#![forbid(unsafe_code)]\n" + body)
         after = [r for r in scan(d) if r[0] == "no-forbid" or "crate root" in r[3]]
         if after:
             problems.append(f"crate root rule still flags after the fix: {after}")

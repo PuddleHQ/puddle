@@ -6,6 +6,7 @@
 //! app commands today (the SPA uses no Tauri IPC); `ping` is declared so the ACL tests have a
 //! real command to be refused, and so the manifest is in force when the first real one arrives.
 
+#![forbid(unsafe_code)]
 #![expect(
     clippy::expect_used,
     reason = "a build script has no caller to return an error to; a failure must stop the build"

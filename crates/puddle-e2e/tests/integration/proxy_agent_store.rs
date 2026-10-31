@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 use puddle_agent::config::Target;
 use puddle_agent::{Agent, Config};
 use puddle_store::{Actor, Limits, PendingState, Resolution};
+use puddle_test_kit::cpu_time;
 use serde_json::Value;
 use support::{
     LOCAL, allow, connect_via, connection_records, echo_server, rig, round_trip, wait_for_records,
@@ -770,15 +771,15 @@ async fn a_hundred_thousand_unknown_names_are_all_told_to_wait_and_the_store_sta
     assert_eq!(refused, WORKERS * PER_WORKER);
 
     let cap = usize::try_from(Limits::default().max_open_rows).unwrap();
-    let started = Instant::now();
-    let open = rig.store.open_pending(Some(&workspace())).unwrap();
-    // flake-ok: a time bar on the open-rows read over the capped rows; it catches a per-row query,
-    // which costs seconds. The same read measured 25 to 38 ms in the two sibling tests under 16
-    // busy loops on 4 cores (a 5x margin).
+    let (open, cpu) = cpu_time(|| rig.store.open_pending(Some(&workspace())).unwrap());
+    eprintln!("open rows over the cap: {cpu:?} of CPU");
+    // The bar is on this thread's CPU time, so the load of the flood tasks does not move it; it
+    // catches a per-row query that scans (225 ms planted, 2 ms unplanted on Linux). This read is the
+    // open rows alone, without the inbox grouping the sibling tests also time, so its bar is
+    // tighter than theirs would need; the Windows clock ticks in 15.6 ms steps.
     assert!(
-        started.elapsed() < Duration::from_millis(200),
-        "{:?}",
-        started.elapsed()
+        cpu < Duration::from_millis(100),
+        "the read used {cpu:?} of CPU"
     );
     assert_eq!(open.len(), cap);
     assert!(open.iter().any(|row| row.id == first));

@@ -245,7 +245,6 @@ describe("opening in VS Code", () => {
   it("says why when VS Code could not be opened, with the service's words", async () => {
     api.attachReply = {
       opened: false,
-      url: null,
       message: "VS Code isn't installed.",
     };
     actions.openDesktop(w("trusted"));
@@ -258,7 +257,7 @@ describe("opening in VS Code", () => {
   });
 
   it("has words of its own when the service gave none", async () => {
-    api.attachReply = { opened: false, url: null, message: null };
+    api.attachReply = { opened: false, message: null };
     actions.openDesktop(w("trusted"));
     await expect
       .poll(() => messages())
@@ -288,7 +287,6 @@ describe("opening in the browser", () => {
   it("shows the service's words when no window opened (a failed sign-in, no desktop app)", async () => {
     api.attachReply = {
       opened: false,
-      url: null,
       message: "the browser editor opens from the desktop app",
     };
     actions.openBrowser(w("up"));
@@ -301,7 +299,7 @@ describe("opening in the browser", () => {
   });
 
   it("has words of its own when the service gave none, naming the browser editor", async () => {
-    api.attachReply = { opened: false, url: null, message: null };
+    api.attachReply = { opened: false, message: null };
     actions.openBrowser(w("up"));
     await expect
       .poll(() => messages())

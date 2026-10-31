@@ -225,13 +225,13 @@ pub fn dacl_is_owner_only(file: &File) -> io::Result<Result<(), String>> {
         }
         // SAFETY: GetAce succeeded, so `ace` points at an ACE in the ACL, and every ACE starts
         // with an ACE_HEADER. Only the header is read until the type says how long the ACE is.
-        let header = unsafe { &*ace.cast::<ACE_HEADER>() };
+        let header = unsafe { ace.cast::<ACE_HEADER>().read() };
         if u32::from(header.AceType) != ACCESS_ALLOWED_ACE_TYPE {
             return Ok(Err(format!("entry {index} is not a plain allow entry")));
         }
         // SAFETY: `ace` points at an ACE whose header was read above; the function checks the size
         // before it reads any of the SID.
-        if !unsafe { ace_holds_a_sid(ace) } {
+        if !unsafe { ace_holds_a_sid(ace, header.AceSize) } {
             return Ok(Err(format!("entry {index} is too short to hold a SID")));
         }
         // SAFETY: the type and size checks above make this a whole ACCESS_ALLOWED_ACE, and
@@ -270,11 +270,11 @@ unsafe fn sid_start(ace: *const c_void) -> PSID {
 ///
 /// # Safety
 ///
-/// `ace` must point at an ACE that starts with a readable `ACE_HEADER`; the rest is read only
-/// after `AceSize` says it is there.
-unsafe fn ace_holds_a_sid(ace: *const c_void) -> bool {
-    // SAFETY: the caller guarantees the header.
-    let ace_size = usize::from(unsafe { (*ace.cast::<ACE_HEADER>()).AceSize });
+/// `ace` must point at an ACE whose `ACE_HEADER` said it is `ace_size` bytes long; the rest is
+/// read only after the size says it is there. The size is a parameter so this function never
+/// dereferences the `GetAce` pointer itself.
+unsafe fn ace_holds_a_sid(ace: *const c_void, ace_size: u16) -> bool {
+    let ace_size = usize::from(ace_size);
     if ace_size < size_of::<ACCESS_ALLOWED_ACE>() {
         return false;
     }
@@ -567,7 +567,7 @@ mod tests {
             let size = u16::try_from(header_and_mask + sid).unwrap();
             let whole = ace_bytes(size, sub_authorities, header_and_mask + sid);
             // SAFETY: the buffer holds the size it claims.
-            assert!(unsafe { ace_holds_a_sid(whole.as_ptr().cast()) });
+            assert!(unsafe { ace_holds_a_sid(whole.as_ptr().cast(), size) });
         }
     }
 
@@ -578,18 +578,18 @@ mod tests {
         // The buffer is larger than claimed, so the test reads no memory it does not own.
         let cut = ace_bytes(whole_struct, 5, 64);
         // SAFETY: the buffer is 64 bytes.
-        assert!(!unsafe { ace_holds_a_sid(cut.as_ptr().cast()) });
+        assert!(!unsafe { ace_holds_a_sid(cut.as_ptr().cast(), whole_struct) });
         // One byte short of a one-sub-authority SID.
         let short = ace_bytes(whole_struct + 7, 1, 64);
         // SAFETY: as above.
-        assert!(!unsafe { ace_holds_a_sid(short.as_ptr().cast()) });
+        assert!(!unsafe { ace_holds_a_sid(short.as_ptr().cast(), whole_struct + 7) });
         // An entry smaller than its own struct.
         let tiny = ace_bytes(whole_struct - 1, 0, 64);
         // SAFETY: as above.
-        assert!(!unsafe { ace_holds_a_sid(tiny.as_ptr().cast()) });
+        assert!(!unsafe { ace_holds_a_sid(tiny.as_ptr().cast(), whole_struct - 1) });
         let zero = ace_bytes(0, 0, 64);
         // SAFETY: as above.
-        assert!(!unsafe { ace_holds_a_sid(zero.as_ptr().cast()) });
+        assert!(!unsafe { ace_holds_a_sid(zero.as_ptr().cast(), 0) });
     }
 
     #[test]

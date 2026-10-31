@@ -17,7 +17,7 @@ use puddle_store::{
     PatternChoice, PatternError, PendingState, Resolution, Scope, ScopeChoice, Store, StoreError,
     Sweeper,
 };
-use puddle_test_kit::eventually;
+use puddle_test_kit::{cpu_time, eventually};
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin,
     ConnectionReason, Decision, EgressRequest, Host, HttpRequestLine, PatternKind, PendingId,
@@ -510,15 +510,19 @@ fn r45_a_hundred_thousand_new_hosts_keep_the_store_bounded_and_the_inbox_fast() 
     }
     let cap = usize::try_from(Limits::default().max_open_rows).unwrap();
     assert_eq!(listed, cap);
-    let started = std::time::Instant::now();
-    let rows = store.open_pending(Some(&sb("a"))).unwrap();
-    let groups = store.inbox().unwrap();
-    // flake-ok: a time bar on one query pair (the inbox over the capped open rows); it catches a
-    // per-row query, which costs seconds. Measured under 16 busy loops on 4 cores: 25 ms, a 5x margin.
+    let ((rows, groups), cpu) = cpu_time(|| {
+        (
+            store.open_pending(Some(&sb("a"))).unwrap(),
+            store.inbox().unwrap(),
+        )
+    });
+    eprintln!("inbox over the capped open rows: {cpu:?} of CPU");
+    // The bar is on this thread's CPU time, so a loaded machine does not move it; it catches a
+    // per-row rescan of the open rows, which costs seconds (2.8 s planted). The read took 5 ms on
+    // Linux; the Windows clock ticks in 15.6 ms steps and read 0 ns, so 100 ms is far above both.
     assert!(
-        started.elapsed() < Duration::from_millis(200),
-        "{:?}",
-        started.elapsed()
+        cpu < Duration::from_millis(200),
+        "the inbox used {cpu:?} of CPU"
     );
     assert_eq!(rows.len(), cap);
     assert_eq!(groups.iter().map(|g| g.rows.len()).sum::<usize>(), cap);

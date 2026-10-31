@@ -8974,6 +8974,72 @@ async fn a_newer_editor_build_that_was_refused_is_a_problem_beside_the_install_o
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn capture_rules_the_guest_tore_down_or_that_cannot_install_are_problems_until_they_are_fixed_or_it_stops()
+ {
+    use puddle_agent_proto::AgentMessage;
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    create(&api, &mut events, "other").await;
+
+    let session = agent_says(
+        &rig,
+        "acme",
+        &[
+            AgentMessage::capture_tampered(true),
+            AgentMessage::capture_tampered(false),
+            AgentMessage::capture_tampered(true),
+            AgentMessage::capture_tampered(true),
+            AgentMessage::capture_unavailable("nft: Operation not supported".to_owned()),
+        ],
+    )
+    .await;
+    // The agent's messages are handled in order: with the last one's problem up, the count is final.
+    let (title, detail) = problem_is(&api, "capture-unavailable:acme", true)
+        .await
+        .unwrap();
+    assert_eq!(
+        title,
+        "Tools in acme that ignore proxy settings are offline: nft: Operation not supported"
+    );
+    assert!(detail.contains("Puddle keeps trying"), "{detail}");
+    let (title, detail) = problem_is(&api, "capture-tamper:acme", true).await.unwrap();
+    assert_eq!(
+        title,
+        "Something in acme deleted Puddle's capture rules; Puddle put them back"
+    );
+    assert!(detail.contains("nft flush ruleset"), "{detail}");
+    assert!(
+        problem_is(&api, "capture-tamper:other", false)
+            .await
+            .is_none()
+    );
+
+    // The rules went in on a later try: the agent says so; the tamper notice stays.
+    let fixed = agent_says(&rig, "acme", &[AgentMessage::capture_ready()]).await;
+    assert!(
+        problem_is(&api, "capture-unavailable:acme", false)
+            .await
+            .is_none()
+    );
+    problem_is(&api, "capture-tamper:acme", true).await.unwrap();
+    fixed.abort();
+
+    // A stop ends the tamper notice with the machine it is about.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(
+        problem_is(&api, "capture-tamper:acme", false)
+            .await
+            .is_none()
+    );
+    session.abort();
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_stop_that_fails_leaves_the_workspace_running_and_its_reports_still_count() {
     use puddle_agent_proto::{AgentMessage, StubDnsTrouble};
     let rig = Rig::new();

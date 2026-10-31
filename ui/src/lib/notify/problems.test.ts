@@ -77,6 +77,43 @@ describe("background problems", () => {
     });
   });
 
+  it("tells the user a guest tore down the capture rules or cannot install them, and withdraws the second when the rules install", async () => {
+    const notices = make();
+    const tampered: Problem = {
+      key: "capture-tamper:dev",
+      workspace: "dev",
+      title:
+        "Something in dev deleted Puddle's capture rules; Puddle put them back",
+      detail: "removed the rules",
+    };
+    listed = [
+      tampered,
+      {
+        ...problem("capture-unavailable:dev", "dev"),
+        title:
+          "Tools in dev that ignore proxy settings are offline: no nf_tables",
+      },
+    ];
+    await notices.refresh();
+    expect(center.items.map((n) => [n.title, n.link])).toEqual([
+      [
+        "Something in dev deleted Puddle's capture rules; Puddle put them back",
+        { href: "/workspaces/dev", label: "Open workspace" },
+      ],
+      [
+        "Tools in dev that ignore proxy settings are offline: no nf_tables",
+        { href: "/workspaces/dev", label: "Open workspace" },
+      ],
+    ]);
+    // The rules installing withdraws the second notice only.
+    listed = [tampered];
+    await notices.refresh();
+    expect(keys()).toEqual(["problem:capture-tamper:dev"]);
+    listed = [];
+    await notices.refresh();
+    expect(keys()).toEqual([]);
+  });
+
   it("withdraws a notice when its problem leaves the list", async () => {
     const notices = make();
     listed = [problem("sweeper"), problem("reconcile")];

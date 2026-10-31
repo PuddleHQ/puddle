@@ -400,18 +400,27 @@ run_gate() {
             echo "diff-coverage-fast: only puddle-app changed and it is skipped here; CI measures it"
             exit 0
         fi
-        target=${CARGO_TARGET_DIR:-target}
+        # Its own target directory, and the old test binaries removed from it first: a report reads every
+        # executable in the directory, so a binary left by an earlier run of other crates, built from older
+        # sources, would put the old line numbers into this report. Cargo links the missing ones again; every
+        # library stays built for the next run. The full coverage gate's directory (and its lcov.info) is never touched.
+        target=${CARGO_TARGET_DIR:-target}/diff-coverage-fast
         echo "diff-coverage-fast: tests with coverage for:$packages"
+        find "$target/llvm-cov-target/debug" -maxdepth 2 -type f -perm -u+x ! -name '*.so' ! -name '*.d' -delete 2>/dev/null || true
         # shellcheck disable=SC2086 # $packages is a list of `-p <crate>` pairs
-        scripts/coverage-run.sh "$plain_cargo" $packages --all-features --locked \
+        CARGO_TARGET_DIR=$target scripts/coverage-run.sh "$plain_cargo" $packages --all-features --locked \
             --profile "${NEXTEST_PROFILE:-default}"
-        # Its own report file: lcov.info is the full coverage gate's, and a partial report must not stand in for it.
-        "$plain_cargo" llvm-cov report --lcov --output-path "$target/lcov-fast.info"
-        diff_coverage "diff-coverage-fast (rust)" "$target/lcov-fast.info" .rs ||
-            {
-                echo "diff-coverage-fast: only the tests of$packages ran; a line another crate's tests run is reported here and cleared by the full coverage gate" >&2
-                exit 1
-            }
+        CARGO_TARGET_DIR=$target "$plain_cargo" llvm-cov report --lcov --output-path "$target/lcov.info"
+        # The exclusion notes ("matched nothing in this diff") list every entry of the file that this change does
+        # not touch: hundreds of lines, so only their count is printed.
+        rc=0
+        report=$(diff_coverage "diff-coverage-fast (rust)" "$target/lcov.info" .rs 2>&1) || rc=$?
+        printf '%s\n' "$report" | grep -v 'matched nothing in this diff' || true
+        echo "diff-coverage-fast: $(printf '%s\n' "$report" | grep -c 'matched nothing in this diff' || true) exclusion note(s) for untouched code left out"
+        if [ "$rc" != 0 ]; then
+            echo "diff-coverage-fast: only the tests of$packages ran; a line another crate's tests run is reported here and cleared by the full coverage gate" >&2
+            exit "$rc"
+        fi
         ;;
     diff-coverage)
         # By hand, after `coverage` and `ui` ran: both reports against the base. Untracked new

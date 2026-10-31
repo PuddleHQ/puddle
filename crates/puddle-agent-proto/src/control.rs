@@ -34,6 +34,9 @@ pub const MAX_LINE: usize = 4096;
 /// stays well inside [`MAX_LINE`].
 pub const MAX_PORTS: usize = 512;
 
+/// Most characters of an [`AgentMessage::EditorStatus`] reason the agent sends.
+pub const MAX_EDITOR_PROBLEM_CHARS: usize = 200;
+
 /// One message from the agent to the host.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -106,6 +109,16 @@ pub enum AgentMessage {
     Ports {
         /// The ports, ascending.
         listening: Vec<u16>,
+    },
+    /// Whether the browser editor's server could be installed in the guest. Sent with `problem`
+    /// set each time a download of the server is fetched and refused (a wrong checksum, an archive
+    /// that does not unpack), and with it unset once a server launches after such a refusal. The
+    /// latest message replaces the one before; the text is the agent's own error, at most
+    /// [`MAX_EDITOR_PROBLEM_CHARS`] characters, and the host cleans it.
+    EditorStatus {
+        /// Why the server cannot be installed; `None` when it can.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        problem: Option<String>,
     },
     /// A message type this side doesn't know (from a newer agent). Ignored.
     #[serde(other)]
@@ -197,6 +210,15 @@ impl AgentMessage {
     #[must_use]
     pub fn stub_dns(kind: StubDnsTrouble, count: u32) -> Self {
         Self::StubDns { kind, count }
+    }
+
+    /// An [`AgentMessage::EditorStatus`]; a `problem` longer than [`MAX_EDITOR_PROBLEM_CHARS`]
+    /// characters is cut.
+    #[must_use]
+    pub fn editor_status(problem: Option<&str>) -> Self {
+        Self::EditorStatus {
+            problem: problem.map(|p| p.chars().take(MAX_EDITOR_PROBLEM_CHARS).collect()),
+        }
     }
 
     /// An [`AgentMessage::Ports`] for `listening`: sorted, without duplicates or port 0, cut to
@@ -452,6 +474,30 @@ mod tests {
         assert!(
             AgentMessage::from_line(b"{\"type\":\"entrypoint_exited\",\"status\":256}").is_err()
         );
+    }
+
+    #[test]
+    fn the_editor_status_round_trips_and_is_cut_to_its_limit() {
+        let refused = AgentMessage::editor_status(Some("checksum mismatch"));
+        assert_eq!(
+            refused.to_line().unwrap(),
+            b"{\"type\":\"editor_status\",\"problem\":\"checksum mismatch\"}\n"
+        );
+        assert_eq!(
+            AgentMessage::from_line(&refused.to_line().unwrap()).unwrap(),
+            refused
+        );
+        let fine = AgentMessage::editor_status(None);
+        assert_eq!(fine.to_line().unwrap(), b"{\"type\":\"editor_status\"}\n");
+        assert_eq!(
+            AgentMessage::from_line(&fine.to_line().unwrap()).unwrap(),
+            fine
+        );
+        let long = AgentMessage::editor_status(Some(&"\u{1b}".repeat(5000)));
+        let sent: serde_json::Value = serde_json::from_slice(&long.to_line().unwrap()).unwrap();
+        let text = sent["problem"].as_str().unwrap();
+        assert_eq!(text.chars().count(), MAX_EDITOR_PROBLEM_CHARS);
+        assert!(long.to_line().is_ok(), "the cut text fits a control line");
     }
 
     proptest! {

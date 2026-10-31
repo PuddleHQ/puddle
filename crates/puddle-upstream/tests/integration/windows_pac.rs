@@ -238,10 +238,8 @@ static REGISTRY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 /// disturb each other: one's values (or its clean-up deleting them) show up in another's reads,
 /// every evaluated PAC script, in any process, makes WinHTTP call the proxy-change callback of
 /// every registered watch (about every 50 ms for as long as lookups run, with no registry change
-/// at all), which ends the epoch the debounce test is counting, and PAC lookups of two processes
-/// at once have given wrong results (one that must fail answering, ones that must answer
-/// failing). A file lock holds across processes and across threads alike. Held until the
-/// returned file is dropped.
+/// at all), which ends the epoch the debounce test is counting. A file lock holds across
+/// processes and across threads alike. Held until the returned file is dropped.
 #[expect(
     clippy::disallowed_methods,
     reason = "the lock is shared by every test process, so it must sit at one fixed path"

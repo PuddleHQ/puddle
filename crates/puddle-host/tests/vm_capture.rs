@@ -12,8 +12,12 @@
 //! agent puts them back.
 //!
 //! The sites the tests reach are a fake website behind a fake company proxy (`web_internet`), so no
-//! result here depends on a public site being up; only the package install of the second test and
-//! the `apt-get update` of the third still use the real internet.
+//! result here depends on a public site being up. Two tests keep a live third party on purpose, and
+//! their failure messages name it: the second installs the real `nftables` package from
+//! `deb.debian.org` (the test needs a real `nft` binary; a mirror would have to serve that
+//! package and its libraries, signed, to apt's default sources), and the third runs the real
+//! `apt-get update` against Debian's mirrors (the assertion is about apt's own behaviour with
+//! Debian's `SRV` records, which a stand-in mirror would not carry).
 //!
 //! Every guest command runs as root through the runtime's exec, which carries the workspace's
 //! proxy settings; the probes that must not use them say `env -i` or `--noproxy '*'`.
@@ -35,7 +39,7 @@ use puddle_test_kit::eventually;
 use puddle_types::WorkspaceName;
 use serde_json::json;
 use support::{Api, ended, hermetic_options};
-use vm_support::{VmHost, guest, start_vm_host, start_vm_host_platform, web_internet};
+use vm_support::{VmHost, guest, guest_live, start_vm_host, start_vm_host_platform, web_internet};
 
 /// The fake website's name (it answers plain HTTP and HTTPS).
 const SITE: &str = "site.invalid";
@@ -358,12 +362,21 @@ async fn vm_capture_survives_a_root_that_deletes_the_rules() {
     };
 
     // The image ships no nft; the test brings one, through the proxy, as any tool would.
-    let installed = run("export DEBIAN_FRONTEND=noninteractive
+    let installed = guest_live(
+        &vm.runtime,
+        &workspace,
+        &bash_script(
+            "export DEBIAN_FRONTEND=noninteractive
          { apt-get update -qq; apt-get install -y -qq nftables; } >/tmp/apt.log 2>&1
-         command -v nft || { echo 'no nft; the end of apt output:'; tail -15 /tmp/apt.log; curl -sv --max-time 20 -o /dev/null http://deb.debian.org/debian/dists/trixie/InRelease 2>&1 | tail -25; }"
-        .into())
+         command -v nft || { echo 'no nft; the end of apt output:'; tail -15 /tmp/apt.log; curl -sv --max-time 20 -o /dev/null http://deb.debian.org/debian/dists/trixie/InRelease 2>&1 | tail -25; }",
+        ),
+        "deb.debian.org and security.debian.org",
+    )
     .await;
-    assert!(installed.trim_end().ends_with("/nft"), "{installed}");
+    assert!(
+        installed.trim_end().ends_with("/nft"),
+        "nftables could not be installed (live third party: deb.debian.org, security.debian.org; an outage there fails this test): {installed}"
+    );
 
     for attack in ["nft flush ruleset", "nft delete table inet puddle"] {
         let out = run(format!(
@@ -415,7 +428,7 @@ async fn vm_capture_apt_update_works_with_no_proxy_file_and_no_proxy_setting() {
     )
     .await;
     let before = allowed_connections(&vm, "deb.debian.org", 80);
-    let out = guest(
+    let out = guest_live(
         &vm.runtime,
         &workspace,
         &bash_script(
@@ -423,13 +436,18 @@ async fn vm_capture_apt_update_works_with_no_proxy_file_and_no_proxy_setting() {
              env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin apt-get update 2>&1 | tail -20
              echo \"apt=${PIPESTATUS[0]}\"",
         ),
+        "deb.debian.org and security.debian.org",
     )
     .await;
     eprintln!("{out}");
-    assert_eq!(field(&out, "apt="), "0", "{out}");
+    assert_eq!(
+        field(&out, "apt="),
+        "0",
+        "apt-get update failed (live third party: deb.debian.org, security.debian.org): {out}"
+    );
     assert!(
         !out.contains("Err:") && !out.contains("W: "),
-        "apt-get update reported a failure: {out}"
+        "apt-get update reported a failure (live third party: deb.debian.org, security.debian.org): {out}"
     );
     wait_for_connection_record(&vm, "deb.debian.org", 80, before).await;
     eprintln!("open rows: {:?}", open_rows(&vm, &workspace));

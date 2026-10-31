@@ -476,6 +476,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_layout_problem_keeps_its_reason() {
+        let WorkspaceError::Layout { reason } = layout("no such place") else {
+            unreachable!("layout makes only Layout errors");
+        };
+        assert_eq!(reason, "no such place");
+    }
+
+    #[test]
     fn the_origin_is_the_first_url_of_its_section_in_any_spelling() {
         let text = "\u{feff}[core]\n\tbare = false\n[remote \"upstream\"]\n\turl = https://example.org/up.git\n\
                     [Remote \"origin\"]  # mine\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n\

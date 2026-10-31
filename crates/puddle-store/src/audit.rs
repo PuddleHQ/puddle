@@ -79,6 +79,13 @@ pub struct ConnectionRecord {
     /// `rule_id`. Absent in records written before it existed.
     #[serde(default)]
     pub request_rule: Option<i64>,
+    /// The first address of the answer that the address guard refused, while the connection
+    /// went to the allowed addresses only. Absent in records written before it existed.
+    #[serde(default)]
+    pub refused_address: Option<String>,
+    /// Why `refused_address` was refused (a reason code such as `toggle:private`).
+    #[serde(default)]
+    pub refused_reason: Option<String>,
     /// The pending row.
     pub pending_id: Option<i64>,
     /// The credential binding, by id.
@@ -119,6 +126,8 @@ impl ConnectionRecord {
             decision: Some(event.decision),
             outcome: event.outcome,
             reason: event.reason.to_string(),
+            refused_address: event.refused_address.map(|(ip, _)| ip.to_string()),
+            refused_reason: event.refused_address.map(|(_, why)| why.code().to_owned()),
             rule_id: event.rule_id.map(|id| id.0),
             rule_set: event.rule_set.map(|set| set.to_string()),
             request_rule: event.request_rule.map(|id| id.0),
@@ -171,6 +180,8 @@ impl ConnectionRecord {
             decision: None,
             outcome: None,
             reason: reason.to_string(),
+            refused_address: None,
+            refused_reason: None,
             rule_id: None,
             rule_set: None,
             request_rule: None,
@@ -1121,6 +1132,36 @@ mod tests {
         );
     }
 
+    /// A line written before the field existed reads as no refused address, and an event's
+    /// refused address and reason reach the record.
+    #[test]
+    fn a_connection_line_without_a_refused_address_reads_as_none_and_one_is_kept() {
+        let line = json!({"type": "connection", "ts": 9, "workspace_id": "sb-1",
+            "origin": "workspace", "host": "example.com", "port": 443, "resolved_ip": null,
+            "decision": "allow", "reason": "rule", "rule_id": 1, "pending_id": null,
+            "binding_id": null, "injected": false, "method": null, "path": null,
+            "path_truncated": false, "bytes_up": 0, "bytes_down": 0, "count": null});
+        let record: AuditRecord = serde_json::from_value(line).unwrap();
+        assert!(matches!(
+            record,
+            AuditRecord::Connection(ConnectionRecord {
+                refused_address: None,
+                refused_reason: None,
+                ..
+            })
+        ));
+        let mut mixed = event();
+        mixed.refused_address = Some(("10.0.0.8".parse().unwrap(), BlockReason::LocalAddress));
+        let kept = ConnectionRecord::from_event(1, &mixed);
+        assert_eq!(
+            (
+                kept.refused_address.as_deref(),
+                kept.refused_reason.as_deref()
+            ),
+            (Some("10.0.0.8"), Some("local_address"))
+        );
+    }
+
     #[test]
     fn the_outcome_of_reaching_the_destination_is_kept_and_old_records_read_as_none() {
         let mut event = event();
@@ -1230,6 +1271,8 @@ mod tests {
             "binding_id",
             "injected",
             "unswapped_stand_ins",
+            "refused_address",
+            "refused_reason",
             "method",
             "path",
             "path_truncated",

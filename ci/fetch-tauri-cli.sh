@@ -10,6 +10,8 @@
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=ci/fetch-retry.sh
+. "$here/fetch-retry.sh"
 [ "$#" -ge 1 ] && [ "$#" -le 2 ] || { echo "usage: $0 <dest-dir> [<version>]" >&2; exit 2; }
 dest=$1
 version=${2:-}
@@ -25,13 +27,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 base=${TAURI_CLI_BASE_URL:-https://github.com/tauri-apps/tauri/releases/download}
 url="$base/tauri-cli-v$version/$asset"
-attempt=1
-until curl -fsSL --connect-timeout 20 --max-time 300 -o "$work/$asset" "$url"; do
-    [ "$attempt" -lt 3 ] || { echo "fetch-tauri-cli: download failed 3 times: $url" >&2; exit 1; }
-    echo "fetch-tauri-cli: download attempt $attempt failed, retrying (infrastructure retry)" >&2
-    attempt=$((attempt + 1))
-    sleep 5
-done
+download fetch-tauri-cli "$url" "$work/$asset" 300
 # Hash from stdin: for a path with backslashes, Git Bash's sha256sum puts a backslash before the hash.
 got=$(sha256sum < "$work/$asset" | cut -d' ' -f1)
 if [ "$got" != "$want" ]; then

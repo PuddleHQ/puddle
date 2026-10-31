@@ -28,15 +28,28 @@ const TIMEOUT: Duration = Duration::from_secs(15);
 pub struct SessionCookie {
     name: String,
     value: String,
+    script_reads: bool,
 }
 
 impl SessionCookie {
-    /// A session with this name and value.
+    /// A session with this name and value, which the page's script cannot read (`HttpOnly`).
     #[must_use]
     pub fn new(name: impl Into<String>, value: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             value: value.into(),
+            script_reads: false,
+        }
+    }
+
+    /// Microsoft's server's connection token, which the workbench's script reads from the cookie
+    /// for its socket's handshake, so it is not `HttpOnly`.
+    #[must_use]
+    pub fn connection_token(token: impl Into<String>) -> Self {
+        Self {
+            name: puddle_api::CONNECTION_TOKEN_COOKIE.to_owned(),
+            value: token.into(),
+            script_reads: true,
         }
     }
 
@@ -51,6 +64,12 @@ impl SessionCookie {
     pub fn value(&self) -> &str {
         &self.value
     }
+
+    /// Whether the page's script reads it (not `HttpOnly`).
+    #[must_use]
+    pub fn script_reads(&self) -> bool {
+        self.script_reads
+    }
 }
 
 impl std::fmt::Debug for SessionCookie {
@@ -58,6 +77,7 @@ impl std::fmt::Debug for SessionCookie {
         f.debug_struct("SessionCookie")
             .field("name", &self.name)
             .field("value", &"<hidden>")
+            .field("script_reads", &self.script_reads)
             .finish()
     }
 }
@@ -254,10 +274,7 @@ mod tests {
 
     #[test]
     fn the_cookie_s_debug_form_hides_its_value() {
-        let cookie = SessionCookie {
-            name: SESSION_COOKIE.into(),
-            value: "abc123".into(),
-        };
+        let cookie = SessionCookie::new(SESSION_COOKIE, "abc123");
         let shown = format!("{cookie:?}");
         assert!(
             shown.contains("code-server-session") && !shown.contains("abc123"),

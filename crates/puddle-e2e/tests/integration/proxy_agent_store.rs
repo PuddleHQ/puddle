@@ -17,7 +17,7 @@ use crate::support;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use puddle_agent::config::Target;
 use puddle_agent::{Agent, Config};

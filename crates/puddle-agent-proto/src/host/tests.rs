@@ -322,14 +322,11 @@ async fn an_editor_status_reaches_the_handler_cleaned_and_a_blank_one_means_inst
     c.write_all(long.as_bytes()).await.unwrap();
     send(&mut c, &AgentMessage::editor_status(Some(""))).await;
     send(&mut c, &AgentMessage::editor_status(None)).await;
-    for _ in 0..100 {
-        if told.reports.lock().unwrap().len() == 4 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    let reports = told.reports.lock().unwrap().clone();
-    assert_eq!(reports.len(), 4, "{reports:?}");
+    let reports = eventually("the handler gets all four editor statuses", WAIT, || {
+        let reports = told.reports.lock().unwrap().clone();
+        (reports.len() == 4).then_some(reports)
+    })
+    .await;
     assert_eq!(
         reports[0],
         AgentReport::EditorStatus {

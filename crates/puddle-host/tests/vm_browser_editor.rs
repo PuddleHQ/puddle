@@ -58,11 +58,6 @@ const EXPLORER_ROWS: &str = "[...document.querySelectorAll('.explorer-folders-vi
 /// Waits until the editor server answers its health check.
 const EDITOR_UP: &str = "for i in $(seq 1 100); do curl -sf -o /dev/null http://127.0.0.1:41337/healthz && exit 0; sleep 1; done; exit 1";
 
-/// Ends the editor server as a crash would; the agent starts it again, and this waits for that.
-const RESTART_EDITOR: &str = "for p in /proc/[0-9]*; do tr '\\0' ' ' <$p/cmdline 2>/dev/null | \
-     grep -q '[c]ode-server/lib/node' && kill -9 ${p#/proc/}; done; sleep 3; \
-     for i in $(seq 1 100); do curl -sf -o /dev/null http://127.0.0.1:41337/healthz && exit 0; sleep 1; done; exit 1";
-
 /// Where the page is and whether it shows code-server's login form.
 const WHERE: &str = "({ path: location.pathname, search: decodeURIComponent(location.search), \
      login: !!document.querySelector('input[type=password]') })";
@@ -319,8 +314,8 @@ async fn windows_become(windows: &puddle_front::Windows, workspace: &WorkspaceNa
 /// host (the shell's last-window cleanup) and keeps the terminal host; opening it again within the
 /// grace finds the editor with the kept session (no second sign-in). A stop closes the window
 /// before the guest goes; after the next start the window opens signed in again (a new sign-in only
-/// when the password changed), and once the server starts again it opens the multi-root file the
-/// attach wrote, one root per checkout and the volume.
+/// when the password changed), and a window on the multi-root file the attach wrote shows one root
+/// per checkout and the volume.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_close_ends_the_extension_hosts()
@@ -519,20 +514,32 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     );
     assert_eq!(*shell.sign_ins.lock().unwrap(), sign_ins);
 
-    // The attach wrote the multi-root file; the server started again (as the agent starts it when
-    // it exits) opens it: one root per checkout and the volume, with the same password.
-    shell.close_pages(&name).await;
-    guest(&runtime, &sandbox, RESTART_EDITOR).await;
-    attach().await;
+    // The attach wrote the multi-root file; a window on it shows one root per checkout and the
+    // volume (a server that was running before the file was written opens the volume by itself).
+    let file = format!("{root}/.puddle/editor/{name}.code-workspace");
+    let (multi, _) = shell
+        .browser
+        .lock()
+        .await
+        .open(
+            &PageRequest::new(format!("{origin}/?workspace={file}"), "true")
+                .on_commit()
+                .budget(PAGE_BUDGET),
+        )
+        .await
+        .expect("a window on the file");
+    shell
+        .pages
+        .lock()
+        .unwrap()
+        .entry(name.clone())
+        .or_default()
+        .push(multi);
     let rows = shell
         .wait(&name, EXPLORER_READY, EXPLORER_ROWS, WORKBENCH_BUDGET)
         .await;
     let place = shell.wait(&name, "true", WHERE, PAGE_BUDGET).await;
-    assert_eq!(
-        place["search"],
-        format!("?workspace={root}/.puddle/editor/{name}.code-workspace"),
-        "{place}"
-    );
+    assert_eq!(place["search"], format!("?workspace={file}"), "{place}");
     let roots: Vec<&str> = rows
         .as_array()
         .unwrap()

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! `puddle-ui-fixture`: the real API on fake services, for UI development and end-to-end tests.
 //! See `puddle_e2e::ui_fixture` and `puddle-ui-fixture --help`.
+#![forbid(unsafe_code)]
 #![expect(
     clippy::print_stderr,
     reason = "a command line tool: it reports its error on stderr"

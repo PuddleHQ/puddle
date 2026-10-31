@@ -63,6 +63,7 @@ impl RuntimeFactory for HarnessFactory {
             &self.libkrunfw,
             inputs.guest_share,
         )
+        .with_protected_dir(inputs.data)
         .with_registry_proxy(inputs.pull_proxy.expose())
         .with_registry_roots(inputs.registry_roots)
         .with_runtime_log_level(self.settings.msb_log_level.clone())

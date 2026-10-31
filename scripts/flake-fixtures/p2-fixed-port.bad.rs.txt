@@ -1,0 +1,10 @@
+#[tokio::test]
+async fn the_proxy_answers_on_its_port() {
+    let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
+    let other = TcpListener::bind((LOCAL, 9000)).await.unwrap();
+    let stream = TcpStream::connect(
+        "localhost:18080",
+    )
+    .await
+    .unwrap();
+}

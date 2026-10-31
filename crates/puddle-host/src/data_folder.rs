@@ -178,6 +178,50 @@ mod tests {
         assert!(err.contains("not-a-folder"), "{err}");
     }
 
+    /// msb creates its catalog with the process's default permissions (world-readable before msb
+    /// 0.7.12, advisory GHSA-cvr8-2329-j4xw), so the data folder around the msb home is what
+    /// keeps other accounts out of it.
+    #[test]
+    fn the_msb_catalog_is_unreachable_for_other_accounts_inside_the_data_folder() {
+        let root = tempfile::tempdir().unwrap();
+        let data = root.path().join("a").join("puddle");
+        let exe = root.path().join("app").join("puddle");
+        let config = crate::HostConfig::installed(&exe, &data).unwrap();
+        let home = config.layout.home().to_path_buf();
+        assert_eq!(home, data.join("msb"));
+
+        // The start's order: lock the folder (creates it), tighten it, then msb opens its home.
+        let _lock = puddle_fs::DataLock::acquire(&data).unwrap();
+        make_owner_only(&config.paths).unwrap();
+        let db_dir = home.join("db");
+        fs::create_dir_all(&db_dir).unwrap();
+        let catalog = db_dir.join("msb.db");
+        fs::write(&catalog, b"catalog").unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            // The catalog as msb before 0.7.12 left it.
+            fs::set_permissions(&catalog, fs::Permissions::from_mode(0o644)).unwrap();
+            // The data folder and the folders Puddle made above it are closed to group and
+            // other, so the catalog cannot be reached by path.
+            let puddle_made = data.ancestors().take_while(|dir| *dir != root.path());
+            for dir in puddle_made {
+                assert_eq!(mode(dir), 0o700, "{}", dir.display());
+            }
+        }
+        #[cfg(windows)]
+        {
+            // The ACL is inherited: the catalog msb made, and its folders, have the owner's
+            // entry alone.
+            private::check(&fs::File::open(&catalog).unwrap()).unwrap();
+            assert_eq!(private::tighten_dir(&db_dir).unwrap(), None);
+            assert_eq!(private::tighten_dir(&home).unwrap(), None);
+            assert_eq!(private::tighten_dir(&data).unwrap(), None);
+        }
+    }
+
     #[test]
     fn the_log_line_describes_both_kinds_of_exposure() {
         assert!(describe(&Exposed::Mode(0o755)).contains("mode 755"));

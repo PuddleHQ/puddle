@@ -31,6 +31,8 @@ set -eu
 unset $(git rev-parse --local-env-vars 2>/dev/null || true)
 
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=ci/fetch-retry.sh
+. "$here/fetch-retry.sh"
 
 # pinned <tag> <name>: the third field of the matching line in ci/msb-runtime.sha256. `cargo xtask
 # runtime` reads the same lines (crates/xtask/src/pin.rs); a test there runs `--pinned` to keep both
@@ -80,13 +82,7 @@ esac
 fetch() {
     want=$(pinned "$2" "$3")
     url="https://github.com/$1/releases/download/$2/$3"
-    attempt=1
-    until curl -fsSL --connect-timeout 20 --max-time 300 -o "$4" "$url"; do
-        [ "$attempt" -lt 3 ] || { echo "fetch-msb: download failed 3 times: $url" >&2; exit 1; }
-        echo "fetch-msb: download attempt $attempt failed, retrying (infrastructure retry)" >&2
-        attempt=$((attempt + 1))
-        sleep 5
-    done
+    download fetch-msb "$url" "$4" 300
     # Hash from stdin: for a path with backslashes, Git Bash's sha256sum puts a backslash before the hash.
     got=$(sha256sum < "$4" | cut -d' ' -f1)
     if [ "$got" != "$want" ]; then

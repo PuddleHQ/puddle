@@ -6192,6 +6192,7 @@ dependencies = [
 name = "puddle-compute-msb"
 version = "0.0.0"
 dependencies = [
+ "dunce",
  "microsandbox",
  "microsandbox-image",
  "microsandbox-runtime",

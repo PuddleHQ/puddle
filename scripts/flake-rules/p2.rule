@@ -1,0 +1,4 @@
+status: failing
+fixture: p2-fixed-port.bad.rs.txt
+as: crates/puddle-proxy/tests/x.rs
+fix: a test that binds or connects a literal port fails when another test or a dead run still holds it: bind port 0 and read the address back from the listener, or `flake-ok: <why this port number must be literal>`

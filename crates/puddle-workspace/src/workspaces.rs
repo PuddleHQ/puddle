@@ -1029,49 +1029,50 @@ impl Workspaces {
         for (n, import) in imports.iter().enumerate() {
             let dir = &import.directory;
             // A refusal of git and a step that ran out of time fail only this checkout; anything
-            // else (the guest gone) fails the import.
+            // else (the guest gone) fails the import. The flag says whether git was stopped
+            // part way (a timeout), so it removed nothing itself.
             let step = |request: ExecRequest| async move {
                 match sandbox.exec(request).await {
                     Ok(out) if out.status.success() => Ok(None),
-                    Ok(out) => Ok(Some(format!(
-                        "git exited {}: {}",
-                        out.status.code,
-                        tail(&out.stderr_text())
+                    Ok(out) => Ok(Some((
+                        format!(
+                            "git exited {}: {}",
+                            out.status.code,
+                            tail(&out.stderr_text())
+                        ),
+                        false,
                     ))),
-                    Err(ComputeError::ExecTimeout { timeout, .. }) => Ok(Some(format!(
-                        "git did not finish within {} s",
-                        timeout.as_secs()
+                    Err(ComputeError::ExecTimeout { timeout, .. }) => Ok(Some((
+                        format!("git did not finish within {} s", timeout.as_secs()),
+                        true,
                     ))),
                     Err(e) => Err(WorkspaceError::runtime("import a checkout", id, e)),
                 }
             };
-            // git removes the folder of a clone it refused; a clone whose finishing step failed
-            // is half made.
+            // git removes the folder of a clone it refused; a clone it was stopped in, or whose
+            // finishing step failed, is half made.
             let reason = match step(layout.import_request(n, dir)?).await? {
-                Some(reason) => Some((reason, false)),
+                Some((reason, stopped)) => Some((reason, stopped)),
                 None => step(layout.finish_import_request(n, dir, &import.url)?)
                     .await?
-                    .map(|reason| (reason, true)),
+                    .map(|(reason, _)| (reason, true)),
             };
             let Some((mut reason, half_made)) = reason else {
                 info!(workspace = %id, checkout = %dir, "checkout imported");
                 continue;
             };
             warn!(workspace = %id, checkout = %dir, %reason, "a checkout was not imported");
-            // A clone whose finishing step failed is half made: remove it, so a later clone of
-            // the same folder is not refused.
+            // A half-made clone is removed, so a later clone of the same folder is not refused.
             if half_made {
                 let checkout = layout.checkout(dir)?;
                 let rm = ExecRequest::new("rm", ["-rf", "--", checkout.as_str()]).as_user("root");
-                let removed = sandbox
-                    .exec(rm)
-                    .await
-                    .map_err(|e| WorkspaceError::runtime("import a checkout", id, e))?;
-                if !removed.status.success() {
-                    reason = format!(
-                        "{reason}; its half-made folder was not removed: {}",
-                        tail(&removed.stderr_text())
-                    );
+                let left = match sandbox.exec(rm).await {
+                    Ok(out) if out.status.success() => None,
+                    Ok(out) => Some(tail(&out.stderr_text())),
+                    Err(e) => Some(e.to_string()),
+                };
+                if let Some(left) = left {
+                    reason = format!("{reason}; its half-made folder was not removed: {left}");
                 }
             }
             failed.push((dir.clone(), reason));

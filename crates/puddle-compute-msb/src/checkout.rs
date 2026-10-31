@@ -42,9 +42,7 @@ fn check_as(git_dir: &Path, protected: &[&Path], owner: Option<u32>) -> Result<(
         return Err(refuse("is not an absolute path".into()));
     }
     if !on_local_drive(git_dir) {
-        return Err(refuse(
-            "is not on a local drive (a network share or a device path)".into(),
-        ));
+        return Err(refuse("is on a network share, not a local drive".into()));
     }
     let canonical =
         dunce::canonicalize(git_dir).map_err(|e| refuse(format!("can't be resolved: {e}")))?;

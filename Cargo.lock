@@ -5963,6 +5963,7 @@ dependencies = [
  "puddle-compute",
  "puddle-compute-msb",
  "puddle-doctor",
+ "puddle-fs",
  "puddle-host",
  "puddle-ipc",
  "puddle-lifecycle",
@@ -6217,6 +6218,7 @@ name = "puddle-doctor"
 version = "0.0.0"
 dependencies = [
  "object",
+ "puddle-fs",
  "puddle-runtime",
  "serde",
  "serde_json",

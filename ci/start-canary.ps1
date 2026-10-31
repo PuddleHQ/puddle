@@ -11,10 +11,13 @@ do not. This canary makes such a window visible in every run, red or green.
 -Out <file>: runs until stopped; every 2 s it starts `cmd /c exit 0`, times it to its end and
 appends one line `<UTC time> <seconds> <available memory MB> <disk read latency s>` to the file
 (the last two from the Memory and PhysicalDisk(_Total) counters: a start must page its program in,
-so a start stall next to little free memory or slow disk reads points there).
+so a start stall next to little free memory or slow disk reads points there). When free memory is
+under 3000 MB (a healthy test run stays above 7000), the sample is followed by a line `# <UTC time>
+<name>xN=<MB> ...` naming the six process groups with the largest working set, so a memory dip
+names its consumer (link.exe, rustc, a test binary, a browser) in the run that had it.
 
 -Summary <file>: prints the runner image, the Defender state and exclusions, how many samples
-there were, the median and the slowest, and every sample over 1 s.
+there were, the median and the slowest, every sample over 1 s and every consumer line.
 
 PowerShell 7 (pwsh); keep this file ASCII-only.
 #>
@@ -30,6 +33,12 @@ if ($Out) {
         Start-Process -FilePath cmd.exe -ArgumentList '/c', 'exit 0' -NoNewWindow -Wait
         $line = '{0:HH:mm:ss.f} {1:0.000} {2:0} {3:0.000}' -f $t, $sw.Elapsed.TotalSeconds, $memory.NextValue(), $read.NextValue()
         Add-Content -Path $Out -Value $line
+        if ($memory.NextValue() -lt 3000) {
+            $top = Get-Process | Group-Object ProcessName | ForEach-Object {
+                [pscustomobject]@{ Name = $_.Name; Count = $_.Count; MB = [math]::Round((($_.Group | Measure-Object WorkingSet64 -Sum).Sum) / 1MB) }
+            } | Sort-Object MB -Descending | Select-Object -First 6
+            Add-Content -Path $Out -Value ('# {0:HH:mm:ss.f} {1}' -f $t, (($top | ForEach-Object { '{0}x{1}={2}' -f $_.Name, $_.Count, $_.MB }) -join ' '))
+        }
         Start-Sleep -Seconds 2
     }
 }
@@ -44,7 +53,8 @@ if ($Summary) {
     } catch {
         Write-Output "Defender state not readable: $_"
     }
-    $rows = @(Get-Content -Path $Summary -ErrorAction SilentlyContinue | ForEach-Object {
+    $lines = @(Get-Content -Path $Summary -ErrorAction SilentlyContinue)
+    $rows = @($lines | Where-Object { $_ -notmatch '^#' } | ForEach-Object {
         $f = $_ -split ' '
         [pscustomobject]@{ At = $f[0]; Seconds = [double]$f[1]; FreeMB = [double]$f[2]; ReadS = [double]$f[3] }
     })
@@ -56,5 +66,6 @@ if ($Summary) {
     $median = $sorted[[int][math]::Floor($sorted.Count / 2)].Seconds
     $slow = @($rows | Where-Object { $_.Seconds -gt 1 })
     Write-Output ('process start canary: {0} samples, median {1:0.000} s, slowest {2:0.000} s, {3} over 1 s; least free memory {4:0} MB, slowest disk read {5:0.000} s' -f $rows.Count, $median, $sorted[-1].Seconds, $slow.Count, ($rows | Measure-Object FreeMB -Minimum).Minimum, ($rows | Measure-Object ReadS -Maximum).Maximum)
+    $lines | Where-Object { $_ -match '^#' } | ForEach-Object { "  memory under 3000 MB $_" }
     $slow | ForEach-Object { '  slow start at {0}: {1:0.000} s, {2:0} MB free, disk read {3:0.000} s' -f $_.At, $_.Seconds, $_.FreeMB, $_.ReadS }
 }

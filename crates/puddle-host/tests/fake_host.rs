@@ -2862,23 +2862,45 @@ fn front_port_of(host: &Host<FakeRuntime>) -> u16 {
     fronts[0]
 }
 
+fn store_front_port(rig: &Rig, port: u16) {
+    let file = HostPaths::new(rig.dir.path().join("data")).front_port_file();
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, port.to_string()).unwrap();
+}
+
 fn stored_front_port(rig: &Rig) -> Option<u16> {
     let file = HostPaths::new(rig.dir.path().join("data")).front_port_file();
     std::fs::read_to_string(file).ok()?.trim().parse().ok()
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_first_run_stores_the_port_its_front_took() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    assert_eq!(
+        stored_front_port(&rig),
+        Some(front_port_of(&host)),
+        "the port is stored"
+    );
+    host.shutdown().await;
+}
+
+/// The stored port is reserved for the whole test, because a port the first run gave up is free for
+/// anyone's port 0 or source port (the restart's own pull proxy binds one before the front does).
+#[tokio::test(flavor = "multi_thread")]
 async fn the_front_keeps_its_port_across_restarts_of_the_host() {
     let rig = Rig::new();
+    let reserved = puddle_test_kit::ReservedPort::new();
+    store_front_port(&rig, reserved.port());
+
     let first = rig.start().await;
-    let port = front_port_of(&first);
-    assert_eq!(stored_front_port(&rig), Some(port), "the port is stored");
+    assert_eq!(front_port_of(&first), reserved.port());
     first.shutdown().await;
     drop(first); // the next run is a new process: its hold on the data folder ends
 
     // The same data folder, a new run: the same origin, so the editor's browser storage stays.
     let second = rig.start().await;
-    assert_eq!(front_port_of(&second), port);
+    assert_eq!(front_port_of(&second), reserved.port());
     second.shutdown().await;
 }
 
@@ -2886,9 +2908,7 @@ async fn the_front_keeps_its_port_across_restarts_of_the_host() {
 async fn a_taken_front_port_falls_back_to_another_that_is_then_kept() {
     let rig = Rig::new();
     let (held, taken) = puddle_test_kit::bound_port();
-    let file = HostPaths::new(rig.dir.path().join("data")).front_port_file();
-    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-    std::fs::write(&file, taken.to_string()).unwrap();
+    store_front_port(&rig, taken);
 
     let first = rig.start().await;
     let moved = front_port_of(&first);
@@ -2908,9 +2928,12 @@ async fn a_taken_front_port_falls_back_to_another_that_is_then_kept() {
     first.shutdown().await;
     drop(first);
 
-    // Next run the new port is the usual one, with the old one still taken.
+    // Next run the stored port is the usual one, with the old one still taken. It is reserved, as the
+    // port the first run gave up is free for anyone.
+    let reserved = puddle_test_kit::ReservedPort::new();
+    store_front_port(&rig, reserved.port());
     let second = rig.start().await;
-    assert_eq!(front_port_of(&second), moved);
+    assert_eq!(front_port_of(&second), reserved.port());
     assert!(
         second
             .problems()

@@ -1,0 +1,4 @@
+status: failing
+fixture: w3-sleep-loop.bad.rs.txt
+as: crates/puddle-host/tests/fake_host.rs
+fix: a hand-rolled wait loop (a `for`, `while` or `loop` that sleeps or yields between looks): use `eventually(what, within, probe)` (it names the wait and bounds it below nextest's slow-timeout), or `flake-ok: <why this loop is not a wait for a condition>`

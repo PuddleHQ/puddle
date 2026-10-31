@@ -17,6 +17,7 @@ mod capture;
 mod editor;
 mod editor_stream;
 mod forward;
+mod fuzz_corpus;
 mod host_control;
 mod merge_file;
 mod microsoft_server;

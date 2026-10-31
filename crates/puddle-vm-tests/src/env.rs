@@ -377,6 +377,7 @@ async fn remove_dir_retrying(
     backoff: Duration,
 ) -> Result<(), HarnessError> {
     let mut tried = 1;
+    // flake-ok: retries the removal with a backoff, and this crate may not depend on the dev-only test kit
     loop {
         match std::fs::remove_dir_all(dir) {
             Ok(()) => return Ok(()),

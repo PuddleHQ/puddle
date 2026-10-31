@@ -18,6 +18,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+puddle-test-kit = { workspace = true }
 microsandbox = { workspace = true }
 puddle-boot = { workspace = true }
 puddle-compute = { workspace = true, features = ["fake"] }

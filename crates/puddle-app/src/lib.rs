@@ -31,6 +31,7 @@
 // Not `forbid` on Windows: `sandbox_window::accelerators` makes one WebView2 COM call.
 #![cfg_attr(not(windows), forbid(unsafe_code))]
 
+pub mod autostart;
 pub mod backend;
 pub mod badge;
 pub mod crash;

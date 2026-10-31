@@ -140,15 +140,14 @@ async fn a_stream_over_the_workspace_budget_is_refused_and_a_finished_one_gives_
     );
     // Giving up on one of the two streams frees its place.
     holders[0].abort();
-    let mut status = 0;
-    for _ in 0..100 {
-        status = client.get("bound.test", "/other").await.status;
-        if status == 200 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert_eq!(status, 200, "the place came back");
+    let shared = tokio::sync::Mutex::new(client);
+    puddle_test_kit::eventually_async(
+        "the place came back (a request is answered 200)",
+        Duration::from_secs(5),
+        || async { shared.lock().await.get("bound.test", "/other").await.status == 200 },
+    )
+    .await;
+    let client = shared.into_inner();
     for holder in &holders {
         holder.abort();
     }
@@ -698,6 +697,7 @@ async fn an_agreed_websocket_over_http11_that_goes_silent_is_closed_and_recorded
     // and the audit log run on the blocking pool, which a paused clock does not wait for).
     tokio::time::pause();
     // Traffic keeps it open past the limit...
+    // flake-ok: paced traffic on the paused clock, load generation not a wait for a condition.
     for _ in 0..3 {
         tokio::time::sleep(Duration::from_millis(600)).await;
         client

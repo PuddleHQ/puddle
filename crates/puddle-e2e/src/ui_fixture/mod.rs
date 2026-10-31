@@ -37,12 +37,13 @@ use puddle_secrets::{
 };
 use puddle_settings::GLOBAL_SCHEMA_VERSION;
 use puddle_store::{
-    Actor, Clock, IdentityId, Limits, ManualClock, NewRule, Pattern, RepoRef, Scope, Store,
+    Actor, Clock, IdentityId, Limits, ManualClock, NewRequestRule, NewRule, Pattern, RepoRef,
+    Scope, Store,
 };
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, EgressRequest, Event,
-    EventSink, Host, ImageRef, MemoryMib, Problem, Problems, SuffixAllows, WorkspaceId,
-    WorkspaceName, WorkspaceStatus,
+    EventSink, Host, HttpRequestLine, ImageRef, MemoryMib, Methods, PathPattern, Problem, Problems,
+    RuleId, SuffixAllows, WorkspaceId, WorkspaceName, WorkspaceStatus,
 };
 use tokio::sync::Mutex;
 
@@ -55,12 +56,12 @@ pub use scenario::{CheckoutSeed, RemoteNoteSeed};
 pub use scenario::{
     ConnectionSeed, CredentialsSeed, DecisionSeed, EffectSeed, EnvKindSeed, EnvSeed, GitRepoSeed,
     GitSeed, KeptLoginSeed, ProblemSeed, RepoItemSeed, RepoListSeed, RepoNoteSeed, RepoProblemSeed,
-    RepoSeed, RequestSeed, RuleSeed, Scenario, SettingsSeed, StatusSeed, Step, UnsavedSeed,
-    WorkspaceOperationSeed, WorkspaceSeed,
+    RepoSeed, RequestLineSeed, RequestRuleSeed, RequestSeed, RuleSeed, Scenario, SettingsSeed,
+    StatusSeed, Step, UnsavedSeed, WorkspaceOperationSeed, WorkspaceSeed,
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
-const BUILT_IN: [(&str, &str); 12] = [
+const BUILT_IN: [(&str, &str); 13] = [
     (
         "default",
         include_str!("../../../../ui/e2e/fixtures/default.json"),
@@ -108,6 +109,10 @@ const BUILT_IN: [(&str, &str); 12] = [
     (
         "environment",
         include_str!("../../../../ui/e2e/fixtures/environment.json"),
+    ),
+    (
+        "request-rules",
+        include_str!("../../../../ui/e2e/fixtures/request-rules.json"),
     ),
 ];
 
@@ -257,6 +262,7 @@ impl Fixture {
     async fn bind(&self) -> Result<(), String> {
         let mut state = self.state.lock().await;
         let mut last = String::new();
+        // flake-ok: retries the bind (an operation) and returns its last error, which the kit's waits would panic on.
         for _ in 0..100 {
             let services = Services::new(
                 state.store.clone(),
@@ -436,6 +442,7 @@ impl Fixture {
 pub fn watch_drop_dir(fixture: Arc<Fixture>, dir: PathBuf) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let _ = tokio::fs::create_dir_all(&dir).await;
+        // flake-ok: a poller that runs until the task is aborted, not a wait for a condition.
         loop {
             drain_drop_dir(&fixture, &dir).await;
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -506,6 +513,9 @@ impl State {
         let start = scenario.start_ms();
         for rule in &scenario.rules {
             self.add_rule(rule, start)?;
+        }
+        for rule in &scenario.request_rules {
+            self.add_request_rule(rule, start)?;
         }
         for request in &scenario.requests {
             self.request(request, start)?;
@@ -610,6 +620,7 @@ impl State {
                             port: 443,
                             decision,
                             reason: None,
+                            request_line: None,
                             bytes_up: i % 5000,
                             bytes_down: (i % 700) * 1024,
                             ago_ms: (count - 1 - i) * WEEK_MS / count,
@@ -971,6 +982,20 @@ impl State {
             .map_err(|err| err.to_string())
     }
 
+    fn add_request_rule(&self, seed: &RequestRuleSeed, now: u64) -> Result<(), String> {
+        let new = NewRequestRule {
+            workspace: seed.workspace.as_deref().map(workspace).transpose()?,
+            host: seed.host.clone(),
+            methods: Methods::parse(seed.methods.iter().map(String::as_str))
+                .map_err(|err| err.to_string())?,
+            path: PathPattern::parse(&seed.path).map_err(|err| err.to_string())?,
+            created_by: Actor::Api,
+        };
+        self.at(now, seed.ago_ms, || self.store.add_request_rule(&new))
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    }
+
     fn request(&self, seed: &RequestSeed, now: u64) -> Result<(), String> {
         let request = EgressRequest::new(workspace(&seed.workspace)?, host(&seed.host)?, seed.port);
         self.at(now, seed.ago_ms, || {
@@ -998,6 +1023,7 @@ impl State {
         let reason = match seed.reason.as_deref().unwrap_or(default_reason) {
             "rule" => ConnectionReason::Rule,
             "no_rule" => ConnectionReason::NoRule,
+            "request_rule" => ConnectionReason::RequestRule,
             "puddle_endpoint" => ConnectionReason::Blocked(BlockReason::PuddleEndpoint),
             "ssh_unsupported" => ConnectionReason::Blocked(BlockReason::SshUnsupported),
             "udp_unsupported" => ConnectionReason::Blocked(BlockReason::UdpUnsupported),
@@ -1007,6 +1033,10 @@ impl State {
         let mut event = ConnectionEvent::new(&request, decision, reason);
         event.bytes_up = seed.bytes_up;
         event.bytes_down = seed.bytes_down;
+        if let Some(line) = &seed.request_line {
+            event.http = Some(HttpRequestLine::new(line.method.as_str(), &line.path));
+            event.request_rule = line.rule.map(RuleId);
+        }
         self.at(now, seed.ago_ms, || self.store.record_connection(&event))
             .map_err(|err| err.to_string())
     }

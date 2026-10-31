@@ -662,6 +662,62 @@ fn the_hook_reports_the_guests_git_version_when_there_is_a_git() {
 }
 
 #[test]
+fn the_hook_reports_the_kubernetes_tools_on_the_path() {
+    for shell in shells() {
+        let fr = FakeRoot::new(&shell);
+        // The image's PATH is an empty directory: the usual one (/usr/local/bin) holds kind and
+        // minikube on a CI runner, which would be found as if installed in the guest.
+        let empty = tempfile::tempdir().unwrap();
+        let config = ImageConfig {
+            env: vec![("PATH".into(), empty.path().display().to_string())],
+            ..ImageConfig::default()
+        };
+        let plan = BootPlan::builder(&config).no_agent().build().unwrap();
+        let tools_of = |fr: &FakeRoot| {
+            let out = fr.run_raw(&plan.render(), &[], true);
+            assert!(out.status.success(), "{}", show(&out));
+            puddle_boot::BootReport {
+                stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+                ..Default::default()
+            }
+            .kubernetes_tools()
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+        };
+        // Nothing installed: no line, so the host raises nothing.
+        assert_eq!(tools_of(&fr), Vec::<String>::new());
+        fr.stub("kind", "#!/bin/sh\nexit 0\n");
+        fr.stub("minikube", "#!/bin/sh\nexit 0\n");
+        assert_eq!(tools_of(&fr), ["kind", "minikube"]);
+        // A later run finds a tool added since.
+        fr.stub("k3d", "#!/bin/sh\nexit 0\n");
+        assert_eq!(tools_of(&fr), ["kind", "k3d", "minikube"]);
+    }
+}
+
+#[test]
+fn a_kubernetes_tool_only_the_images_own_path_names_is_found_too() {
+    let fr = FakeRoot::new(&shells()[0]);
+    let bin = tempfile::tempdir().unwrap();
+    let tool = bin.path().join("minikube");
+    std::fs::write(&tool, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&tool, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let config = ImageConfig {
+        env: vec![("PATH".into(), bin.path().display().to_string())],
+        ..ImageConfig::default()
+    };
+    let plan = BootPlan::builder(&config).no_agent().build().unwrap();
+    let out = fr.run_raw(&plan.render(), &[], false);
+    assert!(out.status.success(), "{}", show(&out));
+    let report = puddle_boot::BootReport {
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        ..Default::default()
+    };
+    assert_eq!(report.kubernetes_tools(), ["minikube"]);
+}
+
+#[test]
 fn no_credential_helper_is_ever_written() {
     let fr = FakeRoot::new(&shells()[0]);
     assert!(fr.run(&full_plan("CA\n")).status.success());

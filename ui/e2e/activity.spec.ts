@@ -4,6 +4,7 @@
 // what the page shows, never on time.
 import { readFileSync } from "node:fs";
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
+import { slowdown } from "./cpu-throttle.ts";
 import { type Backend, expect, test } from "./fixture";
 import { axeStops, watchCsp, staysEmpty } from "./support";
 
@@ -609,6 +610,11 @@ test.describe("a long log", () => {
   // regression that blocks the page costs seconds, so the test enforces a loose bar and reports
   // the best figure; the target is "no task over 50 ms while scrolling 1 000 rows".
   const LONG_TASK_TARGET_MS = 50;
+  // The bar is four times the target at full speed. A run that slows Chromium down on purpose
+  // (the nightly stress: PUDDLE_E2E_CPU_THROTTLE=4) makes every task that many times longer, so
+  // the bar grows by the same factor, as the inbox bars do; without it a scroll that meets the
+  // target exactly (50 ms of work, 200 ms throttled) fails a bar that is meant to have room.
+  const LONG_TASK_BAR_MS = LONG_TASK_TARGET_MS * 4 * slowdown();
 
   test(`${RECORDS.toLocaleString()} records: scrolling 1 000 rows draws a bounded window and blocks nothing`, async ({
     page,
@@ -663,7 +669,7 @@ test.describe("a long log", () => {
       expect(last.top).toBeGreaterThanOrEqual(target);
       // Without a clock: the table never holds more rows than a screen and its overscan.
       await expect.poll(() => rows(page).count()).toBeLessThan(60);
-      if (Math.max(0, ...last.long) < LONG_TASK_TARGET_MS * 4) break;
+      if (Math.max(0, ...last.long) < LONG_TASK_BAR_MS) break;
     }
     const worsts = attempts.map((p) => Math.max(0, ...p.long));
     const worst = Math.min(...worsts);
@@ -671,11 +677,11 @@ test.describe("a long log", () => {
     test.info().annotations.push({
       type: "activity-100k",
       description: measured
-        ? `${RECORDS} records, 1000 rows scrolled: worst task per attempt ${worsts.map((w) => w.toFixed(0)).join(", ")} ms, best ${worst.toFixed(0)} ms (target ${LONG_TASK_TARGET_MS} ms)`
+        ? `${RECORDS} records, 1000 rows scrolled: worst task per attempt ${worsts.map((w) => w.toFixed(0)).join(", ")} ms, best ${worst.toFixed(0)} ms (target ${LONG_TASK_TARGET_MS} ms, bar ${LONG_TASK_BAR_MS} ms at slowdown ${slowdown()})`
         : `${RECORDS} records, 1000 rows scrolled: this browser has no long-task timing, so only the window is checked`,
     });
     expect(worst, "longest task while scrolling, best attempt").toBeLessThan(
-      LONG_TASK_TARGET_MS * 4,
+      LONG_TASK_BAR_MS,
     );
   });
 });

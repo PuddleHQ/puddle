@@ -84,7 +84,7 @@ test("a credential's last read survives a reload, from a push and a repository l
   await expect(work).toContainText("Sign in needed");
   await expect(personal).not.toContainText("Not tested");
   // The detail page says when and what asked, and Test still reads again.
-  await page.getByRole("link", { name: "Personal" }).click();
+  await page.getByRole("link", { name: "Personal", exact: true }).click();
   const cred = page.locator("[data-credential]").first();
   await expect(cred.getByTestId("checked")).toContainText(
     /Checked 4 minutes ago by a workspace's request/,
@@ -92,7 +92,7 @@ test("a credential's last read survives a reload, from a push and a repository l
   await cred.getByRole("button", { name: /^Test / }).click();
   await expect(cred.getByTestId("checked")).toContainText(/by a test/);
   await page.goto("/identities");
-  await page.getByRole("link", { name: "Work" }).click();
+  await page.getByRole("link", { name: "Work", exact: true }).click();
   const azure = page.locator("[data-credential]").nth(1);
   await expect(azure).toContainText("Sign in needed");
   await expect(azure.getByTestId("checked")).toContainText(

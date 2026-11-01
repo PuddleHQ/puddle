@@ -627,3 +627,37 @@ async fn a_client_that_leaves_early_doesnt_disturb_the_endpoint() {
     assert_eq!(refusal(endpoint.endpoint().path()).await, "stopped");
     endpoint.close().await;
 }
+
+#[tokio::test]
+async fn a_gated_sandbox_is_labelled_with_its_name() {
+    let rt = FakeRuntime::new();
+    let _code = install_hook(&rt, "");
+    let gate = Gate::new();
+    let sb = BootHook::new()
+        .create(&rt, spec("box"), &plan(&rt).await, &gate)
+        .await
+        .unwrap();
+    assert_eq!(SshTarget::label(&sb), "box");
+}
+
+/// `close` returns only once the listener is gone, not merely told to stop: a connect that
+/// follows it at once, with no chance for the runtime to run the accept task again, is refused.
+#[cfg(unix)]
+#[tokio::test]
+async fn close_returns_after_the_listener_is_gone() {
+    let echo = Echo::new(u64::MAX, false);
+    let root = IpcRoot::new().unwrap();
+    let endpoint = SshEndpoint::start(root.listen().unwrap(), echo).unwrap();
+    let path: PathBuf = endpoint.endpoint().path().to_path_buf();
+    // Let the accept loop start.
+    tokio::task::yield_now().await;
+    endpoint.close().await;
+    let err = std::os::unix::net::UnixStream::connect(&path).unwrap_err();
+    assert!(
+        matches!(
+            err.kind(),
+            std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+        ),
+        "{err}"
+    );
+}

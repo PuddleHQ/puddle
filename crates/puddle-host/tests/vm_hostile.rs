@@ -477,7 +477,13 @@ async fn vm_hostile_hg11_a_flooding_workspace_is_held_at_its_cap_and_another_is_
         report.contains(&format!("{target} HTTP/1.1 200")),
         "{report}"
     );
-    assert!(took < Duration::from_secs(5), "the bystander took {took:?}");
+    // flake-ok: the flood is held until the release below, so a starved bystander would wait for
+    // that release (minutes) or fail its own connection; 60 s only separates "served while the
+    // flood is held" from "waited for it", and a loaded host adds seconds, not that.
+    assert!(
+        took < Duration::from_secs(60),
+        "the bystander took {took:?}"
+    );
 
     // The flood ends: its slots are free for the workspace again (the agent is gone, so the
     // guest's own client asks).

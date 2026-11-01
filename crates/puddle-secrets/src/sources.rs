@@ -322,7 +322,13 @@ mod tests {
             now + 3600
         );
         let got = parse_fill(&live, &h, &p, None).unwrap();
-        assert!(got.valid_for.unwrap() > Duration::from_secs(3500));
+        let left = got.valid_for.unwrap();
+        // flake-ok: `left` is the stated expiry minus a clock that only moves forward, so at most the
+        // 3600 s asked for however slow the machine is; the lower bound keeps a 100 s margin.
+        assert!(
+            left > Duration::from_secs(3500) && left <= Duration::from_secs(3600),
+            "{left:?}"
+        );
         let dead = "host=dev.azure.com\npath=org\npassword=x\npassword_expiry_utc=5\n";
         assert_eq!(
             parse_fill(dead, &h, &p, None).unwrap_err(),
@@ -337,5 +343,20 @@ mod tests {
         assert!(pasted_token("a b").is_err());
         assert!(pasted_token("a\nb").is_err());
         assert!(pasted_token(&"a".repeat(9000)).is_err());
+    }
+
+    #[test]
+    fn a_token_of_8192_bytes_is_taken_and_one_byte_more_is_not() {
+        assert_eq!(
+            token_secret(&"a".repeat(8192), false)
+                .unwrap()
+                .expose()
+                .len(),
+            8192
+        );
+        assert_eq!(
+            token_secret(&"a".repeat(8193), false).unwrap_err(),
+            SourceError::Refused(Refusal::Malformed)
+        );
     }
 }

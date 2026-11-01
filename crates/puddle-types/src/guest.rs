@@ -181,6 +181,10 @@ pub enum ApplyKind {
     /// every boot and removed when no provider lists the file any more; everything else stays.
     /// A file that can't be parsed is left alone. The file's mode applies when Puddle creates it.
     Merge(MergeSpec),
+    /// A merged file an earlier plan wrote stays as it is: its keys are neither set nor removed,
+    /// and they are still Puddle's to remove later. For a file only a running guest can work out,
+    /// written again once it runs. Nothing happens when no earlier plan merged it.
+    Keep,
 }
 
 impl GuestFile {
@@ -215,6 +219,23 @@ impl GuestFile {
             contents: spec.fresh(),
             mode: Self::DEFAULT_MODE,
             apply: ApplyKind::Merge(spec),
+        }
+    }
+
+    /// The merged file at `path` an earlier plan wrote, kept as it is (see [`ApplyKind::Keep`]).
+    ///
+    /// ```
+    /// use puddle_types::{ApplyKind, GuestFile, GuestPath};
+    /// let f = GuestFile::kept(GuestPath::new("/w/.puddle/editor/w.code-workspace").unwrap());
+    /// assert!(matches!(f.apply(), ApplyKind::Keep));
+    /// ```
+    #[must_use]
+    pub fn kept(path: GuestPath) -> Self {
+        Self {
+            path,
+            contents: Vec::new(),
+            mode: Self::DEFAULT_MODE,
+            apply: ApplyKind::Keep,
         }
     }
 

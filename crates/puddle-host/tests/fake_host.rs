@@ -8696,6 +8696,17 @@ async fn a_start_folder_reaches_the_login_shell_file_and_a_missing_one_is_a_prob
     assert_eq!(saved.json()["start_folder"], serde_json::Value::Null);
 }
 
+/// Stops `name` and starts it again.
+async fn stop_and_start(api: &Api, events: &mut support::Events, name: &'static str) {
+    for step in ["stop", "start"] {
+        let reply = api
+            .post(&format!("/api/workspaces/{name}/{step}"), "")
+            .await;
+        assert_eq!(reply.status, 202, "{}", reply.body);
+        events.until(ended(name), Duration::from_secs(20)).await;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_attach_writes_the_multi_root_file_for_two_checkouts_and_a_file_it_cannot_parse_is_a_problem()
  {
@@ -8738,9 +8749,19 @@ async fn an_attach_writes_the_multi_root_file_for_two_checkouts_and_a_file_it_ca
     ] {
         assert!(plan.contains(folder), "{folder}: {plan}");
     }
-    // A start folder replaces the window: Puddle's lines go again.
+    // A start keeps the file as the last attach wrote it, so the editor server opens it at once
+    // (only a running guest can list the checkouts).
+    stop_and_start(&api, &mut events, "acme").await;
+    let plan = last_plan(&rig);
+    assert!(
+        plan.contains(&format!("\npuddle_keep '/workspaces/acme/{file}'\n")),
+        "{plan}"
+    );
+    // A start folder replaces the window: Puddle's lines go again, at an attach and at a start.
     put_start_folder(&api, "acme", Some("api")).await;
     attach().await;
+    assert!(!last_plan(&rig).contains(file));
+    stop_and_start(&api, &mut events, "acme").await;
     assert!(!last_plan(&rig).contains(file));
     put_start_folder(&api, "acme", None).await;
 

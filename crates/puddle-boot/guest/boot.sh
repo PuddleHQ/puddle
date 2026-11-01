@@ -115,9 +115,10 @@ setk kernel.unprivileged_bpf_disabled 1
 say "sysctls set"
 
 # --- 3. Files, applied in plan order ----------------------------------------------------------
-# Two kinds: puddle_file writes a whole file Puddle owns; puddle_merge sets only Puddle's keys in
+# Three kinds: puddle_file writes a whole file Puddle owns; puddle_merge sets only Puddle's keys in
 # a file that belongs to the user, through the agent binary's `merge-file`, which parses
-# the file (this script can't) and leaves one it can't parse untouched.
+# the file (this script can't) and leaves one it can't parse untouched; puddle_keep leaves a file
+# an earlier plan merged as it is, its keys still Puddle's.
 GIT_INCLUDE=
 MERGE_TOOL=
 AGENT=
@@ -184,6 +185,11 @@ merge_result() { # merge_result <path> <tool output>
             die "cannot merge $1: $out"
         merge_result "$1" "$out"
         printf '%s\n' "$1" >>"$RUN/merge.new"
+    }
+    puddle_keep() { # puddle_keep <path>: a file an earlier plan merged stays as it is, still Puddle's
+        if [ -f "$STATE/merge-files" ] && grep -Fxq -- "$1" "$STATE/merge-files"; then
+            printf '%s\n' "$1" >>"$RUN/merge.new"
+        fi
     }
     puddle_on_change() { printf '%s %s\n' "$1" "$2" >>"$RUN/triggers"; }
     puddle_step() { printf '%s\n' "$1" >>"$RUN/steps"; }

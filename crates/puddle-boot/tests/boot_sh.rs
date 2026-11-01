@@ -909,6 +909,40 @@ fn merged_files_go_through_the_merge_tool_and_lose_only_puddles_keys_when_droppe
 }
 
 #[test]
+fn a_kept_file_stays_as_an_earlier_plan_merged_it_and_is_still_puddles_to_remove() {
+    for sh in shells() {
+        let fr = FakeRoot::new(&sh);
+        let kept = || GuestFile::kept(GuestPath::new(DOCKER).unwrap());
+        // Never merged: keeping it does nothing and records nothing.
+        let out = fr.run(&plan_with(vec![kept()]));
+        assert!(out.status.success(), "{}", show(&out));
+        assert_eq!(merge_calls(&fr), Vec::<String>::new());
+        assert!(!fr.read("/var/lib/puddle/merge-files").contains(DOCKER));
+
+        let out = fr.run(&plan_with(vec![merged(DOCKER)]));
+        assert!(out.status.success(), "{}", show(&out));
+        // Kept: the merge tool is not asked to set or remove anything, and the record stays.
+        let out = fr.run(&plan_with(vec![kept()]));
+        assert!(out.status.success(), "{}", show(&out));
+        assert_eq!(
+            merge_calls(&fr),
+            [format!("merge-file apply {DOCKER} 0600")]
+        );
+        assert_eq!(
+            fr.read("/var/lib/puddle/merge-files"),
+            format!("{MACHINE_SETTINGS_GUEST}\n{DOCKER}\n")
+        );
+        // A later plan without it removes Puddle's keys as for any merged file.
+        let out = fr.run(&plan_with(vec![]));
+        assert!(out.status.success(), "{}", show(&out));
+        assert_eq!(
+            merge_calls(&fr).last().unwrap(),
+            &format!("merge-file remove {DOCKER}")
+        );
+    }
+}
+
+#[test]
 fn a_file_the_tool_cannot_parse_is_left_and_the_boot_goes_on() {
     let fr = FakeRoot::new(&shells()[0]);
     std::fs::write(

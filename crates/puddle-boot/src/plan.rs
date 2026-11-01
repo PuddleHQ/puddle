@@ -383,6 +383,10 @@ impl BootPlan {
             format!("puddle_merge_tool {}", sh_word(self.merge_tool().as_str())),
         ];
         for f in &self.files {
+            if matches!(f.apply(), ApplyKind::Keep) {
+                lines.push(format!("puddle_keep {}", sh_word(f.path().as_str())));
+                continue;
+            }
             let (call, body) = match f.apply() {
                 ApplyKind::Merge(spec) => (
                     "puddle_merge",
@@ -586,7 +590,8 @@ impl BootPlanBuilder {
                     path: path.to_string(),
                 });
             }
-            if !matches!(f.apply(), ApplyKind::Replace | ApplyKind::Merge(_)) {
+            let known = matches!(f.apply(), ApplyKind::Replace | ApplyKind::Merge(_));
+            if !known && !matches!(f.apply(), ApplyKind::Keep) {
                 return Err(PlanError::UnknownApplyKind {
                     path: path.to_string(),
                 });
@@ -1260,5 +1265,21 @@ mod tests {
             ),
             "{r}"
         );
+    }
+
+    #[test]
+    fn a_kept_file_renders_as_its_path_alone() {
+        let plan = BootPlan::builder(&ImageConfig::default())
+            .file(GuestFile::kept(
+                GuestPath::new("/w/.puddle/editor/w.code-workspace").unwrap(),
+            ))
+            .build()
+            .unwrap();
+        let r = String::from_utf8(plan.render()).unwrap();
+        assert!(
+            r.contains("\npuddle_keep '/w/.puddle/editor/w.code-workspace'\n"),
+            "{r}"
+        );
+        assert!(!r.contains("puddle_merge '/w/"), "{r}");
     }
 }

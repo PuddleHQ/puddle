@@ -79,6 +79,15 @@ mod tests {
         assert!(
             user_ssh_config().is_none_or(|own| own.ends_with(Path::new(".ssh").join("config")))
         );
+        // The real one is the same lookup the folder helper makes for the OS's home folder.
+        assert_eq!(
+            user_ssh_config(),
+            user_ssh_config_in(dirs::home_dir().as_deref())
+        );
+        assert!(
+            user_ssh_config().is_some(),
+            "a computer that runs the tests has a home folder"
+        );
     }
 
     #[test]

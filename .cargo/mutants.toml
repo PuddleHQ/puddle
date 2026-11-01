@@ -12,7 +12,16 @@
 test_tool = "nextest"
 
 # Test support that is compiled outside `cfg(test)` (feature-gated helpers) is no product code.
-exclude_globs = ["**/testing.rs", "**/testing/**", "**/tests/**", "**/benches/**"]
+exclude_globs = [
+    "**/testing.rs",
+    "**/testing/**",
+    "**/tests/**",
+    "**/benches/**",
+    # Windows-only code of `puddle-fs` (`#[cfg(windows)]` modules): a Linux run never compiles it, so
+    # every change to it would pass. The Windows test job covers it; the mutation run does not.
+    "crates/puddle-fs/src/private/windows.rs",
+    "crates/puddle-fs/src/win/**",
+]
 
 # Equivalent mutants, each with its reason:
 exclude_re = [
@@ -62,6 +71,30 @@ exclude_re = [
     # both give the same answer. The columns are the three `key > best` / `own_key > own_key` comparisons
     # (not the specificity comparison against an own rule, where equal does matter and a test pins it).
     "engine\\.rs:\\d+:(88|61|93): replace > with >= in RuleIndex::decide",
+    # The default body of `SshTarget::failed` is `let _ = reason;`, so `()` is the same code.
+    'replace SshTarget::failed with \(\)',
+    # `SshEndpoint::drop` aborts the accept task, but dropping the endpoint also drops the `stop`
+    # sender, which makes the task's `stopped` receiver resolve, so the loop ends and shuts its
+    # sessions down either way; the abort only makes it prompt, which no test can time.
+    'replace <impl Drop for SshEndpoint>::drop with \(\)',
+    # `!matches!(written, Ok(Ok(())))` in `session` only decides whether to log that a refused
+    # client left before reading its refusal; the connection is dropped on both paths.
+    'endpoint\.rs:\d+:12: delete ! in session',
+    # The default body of `SecretStore::sweep_orphans` is `Ok(Sweep::default())`, so `Ok(Default::default())`
+    # is the same code.
+    'replace SecretStore::sweep_orphans -> Result<Sweep, StoreError> with Ok\(Default::default\(\)\)',
+    # `keyring_available` is `false` on a computer with no credential store (every Linux run of the
+    # tests), which is what the mutant returns; on a computer that has one, the Windows job sets
+    # PUDDLE_REQUIRE_OS_CREDENTIAL_STORE and its real-store tests fail when the answer is `false`.
+    'replace keyring_available -> bool with false',
+    # Not measured: the `#[cfg(not(unix))]` `is_executable` (run.rs lines 78 to 82, the Windows one: a
+    # file counts when it exists) is never compiled on Linux. The Unix one is measured and caught.
+    'run\.rs:(79|8[0-2]):5: replace is_executable -> bool',
+    # Not measured: the Windows `allocated_bytes` (allocated.rs lines 30 to 49) is `#[cfg(windows)]`,
+    # so a Linux run never compiles it and every change to it passes. The mutation run covers Linux
+    # only; this function is tested by the Windows test job and is not part of the clean claim.
+    'allocated\.rs:(3\d|4\d):\d+: .* in allocated_bytes',
+    'allocated\.rs:(3\d|4\d):\d+: replace allocated_bytes ',
 ]
 
 # The first failing test decides a mutant: stop the rest. Without it, a mutant that makes a test

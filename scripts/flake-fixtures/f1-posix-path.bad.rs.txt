@@ -1,0 +1,8 @@
+#[test]
+fn reads_the_config() {
+    let dir = PathBuf::from("/tmp/puddle-config");
+    let file = format!("{dir}/config.toml");
+    let missing = Path::new("/nonexistent/config.toml");
+    assert!(load(&file).is_ok());
+    assert!(load(missing).is_err());
+}

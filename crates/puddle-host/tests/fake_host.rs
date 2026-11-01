@@ -2400,6 +2400,7 @@ async fn editor_stand_in(rig: &Rig, name: &str) -> EditorStandIn {
     std::fs::write(&password_file, "0".repeat(64)).unwrap();
     // Its port is taken, so the agent starts no server of its own and the stand-in answers.
     let mut editor = EditorServer::new("/nonexistent/data", "/nonexistent/work", 120);
+    // flake-ok: a path that must not exist; on Windows it is rooted on the current drive and still does not exist
     editor.dir = "/nonexistent/release".into();
     editor.port = port;
     let sandbox = WorkspaceName::new(name).unwrap().sandbox_name();

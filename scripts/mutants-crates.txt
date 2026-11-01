@@ -12,4 +12,7 @@ puddle-netpolicy
 puddle-inject
 puddle-types
 puddle-ca
-puddle-store # whole sweep about 3.5 h at --jobs 1 (831 mutants; the sum of its 22 file sweeps on a loaded 40-core host)
+puddle-store    # whole-crate sweep 100 min at --jobs 1 (831 mutants)
+puddle-ssh      # whole-crate sweep 6 min at --jobs 1 (76 mutants)
+puddle-fs       # Linux only: 3 min (69 mutants); Windows-only code is excluded in .cargo/mutants.toml
+puddle-secrets  # 18 min (248 mutants)

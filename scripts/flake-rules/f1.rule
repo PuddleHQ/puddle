@@ -1,0 +1,4 @@
+status: failing
+fixture: f1-posix-path.bad.rs.txt
+as: crates/puddle-store/tests/store_paths.rs
+fix: a Unix path literal (`/tmp`, `/home`, `/no...`, `/nonexistent`) used as a host path, or `format!("{dir}/{name}")`, fails on Windows: take the directory from `tempfile::tempdir()` and build the path with `Path::join`, or `flake-ok: <why this string is not a host path>`

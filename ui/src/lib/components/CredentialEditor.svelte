@@ -16,7 +16,7 @@
     toggleOwner,
     tokenProblem,
     type AccountProfile,
-    type Credential,
+    type CredentialDraft,
     type FoundAccount,
     type Source,
   } from "#lib/identities/model.ts";
@@ -34,9 +34,9 @@
     onProfile,
   }: {
     store: IdentitiesStore;
-    existing: readonly Credential[];
+    existing: readonly CredentialDraft[];
     /** `stored` is the source of a token that was just kept, so the dialog can remove it again if the identity is not saved. */
-    onAdd: (credential: Credential, stored: Source | null) => void;
+    onAdd: (credential: CredentialDraft, stored: Source | null) => void;
     onCancel: () => void;
     /** The account's name and address when the Git host gave them, for the author fields. */
     onProfile: (profile: AccountProfile) => void;

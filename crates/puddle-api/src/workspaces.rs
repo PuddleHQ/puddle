@@ -1688,7 +1688,7 @@ mod tests {
     #[test]
     fn a_checkout_on_this_computer_takes_its_origin_and_folder_name_unless_given() {
         let source = |folder: &str, origin: Result<&str, &str>| LocalSource {
-            git_dir: PathBuf::from(format!("/home/u/{folder}/.git")),
+            git_dir: PathBuf::from("home").join(folder).join(".git"),
             folder_name: folder.into(),
             origin: origin.map(str::to_owned).map_err(str::to_owned),
         };
@@ -1724,7 +1724,10 @@ mod tests {
             "https://github.com/acme/shop.git"
         );
         assert_eq!(checked[0].repository.directory.as_str(), "Shop");
-        assert_eq!(checked[0].local, Some(PathBuf::from("/home/u/Shop/.git")));
+        assert_eq!(
+            checked[0].local,
+            Some(PathBuf::from("home").join("Shop").join(".git"))
+        );
         // A given address stands in for a missing origin.
         assert_eq!(
             checked[1].repository.url.as_str(),
@@ -1735,7 +1738,10 @@ mod tests {
             |d: RepositoryDraft| check_repositories_with(&[d], |_| false, &locals).unwrap_err();
         assert_eq!(
             refused(local("/home/u/none", "")),
-            "repository 1 (the checkout /home/u/none): it has no origin remote"
+            format!(
+                "repository 1 (the checkout {}): it has no origin remote",
+                PathBuf::from("home").join("none").display()
+            )
         );
         assert_eq!(
             refused(local("/home/u/plain", "")),

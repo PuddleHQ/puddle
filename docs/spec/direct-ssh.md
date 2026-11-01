@@ -46,3 +46,6 @@ computer and read the editor's secrets (a signed-in GitHub token). The browser e
 12. A direct SSH that is on but not usable (no endpoint, no login key, an entry that cannot be
     written) is a problem on the workspace, with the reason, until it works or the switch goes off:
     the "Trusted" mark is never the only thing the user sees.
+13. Reload Window in desktop VS Code ends a terminal process in the workspace while Remote-SSH's default
+    `remote.SSH.useLocalServer` is off, because the workspace's VS Code server is replaced. With it on, in
+    the user's own VS Code settings, the process survives. Puddle does not change that setting.

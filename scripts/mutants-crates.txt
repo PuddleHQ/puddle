@@ -5,3 +5,4 @@ puddle-netpolicy
 puddle-inject
 puddle-types
 puddle-ca
+puddle-store # whole sweep about 3.5 h at --jobs 1 (831 mutants; the sum of its 22 file sweeps on a loaded 40-core host)

@@ -726,3 +726,78 @@ fn the_secret_ids_in_use_are_the_stored_tokens_of_identities_and_the_secrets_of_
         [id("env-1")].into_iter().collect()
     );
 }
+
+fn git_events(sink: &CollectingSink) -> usize {
+    sink.take()
+        .iter()
+        .filter(|e| matches!(e, Event::WorkspaceGitChanged { .. }))
+        .count()
+}
+
+#[test]
+fn a_set_up_that_only_adds_the_identity_or_only_adds_the_row_still_says_so() {
+    let (sink, store) = fixture();
+    let work = make(&store, "Work", &["acme"], false);
+    let _ = sink.take();
+
+    // The row exists already: only the identity joins the list.
+    let w = ws("only-identity");
+    store
+        .add_repo(&w, &repo("github.com", "acme", "shop"), true, true)
+        .unwrap();
+    let _ = sink.take();
+    let named = RepoGitRequest {
+        identity: Some(work),
+        ..ask(repo("github.com", "acme", "shop"))
+    };
+    store.start_repository_git(&w, &named).unwrap();
+    assert_eq!(attached(&store, "only-identity"), [work]);
+    assert_eq!(git_events(&sink), 1, "the list changed");
+
+    // The identity is on the list already: only the row is new.
+    store
+        .start_repository_git(&w, &ask(repo("github.com", "acme", "blog")))
+        .unwrap();
+    assert_eq!(store.workspace_git(&w).unwrap().repos.len(), 2);
+    assert_eq!(git_events(&sink), 1, "the table changed");
+
+    // Neither is new.
+    store
+        .start_repository_git(&w, &ask(repo("github.com", "acme", "blog")))
+        .unwrap();
+    assert_eq!(git_events(&sink), 0);
+}
+
+#[test]
+fn detaching_one_identity_keeps_the_others_in_order() {
+    let (_sink, store) = fixture();
+    let a = make(&store, "A", &["a"], false);
+    let b = make(&store, "B", &["b"], false);
+    let c = make(&store, "C", &["c"], false);
+    let w = ws("shop");
+    store.set_workspace_identities(&w, &[a, b, c]).unwrap();
+    let git = store.detach_identity(&w, b).unwrap();
+    assert_eq!(
+        git.identities.iter().map(|i| i.id).collect::<Vec<_>>(),
+        [a, c]
+    );
+    assert_eq!(attached(&store, "shop"), [a, c]);
+}
+
+#[test]
+fn deleting_a_workspace_says_its_git_settings_changed_only_when_it_had_some() {
+    let (sink, store) = fixture();
+    let work = make(&store, "Work", &["acme"], false);
+    store
+        .start_repository_git(&ws("had"), &ask(repo("github.com", "acme", "shop")))
+        .unwrap();
+    assert_eq!(attached(&store, "had"), [work]);
+    let _ = sink.take();
+
+    store.delete_workspace(&ws("had")).unwrap();
+    assert_eq!(git_events(&sink), 1);
+    assert_eq!(store.workspace_git(&ws("had")).unwrap().repos.len(), 0);
+
+    store.delete_workspace(&ws("never-had")).unwrap();
+    assert_eq!(git_events(&sink), 0, "nothing of it was in the Git tables");
+}

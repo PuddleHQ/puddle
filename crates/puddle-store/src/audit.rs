@@ -1418,6 +1418,70 @@ mod tests {
     }
 
     #[test]
+    fn a_string_of_exactly_the_field_limit_is_kept_and_not_flagged() {
+        let mut e = event();
+        e.http = Some(HttpRequestLine::new(
+            "GET",
+            &format!("/{}", "a".repeat(MAX_FIELD_BYTES - 1)),
+        ));
+        let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &e))
+            .to_line()
+            .unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["path"].as_str().unwrap().len(), MAX_FIELD_BYTES);
+        assert_eq!(value["path_truncated"], false);
+    }
+
+    #[test]
+    fn a_string_in_a_list_over_the_field_limit_is_cut_to_it() {
+        let record = AuditRecord::RuleSetChanged {
+            ts: 1,
+            set_id: "builtin:github".into(),
+            added: vec!["a".repeat(MAX_FIELD_BYTES + 1), "b".repeat(MAX_FIELD_BYTES)],
+            removed: Vec::new(),
+        };
+        let value: Value = serde_json::from_str(&record.to_line().unwrap()).unwrap();
+        assert_eq!(value["added"][0].as_str().unwrap().len(), MAX_FIELD_BYTES);
+        assert_eq!(value["added"][1].as_str().unwrap().len(), MAX_FIELD_BYTES);
+    }
+
+    #[test]
+    fn a_line_of_exactly_the_limit_is_written_whole() {
+        let with = |strings: &[usize]| AuditRecord::RuleSetChanged {
+            ts: 1,
+            set_id: "builtin:github".into(),
+            added: strings.iter().map(|n| "a".repeat(*n)).collect(),
+            removed: Vec::new(),
+        };
+        let base = with(&[0; 4]).to_line().unwrap().len();
+        let spare = MAX_LINE_BYTES - base;
+        let sizes = [spare / 4, spare / 4, spare / 4, spare - 3 * (spare / 4)];
+        assert!(sizes.iter().all(|n| *n <= MAX_FIELD_BYTES), "{sizes:?}");
+        let line = with(&sizes).to_line().unwrap();
+        assert_eq!(line.len(), MAX_LINE_BYTES);
+        let value: Value = serde_json::from_str(&line).unwrap();
+        let lengths: Vec<usize> = value["added"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry.as_str().unwrap().len())
+            .collect();
+        assert_eq!(lengths, sizes, "nothing was cut");
+    }
+
+    #[test]
+    fn a_character_the_line_escapes_counts_as_six_bytes_when_choosing_what_to_cut() {
+        for c in ['\u{1}', '\u{7f}', '"', '\\', '\u{2028}', '\u{2029}'] {
+            assert!(needs_escape(c), "{c:?}");
+            assert_eq!(encoded_len(&c.to_string()), 6, "{c:?}");
+        }
+        for c in ['a', 'é', '/', ' ', '\''] {
+            assert!(!needs_escape(c), "{c:?}");
+            assert_eq!(encoded_len(&c.to_string()), c.len_utf8(), "{c:?}");
+        }
+    }
+
+    #[test]
     fn connection_window_counts_excess_per_second() {
         let mut w = ConnectionWindow::default();
         assert_eq!(w.admit(5_000, 2), (true, None));

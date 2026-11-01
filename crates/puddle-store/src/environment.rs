@@ -573,7 +573,24 @@ mod tests {
         let many = (0..=MAX_SECRET_HOSTS)
             .map(|i| SecretHost::new(&format!("h{i}.example.com")).unwrap())
             .collect();
-        assert!(EnvDraft::secret(id, many).is_err());
+        assert!(EnvDraft::secret(id.clone(), many).is_err());
+        let most = (0..MAX_SECRET_HOSTS)
+            .map(|i| SecretHost::new(&format!("h{i}.example.com")).unwrap())
+            .collect();
+        assert!(
+            EnvDraft::secret(id, most).is_ok(),
+            "the limit itself is allowed"
+        );
+    }
+
+    #[test]
+    fn the_limits_are_the_documented_numbers() {
+        assert_eq!(MAX_NAME_LEN, 64);
+        assert_eq!(MAX_PLAIN_VALUE_BYTES, 49_152);
+        assert_eq!(MAX_SECRET_VALUE_CHARS, 8_192);
+        assert_eq!(MAX_ENTRIES_PER_SCOPE, 256);
+        assert_eq!(MAX_SCOPE_BYTES, 262_144);
+        assert_eq!(MAX_SECRET_HOSTS, 32);
     }
 
     #[test]

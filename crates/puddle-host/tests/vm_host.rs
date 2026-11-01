@@ -479,15 +479,16 @@ async fn vm_host_starts_a_workspace_from_a_checkout_on_this_computer() {
     // The hostile part: each would leave a mark in the folder it runs in (the guest's clone or
     // this checkout) and one beside the checkout here.
     let here = base.join("RAN-HERE");
-    // Forward slashes: a backslash in a git config value starts an escape.
+    // Forward slashes: a backslash in a git config value starts an escape. The include is
+    // relative to the config file: a host path (`C:/...`) is no path in the guest, and the
+    // mount refuses it with EPERM, which stops git before it reads anything.
     let slashed = |p: &std::path::Path| p.display().to_string().replace('\\', "/");
     let mark = format!("touch ./RAN-IN-CLONE ../RAN-BESIDE '{}'", slashed(&here));
     let git_dir = work.join(".git");
     let config = format!(
         "{}[core]\n\tfsmonitor = \"{mark}; false\"\n\tsshCommand = \"{mark}; false\"\n\
-         [include]\n\tpath = {}\n",
-        std::fs::read_to_string(git_dir.join("config")).unwrap(),
-        slashed(&git_dir.join("extra"))
+         [include]\n\tpath = extra\n",
+        std::fs::read_to_string(git_dir.join("config")).unwrap()
     );
     std::fs::write(git_dir.join("config"), config).unwrap();
     std::fs::write(

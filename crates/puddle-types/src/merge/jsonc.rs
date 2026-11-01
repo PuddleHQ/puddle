@@ -135,13 +135,26 @@ fn fill(out: &mut [u8], range: Range<usize>) {
 mod tests {
     use super::*;
 
+    /// `blank` on its own thread, failing the test when it has not returned after a few seconds. A scanner
+    /// that stops advancing would otherwise loop and allocate until the process dies of memory, which a
+    /// mutation run (and anyone breaking the loop) would see as a hang instead of a failed test.
+    fn blank_bounded(text: &str) -> Result<Blanked, MergeRefusal> {
+        let text = text.to_owned();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(blank(&text));
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(5))
+            .expect("blank did not return: its scan must always advance")
+    }
+
     fn view(text: &str) -> String {
-        blank(text).unwrap().view
+        blank_bounded(text).unwrap().view
     }
 
     #[test]
     fn an_unterminated_string_runs_to_the_end_and_the_parser_refuses_it() {
-        let b = blank("{\"a\": \"open").unwrap();
+        let b = blank_bounded("{\"a\": \"open").unwrap();
         assert_eq!(b.view, "{\"a\": \"open");
         assert!(serde_json::from_str::<serde_json::Value>(&b.view).is_err());
     }
@@ -149,7 +162,7 @@ mod tests {
     #[test]
     fn comments_become_spaces_and_the_length_is_unchanged() {
         let t = "{ // one\n  \"a\": 1, /* two\nlines */ \"b\": 2 }";
-        let b = blank(t).unwrap();
+        let b = blank_bounded(t).unwrap();
         assert_eq!(b.view.len(), t.len());
         assert_eq!(b.view, "{       \n  \"a\": 1,       \n         \"b\": 2 }");
         assert_eq!(b.comments, [2..8, 19..34]);

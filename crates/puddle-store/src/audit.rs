@@ -1385,6 +1385,18 @@ mod tests {
         assert_eq!(value["path_truncated"], true);
     }
 
+    /// `to_line` on its own thread, failing the test when it has not returned after a few seconds. The
+    /// shortening loop ends only because every pass cuts a string; a pass that cuts nothing would
+    /// spin for ever, which a mutation run would see as a hang instead of a failed test.
+    fn to_line_bounded(record: AuditRecord) -> Result<String, AuditError> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(record.to_line());
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(5))
+            .expect("to_line did not return: its shortening loop must always end")
+    }
+
     #[test]
     fn a_record_too_long_without_its_strings_is_refused() {
         let record = AuditRecord::RuleSetChanged {
@@ -1393,7 +1405,7 @@ mod tests {
             added: vec![String::new(); 2_000],
             removed: Vec::new(),
         };
-        assert!(matches!(record.to_line(), Err(AuditError::TooLarge)));
+        assert!(matches!(to_line_bounded(record), Err(AuditError::TooLarge)));
     }
 
     #[test]
@@ -1404,7 +1416,7 @@ mod tests {
             added: vec!["a".repeat(1_000); 6],
             removed: vec!["b".into()],
         };
-        let line = record.to_line().unwrap();
+        let line = to_line_bounded(record).unwrap();
         assert!(line.len() <= MAX_LINE_BYTES, "{}", line.len());
         let value: Value = serde_json::from_str(&line).unwrap();
         let lengths: Vec<usize> = value["added"]
@@ -1453,11 +1465,11 @@ mod tests {
             added: strings.iter().map(|n| "a".repeat(*n)).collect(),
             removed: Vec::new(),
         };
-        let base = with(&[0; 4]).to_line().unwrap().len();
+        let base = to_line_bounded(with(&[0; 4])).unwrap().len();
         let spare = MAX_LINE_BYTES - base;
         let sizes = [spare / 4, spare / 4, spare / 4, spare - 3 * (spare / 4)];
         assert!(sizes.iter().all(|n| *n <= MAX_FIELD_BYTES), "{sizes:?}");
-        let line = with(&sizes).to_line().unwrap();
+        let line = to_line_bounded(with(&sizes)).unwrap();
         assert_eq!(line.len(), MAX_LINE_BYTES);
         let value: Value = serde_json::from_str(&line).unwrap();
         let lengths: Vec<usize> = value["added"]

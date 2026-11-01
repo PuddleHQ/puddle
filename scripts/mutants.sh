@@ -11,6 +11,8 @@
 #       --uncached       ignore the cache and run everything (the weekly run that proves the cache)
 #   scripts/mutants.sh --list              prints the listed crates
 #   scripts/mutants.sh --units             prints the sweep's units, `CRATE` or `CRATE FILE` per line
+#   scripts/mutants.sh --matrix            prints the sweep's units as the workflow's job matrix: one-line JSON, a list of
+#                                          {crate, file, name} objects (needs jq; the workflow uses it as `matrix.include`)
 #   scripts/mutants.sh --key CRATE [FILE]  prints the cache key of the crate (or of one file unit) (clean tree only)
 # The crates are in scripts/mutants-crates.txt: a `CRATE` line lists the whole crate, `CRATE FILE` lines
 # (FILE under the crate's directory, one per line) list only those files, so a big crate joins file by file
@@ -100,6 +102,9 @@ case $mode in
 --units)
     units
     ;;
+--matrix)
+    units | jq -R 'split(" ") | {crate: .[0], file: (.[1] // ""), name: ((.[1] // "") | gsub("[/.]"; "-"))}' | jq -sc .
+    ;;
 --key)
     crate_key "$1" "${2:-}"
     ;;
@@ -188,7 +193,7 @@ EOF
     exit "$status"
     ;;
 *)
-    echo "usage: scripts/mutants.sh diff [<base>] | sweep [--shard K/N] [--crate C [--file F]] [--cache DIR] [--uncached] | --list | --units" >&2
+    echo "usage: scripts/mutants.sh diff [<base>] | sweep [--shard K/N] [--crate C [--file F]] [--cache DIR] [--uncached] | --list | --units | --matrix" >&2
     exit 2
     ;;
 esac

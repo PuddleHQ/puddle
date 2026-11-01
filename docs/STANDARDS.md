@@ -215,7 +215,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
 - **Test shapes that raced before** (the `flake-*` kinds of `scripts/quality-gate.py`, `scripts/quality-gate.py --flakes`
   lists each rule with its count and the fix its error names): a hand-rolled wait helper (the row says whether it lacks a name or a bound) or wait loop (`for`, `while` or `loop` that sleeps or yields between looks; `flake-w3`), `file.lock()` in a
   test, `try_recv()`, a port picked and released, a literal port bound or connected (bind port 0; the rule reads only addresses of this machine, a measured choice: widening it to any 4 or 5 digit port near a socket call finds 5 lines in tests, all `.test` name authorities handed to a fake proxy or read from a captured list, none a socket, so it would need a `flake-ok:` per site and guard nothing), a name built from the clock, a wall-clock bar (a bar on a call's work goes on `cpu_time`'s result in a variable named `*cpu*` bound from that call just above, which `flake-t1` accepts), records matched by
-  position, a reserved name (`.test`, `example.com`) in a test that reaches the real resolver, and an awaited page read asserted once (the scan reads a variable; the ESLint selector reads `expect(await ...)`; a read kept as `(await loc.boundingBox())!` counts, a value derived from it does not). A site is accepted with `flake-ok: <why>` on its line or within three
+  position, a reserved name (`.test`, `example.com`) in a test that reaches the real resolver, a Unix path literal or a path joined by hand with `format!` in a test (`flake-f1`: it passes on Linux and fails on Windows; take a `tempfile` directory and `Path::join`), and an awaited page read asserted once (the scan reads a variable; the ESLint selector reads `expect(await ...)`; a read kept as `(await loc.boundingBox())!` counts, a value derived from it does not). A site is accepted with `flake-ok: <why>` on its line or within three
   lines above (in the UI also `eslint-disable-next-line no-restricted-syntax -- <why>`). Each rule is one file,
   `scripts/flake-rules/<id>.rule`; the kinds are counted, not failing, until their existing sites are fixed or
   reasoned; the rule's file then says `status: failing` and an unreasoned site fails the `quality` gate like the others
@@ -253,10 +253,10 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   that say what failed and carry the context needed to act (`path`, `workspace`, `host`). Errors
   that cross crates live in `puddle-types` or are converted at the boundary.
 - **Binaries:** `puddle` maps errors to a user message and an exit code at the top; it may use
-  `anyhow` only in `main`-level glue, never in the libraries.
+  `anyhow` only in `main`-level glue, never in the libraries (`deny.toml` bans it with a list of the crates that may depend on it).
 - Don't stringly-type errors, don't discard them (`let _ =` on a `Result` needs a comment), and
   don't log *and* return the same error (the handler that consumes it logs it).
-- Error messages are lower-case, no trailing period, and never contain secret values.
+- Error messages are lower-case, no trailing period, and never contain secret values. The quality gate fails a `#[error("...")]` that starts with a capital or ends with a period (`ban-error-capital`, `ban-error-period`), and a `#[serde(untagged)]` (`ban-untagged`, ADR 0002).
 
 ## 7. Logging
 

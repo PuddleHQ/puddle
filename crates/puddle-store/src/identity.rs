@@ -641,6 +641,47 @@ mod tests {
     }
 
     #[test]
+    fn a_label_has_a_length_limit_and_keeps_out_what_git_drops() {
+        let draft = |label: &str, credentials| IdentityDraft {
+            label: label.into(),
+            author: Author::new("Me", "me@example.com").unwrap(),
+            credentials,
+        };
+        assert!(draft(&"l".repeat(MAX_LABEL), vec![]).checked().is_ok());
+        let err = draft(&"l".repeat(MAX_LABEL + 1), vec![])
+            .checked()
+            .unwrap_err();
+        assert!(err.to_string().contains("longer than 64"), "{err}");
+        for bad in ["a<b", "a>b", "a\tb", "a\u{7f}b"] {
+            let err = draft(bad, vec![]).checked().unwrap_err();
+            assert!(
+                err.to_string().contains("git does not keep"),
+                "{bad:?}: {err}"
+            );
+        }
+        // Only the author's name uses the same rule: a character in the middle is as bad as at the end.
+        assert!(Author::new("Me<", "me@example.com").is_err());
+        assert!(Author::new("Me>", "me@example.com").is_err());
+    }
+
+    #[test]
+    fn an_identity_holds_exactly_the_most_credentials() {
+        let draft = |n: usize| IdentityDraft {
+            label: "x".into(),
+            author: Author::new("Me", "me@example.com").unwrap(),
+            credentials: (0..n)
+                .map(|i| binding("github.com", &[&format!("owner{i}")], false))
+                .collect(),
+        };
+        assert_eq!(
+            draft(MAX_CREDENTIALS).checked().unwrap().credentials.len(),
+            MAX_CREDENTIALS
+        );
+        let err = draft(MAX_CREDENTIALS + 1).checked().unwrap_err();
+        assert!(err.to_string().contains("at most 16"), "{err}");
+    }
+
+    #[test]
     fn coverage_survives_json_and_rejects_nonsense() {
         let c = binding("github.com", &["Acme"], true);
         let json = serde_json::to_string(&c).unwrap();

@@ -483,6 +483,26 @@ impl<T: ConnectionLog + ?Sized> ConnectionLog for std::sync::Arc<T> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn a_refused_reason_has_the_code_the_audit_records() {
+        use crate::policy::BlockReason;
+        let guard = |r: BlockReason| RefusedReason::from(r).code();
+        assert_eq!(RefusedReason::IpRule.code(), "ip_rule");
+        assert_eq!(guard(BlockReason::SshUnsupported), "ssh_unsupported");
+        assert_eq!(guard(BlockReason::UdpUnsupported), "udp_unsupported");
+        assert_eq!(guard(BlockReason::PuddleEndpoint), "puddle_endpoint");
+        assert_eq!(guard(BlockReason::LocalAddress), "local_address");
+        assert_eq!(
+            guard(BlockReason::SettingsUnreadable),
+            "settings_unreadable"
+        );
+        for category in LocalCategory::ALL {
+            let code = guard(BlockReason::LocalToggle(category));
+            assert_eq!(code, category.audit_reason());
+            assert!(code.starts_with("toggle:"), "{code}");
+        }
+    }
+
+    #[test]
     fn an_outcome_prints_as_its_wire_name() {
         assert_eq!(
             ConnectionOutcome::UpstreamRefused.to_string(),

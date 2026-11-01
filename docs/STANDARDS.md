@@ -467,7 +467,7 @@ replaced by its default, a `&&` turned into `||`) and runs the crate's tests; a 
   that says why it is equivalent, and are reviewed like a lint suppression. A mutant that only a test of a
   logging line or a timing could catch is not equivalent: assert the line or the timing.
 - **Test selection and the cache.** Mutants run through nextest's `mutants` profile (the default profile's tests, so no
-  VM tests, with four threads and a 2 GiB heap limit per test process: a mutant can make a loop allocate without
+  VM tests, with four threads and a 512 MiB heap limit per test process: a mutant can make a loop allocate without
   end, and the limit fails that test instead of the machine), in a copy
   of the tree each, `MUTANTS_JOBS` at a time. The nightly sweep skips a crate whose inputs hash like the last
   passing run's: the committed trees of the crate and of every workspace crate it depends on (normal, build and

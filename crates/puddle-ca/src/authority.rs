@@ -483,6 +483,14 @@ mod tests {
     }
 
     #[test]
+    fn the_cache_clock_counts_up_by_one_per_use() {
+        let mut cache = LeafCache::new(2);
+        assert_eq!(cache.tick(), 1);
+        assert_eq!(cache.tick(), 2);
+        assert_eq!(cache.tick(), 3);
+    }
+
+    #[test]
     fn the_cache_evicts_the_least_recently_used_leaf() {
         let ca = CaBuilder::new("Puddle test CA")
             .leaf_cache_capacity(2)

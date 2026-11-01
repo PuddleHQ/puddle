@@ -343,17 +343,13 @@ for my $i (0 .. $count - 1) {
 my $pid = fork();
 die "fork: $!" unless defined $pid;
 if (!$pid) {
-  open(my $log, ">", "/tmp/hg11.child") or die;
   my $off = 0;
-  select((select($log), $| = 1)[0]);
-  print $log "start ", length $out, "\n";
   while ($off < length $out) {
     my $n = syswrite($s, $out, 4096, $off);
-    print $log "wrote $n at $off\n" if $off < 20000;
-    unless ($n) { print $log "write failed at $off: $!\n"; close $log; exit 1; }
+    die "write: $!\n" unless $n;
     $off += $n;
   }
-  print $log "wrote $off\n"; close $log; exit 0;
+  exit 0;
 }
 sub read_exactly {
   my $want = shift; my $buf = "";
@@ -380,14 +376,12 @@ eval {
       $seen{$sid} = 1;
       my ($line) = split /\r\n/, $buffer{$sid};
       $count{(split / /, $line)[1]}++;
-      if (keys(%seen) % 500 == 0) { open(my $pg, ">", "/tmp/hg11.progress"); print $pg keys(%seen), " at ", time - $^T, "s\n"; close $pg; }
       delete $buffer{$sid};
     }
   }
   1;
 } or $error = " error=$@";
 chomp $error;
-$error .= " child_alive=" . (kill(0, $pid) ? 1 : 0) . " elapsed=" . (time - $^T);
 open(my $o, ">", "/tmp/hg11.out.tmp") or die;
 print $o join(" ", map { "$_=$count{$_}" } sort keys %count), " seen=", scalar(keys %seen), "$error\n";
 close $o;
@@ -446,12 +440,12 @@ async fn vm_hostile_hg11_a_flooding_workspace_is_held_at_its_cap_and_another_is_
     .await;
     let counts = puddle_test_kit::eventually_async(
         "the flood's counts",
-        Duration::from_secs(95),
+        Duration::from_secs(90),
         || async {
             let out = guest(
                 &runtime,
                 &flooder,
-                "cat /tmp/hg11.out 2>/dev/null || { echo pending; tail -3 /tmp/hg11.log; cat /tmp/hg11.progress 2>/dev/null; true; }",
+                "cat /tmp/hg11.out 2>/dev/null || { echo pending; tail -3 /tmp/hg11.log; }",
             )
             .await;
             if out.starts_with("pending") {

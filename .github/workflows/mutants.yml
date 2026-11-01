@@ -79,7 +79,7 @@ jobs:
       - id: list
         # One job per unit: a whole crate, or one file of a crate the list names file by file.
         run: |
-          matrix=$(scripts/mutants.sh --units | jq -R 'split(" ") | {crate: .[0], file: (.[1] // ""), name: ((.[1] // "") | gsub("[/.]"; "-"))}' | jq -sc .)
+          matrix=$(scripts/mutants.sh --matrix)
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   sweep:
@@ -90,7 +90,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        crate: ${{ fromJson(needs.crates.outputs.matrix) }}
+        include: ${{ fromJson(needs.crates.outputs.matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Rust toolchain

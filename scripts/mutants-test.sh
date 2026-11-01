@@ -5,6 +5,7 @@
 # the cache, a dirty tree never uses it, and a cache hit that now fails reports a MISMATCH. Then the
 # list's two forms: a crate with a file list is swept with one `-f` per file (and `diff` looks at those
 # files only), a crate without one whole, a file unit has its own cache entry, a malformed list is refused.
+# The job matrix is a list of {crate, file, name} objects and the workflow spreads it with `include:`.
 set -eu
 # A git hook runs this with GIT_DIR and friends set; they would point the throwaway repository's git
 # commands at the real one.
@@ -124,6 +125,20 @@ scripts/mutants.sh diff HEAD~2 >/dev/null
 [ "$(runs)" = 1 ] || fail "a listed file's change must run once"
 grep -q 'h2.rs' "$MUTANTS_OUT/change.diff" || fail "the diff must hold the listed file"
 grep -q 'unlisted.rs' "$MUTANTS_OUT/change.diff" && fail "the diff must hold listed files only"
+
+# The job matrix: a list of objects whose fields are strings, and the workflow spreads it with `include:` (a
+# list of objects under `matrix.crate` made the first nightly fail with "A mapping was not expected").
+printf 'puddle-a\npuddle-b src/h2.rs\n' >scripts/mutants-crates.txt
+matrix=$(scripts/mutants.sh --matrix)
+[ "$(echo "$matrix" | jq -c '[.[] | [.crate, .file, .name] | map(type == "string") | all] | all')" = true ] || fail "matrix fields must be strings: $matrix"
+[ "$(echo "$matrix" | jq -r '.[1] | "\(.crate) \(.file) \(.name)"')" = "puddle-b src/h2.rs src-h2-rs" ] || fail "matrix entry wrong: $matrix"
+[ "$(echo "$matrix" | jq -r '.[0].file')" = "" ] || fail "a whole-crate unit has an empty file: $matrix"
+real=$("$here/mutants.sh" --matrix)
+[ "$(echo "$real" | jq 'type == "array" and length > 0 and all(.[]; type == "object")')" = true ] || fail "the real list's matrix must be a list of objects: $real"
+wf="$here/../.github/workflows/mutants.yml"
+grep -Eq '^ +include: \$\{\{ fromJson\(needs\.crates\.outputs\.matrix\) \}\}$' "$wf" || fail "the sweep job must use matrix include: with the crate list"
+grep -Eq '^ +crate: \$\{\{ fromJson' "$wf" && fail "the matrix must not be keyed by crate: its entries are objects"
+grep -q 'scripts/mutants.sh --matrix' "$wf" || fail "the workflow must build the matrix with scripts/mutants.sh --matrix"
 
 # A malformed list is refused.
 printf 'puddle-a\npuddle-a src/x.rs\n' >scripts/mutants-crates.txt

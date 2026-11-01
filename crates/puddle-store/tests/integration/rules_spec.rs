@@ -1196,10 +1196,16 @@ fn the_refused_address_of_an_answer_is_named_in_its_record_only() {
     let mut mixed = connection("a");
     mixed.refused_address = Some((
         "10.0.0.8".parse().unwrap(),
-        BlockReason::LocalToggle(puddle_types::LocalCategory::Private),
+        BlockReason::LocalToggle(puddle_types::LocalCategory::Private).into(),
     ));
     store.record_connection(&mixed).unwrap();
     store.record_connection(&connection("b")).unwrap();
+    let mut ip_denied = connection("c");
+    ip_denied.refused_address = Some((
+        "10.0.0.9".parse().unwrap(),
+        puddle_types::RefusedReason::IpRule,
+    ));
+    store.record_connection(&ip_denied).unwrap();
     let records = audit_of(&store, "connection");
     let refused: Vec<_> = records
         .iter()
@@ -1209,7 +1215,8 @@ fn the_refused_address_of_an_answer_is_named_in_its_record_only() {
         refused,
         [
             (json!("10.0.0.8"), json!("toggle:private")),
-            (json!(null), json!(null))
+            (json!(null), json!(null)),
+            (json!("10.0.0.9"), json!("ip_rule"))
         ]
     );
 }

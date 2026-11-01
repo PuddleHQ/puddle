@@ -311,6 +311,19 @@ describe("a record as a row", () => {
     expect(raw.detail).toContain("127.0.0.1 (toggle:loopback)");
     expect(row(connection(3, {}).record).detail).not.toContain("answer");
   });
+  it("names an address that a rule on the address denied", () => {
+    const view = row(
+      connection(1, {
+        decision: "deny",
+        resolved_ip: "10.0.0.9",
+        refused_address: "10.0.0.9",
+        refused_reason: "ip_rule",
+      }).record,
+    );
+    expect(view.detail).toBe(
+      "rule 1 · the answer held 10.0.0.9, which a rule on that address denies, so Puddle did not use it",
+    );
+  });
   it("shows Puddle's own connections as Puddle, with its own reason", () => {
     const view = row(
       connection(1, {

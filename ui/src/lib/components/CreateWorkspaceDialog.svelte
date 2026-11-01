@@ -34,6 +34,8 @@
     clashes,
     rowProblems,
     directoryFor,
+    cleanPath,
+    folderOf,
     MAX_REPOSITORIES,
     newRow,
     refusedRow,
@@ -149,7 +151,14 @@
 
   // Until the user types a name, it follows the first repository.
   $effect(() => {
-    if (!nameTouched) name = suggestName(rows[0]?.url ?? "");
+    if (nameTouched) return;
+    const first = rows[0];
+    // From a folder with no address typed, the folder's name stands in for the address's.
+    const folder =
+      first?.source === "folder" && first.url.trim() === ""
+        ? folderOf(first.localPath)
+        : null;
+    name = suggestName(folder === null ? (first?.url ?? "") : `/${folder}`);
   });
 
   function reset() {
@@ -216,6 +225,7 @@
     bad: Record<number, RowProblems>,
   ): string | null {
     for (const row of rows) {
+      if (bad[row.key]?.localPath) return rowId(row, "localPath");
       if (bad[row.key]?.url) return rowId(row, "url");
       if (bad[row.key]?.directory) return rowId(row, "directory");
     }
@@ -249,8 +259,10 @@
       repositories: rows.map((row) => {
         const identity = selectedFor(row);
         const directory = row.directory.trim();
+        const local = row.source === "folder" ? cleanPath(row.localPath) : "";
         return {
           url: row.url.trim(),
+          ...(local === "" ? {} : { local_path: local }),
           ...(directory === "" ? {} : { directory }),
           ...(identity === "" ? {} : { identity_id: Number(identity) }),
           ...(row.pull ? {} : { pull: false }),
@@ -327,6 +339,8 @@
   title="New workspace"
   description="Puddle clones your repositories into a fresh workspace with its own disk."
   onClose={reset}
+  openFocus={() =>
+    rows[0] ? document.getElementById(rowId(rows[0], "url")) : null}
 >
   <form onsubmit={submit} novalidate>
     {#if rows.length === 0}
@@ -341,8 +355,78 @@
       {@const dirError = problem(row, "directory")}
       <fieldset class="repo">
         <legend>Repository {at + 1}</legend>
+        <div
+          class="source"
+          role="radiogroup"
+          aria-label="Where the code comes from"
+        >
+          <label>
+            <input
+              type="radio"
+              name={rowId(row, "source")}
+              value="address"
+              bind:group={row.source}
+              onchange={() => {
+                rowErrors = { ...rowErrors, [row.key]: {} };
+              }}
+              data-testid="source-address"
+            />
+            Clone from an address
+          </label>
+          <label>
+            <input
+              type="radio"
+              name={rowId(row, "source")}
+              value="folder"
+              bind:group={row.source}
+              onchange={() => {
+                rowErrors = { ...rowErrors, [row.key]: {} };
+              }}
+              data-testid="source-folder"
+            />
+            From a folder on this computer
+          </label>
+        </div>
+
+        {#if row.source === "folder"}
+          {@const localError = problem(row, "localPath")}
+          <div class="field">
+            <label for={rowId(row, "localPath")}>Folder of the checkout</label>
+            <input
+              id={rowId(row, "localPath")}
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="/home/you/project or C:\Users\you\project"
+              bind:value={row.localPath}
+              oninput={() => {
+                rowErrors = { ...rowErrors, [row.key]: {} };
+              }}
+              aria-invalid={localError ? "true" : undefined}
+              aria-describedby={localError
+                ? rowId(row, "localPath-error")
+                : rowId(row, "localPath-hint")}
+            />
+            {#if localError}
+              <p class="error" id={rowId(row, "localPath-error")} role="alert">
+                {localError}
+              </p>
+            {:else}
+              <p class="hint" id={rowId(row, "localPath-hint")}>
+                Puddle copies your commits and branches from the .git folder.
+                Uncommitted changes, untracked files such as .env, and hooks
+                stay on this computer.
+              </p>
+            {/if}
+          </div>
+        {/if}
+
         <div class="field">
-          <label for={rowId(row, "url")}>Git repository (HTTPS)</label>
+          <label for={rowId(row, "url")}
+            >{row.source === "folder"
+              ? "Git repository (HTTPS, optional)"
+              : "Git repository (HTTPS)"}</label
+          >
           <input
             id={rowId(row, "url")}
             type="text"
@@ -367,15 +451,19 @@
             </p>
           {:else}
             <p class="hint" id={rowId(row, "url-hint")}>
-              SSH addresses aren't supported yet: use the HTTPS URL.
+              {row.source === "folder"
+                ? "Left empty, the checkout's own origin is used. An SSH origin on GitHub, GitLab, Bitbucket or Azure DevOps is turned into its HTTPS address; for any other host, give the HTTPS address here."
+                : "SSH addresses aren't supported yet: use the HTTPS URL."}
             </p>
           {/if}
         </div>
 
-        <RepoPicker
-          identities={identities.identities}
-          onPick={(repo, by) => picked(row, repo, by)}
-        />
+        {#if row.source === "address"}
+          <RepoPicker
+            identities={identities.identities}
+            onPick={(repo, by) => picked(row, repo, by)}
+          />
+        {/if}
 
         {#if tableCannotHold(row.url)}
           <p class="hint warn" data-testid="table-cannot-hold">
@@ -390,7 +478,7 @@
             type="text"
             autocomplete="off"
             spellcheck="false"
-            placeholder={directoryFor({ url: row.url, directory: "" })}
+            placeholder={directoryFor({ ...row, directory: "" })}
             bind:value={row.directory}
             oninput={() => {
               rowErrors = { ...rowErrors, [row.key]: {} };
@@ -640,9 +728,17 @@
     border: 1px solid var(--color-border-subtle);
     border-radius: var(--radius-md);
   }
-  .boxes {
+  .boxes,
+  .source {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--space-4);
+  }
+  .source label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: var(--control-size);
   }
   .boxes .choice {
     min-height: var(--control-size);

@@ -70,6 +70,9 @@ exclude_re = [
     # tests), which is what the mutant returns; on a computer that has one, the Windows job sets
     # PUDDLE_REQUIRE_OS_CREDENTIAL_STORE and its real-store tests fail when the answer is `false`.
     'replace keyring_available -> bool with false',
+    # Not measured: the `#[cfg(not(unix))]` `is_executable` (run.rs lines 78 to 82, the Windows one: a
+    # file counts when it exists) is never compiled on Linux. The Unix one is measured and caught.
+    'run\.rs:(79|8[0-2]):5: replace is_executable -> bool',
     # Not measured: the Windows `allocated_bytes` (allocated.rs lines 30 to 49) is `#[cfg(windows)]`,
     # so a Linux run never compiles it and every change to it passes. The mutation run covers Linux
     # only; this function is tested by the Windows test job and is not part of the clean claim.

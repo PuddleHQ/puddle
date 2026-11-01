@@ -379,6 +379,7 @@ mod tests {
 
     #[test]
     fn only_a_local_drive_counts() {
+        // flake-ok: a string only parsed for its drive prefix; no file is read or written at it
         assert!(on_local_drive(Path::new("/home/u/api/.git")));
         #[cfg(windows)]
         {

@@ -77,7 +77,7 @@ const EXTENSIONS: &str = "extensions";
 #[derive(Debug, thiserror::Error)]
 pub enum InstallError {
     /// No server build exists for this machine's architecture.
-    #[error("Microsoft publishes no VS Code server for the {0} architecture")]
+    #[error("no VS Code server is published for the {0} architecture")]
     Unsupported(String),
     /// The update service could not be asked or answered something unusable.
     #[error("could not find the current VS Code server: {0}")]

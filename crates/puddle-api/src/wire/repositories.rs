@@ -194,6 +194,7 @@ impl AddRepositoryRequest {
                     identity: identity_id.map(IdentityId),
                     pull,
                     push,
+                    local: None,
                 };
                 let mut checked =
                     check_repositories(&[draft], identity_exists).map_err(ApiError::invalid)?;

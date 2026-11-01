@@ -675,6 +675,7 @@ mod tests {
         assert!(err.to_string().contains("node-probe"), "{err}");
         let err = BrowserClient {
             node: Node::new("/nonexistent/node-probe"),
+            // flake-ok: a path that must not exist; on Windows it is rooted on the current drive and still does not exist
             modules: PathBuf::from("/nonexistent"),
             grace: NODE_GRACE,
         }

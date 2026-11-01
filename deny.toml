@@ -102,7 +102,12 @@ multiple-versions = "warn"
 wildcards = "deny"
 allow-wildcard-paths = true
 highlight = "all"
-deny = []
+# `anyhow` is for `main`-level glue only (docs/STANDARDS.md section 5). Only the third-party crates that already depend on
+# it are listed; nothing of ours is, so the first use (the `puddle` binary's glue) adds `puddle` to `wrappers` on purpose,
+# and a library crate that adds it is refused.
+deny = [
+    { crate = "anyhow", wrappers = ["microsandbox", "prost-derive", "tauri", "tauri-build", "tauri-plugin", "tauri-utils"] },
+]
 
 [sources]
 unknown-registry = "deny"

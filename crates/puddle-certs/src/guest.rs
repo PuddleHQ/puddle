@@ -275,6 +275,7 @@ mod tests {
         let expected: Vec<String> = corp
             .certificates()
             .iter()
+            // flake-ok: a path inside the guest, which is Linux whatever the host is
             .map(|c| format!("{HOST_CA_DIR}/{}.crt", &c.fingerprint().to_string()[..16]))
             .collect();
         assert_eq!(host_files, expected);

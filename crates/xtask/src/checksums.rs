@@ -132,6 +132,7 @@ mod tests {
         );
         std::fs::remove_file(empty).unwrap();
         std::fs::remove_file(abc).unwrap();
+        // flake-ok: a path that must not exist; on Windows it is rooted on the current drive and still does not exist
         assert!(sha256_file(Path::new("/nonexistent/xtask/file")).is_err());
     }
 

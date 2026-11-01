@@ -794,6 +794,7 @@ fn a_failed_boots_kept_logs_are_named_in_the_report() {
         ..linux()
     };
     let kept = ran(KeptLogs::Kept {
+        // flake-ok: a value that is parsed or compared and never opened, so the missing drive letter does not matter
         dir: "/home/dev/kept/puddle-doctor-boot-1".into(),
         failed: vec![],
     });
@@ -810,6 +811,7 @@ fn a_failed_boots_kept_logs_are_named_in_the_report() {
         "{detail}"
     );
     let partial = ran(KeptLogs::Kept {
+        // flake-ok: a value that is parsed or compared and never opened, so the missing drive letter does not matter
         dir: "/home/dev/kept/puddle-doctor-boot-1".into(),
         failed: vec!["runtime.log: Permission denied".into()],
     });

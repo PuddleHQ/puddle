@@ -135,6 +135,20 @@ export async function expectFocused(
 export const AXE_SCAN_ALLOWANCE_MS = 30_000;
 
 /**
+ * The wait for a list that follows the service: a change made behind the page's back reaches it by
+ * event, or at the latest by the inbox's 5 s poll, so the bound is four polls. It is a ceiling for a
+ * starved browser (whole tests took 3 to 11 s on a starved WebKit and Chromium, so the waits inside them
+ * took less), not a latency the tests claim.
+ */
+export const CONVERGE_WAIT_MS = 20_000;
+
+/**
+ * The wait after the API restarts: the page's event stream reconnects after 1, 2, 5 and 10 s of backoff
+ * at most (18 s in all) and then refetches, so a shorter wait would fail on the backoff alone.
+ */
+export const RECONNECT_WAIT_MS = 20_000;
+
+/**
  * axe with the tags the project's bar names (WCAG 2.0 to 2.2, A and AA).
  *
  * A scan used to cost 1 to 2 s on an idle machine for a page of 200 to 400 elements and 3 to 5 s on the

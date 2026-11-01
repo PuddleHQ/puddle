@@ -22,8 +22,8 @@ use puddle_agent_proto::resolve::{ResolveAnswer, ResolveQuery};
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOutcome,
     ConnectionReason, Decision, EgressRequest, EventSink, Host, HttpRequestLine, NullConnectionLog,
-    PatternKind, PendingOutcome, Policy, PolicyError, ProtocolHint, RuleId, SuffixAllows,
-    WorkspaceName,
+    PatternKind, PendingOutcome, Policy, PolicyError, ProtocolHint, RefusedReason, RuleId,
+    SuffixAllows, WorkspaceName,
 };
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
@@ -1088,7 +1088,7 @@ async fn admit_into(
                 categories.push(category);
             }
             AddressVerdict::Block(reason) => {
-                refused_first.get_or_insert((addr.ip(), reason));
+                refused_first.get_or_insert((addr.ip(), RefusedReason::Guard(reason)));
                 blocked.push(reason);
             }
             other => {
@@ -1097,7 +1097,7 @@ async fn admit_into(
             }
         }
     }
-    event.refused_address = refused_first;
+    event.refused_address = event.refused_address.or(refused_first);
     if pattern == PatternKind::Exact {
         // An exact allow reaches local addresses whose toggle is on.
         usable.append(&mut exact_only);
@@ -1243,6 +1243,9 @@ fn apply_ip_rules(
             }
         }
     }
+    event.refused_address = ip_denies
+        .first()
+        .map(|(addr, _)| (addr.ip(), RefusedReason::IpRule));
     if kept.is_empty() {
         return Err(ip_denied(request, &ip_denies, event));
     }

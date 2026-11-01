@@ -9,7 +9,7 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use puddle_compute::{ComputeError, ExecRequest, Runtime, Sandbox, VsockRoute};
+use puddle_compute::{ComputeError, ExecRequest, Runtime, Sandbox, StartRefusal, VsockRoute};
 use puddle_ipc::IpcRoot;
 use support::{cleanup, collect_lines, sh, spec, vsock_sweep};
 
@@ -331,10 +331,10 @@ async fn vm_hostile_hg44_a_rewritten_root_disk_journal_attaches_no_file_outside_
             "the guest's journal did not reach the host: {landed}"
         );
         match refused {
-            Some(ComputeError::Runtime {
-                op: "start",
-                message,
-            }) if message.contains("outside the sandbox's folder") => {}
+            Some(ComputeError::StartRefused {
+                sandbox,
+                cause: StartRefusal::RootDiskOutsideFolder,
+            }) if sandbox == n.as_str() => {}
             other => panic!(
                 "the start with a journal naming {} was not refused by the check: {other:?}",
                 target.display()

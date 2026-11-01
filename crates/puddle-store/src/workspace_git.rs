@@ -439,7 +439,9 @@ mod tests {
             "%00", "%01", "%1f", "%7f", "%2f", "%2F", "%5c", "%25", "%3f", "%23", "%3b",
         ] {
             let url = format!("https://github.com/acme/web{escape}x");
-            assert!(RepoRef::from_https_url(&url).is_err(), "{url}");
+            let err = RepoRef::from_https_url(&url).unwrap_err();
+            // Refused as an address, not later as a name that holds the character.
+            assert_eq!(err.to_string(), "not an HTTPS repository address", "{url}");
         }
         // Escapes for ordinary characters decode.
         let got = RepoRef::from_https_url("https://github.com/acme/we%62%2d1").unwrap();

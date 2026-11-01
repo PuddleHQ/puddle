@@ -2340,12 +2340,12 @@ async fn radar_workspace(tag: &str, terminate: bool) -> (VmHost, WorkspaceName, 
             })
             .unwrap();
     }
-    if terminate {
+    let radar_identity = terminate.then(|| {
         vm.host
             .store()
             .create_identity(identity_for("Radar", radar_tls_hosts()))
-            .unwrap();
-    }
+            .unwrap()
+    });
     let api = Api::new(vm.host.url(), vm.host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
@@ -2364,6 +2364,27 @@ async fn radar_workspace(tag: &str, terminate: bool) -> (VmHost, WorkspaceName, 
         Some("done"),
         "{end}"
     );
+    // An identity reaches a workspace through a repository it clones or by being attached, and
+    // this workspace has no repository: without the attachment its decrypt set is empty and every
+    // registry is spliced, whatever `terminate` says.
+    if let Some(identity) = radar_identity {
+        vm.host
+            .store()
+            .attach_identity(&sandbox, identity.id, None)
+            .unwrap();
+        let registry = puddle_types::Host::parse_normalised("registry.npmjs.org").unwrap();
+        puddle_test_kit::eventually_async(
+            "the registries joined the decrypt set",
+            Duration::from_secs(10),
+            || async {
+                vm.host
+                    .workspaces()
+                    .termination(&sandbox)
+                    .is_some_and(|t| t.set().contains(&registry))
+            },
+        )
+        .await;
+    }
     (vm, sandbox, api)
 }
 

@@ -5,6 +5,7 @@
 //! place the version is written). Fails the build when the SDK doesn't come from that fork tag, or
 //! when the SDK's crates resolve to more than one source (a half-done bump).
 
+#![forbid(unsafe_code)]
 #![expect(
     clippy::exit,
     reason = "a build script stops the build with an exit code"

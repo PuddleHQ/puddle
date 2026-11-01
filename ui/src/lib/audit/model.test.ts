@@ -291,6 +291,39 @@ describe("a record as a row", () => {
     );
     expect(row(connection(2, {}).record).detail).not.toContain("stand-in");
   });
+  it("names the refused address of a mixed answer, apart from the one connected to", () => {
+    const view = row(
+      connection(1, {
+        resolved_ip: "93.184.216.34",
+        refused_address: "10.0.0.8",
+        refused_reason: "local_address",
+      }).record,
+    );
+    expect(view.detail).toBe(
+      "rule 1 · the answer also held 10.0.0.8 (a local address), which Puddle did not use",
+    );
+    const raw = row(
+      connection(2, {
+        refused_address: "127.0.0.1",
+        refused_reason: "toggle:loopback",
+      }).record,
+    );
+    expect(raw.detail).toContain("127.0.0.1 (toggle:loopback)");
+    expect(row(connection(3, {}).record).detail).not.toContain("answer");
+  });
+  it("names an address that a rule on the address denied", () => {
+    const view = row(
+      connection(1, {
+        decision: "deny",
+        resolved_ip: "10.0.0.9",
+        refused_address: "10.0.0.9",
+        refused_reason: "ip_rule",
+      }).record,
+    );
+    expect(view.detail).toBe(
+      "rule 1 · the answer held 10.0.0.9, which a rule on that address denies, so Puddle did not use it",
+    );
+  });
   it("shows Puddle's own connections as Puddle, with its own reason", () => {
     const view = row(
       connection(1, {

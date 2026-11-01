@@ -22,8 +22,8 @@ use puddle_agent_proto::resolve::{ResolveAnswer, ResolveQuery};
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOutcome,
     ConnectionReason, Decision, EgressRequest, EventSink, Host, HttpRequestLine, NullConnectionLog,
-    PatternKind, PendingOutcome, Policy, PolicyError, ProtocolHint, RuleId, SuffixAllows,
-    WorkspaceName,
+    PatternKind, PendingOutcome, Policy, PolicyError, ProtocolHint, RefusedReason, RuleId,
+    SuffixAllows, WorkspaceName,
 };
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
@@ -1079,6 +1079,7 @@ async fn admit_into(
     let mut exact_only = Vec::new();
     let mut categories: Vec<LocalCategory> = Vec::new();
     let mut blocked = Vec::new();
+    let mut refused_first = None;
     for addr in addrs {
         match proxy.addresses.check(&request.workspace, addr) {
             AddressVerdict::Allow => usable.push(addr),
@@ -1086,13 +1087,17 @@ async fn admit_into(
                 exact_only.push(addr);
                 categories.push(category);
             }
-            AddressVerdict::Block(reason) => blocked.push(reason),
+            AddressVerdict::Block(reason) => {
+                refused_first.get_or_insert((addr.ip(), RefusedReason::Guard(reason)));
+                blocked.push(reason);
+            }
             other => {
                 tracing::warn!(%addr, verdict = ?other, "unknown address verdict, address dropped");
                 blocked.push(BlockReason::LocalAddress);
             }
         }
     }
+    event.refused_address = event.refused_address.or(refused_first);
     if pattern == PatternKind::Exact {
         // An exact allow reaches local addresses whose toggle is on.
         usable.append(&mut exact_only);
@@ -1238,6 +1243,9 @@ fn apply_ip_rules(
             }
         }
     }
+    event.refused_address = ip_denies
+        .first()
+        .map(|(addr, _)| (addr.ip(), RefusedReason::IpRule));
     if kept.is_empty() {
         return Err(ip_denied(request, &ip_denies, event));
     }

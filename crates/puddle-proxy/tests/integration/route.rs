@@ -24,7 +24,7 @@ use puddle_proxy::testing::{
 use puddle_proxy::{AddressCheck, AddressVerdict, Proxy, ProxyConfig, Route};
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, Host, LocalCategory,
-    NullSink, PendingId, WorkspaceName,
+    NullSink, PendingId, RefusedReason, WorkspaceName,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -705,6 +705,11 @@ async fn hostile_hg08_a_mixed_answer_is_connected_at_the_allowed_address_and_aud
             Some(LOCAL)
         ),
         "the row names the address connected to, never the refused one"
+    );
+    assert_eq!(
+        event.refused_address.as_ref().map(|(ip, _)| *ip),
+        Some(refused),
+        "the row also names the refused address"
     );
 }
 
@@ -1497,22 +1502,16 @@ async fn shutdown_returns_only_once_nothing_accepts_on_the_route_any_more() {
     assert!(listening(&path).await);
     let Rig { route, root, .. } = rig;
     route.shutdown().await;
-    // A blocking connect cannot yield, so a shutdown that only asked the task to stop (which
-    // then ends at its next poll) would still be listening here. A Windows pipe has no such
-    // probe, and its idle instances stop listening only once the runtime has dropped the aborted
-    // acceptors, so there the check is bounded polling.
+    // A blocking connect cannot yield, so a shutdown that only asked the task to stop would
+    // still be listening here. The Windows probe has no blocking form, but shutdown closes the
+    // pipe instances before it returns, so one attempt is enough.
     #[cfg(unix)]
     assert!(
         std::os::unix::net::UnixStream::connect(&path).is_err(),
         "the listener outlived shutdown"
     );
     #[cfg(not(unix))]
-    puddle_test_kit::eventually_async(
-        "nothing accepts on the route after shutdown",
-        Duration::from_secs(10),
-        || async { !listening(&path).await },
-    )
-    .await;
+    assert!(!listening(&path).await, "the listener outlived shutdown");
     drop(root);
 }
 
@@ -1529,4 +1528,51 @@ async fn dropping_the_route_stops_the_accept_loop() {
     )
     .await;
     drop(root);
+}
+
+/// Through the route: an address an IP rule denies is dropped from the answer and named on the
+/// audit row with its reason, whether another address is connected to or none is left.
+#[tokio::test]
+async fn an_ip_rule_deny_names_the_refused_address_on_the_audit_row() {
+    let denied = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
+    let response = "HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok";
+    let (server, received) = http_server(response, 0).await;
+    let rig = Rig::with_resolver(
+        &ProxyConfig::default(),
+        StaticResolver::new()
+            .with("mixed.test", &[denied, LOCAL])
+            .with("only.test", &[denied]),
+    );
+    rig.policy.allow(&host("mixed.test"));
+    rig.policy.allow(&host("only.test"));
+    rig.policy.deny_host(&host("127.0.0.2"));
+    let mut guest = rig.guest().await;
+    let mut stream = guest.stream().await;
+    let request = format!("GET http://mixed.test:{}/ HTTP/1.1\r\n\r\n", server.port());
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let back = String::from_utf8(read_all(&mut stream).await.unwrap()).unwrap();
+    assert_eq!(back, response);
+    received.await.unwrap();
+    let (code, _) = guest.connect_to("only.test:443").await;
+    assert_eq!(code, 403);
+    let events = rig.events(2).await;
+    let refused: Vec<_> = events
+        .iter()
+        .map(|e| (e.host.to_string(), e.decision, e.refused_address))
+        .collect();
+    assert_eq!(
+        refused,
+        [
+            (
+                "mixed.test".to_owned(),
+                ConnectionDecision::Allow,
+                Some((denied, RefusedReason::IpRule))
+            ),
+            (
+                "only.test".to_owned(),
+                ConnectionDecision::Deny,
+                Some((denied, RefusedReason::IpRule))
+            ),
+        ]
+    );
 }

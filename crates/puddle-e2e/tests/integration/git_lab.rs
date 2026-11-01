@@ -76,7 +76,7 @@ async fn git_clones_and_pushes_through_a_squid_that_asks_for_a_basic_sign_in() {
         "the push reached the host"
     );
     // Squid carried the tunnel, signed in as the lab user, and its parent saw the real name.
-    let log = squid.access_log();
+    let log = squid.access_log_with("TCP_TUNNEL/200");
     assert!(
         log.contains("TCP_TUNNEL/200")
             && log.contains(&format!("{NAME}:443"))

@@ -6,8 +6,9 @@
 # result stays equal for every input). Each goes in `exclude_re` below with a comment that says why
 # it is equivalent; a reviewer reads that line like a lint suppression.
 #
-# The tests run through nextest's default profile (.config/nextest.toml), which leaves out the VM
-# tests: a mutant is judged by the same tests a pull request runs without a VM.
+# The tests run through nextest's `mutants` profile (.config/nextest.toml): the default profile's
+# tests, which leave out the VM tests, so a mutant is judged by the tests a pull request runs without
+# a VM, but with few threads and a heap limit per test process (a mutant can loop and allocate).
 test_tool = "nextest"
 
 # Test support that is compiled outside `cfg(test)` (feature-gated helpers) is no product code.
@@ -29,6 +30,18 @@ exclude_re = [
     # low four bits clear and `low` is below 16, so `|` and `^` (and `+`) give the same byte for every input.
     "git_path\\.rs:\\d+:\\d+: replace \\| with \\^ in decode_segment",
     "git_path\\.rs:\\d+:\\d+: replace \\| with \\^ in decode_lossy",
+    # The default body of `Policy::lookup` is `Ok(None)`, so replacing it with `Ok(None)` is the same code.
+    'replace Policy::lookup -> Result<Option<Decision>, PolicyError> with Ok\(None\)',
+    # `keyword` returns `Some("")` for a blank line and `Some("#...")` for a comment when `||` becomes
+    # `&&`; both callers only ask whether the word is `include`, `host` or `match`, which neither is.
+    'sshconfig\.rs:\d+:\d+: replace \|\| with && in keyword',
+    # `starts_line` is always asked with `after` at the `{` of the object, so when the last line
+    # break lies before `after` the text between it and `pos` holds that `{`, which is not blank, and the
+    # answer is `false` either way.
+    'replace match guard n >= after with true in starts_line',
+    # `eol` is the offset of a line break or the end of the text, and no comment starts there, so
+    # `c.start < eol` and `c.start <= eol` agree.
+    'json\.rs:\d+:34: replace < with <= in insert',
     # `Store::rule_set` reads a user set directly; without that arm it lists every set and finds the
     # id, which returns the same set, or the same `UnknownRuleSet` error for an id that is not there.
     "sets\\.rs:\\d+:\\d+: delete match arm RuleSetId::User\\(user\\) in Store::rule_set",
@@ -37,4 +50,4 @@ exclude_re = [
 # The first failing test decides a mutant: stop the rest. Without it, a mutant that makes a test
 # loop forever keeps the run until the timeout, and is reported as a timeout although a faster
 # test already failed.
-additional_cargo_test_args = ["--max-fail=1:immediate"]
+additional_cargo_test_args = ["--profile", "mutants", "--max-fail=1:immediate"]

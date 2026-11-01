@@ -2554,7 +2554,9 @@ async fn a_browser_attach_gives_the_window_the_front_the_settings_and_a_way_to_t
     assert_eq!(host.editor_windows().connected(&acme), 0);
     // code-server asks for a password: the window reads it when it signs in, from the guest's file.
     // The agent may say hello after the window asked: the sign-in waits for it.
-    let login = target.login.expect("code-server asks for a password");
+    let Some(puddle_api::EditorSignIn::Form(login)) = target.login else {
+        panic!("code-server signs in with its login form");
+    };
     assert_eq!(login.password().await.unwrap(), "0".repeat(64));
     // An agent with no password yet, and a workspace that has stopped, are said in words.
     std::fs::remove_file(&editor.password_file).unwrap();
@@ -2576,7 +2578,11 @@ async fn a_window_that_signs_in_before_the_agents_hello_waits_for_it_and_gets_th
     create(&api, &mut events, "acme").await;
     // The workspace reports running and no agent has said hello: the window signs in now.
     let target = browser_target(&rig, &api, "acme").await;
-    let login = target.login.expect("code-server asks for a password");
+    let login = target
+        .login
+        .expect("code-server asks for a password")
+        .reader()
+        .clone();
     let asked = tokio::spawn(async move { login.password().await });
     // An absence window: nothing is there to signal that the sign-in has not given up.
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -2667,7 +2673,7 @@ async fn a_browser_attach_with_an_unreadable_workspace_settings_file_opens_no_wi
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_browser_attach_to_microsoft_s_server_has_no_password_to_read() {
+async fn a_browser_attach_to_microsoft_s_server_gives_the_window_its_connection_token() {
     let rig = Rig::new();
     let covering = puddle_settings::MICROSOFT_TERMS_VERSION;
     write_global_settings(&rig, &microsoft_chosen(covering, false));
@@ -2677,10 +2683,12 @@ async fn a_browser_attach_to_microsoft_s_server_has_no_password_to_read() {
     create(&api, &mut events, "acme").await;
     let _editor = editor_stand_in(&rig, "acme").await;
     let target = browser_target(&rig, &api, "acme").await;
-    assert!(
-        target.login.is_none(),
-        "the front signs Microsoft's server in with its key cookie"
-    );
+    // The server's connection token is the guest's password file: the window carries it as a
+    // cookie, and it is read only when the window asks.
+    let Some(puddle_api::EditorSignIn::ConnectionToken(token)) = target.login else {
+        panic!("Microsoft's server signs in with its connection token");
+    };
+    assert_eq!(token.password().await.unwrap(), "0".repeat(64));
     host.shutdown().await;
 }
 
@@ -8985,6 +8993,72 @@ async fn a_newer_editor_build_that_was_refused_is_a_problem_beside_the_install_o
             .is_none()
     );
     fixed.abort();
+    session.abort();
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn capture_rules_the_guest_tore_down_or_that_cannot_install_are_problems_until_they_are_fixed_or_it_stops()
+ {
+    use puddle_agent_proto::AgentMessage;
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    create(&api, &mut events, "other").await;
+
+    let session = agent_says(
+        &rig,
+        "acme",
+        &[
+            AgentMessage::capture_tampered(true),
+            AgentMessage::capture_tampered(false),
+            AgentMessage::capture_tampered(true),
+            AgentMessage::capture_tampered(true),
+            AgentMessage::capture_unavailable("nft: Operation not supported".to_owned()),
+        ],
+    )
+    .await;
+    // The agent's messages are handled in order: with the last one's problem up, the count is final.
+    let (title, detail) = problem_is(&api, "capture-unavailable:acme", true)
+        .await
+        .unwrap();
+    assert_eq!(
+        title,
+        "Tools in acme that ignore proxy settings are offline: nft: Operation not supported"
+    );
+    assert!(detail.contains("Puddle keeps trying"), "{detail}");
+    let (title, detail) = problem_is(&api, "capture-tamper:acme", true).await.unwrap();
+    assert_eq!(
+        title,
+        "Something in acme deleted Puddle's capture rules; Puddle put them back"
+    );
+    assert!(detail.contains("nft flush ruleset"), "{detail}");
+    assert!(
+        problem_is(&api, "capture-tamper:other", false)
+            .await
+            .is_none()
+    );
+
+    // The rules went in on a later try: the agent says so; the tamper notice stays.
+    let fixed = agent_says(&rig, "acme", &[AgentMessage::capture_ready()]).await;
+    assert!(
+        problem_is(&api, "capture-unavailable:acme", false)
+            .await
+            .is_none()
+    );
+    problem_is(&api, "capture-tamper:acme", true).await.unwrap();
+    fixed.abort();
+
+    // A stop ends the tamper notice with the machine it is about.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(
+        problem_is(&api, "capture-tamper:acme", false)
+            .await
+            .is_none()
+    );
     session.abort();
     host.shutdown().await;
 }

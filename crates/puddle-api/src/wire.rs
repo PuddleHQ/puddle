@@ -53,11 +53,12 @@ pub use environment::{
 };
 pub use first_run::{DevCertTrustResult, DevCertificate, FirstRun, FirstRunRequest};
 pub use identities::{
-    AttachIdentityRequest, CredentialCoverage, CredentialSource, GitDefaultsView, GitRepoRequest,
-    GitRepoToggles, GitRepoView, GitSwitchesRequest, IdentityAuthor, IdentityCredential,
-    IdentityDeleted, IdentityList, IdentityOrderRequest, IdentityRequest, IdentitySigning,
-    IdentityView, NewWorkspaceIdentity, NewWorkspaceIdentityBasis, SwitchSource, TokenLeft,
-    WorkspaceGitView, WorkspaceIdentitiesRequest, WorkspaceSwitchesRequest,
+    AttachIdentityRequest, CheckedBy, CredentialCoverage, CredentialSource, GitDefaultsView,
+    GitRepoRequest, GitRepoToggles, GitRepoView, GitSwitchesRequest, IdentityAuthor,
+    IdentityCredential, IdentityCredentialView, IdentityDeleted, IdentityList,
+    IdentityOrderRequest, IdentityRequest, IdentitySigning, IdentityView, LastCheck,
+    NewWorkspaceIdentity, NewWorkspaceIdentityBasis, SwitchSource, TokenLeft, WorkspaceGitView,
+    WorkspaceIdentitiesRequest, WorkspaceSwitchesRequest,
 };
 pub use interception::{
     GlobalNeverDecrypt, InterceptionRequest, InterceptionView, LearnedHost, LearnedHosts,
@@ -967,6 +968,16 @@ pub enum AuditRecord {
         #[serde(default)]
         #[schema(required = true)]
         rule_set: Option<String>,
+        /// The first address of the answer that an IP rule denied, else the first the address
+        /// guard refused, while the connection went to the allowed addresses only. `null` when none was refused and in records written
+        /// before it existed.
+        #[serde(default)]
+        #[schema(required = true)]
+        refused_address: Option<String>,
+        /// Why `refused_address` was refused: a reason code such as `ip_rule` or `toggle:private`.
+        #[serde(default)]
+        #[schema(required = true)]
+        refused_reason: Option<String>,
         /// The pending request.
         #[schema(required = true)]
         pending_id: Option<i64>,
@@ -1178,6 +1189,8 @@ impl From<store::ConnectionRecord> for AuditRecord {
             rule_id,
             request_rule,
             rule_set,
+            refused_address,
+            refused_reason,
             pending_id,
             binding_id,
             injected,
@@ -1203,6 +1216,8 @@ impl From<store::ConnectionRecord> for AuditRecord {
             rule_id,
             request_rule,
             rule_set,
+            refused_address,
+            refused_reason,
             pending_id,
             binding_id,
             injected,
@@ -3020,6 +3035,22 @@ mod tests {
         );
     }
 
+    /// The wire carries the refused address and the code of an IP-rule deny as stored.
+    #[test]
+    fn an_ip_rule_refusal_reaches_the_wire() {
+        let stored = serde_json::json!({
+            "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
+            "port": 443, "resolved_ip": "10.0.0.9", "decision": "deny", "reason": "rule", "rule_id": 4,
+            "refused_address": "10.0.0.9", "refused_reason": "ip_rule", "pending_id": null, "binding_id": null,
+            "injected": false, "unswapped_stand_ins": [], "method": null, "path": null,
+            "path_truncated": false, "bytes_up": 0, "bytes_down": 0, "count": null
+        });
+        let record: store::AuditRecord = serde_json::from_value(stored).unwrap();
+        let wire = serde_json::to_value(AuditRecord::from(record)).unwrap();
+        assert_eq!(wire["refused_address"], "10.0.0.9");
+        assert_eq!(wire["refused_reason"], "ip_rule");
+    }
+
     /// The typed record serialises to the very JSON the store wrote, so the API adds no layer
     /// that could drop or rename a field, including `upstream` and records older than it.
     #[test]
@@ -3028,7 +3059,7 @@ mod tests {
             "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
             "port": 443, "resolved_ip": "93.184.216.34", "upstream": "PROXY corp:3128",
             "decision": "allow", "outcome": "connected", "reason": "rule", "rule_id": 4, "rule_set": "user:2",
-            "request_rule": 3, "pending_id": null, "binding_id": null, "injected": false, "unswapped_stand_ins": [],
+            "request_rule": 3, "refused_address": "10.0.0.8", "refused_reason": "toggle:private", "pending_id": null, "binding_id": null, "injected": false, "unswapped_stand_ins": [],
             "method": "GET", "path": "/",
             "path_truncated": false, "bytes_up": 1, "bytes_down": 2, "count": null
         });

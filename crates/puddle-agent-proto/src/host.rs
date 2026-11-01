@@ -148,15 +148,8 @@ pub trait StreamHandler: Send + Sync + 'static {
         async {}
     }
 
-    /// Tells the handler that something in the guest deleted or changed the capture rules (the
-    /// agent put them back). `table_missing` is `true` for a deleted table. The session logs it
-    /// before calling this; the default does nothing more.
-    fn capture_tampered(&self, table_missing: bool) -> impl Future<Output = ()> + Send {
-        let _ = table_missing;
-        async {}
-    }
-
-    /// Takes a report about the workspace (an entrypoint exit, stub DNS trouble), already cleaned
+    /// Takes a report about the workspace (an entrypoint exit, stub DNS trouble, capture rules the
+    /// guest tore down or that cannot be installed), already cleaned
     /// and logged by the session. The default does nothing more. The report is the guest's claim:
     /// it may become a notice for this workspace, never a decision.
     fn agent_report(&self, report: AgentReport) -> impl Future<Output = ()> + Send {
@@ -199,6 +192,18 @@ pub enum AgentReport {
         /// What is wrong, at most [`MAX_EDITOR_PROBLEM_CHARS`] characters, control characters
         /// replaced by `?`; `None` when the problem of this `kind` is over.
         problem: Option<String>,
+    },
+    /// Something in the guest deleted or edited the capture rules; the agent put them back. One
+    /// report per event: the host counts them.
+    CaptureTampered {
+        /// `true` when the whole table was gone, `false` when it was edited.
+        table_missing: bool,
+    },
+    /// The capture rules cannot be installed, or can again.
+    CaptureUnavailable {
+        /// What the kernel or the agent said, at most `MAX_REASON_CHARS` (200) characters, control
+        /// characters replaced by `?`; `None` when the rules are installed.
+        reason: Option<String>,
     },
 }
 
@@ -558,14 +563,9 @@ async fn on_message<H: StreamHandler>(msg: AgentMessage, shared: &Shared<H>) {
             }
             shared.sink.emit(event);
         }
-        AgentMessage::CaptureTampered { table_missing } => {
-            tracing::warn!(%workspace, table_missing, "the guest changed the capture rules; the agent restored them");
-            shared.handler.capture_tampered(table_missing).await;
-        }
-        AgentMessage::CaptureUnavailable { reason } => {
-            let reason = clean(&reason, MAX_REASON_CHARS);
-            tracing::warn!(%workspace, %reason, "the guest could not install its capture rules; tools that ignore the proxy settings fail until it can");
-        }
+        msg @ (AgentMessage::CaptureTampered { .. }
+        | AgentMessage::CaptureUnavailable { .. }
+        | AgentMessage::CaptureReady) => on_capture(msg, shared).await,
         AgentMessage::UdpRefused {
             address,
             port,
@@ -610,6 +610,33 @@ async fn on_message<H: StreamHandler>(msg: AgentMessage, shared: &Shared<H>) {
             tracing::debug!(%workspace, "unknown control message ignored");
         }
     }
+}
+
+/// The three messages about the capture rules, each becoming a report.
+async fn on_capture<H: StreamHandler>(msg: AgentMessage, shared: &Shared<H>) {
+    let workspace = &shared.workspace;
+    let report = match msg {
+        AgentMessage::CaptureTampered { table_missing } => {
+            tracing::warn!(%workspace, table_missing, "the guest changed the capture rules; the agent restored them");
+            AgentReport::CaptureTampered { table_missing }
+        }
+        AgentMessage::CaptureUnavailable { reason } => {
+            let mut reason = clean(&reason, MAX_REASON_CHARS);
+            if reason.is_empty() {
+                // `None` means "installed"; an outage always has a reason.
+                reason.push_str("no reason given");
+            }
+            tracing::warn!(%workspace, %reason, "the guest could not install its capture rules; tools that ignore the proxy settings fail until it can");
+            AgentReport::CaptureUnavailable {
+                reason: Some(reason),
+            }
+        }
+        _ => {
+            tracing::info!(%workspace, "the guest's capture rules are installed");
+            AgentReport::CaptureUnavailable { reason: None }
+        }
+    };
+    shared.handler.agent_report(report).await;
 }
 
 async fn on_editor_status<H: StreamHandler>(

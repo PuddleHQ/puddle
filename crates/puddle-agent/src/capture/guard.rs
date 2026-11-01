@@ -137,6 +137,9 @@ pub async fn keep(guard: Guard, reports: mpsc::Sender<AgentMessage>) {
     // Whether this outage has been told to the host: a queue that is full at boot (nobody reads
     // yet) leaves it untold, so the next pass tries again.
     let mut told = false;
+    // The host was told of an outage and not yet that it ended: a queue that is full at that
+    // moment leaves it pending, so the next pass tells it again.
+    let mut recovery_owed = false;
     loop {
         let g = guard.clone();
         let result = tokio::task::spawn_blocking(move || {
@@ -157,11 +160,11 @@ pub async fn keep(guard: Guard, reports: mpsc::Sender<AgentMessage>) {
         match outcome {
             Ok(None) => {
                 failures = 0;
-                told = false;
+                recovered(&mut told, &mut recovery_owed, &reports);
             }
             Ok(Some(why)) => {
                 failures = 0;
-                told = false;
+                recovered(&mut told, &mut recovery_owed, &reports);
                 announce(why, state.installed.as_ref().map(|(plan, _)| plan));
                 if let Some(report) = report_for(why) {
                     // A full queue only means the host is not listening; the log has it.
@@ -169,6 +172,8 @@ pub async fn keep(guard: Guard, reports: mpsc::Sender<AgentMessage>) {
                 }
             }
             Err(err) => {
+                // A new outage supersedes a recovery the host never heard.
+                recovery_owed = false;
                 if !told {
                     // The tools in the workspace see an offline network until this changes.
                     told = reports
@@ -182,6 +187,17 @@ pub async fn keep(guard: Guard, reports: mpsc::Sender<AgentMessage>) {
             }
         }
         tokio::time::sleep(guard.poll).await;
+    }
+}
+
+/// An outage the host heard of is over: tells the host the rules are installed, until it has.
+fn recovered(told: &mut bool, owed: &mut bool, reports: &mpsc::Sender<AgentMessage>) {
+    if *told {
+        *told = false;
+        *owed = true;
+    }
+    if *owed {
+        *owed = reports.try_send(AgentMessage::capture_ready()).is_err();
     }
 }
 
@@ -268,5 +284,32 @@ mod tests {
             report_for(Why::Edited),
             Some(AgentMessage::capture_tampered(false))
         );
+    }
+
+    #[test]
+    fn the_host_hears_the_rules_are_back_once_and_only_after_an_outage_it_heard_of() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let (mut told, mut owed) = (false, false);
+        recovered(&mut told, &mut owed, &tx);
+        assert!(rx.try_recv().is_err(), "no outage, nothing to end"); // flake-ok: `recovered` sends on this thread before the read
+        told = true;
+        recovered(&mut told, &mut owed, &tx);
+        assert_eq!(rx.try_recv(), Ok(AgentMessage::capture_ready())); // flake-ok: `recovered` sends on this thread before the read
+        recovered(&mut told, &mut owed, &tx);
+        assert!(rx.try_recv().is_err(), "told once"); // flake-ok: `recovered` sends on this thread before the read
+        assert!(!told && !owed);
+    }
+
+    #[test]
+    fn a_recovery_the_full_queue_refused_is_told_on_a_later_pass() {
+        let (tx, mut rx) = mpsc::channel(1);
+        tx.try_send(AgentMessage::hello()).unwrap();
+        let (mut told, mut owed) = (true, false);
+        recovered(&mut told, &mut owed, &tx);
+        assert!(owed, "the queue was full");
+        assert_eq!(rx.try_recv(), Ok(AgentMessage::hello())); // flake-ok: `recovered` sends on this thread before the read
+        recovered(&mut told, &mut owed, &tx);
+        assert!(!owed);
+        assert_eq!(rx.try_recv(), Ok(AgentMessage::capture_ready())); // flake-ok: `recovered` sends on this thread before the read
     }
 }

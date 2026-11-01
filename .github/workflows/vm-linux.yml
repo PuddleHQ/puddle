@@ -99,6 +99,13 @@ jobs:
     outputs:
       run: ${{ steps.changed.outputs.run }}
     steps:
+      # A runner that starts nearly full ends in "No space left on device" in its own log, with the job log lost;
+      # this line shows the free space and the image of the runner a failed job had. A normal runner starts with
+      # about 86 GB free, and a test job writes about 13 GB (measured 2026-10-31).
+      - name: disk at start (evidence, never a gate)
+        run: |
+          df -h /
+          echo "runner=${RUNNER_NAME} image=${ImageVersion:-unknown}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: anything new since the last green run?
         id: changed
@@ -169,6 +176,13 @@ jobs:
       matrix:
         partition: [1, 2, 3, 4]
     steps:
+      # A runner that starts nearly full ends in "No space left on device" in its own log, with the job log lost;
+      # this line shows the free space and the image of the runner a failed job had. A normal runner starts with
+      # about 86 GB free, and a test job writes about 13 GB (measured 2026-10-31).
+      - name: disk at start (evidence, never a gate)
+        run: |
+          df -h /
+          echo "runner=${RUNNER_NAME} image=${ImageVersion:-unknown}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: KVM preflight (infrastructure)
         id: kvm

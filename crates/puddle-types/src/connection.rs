@@ -101,6 +101,33 @@ impl fmt::Display for ConnectionOutcome {
     }
 }
 
+/// Why one address of an answer was refused ([`ConnectionEvent::refused_address`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RefusedReason {
+    /// The address guard refused it.
+    Guard(BlockReason),
+    /// An IP rule denies the address (R-27).
+    IpRule,
+}
+
+impl RefusedReason {
+    /// The audit `refused_reason` code.
+    #[must_use]
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Guard(reason) => reason.code(),
+            Self::IpRule => "ip_rule",
+        }
+    }
+}
+
+impl From<BlockReason> for RefusedReason {
+    fn from(reason: BlockReason) -> Self {
+        Self::Guard(reason)
+    }
+}
+
 /// Why the proxy decided as it did (R-24). Serialised as a string: `rule`, `no_rule`, a
 /// [`BlockReason::code`] (`toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`,
 /// `local_address`, `settings_unreadable`), `policy_unavailable`, `puddle_request`, `sni_mismatch`, `guest_tls_rejected`, `certificate_unavailable`,
@@ -260,6 +287,10 @@ pub struct ConnectionEvent {
     pub port: u16,
     /// The address connected to, once connected.
     pub resolved_ip: Option<IpAddr>,
+    /// The first address of the answer that an IP rule denied, else the first the address guard
+    /// refused, and why (its code is `ip_rule`, `toggle:private`, `local_address`, ...).
+    /// Visibility only: the connection still goes to the allowed addresses of the answer alone.
+    pub refused_address: Option<(IpAddr, RefusedReason)>,
     /// The hop of the company-proxy route that carried the connection (`DIRECT` or
     /// `PROXY host:port`), once connected; `None` when no upstream route is configured.
     /// Never carries credentials.
@@ -313,6 +344,7 @@ impl ConnectionEvent {
             host: request.host.clone(),
             port: request.port,
             resolved_ip: None,
+            refused_address: None,
             upstream: None,
             decision,
             outcome: None,
@@ -345,6 +377,7 @@ impl ConnectionEvent {
             host,
             port,
             resolved_ip: None,
+            refused_address: None,
             upstream: None,
             decision,
             outcome: None,

@@ -4,7 +4,12 @@
 // own backend. The page clock is the fixture's, so relative times and expiries agree with the API.
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { watchCsp, expectNoAxeViolations, staysEmpty } from "./support";
+import {
+  RECONNECT_WAIT_MS,
+  watchCsp,
+  expectNoAxeViolations,
+  staysEmpty,
+} from "./support";
 
 interface Rule {
   id: number;
@@ -506,7 +511,7 @@ test.describe("staying current", () => {
       pattern: "after-restart.example.org",
     });
     await expect(rowFor(page, "after-restart.example.org")).toBeVisible({
-      timeout: 20_000,
+      timeout: RECONNECT_WAIT_MS,
     });
   });
 });

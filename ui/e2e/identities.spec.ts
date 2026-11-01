@@ -144,7 +144,7 @@ test("signing in happens on a click: the dialog shows the code and the credentia
   await expect(
     dialog.getByRole("link", { name: "https://github.com/login/device" }),
   ).toHaveAttribute("rel", /noopener/);
-  // The fake finishes the sign-in at once; the dialog sees it on its next check.
+  // The fake finishes the sign-in at once; the dialog sees it on its next check, every 3 s, and 15 s is five checks.
   await expect(dialog).toContainText("Signed in.", { timeout: 15_000 });
   await dialog.getByRole("button", { name: "Done" }).click();
   await expect(azure).toContainText("OK");

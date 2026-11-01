@@ -16,7 +16,7 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
-use puddle_compute::ComputeError;
+use puddle_compute::{ComputeError, StartRefusal};
 use serde::Deserialize;
 
 /// The journal's file name in the sandbox's `runtime/` folder (msb's name for it).
@@ -92,24 +92,21 @@ pub(crate) enum JournalProblem {
     },
 }
 
-/// [`check`] as the error of a start: [`ComputeError::Runtime`] that says what the journal names
-/// and why the start was refused.
+/// [`check`] as the error of a start: [`ComputeError::StartRefused`] for `sandbox`. The journal's
+/// own words and paths are the guest's, so they go to the log and not into the error.
 ///
 /// # Errors
 ///
 /// As [`check`].
-pub(crate) fn check_before_start(sandbox_dir: &Path) -> Result<(), ComputeError> {
+pub(crate) fn check_before_start(sandbox: &str, sandbox_dir: &Path) -> Result<(), ComputeError> {
     check(sandbox_dir).map_err(|problem| {
-        let why = if matches!(problem, JournalProblem::Unreadable { .. }) {
-            "which files the start would attach cannot be told, so nothing was attached"
-        } else {
-            "a process in the sandbox can write that journal, and the start would attach what it \
-             names as the writable root disk, so nothing was attached; removing the sandbox and \
-             creating it again gives it a fresh root disk (its volumes are kept)"
-        };
-        ComputeError::Runtime {
-            op: "start",
-            message: format!("refused, {problem}: {why}"),
+        tracing::warn!(sandbox, %problem, "refusing a start: the root-disk journal is not safe to attach");
+        ComputeError::StartRefused {
+            sandbox: sandbox.to_owned(),
+            cause: match problem {
+                JournalProblem::Unreadable { .. } => StartRefusal::RootDiskUnreadable,
+                _ => StartRefusal::RootDiskOutsideFolder,
+            },
         }
     })
 }
@@ -420,29 +417,31 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_start_says_what_the_journal_names_and_that_nothing_was_attached() {
+    fn a_refused_start_names_the_sandbox_and_a_closed_cause_and_none_of_the_journal() {
         let home = Home::new();
-        assert_eq!(check_before_start(&home.mine()), Ok(()));
+        assert_eq!(check_before_start("mine", &home.mine()), Ok(()));
         let theirs = home.sandboxes.join("other").join("upper.ext4");
         home.journal(&[&theirs], None);
-        let refused = check_before_start(&home.mine()).unwrap_err();
-        assert!(
-            matches!(refused, ComputeError::Runtime { op: "start", .. }),
-            "{refused:?}"
+        let refused = check_before_start("mine", &home.mine()).unwrap_err();
+        assert_eq!(
+            refused,
+            ComputeError::StartRefused {
+                sandbox: "mine".into(),
+                cause: StartRefusal::RootDiskOutsideFolder,
+            }
         );
         let message = refused.to_string();
-        assert!(message.contains(&format!("{theirs:?}")), "{message}");
-        assert!(
-            message.contains("outside the sandbox's folder"),
-            "{message}"
-        );
+        assert!(!message.contains("other"), "{message}");
         assert!(message.contains("nothing was attached"), "{message}");
-        assert!(message.contains("creating it again"), "{message}");
 
         home.write_journal(b"not json");
-        let message = check_before_start(&home.mine()).unwrap_err().to_string();
-        assert!(message.contains("cannot be told"), "{message}");
-        assert!(!message.contains("can write that journal"), "{message}");
+        assert_eq!(
+            check_before_start("mine", &home.mine()),
+            Err(ComputeError::StartRefused {
+                sandbox: "mine".into(),
+                cause: StartRefusal::RootDiskUnreadable,
+            })
+        );
     }
 
     #[test]

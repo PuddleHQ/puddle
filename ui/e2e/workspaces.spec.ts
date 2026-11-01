@@ -9,6 +9,7 @@ import { CPUS_MAX, CPUS_MIN } from "../src/lib/settings/cpus.ts";
 import { type Backend, expect, test } from "./fixture";
 import {
   axeStops,
+  RECONNECT_WAIT_MS,
   watchCsp,
   expectNoAxeViolations,
   staysEmpty,
@@ -453,7 +454,7 @@ test.describe("start and stop", () => {
       headers: auth(backend),
     });
     await expect(card(page, "web-shop")).toContainText("Stopped", {
-      timeout: 20_000,
+      timeout: RECONNECT_WAIT_MS,
     });
   });
 });
@@ -754,6 +755,8 @@ test.describe("deleting", () => {
       headers: auth(backend),
       data: { confirm: true, fingerprint },
     });
+    // Only the event can do this: the list polls every 60 s. 15 s is the starved browser's ceiling; the
+    // whole test took 5 to 10 s there.
     await expect(page).toHaveURL(/\/workspaces$/, { timeout: 15_000 });
     await expect(page.getByRole("article")).toHaveCount(2);
   });

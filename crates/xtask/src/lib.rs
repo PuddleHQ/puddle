@@ -58,7 +58,7 @@ commands:
                                    firmware version comes from
             --tag <tag>            fork tag (default: v<BUILT_FOR>, the version this Puddle runs)
             --upstream-tag <tag>   upstream base tag (default: derived from a -puddle.N tag)
-            --fork <owner/name>    fork repository (default: TijsVK/microsandbox)
+            --fork <owner/name>    fork repository (default: PuddleHQ/microsandbox)
             --upstream <owner/name> upstream repository (default: superradcompany/microsandbox)
             --from <dir>           take the parts from a folder instead of GitHub
             --offline              no network for cargo
@@ -81,7 +81,7 @@ commands:
                                    unless CI is set)";
 
 /// The default fork.
-pub const DEFAULT_FORK: &str = "TijsVK/microsandbox";
+pub const DEFAULT_FORK: &str = "PuddleHQ/microsandbox";
 /// Upstream msb.
 pub const DEFAULT_UPSTREAM: &str = "superradcompany/microsandbox";
 /// The targets Puddle ships binaries for (host on Windows, guest agent on Linux musl) or develops on.

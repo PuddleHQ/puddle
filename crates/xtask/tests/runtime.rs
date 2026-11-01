@@ -117,7 +117,7 @@ fn fixture(dir: &Path, embedded: &str) -> PathBuf {
     )
     .unwrap();
     let facts = ForkFacts {
-        fork_repo: "TijsVK/microsandbox".into(),
+        fork_repo: "PuddleHQ/microsandbox".into(),
         upstream_repo: "superradcompany/microsandbox".into(),
         tag: format!("v{VERSION}"),
         upstream_tag: "v0.7.7".into(),

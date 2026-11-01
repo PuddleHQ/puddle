@@ -484,7 +484,7 @@ async fn vm_hostile_hg11_a_flooding_workspace_is_held_at_its_cap_and_another_is_
     guest(&runtime, &flooder, "touch /tmp/hg11.release").await;
     let again = puddle_test_kit::eventually_async(
         "the flooder's slots free after the flood",
-        Duration::from_secs(120),
+        Duration::from_secs(90),
         || async {
             let out = guest(
                 &runtime,

@@ -289,6 +289,7 @@ mod tests {
     #[test]
     fn generator_failures_surface() {
         let g = NodeGenerator {
+            // flake-ok: a path that must not exist; on Windows it is rooted on the current drive and still does not exist
             dir: PathBuf::from("/nonexistent/puddle-openapi"),
             work: std::path::absolute("xtask-openapi-test").unwrap(),
         };

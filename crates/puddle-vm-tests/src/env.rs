@@ -493,6 +493,7 @@ pub(crate) mod tests {
     fn the_metrics_segment_name_matches_msbs_hash_of_the_home() {
         // Value from msb's own `metrics_registry_shm_name` for this path.
         assert_eq!(
+            // flake-ok: a value that is parsed or compared and never opened, so the missing drive letter does not matter
             metrics_segment_names(Path::new("/tmp/msb-abc123")),
             ["msb-met-d63328847086d141-v2", "msb-met-d63328847086d141-v3"]
         );

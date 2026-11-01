@@ -474,6 +474,35 @@ mod tests {
         r
     }
 
+    /// Two set denies of one pattern: the lower set, then the lower rule id, decides, whichever the
+    /// index met first; it matters when an own rule is less specific and a set deny overrides it.
+    #[test]
+    fn of_two_set_denies_that_override_an_own_rule_the_lower_set_wins_whatever_the_order() {
+        let own = rule(9, None, ".example.com", Effect::Allow);
+        for denies in [
+            vec![
+                in_set(1, 2, "x.example.com", Effect::Deny),
+                in_set(2, 1, "x.example.com", Effect::Deny),
+            ],
+            vec![
+                in_set(2, 1, "x.example.com", Effect::Deny),
+                in_set(1, 2, "x.example.com", Effect::Deny),
+            ],
+        ] {
+            let mut rules = vec![own.clone()];
+            rules.extend(denies);
+            let got = decision(&index(rules), "a", "x.example.com");
+            assert_eq!(
+                got,
+                Some(Decision::SetDeny {
+                    set: RuleSetId::User(1),
+                    rule_id: RuleId(2),
+                    pattern: PatternKind::Exact,
+                })
+            );
+        }
+    }
+
     fn system(pattern: &str, workspace: Option<&str>) -> SetEntry {
         SetEntry {
             set: RuleSetId::System,

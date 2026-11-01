@@ -408,6 +408,49 @@ mod tests {
     }
 
     #[test]
+    fn an_address_of_a_known_shape_needs_its_git_segment() {
+        for bad in [
+            "https://dev.azure.com/org/project/repo",
+            "https://dev.azure.com/org/project/other/repo",
+            "https://org.visualstudio.com/project/other/repo",
+            "https://org.visualstudio.com/DefaultCollection/project/other/repo",
+        ] {
+            let err = RepoRef::from_https_url(bad).unwrap_err();
+            assert_eq!(err.to_string(), "not an HTTPS repository address", "{bad}");
+        }
+        // The address of a host with an owner and no repository.
+        let err = RepoRef::from_https_url("https://github.com/acme").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "not an HTTPS repository address",
+            "an owner alone is no repository"
+        );
+        assert_eq!(
+            RepoRef::from_https_url("https://dev.azure.com/org/_GIT/repo")
+                .unwrap()
+                .repo,
+            "repo/repo"
+        );
+    }
+
+    #[test]
+    fn an_escape_in_an_address_that_separates_or_controls_is_refused() {
+        for escape in [
+            "%00", "%01", "%1f", "%7f", "%2f", "%2F", "%5c", "%25", "%3f", "%23", "%3b",
+        ] {
+            let url = format!("https://github.com/acme/web{escape}x");
+            let err = RepoRef::from_https_url(&url).unwrap_err();
+            // Refused as an address, not later as a name that holds the character.
+            assert_eq!(err.to_string(), "not an HTTPS repository address", "{url}");
+        }
+        // Escapes for ordinary characters decode.
+        let got = RepoRef::from_https_url("https://github.com/acme/we%62%2d1").unwrap();
+        assert_eq!(got.repo, "web-1");
+        let got = RepoRef::from_https_url("https://dev.azure.com/org/p%20q/_git/r").unwrap();
+        assert_eq!(got.repo, "p q/r");
+    }
+
+    #[test]
     fn repos_are_canonical() {
         assert_eq!(repo("GitHub.com/Acme/Web.GIT"), repo("github.com/acme/web"));
         assert_eq!(repo("dev.azure.com/Org/Proj/Repo").repo, "proj/repo");

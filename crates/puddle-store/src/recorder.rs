@@ -114,6 +114,11 @@ mod tests {
 
         store.fail_audit_writes("connection");
         log.record(&event());
+        assert_eq!(
+            problems.list().len(),
+            1,
+            "the first failure already raises it"
+        );
         log.record(&event());
         let listed = problems.list();
         assert_eq!(listed.len(), 1, "{listed:?}");

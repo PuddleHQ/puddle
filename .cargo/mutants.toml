@@ -49,6 +49,9 @@ exclude_re = [
     # not match. The left row is already decided when the query runs, so it is never in the list, and a
     # row the pattern does not match cannot have this rule as its winner, so `||` and `&&` close the same rows.
     "store\\.rs:\\d+:\\d+: replace \\|\\| with && in close_decided_rows",
+    # `high << 4 | low` joins two hexadecimal digits (as in `decode_segment` above): both are below 16,
+    # so `|` and `^` give the same byte.
+    "workspace_git\\.rs:\\d+:\\d+: replace \\| with \\^ in decode_address_segment",
 ]
 
 # The first failing test decides a mutant: stop the rest. Without it, a mutant that makes a test

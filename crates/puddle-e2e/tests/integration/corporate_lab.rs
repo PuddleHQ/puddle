@@ -58,7 +58,7 @@ async fn s2_an_open_explicit_proxy_carries_a_tunnel_to_a_name_only_it_resolves()
         records[0]["upstream"],
         format!("PROXY 127.0.0.1:{}", squid.port())
     );
-    let log = squid.access_log();
+    let log = squid.access_log_with("TCP_TUNNEL/200");
     assert!(
         log.contains("TCP_TUNNEL/200") && log.contains(&authority),
         "{log}"

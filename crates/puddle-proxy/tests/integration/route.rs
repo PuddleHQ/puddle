@@ -24,7 +24,7 @@ use puddle_proxy::testing::{
 use puddle_proxy::{AddressCheck, AddressVerdict, Proxy, ProxyConfig, Route};
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, Host, LocalCategory,
-    NullSink, PendingId, WorkspaceName,
+    NullSink, PendingId, RefusedReason, WorkspaceName,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -1528,4 +1528,51 @@ async fn dropping_the_route_stops_the_accept_loop() {
     )
     .await;
     drop(root);
+}
+
+/// Through the route: an address an IP rule denies is dropped from the answer and named on the
+/// audit row with its reason, whether another address is connected to or none is left.
+#[tokio::test]
+async fn an_ip_rule_deny_names_the_refused_address_on_the_audit_row() {
+    let denied = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
+    let response = "HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok";
+    let (server, received) = http_server(response, 0).await;
+    let rig = Rig::with_resolver(
+        &ProxyConfig::default(),
+        StaticResolver::new()
+            .with("mixed.test", &[denied, LOCAL])
+            .with("only.test", &[denied]),
+    );
+    rig.policy.allow(&host("mixed.test"));
+    rig.policy.allow(&host("only.test"));
+    rig.policy.deny_host(&host("127.0.0.2"));
+    let mut guest = rig.guest().await;
+    let mut stream = guest.stream().await;
+    let request = format!("GET http://mixed.test:{}/ HTTP/1.1\r\n\r\n", server.port());
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let back = String::from_utf8(read_all(&mut stream).await.unwrap()).unwrap();
+    assert_eq!(back, response);
+    received.await.unwrap();
+    let (code, _) = guest.connect_to("only.test:443").await;
+    assert_eq!(code, 403);
+    let events = rig.events(2).await;
+    let refused: Vec<_> = events
+        .iter()
+        .map(|e| (e.host.to_string(), e.decision, e.refused_address))
+        .collect();
+    assert_eq!(
+        refused,
+        [
+            (
+                "mixed.test".to_owned(),
+                ConnectionDecision::Allow,
+                Some((denied, RefusedReason::IpRule))
+            ),
+            (
+                "only.test".to_owned(),
+                ConnectionDecision::Deny,
+                Some((denied, RefusedReason::IpRule))
+            ),
+        ]
+    );
 }

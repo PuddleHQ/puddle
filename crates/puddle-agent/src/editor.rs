@@ -325,6 +325,9 @@ pub fn arguments(server: &EditorServer) -> Vec<OsString> {
         server.grace_secs.to_string().into(),
         "--disable-telemetry".into(),
         "--disable-update-check".into(),
+        // code-server sends a window opened without a folder to the one its last window showed,
+        // over the target below; Puddle's target (the start folder or the multi-root file) wins.
+        "--ignore-last-opened".into(),
     ];
     args.push(target(server));
     args
@@ -840,6 +843,7 @@ mod tests {
         assert_eq!(after("--reconnection-grace-time"), "300");
         assert!(args.iter().any(|a| a == "--disable-telemetry"));
         assert!(args.iter().any(|a| a == "--disable-update-check"));
+        assert!(args.iter().any(|a| a == "--ignore-last-opened"));
         assert_eq!(args.last().map(String::as_str), Some("/workspaces/a"));
         assert!(
             !args

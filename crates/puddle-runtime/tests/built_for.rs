@@ -7,7 +7,7 @@ mod built_for;
 
 use built_for::built_for;
 
-const TAG: &str = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.3#7e3e0b2b4611cd6f4cfa2c82b58cee650eff03a7";
+const TAG: &str = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.7-puddle.3#7e3e0b2b4611cd6f4cfa2c82b58cee650eff03a7";
 
 fn package(name: &str, version: &str, source: Option<&str>) -> String {
     let source = source.map_or_else(String::new, |s| format!("source = \"{s}\"\n"));
@@ -63,7 +63,7 @@ fn an_sdk_from_a_fork_branch_fails() {
     let lock = lock(&[package(
         "microsandbox",
         "0.7.7-puddle.3",
-        Some("git+https://github.com/TijsVK/microsandbox?branch=puddle#7e3e0b2b"),
+        Some("git+https://github.com/PuddleHQ/microsandbox?branch=puddle#7e3e0b2b"),
     )]);
     let err = built_for(&lock).unwrap_err();
     assert!(err.contains("must come from"), "{err}");

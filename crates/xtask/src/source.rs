@@ -492,12 +492,12 @@ mod tests {
     fn the_compare_base_names_upstreams_owner() {
         assert_eq!(
             compare_path(
-                "TijsVK/microsandbox",
+                "PuddleHQ/microsandbox",
                 "superradcompany/microsandbox",
                 "v0.7.7",
                 "v0.7.7-puddle.3"
             ),
-            "repos/TijsVK/microsandbox/compare/superradcompany:v0.7.7...v0.7.7-puddle.3"
+            "repos/PuddleHQ/microsandbox/compare/superradcompany:v0.7.7...v0.7.7-puddle.3"
         );
     }
 }

@@ -102,7 +102,7 @@ mod tests {
 
     fn facts(commits: Vec<Commit>) -> ForkFacts {
         ForkFacts {
-            fork_repo: "TijsVK/microsandbox".into(),
+            fork_repo: "PuddleHQ/microsandbox".into(),
             upstream_repo: "superradcompany/microsandbox".into(),
             tag: "v0.7.7-puddle.1".into(),
             upstream_tag: "v0.7.7".into(),
@@ -141,7 +141,7 @@ mod tests {
             "a".repeat(40)
         )));
         assert!(text.contains(&format!("  {} fix(ssh): signal exit\n", "b".repeat(40))));
-        assert!(text.contains("https://github.com/TijsVK/microsandbox at tag v0.7.7-puddle.1"));
+        assert!(text.contains("https://github.com/PuddleHQ/microsandbox at tag v0.7.7-puddle.1"));
         assert!(text.contains("Apache-2.0 section 4(b)"));
         assert!(text.contains("libkrunfw 5.6.1"));
         assert!(

@@ -4,7 +4,7 @@
 //! from the fork tag `v<version>`, with every other `microsandbox*` crate from the same source.
 
 /// The fork every `microsandbox*` package must come from.
-pub(crate) const FORK: &str = "git+https://github.com/TijsVK/microsandbox?tag=v";
+pub(crate) const FORK: &str = "git+https://github.com/PuddleHQ/microsandbox?tag=v";
 
 /// The `microsandbox` package's version, checked against its fork tag and its sibling crates.
 pub(crate) fn built_for(lock: &str) -> Result<String, String> {

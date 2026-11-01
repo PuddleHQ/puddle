@@ -115,10 +115,10 @@ unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # Puddle's own forks, and only these repositories: the msb SDK at its fork tag, and the
 # libkrun and russh forks that the msb fork patches in (repeated in Puddle's `[patch.crates-io]`).
-# Not `allow-org`: a new repository under TijsVK must be added here on purpose.
+# Not `allow-org`: a new repository under PuddleHQ must be added here on purpose.
 allow-git = [
-    "https://github.com/TijsVK/microsandbox",
-    "https://github.com/TijsVK/libkrun",
-    "https://github.com/TijsVK/russh",
-    "https://github.com/TijsVK/imago",
+    "https://github.com/PuddleHQ/microsandbox",
+    "https://github.com/PuddleHQ/libkrun",
+    "https://github.com/PuddleHQ/russh",
+    "https://github.com/PuddleHQ/imago",
 ]

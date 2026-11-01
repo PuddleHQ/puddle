@@ -6,7 +6,7 @@
 # Usage: ci/fetch-msb.sh [<tag>] <dest-dir>     tag defaults to the SDK's fork tag (ci/msb-tag.sh)
 #        ci/fetch-msb.sh --pinned <tag> <name>  prints that pin (see `pinned`)
 #
-#   fork tag v<release>-puddle.N (TijsVK/microsandbox):
+#   fork tag v<release>-puddle.N (PuddleHQ/microsandbox):
 #     Windows: the release's msb-windows-x86_64.exe and libkrunfw-windows-x86_64.dll, installed as
 #              msb.exe + libkrunfw.dll.
 #     Linux:   the release's msb-linux-x86_64 and libkrunfw-linux-x86_64.so (the fork's release job
@@ -70,7 +70,7 @@ x86_64 | amd64) arch=x86_64 ;;
 *) echo "fetch-msb: unsupported arch $(uname -m)" >&2; exit 2 ;;
 esac
 
-fork_repo=TijsVK/microsandbox
+fork_repo=PuddleHQ/microsandbox
 upstream_repo=superradcompany/microsandbox
 case "$tag" in
 v*-puddle.*) release=${tag%%-puddle.*} ;;

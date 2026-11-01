@@ -12,7 +12,7 @@ updates:
       cargo:
         patterns: ["*"]
     ignore:
-      # The microsandbox crates are our fork (TijsVK/microsandbox), released by hand as
+      # The microsandbox crates are our fork (PuddleHQ/microsandbox), released by hand as
       # `v<upstream>-puddle.<n>` tags. Dependabot sorts those tags and proposed .3 over .5.
       - dependency-name: "microsandbox*"
   - package-ecosystem: github-actions

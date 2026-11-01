@@ -2400,6 +2400,7 @@ async fn editor_stand_in(rig: &Rig, name: &str) -> EditorStandIn {
     std::fs::write(&password_file, "0".repeat(64)).unwrap();
     // Its port is taken, so the agent starts no server of its own and the stand-in answers.
     let mut editor = EditorServer::new("/nonexistent/data", "/nonexistent/work", 120);
+    // flake-ok: a path that must not exist; on Windows it is rooted on the current drive and still does not exist
     editor.dir = "/nonexistent/release".into();
     editor.port = port;
     let sandbox = WorkspaceName::new(name).unwrap().sandbox_name();
@@ -5796,6 +5797,46 @@ async fn a_start_that_fails_after_the_ca_was_made_leaves_no_ca_behind() {
     let end = events.until(ended("beta"), Duration::from_secs(20)).await;
     assert_eq!(end["step"], "failed", "{end}");
     assert!(host.workspaces().termination(&name("beta")).is_none());
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_start_the_runtime_refuses_raises_a_problem_about_the_workspace_until_it_starts() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "beta").await;
+    api.post("/api/workspaces/beta/stop", "").await;
+    events.until(ended("beta"), Duration::from_secs(20)).await;
+    rig.runtime.inject(
+        Op::Start,
+        Fault::once(puddle_compute::ComputeError::StartRefused {
+            sandbox: name("beta").sandbox_name().to_string(),
+            cause: puddle_compute::StartRefusal::RootDiskOutsideFolder,
+        }),
+    );
+    api.post("/api/workspaces/beta/start", "").await;
+    let end = events.until(ended("beta"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    let problem = problem_of(&host, "start-refused:beta");
+    assert_eq!(problem.workspace, Some(name("beta")));
+    assert!(
+        problem.title.contains("beta was not started"),
+        "{problem:?}"
+    );
+    for want in [
+        "nothing was attached",
+        "root-disk journal names a file outside its own folder",
+        "create it again",
+    ] {
+        assert!(problem.detail.contains(want), "{problem:?}");
+    }
+
+    api.post("/api/workspaces/beta/start", "").await;
+    let end = events.until(ended("beta"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert!(!has_problem(&host, "start-refused:beta"));
     host.shutdown().await;
 }
 

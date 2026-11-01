@@ -77,10 +77,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: list
-        run: echo "matrix=$(scripts/mutants.sh --list | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+        # One job per unit: a whole crate, or one file of a crate the list names file by file.
+        run: |
+          matrix=$(scripts/mutants.sh --units | jq -R 'split(" ") | {crate: .[0], file: (.[1] // ""), name: ((.[1] // "") | gsub("[/.]"; "-"))}' | jq -sc .)
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   sweep:
-    name: mutants (${{ matrix.crate }})
+    name: mutants (${{ matrix.crate }} ${{ matrix.file }})
     needs: crates
     runs-on: ubuntu-24.04
     timeout-minutes: 300
@@ -101,24 +104,30 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/develop' }}
       - name: cache key of the crate's inputs
         id: key
-        run: echo "key=$(scripts/mutants.sh --key '${{ matrix.crate }}')" >> "$GITHUB_OUTPUT"
+        run: echo "key=$(scripts/mutants.sh --key '${{ matrix.crate }}' '${{ matrix.file }}')" >> "$GITHUB_OUTPUT"
       - name: result of the last passing run on these inputs
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .mutants-cache
-          key: mutants-${{ matrix.crate }}-${{ steps.key.outputs.key }}
+          key: mutants-${{ matrix.crate }}-${{ matrix.name }}-${{ steps.key.outputs.key }}
       - name: sweep
         env:
           UNCACHED_INPUT: ${{ inputs.uncached }}
+          CRATE: ${{ matrix.crate }}
+          FILE: ${{ matrix.file }}
         run: |
           uncached=
           if [ "$UNCACHED_INPUT" = true ] || [ "$(date -u +%u)" = 7 ]; then uncached=--uncached; fi
-          scripts/mutants.sh sweep --crate '${{ matrix.crate }}' --cache .mutants-cache $uncached
+          if [ -n "$FILE" ]; then
+            scripts/mutants.sh sweep --crate "$CRATE" --file "$FILE" --cache .mutants-cache $uncached
+          else
+            scripts/mutants.sh sweep --crate "$CRATE" --cache .mutants-cache $uncached
+          fi
       - name: survivors
         if: ${{ failure() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: mutants-${{ matrix.crate }}
-          path: target/mutants-out/${{ matrix.crate }}/mutants.out/
+          name: mutants-${{ matrix.crate }}-${{ matrix.name }}
+          path: target/mutants-out/${{ matrix.crate }}/
           retention-days: 14
           if-no-files-found: ignore

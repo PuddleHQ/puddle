@@ -646,7 +646,7 @@ async fn hostile_hg08_a_bound_host_with_a_mixed_answer_is_connected_at_the_allow
         event.refused_address,
         Some((
             refused_addr.ip(),
-            BlockReason::LocalToggle(LocalCategory::Loopback)
+            BlockReason::LocalToggle(LocalCategory::Loopback).into()
         )),
     );
     assert!(!captured_logs().contains(CANARY));

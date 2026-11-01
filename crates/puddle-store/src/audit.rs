@@ -79,11 +79,11 @@ pub struct ConnectionRecord {
     /// `rule_id`. Absent in records written before it existed.
     #[serde(default)]
     pub request_rule: Option<i64>,
-    /// The first address of the answer that the address guard refused, while the connection
+    /// The first address of the answer that an IP rule denied, else the first the address guard refused, while the connection
     /// went to the allowed addresses only. Absent in records written before it existed.
     #[serde(default)]
     pub refused_address: Option<String>,
-    /// Why `refused_address` was refused (a reason code such as `toggle:private`).
+    /// Why `refused_address` was refused (a reason code such as `ip_rule` or `toggle:private`).
     #[serde(default)]
     pub refused_reason: Option<String>,
     /// The pending row.
@@ -950,7 +950,9 @@ mod tests {
     use super::*;
     use crate::pending::PendingState;
     use proptest::prelude::*;
-    use puddle_types::{BlockReason, EgressRequest, Host, HttpRequestLine, LocalCategory, RuleId};
+    use puddle_types::{
+        BlockReason, EgressRequest, Host, HttpRequestLine, LocalCategory, RefusedReason, RuleId,
+    };
     use serde_json::json;
 
     const CANARY: &str = "CANARY-7f3a9c";
@@ -1151,7 +1153,10 @@ mod tests {
             })
         ));
         let mut mixed = event();
-        mixed.refused_address = Some(("10.0.0.8".parse().unwrap(), BlockReason::LocalAddress));
+        mixed.refused_address = Some((
+            "10.0.0.8".parse().unwrap(),
+            BlockReason::LocalAddress.into(),
+        ));
         let kept = ConnectionRecord::from_event(1, &mixed);
         assert_eq!(
             (
@@ -1159,6 +1164,17 @@ mod tests {
                 kept.refused_reason.as_deref()
             ),
             (Some("10.0.0.8"), Some("local_address"))
+        );
+        // An address an IP rule denied keeps its own code, apart from the guard's.
+        let mut denied = event();
+        denied.refused_address = Some(("10.0.0.9".parse().unwrap(), RefusedReason::IpRule));
+        let kept = ConnectionRecord::from_event(1, &denied);
+        assert_eq!(
+            (
+                kept.refused_address.as_deref(),
+                kept.refused_reason.as_deref()
+            ),
+            (Some("10.0.0.9"), Some("ip_rule"))
         );
     }
 

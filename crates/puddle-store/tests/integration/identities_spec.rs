@@ -796,7 +796,7 @@ fn deleting_a_workspace_says_its_git_settings_changed_only_when_it_had_some() {
 
     store.delete_workspace(&ws("had")).unwrap();
     assert_eq!(git_events(&sink), 1);
-    assert!(store.workspace_git(&ws("had")).unwrap().repos.is_empty());
+    assert_eq!(store.workspace_git(&ws("had")).unwrap().repos.len(), 0);
 
     store.delete_workspace(&ws("never-had")).unwrap();
     assert_eq!(git_events(&sink), 0, "nothing of it was in the Git tables");

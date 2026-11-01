@@ -386,6 +386,10 @@ impl Runtime for MsbRuntime {
         })
     }
 
+    fn check_checkout(&self, git_dir: &Path) -> Result<(), ComputeError> {
+        self.inner.config.check_checkout(git_dir)
+    }
+
     fn pull_image(
         &self,
         image: &ImageRef,

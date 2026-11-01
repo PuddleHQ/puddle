@@ -805,6 +805,80 @@ mod tests {
     }
 
     #[test]
+    fn a_scope_may_hold_exactly_256_kib_and_not_a_byte_more() {
+        let store = store();
+        let scope = EnvScope::Workspace(ws("full"));
+        let chunk = "x".repeat(crate::environment::MAX_PLAIN_VALUE_BYTES);
+        // Names of two bytes (`B0`..) with a full value: each takes `len + 2`.
+        let fits = MAX_SCOPE_BYTES / (chunk.len() + 2);
+        for i in 0..fits {
+            store
+                .set_env(&scope, &name(&format!("B{i:x}")), plain(&chunk))
+                .unwrap();
+        }
+        let left = MAX_SCOPE_BYTES - fits * (chunk.len() + 2);
+        let exact = "y".repeat(left - 2);
+        let over = "y".repeat(left - 1);
+        let err = store
+            .set_env(&scope, &name("EX"), plain(&over))
+            .unwrap_err();
+        assert!(err.to_string().contains("256 KiB"), "{err}");
+        store.set_env(&scope, &name("EX"), plain(&exact)).unwrap();
+    }
+
+    #[test]
+    fn deleting_a_workspace_says_its_environment_changed_only_when_it_held_something() {
+        #[derive(Default)]
+        struct Events(std::sync::Mutex<Vec<Event>>);
+        impl EventSink for Events {
+            fn emit(&self, event: Event) {
+                self.0.lock().unwrap().push(event);
+            }
+        }
+        let events = Arc::new(Events::default());
+        let store = Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default())
+            .unwrap()
+            .with_events(events.clone());
+        let said = |workspace: &str| -> usize {
+            let mut seen = events.0.lock().unwrap();
+            let n = seen
+                .iter()
+                .filter(|e| {
+                    **e == Event::WorkspaceEnvChanged {
+                        workspace: ws(workspace),
+                    }
+                })
+                .count();
+            seen.clear();
+            n
+        };
+        // Its own variable, no stand-in.
+        store
+            .set_env(&EnvScope::Workspace(ws("own")), &name("A"), plain("1"))
+            .unwrap();
+        events.0.lock().unwrap().clear();
+        store.delete_workspace(&ws("own")).unwrap();
+        assert_eq!(said("own"), 1);
+
+        // No variable of its own, only a stand-in for a global secret.
+        store
+            .set_env(
+                &EnvScope::Global,
+                &name("G"),
+                secret("env-g", &["g.example.com"]),
+            )
+            .unwrap();
+        start(&store, "held");
+        events.0.lock().unwrap().clear();
+        store.delete_workspace(&ws("held")).unwrap();
+        assert_eq!(said("held"), 1);
+
+        // Nothing at all.
+        store.delete_workspace(&ws("empty")).unwrap();
+        assert_eq!(said("empty"), 0);
+    }
+
+    #[test]
     fn a_row_edited_by_hand_to_something_that_does_not_parse_is_reported() {
         let store = store();
         let scope = EnvScope::Workspace(ws("a"));

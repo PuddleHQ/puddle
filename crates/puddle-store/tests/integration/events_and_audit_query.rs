@@ -885,3 +885,45 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
         .unwrap();
     assert_eq!(one.len(), 1);
 }
+
+fn rules_changed_by_deleting(store: &Store, sink: &CollectingSink, workspace: &str) -> bool {
+    drop(sink.take());
+    store.delete_workspace(&sb(workspace)).unwrap();
+    sink.take().contains(&Event::RulesChanged {})
+}
+
+#[test]
+fn deleting_a_workspace_that_only_had_a_rule_set_switch_reports_rules_changed() {
+    let (_, sink, store) = fixture(Limits::default());
+    store
+        .switch_rule_set(
+            puddle_types::RuleSetId::BuiltIn("github"),
+            Some(&sb("a")),
+            Some(false),
+            Actor::Ui,
+        )
+        .unwrap();
+    assert!(rules_changed_by_deleting(&store, &sink, "a"));
+}
+
+#[test]
+fn deleting_a_workspace_that_only_had_a_system_reason_reports_rules_changed() {
+    let (_, sink, store) = fixture(Limits::default());
+    let plan = puddle_store::SystemPlan {
+        workspaces: [(
+            sb("a"),
+            [puddle_store::SystemReason::DirectSsh]
+                .into_iter()
+                .collect(),
+        )]
+        .into_iter()
+        .collect(),
+        ..puddle_store::SystemPlan::default()
+    };
+    store.set_system_managed(&plan).unwrap();
+    assert!(rules_changed_by_deleting(&store, &sink, "a"));
+    assert!(
+        !rules_changed_by_deleting(&store, &sink, "b"),
+        "nothing to drop, nothing reported"
+    );
+}

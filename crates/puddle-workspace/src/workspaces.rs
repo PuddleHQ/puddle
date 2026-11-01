@@ -5,8 +5,8 @@
 use std::time::Duration;
 
 use puddle_compute::{
-    ComputeError, DiskSize, ExecRequest, Runtime, Sandbox, SandboxSpec, VolumeInfo, VolumeMount,
-    VolumeSpec,
+    ComputeError, DiskSize, ExecRequest, FileMount, Runtime, Sandbox, SandboxSpec, VolumeInfo,
+    VolumeMount, VolumeSpec,
 };
 use puddle_types::{
     CheckoutDir, GuestPath, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceId,
@@ -16,6 +16,7 @@ use tracing::{debug, info, warn};
 
 use crate::check::{self, DeleteConfirmation, DeleteReport, Findings};
 use crate::checkouts::{self, CheckoutList, FoundCheckout};
+use crate::import::{Import, import_mount};
 use crate::locks::{self, LockReport};
 use crate::registry::{HoldKind, Holder, Registry};
 use crate::trim::{self, TrimReport, tail};
@@ -911,6 +912,177 @@ impl Workspaces {
             })
     }
 
+    /// Clones the checkouts `imports` (on this computer) onto workspace `id`'s volume, making
+    /// the volume with `size` if it does not exist yet. It runs in the workspace's short-lived
+    /// maintenance sandbox, booted from `image` (the workspace's own, so the clones belong to the
+    /// user its sandbox runs commands as): no route, the volume, and each checkout's `.git`
+    /// read-only at [`import_mount`]. Each clone gets every branch and tag of the checkout and
+    /// `origin` set to its [`Import::url`] (see [`crate::FINISH_IMPORT_SH`]); one `sync` follows.
+    /// The sandbox is removed again whatever happened. A checkout git refuses fails only itself:
+    /// its folder is removed and the reason is in [`ImportReport::failed`].
+    ///
+    /// # Errors
+    ///
+    /// [`WorkspaceError::InUse`]; [`WorkspaceError::Runtime`]; [`WorkspaceError::Sync`];
+    /// [`WorkspaceError::Leftover`]. A volume this call made is removed again on an error.
+    pub async fn import<R: Runtime>(
+        &self,
+        rt: &R,
+        id: &WorkspaceId,
+        image: &ImageRef,
+        size: DiskSize,
+        imports: &[Import],
+    ) -> Result<ImportReport, WorkspaceError> {
+        let name = maintenance_name(id)?;
+        self.borrow(id, &name)?;
+        let volume = id.volume_name();
+        let existed = match rt.volume(&volume).await {
+            Ok(found) => found.is_some(),
+            Err(e) => {
+                self.registry.give_back(id);
+                return Err(WorkspaceError::runtime("look up the volume", id, e));
+            }
+        };
+        let result = self.run_import(rt, id, &name, image, size, imports).await;
+        self.registry.give_back(id);
+        // The create makes the volume; whether it got that far is read, not assumed.
+        let made = !existed && matches!(rt.volume(&volume).await, Ok(Some(_)));
+        match result {
+            Ok(failed) => Ok(ImportReport {
+                created_volume: made,
+                failed,
+            }),
+            // The sandbox is still there and holds the volume: removing it now would fail or
+            // pull it from under a running guest. The error names the sandbox left behind.
+            Err(e @ WorkspaceError::Leftover { .. }) => Err(e),
+            Err(e) if made => match rt.remove_volume(&volume).await {
+                Ok(()) => Err(e),
+                Err(left) => Err(WorkspaceError::Leftover {
+                    workspace: id.to_string(),
+                    job: e.to_string(),
+                    leftover: format!("the new volume {volume} was not removed ({left})"),
+                }),
+            },
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn run_import<R: Runtime>(
+        &self,
+        rt: &R,
+        id: &WorkspaceId,
+        name: &SandboxName,
+        image: &ImageRef,
+        size: DiskSize,
+        imports: &[Import],
+    ) -> Result<Vec<(CheckoutDir, String)>, WorkspaceError> {
+        clear_leftover(rt, id, name).await?;
+        let layout = Layout::new(id)?;
+        let mut spec = SandboxSpec::new(name.clone(), image.clone())
+            .with_memory(self.config.maintenance_memory)
+            .with_cpus(1)
+            .with_volume(
+                VolumeMount::named(id.volume_name(), layout.mount().clone()).ensure_size(size),
+            );
+        for (n, import) in imports.iter().enumerate() {
+            spec = spec.with_file_mount(FileMount::checkout(&import.git_dir, import_mount(n)?));
+        }
+        debug!(workspace = %id, sandbox = %name, checkouts = imports.len(), "starting the import sandbox");
+        let sandbox = match rt.create(spec).await {
+            Ok(s) => s,
+            Err(e) => {
+                if let Err(cleanup) = cleanup_failed_create(rt, name, false, false).await {
+                    warn!(workspace = %id, error = %cleanup, "cleanup after a failed import create failed");
+                }
+                return Err(WorkspaceError::runtime("create the import sandbox", id, e));
+            }
+        };
+        let work = self.import_into(&sandbox, id, &layout, imports).await;
+        let stopped = sandbox.stop().await;
+        drop(sandbox);
+        let removed = rt.remove(name).await;
+        let cleanup = stopped
+            .map_err(|e| WorkspaceError::runtime("stop the import sandbox", id, e))
+            .and(removed.map_err(|e| WorkspaceError::runtime("remove the import sandbox", id, e)));
+        match (work, cleanup) {
+            (Ok(failed), Ok(())) => Ok(failed),
+            (Ok(_), Err(e)) | (Err(e), Ok(())) => Err(e),
+            (Err(job), Err(leftover)) => {
+                warn!(workspace = %id, error = %leftover, "the import sandbox was left behind");
+                Err(WorkspaceError::Leftover {
+                    workspace: id.to_string(),
+                    job: job.to_string(),
+                    leftover: leftover.to_string(),
+                })
+            }
+        }
+    }
+
+    async fn import_into<S: Sandbox>(
+        &self,
+        sandbox: &S,
+        id: &WorkspaceId,
+        layout: &Layout,
+        imports: &[Import],
+    ) -> Result<Vec<(CheckoutDir, String)>, WorkspaceError> {
+        let mut failed = Vec::new();
+        for (n, import) in imports.iter().enumerate() {
+            let dir = &import.directory;
+            // A refusal of git and a step that ran out of time fail only this checkout; anything
+            // else (the guest gone) fails the import. The flag says whether git was stopped
+            // part way (a timeout), so it removed nothing itself.
+            let step = |request: ExecRequest| async move {
+                match sandbox.exec(request).await {
+                    Ok(out) if out.status.success() => Ok(None),
+                    Ok(out) => Ok(Some((
+                        format!(
+                            "git exited {}: {}",
+                            out.status.code,
+                            tail(&out.stderr_text())
+                        ),
+                        false,
+                    ))),
+                    Err(ComputeError::ExecTimeout { timeout, .. }) => Ok(Some((
+                        format!("git did not finish within {} s", timeout.as_secs()),
+                        true,
+                    ))),
+                    Err(e) => Err(WorkspaceError::runtime("import a checkout", id, e)),
+                }
+            };
+            // git removes the folder of a clone it refused; a clone it was stopped in, or whose
+            // finishing step failed, is half made.
+            let reason = match step(layout.import_request(n, dir)?).await? {
+                Some((reason, stopped)) => Some((reason, stopped)),
+                None => step(layout.finish_import_request(n, dir, &import.url)?)
+                    .await?
+                    .map(|(reason, _)| (reason, true)),
+            };
+            let Some((mut reason, half_made)) = reason else {
+                info!(workspace = %id, checkout = %dir, "checkout imported");
+                continue;
+            };
+            warn!(workspace = %id, checkout = %dir, %reason, "a checkout was not imported");
+            // A half-made clone is removed, so a later clone of the same folder is not refused.
+            if half_made {
+                let checkout = layout.checkout(dir)?;
+                let rm = ExecRequest::new("rm", ["-rf", "--", checkout.as_str()]).as_user("root");
+                let left = match sandbox.exec(rm).await {
+                    Ok(out) if out.status.success() => None,
+                    Ok(out) => Some(tail(&out.stderr_text())),
+                    Err(e) => Some(e.to_string()),
+                };
+                if let Some(left) = left {
+                    reason = format!("{reason}; its half-made folder was not removed: {left}");
+                }
+            }
+            failed.push((dir.clone(), reason));
+        }
+        if failed.len() < imports.len() {
+            self.sync(sandbox, id).await?;
+        }
+        Ok(failed)
+    }
+
     /// Runs `job` in a maintenance sandbox, holding the registry loan for its duration.
     async fn maintenance<R: Runtime>(
         &self,
@@ -984,6 +1156,15 @@ impl Workspaces {
             }
         }
     }
+}
+
+/// What [`Workspaces::import`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportReport {
+    /// Whether the import made the workspace's volume (a later failure of the create removes it).
+    pub created_volume: bool,
+    /// The checkouts git refused, each with git's reason; the others are on the volume.
+    pub failed: Vec<(CheckoutDir, String)>,
 }
 
 /// The mount of `volume` at the workspace's mount point, always with kind disk and the size

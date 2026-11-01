@@ -195,11 +195,8 @@ mod tests {
     use super::*;
 
     fn name(tool: &str) -> String {
-        if cfg!(windows) {
-            format!("{tool}.exe")
-        } else {
-            tool.to_owned()
-        }
+        let extension = if cfg!(windows) { ".exe" } else { "" };
+        format!("{tool}{extension}")
     }
 
     #[cfg(unix)]

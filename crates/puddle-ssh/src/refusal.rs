@@ -247,13 +247,14 @@ mod tests {
             _cx: &mut std::task::Context<'_>,
             buf: &mut tokio::io::ReadBuf<'_>,
         ) -> std::task::Poll<std::io::Result<()>> {
-            if self.taken >= self.cap {
-                return std::task::Poll::Ready(Err(std::io::Error::other("read past the cap")));
-            }
+            let outcome = self
+                .cap
+                .checked_sub(self.taken)
+                .ok_or_else(|| std::io::Error::other("read past the cap"));
             self.taken += 1;
             let b = self.first.pop_front().unwrap_or(b'x');
             buf.put_slice(&[b]);
-            std::task::Poll::Ready(Ok(()))
+            std::task::Poll::Ready(outcome.map(|_| ()))
         }
     }
 

@@ -342,6 +342,7 @@ mod tests {
     #[test]
     fn connecting_outside_a_runtime_is_refused() {
         // Polled with no tokio context at all: the guard must answer before any I/O.
+        // flake-ok: a path that must not exist; on Windows it is rooted on the current drive and still does not exist
         let err = block_on_without_runtime(connect(Path::new("/nonexistent"))).unwrap_err();
         assert!(matches!(err, IpcError::NoRuntime), "{err}");
     }

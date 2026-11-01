@@ -529,6 +529,7 @@ mod tests {
     fn a_checkout_is_its_own_kind_and_only_goes_to_a_sandbox_with_no_route() {
         let checkout = FileMount::checkout("/home/u/api/.git", p("/puddle/import/0"));
         assert_eq!(checkout.kind, MountKind::Checkout);
+        // flake-ok: a host path stored and compared as a value; nothing is read or written at it
         assert_eq!(checkout.host, PathBuf::from("/home/u/api/.git"));
         base().with_file_mount(checkout.clone()).validate().unwrap();
         let routed = base()

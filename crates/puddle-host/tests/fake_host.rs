@@ -37,7 +37,7 @@ use puddle_types::{
     Event, EventSink, GuestEnv, GuestPath, ImageRef, SandboxName, WorkspaceId, WorkspaceName,
 };
 use puddle_upstream::{Discovery, FakeOs, Mode, ProxyConfig};
-use puddle_workspace::{CLEAR_LOCKS_SH, DELETE_CHECK_SH};
+use puddle_workspace::{CLEAR_LOCKS_SH, DELETE_CHECK_SH, FINISH_IMPORT_SH};
 use rustls::pki_types::pem::PemObject;
 use serde_json::json;
 use support::{Api, TestDevCert, ended, hermetic_options};
@@ -196,6 +196,12 @@ struct Guest {
     volume: Mutex<Vec<(String, String)>>,
     /// How many times the listing script ran, for all checkouts or for one.
     listings: Mutex<Vec<Option<String>>>,
+    /// Each import's arguments, with what the guest read at its mounted source's `HEAD`,
+    /// whether a file beside the `.git` (the working tree) could be read there, and the hook
+    /// setting its environment gave git.
+    imports: Mutex<Vec<SeenImport>>,
+    /// Every import fails the way git does for a repository it can't read.
+    fail_import: AtomicBool,
     /// The listing script fails the way it does for a volume it cannot enter.
     fail_listing: AtomicBool,
     /// Checkouts the listing reports as unreadable, by directory and message.
@@ -204,6 +210,10 @@ struct Guest {
     listing_hold: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
     listing_waits: AtomicBool,
 }
+
+/// One import as the fake guest saw it: its arguments, its source's `HEAD`, whether the working
+/// tree was readable, and the hook setting its environment gave git.
+type SeenImport = (Vec<String>, String, bool, Option<String>);
 
 impl Guest {
     fn install(self: &Arc<Self>, runtime: &FakeRuntime) {
@@ -223,6 +233,8 @@ impl Guest {
                 "start-folder"
             }
             ("sh", _) if second == Some(CLEAR_LOCKS_SH) => "locks",
+            ("sh", _) if second == Some(FINISH_IMPORT_SH) => "finish-import",
+            ("git", _) if r.args.iter().any(|a| a == "--no-local") => "import",
             ("sh", _) if second == Some(DELETE_CHECK_SH) => "check",
             ("sh", _) if second.is_some_and(|s| s.contains("fstrim")) => "shutdown-trim",
             ("sh", _) if second.is_some_and(|s| s.contains("mktemp")) => "shell-init-check",
@@ -253,6 +265,13 @@ impl Guest {
             }
             "boot" => self.boot_ok(),
             "start-folder" => self.answer_start_folder(),
+            "import" => self.answer_import(ctx, r),
+            "finish-import" => {
+                let (dest, url) = (&r.args[3], &r.args[5]);
+                let dir = dest.rsplit('/').next().unwrap_or_default().to_owned();
+                self.volume.lock().unwrap().push((dir, url.clone()));
+                ExecOutput::new(0, "", "")
+            }
             "shell-init-check" => self.answer_shell_init_check(ctx, r),
             "layout" if self.fail_layout.load(Ordering::SeqCst) => ExecOutput::new(
                 1,
@@ -316,6 +335,34 @@ impl Guest {
             Some((code, out)) => ExecOutput::new(code, out, ""),
             None => ExecOutput::new(0, "", ""),
         }
+    }
+
+    /// Records an import: what its mounted source's `HEAD` reads, and whether the working tree
+    /// next to the `.git` is there to read (it must not be).
+    fn answer_import(&self, ctx: &ExecContext<'_>, r: &ExecRequest) -> ExecOutput {
+        let src = &r.args[r.args.len() - 2];
+        let read = |p: &str| ctx.read(&GuestPath::new(p).unwrap()).ok();
+        let head = read(&format!("{src}/.git/HEAD"))
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default();
+        let tree_visible = read(&format!("{src}/.env")).is_some();
+        let hooks = (0..8).find_map(|i| {
+            (ctx.env().get(&format!("GIT_CONFIG_KEY_{i}")) == Some("core.hooksPath"))
+                .then(|| {
+                    ctx.env()
+                        .get(&format!("GIT_CONFIG_VALUE_{i}"))
+                        .map(str::to_owned)
+                })
+                .flatten()
+        });
+        self.imports
+            .lock()
+            .unwrap()
+            .push((r.args.clone(), head, tree_visible, hooks));
+        if self.fail_import.load(Ordering::SeqCst) {
+            return ExecOutput::new(128, "", "fatal: bad object HEAD\n");
+        }
+        ExecOutput::new(0, "", "")
     }
 
     /// What the guest says about the start folder: a missing one fails the `[ -d ]` test.
@@ -2400,6 +2447,7 @@ async fn editor_stand_in(rig: &Rig, name: &str) -> EditorStandIn {
     std::fs::write(&password_file, "0".repeat(64)).unwrap();
     // Its port is taken, so the agent starts no server of its own and the stand-in answers.
     let mut editor = EditorServer::new("/nonexistent/data", "/nonexistent/work", 120);
+    // flake-ok: a path that must not exist; on Windows it is rooted on the current drive and still does not exist
     editor.dir = "/nonexistent/release".into();
     editor.port = port;
     let sandbox = WorkspaceName::new(name).unwrap().sandbox_name();
@@ -2412,6 +2460,7 @@ async fn editor_stand_in(rig: &Rig, name: &str) -> EditorStandIn {
         editor: Some(EditorConfig {
             server: editor,
             password_file: password_file.clone(),
+            boot_id: dir.path().join("boot_id"),
         }),
         ..puddle_agent::Config::default()
     })
@@ -5799,6 +5848,46 @@ async fn a_start_that_fails_after_the_ca_was_made_leaves_no_ca_behind() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_start_the_runtime_refuses_raises_a_problem_about_the_workspace_until_it_starts() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "beta").await;
+    api.post("/api/workspaces/beta/stop", "").await;
+    events.until(ended("beta"), Duration::from_secs(20)).await;
+    rig.runtime.inject(
+        Op::Start,
+        Fault::once(puddle_compute::ComputeError::StartRefused {
+            sandbox: name("beta").sandbox_name().to_string(),
+            cause: puddle_compute::StartRefusal::RootDiskOutsideFolder,
+        }),
+    );
+    api.post("/api/workspaces/beta/start", "").await;
+    let end = events.until(ended("beta"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    let problem = problem_of(&host, "start-refused:beta");
+    assert_eq!(problem.workspace, Some(name("beta")));
+    assert!(
+        problem.title.contains("beta was not started"),
+        "{problem:?}"
+    );
+    for want in [
+        "nothing was attached",
+        "root-disk journal names a file outside its own folder",
+        "create it again",
+    ] {
+        assert!(problem.detail.contains(want), "{problem:?}");
+    }
+
+    api.post("/api/workspaces/beta/start", "").await;
+    let end = events.until(ended("beta"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert!(!has_problem(&host, "start-refused:beta"));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_company_roots_go_into_the_clients_that_verify_decrypted_hosts() {
     // A host with company roots starts: the TLS client for decrypted hosts is built with them.
     let rig = Rig::new();
@@ -8607,6 +8696,17 @@ async fn a_start_folder_reaches_the_login_shell_file_and_a_missing_one_is_a_prob
     assert_eq!(saved.json()["start_folder"], serde_json::Value::Null);
 }
 
+/// Stops `name` and starts it again.
+async fn stop_and_start(api: &Api, events: &mut support::Events, name: &'static str) {
+    for step in ["stop", "start"] {
+        let reply = api
+            .post(&format!("/api/workspaces/{name}/{step}"), "")
+            .await;
+        assert_eq!(reply.status, 202, "{}", reply.body);
+        events.until(ended(name), Duration::from_secs(20)).await;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_attach_writes_the_multi_root_file_for_two_checkouts_and_a_file_it_cannot_parse_is_a_problem()
  {
@@ -8649,9 +8749,19 @@ async fn an_attach_writes_the_multi_root_file_for_two_checkouts_and_a_file_it_ca
     ] {
         assert!(plan.contains(folder), "{folder}: {plan}");
     }
-    // A start folder replaces the window: Puddle's lines go again.
+    // A start keeps the file as the last attach wrote it, so the editor server opens it at once
+    // (only a running guest can list the checkouts).
+    stop_and_start(&api, &mut events, "acme").await;
+    let plan = last_plan(&rig);
+    assert!(
+        plan.contains(&format!("\npuddle_keep '/workspaces/acme/{file}'\n")),
+        "{plan}"
+    );
+    // A start folder replaces the window: Puddle's lines go again, at an attach and at a start.
     put_start_folder(&api, "acme", Some("api")).await;
     attach().await;
+    assert!(!last_plan(&rig).contains(file));
+    stop_and_start(&api, &mut events, "acme").await;
     assert!(!last_plan(&rig).contains(file));
     put_start_folder(&api, "acme", None).await;
 
@@ -9185,5 +9295,273 @@ async fn a_pinned_forward_follows_the_workspace_through_stop_start_and_delete() 
     assert_eq!(delete.status, 202, "{}", delete.body);
     events.until(ended("acme"), Duration::from_secs(20)).await;
     assert_eq!(host.store().pinned_ports(&name).unwrap(), []);
+    host.shutdown().await;
+}
+
+// ---- starting from a checkout on this computer ------------------------------------------------
+
+/// A checkout on this computer by its files alone (Puddle never runs git against it): a `.git`
+/// whose config names `origin` as an SSH remote of GitHub and asks for a file-system monitor, a
+/// hook, and an `.env` beside it. The monitor and the hook would leave `ran` next to the folder if
+/// anything ran them on this computer.
+fn local_checkout(base: &std::path::Path, name: &str) -> PathBuf {
+    let work = base.join(name);
+    let git = work.join(".git");
+    for dir in ["objects", "refs/heads", "hooks"] {
+        std::fs::create_dir_all(git.join(dir)).unwrap();
+    }
+    let ran = base.join("ran");
+    std::fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+    std::fs::write(
+        git.join("config"),
+        format!(
+            "[core]\n\tfsmonitor = touch {ran}\n[remote \"origin\"]\n\turl = git@github.com:acme/{name}.git\n",
+            ran = ran.display()
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        git.join("hooks").join("post-checkout"),
+        format!("#!/bin/sh\ntouch {}\n", ran.display()),
+    )
+    .unwrap();
+    std::fs::write(work.join(".env"), "SECRET=never-in-a-guest\n").unwrap();
+    work
+}
+
+/// Every file below `dir` with its bytes and modification time.
+fn files_of(dir: &std::path::Path) -> Vec<(PathBuf, Vec<u8>, std::time::SystemTime)> {
+    let mut out = Vec::new();
+    let mut todo = vec![dir.to_path_buf()];
+    while let Some(d) = todo.pop() {
+        for entry in std::fs::read_dir(&d).unwrap() {
+            let p = entry.unwrap().path();
+            if p.is_dir() {
+                todo.push(p);
+            } else {
+                let modified = std::fs::metadata(&p).unwrap().modified().unwrap();
+                out.push((p.clone(), std::fs::read(&p).unwrap(), modified));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_workspace_starts_from_a_checkout_on_this_computer_and_the_checkout_is_left_as_it_was() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let tmp = tempfile::tempdir().unwrap();
+    let base = std::fs::canonicalize(tmp.path()).unwrap();
+    let work = local_checkout(&base, "shop");
+    let before = files_of(&base);
+    let mut events = api.events().await;
+
+    let body =
+        json!({"name": "local", "repositories": [{"local_path": work.display().to_string()}]});
+    let reply = api.post("/api/workspaces", &body.to_string()).await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    // The origin's HTTPS form is the repository's address, the folder's name its directory.
+    let entry = &reply.json()["repositories"][0];
+    assert_eq!(entry["url"], "https://github.com/acme/shop.git", "{entry}");
+    assert_eq!(entry["directory"], "shop", "{entry}");
+    let end = events.until(ended("local"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+
+    // The import ran first, in the maintenance sandbox, and the workspace's own boot cloned nothing.
+    let commands = rig.guest.commands();
+    assert_eq!(
+        commands[..3],
+        ["m--local import", "m--local finish-import", "m--local sync"],
+        "{commands:#?}"
+    );
+    assert!(
+        commands[3..]
+            .iter()
+            .all(|c| c.starts_with("local ") && !c.ends_with(" clone")),
+        "{commands:#?}"
+    );
+    let imports = rig.guest.imports.lock().unwrap().clone();
+    assert_eq!(imports.len(), 1);
+    let (args, head, tree_visible, hooks) = &imports[0];
+    assert_eq!(
+        head, "ref: refs/heads/main\n",
+        "the import read the checkout's own .git"
+    );
+    assert!(!tree_visible, "the working tree was visible to the import");
+    assert_eq!(
+        hooks.as_deref(),
+        Some("/dev/null"),
+        "no hook may run in the import"
+    );
+    assert_eq!(args.last().unwrap(), "/workspaces/local/shop");
+    // The import sandbox had no route and is gone; the workspace's has its own.
+    let names: Vec<String> = rig
+        .runtime
+        .list()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|s| s.name)
+        .collect();
+    assert_eq!(names, ["local"]);
+
+    // The listing ties the clone to its entry, by the origin it was given.
+    let list = checkouts_of(&api, "local").await;
+    assert_eq!(
+        list["checkouts"][0]["entry"]["url"],
+        "https://github.com/acme/shop.git"
+    );
+
+    // Nothing on this computer ran or changed: no hook, no monitor, every file as it was.
+    assert!(!base.join("ran").exists());
+    assert_eq!(files_of(&base), before);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_folder_that_cannot_be_started_from_is_refused_before_anything_exists() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let tmp = tempfile::tempdir().unwrap();
+    let base = std::fs::canonicalize(tmp.path()).unwrap();
+    let plain = base.join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    let linked = base.join("linked");
+    std::fs::create_dir_all(&linked).unwrap();
+    std::fs::write(linked.join(".git"), "gitdir: /elsewhere/.git/worktrees/x\n").unwrap();
+    let no_origin = local_checkout(&base, "no-origin");
+    std::fs::write(no_origin.join(".git").join("config"), "[core]\n").unwrap();
+    let unknown = local_checkout(&base, "unknown");
+    std::fs::write(
+        unknown.join(".git").join("config"),
+        "[remote \"origin\"]\n\turl = git@git.example.com:acme/x.git\n",
+    )
+    .unwrap();
+
+    for (folder, want) in [
+        (&plain, "has no .git"),
+        (&linked, "linked worktree or a submodule"),
+        (&no_origin, "has no origin remote"),
+        (&unknown, "knows no HTTPS form"),
+    ] {
+        let body = json!({"name": "refused", "repositories": [{"local_path": folder.display().to_string()}]});
+        let reply = api.post("/api/workspaces", &body.to_string()).await;
+        assert_eq!(reply.status, 422, "{}: {}", folder.display(), reply.body);
+        assert!(reply.body.contains(want), "{want}: {}", reply.body);
+    }
+    assert!(rig.guest.commands().is_empty());
+    assert!(
+        api.get("/api/workspaces").await.json()["workspaces"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    // An address given with the folder stands in for a missing or unusable origin.
+    let mut events = api.events().await;
+    let body = json!({"name": "given", "repositories": [{"local_path": unknown.display().to_string(), "url": "https://git.example.com/acme/x.git"}]});
+    let reply = api.post("/api/workspaces", &body.to_string()).await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    assert_eq!(
+        reply.json()["repositories"][0]["url"],
+        "https://git.example.com/acme/x.git"
+    );
+    events.until(ended("given"), Duration::from_secs(20)).await;
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_checkout_git_refuses_is_a_problem_and_a_boot_that_fails_after_the_import_leaves_no_volume()
+ {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let tmp = tempfile::tempdir().unwrap();
+    let base = std::fs::canonicalize(tmp.path()).unwrap();
+    let work = local_checkout(&base, "shop");
+    let body = |name: &str| {
+        json!({"name": name, "repositories": [{"local_path": work.display().to_string()}]})
+            .to_string()
+    };
+
+    // git refuses the checkout: the workspace is made without it, and a problem says what to do.
+    rig.guest.fail_import.store(true, Ordering::SeqCst);
+    let mut events = api.events().await;
+    let reply = api.post("/api/workspaces", &body("refused")).await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended("refused"), Duration::from_secs(20))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let problems = api.get("/api/problems").await.json();
+    let problem = problems["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["key"] == "clone:refused:shop")
+        .unwrap_or_else(|| panic!("{problems}"))
+        .clone();
+    assert!(
+        problem["title"]
+            .as_str()
+            .unwrap()
+            .contains("https://github.com/acme/shop.git"),
+        "{problem}"
+    );
+    let detail = problem["detail"].as_str().unwrap();
+    assert!(
+        detail.starts_with("git exited 128: fatal: bad object HEAD"),
+        "{problem}"
+    );
+    assert!(
+        detail.contains("add the repository by its address on the Git tab"),
+        "{problem}"
+    );
+    rig.guest.fail_import.store(false, Ordering::SeqCst);
+
+    // The import made the volume and then the boot failed: the volume goes with the create.
+    rig.guest.fail_boot.store(true, Ordering::SeqCst);
+    let reply = api.post("/api/workspaces", &body("unbooted")).await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended("unbooted"), Duration::from_secs(20))
+        .await;
+    assert_eq!(end["step"], "failed", "{end}");
+    let volumes: Vec<String> = rig
+        .runtime
+        .list_volumes()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|v| v.name)
+        .collect();
+    assert!(!volumes.contains(&"ws-unbooted".to_owned()), "{volumes:?}");
+    assert!(
+        rig.guest
+            .commands()
+            .contains(&"m--unbooted import".to_owned())
+    );
+
+    // The volume cannot be removed either: the failure says so and names the volume left.
+    rig.runtime.inject(
+        Op::RemoveVolume,
+        Fault::once(puddle_compute::ComputeError::Runtime {
+            op: "remove_volume",
+            message: "the disk is busy".into(),
+        }),
+    );
+    let reply = api.post("/api/workspaces", &body("stuck")).await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events.until(ended("stuck"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    assert!(
+        end.to_string()
+            .contains("the new volume ws-stuck was not removed"),
+        "{end}"
+    );
     host.shutdown().await;
 }

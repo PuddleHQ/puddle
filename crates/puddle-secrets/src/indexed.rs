@@ -337,4 +337,41 @@ mod tests {
         store.delete(&id("tok-a")).unwrap();
         assert!(store.get(&id("tok-a")).unwrap().is_none());
     }
+
+    /// A store whose index entry can be made read-only.
+    #[derive(Default)]
+    struct IndexLocked {
+        inner: MemoryStore,
+        locked: Mutex<bool>,
+    }
+
+    impl SecretStore for IndexLocked {
+        fn get(&self, id: &StoredId) -> Result<Option<Secret>, StoreError> {
+            self.inner.get(id)
+        }
+        fn set(&self, id: &StoredId, secret: &Secret) -> Result<(), StoreError> {
+            if id.as_str() == INDEX_ID && *self.locked.lock().unwrap() {
+                return Err(StoreError);
+            }
+            self.inner.set(id, secret)
+        }
+        fn delete(&self, id: &StoredId) -> Result<(), StoreError> {
+            self.inner.delete(id)
+        }
+    }
+
+    #[test]
+    fn a_sweep_that_removes_nothing_does_not_write_the_index() {
+        let store = IndexedStore::new(IndexLocked::default());
+        store.set(&id("tok-a"), &secret("a")).unwrap();
+        let later = IndexedStore {
+            inner: store.inner,
+            written: Mutex::new(HashSet::new()),
+        };
+        *later.inner.locked.lock().unwrap() = true;
+        // Everything is kept: nothing changes, so there is nothing to write (and no failure).
+        assert_eq!(later.sweep_orphans(&|_| true).unwrap(), Sweep::default());
+        // A removal does need the index written, and says so when it cannot.
+        assert_eq!(later.sweep_orphans(&|_| false), Err(StoreError));
+    }
 }

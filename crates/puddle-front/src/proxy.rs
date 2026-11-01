@@ -336,19 +336,13 @@ async fn forward(
             let open = editor.then(|| shared.windows.open(workspace));
             let mut stop = shared.stop.clone();
             tokio::spawn(async move {
-                let _open = open;
                 let _socket = socket;
                 let (Ok(client), Ok(server)) = tokio::join!(client_upgrade, server_upgrade) else {
                     return;
                 };
-                let (mut client, mut server) = (TokioIo::new(client), TokioIo::new(server));
                 tokio::select! {
                     _ = stop.wait_for(|stopped| *stopped) => {}
-                    ended = tokio::io::copy_bidirectional(&mut client, &mut server) => {
-                        if let Err(err) = ended {
-                            tracing::debug!(error = %err, "an editor socket ended with an error");
-                        }
-                    }
+                    () = carry(TokioIo::new(client), TokioIo::new(server), open) => {}
                 }
             });
         }
@@ -373,6 +367,48 @@ async fn forward(
         }
     }
     response.map(BodyExt::boxed)
+}
+
+/// How long one side of an upgraded socket is carried on after the other side ended it.
+const LINGER: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Carries an upgraded socket both ways. The window is gone once the client ends its side, so
+/// `open` is dropped then, whatever the server does with its own; either side's end leaves the
+/// other [`LINGER`] to finish before the socket closes.
+async fn carry<C, S>(client: C, server: S, open: Option<crate::windows::Connected>)
+where
+    C: tokio::io::AsyncRead + tokio::io::AsyncWrite,
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite,
+{
+    use tokio::io::AsyncWriteExt as _;
+    let (mut client_in, mut client_out) = tokio::io::split(client);
+    let (mut server_in, mut server_out) = tokio::io::split(server);
+    let up = async {
+        let copied = tokio::io::copy(&mut client_in, &mut server_out).await;
+        let _ = server_out.shutdown().await;
+        copied.inspect_err(socket_error)
+    };
+    let down = async {
+        let copied = tokio::io::copy(&mut server_in, &mut client_out).await;
+        let _ = client_out.shutdown().await;
+        copied.inspect_err(socket_error)
+    };
+    tokio::pin!(up, down);
+    // A linger that runs out ends the socket like a close.
+    tokio::select! {
+        _ = &mut up => {
+            drop(open);
+            let _ = tokio::time::timeout(LINGER, &mut down).await;
+        }
+        _ = &mut down => {
+            let _ = tokio::time::timeout(LINGER, &mut up).await;
+        }
+    }
+}
+
+/// Logs an error that ended one side of an editor socket (a reset ends it like a close).
+fn socket_error(err: &std::io::Error) {
+    tracing::debug!(error = %err, "an editor socket ended with an error");
 }
 
 /// Removes the headers of the client's connection; an upgrade keeps the two that make it one.

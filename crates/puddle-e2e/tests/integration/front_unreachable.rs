@@ -111,6 +111,7 @@ async fn rig() -> Rig {
     let password_file = dir.path().join("editor-password");
     std::fs::write(&password_file, PASSWORD).unwrap();
     let mut editor = EditorServer::new("/nonexistent/data", "/nonexistent/work", 120);
+    // flake-ok: a path that must not exist; on Windows it is rooted on the current drive and still does not exist
     editor.dir = "/nonexistent/release".into();
     editor.port = editor_port;
     let agent = Agent::start(Config {
@@ -121,6 +122,7 @@ async fn rig() -> Rig {
         editor: Some(EditorConfig {
             server: editor,
             password_file,
+            boot_id: dir.path().join("boot_id"),
         }),
         ..Config::default()
     })

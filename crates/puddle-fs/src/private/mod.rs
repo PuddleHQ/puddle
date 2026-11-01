@@ -534,4 +534,42 @@ mod tests {
         fs::rename(&from, &to).unwrap();
         assert_ne!(acl_of(&to), before);
     }
+
+    #[test]
+    fn what_a_file_exposes_is_said_in_words() {
+        assert_eq!(
+            Exposed::Mode(0o644).to_string(),
+            "mode 644; it must be 0600"
+        );
+        assert_eq!(
+            Exposed::Acl("Everyone may read".to_owned()).to_string(),
+            "Everyone may read; it must be accessible to its owner only"
+        );
+        assert_eq!(
+            CheckError::Exposed(Exposed::Mode(0o640)).to_string(),
+            "readable by other users (mode 640; it must be 0600)"
+        );
+    }
+
+    #[test]
+    fn check_passes_an_owner_only_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = create_file(&dir.path().join("private")).unwrap();
+        check(&file).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_refuses_a_file_others_can_read() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("open");
+        fs::write(&path, b"x").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        let err = check(&File::open(&path).unwrap()).unwrap_err();
+        assert!(
+            matches!(err, CheckError::Exposed(Exposed::Mode(0o644))),
+            "{err}"
+        );
+    }
 }

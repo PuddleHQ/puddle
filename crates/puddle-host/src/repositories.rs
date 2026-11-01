@@ -222,6 +222,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             identity: None,
             pull: true,
             push: true,
+            local: None,
         };
         self.begin_clone(id, new, false, git).await
     }
@@ -408,6 +409,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             identity,
             pull,
             push,
+            local: None,
         };
         let record = {
             let mut state = self.state();

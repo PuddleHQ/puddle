@@ -100,11 +100,13 @@ async fn rig(tag: &str, editor: Option<(u16, Option<&str>)>) -> Rig {
             std::fs::write(&password_file, password).unwrap();
         }
         let mut server = EditorServer::new("/nonexistent/data", "/nonexistent/work", 120);
+        // flake-ok: a path that must not exist; on Windows it is rooted on the current drive and still does not exist
         server.dir = "/nonexistent/release".into();
         server.port = port;
         EditorConfig {
             server,
             password_file,
+            boot_id: dir.0.join("boot_id"),
         }
     });
     let config = Config {

@@ -441,6 +441,7 @@ impl Config {
                 EditorConfig {
                     server,
                     password_file,
+                    boot_id: PathBuf::from(crate::editor::BOOT_ID_FILE),
                 }
             });
         config.capture = capture_on.then_some(capture);
@@ -750,6 +751,7 @@ mod tests {
                 .unwrap()
                 .entrypoint
                 .map(|w| w.exit_file),
+            // flake-ok: a value that is parsed or compared and never opened, so the missing drive letter does not matter
             Some(PathBuf::from("/tmp/exit"))
         );
     }

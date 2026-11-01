@@ -13,6 +13,7 @@
     children,
     onClose,
     returnFocusTo,
+    openFocus,
   }: {
     open?: boolean;
     title: string;
@@ -21,6 +22,8 @@
     onClose?: () => void;
     /** Where focus goes on close, when the dialog was not opened from a control that will take it back. */
     returnFocusTo?: () => HTMLElement | null | undefined;
+    /** The element that takes focus on open, when it is not the first tabbable one. */
+    openFocus?: () => HTMLElement | null | undefined;
   } = $props();
 </script>
 
@@ -34,6 +37,13 @@
     <Dialog.Overlay class="confirm-overlay" />
     <Dialog.Content
       class="confirm-content form-dialog"
+      onOpenAutoFocus={(event) => {
+        const target = openFocus?.();
+        if (target) {
+          event.preventDefault();
+          target.focus();
+        }
+      }}
       onCloseAutoFocus={(event) => {
         const target = returnFocusTo?.();
         if (target) {

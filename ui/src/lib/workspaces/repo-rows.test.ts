@@ -6,7 +6,10 @@ import {
   directoryFor,
   directoryOf,
   directoryProblem,
+  folderOf,
   freeDirectory,
+  cleanPath,
+  localPathProblem,
   MAX_REPOSITORIES,
   newRow,
   refusedRow,
@@ -215,5 +218,117 @@ describe("refusedRow", () => {
   it("is null for anything else", () => {
     expect(refusedRow("a workspace holds at most 100 repositories")).toBeNull();
     expect(refusedRow("")).toBeNull();
+  });
+});
+
+const folderRow = (key: number, localPath: string, url = "") => ({
+  ...newRow(key, url),
+  source: "folder" as const,
+  localPath,
+});
+
+describe("a checkout on this computer", () => {
+  it.each([
+    ["/home/you/shop", "shop"],
+    ["/home/you/shop/", "shop"],
+    ["/home/you/shop/.git", "shop"],
+    ["C:\\Users\\you\\Shop", "Shop"],
+    ["C:\\Users\\you\\Shop\\.git\\", "Shop"],
+    ["/home/you/.hidden", null],
+    ["/", null],
+  ])("%j is cloned into %j", (path, dir) => {
+    expect(folderOf(path)).toBe(dir);
+  });
+
+  it.each([
+    ["/home/you/shop", null],
+    ["C:\\Users\\you\\shop", null],
+    ["c:/Users/you/shop", null],
+    ["\\\\server\\share\\shop", null],
+    ['"C:\\Users\\you\\shop"', null],
+    ['  "/home/you/shop"  ', null],
+    ["/", "not the root of a drive"],
+    ["//", "not the root of a drive"],
+    ["C:\\", "not the root of a drive"],
+    ["c:/", "not the root of a drive"],
+    ["\\\\", "not the root of a drive"],
+    ['"C:\\"', "not the root of a drive"],
+    ["", "Give the folder of the checkout."],
+    ['""', "Give the folder of the checkout."],
+    ["shop", "Give the full path"],
+    ["~/shop", "Give the full path"],
+  ])("%j: %j", (path, problem) => {
+    const found = localPathProblem(path);
+    if (problem === null) expect(found).toBeNull();
+    else expect(found).toContain(problem);
+  });
+
+  it("takes the folder's name as its directory, unless one is typed or the name is unusable", () => {
+    expect(directoryFor(folderRow(1, "/home/you/shop"))).toBe("shop");
+    expect(
+      directoryFor({ ...folderRow(1, "/home/you/shop"), directory: "web" }),
+    ).toBe("web");
+    expect(
+      directoryFor(folderRow(1, "/home/you/.x", "https://h/a/api.git")),
+    ).toBe("api");
+    // A folder typed but the address chosen: the folder does not count.
+    expect(
+      directoryFor({
+        ...folderRow(1, "/home/you/shop", "https://h/a/api.git"),
+        source: "address",
+      }),
+    ).toBe("api");
+  });
+
+  it("needs no address, and a typed one is still checked", () => {
+    expect(
+      rowProblems([folderRow(1, "/home/you/shop")]).get(1),
+    ).toBeUndefined();
+    expect(rowProblems([folderRow(1, "shop")]).get(1)?.localPath).toContain(
+      "full path",
+    );
+    expect(rowProblems([folderRow(1, "")]).get(1)?.localPath).toBe(
+      "Give the folder of the checkout.",
+    );
+    expect(
+      rowProblems([folderRow(1, "/home/you/shop", "http://x/y")]).get(1)?.url,
+    ).toBe("Use an https:// URL.");
+    // An address row with a folder left over from switching is checked as an address.
+    const switched = {
+      ...folderRow(1, "/home/you/shop"),
+      source: "address" as const,
+    };
+    expect(rowProblems([switched]).get(1)?.url).toBe(
+      "Enter the repository's HTTPS URL.",
+    );
+  });
+
+  it("clashes on the folder's directory like any other", () => {
+    const found = clashes([
+      folderRow(1, "/home/you/api"),
+      row(2, "https://github.com/acme/api.git"),
+    ]);
+    expect(found.get(2)?.directory).toContain("also goes into api");
+    expect(checkRows([folderRow(1, "")]).get(1)?.localPath).toBeDefined();
+  });
+
+  it("puts a refusal about the checkout on its folder field", () => {
+    expect(
+      refusedRow(
+        "repository 2 (the checkout /home/you/shop): it has no origin remote",
+      ),
+    ).toEqual({
+      row: 2,
+      field: "localPath",
+    });
+  });
+});
+
+describe("cleanPath", () => {
+  it("drops the quotes Windows' Copy as path adds, and only a matching outer pair", () => {
+    expect(cleanPath(' "C:\\a b\\shop" ')).toBe("C:\\a b\\shop");
+    expect(cleanPath("/home/you/shop")).toBe("/home/you/shop");
+    expect(cleanPath('"/home/you/shop')).toBe('"/home/you/shop');
+    expect(folderOf('"C:\\Users\\you\\shop"')).toBe("shop");
   });
 });

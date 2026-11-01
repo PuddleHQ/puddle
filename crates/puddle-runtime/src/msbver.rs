@@ -132,6 +132,7 @@ mod tests {
     fn non_executables_and_missing_files_are_errors() {
         assert!(read(b"#!/bin/sh\necho 0.7.7-puddle.1\n").is_err());
         assert!(read(b"").is_err());
+        // flake-ok: a path that must not exist; on Windows it is rooted on the current drive and still does not exist
         let missing = read_embedded_version(Path::new("/nonexistent/puddle/msb"));
         assert!(missing.is_err());
     }

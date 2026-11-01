@@ -52,7 +52,7 @@ pub mod fake;
 mod runtime;
 mod spec;
 
-pub use error::ComputeError;
+pub use error::{ComputeError, StartRefusal};
 pub use exec::{ExecOutput, ExecRequest, ExitStatus};
 pub use runtime::{
     Capabilities, ImageConfig, Runtime, Sandbox, SandboxInfo, SshStream, VolumeInfo, VolumeSpec,

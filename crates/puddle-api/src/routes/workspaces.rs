@@ -4,7 +4,7 @@
 //! operations answer 202 with the workspace marked busy and report through `status_changed` and
 //! `workspace_progress` events.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use axum::Json;
@@ -24,7 +24,7 @@ use crate::wire::{
     AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, NewWorkspaceIdentity,
     NewWorkspaceRequest, RenameWorkspaceRequest, Workspace, WorkspaceList,
 };
-use crate::workspaces::{GitSetup, NewRepository};
+use crate::workspaces::{GitSetup, LocalSource, NewRepository};
 
 /// The id in a path. A string that can't be an id names no workspace.
 pub(super) fn workspace_id(raw: &str) -> Result<WorkspaceId, ApiError> {
@@ -256,7 +256,25 @@ pub(crate) async fn create_workspace(
     let store = state.store.clone();
     let known: BTreeSet<IdentityId> =
         blocking(move || Ok(store.identities()?.into_iter().map(|i| i.id).collect())).await?;
-    let new = body.into_new(|id| known.contains(&id))?;
+    let mut paths = body.local_paths();
+    // Looked at only for a list the create can take: each look reads the disk.
+    if body.repositories.len() > crate::workspaces::MAX_REPOSITORIES {
+        paths.clear();
+    }
+    paths.sort();
+    paths.dedup();
+    let service = state.workspaces.clone();
+    let locals: BTreeMap<String, Result<LocalSource, String>> = blocking(move || {
+        Ok(paths
+            .into_iter()
+            .map(|p| {
+                let found = service.local_checkout(&p);
+                (p, found)
+            })
+            .collect())
+    })
+    .await?;
+    let new = body.into_new(|id| known.contains(&id), &locals)?;
     let (store, name) = (state.store.clone(), new.name.clone());
     let requests: Vec<RepoGitRequest> = new.repositories.iter().filter_map(git_request).collect();
     blocking(move || Ok(store.check_repository_git(&name, &requests)?)).await?;
@@ -492,6 +510,7 @@ mod tests {
             identity: identity.map(IdentityId),
             pull: true,
             push: true,
+            local: None,
         }
     }
 

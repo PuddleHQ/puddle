@@ -295,6 +295,7 @@ mod tests {
     fn port_and_connection_file() {
         let a = serve(&["--port", "4000", "--connection-file", "/tmp/c.json"]).unwrap();
         assert_eq!(a.port, Some(4000));
+        // flake-ok: a value that is parsed or compared and never opened, so the missing drive letter does not matter
         assert_eq!(a.connection_file, Some(PathBuf::from("/tmp/c.json")));
     }
 

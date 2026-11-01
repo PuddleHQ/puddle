@@ -3244,9 +3244,9 @@ export interface components {
         /** @description One repository of `POST /api/workspaces`. */
         NewRepositoryRequest: {
             /**
-             * @description The checkout's directory under the volume root; left out or `null` is the last part of
-             *     the address (`api` for `https://github.com/acme/api.git`), or `src` when that is no usable
-             *     name.
+             * @description The checkout's directory under the volume root; left out or `null` is the folder's name
+             *     for a `local_path`, else the last part of the address (`api` for
+             *     `https://github.com/acme/api.git`), or `src` when that is no usable name.
              */
             directory?: string | null;
             /**
@@ -3256,6 +3256,14 @@ export interface components {
              */
             identity_id?: number | null;
             /**
+             * @description A git checkout on this computer to start from, as an absolute path to its folder (or its
+             *     `.git`). Only its `.git` directory is read, read-only, by a short-lived sandbox with no
+             *     network that clones it: every commit, branch and tag comes along; uncommitted changes and
+             *     untracked files (an `.env`) stay on this computer. The clone's `origin` is `url`. A
+             *     worktree's or submodule's `.git` file and a bare repository are refused with the reason.
+             */
+            local_path?: string | null;
+            /**
              * @description Pull on its new repository table row; left out or `null` is on. A row the table already
              *     has keeps its toggles.
              */
@@ -3264,9 +3272,11 @@ export interface components {
             push?: boolean | null;
             /**
              * @description The repository to clone, as an `https://` URL without credentials. SSH remotes
-             *     (`git@host:path`, `ssh://`) are refused with a message saying so.
+             *     (`git@host:path`, `ssh://`) are refused with a message saying so. With `local_path` it
+             *     may be left out or empty: the checkout's `origin` remote gives it (an SSH remote of
+             *     GitHub, GitLab, Bitbucket or Azure DevOps in its HTTPS form).
              */
-            url: string;
+            url?: string;
         };
         /** @description A rule on method and path to make. */
         NewRequestRuleRequest: {

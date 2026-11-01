@@ -193,9 +193,13 @@ impl MsbConfig {
         }
     }
 
-    /// The checkout rule (see [`crate::checkout`]), with the msb home, the guest share and every
+    /// The checkout rule (see `crate::checkout`), with the msb home, the guest share and every
     /// [`MsbConfig::protected_dirs`] folder protected.
-    fn check_checkout(&self, host: &Path) -> Result<(), ComputeError> {
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::InvalidSpec`] naming what is wrong with the folder.
+    pub fn check_checkout(&self, host: &Path) -> Result<(), ComputeError> {
         // Without the data folder named, a checkout inside it would pass: fail closed.
         if self.protected_dirs.is_empty() {
             return Err(ComputeError::InvalidSpec {

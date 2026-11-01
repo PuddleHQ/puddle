@@ -35,10 +35,53 @@ export function directoryOf(url: string): string {
   return directoryProblem(name) === null ? name : FALLBACK_DIRECTORY;
 }
 
+/**
+ * The folder name of a checkout on this computer: the last part of its path (the part before
+ * `.git` when the path names the `.git` itself), or `null` when that is no usable directory.
+ */
+export function folderOf(path: string): string | null {
+  const parts = cleanPath(path)
+    .split(/[\\/]+/)
+    .filter(Boolean);
+  if (parts[parts.length - 1] === ".git") parts.pop();
+  const name = parts.pop() ?? "";
+  return directoryProblem(name) === null ? name : null;
+}
+
+/**
+ * A folder path as typed: trimmed, and without the pair of double quotes that Windows'
+ * "Copy as path" puts around it.
+ */
+export function cleanPath(path: string): string {
+  const p = path.trim();
+  return p.length >= 2 && p.startsWith('"') && p.endsWith('"')
+    ? p.slice(1, -1).trim()
+    : p;
+}
+
+/** The reason `path` can't name a checkout on this computer, or `null` when it can. */
+export function localPathProblem(path: string): string | null {
+  const p = cleanPath(path);
+  if (p === "") return "Give the folder of the checkout.";
+  if (!/^(\/|[A-Za-z]:[\\/]|\\\\)/.test(p))
+    return "Give the full path of the folder, such as /home/you/project or C:\\Users\\you\\project.";
+  // A root (`/`, `C:\`, `\\`) holds no checkout: nothing is left once the separators are dropped.
+  if (p.replace(/^[A-Za-z]:/, "").replace(/[\\/]+/g, "") === "")
+    return "Give the folder of the checkout, not the root of a drive.";
+  return null;
+}
+
 /** One row of the form as the user left it. */
 export interface RowDraft {
   /** Stable identity of the row, for ids and keyed rendering. */
   key: number;
+  /** Where the code comes from: cloned from `url`, or a checkout on this computer. */
+  source: "address" | "folder";
+  /**
+   * With `source` `"folder"`: the checkout's folder on this computer. An empty `url` then takes
+   * the checkout's own `origin`.
+   */
+  localPath: string;
   url: string;
   /** What was typed in the directory field; empty follows the address. */
   directory: string;
@@ -53,6 +96,8 @@ export interface RowDraft {
 export function newRow(key: number, url = ""): RowDraft {
   return {
     key,
+    source: "address",
+    localPath: "",
     url,
     directory: "",
     identity: null,
@@ -62,10 +107,19 @@ export function newRow(key: number, url = ""): RowDraft {
   };
 }
 
-/** The directory the row will be cloned into: what was typed, else what the address gives. */
-export function directoryFor(row: Pick<RowDraft, "url" | "directory">): string {
+/**
+ * The directory the row will be cloned into: what was typed, else the checkout's folder name
+ * when it starts from a folder, else what the address gives.
+ */
+export function directoryFor(
+  row: Pick<RowDraft, "url" | "directory"> &
+    Partial<Pick<RowDraft, "source" | "localPath">>,
+): string {
   const typed = row.directory.trim();
-  return typed === "" ? directoryOf(row.url) : typed;
+  if (typed !== "") return typed;
+  const local = row.source === "folder" ? cleanPath(row.localPath ?? "") : "";
+  if (local !== "") return folderOf(local) ?? directoryOf(row.url);
+  return directoryOf(row.url);
 }
 
 /** `<dir>-2`, `<dir>-3`, ...: the first that no row in `taken` uses. */
@@ -90,6 +144,7 @@ export function sameRepositoryKey(url: string): string | null {
 }
 
 export interface RowProblems {
+  localPath?: string;
   url?: string;
   directory?: string;
 }
@@ -104,7 +159,11 @@ export function clashes(rows: readonly RowDraft[]): Map<number, RowProblems> {
   const set = (key: number, problems: RowProblems) =>
     found.set(key, { ...found.get(key), ...problems });
   const dirs = rows.map((r) =>
-    r.url.trim() === "" && r.directory.trim() === "" ? null : directoryFor(r),
+    r.url.trim() === "" &&
+    r.directory.trim() === "" &&
+    (r.source === "address" || r.localPath.trim() === "")
+      ? null
+      : directoryFor(r),
   );
   const taken = dirs.filter((d): d is string => d !== null);
   rows.forEach((row, at) => {
@@ -142,9 +201,14 @@ export function rowProblems(
   const add = (key: number, problems: RowProblems) =>
     found.set(key, { ...found.get(key), ...problems });
   for (const row of rows) {
-    const url = repoUrlProblem(row.url);
+    const fromFolder = row.source === "folder";
+    const local = fromFolder ? localPathProblem(row.localPath) : null;
+    // From a folder, the address may stay empty: the checkout's origin gives it.
+    const url =
+      fromFolder && row.url.trim() === "" ? null : repoUrlProblem(row.url);
     const typed = row.directory.trim();
     const dir = typed === "" ? null : directoryProblem(typed);
+    if (local) add(row.key, { localPath: local });
     if (url) add(row.key, { url });
     if (dir) add(row.key, { directory: dir });
   }
@@ -195,7 +259,7 @@ export function startFolderProblem(text: string): string | null {
 /** Which row of the list a refusal is about, from the service's words; `null` when none. */
 export function refusedRow(
   message: string,
-): { row: number; field: "url" | "directory" } | null {
+): { row: number; field: "localPath" | "url" | "directory" } | null {
   // "repositories 1 (a) and 2 (b) both go into api; ..." and "... are the same repository, ..."
   const pair = /^repositories (\d+) \(.*?\) and (\d+) \(/.exec(message);
   if (pair) {
@@ -205,6 +269,8 @@ export function refusedRow(
     };
   }
   const single = /^repository (\d+) \(/.exec(message);
+  if (single && message.startsWith(`repository ${single[1]} (the checkout `))
+    return { row: Number(single[1]), field: "localPath" };
   if (single) {
     // The service's reasons for a directory it refuses (`CheckoutDir::new`).
     const field = /lost\+found|ASCII letters|100 characters|`\.` or `-`/.test(

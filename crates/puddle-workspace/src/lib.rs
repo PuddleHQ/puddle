@@ -45,6 +45,7 @@
 mod check;
 mod checkouts;
 mod error;
+mod import;
 mod layout;
 mod locks;
 mod registry;
@@ -60,11 +61,12 @@ pub use checkouts::{
     RemoteNote,
 };
 pub use error::WorkspaceError;
+pub use import::{FINISH_IMPORT_SH, Import, LocalCheckout, https_form, import_mount};
 pub use layout::{LOST_AND_FOUND, Layout, PUDDLE_DIR, WORKSPACES_ROOT};
 pub use locks::{CLEAR_LOCKS_SH, CLEAR_LOCKS_TIMEOUT, LockReport, MAX_LOCKS};
 pub use registry::{HoldKind, Holder};
 pub use trim::{TRIM_TIMEOUT, TrimReport};
 pub use workspaces::{
-    Attachment, Deleted, KeptSize, MAINTENANCE_PREFIX, StopReport, WorkspaceConfig, Workspaces,
-    is_maintenance_name,
+    Attachment, Deleted, ImportReport, KeptSize, MAINTENANCE_PREFIX, StopReport, WorkspaceConfig,
+    Workspaces, is_maintenance_name,
 };

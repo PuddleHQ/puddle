@@ -19,7 +19,7 @@ use tokio::sync::watch;
 use crate::checkouts::{AddRepository, Checkouts, FoundList, check_addition, checkouts_view};
 use crate::workspaces::{
     AttachMode, Attached, BrowserTarget, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DeleteCheck,
-    DesktopTarget, DisplayName, GitSetup, KeptLogins, LaunchError, Launcher, Listing,
+    DesktopTarget, DisplayName, GitSetup, KeptLogins, LaunchError, Launcher, Listing, LocalSource,
     NewRepository, NewWorkspace, Operation, RepoFindings, ShellInitCheck, StartFolder,
     StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService,
 };
@@ -562,6 +562,7 @@ impl FakeWorkspaces {
                     identity,
                     pull,
                     push,
+                    local: None,
                 },
             )
         };
@@ -612,7 +613,45 @@ fn delete_check(entry: &Entry) -> DeleteCheck {
     )
 }
 
+/// A checkout on this computer as the fake sees it: a folder with a `.git/HEAD`, its origin the
+/// first `url = ` line of `.git/config`. Only the shape a screen needs; the real service reads
+/// much more carefully (`puddle-workspace`'s `LocalCheckout`).
+fn fake_local_checkout(path: &str) -> Result<LocalSource, String> {
+    let folder = std::path::Path::new(path.trim_end_matches(['/', '\\']));
+    let folder = if folder.file_name().is_some_and(|n| n == ".git") {
+        folder.parent().unwrap_or(folder)
+    } else {
+        folder
+    };
+    let git_dir = folder.join(".git");
+    if !git_dir.join("HEAD").is_file() {
+        return Err(format!(
+            "{} is not a git checkout: it has no .git",
+            folder.display()
+        ));
+    }
+    let origin = std::fs::read_to_string(git_dir.join("config"))
+        .ok()
+        .and_then(|text| {
+            text.lines()
+                .find_map(|l| l.trim().strip_prefix("url = ").map(str::to_owned))
+        })
+        .ok_or_else(|| "it has no origin remote".to_owned());
+    Ok(LocalSource {
+        folder_name: folder
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        git_dir,
+        origin,
+    })
+}
+
 impl WorkspaceService for FakeWorkspaces {
+    fn local_checkout(&self, path: &str) -> Result<LocalSource, String> {
+        fake_local_checkout(path)
+    }
+
     fn list(&self) -> BoxFuture<'_, Result<Vec<WorkspaceRecord>, WorkspaceError>> {
         Box::pin(async move {
             Ok(lock(&self.inner.state)
@@ -1096,6 +1135,7 @@ impl WorkspaceService for FakeWorkspaces {
                 identity: None,
                 pull: true,
                 push: true,
+                local: None,
             };
             self.clone_into(id, new, false, git).await
         })
@@ -1144,6 +1184,40 @@ impl WorkspaceService for FakeWorkspaces {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_fake_finds_a_checkout_by_its_head_and_its_origin_by_a_url_line() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shop = tmp.path().join("Shop");
+        std::fs::create_dir_all(shop.join(".git")).unwrap();
+        std::fs::write(shop.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        let service = FakeWorkspaces::new(
+            Arc::new(puddle_types::NullSink),
+            Arc::new(ManualClock::new(0)),
+        );
+        let found = service
+            .local_checkout(&format!("{}/", shop.display()))
+            .unwrap();
+        assert_eq!(found.folder_name, "Shop");
+        assert_eq!(found.git_dir, shop.join(".git"));
+        assert_eq!(found.origin, Err("it has no origin remote".to_owned()));
+        std::fs::write(
+            shop.join(".git").join("config"),
+            "[remote \"origin\"]\n\turl = https://github.com/acme/shop.git\n",
+        )
+        .unwrap();
+        let by_git = service
+            .local_checkout(&shop.join(".git").display().to_string())
+            .unwrap();
+        assert_eq!(
+            by_git.origin.as_deref(),
+            Ok("https://github.com/acme/shop.git")
+        );
+        let err = service
+            .local_checkout(&tmp.path().display().to_string())
+            .unwrap_err();
+        assert!(err.contains("has no .git"), "{err}");
+    }
     use puddle_store::ManualClock;
     use puddle_types::{CollectingSink, WorkspaceName};
 
@@ -1170,6 +1244,7 @@ mod tests {
                 identity: None,
                 pull: true,
                 push: true,
+                local: None,
             }],
         )
     }

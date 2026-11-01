@@ -32,12 +32,14 @@ use puddle_agent_proto::host_control::{HostMessage, HostReply};
 use puddle_api::{
     AttachMode, Attached, BrowserTarget, DEFAULT_IMAGE, DeleteCheck, DesktopTarget, DisplayName,
     EditorLogin, EditorSignIn, GitSetup, KeptLogin, KeptLogins, LaunchError, Launcher, Listing,
-    NewWorkspace, Operation, RepoFindings, Repository, ShellInitCheck, StartFolder,
+    LocalSource, NewWorkspace, Operation, RepoFindings, Repository, ShellInitCheck, StartFolder,
     StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService,
 };
 use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
-use puddle_compute::{ComputeError, DiskSize, ExecRequest, ImageConfig, Runtime, Sandbox as _};
+use puddle_compute::{
+    ComputeError, DiskSize, ExecRequest, ImageConfig, Runtime, Sandbox as _, StartRefusal,
+};
 use puddle_lifecycle::Lifecycle;
 use puddle_ports::{NoLink, Ports};
 use puddle_proxy::Route;
@@ -51,7 +53,7 @@ use puddle_types::{
 
 use crate::ssh_config::{SshSetup, ssh_host};
 use crate::ssh_target::{ReportingTarget, report_no_endpoint};
-use puddle_workspace::{Findings, Layout, Workspaces};
+use puddle_workspace::{Findings, Import, Layout, LocalCheckout, Workspaces};
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 
@@ -1055,6 +1057,15 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let began = inner.injection.begin(name, capture).await?;
         let wanted = authors(&began.git);
         self.report_git_settings(name, &began.git, &wanted);
+        let root = Layout::new(id).map_err(|e| e.to_string())?.mount().clone();
+        // Only a running guest can list the checkouts, so the multi-root file the last attach
+        // wrote stays as it is and the editor server opens it at this start; the next attach
+        // writes it again. A start folder replaces it.
+        let editor_file = start_folder
+            .is_none()
+            .then(|| crate::editor_file::workspace_file_path(&root, id))
+            .flatten()
+            .map(GuestFile::kept);
         let state = GuestState {
             editor,
             image,
@@ -1063,8 +1074,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             env: began.env,
             dev_cert: inner.kit.dev_cert().await,
             start_folder: start_folder.cloned(),
-            root: Layout::new(id).map_err(|e| e.to_string())?.mount().clone(),
-            editor_file: None,
+            root,
+            editor_file,
         };
         match inner.kit.plan(
             &state.image,
@@ -2257,16 +2268,30 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         with_leftovers(reason, &leftovers)
     }
 
-    async fn create_work(&self, record: WorkspaceRecord) -> Result<(), String> {
+    async fn create_work(
+        &self,
+        record: WorkspaceRecord,
+        imports: Vec<Import>,
+    ) -> Result<(), String> {
         self.inner.reports.begin(&record.name);
-        let mut created_volume = false;
-        self.boot_new(&record, &mut created_volume, true, true)
-            .await?;
+        let (imported, mut created_volume) = self.import_all(&record, &imports).await?;
+        let mut created_by_boot = false;
+        if let Err(reason) = self
+            .boot_new(&record, &mut created_by_boot, true, true)
+            .await
+        {
+            return Err(if created_volume {
+                self.remove_new_volume(&record, reason).await
+            } else {
+                reason
+            });
+        }
+        created_volume |= created_by_boot;
         if let Err(reason) = self.settle(&record).await {
             return Err(self.undo_boot(&record, true, created_volume, reason).await);
         }
         let gated = self.gated(&record.name).await?;
-        if let Err(reason) = self.clone_all(&record, gated.ungated()).await {
+        if let Err(reason) = self.clone_all(&record, gated.ungated(), &imported).await {
             return Err(self.undo_boot(&record, true, created_volume, reason).await);
         }
         // Nobody has worked in it yet, so undoing it now loses nothing; keeping it would leave
@@ -2279,6 +2304,74 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Ok(())
     }
 
+    /// Clones the checkouts on this computer of a new workspace onto its volume, before its
+    /// sandbox boots (see [`Workspaces::import`]). Returns the directories they went to (cloned or
+    /// refused: neither is cloned again from its address) and whether this made the volume. A
+    /// checkout git refuses fails only its repository, as a clone does.
+    async fn import_all(
+        &self,
+        record: &WorkspaceRecord,
+        imports: &[Import],
+    ) -> Result<(BTreeSet<CheckoutDir>, bool), String> {
+        if imports.is_empty() {
+            return Ok((BTreeSet::new(), false));
+        }
+        let image = ImageRef::new(&record.image).map_err(|e| e.to_string())?;
+        let size = DiskSize::mib(u32::try_from(record.disk_size_mib).unwrap_or(u32::MAX));
+        for import in imports {
+            if let Some(repository) = record
+                .repositories
+                .iter()
+                .find(|r| r.directory == import.directory)
+            {
+                self.progress_cloning(&record.name, repository);
+            }
+        }
+        let report = self
+            .inner
+            .workspaces
+            .import(&self.inner.runtime, &record.id, &image, size, imports)
+            .await
+            .map_err(|e| e.to_string())?;
+        for (directory, reason) in &report.failed {
+            if let Some(repository) = record
+                .repositories
+                .iter()
+                .find(|r| &r.directory == directory)
+            {
+                tracing::warn!(workspace = %record.name, checkout = %directory, %reason, "a checkout of a new workspace was not imported");
+                let reason = format!(
+                    "{reason}. To try again, add the repository by its address on the Git tab"
+                );
+                self.raise_clone_problem(record, repository, &reason, true);
+            }
+        }
+        let done = imports.iter().map(|i| i.directory.clone()).collect();
+        Ok((done, report.created_volume))
+    }
+
+    /// Removes the volume a create made before its boot failed, and says so if that failed too.
+    async fn remove_new_volume(&self, record: &WorkspaceRecord, reason: String) -> String {
+        match self
+            .inner
+            .runtime
+            .remove_volume(&record.id.volume_name())
+            .await
+        {
+            Ok(()) => reason,
+            Err(e) => {
+                tracing::warn!(workspace = %record.id, error = %e, "removing a new volume failed");
+                with_leftovers(
+                    reason,
+                    &[format!(
+                        "the new volume {} was not removed ({e})",
+                        record.id.volume_name()
+                    )],
+                )
+            }
+        }
+    }
+
     /// Clones the repositories of a new workspace one at a time in list order, then runs one
     /// `sync`. A clone git refuses fails only its repository: a background problem names it and
     /// the next one starts (git removes the folder of its own failed clone). Anything else (the
@@ -2287,9 +2380,15 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         &self,
         record: &WorkspaceRecord,
         sandbox: &R::Sandbox,
+        imported: &BTreeSet<CheckoutDir>,
     ) -> Result<(), String> {
         let workspaces = &self.inner.workspaces;
+        let mut any_cloned = false;
         for repository in &record.repositories {
+            if imported.contains(&repository.directory) {
+                continue;
+            }
+            any_cloned = true;
             self.progress_cloning(&record.name, repository);
             let key = clone_problem_key(&record.name, &repository.directory);
             let cloned = workspaces
@@ -2310,7 +2409,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 Err(other) => return Err(other.to_string()),
             }
         }
-        if record.repositories.is_empty() {
+        if !any_cloned {
             return Ok(());
         }
         workspaces
@@ -2334,6 +2433,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let name = &record.name;
         self.progress(name, WorkspaceStep::Starting, None);
         inner.problems.clear(&problem_key("forced-stop", name));
+        inner.problems.clear(&problem_key("start-refused", name));
         inner.reports.begin(name);
         let exists = inner
             .runtime
@@ -2448,7 +2548,27 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .hook()
             .start(&inner.runtime, &name.sandbox_name(), plan, &gate)
             .await
-            .map_err(|e| boot_message(&e))
+            .map_err(|e| {
+                if let BootError::Compute(ComputeError::StartRefused { cause, .. }) = &e {
+                    self.raise_start_refused(name, *cause);
+                }
+                boot_message(&e)
+            })
+    }
+
+    /// Raises the problem that the runtime refused to start `name` and why.
+    fn raise_start_refused(&self, name: &WorkspaceName, cause: StartRefusal) {
+        self.inner.problems.raise(
+            Problem::new(
+                problem_key("start-refused", name),
+                format!("{name} was not started"),
+                format!(
+                    "Puddle refused to start it, and nothing was attached: {cause}. {}",
+                    cause.way_out()
+                ),
+            )
+            .about(name.clone()),
+        );
     }
 
     async fn stop_work(&self, record: WorkspaceRecord) -> Result<(), String> {
@@ -2564,6 +2684,27 @@ fn boot_message(e: &BootError) -> String {
 }
 
 impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
+    fn local_checkout(&self, path: &str) -> Result<LocalSource, String> {
+        let found = LocalCheckout::open(std::path::Path::new(path))?;
+        // The runtime's own rule (owner, Puddle's folders) now, not only when the create runs.
+        self.inner
+            .runtime
+            .check_checkout(&found.git_dir)
+            .map_err(|e| match e {
+                ComputeError::InvalidSpec { reason } => reason,
+                other => other.to_string(),
+            })?;
+        Ok(LocalSource {
+            folder_name: found
+                .folder
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            git_dir: found.git_dir,
+            origin: found.origin,
+        })
+    }
+
     fn list(&self) -> BoxFuture<'_, Result<Vec<WorkspaceRecord>, WorkspaceError>> {
         Box::pin(async move {
             self.refresh_disk_use().await;
@@ -2678,10 +2819,21 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             // The name is reserved and the list saved: set up what the clones need first.
             git.set_up(&new.name, &new.repositories).await;
             self.status_event(&record);
+            let imports: Vec<Import> = new
+                .repositories
+                .iter()
+                .filter_map(|r| {
+                    r.local.as_ref().map(|git_dir| Import {
+                        git_dir: git_dir.clone(),
+                        directory: r.repository.directory.clone(),
+                        url: r.repository.url.as_str().to_owned(),
+                    })
+                })
+                .collect();
             let this = self.clone();
             let work = record.clone();
             self.run(&record, Operation::Creating, async move {
-                this.create_work(work).await
+                this.create_work(work, imports).await
             })
             .await;
             Ok(record)

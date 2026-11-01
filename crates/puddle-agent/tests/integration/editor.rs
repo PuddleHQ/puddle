@@ -59,6 +59,7 @@ fn fixture() -> Fixture {
     server.dir = release.to_string_lossy().into_owned();
     let reserved = ReservedPort::new();
     server.port = reserved.port();
+    std::fs::write(dir.path().join("boot_id"), "this-boot\n").unwrap();
     let password_file = dir.path().join("run/editor-password");
     let config = Config {
         listen: "127.0.0.1:0".parse().unwrap(),
@@ -68,6 +69,7 @@ fn fixture() -> Fixture {
         editor: Some(EditorConfig {
             server,
             password_file: password_file.clone(),
+            boot_id: dir.path().join("boot_id"),
         }),
         ..Config::default()
     };

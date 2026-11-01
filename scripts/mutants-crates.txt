@@ -1,7 +1,18 @@
 # The crates mutation testing covers (scripts/mutants.sh, docs/STANDARDS.md "Mutation testing"): one
 # per line, comments after '#'. A crate joins this list only when its sweep has no surviving mutant,
 # so the list grows as each crate's survivors are fixed with tests.
+#
+# `crate` lists the whole crate. A crate too big to sweep in one job joins file by file instead: one
+# `crate src/file.rs` line per swept-clean file (path under the crate's directory), added as each file's
+# sweep is clean, for example
+#   puddle-proxy src/route.rs
+#   puddle-proxy src/upstream.rs
+# A crate uses one form only; when its last file is in, replace its lines with the plain `crate` line.
 puddle-netpolicy
 puddle-inject
 puddle-types
 puddle-ca
+puddle-store    # whole-crate sweep 100 min at --jobs 1 (831 mutants)
+puddle-ssh      # whole-crate sweep 6 min at --jobs 1 (76 mutants)
+puddle-fs       # Linux only: 3 min (69 mutants); Windows-only code is excluded in .cargo/mutants.toml
+puddle-secrets  # 18 min (248 mutants)

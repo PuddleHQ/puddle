@@ -322,8 +322,8 @@ async fn windows_become(windows: &puddle_front::Windows, workspace: &WorkspaceNa
 /// checkouts; the front counts the window. Closing the window ends the guest's real extension
 /// host (the shell's last-window cleanup) and keeps the terminal host; opening it again within the
 /// grace finds the editor with the kept session (no second sign-in). A stop closes the window
-/// before the guest goes; after the next start the window opens signed in again (a new sign-in only
-/// when the password changed) on the multi-root file the attach wrote, not on the volume the last
+/// before the guest goes; the next start makes a new password, and the window opens signed in
+/// again with a new sign-in on the multi-root file the attach wrote, not on the volume the last
 /// window showed, with one root per checkout and the volume.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
@@ -502,10 +502,9 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     assert!(!shell.pages.lock().unwrap().contains_key(&name));
     windows_become(windows, &sandbox, false).await;
 
-    // After the start the shell signs in again if the password changed, and only then; the window
-    // opens signed in either way. The server started with the multi-root file the attach wrote,
-    // so the window opens it, not the volume the last window showed, with one root per checkout
-    // and the volume.
+    // The start is a new boot with a new password: the shell signs in again and the window opens
+    // signed in. The server started with the multi-root file the attach wrote, so the window
+    // opens it, not the volume the last window showed, with one root per checkout and the volume.
     let start = api.post(&format!("/api/workspaces/{name}/start"), "").await;
     assert_eq!(start.status, 202, "{}", start.body);
     let end = events
@@ -514,7 +513,8 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     assert_eq!(end["step"], "done", "{end}");
     guest(&runtime, &sandbox, EDITOR_UP).await;
     let after = guest(&runtime, &sandbox, "cat /run/puddle/editor-password").await;
-    let sign_ins = if after == before { 1 } else { 2 };
+    assert_ne!(after, before, "the new boot kept the old boot's password");
+    let sign_ins = 2;
     attach().await;
     let rows = shell
         .wait(&name, EXPLORER_READY, EXPLORER_ROWS, WORKBENCH_BUDGET)

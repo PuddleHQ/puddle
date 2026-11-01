@@ -10,7 +10,8 @@
 //! - makes a random password for the sandbox's boot, writes it to an owner-only file in `/run` (the
 //!   host reads it to sign a window in) and hands it to the server in its environment, never on its
 //!   command line. A restarted server, or a restarted agent, keeps the password while the file
-//!   holds one, so a window signed in stays signed in; a rebooted sandbox gets a new one;
+//!   holds one of this boot, so a window signed in stays signed in; a rebooted sandbox gets a new
+//!   one (the guest's `/run` is on its disk, so a file beside the password names its boot);
 //! - passes the reconnection grace on, and turns off the server's telemetry and update check
 //!   (the release is replaced only with a Puddle release);
 //! - starts it again when it exits, waiting longer after each quick exit. A server that an earlier
@@ -229,6 +230,42 @@ pub struct EditorConfig {
     pub server: EditorServer,
     /// Where the password is written.
     pub password_file: PathBuf,
+    /// The kernel's id of this boot ([`BOOT_ID_FILE`]). A password is kept only in the boot it was
+    /// made in: the guest's `/run` is on its disk, so a file there outlives a stop and start.
+    pub boot_id: PathBuf,
+}
+
+/// Where the kernel keeps the id of the running boot.
+pub const BOOT_ID_FILE: &str = "/proc/sys/kernel/random/boot_id";
+
+/// The boot id in `path`, or `None` when it cannot be read (then no password is kept).
+fn boot_id(path: &Path) -> Option<String> {
+    let id = std::fs::read_to_string(path).ok()?;
+    let id = id.trim();
+    (!id.is_empty() && id.len() <= 64).then(|| id.to_owned())
+}
+
+/// The file beside the password that names the boot it was made in.
+fn boot_stamp(password_file: &Path) -> PathBuf {
+    let mut stamp = password_file.as_os_str().to_owned();
+    stamp.push(".boot");
+    PathBuf::from(stamp)
+}
+
+/// The password of this boot: the one in `config.password_file` when it was made in the boot
+/// `config.boot_id` names, else a new one, written there.
+fn boot_password(config: &EditorConfig) -> io::Result<String> {
+    let boot = boot_id(&config.boot_id);
+    let stamp = boot_stamp(&config.password_file);
+    let made_in_this_boot = boot.is_some() && std::fs::read_to_string(&stamp).ok() == boot;
+    if made_in_this_boot && let Some(password) = existing_password(&config.password_file) {
+        return Ok(password);
+    }
+    let password = new_password()?;
+    write_password(&config.password_file, &password)?;
+    // An unknown boot leaves an empty stamp, which no boot matches.
+    write_private(&stamp, boot.as_deref().unwrap_or_default())?;
+    Ok(password)
 }
 
 /// A fresh random password, lowercase hex.
@@ -260,6 +297,11 @@ fn existing_password(path: &Path) -> Option<String> {
 ///
 /// When the folder or the file can't be written.
 pub fn write_password(path: &Path, password: &str) -> io::Result<()> {
+    write_private(path, password)
+}
+
+/// Writes `text` to `path` for its owner only, through a temporary file renamed over it.
+fn write_private(path: &Path, text: &str) -> io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -276,7 +318,7 @@ pub fn write_password(path: &Path, password: &str) -> io::Result<()> {
     {
         use std::io::Write as _;
         let mut file = options.open(&partial)?;
-        file.write_all(password.as_bytes())?;
+        file.write_all(text.as_bytes())?;
     }
     std::fs::rename(&partial, path)
 }
@@ -769,13 +811,7 @@ async fn start_once(
         prepare(&config.server)?;
     }
     wait_until_free(config.server.port, port_taken).await;
-    let password = if let Some(password) = existing_password(&config.password_file) {
-        password
-    } else {
-        let password = new_password()?;
-        write_password(&config.password_file, &password)?;
-        password
-    };
+    let password = boot_password(config)?;
     let inherited = std::env::vars_os().filter_map(|(k, _)| k.into_string().ok());
     let mut child = command(launch, &password, inherited).spawn()?;
     tracing::info!(
@@ -1002,6 +1038,40 @@ mod tests {
     }
 
     #[test]
+    fn a_password_is_kept_within_its_boot_and_replaced_in_the_next() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = EditorConfig {
+            server: server(),
+            password_file: dir.path().join("run/editor-password"),
+            boot_id: dir.path().join("boot_id"),
+        };
+        std::fs::write(&config.boot_id, "boot-one\n").unwrap();
+        let first = boot_password(&config).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&config.password_file).unwrap(),
+            first
+        );
+        // A restarted server or agent in the same boot: the same password.
+        assert_eq!(boot_password(&config).unwrap(), first);
+        // The next boot finds the file on the disk and makes a new one.
+        std::fs::write(&config.boot_id, "boot-two\n").unwrap();
+        let second = boot_password(&config).unwrap();
+        assert_ne!(second, first);
+        assert_eq!(
+            std::fs::read_to_string(&config.password_file).unwrap(),
+            second
+        );
+        assert_eq!(boot_password(&config).unwrap(), second);
+        // A password with no stamp (written before the stamp existed) is not kept.
+        std::fs::remove_file(boot_stamp(&config.password_file)).unwrap();
+        assert_ne!(boot_password(&config).unwrap(), second);
+        // A boot that cannot be named keeps nothing.
+        std::fs::remove_file(&config.boot_id).unwrap();
+        let unnamed = boot_password(&config).unwrap();
+        assert_ne!(boot_password(&config).unwrap(), unnamed);
+    }
+
+    #[test]
     fn the_password_file_is_owner_only_and_replaced_whole() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("run/editor-password");
@@ -1147,6 +1217,7 @@ mod tests {
         let config = EditorConfig {
             server,
             password_file: dir.join("password"),
+            boot_id: dir.join("boot_id"),
         };
         let service = Arc::new(WrongHash {
             downloads: std::sync::atomic::AtomicUsize::new(0),

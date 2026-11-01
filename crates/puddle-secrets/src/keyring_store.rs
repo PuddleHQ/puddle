@@ -69,3 +69,39 @@ impl SecretStore for KeyringStore {
 pub fn keyring_available() -> bool {
     keyring::Entry::store_status().is_ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn id() -> StoredId {
+        StoredId::new("probe").unwrap()
+    }
+
+    #[test]
+    fn the_store_is_filed_under_puddle_unless_a_test_names_another_service() {
+        assert_eq!(KeyringStore::new().service, None);
+        assert_eq!(
+            KeyringStore::named("puddle-test-x").service.as_deref(),
+            Some("puddle-test-x")
+        );
+    }
+
+    #[test]
+    fn availability_is_what_the_platform_store_reports() {
+        assert_eq!(keyring_available(), keyring::Entry::store_status().is_ok());
+    }
+
+    #[test]
+    fn a_computer_without_a_credential_store_fails_every_call_and_loses_nothing_silently() {
+        if !keyring_available() {
+            let store = KeyringStore::named("puddle-test-unavailable");
+            assert_eq!(store.get(&id()).err(), Some(StoreError));
+            assert_eq!(
+                store.set(&id(), &Secret::new("v".to_owned())),
+                Err(StoreError)
+            );
+            assert_eq!(store.delete(&id()), Err(StoreError));
+        }
+    }
+}

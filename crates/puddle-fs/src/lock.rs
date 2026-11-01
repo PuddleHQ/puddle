@@ -205,4 +205,18 @@ mod tests {
         let err = open_lock_file(&dir.path().join("missing").join(LOCK_FILE)).unwrap_err();
         assert_ne!(err.kind(), io::ErrorKind::AlreadyExists, "{err}");
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_lock_file_that_cannot_be_created_is_not_retried_as_an_existing_one() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+        // A user who may write in it anyway (root) cannot show this, and the check is skipped.
+        if std::fs::File::create(dir.path().join("probe")).is_err() {
+            let err = open_lock_file(&dir.path().join(LOCK_FILE)).unwrap_err();
+            // Opening the missing file instead would say it is not found, hiding why it was not made.
+            assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{err}");
+        }
+    }
 }

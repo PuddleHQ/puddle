@@ -30,10 +30,13 @@ use tokio::net::{TcpListener, TcpStream};
 struct Seen {
     heads: Mutex<Vec<String>>,
     connections: AtomicUsize,
+    /// How many `/ws-held` sockets the client ended.
+    client_ended: AtomicUsize,
 }
 
 /// A fake editor server: answers `/whoami` with its name, `/head` with the head it received,
-/// `/csp` with a policy of its own, `/ws` with an upgrade and then an echo.
+/// `/csp` with a policy of its own, `/ws` with an upgrade and then an echo, `/ws-held` with an
+/// upgrade whose server side never ends, `/ws-gone` with an upgrade the server ends at once.
 struct Server {
     addr: SocketAddr,
     seen: Arc<Seen>,
@@ -86,6 +89,24 @@ impl Server {
                                     break;
                                 }
                             }
+                        }
+                        "/ws-held" => {
+                            // A server that never ends its side: it reads to the client's end
+                            // and then holds the socket open.
+                            stream
+                                .write_all(b"HTTP/1.1 101 Switching Protocols\r\nconnection: Upgrade\r\nupgrade: websocket\r\nsec-websocket-accept: x\r\n\r\n")
+                                .await
+                                .unwrap();
+                            let mut buf = [0_u8; 256];
+                            while matches!(stream.read(&mut buf).await, Ok(n) if n > 0) {}
+                            seen.client_ended.fetch_add(1, Ordering::SeqCst);
+                            std::future::pending::<()>().await;
+                        }
+                        "/ws-gone" => {
+                            // A server that ends the socket right after the upgrade.
+                            let _ = stream
+                                .write_all(b"HTTP/1.1 101 Switching Protocols\r\nconnection: Upgrade\r\nupgrade: websocket\r\nsec-websocket-accept: x\r\n\r\n")
+                                .await;
                         }
                         "/head" => {
                             let _ = stream.write_all(reply("", &head).as_bytes()).await;
@@ -613,9 +634,14 @@ async fn an_editor_that_cannot_be_reached_is_a_502_that_says_why_and_cannot_run_
 
 /// Opens a WebSocket-style upgrade and returns the stream after the 101.
 async fn upgrade(rig: &Rig, host: &str, extra: &str) -> (TcpStream, String) {
+    upgrade_at(rig, "/ws", host, extra).await
+}
+
+/// [`upgrade`] on `path`.
+async fn upgrade_at(rig: &Rig, path: &str, host: &str, extra: &str) -> (TcpStream, String) {
     let mut stream = TcpStream::connect(rig.front.local_addr()).await.unwrap();
     let request = format!(
-        "GET /ws HTTP/1.1\r\nHost: {host}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: abc\r\nSec-WebSocket-Version: 13\r\n{extra}\r\n"
+        "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: abc\r\nSec-WebSocket-Version: 13\r\n{extra}\r\n"
     );
     stream.write_all(request.as_bytes()).await.unwrap();
     let head = read_head(&mut stream).await.unwrap();
@@ -652,6 +678,55 @@ async fn a_websocket_upgrade_carries_bytes_both_ways_and_is_counted_while_it_is_
     eventually("none left", Duration::from_secs(5), || {
         rig.front.connected(&ws(&name)) == 0
     })
+    .await;
+}
+
+#[tokio::test]
+async fn a_window_that_ends_its_socket_is_no_longer_counted_though_the_server_holds_its_side() {
+    let rig = rig().await;
+    let a = Server::start("alpha").await;
+    rig.running.start("a", Some(a.addr), Flavour::CodeServer);
+    let name = WorkspaceName::new("a").unwrap();
+    let h = host(&rig, "a");
+    let (stream, head) = upgrade_at(&rig, "/ws-held", &h, "").await;
+    assert!(head.starts_with("HTTP/1.1 101"), "{head}");
+    eventually("the window counted", Duration::from_secs(5), || {
+        rig.front.connected(&name) == 1
+    })
+    .await;
+    drop(stream);
+    eventually("the server saw the end", Duration::from_secs(5), || {
+        a.seen.client_ended.load(Ordering::SeqCst) == 1
+    })
+    .await;
+    eventually(
+        "the window no longer counted",
+        Duration::from_secs(5),
+        || rig.front.connected(&name) == 0,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_socket_the_server_ends_ends_for_the_window_and_is_no_longer_counted() {
+    let rig = rig().await;
+    let a = Server::start("alpha").await;
+    rig.running.start("a", Some(a.addr), Flavour::CodeServer);
+    let name = WorkspaceName::new("a").unwrap();
+    let h = host(&rig, "a");
+    let (mut stream, head) = upgrade_at(&rig, "/ws-gone", &h, "").await;
+    assert!(head.starts_with("HTTP/1.1 101"), "{head}");
+    let mut buf = [0_u8; 8];
+    let end = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buf))
+        .await
+        .expect("the window's socket stayed open");
+    assert!(matches!(end, Ok(0)), "{end:?}");
+    // The window keeps its side open; the front ends it after the linger.
+    eventually(
+        "the window no longer counted",
+        Duration::from_secs(15),
+        || rig.front.connected(&name) == 0,
+    )
     .await;
 }
 

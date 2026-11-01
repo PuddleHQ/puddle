@@ -410,4 +410,45 @@ mod tests {
             (ReadUse::Injection, Some(SourceError::NotSignedIn))
         );
     }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_value_is_read_again_at_the_very_moment_its_time_to_live_ends() {
+        let script = Script::new(vec![Ok(None), Ok(None)]);
+        let cache = SecretCache::new(&script);
+        assert_eq!(value(&cache, &gh()).await.unwrap(), "v0");
+        tokio::time::advance(Duration::from_millis(55 * 60 * 1000 - 1)).await;
+        assert_eq!(value(&cache, &gh()).await.unwrap(), "v0");
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert_eq!(value(&cache, &gh()).await.unwrap(), "v1");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_old_value_is_not_served_at_the_very_moment_its_grace_ends() {
+        let script = Script::new(vec![Ok(None), Err(SourceError::Timeout(crate::Tool::Gh))]);
+        let cache = SecretCache::new(&script);
+        assert_eq!(value(&cache, &gh()).await.unwrap(), "v0");
+        // 55 minutes of life and 5 of grace end together at 60.
+        tokio::time::advance(60 * MIN).await;
+        assert_eq!(
+            value(&cache, &gh()).await.unwrap_err(),
+            SourceError::Timeout(crate::Tool::Gh)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_token_is_served_after_a_failed_refresh_until_its_own_end() {
+        let script = Script::new(vec![
+            Ok(Some(20 * MIN)),
+            Err(SourceError::Timeout(crate::Tool::Gh)),
+            Err(SourceError::Timeout(crate::Tool::Gh)),
+        ]);
+        let cache = SecretCache::new(&script);
+        assert_eq!(value(&cache, &gh()).await.unwrap(), "v0");
+        // Past the early renewal (15 minutes) and before the end (20): the old token still works.
+        tokio::time::advance(16 * MIN).await;
+        assert_eq!(value(&cache, &gh()).await.unwrap(), "v0");
+        // At the end it does not, though the cache's own time to live would allow it.
+        tokio::time::advance(4 * MIN).await;
+        assert!(value(&cache, &gh()).await.is_err());
+    }
 }

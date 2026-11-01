@@ -142,6 +142,8 @@ try {
     welcome?.path === "/welcome" && welcome.title === "Welcome - Puddle" && welcome.heading === "Welcome to Puddle" && welcome.skip && welcome.links === 0,
     JSON.stringify(welcome),
   );
+  // The app's own window runs only Puddle's bundle, so it keeps the prototype frozen against pollution.
+  check("the app window's Object.prototype is frozen", await run(`return Object.isFrozen(Object.prototype);`) === true);
   await run(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === "Skip setup")?.click(); return true;`);
 
   // The sections the sidebar has today (ui/src/lib/nav.ts). A new section must not turn this test

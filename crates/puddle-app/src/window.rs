@@ -22,7 +22,11 @@ pub type Refused = Arc<dyn Fn(&Url) + Send + Sync>;
 
 /// The script that runs before the page's own scripts, in the main window's top-level frame only.
 ///
-/// It sets `window.__PUDDLE__ = { token }`, the one way the SPA learns the API token (see `ui/src/lib/api/connection.ts`). The
+/// It freezes `Object.prototype`: the SPA is Puddle's own bundle and writes to no built-in, so a
+/// polluted prototype can only come from a bug. Tauri's `freezePrototype` setting is off because it is one
+/// switch for every webview of the app, and the workspace editor windows need a writable prototype (VS
+/// Code assigns `toString` on plain objects). Then it sets `window.__PUDDLE__ = { token }`, the one way
+/// the SPA learns the API token (see `ui/src/lib/api/connection.ts`). The
 /// property can't be reassigned or deleted by the page. The script does nothing unless the page's
 /// origin is the API's, so a navigation that somehow got elsewhere would see no token.
 #[must_use]
@@ -32,7 +36,8 @@ pub fn init_script(origin: &str, token: &str) -> String {
     let origin = serde_json::Value::from(origin);
     let token = serde_json::Value::from(token);
     format!(
-        "(function () {{\n\
+        "Object.freeze(Object.prototype);\n\
+         (function () {{\n\
          \x20 if (window.location.origin !== {origin}) return;\n\
          \x20 Object.defineProperty(window, \"__PUDDLE__\", {{\n\
          \x20   value: Object.freeze({{ token: {token} }}),\n\
@@ -140,6 +145,15 @@ mod tests {
         assert!(script.contains("Object.freeze({ token: \"abc123\" })"));
         assert!(script.contains("Object.defineProperty(window, \"__PUDDLE__\""));
         assert_eq!(script.matches("abc123").count(), 1);
+    }
+
+    #[test]
+    fn the_script_freezes_the_prototype_before_anything_else() {
+        let script = init_script("http://127.0.0.1:4711", "abc123");
+        assert!(
+            script.starts_with("Object.freeze(Object.prototype);"),
+            "{script}"
+        );
     }
 
     #[test]

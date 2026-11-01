@@ -132,6 +132,10 @@ async function attack(target, label) {
       check(`${label}: ${r.name} does not succeed`, !r.succeeded, r.detail.split("\n")[0]);
     }
     check(`${label}: every attack ran`, results.length >= 10, `${results.length} attempts`);
+    // The editor's own scripts (VS Code assigns `toString` on plain objects, in strict mode) and a
+    // forwarded dev server's must run, so these windows keep Object.prototype writable.
+    const writable = await page.evaluate(`(() => { "use strict"; try { const o = {}; o.toString = () => "ok"; return "writable"; } catch (e) { return String(e); } })()`);
+    check(`${label}: a page can assign toString on a plain object`, writable === "writable", writable);
   } finally {
     page.close();
   }

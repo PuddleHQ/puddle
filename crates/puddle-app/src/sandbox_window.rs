@@ -14,6 +14,9 @@
 //!   that port, `<port>.<workspace>.localhost` ([`forward_url`]), with a data folder of its own: the
 //!   page there is the guest's own app, not the editor. The answer to a new-window request is never
 //!   `Allow`, which would be the webview's own pop-up with none of these guards.
+//! * **A writable `Object.prototype`.** Tauri's `freezePrototype` is off for the app, because the
+//!   editor's own scripts assign to built-in prototypes. The page is the untrusted side here, so a
+//!   freeze would guard nothing; the app's main window freezes its own (`window::init_script`).
 //! * **A data folder per workspace,** kept between opens and deleted with the workspace.
 //! * **The editor's credential before it navigates:** the window starts on a blank page, gets the
 //!   session cookie from [`signin`] and then navigates; the credential is never in a URL.

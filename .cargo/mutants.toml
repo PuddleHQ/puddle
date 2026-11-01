@@ -52,6 +52,16 @@ exclude_re = [
     # `high << 4 | low` joins two hexadecimal digits (as in `decode_segment` above): both are below 16,
     # so `|` and `^` give the same byte.
     "workspace_git\\.rs:\\d+:\\d+: replace \\| with \\^ in decode_address_segment",
+    # `set_key` puts the rule id last, and an entry (no rule row) takes the placeholder -1 there. Only two
+    # keys of the same set are ever compared on it, and a set's entries all have no id, so the placeholder's
+    # value (-1 or 1) never decides.
+    "engine\\.rs:\\d+:\\d+: delete - in set_key",
+    # `RuleIndex::decide` replaces its best hit when a candidate's key is greater; `>=` only differs for
+    # an equal key. Rule keys end in the rule id, which is unique, and two entries of one set with equal
+    # keys (same kind and length of pattern matching one host, same effect) are the same pattern, so
+    # both give the same answer. The columns are the three `key > best` / `own_key > own_key` comparisons
+    # (not the specificity comparison against an own rule, where equal does matter and a test pins it).
+    "engine\\.rs:\\d+:(88|61|93): replace > with >= in RuleIndex::decide",
 ]
 
 # The first failing test decides a mutant: stop the rest. Without it, a mutant that makes a test

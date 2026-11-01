@@ -12,7 +12,7 @@
     "windows": [],
     "security": {
       "capabilities": ["main"],
-      "freezePrototype": true
+      "freezePrototype": false
     }
   },
   "bundle": {

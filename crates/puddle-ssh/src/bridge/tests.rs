@@ -571,6 +571,19 @@ async fn a_server_write_that_fails_stops_the_sending_whichever_step_fails() {
     }
 }
 
+/// An input that records the buffer it is offered and ends at once.
+struct Cap(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+impl AsyncRead for Cap {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        self.0.store(buf.remaining(), Ordering::Relaxed);
+        Poll::Ready(Ok(()))
+    }
+}
+
 #[tokio::test]
 async fn each_direction_reads_in_chunks_of_64_kib() {
     let (mut stdin, i) = duplex(1024);
@@ -583,17 +596,6 @@ async fn each_direction_reads_in_chunks_of_64_kib() {
     assert_eq!(seen.lock().unwrap().largest_read, 64 * 1024);
 
     // The client's input is read in the same size: a probe as the input.
-    struct Cap(std::sync::Arc<std::sync::atomic::AtomicUsize>);
-    impl AsyncRead for Cap {
-        fn poll_read(
-            self: Pin<&mut Self>,
-            _cx: &mut Context<'_>,
-            buf: &mut ReadBuf<'_>,
-        ) -> Poll<io::Result<()>> {
-            self.0.store(buf.remaining(), Ordering::Relaxed);
-            Poll::Ready(Ok(()))
-        }
-    }
     let offered = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let (o, _stdout) = duplex(1024);
     let (probe, _seen) = Probe::new(false, false);

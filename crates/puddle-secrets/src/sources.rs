@@ -323,6 +323,8 @@ mod tests {
         );
         let got = parse_fill(&live, &h, &p, None).unwrap();
         let left = got.valid_for.unwrap();
+        // flake-ok: `left` is the stated expiry minus a clock that only moves forward, so at most the
+        // 3600 s asked for however slow the machine is; the lower bound keeps a 100 s margin.
         assert!(
             left > Duration::from_secs(3500) && left <= Duration::from_secs(3600),
             "{left:?}"

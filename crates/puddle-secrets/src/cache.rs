@@ -416,7 +416,7 @@ mod tests {
         let script = Script::new(vec![Ok(None), Ok(None)]);
         let cache = SecretCache::new(&script);
         assert_eq!(value(&cache, &gh()).await.unwrap(), "v0");
-        tokio::time::advance(55 * MIN - Duration::from_millis(1)).await;
+        tokio::time::advance(Duration::from_millis(55 * 60 * 1000 - 1)).await;
         assert_eq!(value(&cache, &gh()).await.unwrap(), "v0");
         tokio::time::advance(Duration::from_millis(1)).await;
         assert_eq!(value(&cache, &gh()).await.unwrap(), "v1");

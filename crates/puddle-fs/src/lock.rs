@@ -213,7 +213,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
         // A user who may write in it anyway (root) gets no error at all.
-        let can_write = std::fs::File::create(dir.path().join("probe")).is_ok();
+        let can_write = File::create(dir.path().join("probe")).is_ok();
         let kind = open_lock_file(&dir.path().join(LOCK_FILE))
             .err()
             .map(|e| e.kind());

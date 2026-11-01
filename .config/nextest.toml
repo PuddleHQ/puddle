@@ -9,6 +9,9 @@
 # The default and ci profiles leave them out, so `scripts/check.sh` and the Linux gates never
 # need KVM; `--profile vm` runs only them (vm-linux / vm-windows workflows, ci/windows-e2e.ps1).
 
+# Wrapper scripts are still an experimental nextest feature; the `mutants` profile needs one.
+experimental = ["wrapper-scripts"]
+
 [profile.default]
 retries = 0
 fail-fast = false
@@ -24,6 +27,22 @@ default-filter = "not (test(/(^|::)vm_/) | binary(/^vm_/))"
 
 [profile.ci.junit]
 path = "junit.xml"
+
+# Mutation runs (scripts/mutants.sh, .cargo/mutants.toml). A mutant can turn a scanning loop into one
+# that never advances while it pushes into a Vec: the test process then takes about 200 MB a second
+# until the run's timeout, and one such process per CPU filled a 32 GB machine in seconds. Each test
+# process gets a heap limit (scripts/cap-test-memory.sh) and fewer run at once, so the runaway test
+# fails, which counts the mutant as caught. Ordinary tests peak at about 10 MB.
+[scripts.wrapper.cap-memory]
+command = { command-line = "scripts/cap-test-memory.sh", relative-to = "workspace-root" }
+
+[profile.mutants]
+inherits = "default"
+test-threads = 4
+
+[[profile.mutants.scripts]]
+filter = "all()"
+run-wrapper = "cap-memory"
 
 # VM tests only, one at a time (hosted runners have 2 vCPU / 8 GB), never retried.
 # A test is killed after 12 minutes, inside the jobs' 15-minute limit.

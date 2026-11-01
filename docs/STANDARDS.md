@@ -214,7 +214,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   missing a reason, and what changed since the day before.
 - **Test shapes that raced before** (the `flake-*` kinds of `scripts/quality-gate.py`, `scripts/quality-gate.py --flakes`
   lists each rule with its count and the fix its error names): a hand-rolled wait helper (the row says whether it lacks a name or a bound) or wait loop (`for`, `while` or `loop` that sleeps or yields between looks; `flake-w3`), `file.lock()` in a
-  test, `try_recv()`, a port picked and released, a literal port bound or connected (bind port 0), a name built from the clock, a wall-clock bar (a bar on a call's work goes on `cpu_time`'s result in a variable named `*cpu*` bound from that call just above, which `flake-t1` accepts), records matched by
+  test, `try_recv()`, a port picked and released, a literal port bound or connected (bind port 0; the rule reads only addresses of this machine, a measured choice: widening it to any 4 or 5 digit port near a socket call finds 5 lines in tests, all `.test` name authorities handed to a fake proxy or read from a captured list, none a socket, so it would need a `flake-ok:` per site and guard nothing), a name built from the clock, a wall-clock bar (a bar on a call's work goes on `cpu_time`'s result in a variable named `*cpu*` bound from that call just above, which `flake-t1` accepts), records matched by
   position, a reserved name (`.test`, `example.com`) in a test that reaches the real resolver, and an awaited page read asserted once (the scan reads a variable; the ESLint selector reads `expect(await ...)`; a read kept as `(await loc.boundingBox())!` counts, a value derived from it does not). A site is accepted with `flake-ok: <why>` on its line or within three
   lines above (in the UI also `eslint-disable-next-line no-restricted-syntax -- <why>`). Each rule is one file,
   `scripts/flake-rules/<id>.rule`; the kinds are counted, not failing, until their existing sites are fixed or
@@ -448,26 +448,31 @@ replaced by its default, a `&&` turned into `||`) and runs the crate's tests; a 
 **missed**, and a missed mutant is a missing test.
 
 - **Which code.** The crates in `scripts/mutants-crates.txt`: the core logic whose wrong answer is a security or
-  data bug (types, rules engine and store model, network policy, proxy, credential injection). A crate joins the
-  list when its full sweep has no missed mutant, so the list only grows. The UI's `lib/**` joins through
-  StrykerJS in the same way.
+  data bug (types, rules engine and store model, network policy, proxy, credential injection). A `crate` line
+  lists the whole crate; `crate src/file.rs` lines list single files (paths under the crate's directory, one
+  per line), so a big crate joins file by file as each file's sweep has no missed mutant, and a crate's lines
+  are all one form. A crate or file joins the list when its sweep has no missed mutant, so the list only
+  grows. The UI's `lib/**` joins through StrykerJS in the same way.
 - **Per change.** `scripts/check.sh mutants` (CI: the `mutants` workflow, pull requests) mutates only the lines the
   change adds or changes in the listed crates (`cargo mutants --in-diff`), so its cost follows the size of the change.
   Any missed mutant or timeout fails it.
-- **Nightly.** The `mutants` workflow sweeps every mutant of every listed crate, one job per crate; a failure uploads
+- **Nightly.** The `mutants` workflow sweeps every mutant of every listed crate, one job per whole crate or per listed file; a failure uploads
   `mutants.out/` (the missed list with the diff of each). `scripts/mutants.sh sweep --crate <name>` does the same
-  by hand, which is also how a crate is triaged before it joins the list.
+  by hand (`--file src/x.rs` for one file), which is also how a crate or file is triaged before it joins the
+  list. A listed file's per-change run looks at changes in the listed files only.
 - **A missed mutant is fixed with a test**: read the mutant's diff (`mutants.out/diff/`), write the test that fails
   on it, and run the change again. Never mark the code as skipped.
   The one exception is an **equivalent mutant**, one no test can tell from the original (the result is the same
   for every input, or only timing changes). Those go in `.cargo/mutants.toml` as an `exclude_re` entry with a comment
   that says why it is equivalent, and are reviewed like a lint suppression. A mutant that only a test of a
   logging line or a timing could catch is not equivalent: assert the line or the timing.
-- **Test selection and the cache.** Mutants run through nextest's default profile (no VM tests), in a copy
+- **Test selection and the cache.** Mutants run through nextest's `mutants` profile (the default profile's tests, so no
+  VM tests, with four threads and a 2 GiB heap limit per test process: a mutant can make a loop allocate without
+  end, and the limit fails that test instead of the machine), in a copy
   of the tree each, `MUTANTS_JOBS` at a time. The nightly sweep skips a crate whose inputs hash like the last
   passing run's: the committed trees of the crate and of every workspace crate it depends on (normal, build and
   dev), `Cargo.lock`, the toolchain pin, the mutants and nextest settings, `scripts/mutants.sh` and the cargo-mutants
-  version (`scripts/mutants.sh --key <crate>`). Only a passing run is recorded, so the cache cannot hide a missed mutant,
+  version (`scripts/mutants.sh --key <crate> [<file>]`; a file's key holds only that file's name). Only a passing run is recorded, so the cache cannot hide a missed mutant,
   and any change under a dependency re-runs everything above it. On Sundays the nightly ignores the cache and runs
   everything, and says `MISMATCH` when a crate that has a cache entry fails.
 - **No shared target directory.** `scripts/mutants.sh` unsets `CARGO_TARGET_DIR`: cargo-mutants tests several mutants
@@ -516,7 +521,7 @@ before pushing a change that touches the UI's behaviour, routes or accessibility
 |---|---|---|---|
 | `ci.yml` | push to `develop`/`main`, every PR, every merge queue run, nightly (the two advisories jobs only), manual (a newer push to a PR or `develop` cancels the run in flight; `main` never) | `ubuntu-24.04` | all of `scripts/check.sh all` (the `pre-push` set plus `ui-e2e`, `advisories` and `ui-audit`) in parallel jobs (Rust and repository gates; UI gates; RustSec advisories; npm advisories) plus `linux (all gates)`, the one result that needs them; every gate runs even if an earlier one fails |
 | `windows.yml` | every PR to `develop` and `main` (a newer push to the PR cancels the run in flight), every merge queue run, nightly 02:37 UTC (a job skips if this workflow already has a green nightly or manual run on that commit; a merge queue run never counts), manual | `windows-2025` | four parallel jobs (clippy; nextest, doc tests, secret scan; UI gates, e2e on Edge and the desktop shell smoke test; release build, MSVC: only on the nightly, on PRs to `main` and on manual runs from `develop`, so PRs to `develop` skip it) plus `windows-msvc (build, clippy, tests)`, the one result that needs them all. The nightly retries each failed test once and lists the flaky ones in the job summary, without failing |
-| `mutants.yml` | every PR that touches `crates/`, the mutants settings or scripts (a newer push cancels the run in flight; not a required check yet), nightly 03:53 UTC, manual | `ubuntu-24.04` | `scripts/check.sh mutants` on a PR (the mutants on the changed lines of the crates in `scripts/mutants-crates.txt`); the nightly sweep, one job per listed crate, uncached on Sundays |
+| `mutants.yml` | every PR that touches `crates/`, the mutants settings or scripts (a newer push cancels the run in flight; not a required check yet), nightly 03:53 UTC, manual | `ubuntu-24.04` | `scripts/check.sh mutants` on a PR (the mutants on the changed lines of the crates and files in `scripts/mutants-crates.txt`); the nightly sweep, one job per listed crate or file, uncached on Sundays |
 | `windows-cache.yml` | push to `develop` that changes a `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml` or `.cargo/config.toml`, manual | `windows-2025` | builds the test binaries once (no tests) so the pull requests' `windows.yml` runs restore a current `windows` Rust cache entry instead of an older one; only a run on `develop` saves it |
 | `vm-linux.yml` | every PR to `develop` and to `main` (a newer push to the PR cancels the run in flight), every merge queue run, manual on any branch (`gh workflow run vm-linux.yml --ref <branch>`), nightly 03:07 UTC on `develop` (skipped if it already has a green nightly or manual run on that commit) | `ubuntu-24.04` (KVM) | VM tests, tier K: the test binaries are built once (`cargo nextest archive`) and run in 4 hash partitions on 4 runners; `vm-linux (KVM, msb microVMs)` is the one result. No KVM ⇒ warning, infrastructure skip (on a PR or a merge queue run: failure) |
 | `vm-windows.yml` | every PR to `develop` and to `main` (a newer push to the PR cancels the run in flight), every merge queue run, manual on any branch, nightly 03:23 UTC on `develop` (skipped if it already has a green nightly or manual run on that commit) | `windows-2025` (WHP) | VM tests, tier W: built once and run in 5 hash partitions on 5 runners; `vm-windows (WHP, msb microVMs)` is the one result. No WHP ⇒ warning, infrastructure skip (on a PR or a merge queue run: failure) |

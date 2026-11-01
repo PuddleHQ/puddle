@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { slowdown } from "./cpu-throttle.ts";
 import { type Backend, expect, test } from "./fixture";
-import { axeStops, watchCsp, staysEmpty } from "./support";
+import { axeStops, RECONNECT_WAIT_MS, watchCsp, staysEmpty } from "./support";
 
 test.beforeEach(async ({ backend }) => {
   await backend.control.reset("lived-in");
@@ -523,7 +523,7 @@ test.describe("live", () => {
     await connect(backend, "after-restart.example.org");
     await expect(rows(page).first()).toContainText(
       "after-restart.example.org",
-      { timeout: 20_000 },
+      { timeout: RECONNECT_WAIT_MS },
     );
   });
 });

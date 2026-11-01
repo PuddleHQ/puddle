@@ -4,7 +4,13 @@
 // registry.example.org) on its worker's own backend, so a test may decide anything it likes.
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { axeStops, watchCsp, staysEmpty } from "./support";
+import {
+  axeStops,
+  CONVERGE_WAIT_MS,
+  RECONNECT_WAIT_MS,
+  watchCsp,
+  staysEmpty,
+} from "./support";
 
 interface Rule {
   id: number;
@@ -288,6 +294,7 @@ test.describe("deciding", () => {
       .click();
     const list = page.getByRole("region", { name: "Decided just now" });
     await expect(list).toContainText("undolist.example.com");
+    // The toast lives 5 s; 15 s is three lives for a starved browser.
     await expect(
       page.getByRole("button", { name: "Undo", exact: true }),
     ).toHaveCount(0, { timeout: 15_000 });
@@ -320,7 +327,7 @@ test.describe("deciding", () => {
       headers: auth(backend),
       data: {},
     });
-    await expect(row).toHaveCount(0, { timeout: 20_000 });
+    await expect(row).toHaveCount(0, { timeout: CONVERGE_WAIT_MS });
   });
 
   test("a request decided elsewhere, with the stream down, is refused politely and leaves the list", async ({
@@ -364,13 +371,13 @@ test.describe("live", () => {
     await expect(rowFor(page, "live.example.com")).toHaveCount(0);
     await ask(backend, "shop", "live.example.com");
     await expect(rowFor(page, "live.example.com")).toBeVisible({
-      timeout: 20_000,
+      timeout: CONVERGE_WAIT_MS,
     });
     await expect(page).toHaveTitle("Inbox (2) - Puddle");
     await expect(page.getByTestId("pending-badge")).toContainText("2 pending");
     await ask(backend, "shop", "live.example.com", { repeat: 2 });
     await expect(rowFor(page, "live.example.com")).toContainText("3 attempts", {
-      timeout: 20_000,
+      timeout: CONVERGE_WAIT_MS,
     });
   });
 
@@ -382,7 +389,7 @@ test.describe("live", () => {
     await openInbox(page, backend);
     await ask(backend, "shop", "nostream.example.com");
     await expect(rowFor(page, "nostream.example.com")).toBeVisible({
-      timeout: 20_000,
+      timeout: CONVERGE_WAIT_MS,
     });
   });
 
@@ -394,7 +401,7 @@ test.describe("live", () => {
     await ask(backend, "shop", "resync.example.com");
     await backend.control.restart();
     await expect(rowFor(page, "resync.example.com")).toBeVisible({
-      timeout: 20_000,
+      timeout: RECONNECT_WAIT_MS,
     });
   });
 

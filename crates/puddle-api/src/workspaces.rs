@@ -1688,6 +1688,7 @@ mod tests {
     #[test]
     fn a_checkout_on_this_computer_takes_its_origin_and_folder_name_unless_given() {
         let source = |folder: &str, origin: Result<&str, &str>| LocalSource {
+            // flake-ok: only compared as a value, never opened as a path
             git_dir: PathBuf::from(format!("/home/u/{folder}/.git")),
             folder_name: folder.into(),
             origin: origin.map(str::to_owned).map_err(str::to_owned),
@@ -1724,6 +1725,7 @@ mod tests {
             "https://github.com/acme/shop.git"
         );
         assert_eq!(checked[0].repository.directory.as_str(), "Shop");
+        // flake-ok: only compared as a value, never opened as a path
         assert_eq!(checked[0].local, Some(PathBuf::from("/home/u/Shop/.git")));
         // A given address stands in for a missing origin.
         assert_eq!(

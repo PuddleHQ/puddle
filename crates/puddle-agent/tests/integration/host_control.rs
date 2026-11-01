@@ -113,6 +113,7 @@ async fn start_agent(dir: &tempfile::TempDir, mut server: EditorServer) -> (Host
         .local_addr()
         .unwrap()
         .port();
+    std::fs::write(dir.path().join("boot_id"), "this-boot\n").unwrap();
     let config = Config {
         listen: "127.0.0.1:0".parse().unwrap(),
         target: Target::Unix(socket),
@@ -121,6 +122,7 @@ async fn start_agent(dir: &tempfile::TempDir, mut server: EditorServer) -> (Host
         editor: Some(EditorConfig {
             server,
             password_file: dir.path().join("run/editor-password"),
+            boot_id: dir.path().join("boot_id"),
         }),
         ..Config::default()
     };

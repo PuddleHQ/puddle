@@ -214,6 +214,7 @@ mod tests {
 
     #[test]
     fn a_boot_id_that_cannot_be_read_is_the_one_the_boot_hook_writes_then() {
+        // flake-ok: a path that must not exist; on Windows it is rooted on the current drive and still does not exist
         assert_eq!(boot_id(Path::new("/nonexistent/boot_id")), UNKNOWN_BOOT);
     }
 }

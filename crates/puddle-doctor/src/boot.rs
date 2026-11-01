@@ -357,6 +357,7 @@ mod tests {
     fn unknown_architectures_are_not_booted() {
         assert_eq!(
             test_boot(
+                // flake-ok: a path that must not exist; on Windows it is rooted on the current drive and still does not exist
                 Path::new("/nonexistent"),
                 "riscv64",
                 Duration::from_secs(1),
@@ -372,6 +373,7 @@ mod tests {
     fn other_architectures_are_not_booted() {
         assert_eq!(
             test_boot(
+                // flake-ok: a path that must not exist; on Windows it is rooted on the current drive and still does not exist
                 Path::new("/nonexistent"),
                 "aarch64",
                 Duration::from_secs(1),

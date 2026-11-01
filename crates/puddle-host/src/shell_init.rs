@@ -329,6 +329,7 @@ mod tests {
             assert!(GuestPath::new(path).is_ok(), "{path}");
         }
         assert!(
+            // flake-ok: a path inside the guest, which is Linux whatever the host is
             GuestPath::new(&format!("{GUEST_DIR}/{FILE_NAME}"))
                 .unwrap()
                 .is_within(&GuestPath::new(GUEST_DIR).unwrap())

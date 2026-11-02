@@ -154,7 +154,7 @@ tauri = { version = "2.12.1", default-features = false, features = ["wry", "x11"
 # The user's icon image: PNG, JPEG and WebP in, a 256 pixel PNG out. No other formats, no threads.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 # Draws the built-in duck icons (anti-aliased paths); `png-format` encodes them.
-tiny-skia = { version = "0.11", default-features = false, features = ["std", "png-format"] }
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "png-format"] }
 tauri-build = { version = "2.7.1", default-features = false }
 tauri-plugin-notification = { version = "2.7.0", default-features = false }
 tauri-plugin-single-instance = "2.5.2"

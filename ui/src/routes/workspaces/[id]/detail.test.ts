@@ -539,6 +539,18 @@ describe("the overview", () => {
     );
   });
 
+  it("offers the reset next to Reclaim space even when no disk is nearly full", async () => {
+    api.list = [workspace("demo", { status: "stopped" })];
+    await load();
+    render(Overview);
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Reset root disk…" }),
+    );
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent(
+      "Reset the root disk of demo?",
+    );
+  });
+
   it("does not offer the reset to a running workspace and asks to stop it first", async () => {
     api.list = [
       workspace("demo", {

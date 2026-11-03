@@ -523,7 +523,7 @@ describe("the overview", () => {
     const dialog = await screen.findByRole("alertdialog");
     expect(dialog).toHaveTextContent("Reset the root disk of demo?");
     expect(dialog).toHaveTextContent(
-      "they reinstall or rebuild on the next start",
+      "packages reinstall and caches rebuild on the next start",
     );
     expect(dialog).toHaveTextContent(
       "The volume, with your repositories and files, is untouched.",

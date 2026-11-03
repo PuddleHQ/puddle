@@ -30,6 +30,7 @@ mod changes;
 mod config;
 mod data_folder;
 mod dev_cert;
+mod disk_watch;
 mod doctor;
 mod editor_file;
 mod editor_updates;

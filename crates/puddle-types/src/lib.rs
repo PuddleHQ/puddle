@@ -45,7 +45,7 @@ pub use connection::{
 pub use cpus::CpuCount;
 pub use error::ValidationError;
 pub use event::{
-    CollectingSink, Event, EventSink, GitAccess, LoginProblemKind, NullSink, PendingEnd,
+    CollectingSink, DiskKind, Event, EventSink, GitAccess, LoginProblemKind, NullSink, PendingEnd,
     PendingSummary, WorkspaceStatus, WorkspaceStep,
 };
 pub use guest::{ApplyKind, GuestEnv, GuestFile, GuestPath};

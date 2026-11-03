@@ -97,7 +97,18 @@ pub enum Event {
         /// The killed process's name (`comm`), cleaned by [`Event::oom_kill`].
         process: String,
     },
-    /// A workspace operation (create, start, stop, reclaim, delete) moved on. An operation ends
+    /// A disk of a workspace reached the warning threshold (`ui.disk_warning_percent`) or, with
+    /// the workspace still over it, grew fuller. Said once when a disk crosses the threshold and
+    /// again only after it has dropped below it.
+    DiskNearlyFull {
+        /// The workspace.
+        workspace: WorkspaceName,
+        /// Which disk.
+        disk: DiskKind,
+        /// How full it is, in whole percent (rounded down), 0 to 100.
+        percent: u8,
+    },
+    /// A workspace operation (create, start, stop, reclaim, reset the root disk, delete) moved on. An operation ends
     /// with one event whose step is [`WorkspaceStep::Done`] or [`WorkspaceStep::Failed`].
     WorkspaceProgress {
         /// The workspace's workspace.
@@ -398,6 +409,18 @@ pub enum PendingEnd {
     Expired,
 }
 
+/// Which of a workspace's two disks an event or figure is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub enum DiskKind {
+    /// The sandbox's root disk: home directory, tool caches and installed packages. It goes with
+    /// the sandbox and is made again by a reset.
+    Root,
+    /// The workspace volume, which holds the repositories and the user's work.
+    Volume,
+}
+
 /// Where a long workspace operation is, as [`Event::WorkspaceProgress`] reports it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -417,6 +440,8 @@ pub enum WorkspaceStep {
     Checking,
     /// Giving freed disk space back to the host.
     Reclaiming,
+    /// Removing the sandbox, and with it the root disk, so the next start makes a fresh one.
+    ResettingRootDisk,
     /// Shutting the virtual machine down.
     Stopping,
     /// Removing the volume and the workspace.
@@ -462,6 +487,7 @@ impl Event {
         match self {
             Self::StatusChanged { workspace, .. }
             | Self::OomKill { workspace, .. }
+            | Self::DiskNearlyFull { workspace, .. }
             | Self::WorkspaceProgress { workspace, .. }
             | Self::PendingUpdated { workspace, .. }
             | Self::PendingClosed { workspace, .. }
@@ -629,6 +655,22 @@ mod tests {
     }
 
     #[test]
+    fn a_disk_warning_names_the_disk_and_belongs_to_its_workspace() {
+        let e = Event::DiskNearlyFull {
+            workspace: name(),
+            disk: DiskKind::Root,
+            percent: 96,
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        assert_eq!(
+            json,
+            r#"{"type":"disk_nearly_full","workspace":"box","disk":"root","percent":96}"#
+        );
+        assert_eq!(serde_json::from_str::<Event>(&json).unwrap(), e);
+        assert_eq!(e.workspace(), Some(&name()));
+    }
+
+    #[test]
     fn workspace_progress_is_per_workspace_and_always_carries_detail() {
         let steps = [
             (WorkspaceStep::PreparingVolume, "preparing_volume"),
@@ -638,6 +680,7 @@ mod tests {
             (WorkspaceStep::Syncing, "syncing"),
             (WorkspaceStep::Checking, "checking"),
             (WorkspaceStep::Reclaiming, "reclaiming"),
+            (WorkspaceStep::ResettingRootDisk, "resetting_root_disk"),
             (WorkspaceStep::Stopping, "stopping"),
             (WorkspaceStep::Removing, "removing"),
             (WorkspaceStep::Done, "done"),

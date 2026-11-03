@@ -18,9 +18,9 @@ use tokio::sync::watch;
 
 use crate::checkouts::{AddRepository, Checkouts, FoundList, check_addition, checkouts_view};
 use crate::workspaces::{
-    AttachMode, Attached, BrowserTarget, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DeleteCheck,
-    DesktopTarget, DisplayName, GitSetup, KeptLogins, LaunchError, Launcher, Listing, LocalSource,
-    NewRepository, NewWorkspace, Operation, RepoFindings, ShellInitCheck, StartFolder,
+    AttachMode, Attached, BrowserTarget, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DEFAULT_ROOT_DISK_MIB,
+    DeleteCheck, DesktopTarget, DisplayName, GitSetup, KeptLogins, LaunchError, Launcher, Listing,
+    LocalSource, NewRepository, NewWorkspace, Operation, RepoFindings, ShellInitCheck, StartFolder,
     StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService,
 };
 
@@ -374,7 +374,10 @@ impl FakeWorkspaces {
                     status_changed = true;
                     record.status = WorkspaceStatus::Running;
                 }
-                Operation::Reclaiming | Operation::Cloning | Operation::Deleting => {}
+                Operation::Reclaiming
+                | Operation::ResettingRootDisk
+                | Operation::Cloning
+                | Operation::Deleting => {}
             }
             if let Some(entry) = state.entries.get_mut(id) {
                 entry.record = record.clone();
@@ -398,6 +401,9 @@ impl FakeWorkspaces {
             }
             Operation::Reclaiming => {
                 record.disk_used_mib = record.disk_used_mib.map(|used| used / 2);
+            }
+            Operation::ResettingRootDisk => {
+                record.root_disk_used_mib = record.root_disk_size_mib.map(|_| 0);
             }
             Operation::Deleting => {
                 state.entries.remove(id);
@@ -696,6 +702,8 @@ impl WorkspaceService for FakeWorkspaces {
             record.created_at = self.inner.clock.now_ms();
             record.disk_size_mib = DEFAULT_DISK_MIB;
             record.disk_used_mib = Some(0);
+            record.root_disk_size_mib = Some(DEFAULT_ROOT_DISK_MIB);
+            record.root_disk_used_mib = Some(0);
             record.busy = Some(Operation::Creating);
             {
                 let mut state = lock(&self.inner.state);
@@ -839,6 +847,35 @@ impl WorkspaceService for FakeWorkspaces {
                 &record,
                 Operation::Reclaiming,
                 vec![(WorkspaceStep::Reclaiming, None, None)],
+            );
+            Ok(record)
+        })
+    }
+
+    fn reset_root_disk<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let record = self.accept(
+                id,
+                Operation::ResettingRootDisk,
+                |r| {
+                    if r.status.is_down() {
+                        Ok(())
+                    } else {
+                        Err(WorkspaceError::Conflict(format!(
+                            "{} is {}; stop it before resetting its root disk",
+                            r.name, r.status
+                        )))
+                    }
+                },
+                |_| {},
+            )?;
+            self.run(
+                &record,
+                Operation::ResettingRootDisk,
+                vec![(WorkspaceStep::ResettingRootDisk, None, None)],
             );
             Ok(record)
         })

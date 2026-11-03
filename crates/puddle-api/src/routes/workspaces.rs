@@ -11,7 +11,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use futures_util::future::BoxFuture;
-use puddle_settings::resolve;
+use puddle_settings::{DiskWarningPercent, resolve};
 use puddle_store::{IdentityId, RepoGitRequest, RepoRef, Store};
 use puddle_types::{WorkspaceId, WorkspaceName};
 
@@ -39,6 +39,8 @@ struct DirectSsh {
     on: bool,
     /// Set when the settings could not be read: direct SSH then counts as off (the safe side).
     unreadable: Option<String>,
+    /// The disk warning threshold of the global settings; Puddle's default when they cannot be read.
+    disk_warning: DiskWarningPercent,
 }
 
 impl DirectSsh {
@@ -48,6 +50,7 @@ impl DirectSsh {
             unreadable: Some(format!(
                 "the settings cannot be read ({reason}); direct SSH counts as off and local destinations stay blocked until they can"
             )),
+            disk_warning: DiskWarningPercent::DEFAULT,
         }
     }
 }
@@ -64,6 +67,7 @@ async fn direct_ssh_of(state: &AppState, records: &[WorkspaceRecord]) -> Vec<Dir
             Ok(global) => global,
             Err(e) => return Ok(all_unreadable(names.len(), e.reason())),
         };
+        let disk_warning = global.settings.ui.disk_warning_percent();
         Ok(names
             .iter()
             .map(
@@ -73,6 +77,7 @@ async fn direct_ssh_of(state: &AppState, records: &[WorkspaceRecord]) -> Vec<Dir
                             .direct_ssh
                             .value,
                         unreadable: None,
+                        disk_warning,
                     },
                     Err(e) => DirectSsh::unreadable(e.reason()),
                 },
@@ -96,6 +101,7 @@ async fn direct_ssh_of_one(state: &AppState, record: &WorkspaceRecord) -> Direct
     all.pop().unwrap_or(DirectSsh {
         on: false,
         unreadable: None,
+        disk_warning: DiskWarningPercent::DEFAULT,
     })
 }
 
@@ -111,14 +117,21 @@ async fn views(state: &AppState, records: Vec<WorkspaceRecord>) -> Vec<Workspace
     records
         .into_iter()
         .zip(direct)
-        .map(|(record, d)| Workspace::new(record, d.on).with_settings_error(d.unreadable))
+        .map(|(record, d)| present(record, d))
         .collect()
 }
 
 /// One workspace as the API shows it.
 pub(super) async fn view(state: &AppState, record: WorkspaceRecord) -> Workspace {
     let d = direct_ssh_of_one(state, &record).await;
-    Workspace::new(record, d.on).with_settings_error(d.unreadable)
+    present(record, d)
+}
+
+fn present(record: WorkspaceRecord, d: DirectSsh) -> Workspace {
+    let warnings = record.disk_warnings(d.disk_warning);
+    Workspace::new(record, d.on)
+        .with_settings_error(d.unreadable)
+        .with_disk_warnings(warnings)
 }
 
 /// Every workspace.
@@ -392,6 +405,31 @@ pub(crate) async fn reclaim_workspace(
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<Workspace>), ApiError> {
     let record = state.workspaces.reclaim(&workspace_id(&id)?).await?;
+    Ok((StatusCode::ACCEPTED, Json(view(&state, record).await)))
+}
+
+/// Removes the stopped workspace's sandbox and with it the root disk, so the next start makes a
+/// fresh one: what was installed or cached outside the volume is lost, the volume is untouched.
+/// Nothing runs by itself: this is the user's choice. Answers 202.
+#[utoipa::path(
+    post,
+    path = "/api/workspaces/{id}/reset-root-disk",
+    tag = "workspaces",
+    params(("id" = String, Path, description = "workspace id")),
+    responses(
+        (status = ACCEPTED, description = "reset accepted", body = Workspace),
+        (status = NOT_FOUND, description = "no such workspace", body = ApiErrorBody),
+        (status = CONFLICT, description = "busy, or not stopped", body = ApiErrorBody)
+    )
+)]
+pub(crate) async fn reset_root_disk(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<(StatusCode, Json<Workspace>), ApiError> {
+    let record = state
+        .workspaces
+        .reset_root_disk(&workspace_id(&id)?)
+        .await?;
     Ok((StatusCode::ACCEPTED, Json(view(&state, record).await)))
 }
 

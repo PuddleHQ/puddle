@@ -8,6 +8,7 @@
 import { defineConfig, devices } from "@playwright/test";
 import { createServer } from "node:net";
 import { resolve } from "node:path";
+import { slowdown } from "./e2e/cpu-throttle.ts";
 import { edgeLaunchArgs } from "./scripts/edge-launch-args.ts";
 
 // A free port per run, so gate runs from several checkouts can overlap. Playwright loads this
@@ -62,10 +63,17 @@ export default defineConfig({
   reporter: process.env["CI"]
     ? [["list"], ["html", { open: "never" }]]
     : "list",
+  // The nightly stress job (ci/stress.sh) declares a slowdown (`PUDDLE_E2E_CPU_THROTTLE`, 1 everywhere
+  // else) and starves the browser's CPU. The page's own start, which runs before its first request,
+  // took 7 s at the median and 13 s at the worst of 40 loads there against 2 s unstarved, and every
+  // later step is dearer by about the same factor, so a test's 30 s and a read's 15 s fail a page that
+  // is only slow. Both limits grow by the slowdown the run declares, as the bars of `inbox-bulk` and
+  // `inbox-full-list` do; a run that declares none keeps 30 s and 15 s.
+  timeout: 30_000 * slowdown(),
   // `expect.poll` and the web-first assertions give a read this long. The 5 s default is shorter than an
   // axe scan on a loaded machine (a scan that has not returned in 5 s ends a poll with "waiting on the
   // predicate"), so a loaded run failed on time, not on the page.
-  expect: { timeout: 15_000 },
+  expect: { timeout: 15_000 * slowdown() },
   use: {
     baseURL: `http://127.0.0.1:${PORT}`,
     trace: "retain-on-failure",

@@ -70,6 +70,12 @@
         <p class="notice" role="alert">{error}</p>
       {/if}
 
+      {#if !check.volume_missing}
+        <p class="info" role="note">
+          The unsaved work check ignores git-ignored files.
+        </p>
+      {/if}
+
       {#if check.volume_missing}
         <p class="clean">
           The volume is already gone, so there was nothing to check and nothing
@@ -179,6 +185,13 @@
     padding: var(--space-2) var(--space-3);
     border: 1px solid var(--color-warning);
     border-radius: var(--radius-md);
+  }
+  :global(.delete-dialog .info) {
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-text-muted);
   }
   :global(.delete-dialog .confirm-check) {
     display: flex;

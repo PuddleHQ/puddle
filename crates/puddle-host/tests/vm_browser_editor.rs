@@ -112,9 +112,9 @@ async fn explorer(
                 Ok(outcome) => outcome.result.to_string(),
                 Err(e) => format!("(not read: {e})"),
             };
-            // Printed before the guest is asked: a guest that does not answer fails the test
-            // in `guest_within`, and the window's state must not be lost with it.
-            eprintln!("{sandbox}'s explorer did not get ready: {e}\nthe window: {window}");
+            // Logged before the guest is asked: a guest that does not answer fails the test in
+            // `guest_within`, and the window's state must not be lost with it.
+            tracing::error!(workspace = %sandbox, error = %e, %window, "the explorer did not get ready");
             let server = guest_within(runtime, sandbox, SERVER_STATE, PAGE_BUDGET).await;
             panic!("{sandbox}'s explorer did not get ready; the guest:\n{server}");
         }

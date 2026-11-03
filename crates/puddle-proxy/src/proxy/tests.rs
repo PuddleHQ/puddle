@@ -230,6 +230,43 @@ async fn a_built_in_deny_set_names_the_set_and_has_no_rule_to_name() {
     );
 }
 
+/// A policy that allows a name through a set and denies its address through a set entry.
+struct SetAllowsNameDeniesIp;
+
+impl Policy for SetAllowsNameDeniesIp {
+    fn decide(&self, _: &EgressRequest, _: SuffixAllows) -> Result<Decision, PolicyError> {
+        Ok(Decision::SetAllow {
+            set: RuleSetId::System,
+            rule_id: None,
+            pattern: PatternKind::Exact,
+        })
+    }
+
+    fn lookup(&self, _: &EgressRequest, _: SuffixAllows) -> Result<Option<Decision>, PolicyError> {
+        Ok(Some(Decision::SetDeny {
+            set: RuleSetId::User(3),
+            rule_id: Some(RuleId(5)),
+            pattern: PatternKind::Exact,
+        }))
+    }
+}
+
+#[tokio::test]
+async fn a_set_deny_of_every_address_refuses_the_allowed_name() {
+    let p = proxy(
+        Arc::new(SetAllowsNameDeniesIp),
+        StaticResolver::new().with("example.com", &[ip("1.1.1.1")]),
+    );
+    let refusal = admit(&p, &request("example.com")).await.unwrap_err();
+    assert_eq!(refusal.status, "403 Forbidden");
+    assert_eq!(header(&refusal, "x-puddle-rule"), Some("5"));
+    assert!(
+        refusal.message.contains("denied by a rule"),
+        "{}",
+        refusal.message
+    );
+}
+
 #[tokio::test]
 async fn a_rule_set_allow_reaches_public_addresses_but_counts_as_a_wildcard_for_local_ones() {
     let policy = FnPolicy::new(|mode| {

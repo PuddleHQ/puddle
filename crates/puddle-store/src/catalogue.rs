@@ -357,17 +357,28 @@ mod tests {
         ],
     };
 
+    /// The deny sets among `sets` that lack provenance, with what each lacks.
+    fn deny_sets_missing_provenance(sets: &[BuiltInSet]) -> Vec<(&'static str, Vec<&'static str>)> {
+        sets.iter()
+            .filter(|set| set.effect == Effect::Deny)
+            .map(|set| (set.slug, provenance_gaps(set)))
+            .filter(|(_, gaps)| !gaps.is_empty())
+            .collect()
+    }
+
     #[test]
     fn r36_every_deny_set_names_its_source_licence_and_date() {
-        for set in BUILT_IN_SETS.iter().filter(|s| s.effect == Effect::Deny) {
-            assert_eq!(provenance_gaps(set), Vec::<&str>::new(), "{}", set.slug);
-        }
+        assert!(deny_sets_missing_provenance(BUILT_IN_SETS).is_empty());
+        assert!(deny_sets_missing_provenance(&[TRACKER_FIXTURE]).is_empty());
         assert!(provenance_gaps(&TRACKER_FIXTURE).is_empty());
         let bare = BuiltInSet {
             description: "Tracker hosts.",
             ..TRACKER_FIXTURE
         };
-        assert_eq!(provenance_gaps(&bare), ["source", "licence", "date"]);
+        assert_eq!(
+            deny_sets_missing_provenance(&[bare]),
+            [("fixture-trackers", vec!["source", "licence", "date"])]
+        );
     }
 
     #[test]

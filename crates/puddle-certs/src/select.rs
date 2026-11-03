@@ -421,7 +421,7 @@ mod tests {
         let r = CorporateRoots::select(&s, now());
         assert_eq!(names(&r), ["Edge Root"]);
         let later = CorporateRoots::select(&s, now() + Duration::from_secs(1));
-        assert!(names(&later).is_empty());
+        assert_eq!(names(&later), Vec::<&str>::new());
         assert_eq!(
             skipped(&later),
             [("Edge Root".to_owned(), SkipReason::Expired)]

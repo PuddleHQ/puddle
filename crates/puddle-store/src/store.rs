@@ -19,7 +19,7 @@ use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
 use crate::audit::{
     AuditOutcome, AuditRecord, ConnectionRecord, ConnectionWindow, PendingExpiryReason,
-    PendingWire, RuleDeleteReason, RuleWire, actor_str,
+    PendingWire, RuleDeleteReason, RuleWire, WorkspaceOpKind, WorkspaceOpOutcome, actor_str,
 };
 use crate::clock::Clock;
 use crate::engine::{Hit, RuleIndex};
@@ -76,6 +76,21 @@ impl Default for Limits {
             max_waiting_connection_records: 5000,
         }
     }
+}
+
+/// A workspace operation to record ([`Store::record_workspace_op`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewWorkspaceOp {
+    /// What was done.
+    pub op: WorkspaceOpKind,
+    /// The workspace it was done to; `None` for an identity change that belongs to none.
+    pub workspace: Option<WorkspaceName>,
+    /// How it ended.
+    pub outcome: WorkspaceOpOutcome,
+    /// Who asked.
+    pub actor: Actor,
+    /// A short plain sentence (why it failed, or what it touched); never a secret.
+    pub detail: Option<String>,
 }
 
 /// Which audit records to read. Every field left `None` matches everything; the set
@@ -681,6 +696,41 @@ impl Store {
             self.put_back(vec![Flushed(event.workspace.clone(), ts, count)]);
         }
         written
+    }
+
+    /// Writes a `workspace_op` record: a workspace operation or a change to the identities and
+    /// repository lists a workspace uses. The host calls it once the operation has ended, so a
+    /// failed write costs the record and nothing else; callers log it and go on.
+    ///
+    /// # Errors
+    /// A database or audit error.
+    pub fn record_workspace_op(&self, op: &NewWorkspaceOp) -> Result<(), StoreError> {
+        self.change(|tx, now, _fx| {
+            append(
+                tx,
+                &AuditRecord::WorkspaceOp {
+                    ts: now,
+                    op: op.op,
+                    workspace_id: op.workspace.as_ref().map(|w| w.as_str().to_owned()),
+                    outcome: op.outcome,
+                    actor: actor_str(op.actor),
+                    detail: op.detail.clone(),
+                },
+            )
+        })
+    }
+
+    /// Writes a `workspace_op` record for an operation that has already happened. A record that
+    /// cannot be written is logged and dropped: the operation stands, and an error here would
+    /// read as "not done". Returns whether the record was written.
+    pub fn note_workspace_op(&self, op: &NewWorkspaceOp) -> bool {
+        match self.record_workspace_op(op) {
+            Ok(()) => true,
+            Err(err) => {
+                tracing::warn!(op = ?op.op, error = %err, "workspace operation not written to the audit log");
+                false
+            }
+        }
     }
 
     /// Removes a deleted workspace's rules and environment and expires its open rows, in one

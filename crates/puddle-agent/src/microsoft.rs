@@ -802,6 +802,10 @@ pub fn arguments(
         data.join(EXTENSIONS).into(),
         "--reconnection-grace-time".into(),
         server.grace_secs.to_string().into(),
+        // The sandbox is the boundary, so the folder it opens is trusted: no "Trust Folder"
+        // prompt, and the terminal's shell starts at once. Only this server gets the flag; a
+        // desktop editor attached over SSH keeps its own prompt.
+        "--disable-workspace-trust".into(),
     ];
     if !telemetry {
         args.push("--disable-telemetry".into());
@@ -974,6 +978,7 @@ mod tests {
         assert_eq!(after("--reconnection-grace-time"), "120");
         assert_eq!(after("--default-folder"), "/w");
         assert!(off.iter().any(|a| a == "--accept-server-license-terms"));
+        assert!(off.iter().any(|a| a == "--disable-workspace-trust"));
         assert!(off.iter().any(|a| a == "--disable-telemetry"));
         // The data of the server and its extensions sit on the volume, in their own folders.
         let under = |leaf: &str| {

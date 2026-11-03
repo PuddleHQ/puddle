@@ -496,6 +496,7 @@ mod tests {
         let trust = GuestTrust::new(&CorporateRoots::default(), &TrustBundle::new())
             .with_dev_cert(dev.clone());
         let bytes: Vec<u8> = key_body.bytes().collect();
+        assert_eq!(format!("{dev:?}"), "GuestDevCert { .. }");
         let leaked = format!("{dev:?} {trust:?} {:?}", trust.guest_files());
         assert!(!leaked.contains(&key_body), "key text in Debug output");
         assert!(

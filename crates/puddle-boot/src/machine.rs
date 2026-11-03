@@ -144,6 +144,15 @@ mod tests {
         );
     }
 
+    /// Desktop attach runs VS Code's own server and reads this file: Puddle's trust of the browser
+    /// editor's folder must not reach it, so the desktop editor keeps its Workspace Trust prompt.
+    #[test]
+    fn settings_leave_workspace_trust_to_the_desktop_editor() {
+        let text = String::from_utf8(machine_settings(3128).contents().to_vec()).unwrap();
+        assert!(!text.contains("workspace.trust"), "{text}");
+        assert!(!text.contains("workspaceTrust"), "{text}");
+    }
+
     #[test]
     fn settings_name_no_credential_helper() {
         let text = String::from_utf8(

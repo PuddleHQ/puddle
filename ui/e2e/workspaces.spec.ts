@@ -652,6 +652,9 @@ test.describe("deleting", () => {
     await expect(dialog).toContainText("3f2a9c1 Rewrite the intro");
     await expect(dialog).toContainText("stash@{0}");
     await expect(dialog).toContainText("scratch");
+    await expect(dialog.getByRole("note")).toHaveText(
+      "The unsaved work check ignores git-ignored files.",
+    );
     await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
     const remove = dialog.getByRole("button", { name: "Delete workspace" });
     await expect(remove).toBeDisabled();

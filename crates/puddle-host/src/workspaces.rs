@@ -67,6 +67,7 @@ use crate::git_hosts::{
 };
 use crate::injection::Injection;
 use crate::kubernetes::{kubernetes_key, kubernetes_problem};
+use crate::merge_notice::{merge_notice_prefix, merge_notices};
 
 #[path = "repositories.rs"]
 mod repositories;
@@ -1170,6 +1171,15 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
+    /// After a boot: each file of the user's that Puddle merges settings into and could not parse
+    /// is a notice on the workspace, once per start. The file is left as it is, and the start
+    /// goes on. A stop ends the notices, so a start that finds the file repaired has none.
+    fn settle_merge_notices(&self, name: &WorkspaceName, report: &puddle_boot::BootReport) {
+        for problem in merge_notices(name, &report.left_files()) {
+            self.inner.problems.raise(problem);
+        }
+    }
+
     /// After the hook ran with `wanted` authors: a guest whose git is too old for the author rules
     /// is a problem on the workspace.
     fn settle_git_version(
@@ -1824,6 +1834,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.settle_shell_init(name, &gated).await;
         self.settle_entrypoint(name, gated.boot_report());
         self.settle_kubernetes(name, gated.boot_report());
+        self.settle_merge_notices(name, gated.boot_report());
         let authors = inner
             .live
             .lock()
@@ -2194,6 +2205,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.inner.problems.clear(&problem_key("ssh", name));
         GitProblem::clear_all(&self.inner.problems, name);
         self.inner.problems.clear(&kubernetes_key(name));
+        self.inner.problems.clear_prefix(&merge_notice_prefix(name));
         let (ssh, route) = {
             let mut live = self.inner.live.lock().await;
             if drop_route {

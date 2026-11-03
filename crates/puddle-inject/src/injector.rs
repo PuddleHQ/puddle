@@ -15,7 +15,9 @@
 //!    event tells the user no identity covers the owner, once the workspace's own tool has had a
 //!    moment to retry with a credential it holds). A
 //!    source that cannot supply the secret: `502` (the cache the secret is read through raises the
-//!    sign-in notice). A `401` to the credential Puddle added becomes a `403` and a sign-in notice:
+//!    sign-in notice), except for a read (clone, fetch, LFS download) of a source that needs a
+//!    sign-in: that goes out with no credential, and the server's `401` to it becomes the same
+//!    `502`. A push and every write stay refused. A `401` to the credential Puddle added becomes a `403` and a sign-in notice:
 //!    the workspace holds no credential to answer it with.
 
 use std::collections::HashMap;
@@ -27,7 +29,7 @@ use puddle_proxy::{
     BoxFuture, InjectContext, InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector,
     RequestView, Unauthorized,
 };
-use puddle_secrets::SourceSpec;
+use puddle_secrets::{SourceError, SourceSpec};
 use puddle_store::{CredentialBinding, CredentialChoice, Identity, WorkspaceGit};
 use puddle_types::{Event, EventSink, GitAccess, WorkspaceName};
 use tokio::time::Instant;
@@ -141,7 +143,7 @@ impl GitInjector {
         match covering(&git, &path) {
             CredentialChoice::Covered {
                 identity, binding, ..
-            } => self.inject(identity, binding, &path).await,
+            } => self.inject(identity, binding, &path, access).await,
             // No identity covers it: it goes out as the workspace sent it, so a token the workspace
             // supplies after the server's `401` (a credential helper, `.netrc`, the address's user
             // name and password) is used as it would be without Puddle.
@@ -235,6 +237,7 @@ impl GitInjector {
         identity: &Identity,
         binding: &CredentialBinding,
         path: &GitPath,
+        access: GitAccess,
     ) -> InjectDecision {
         let source = &binding.source;
         let named = format!("{}/{}", path.host, path.owner);
@@ -265,6 +268,9 @@ impl GitInjector {
                 tracing::info!(workspace = %self.workspace, source = %source.describe(), "the credential could not be read: {err}");
                 // The cache the source is read through says when a sign-in is needed (and the host
                 // turns that into a notice), so it is not said twice here.
+                if err.needs_sign_in() && access == GitAccess::Pull {
+                    return self.anonymous_read(identity, source, path, &err);
+                }
                 let advice = if err.needs_sign_in() {
                     "sign in to it in Puddle"
                 } else {
@@ -297,6 +303,32 @@ impl GitInjector {
             vec![header],
         );
         InjectDecision::Inject(injection.on_unauthorized(self.rejected(identity, source, path)))
+    }
+
+    /// A read (clone, fetch, an LFS download) of a repository whose identity is not signed in goes
+    /// out with no credential at all, so a public repository still answers. A private one answers
+    /// `401`, which becomes the sign-in refusal a missing credential would have been, never the
+    /// server's `401` (the workspace's tool would ask for a password that does not exist).
+    /// The notice was raised by the cache the secret is read through.
+    fn anonymous_read(
+        &self,
+        identity: &Identity,
+        source: &SourceSpec,
+        path: &GitPath,
+        err: &SourceError,
+    ) -> InjectDecision {
+        tracing::info!(workspace = %self.workspace, identity = %identity.label, "identity not signed in; the read goes out without a credential");
+        let message = format!(
+            "{} needs a credential for {}/{} and went without one: the credential of identity {} ({}) is not available: {err}; sign in to it in Puddle",
+            path.credential_host,
+            path.host,
+            path.owner,
+            identity.label,
+            source.describe()
+        );
+        InjectDecision::PassThroughNoting(Unauthorized::new(move || {
+            InjectRefusal::new(502, "credential_unavailable", message.clone())
+        }))
     }
 
     /// What a `401` to a request no identity covers does: after [`NO_IDENTITY_GRACE`] without the

@@ -1573,7 +1573,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_git_request_whose_source_needs_a_sign_in_is_a_502_and_the_user_gets_one_notice() {
+    async fn a_git_push_whose_source_needs_a_sign_in_is_a_502_and_the_user_gets_one_notice() {
         // The shape of the default injector, over a cache whose source is never signed in: the
         // request is refused with the way out, and the one notice is the cache's, forwarded.
         let store = store();
@@ -1597,7 +1597,7 @@ mod tests {
         let lines = ["host: github.com".to_owned()];
         let view = RequestView::new(
             "GET",
-            "/acme/web.git/info/refs?service=git-upload-pack",
+            "/acme/web.git/info/refs?service=git-receive-pack",
             &lines,
         );
         let decision = injector.decide(&context, &view).await;

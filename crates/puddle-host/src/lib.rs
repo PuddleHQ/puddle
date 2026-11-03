@@ -43,6 +43,7 @@ mod injection;
 mod kubernetes;
 mod learned;
 mod logins;
+mod merge_notice;
 mod paths;
 mod platform;
 mod ports;

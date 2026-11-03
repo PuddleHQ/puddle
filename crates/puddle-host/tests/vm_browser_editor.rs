@@ -79,7 +79,7 @@ const WINDOW_STATE: &str = r"(() => {
 /// The guest's side of a window whose explorer does not get ready: the editor server's command
 /// line, the multi-root file, the volume, and the end of the server's own logs.
 const SERVER_STATE: &str = r#"
-ps -eo pid,etimes,args | grep -e '[c]ode-server' | cut -c1-400
+ps -eo pid,etimes,args | grep -e '[c]ode-server' | cut -c1-2000
 data=$(ps -eo args= | grep -o -e '--user-data-dir [^ ]*' | head -n 1 | cut -d' ' -f2)
 for f in /workspaces/*/.puddle/editor/*.code-workspace; do [ -f "$f" ] && { echo "== $f"; cat "$f"; echo; }; done
 echo "== volume"; ls -a /workspaces/*/

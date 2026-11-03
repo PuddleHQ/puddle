@@ -9,7 +9,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-/// Who sessions run as in the guest.
+/// Who sessions run as in the guest. The default is the one for a new workspace; a boot plan that
+/// names no user stays `root` (see `puddle-boot`), so nothing changes for a caller that never asks.
 ///
 /// ```
 /// use puddle_types::SessionUser;

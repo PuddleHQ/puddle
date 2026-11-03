@@ -21,6 +21,9 @@ from 1000 when the image already uses it), writes the sudo rule, and gives the u
 files Puddle writes there and the workspace volume. A per-workspace setting switches back to
 `root`.
 
+The hook and the boot plan come first and default to `root`; the per-workspace setting, the
+volume's owner and the per-user tool settings follow, and only then do new workspaces get `agent`.
+
 A workspace made before this change keeps `root`: its stored entry has no session user, which
 reads as `root`. Its volume and its root disk were made for root, and nothing changes under the
 user without being asked.

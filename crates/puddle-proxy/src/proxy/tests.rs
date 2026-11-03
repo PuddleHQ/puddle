@@ -183,7 +183,7 @@ async fn a_rule_set_deny_names_the_rule_and_the_set() {
         FnPolicy::new(|_| {
             Ok(Decision::SetDeny {
                 set: RuleSetId::User(2),
-                rule_id: RuleId(8),
+                rule_id: Some(RuleId(8)),
                 pattern: PatternKind::Exact,
             })
         }),
@@ -196,6 +196,35 @@ async fn a_rule_set_deny_names_the_rule_and_the_set() {
     assert_eq!(header(&refusal, "x-puddle-rule-set"), Some("user:2"));
     assert!(
         refusal.message.contains("rule set user:2"),
+        "{}",
+        refusal.message
+    );
+}
+
+#[tokio::test]
+async fn a_built_in_deny_set_names_the_set_and_has_no_rule_to_name() {
+    let p = proxy(
+        FnPolicy::new(|_| {
+            Ok(Decision::SetDeny {
+                set: RuleSetId::BuiltIn("trackers"),
+                rule_id: None,
+                pattern: PatternKind::Suffix,
+            })
+        }),
+        StaticResolver::new(),
+    );
+    let refusal = admit(&p, &request("ads.example")).await.unwrap_err();
+    assert_eq!(refusal.status, "403 Forbidden");
+    assert_eq!(header(&refusal, "x-puddle-decision"), Some("deny"));
+    assert_eq!(header(&refusal, "x-puddle-rule"), None);
+    assert_eq!(
+        header(&refusal, "x-puddle-rule-set"),
+        Some("builtin:trackers")
+    );
+    assert!(
+        refusal
+            .message
+            .contains("built-in rule set builtin:trackers"),
         "{}",
         refusal.message
     );

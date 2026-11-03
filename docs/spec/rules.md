@@ -36,8 +36,8 @@ a binding never allows a host, and a toggle never allows a destination (R-14).
 ## 2. Matching
 
 - **R-1 Nothing is pre-decided.** A fresh install has no rules, allow or deny. Every request
-  with no matching rule becomes pending (§3); there is no built-in deny list. The built-in rule
-  sets ship switched off (R-36); the one thing Puddle allows by itself is the short System managed
+  with no matching rule becomes pending (§3); no deny list is on by itself. The built-in rule
+  sets, allow or deny, ship switched off (R-36); the one thing Puddle allows by itself is the short System managed
   list, derived from the user's own setup choices and shown with a reason for every host
   (R-40, R-41). *Note added 2026-10-08.*
 - **R-2 Exact rules** match the identical normalised host or IP literal, on any port. Port rules are
@@ -336,11 +336,14 @@ with its reason. The user's own global and workspace rules (§1) are called *own
 rules are tested in `puddle-store` (`rule_sets_spec`, the engine's property tests), the proxy and
 the API. *Added 2026-10-08.*
 
-- **R-36 Built-in sets ship off, only allow, and update with puddle.** A built-in set is data in
+- **R-36 Built-in sets ship off, hold one kind of rule, and update with puddle.** A built-in set is data in
   Puddle (an id `builtin:<slug>`, a name, a description, entries with a note each), checked at
   build time against R-4 and for duplicates. It is read-only and never copied into the database, so
-  an update of Puddle updates it. Puddle ships no deny list: built-in entries only allow. Each
-  ships switched off. When an update changes a set's entries, the store writes one
+  an update of Puddle updates it. A built-in set is single-kind: all its entries allow, or all of
+  them deny (a set the user makes may mix, R-38). A built-in deny set blocks
+  only while the user has switched it on, a refusal by it names the set (R-43), and its description
+  states the list it was taken from, that list's licence and the date it was taken. Each ships
+  switched off. When an update changes a set's entries, the store writes one
   `rule_set_changed` record (`added`, `removed`) when it opens, and the set shows when it changed.
 - **R-37 Switches.** Every set has a switch for every workspace and an override per workspace, each
   on, off or unset; unset passes to the next level (the workspace's, then every workspace's, then the
@@ -474,8 +477,8 @@ ever refuses, so no rule of this kind can open anything and there is no preceden
   and a connection no rule refused names its first request as before. A refused tunnel is
   `decision: blocked`, `reason: request_rule_port`, with `request_rule` the lowest-numbered rule
   on the host (its `403` carries the same id in `x-puddle-request-rule`).
-- **R-55 No rule of this kind is ever made by Puddle.** Automated help may only allow (R-36), so
-  rule sets, System managed and the AI judge never create one; every rule on method and path
+- **R-55 No rule of this kind is ever made by Puddle.** Rule sets, System managed and the AI judge
+  never create one (a built-in set holds host rules only); every rule on method and path
   was made by the user over the API (a screen for them is not built yet) and shows in the audit with who made it.
 
 ## 9. Out of scope here

@@ -470,8 +470,14 @@ fn quit_warnings(shutdown: &HostShutdown) -> Vec<String> {
 /// What a second start of the program does in the running one: bring the window forward, unless
 /// the sign-in entry made that start (a copy is already running), which shows nothing.
 fn on_second_start<R: Runtime>(app: &AppHandle<R>, args: &[String]) {
+    bring_forward_unless_sign_in(args, || focus_main(app));
+}
+
+/// Calls `bring_forward` unless `args` carry the sign-in entry's flag. A seam of its own because
+/// the mock window system keeps no focus state a test could read back.
+fn bring_forward_unless_sign_in(args: &[String], bring_forward: impl FnOnce()) {
     if !autostart::started_at_login(args) {
-        focus_main(app);
+        bring_forward();
     }
 }
 
@@ -911,14 +917,34 @@ mod fixture_tests {
     }
 
     #[test]
-    fn a_second_start_focuses_the_window_unless_it_came_from_the_sign_in_entry() {
+    fn a_second_start_brings_the_window_forward_unless_it_came_from_the_sign_in_entry() {
+        let from_user = ["puddle-app".to_owned()];
+        let from_sign_in = ["puddle-app".to_owned(), autostart::AT_LOGIN_FLAG.to_owned()];
+        let mut forward = 0;
+        bring_forward_unless_sign_in(&from_user, || forward += 1);
+        assert_eq!(
+            forward, 1,
+            "a second start by the user left the window behind"
+        );
+        bring_forward_unless_sign_in(&from_sign_in, || forward += 1);
+        assert_eq!(
+            forward, 1,
+            "the sign-in entry's start brought the window forward"
+        );
+    }
+
+    #[test]
+    fn a_second_start_reaches_the_main_window_and_is_harmless_without_one() {
         let app = app();
-        // Without a window neither call has anything to focus; both must be harmless.
+        on_second_start(app.handle(), &["puddle-app".to_owned()]);
+        start(app.handle(), &fixture_options(), Source::Fixture).unwrap();
         on_second_start(app.handle(), &["puddle-app".to_owned()]);
         on_second_start(
             app.handle(),
             &["puddle-app".to_owned(), autostart::AT_LOGIN_FLAG.to_owned()],
         );
+        assert!(app.get_webview_window(MAIN_LABEL).is_some());
+        assert!(stop(app.handle()).is_some());
     }
 
     #[test]

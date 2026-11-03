@@ -343,6 +343,31 @@ fn exactly_thirty_days_left_is_still_reused() {
 }
 
 #[test]
+fn a_certificate_valid_from_this_very_second_is_reused() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeTrust::new(vec![
+        Spec {
+            started: 0,
+            ..Spec::good()
+        }
+        .build(),
+    ]);
+    let report = manager(&dir, &fake).ensure(now()).unwrap();
+    assert_eq!(report.status, DevCertStatus::ReusingExisting);
+    assert!(report.skipped.is_empty());
+}
+
+#[test]
+fn the_manager_debug_names_its_folder_and_nothing_else() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeTrust::new(vec![]);
+    let text = format!("{:?}", manager(&dir, &fake));
+    assert!(text.starts_with("DevCertManager { dir: "), "{text}");
+    assert!(text.contains(dir.path().to_str().unwrap()), "{text}");
+    assert!(text.ends_with(", .. }"), "{text}");
+}
+
+#[test]
 fn a_certificate_without_the_marker_is_not_a_development_certificate_and_is_not_listed() {
     let dir = tempfile::tempdir().unwrap();
     let fake = FakeTrust::new(vec![

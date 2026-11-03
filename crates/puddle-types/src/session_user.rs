@@ -76,4 +76,11 @@ mod tests {
         assert!(serde_json::from_str::<SessionUser>("\"vscode\"").is_err());
         assert!(SessionUser::Root.is_root() && !SessionUser::Agent.is_root());
     }
+
+    #[test]
+    fn agent_lives_in_home_agent_and_root_in_root() {
+        assert_eq!(SessionUser::Agent.home(), "/home/agent");
+        assert_eq!(SessionUser::Root.home(), "/root");
+        assert_eq!(SessionUser::default(), SessionUser::Agent);
+    }
 }

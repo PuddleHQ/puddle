@@ -1573,9 +1573,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_git_push_whose_source_needs_a_sign_in_is_a_502_and_the_user_gets_one_notice() {
+    async fn a_git_read_whose_source_needs_a_sign_in_goes_out_anonymously_and_the_user_gets_one_notice()
+     {
         // The shape of the default injector, over a cache whose source is never signed in: the
-        // request is refused with the way out, and the one notice is the cache's, forwarded.
+        // request goes out anonymously, and the one notice is the cache's, forwarded.
         let store = store();
         let ws = workspace("alpha");
         attach(&store, &ws, "ada", "github.com");
@@ -1597,13 +1598,17 @@ mod tests {
         let lines = ["host: github.com".to_owned()];
         let view = RequestView::new(
             "GET",
-            "/acme/web.git/info/refs?service=git-receive-pack",
+            "/acme/web.git/info/refs?service=git-upload-pack",
             &lines,
         );
+        // A read goes out with no credential; a private repository's `401` is the sign-in line.
         let decision = injector.decide(&context, &view).await;
-        assert!(matches!(&decision, InjectDecision::Refuse(refusal)
-                if refusal.code() == "credential_unavailable"
-                    && refusal.message().contains("sign in to it in Puddle")));
+        let InjectDecision::PassThroughNoting(unauthorized) = &decision else {
+            panic!("{decision:?}");
+        };
+        let refusal = unauthorized.refusal().expect("a refusal for the 401");
+        assert_eq!(refusal.code(), "credential_unavailable");
+        assert!(refusal.message().contains("sign in to it in Puddle"));
         puddle_test_kit::eventually("a sign-in notice forwarded", Duration::from_secs(2), || {
             !events.0.lock().unwrap().is_empty()
         })

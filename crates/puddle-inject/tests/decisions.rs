@@ -924,17 +924,26 @@ async fn an_anonymous_read_carries_no_header_of_puddles() {
 }
 
 #[tokio::test]
-async fn a_source_that_is_broken_is_a_502_without_a_sign_in_notice() {
+async fn a_push_with_a_broken_source_is_a_502_without_a_sign_in_notice_and_a_read_goes_out_anonymously()
+ {
     let w = world();
     let work = &w.store.identities().unwrap()[0];
     w.credentials.fail(
         &work.credentials[0].source,
         SourceError::ToolMissing(Tool::Gh),
     );
-    let (status, code, message) = refusal(&w.decide("github.com", "GET", FETCH, &[]).await);
+    let (status, code, message) = refusal(&w.decide("github.com", "GET", PUSH_ADVERT, &[]).await);
     assert_eq!((status, code), (502, "credential_unavailable"));
     assert!(message.contains("is not installed"), "{message}");
     assert!(message.contains("check it in Puddle"), "{message}");
+    // A read needs no credential from a source that is not there: it goes out without one.
+    let read = w.decide("github.com", "GET", FETCH, &[]).await;
+    let InjectDecision::PassThroughNoting(unauthorized) = read else {
+        panic!("{read:?}");
+    };
+    let replaced = unauthorized.refusal().expect("replaced");
+    assert!(replaced.message().contains("is not installed"));
+    assert!(replaced.message().contains("check it in Puddle"));
     assert_eq!(w.events.take(), []);
 }
 

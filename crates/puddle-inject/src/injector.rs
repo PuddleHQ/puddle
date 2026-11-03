@@ -15,9 +15,8 @@
 //!    event tells the user no identity covers the owner, once the workspace's own tool has had a
 //!    moment to retry with a credential it holds). A
 //!    source that cannot supply the secret: `502` (the cache the secret is read through raises the
-//!    sign-in notice), except for a read (clone, fetch, LFS download) of a source that needs a
-//!    sign-in: that goes out with no credential, and the server's `401` to it becomes the same
-//!    `502`. A push and every write stay refused. A `401` to the credential Puddle added becomes a `403` and a sign-in notice:
+//!    sign-in notice), except for a read (clone, fetch, LFS download): that goes out with no
+//!    credential, and the server's `401` to it becomes the same `502`. A push and every write stay refused. A `401` to the credential Puddle added becomes a `403` and a sign-in notice:
 //!    the workspace holds no credential to answer it with.
 
 use std::collections::HashMap;
@@ -268,14 +267,14 @@ impl GitInjector {
                 tracing::info!(workspace = %self.workspace, source = %source.describe(), "the credential could not be read: {err}");
                 // The cache the source is read through says when a sign-in is needed (and the host
                 // turns that into a notice), so it is not said twice here.
-                if err.needs_sign_in() && access == GitAccess::Pull {
-                    return self.anonymous_read(identity, source, path, &err);
-                }
                 let advice = if err.needs_sign_in() {
                     "sign in to it in Puddle"
                 } else {
                     "check it in Puddle"
                 };
+                if access == GitAccess::Pull {
+                    return self.anonymous_read(identity, source, path, &err, advice);
+                }
                 return refuse(
                     502,
                     "credential_unavailable",
@@ -305,9 +304,9 @@ impl GitInjector {
         InjectDecision::Inject(injection.on_unauthorized(self.rejected(identity, source, path)))
     }
 
-    /// A read (clone, fetch, an LFS download) of a repository whose identity is not signed in goes
+    /// A read (clone, fetch, an LFS download) of a repository whose identity cannot supply its secret (not signed in, tool missing) goes
     /// out with no credential at all, so a public repository still answers. A private one answers
-    /// `401`, which becomes the sign-in refusal a missing credential would have been, never the
+    /// `401`, which becomes the refusal a missing credential would have been, never the
     /// server's `401` (the workspace's tool would ask for a password that does not exist).
     /// The notice was raised by the cache the secret is read through.
     fn anonymous_read(
@@ -316,10 +315,11 @@ impl GitInjector {
         source: &SourceSpec,
         path: &GitPath,
         err: &SourceError,
+        advice: &str,
     ) -> InjectDecision {
         tracing::info!(workspace = %self.workspace, identity = %identity.label, "identity not signed in; the read goes out without a credential");
         let message = format!(
-            "{} needs a credential for {}/{} and went without one: the credential of identity {} ({}) is not available: {err}; sign in to it in Puddle",
+            "{} needs a credential for {}/{} and went without one: the credential of identity {} ({}) is not available: {err}; {advice}",
             path.credential_host,
             path.host,
             path.owner,

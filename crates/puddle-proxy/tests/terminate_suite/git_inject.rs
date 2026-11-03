@@ -446,10 +446,15 @@ async fn a_401_to_the_workspaces_own_header_is_the_servers_answer_as_without_pud
 
 /// The Work identity's source cannot be read because nobody is signed in.
 fn sign_out(world: &puddle_inject::testing::World) {
-    let work = &world.store.identities().unwrap()[0];
-    world
+    let identities = world.store.identities().unwrap();
+    let source = &identities
+        .first()
+        .unwrap()
         .credentials
-        .fail(&work.credentials[0].source, SourceError::NotSignedIn);
+        .first()
+        .unwrap()
+        .source;
+    world.credentials.fail(source, SourceError::NotSignedIn);
 }
 
 #[tokio::test]

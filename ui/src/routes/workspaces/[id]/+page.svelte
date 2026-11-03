@@ -295,7 +295,7 @@
     bind:open={resetOpen}
     title="Reset the root disk of {workspace.display_name}?"
     summary="Everything installed or cached outside the volume is removed."
-    detail="Packages and tools installed outside the volume, the home directory and tool caches are lost; they reinstall or rebuild on the next start. The volume, with your repositories and files, is untouched."
+    detail="Packages and tools installed outside the volume, the home directory and tool caches are lost, including any file kept there that is not in a repository on the volume; packages reinstall and caches rebuild on the next start. The volume, with your repositories and files, is untouched."
     confirmLabel="Reset root disk"
     tone="deny"
     onConfirm={() => void actions.resetRootDisk(workspace)}

@@ -370,6 +370,10 @@ pub fn arguments(server: &EditorServer) -> Vec<OsString> {
         // code-server sends a window opened without a folder to the one its last window showed,
         // over the target below; Puddle's target (the start folder or the multi-root file) wins.
         "--ignore-last-opened".into(),
+        // The sandbox is the boundary, so the folder it opens is trusted: no "Trust Folder"
+        // prompt, and the terminal's shell starts at once. Only this server gets the flag; a
+        // desktop editor attached over SSH keeps its own prompt.
+        "--disable-workspace-trust".into(),
     ];
     args.push(target(server));
     args
@@ -880,6 +884,7 @@ mod tests {
         assert!(args.iter().any(|a| a == "--disable-telemetry"));
         assert!(args.iter().any(|a| a == "--disable-update-check"));
         assert!(args.iter().any(|a| a == "--ignore-last-opened"));
+        assert!(args.iter().any(|a| a == "--disable-workspace-trust"));
         assert_eq!(args.last().map(String::as_str), Some("/workspaces/a"));
         assert!(
             !args

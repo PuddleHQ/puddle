@@ -35,7 +35,9 @@
     memorySizes,
     microsoftChosenToast,
     needsMicrosoftConsent,
+    parseDiskWarning,
     parseGrace,
+    DISK_WARNING_DEFAULT,
     serverNote,
     serverOf,
     type CloseBehaviour,
@@ -92,6 +94,7 @@
   let saved = $state<string | null>(null);
   let problem = $state<string | null>(null);
   let graceError = $state<string | null>(null);
+  let diskError = $state<string | null>(null);
   let trustOpen = $state(false);
   let popupOpen = $state(false);
   let popupBusy = $state(false);
@@ -173,6 +176,7 @@
   function discard() {
     draft = EMPTY_DRAFT;
     graceError = null;
+    diskError = null;
     saved = null;
     problem = null;
     showStored();
@@ -180,7 +184,7 @@
 
   async function saveAll() {
     const view = store.view;
-    if (!view || !dirty || graceError || saving) return;
+    if (!view || !dirty || graceError || diskError || saving) return;
     saving = true;
     saved = null;
     problem = null;
@@ -227,6 +231,7 @@
     | "sound"
     | "badge"
     | "notify_oom"
+    | "notify_disk_full"
     | "notify_unexpected_stop"
     | "confirm_global_rules"
     | "inbox_shortcuts"
@@ -333,6 +338,22 @@
     }
     graceError = null;
     editLayer("reconnection_grace", parsed.secs, stored);
+  }
+
+  function editDiskWarning(input: HTMLInputElement) {
+    const view = store.view;
+    if (!view) return;
+    const parsed = parseDiskWarning(input.value);
+    if (!parsed.ok) {
+      diskError = parsed.message;
+      return;
+    }
+    diskError = null;
+    editUi(
+      "disk_warning_percent",
+      parsed.percent,
+      view.ui.disk_warning_percent ?? DISK_WARNING_DEFAULT,
+    );
   }
 
   /** The server the select shows: the draft's choice, else the stored one. */
@@ -509,6 +530,37 @@
           "It was stopped because it used all the memory it was given.",
           true,
         )}
+        {@render uiToggle(
+          "notify_disk_full",
+          "set-disk-full",
+          "A workspace's disk is nearly full",
+          "Its root disk or its volume reached the percentage below.",
+          true,
+        )}
+        <div class="setting">
+          <div class="grow">
+            <label for="set-disk-percent"
+              >Warn when a disk is this full (%)</label
+            >
+            <p class="desc" id="set-disk-percent-desc">
+              The warning shows on the workspace even with the notification off.
+              {#if diskError}<span class="error" role="alert">{diskError}</span
+                >{/if}
+            </p>
+          </div>
+          <input
+            id="set-disk-percent"
+            type="text"
+            inputmode="numeric"
+            class="narrow"
+            aria-describedby="set-disk-percent-desc"
+            aria-invalid={diskError ? "true" : undefined}
+            value={String(
+              uiValue("disk_warning_percent", DISK_WARNING_DEFAULT),
+            )}
+            onchange={(e) => editDiskWarning(e.currentTarget)}
+          />
+        </div>
         {@render uiToggle(
           "notify_unexpected_stop",
           "set-stopped",
@@ -961,6 +1013,8 @@
             <p class="error" role="alert">{problem}</p>
           {:else if graceError && dirty}
             <p class="error">Fix the reconnection grace to save.</p>
+          {:else if diskError && dirty}
+            <p class="error">Fix the disk warning percentage to save.</p>
           {:else if saved}
             <p class="saved">{saved}</p>
           {:else if dirty}
@@ -983,7 +1037,10 @@
         <button
           type="button"
           class="btn primary"
-          disabled={!dirty || saving || graceError !== null}
+          disabled={!dirty ||
+            saving ||
+            graceError !== null ||
+            diskError !== null}
           onclick={() => void saveAll()}>Save</button
         >
       </div>

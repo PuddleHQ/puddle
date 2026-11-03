@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use puddle_settings::UiPrefs;
-use puddle_types::{Event, PendingSummary, WorkspaceName, WorkspaceStatus};
+use puddle_types::{DiskKind, Event, PendingSummary, WorkspaceName, WorkspaceStatus};
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_notification::NotificationExt;
 
@@ -128,6 +128,30 @@ impl Notifier {
                      the next time it starts.",
                     clean(process)
                 ),
+                request: None,
+            }],
+            Event::DiskNearlyFull {
+                workspace,
+                disk,
+                percent,
+            } if allowed(prefs, prefs.notify_disk_full(), in_front) => vec![Notice {
+                title: format!(
+                    "{} {} is {percent} % full",
+                    clean(workspace.as_str()),
+                    match disk {
+                        DiskKind::Root => "root disk",
+                        DiskKind::Volume => "volume",
+                    }
+                ),
+                body: match disk {
+                    DiskKind::Root => "Free space in the workspace, or reset its root disk from \
+                                       the workspace page (packages reinstall on the next \
+                                       start, the volume is untouched)."
+                        .to_owned(),
+                    DiskKind::Volume => "Delete what you no longer need in the workspace; the \
+                                         volume cannot grow."
+                        .to_owned(),
+                },
                 request: None,
             }],
             Event::StatusChanged {
@@ -472,6 +496,46 @@ mod tests {
         off.notify_oom = Some(false);
         assert_eq!(Notifier::default().handle(t0, &off, false, &kill), NONE);
         assert_eq!(Notifier::default().handle(t0, &prefs(), true, &kill), NONE);
+    }
+
+    #[test]
+    fn a_full_disk_notifies_by_its_own_switch_and_names_the_disk() {
+        let t0 = Instant::now();
+        let full = |disk, percent| Event::DiskNearlyFull {
+            workspace: name("demo"),
+            disk,
+            percent,
+        };
+        let root = Notifier::default().handle(t0, &prefs(), false, &full(DiskKind::Root, 96));
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].title, "demo root disk is 96 % full");
+        assert!(
+            root[0].body.contains("reset its root disk"),
+            "{}",
+            root[0].body
+        );
+        let volume = Notifier::default().handle(t0, &prefs(), false, &full(DiskKind::Volume, 100));
+        assert_eq!(volume[0].title, "demo volume is 100 % full");
+        let mut off = prefs();
+        off.notify_disk_full = Some(false);
+        assert_eq!(
+            Notifier::default().handle(t0, &off, false, &full(DiskKind::Root, 96)),
+            NONE
+        );
+        // Its own switch only: the others being off changes nothing.
+        let mut others = prefs();
+        others.notify_oom = Some(false);
+        others.notifications = Some(false);
+        assert_eq!(
+            Notifier::default()
+                .handle(t0, &others, false, &full(DiskKind::Root, 96))
+                .len(),
+            1
+        );
+        assert_eq!(
+            Notifier::default().handle(t0, &prefs(), true, &full(DiskKind::Root, 96)),
+            NONE
+        );
     }
 
     #[test]

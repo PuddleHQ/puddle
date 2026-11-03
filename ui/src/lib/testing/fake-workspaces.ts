@@ -26,6 +26,9 @@ export function workspace(
     created_at: 1_000_000,
     disk_size_mib: 32_768,
     disk_used_mib: 2048,
+    root_disk_size_mib: 4096,
+    root_disk_used_mib: 1024,
+    disk_warnings: [],
     direct_ssh: false,
     settings_error: null,
     first_connect_notice_due: false,
@@ -387,7 +390,9 @@ export class FakeWorkspaces {
         ? { ...found, status: "starting", busy: "starting" }
         : verb === "stop"
           ? { ...found, status: "draining", busy: "stopping" }
-          : { ...found, busy: "reclaiming" };
+          : verb === "reset-root-disk"
+            ? { ...found, busy: "resetting_root_disk" }
+            : { ...found, busy: "reclaiming" };
     this.list = this.list.map((w) => (w.id === found.id ? next : w));
     return this.reply(202, next);
   };

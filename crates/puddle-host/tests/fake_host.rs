@@ -5860,7 +5860,7 @@ async fn a_start_the_runtime_refuses_raises_a_problem_about_the_workspace_until_
         Op::Start,
         Fault::once(puddle_compute::ComputeError::StartRefused {
             sandbox: name("beta").sandbox_name().to_string(),
-            cause: puddle_compute::StartRefusal::RootDiskOutsideFolder,
+            cause: puddle_compute::StartRefusal::RootDiskNeedsRecovery,
         }),
     );
     api.post("/api/workspaces/beta/start", "").await;
@@ -5874,7 +5874,7 @@ async fn a_start_the_runtime_refuses_raises_a_problem_about_the_workspace_until_
     );
     for want in [
         "nothing was attached",
-        "root-disk journal names a file outside its own folder",
+        "the runtime cannot verify its stored root disk after an upgrade",
         "create it again",
     ] {
         assert!(problem.detail.contains(want), "{problem:?}");

@@ -125,16 +125,11 @@ pub enum ComputeError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum StartRefusal {
-    /// The sandbox's root-disk journal names a file outside the sandbox's own folder. A process
-    /// in the sandbox can write that journal, so attaching what it names could hand the sandbox
-    /// another workspace's disk or a file of the host.
-    #[error("its root-disk journal names a file outside its own folder")]
-    RootDiskOutsideFolder,
-    /// The root-disk journal cannot be read well enough to tell which files it names.
-    #[error(
-        "its root-disk journal cannot be read, so the files the start would attach are unknown"
-    )]
-    RootDiskUnreadable,
+    /// The runtime cannot vouch for the sandbox's stored root disk: a runtime upgrade found disk
+    /// state it cannot prove came from the host (msb's "migration/recovery required"), so it
+    /// keeps the sandbox as it is instead of attaching that disk.
+    #[error("the runtime cannot verify its stored root disk after an upgrade")]
+    RootDiskNeedsRecovery,
 }
 
 impl StartRefusal {
@@ -142,7 +137,7 @@ impl StartRefusal {
     #[must_use]
     pub const fn way_out(self) -> &'static str {
         match self {
-            Self::RootDiskOutsideFolder | Self::RootDiskUnreadable => {
+            Self::RootDiskNeedsRecovery => {
                 "Delete the workspace and create it again to give it a fresh root disk; the \
                  volume with your work can be kept."
             }
@@ -234,16 +229,9 @@ mod tests {
             (
                 ComputeError::StartRefused {
                     sandbox: "a".into(),
-                    cause: StartRefusal::RootDiskOutsideFolder,
+                    cause: StartRefusal::RootDiskNeedsRecovery,
                 },
-                r#"start of sandbox "a" refused, nothing was attached: its root-disk journal names a file outside its own folder"#,
-            ),
-            (
-                ComputeError::StartRefused {
-                    sandbox: "a".into(),
-                    cause: StartRefusal::RootDiskUnreadable,
-                },
-                "cannot be read, so the files the start would attach are unknown",
+                r#"start of sandbox "a" refused, nothing was attached: the runtime cannot verify its stored root disk after an upgrade"#,
             ),
             (
                 ComputeError::Runtime {

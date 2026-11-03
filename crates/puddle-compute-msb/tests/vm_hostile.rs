@@ -9,7 +9,7 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use puddle_compute::{ComputeError, ExecRequest, Runtime, Sandbox, StartRefusal, VsockRoute};
+use puddle_compute::{ExecRequest, Runtime, Sandbox, VsockRoute};
 use puddle_ipc::IpcRoot;
 use support::{cleanup, collect_lines, sh, spec, vsock_sweep};
 
@@ -172,8 +172,9 @@ async fn vm_hostile_hg02_only_the_routed_vsock_port_accepts() {
     assert_eq!(lines.await.unwrap(), ["hello-hg02"]);
 }
 
-/// The guest-side view of msb's root-disk journal: msb shares the sandbox's runtime folder with
-/// the guest, writable, at this path.
+/// Where the root-disk journal sat in the guest before msb v0.7.12: msb shared the sandbox's
+/// runtime folder with the guest, writable, at `/.msb`. msb now exports only a guest-state folder
+/// there and keeps the journal next to it on the host side, as `<sandbox>/root-disk.json`.
 const GUEST_JOURNAL: &str = "/.msb/root-disk.json";
 
 /// A SHA-256 over a file's content: its length, then every 1 MiB piece that is not all zeros,
@@ -224,17 +225,16 @@ fn read_piece(file: &mut std::fs::File, buf: &mut [u8]) -> usize {
     filled
 }
 
-/// As root in the guest, replaces the journal's first layer with `target` and its launch base
-/// with the sandbox's own disk (`own`), which is what msb compares with the sandbox's config.
-#[expect(
-    clippy::indexing_slicing,
-    clippy::expect_used,
-    reason = "a journal not in msb's shape, or a failed exec, fails the test"
-)]
-async fn forge_journal<S: Sandbox>(sb: &S, journal: &serde_json::Value, own: &Path, target: &Path) {
-    let mut forged = journal.clone();
-    forged["layers"][0]["path"] = serde_json::json!(target);
-    forged["launch_base"] = serde_json::json!(own);
+/// As root in the guest, writes a root-disk journal at [`GUEST_JOURNAL`] in msb's shape whose
+/// launch base is the sandbox's own disk (`own`, what msb compares with the sandbox's config) and
+/// whose only layer is `target`.
+#[expect(clippy::expect_used, reason = "a failed exec fails the test")]
+async fn forge_journal<S: Sandbox>(sb: &S, own: &Path, target: &Path) {
+    let forged = serde_json::json!({
+        "schema": "microsandbox.runtime-root-disk/1",
+        "launch_base": own,
+        "layers": [{ "path": target, "format": "raw" }],
+    });
     let out = sb
         .exec(
             ExecRequest::new(
@@ -253,18 +253,19 @@ async fn forge_journal<S: Sandbox>(sb: &S, journal: &serde_json::Value, own: &Pa
     assert_eq!(
         out.status.code,
         0,
-        "the guest could not write the journal: {}",
+        "the guest could not write into msb's guest share: {}",
         out.stderr_text()
     );
 }
 
-/// Guest root rewrites msb's root-disk journal so that the next start would attach another
-/// workspace's disk, and then a host file, as its writable root disk. After each stop the start
-/// is refused with the adapter's named problem, and both files hash the same as before. Between
-/// the two, the journal msb wrote is put back and the start goes through: a stopped and started
-/// sandbox with its own journal is not refused.
+/// Guest root writes a root-disk journal into msb's guest share at `/.msb` that names another
+/// workspace's disk, and then a host file, as its writable root disk (what the old layout's
+/// guest-writable journal allowed, upstream advisory GHSA-3f94-vm6x-3jv3). msb keeps its journal
+/// out of that share, so the write changes nothing: after each stop the journal on the host is
+/// the one msb wrote (or still absent), the next start goes through with the sandbox's own disk
+/// (a file written before is still there), and both target files hash the same as before.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn vm_hostile_hg44_a_rewritten_root_disk_journal_attaches_no_file_outside_the_sandbox() {
+async fn vm_hostile_hg44_a_guest_written_root_disk_journal_changes_nothing_at_the_next_start() {
     let settings = support::settings();
     let rt = support::runtime(&settings).await;
     let other = spec(&settings, "hg44-other");
@@ -277,71 +278,62 @@ async fn vm_hostile_hg44_a_rewritten_root_disk_journal_attaches_no_file_outside_
     let o = rt.create(other).await.expect("create the other workspace");
     o.stop().await.unwrap();
     let mut sb = rt.create(s).await.expect("create");
-    let read = sh(&sb, &format!("cat {GUEST_JOURNAL}")).await;
-    assert_eq!(
-        read.status.code,
-        0,
-        "no journal in the guest: {}",
-        read.stderr_text()
-    );
-    let journal: serde_json::Value = serde_json::from_str(&read.stdout_text()).unwrap();
-    let own = PathBuf::from(journal["layers"][0]["path"].as_str().unwrap());
-    let sandbox_dir = own.parent().unwrap().to_path_buf();
-    let host_journal = sandbox_dir.join("runtime").join("root-disk.json");
-    let original = std::fs::read(&host_journal).unwrap();
-    let other_disk = sandbox_dir
-        .parent()
-        .unwrap()
-        .join(other_name.as_str())
-        .join("upper.ext4");
+    let sandboxes = settings.home().join("sandboxes");
+    let sandbox_dir = sandboxes.join(n.as_str());
+    let own = sandbox_dir.join("upper.ext4");
+    let other_disk = sandboxes.join(other_name.as_str()).join("upper.ext4");
+    assert!(own.is_file(), "no disk at {}", own.display());
     assert!(other_disk.is_file(), "no disk at {}", other_disk.display());
+    let host_journal = sandbox_dir.join("root-disk.json");
+    let written = sh(&sb, "echo hg44-own-disk > /root/hg44-marker").await;
+    assert_eq!(written.status.code, 0, "{}", written.stderr_text());
+    let targets = [&other_disk, &host_file];
+    let before = targets.map(|t| fingerprint(t));
 
-    let mut outcomes = Vec::new();
-    for (round, target) in [&other_disk, &host_file].into_iter().enumerate() {
-        if round > 0 {
-            // The journal msb wrote, back in place: the start must go through.
-            std::fs::write(&host_journal, &original).unwrap();
-            sb = rt.start(&n).await.expect("a start with msb's own journal");
-        }
-        forge_journal(&sb, &journal, &own, target).await;
+    // Each round: (journal on the host after the stop, the start's error if any, the marker read
+    // after the start).
+    let mut rounds = Vec::new();
+    for target in targets {
+        let journal = std::fs::read(&host_journal).ok();
+        forge_journal(&sb, &own, target).await;
         sb.stop().await.unwrap();
-        let landed = std::fs::read_to_string(&host_journal).unwrap();
-        let before = fingerprint(target);
-        let started = rt.start(&n).await;
-        // A start that went through has the file attached: stop it before reading the file
-        // again, so what the guest wrote is on disk and the next round starts from a stopped
-        // sandbox.
-        let refused = match started {
-            Ok(attached) => {
-                attached.stop().await.unwrap();
-                None
+        let landed = std::fs::read(&host_journal).ok();
+        match rt.start(&n).await {
+            Ok(started) => {
+                let marker = sh(&started, "cat /root/hg44-marker").await.stdout_text();
+                rounds.push((target.clone(), journal == landed, None, marker));
+                sb = started;
             }
-            Err(e) => Some(e),
-        };
-        let after = fingerprint(target);
-        outcomes.push((target.clone(), landed, refused, before, after));
+            Err(e) => {
+                rounds.push((target.clone(), journal == landed, Some(e), String::new()));
+                break;
+            }
+        }
     }
+    sb.stop().await.unwrap();
+    let after = targets.map(|t| fingerprint(t));
     cleanup(&rt, &[&n, &other_name]).await;
     // The run's home is removed with the run; this only tidies early.
     let _ = std::fs::remove_file(&host_file);
-    for (target, landed, refused, before, after) in outcomes {
-        let target_json = serde_json::json!(target).to_string();
+    assert_eq!(rounds.len(), 2, "a start failed: {rounds:?}");
+    for (target, unchanged, refused, marker) in rounds {
         assert!(
-            landed.contains(&target_json),
-            "the guest's journal did not reach the host: {landed}"
+            unchanged,
+            "the guest's write changed msb's journal on the host (target {})",
+            target.display()
         );
-        match refused {
-            Some(ComputeError::StartRefused {
-                sandbox,
-                cause: StartRefusal::RootDiskOutsideFolder,
-            }) if sandbox == n.as_str() => {}
-            other => panic!(
-                "the start with a journal naming {} was not refused by the check: {other:?}",
-                target.display()
-            ),
-        }
-        assert_eq!(before, after, "{} changed", target.display());
+        assert!(
+            refused.is_none(),
+            "the start after a guest-written journal naming {} failed: {refused:?}",
+            target.display()
+        );
+        assert_eq!(
+            marker.trim(),
+            "hg44-own-disk",
+            "the sandbox's own disk is not attached"
+        );
     }
+    assert_eq!(before, after, "a target file changed");
 }
 
 /// What a root process can do at the packet level, one `<check> <outcome>` line per step.

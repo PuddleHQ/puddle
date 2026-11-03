@@ -20,7 +20,7 @@ use puddle_types::{CpuCount, ImageRef, MemoryMib, SandboxName, VolumeName, Works
 use crate::error::{map, runtime};
 use crate::sandbox::{MsbSandbox, boot_id};
 use crate::volume::{Mounter, holders, info, mounted_volumes, mounter};
-use crate::{MsbConfig, OWNER_LABEL, OWNER_LABEL_VALUE, image, logs, root_disk, spec};
+use crate::{MsbConfig, OWNER_LABEL, OWNER_LABEL_VALUE, image, logs, spec};
 
 struct Inner {
     config: MsbConfig,
@@ -375,11 +375,12 @@ impl Runtime for MsbRuntime {
                 })?;
             Ok(Capabilities {
                 runtime_version: version,
-                // The fork removes what a failed create leaves (`0ad1ef63`, since -puddle.1); the
-                // contract suite's volume-mismatch case checks it on every VM run.
+                // msb removes what a failed create leaves (upstream
+                // `superradcompany/microsandbox#1929`, since v0.7.12); the contract suite's
+                // volume-mismatch case checks it on every VM run.
                 stale_dir_fixed: true,
-                // The fork's SSH server sends no exit status for a signal-killed command, so
-                // clients see a failure (fork `359f1585`; stock 0.7.7 sent 0).
+                // msb's SSH server sends exit status 1 for a signal-killed command (upstream
+                // `superradcompany/microsandbox#2011`, carried by the fork; stock 0.7.7 sent 0).
                 // `vm_ssh_reports_a_signal_killed_command_as_a_failure` checks it.
                 ssh_reports_signal_exit: true,
             })
@@ -466,7 +467,6 @@ impl Runtime for MsbRuntime {
                     .map(|v| (v, None))
                     .collect();
             self.check_volumes(name.as_str(), &mounts).await?;
-            root_disk::check_before_start(name.as_str(), &self.sandbox_dir(name.as_str()))?;
             match self.sdk(Sandbox::start(name.as_str())).await {
                 Ok(sdk) => self.handle_for(name, sdk).await,
                 Err(e) => {

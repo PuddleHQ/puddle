@@ -1603,10 +1603,11 @@ mod tests {
         );
         // A read goes out with no credential; a private repository's `401` is the sign-in line.
         let decision = injector.decide(&context, &view).await;
-        let InjectDecision::PassThroughNoting(unauthorized) = &decision else {
-            panic!("{decision:?}");
-        };
-        let refusal = unauthorized.refusal().expect("a refusal for the 401");
+        let refusal = match &decision {
+            InjectDecision::PassThroughNoting(unauthorized) => unauthorized.refusal(),
+            _ => None,
+        }
+        .expect("a read goes out noting its 401");
         assert_eq!(refusal.code(), "credential_unavailable");
         assert!(refusal.message().contains("sign in to it in Puddle"));
         puddle_test_kit::eventually("a sign-in notice forwarded", Duration::from_secs(2), || {

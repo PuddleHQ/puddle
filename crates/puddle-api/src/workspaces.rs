@@ -1448,6 +1448,14 @@ mod tests {
     }
 
     #[test]
+    fn a_root_disk_reset_names_itself_on_the_wire() {
+        assert_eq!(
+            Operation::ResettingRootDisk.to_string(),
+            "resetting_root_disk"
+        );
+    }
+
+    #[test]
     fn disk_percent_rounds_down_caps_at_full_and_needs_both_figures() {
         let t = |root, volume| {
             let r = sized(root, volume);

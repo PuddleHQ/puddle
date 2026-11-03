@@ -8159,6 +8159,27 @@ async fn a_root_disk_at_the_threshold_is_flagged_and_announced_once_until_it_dro
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_runtime_that_cannot_list_leaves_the_last_root_disk_figures() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let sandbox = WorkspaceName::new("acme").unwrap().sandbox_name();
+    rig.runtime.set_root_disk_use(
+        &sandbox,
+        puddle_compute::DiskSize::mib(4096),
+        puddle_compute::DiskSize::mib(3800),
+    );
+    let list = || async { api.get("/api/workspaces").await.json()["workspaces"][0].clone() };
+    assert_eq!(list().await["root_disk_used_mib"], 3800);
+    rig.runtime
+        .inject(Op::List, Fault::always(disk_error("list")));
+    assert_eq!(list().await["root_disk_used_mib"], 3800);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_full_volume_is_flagged_and_the_threshold_is_a_validated_setting() {
     let rig = Rig::new();
     let host = rig.start().await;
@@ -8233,6 +8254,12 @@ async fn resetting_the_root_disk_needs_a_stopped_workspace_and_keeps_the_volume(
     let w = api.get("/api/workspaces/acme").await.json();
     assert!(w["root_disk_used_mib"].is_null(), "{w}");
     assert_eq!(w["status"], "stopped", "{w}");
+
+    // A reset with no sandbox left has nothing to remove and still ends well.
+    let again = api.post("/api/workspaces/acme/reset-root-disk", "").await;
+    assert_eq!(again.status, 202, "{}", again.body);
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done");
 
     // The next start makes a fresh sandbox from the image.
     api.post("/api/workspaces/acme/start", "").await;

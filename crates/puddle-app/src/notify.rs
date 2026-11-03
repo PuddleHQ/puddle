@@ -509,11 +509,8 @@ mod tests {
         let root = Notifier::default().handle(t0, &prefs(), false, &full(DiskKind::Root, 96));
         assert_eq!(root.len(), 1);
         assert_eq!(root[0].title, "demo root disk is 96 % full");
-        assert!(
-            root[0].body.contains("reset its root disk"),
-            "{}",
-            root[0].body
-        );
+        let body = &root[0].body;
+        assert!(body.contains("reset its root disk"), "{body}");
         let volume = Notifier::default().handle(t0, &prefs(), false, &full(DiskKind::Volume, 100));
         assert_eq!(volume[0].title, "demo volume is 100 % full");
         let mut off = prefs();

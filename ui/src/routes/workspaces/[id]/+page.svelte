@@ -43,6 +43,9 @@
   let now = $state(Date.now());
   let dismissedOom = $state<number | null>(null);
   let resetOpen = $state(false);
+  function openReset() {
+    resetOpen = true;
+  }
   let memorySource = $state<"workspace" | "global" | "default" | null>(null);
 
   onMount(() => {
@@ -118,9 +121,7 @@
           type="button"
           class="btn"
           disabled={!canResetRootDisk(workspace)}
-          onclick={() => {
-            resetOpen = true;
-          }}>Reset root disk…</button
+          onclick={openReset}>Reset root disk…</button
         >
         {#if workspace.busy === null && !canResetRootDisk(workspace)}
           <span class="hint">Stop the workspace first.</span>
@@ -243,9 +244,7 @@
           type="button"
           class="btn"
           disabled={!canResetRootDisk(workspace)}
-          onclick={() => {
-            resetOpen = true;
-          }}>Reset root disk…</button
+          onclick={openReset}>Reset root disk…</button
         >
       </div>
     </section>

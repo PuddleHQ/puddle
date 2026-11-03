@@ -745,6 +745,73 @@ async fn vm_trim_returns_deleted_root_disk_space_to_the_host_image() {
     rt.remove(&name).await.unwrap();
 }
 
+/// The root-disk figures msb's listing gives for `name`.
+async fn root_disk_of(rt: &MsbRuntime, name: &SandboxName) -> puddle_compute::RootDiskUse {
+    rt.list()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|s| s.name == name.as_str())
+        .and_then(|s| s.root_disk)
+        .unwrap_or_else(|| panic!("no root disk figures for {name}"))
+}
+
+/// The host reads the root disk's figures from the sandbox listing: the image's capacity as the
+/// size and what the image takes on the host as the use, which grows with what the guest writes
+/// and stays far below the 95 % warning on a mostly empty disk.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_root_disk_use_follows_what_the_guest_writes() {
+    let (rt, settings) = runtime().await;
+    let rt = &rt;
+    let (_, name) = names(&settings, "rootuse");
+    let sb = rt
+        .create(base_spec(&name))
+        .await
+        .unwrap_or_else(|e| panic!("create: {e}"));
+    let before = root_disk_of(rt, &name).await;
+    assert!(before.size.as_mib() > 0, "the root disk has a size");
+    assert!(before.used <= before.size, "the use never exceeds the size");
+
+    sh_ok(
+        &sb,
+        "dd if=/dev/urandom of=/root-use-big bs=1M count=512 status=none && sync",
+    )
+    .await;
+    let after = root_disk_of(rt, &name).await;
+    assert_eq!(
+        after.size, before.size,
+        "writing does not change the capacity"
+    );
+    let grew = after.used.as_mib().saturating_sub(before.used.as_mib());
+    assert!(
+        grew * 10 >= 512 * 8,
+        "the use grew by {grew} MiB for 512 MiB written ({} -> {})",
+        before.used,
+        after.used
+    );
+    let percent = puddle_settings::DiskWarningPercent::default();
+    assert!(
+        !percent.reached(
+            u64::from(after.used.as_mib()),
+            u64::from(after.size.as_mib())
+        ),
+        "a disk with 512 MiB written is not at the default warning ({} of {})",
+        after.used,
+        after.size
+    );
+    assert!(
+        percent.reached(
+            u64::from(after.size.as_mib()),
+            u64::from(after.size.as_mib())
+        ),
+        "a full disk is at the default warning"
+    );
+
+    sb.stop().await.unwrap();
+    drop(sb);
+    rt.remove(&name).await.unwrap();
+}
+
 /// Kills the VM of `name` hard, waits until msb sees it down, and starts it again through the
 /// boot hook.
 async fn kill_and_restart(

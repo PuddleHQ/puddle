@@ -98,6 +98,7 @@ impl FakeRoot {
             "etc",
             "proc/sys/fs/inotify",
             "proc/sys/kernel/random",
+            "proc/sys/net/ipv4",
             "proc/net",
         ] {
             std::fs::create_dir_all(root.join(d)).unwrap();
@@ -118,6 +119,7 @@ impl FakeRoot {
             "fs/inotify/max_user_instances",
             "fs/inotify/max_user_watches",
             "kernel/unprivileged_bpf_disabled",
+            "net/ipv4/ip_unprivileged_port_start",
         ] {
             std::fs::write(root.join("proc/sys").join(f), "0\n").unwrap();
         }
@@ -142,6 +144,16 @@ impl FakeRoot {
     /// The file at `guest`, as text.
     pub(crate) fn read(&self, guest: &str) -> String {
         std::fs::read_to_string(self.path(guest)).unwrap_or_else(|e| panic!("{guest}: {e}"))
+    }
+
+    /// The `<uid:gid> <path>` lines of what the hook gave to a user (it records them here when
+    /// it does not run as root).
+    pub(crate) fn owned(&self) -> Vec<String> {
+        std::fs::read_to_string(self.root.join("owned"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
     }
 
     /// Lines of the stub call log.

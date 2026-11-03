@@ -354,7 +354,7 @@ fn a_certificate_valid_from_this_very_second_is_reused() {
     ]);
     let report = manager(&dir, &fake).ensure(now()).unwrap();
     assert_eq!(report.status, DevCertStatus::ReusingExisting);
-    assert!(report.skipped.is_empty());
+    assert_eq!(report.skipped.len(), 0);
 }
 
 #[test]

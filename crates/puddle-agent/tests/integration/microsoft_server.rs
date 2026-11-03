@@ -667,6 +667,7 @@ async fn the_agent_fetches_the_server_and_starts_it_with_a_token_the_terms_and_n
         "--accept-server-license-terms\n".to_owned(),
         "--reconnection-grace-time\n120\n".to_owned(),
         "--disable-telemetry\n".to_owned(),
+        "--disable-workspace-trust\n".to_owned(),
         format!("--server-data-dir\n{}/server-data\n", server.data),
         format!("--extensions-dir\n{}/extensions\n", server.data),
     ] {

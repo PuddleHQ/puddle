@@ -27,6 +27,11 @@ wait
 /// A pty host with a terminal's shell and a job below it.
 const PTY: &str = "#!/bin/sh\nsh -c 'sleep 600' &\nwait\n";
 
+/// An extension host with a forked child that never runs a program of its own: a subshell with two
+/// commands stays a copy of the host and keeps its command line, as every child does between `fork`
+/// and `exec`.
+const FORKS: &str = "#!/bin/sh\n( sleep 600; : ) &\nwait\n";
+
 struct Server {
     dir: tempfile::TempDir,
 }
@@ -35,7 +40,7 @@ impl Server {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("out")).unwrap();
-        for (name, script) in [("host", HOST), ("pty", PTY)] {
+        for (name, script) in [("host", HOST), ("pty", PTY), ("forks", FORKS)] {
             let path = dir.path().join("out").join(name);
             std::fs::write(&path, script).unwrap();
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -207,6 +212,37 @@ async fn twenty_hosts_each_with_a_debuggee_all_end_together() {
     assert_eq!(ids.iter().filter(|id| alive(**id)).count(), 0);
     let left = server.stubborn().len();
     assert_eq!(left, 0, "debuggees survived");
+}
+
+#[tokio::test]
+async fn a_forked_child_with_the_hosts_command_line_is_ended_with_it_and_not_counted_as_a_host() {
+    let server = Server::new();
+    let host = server.start("forks", "--type=extensionHost", false);
+    let host_id = i32::try_from(host.id().unwrap()).unwrap();
+    // The subshell (with the host's command line) and the `sleep` it started.
+    let copy = eventually_blocking(
+        "the host's subshell and its job did not start",
+        Duration::from_secs(10),
+        || {
+            let procs = exthost::snapshot();
+            let host_argv = &procs.iter().find(|p| p.pid == host_id)?.argv;
+            let copy = procs
+                .iter()
+                .find(|p| p.ppid == host_id && &p.argv == host_argv)?
+                .pid;
+            procs
+                .iter()
+                .any(|p| p.ppid == copy && p.argv.first().is_some_and(|a| a == "sleep"))
+                .then_some(copy)
+        },
+    );
+
+    let ended = exthost::end_extension_hosts(&server.folders()).await;
+
+    assert_eq!(ended.hosts, 1, "{ended:?}");
+    assert!(ended.processes >= 3, "{ended:?}");
+    assert!(!alive(host.id().unwrap()));
+    assert!(!running(copy), "the host's subshell survived");
 }
 
 #[tokio::test]

@@ -56,6 +56,7 @@ const BEARER: &str = "bearer";
         (name = "interception", description = "Decrypting every host: a workspace's switch and the names that are never decrypted"),
         (name = "shell-init", description = "A workspace's shell init: the script its login shells source; the host's copy is the only source of truth"),
         (name = "logins", description = "The logins Puddle kept for a workspace: listing them and forgetting one"),
+        (name = "orphan-volumes", description = "Workspace disks the workspace list does not name, and restoring one as a workspace"),
         (name = "start-folder", description = "Where a workspace's new terminals land and what its editor opens")
     )
 )]

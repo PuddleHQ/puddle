@@ -1027,6 +1027,40 @@ pub trait WorkspaceService: Send + Sync {
         })
     }
 
+    /// The workspace disks Puddle keeps whose workspace its list does not name, in id order. The
+    /// list is read fresh each time, so a disk a workspace has since claimed is not in it. Puddle
+    /// cannot tell from outside whether such a disk holds any files.
+    ///
+    /// # Errors
+    /// [`WorkspaceError::Unavailable`] when the runtime cannot list its disks.
+    fn orphan_volumes(&self) -> BoxFuture<'_, Result<Vec<WorkspaceId>, WorkspaceError>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    /// Adds a list entry for the unclaimed workspace disk `id`, named after the disk. The entry's
+    /// repositories are the checkouts on the disk that have a readable remote address (so the
+    /// disk has to be read in a short-lived maintenance sandbox); when there is none, `repository`
+    /// is the address to use. Nothing is written to the disk, and an entry that already exists is
+    /// never replaced. The new workspace is stopped.
+    ///
+    /// # Errors
+    /// [`WorkspaceError::NotFound`] when the disk does not exist,
+    /// [`WorkspaceError::Conflict`] when the list already names the workspace or something holds
+    /// the disk, [`WorkspaceError::Invalid`] when no address could be read and none was given,
+    /// [`WorkspaceError::Unavailable`] when the list cannot be saved.
+    fn restore_orphan<'a>(
+        &'a self,
+        _id: &'a WorkspaceId,
+        _repository: Option<RepoUrl>,
+        _git: &'a dyn GitSetup,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async {
+            Err(WorkspaceError::Unavailable(
+                "this Puddle keeps no workspace disks".to_owned(),
+            ))
+        })
+    }
+
     /// The checkouts under the workspace's volume root, each with the list entry that has its
     /// directory. A running workspace lists them now (calls at the same
     /// moment share one listing); a stopped one answers the last listing this run made, or says

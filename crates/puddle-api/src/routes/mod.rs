@@ -33,6 +33,7 @@ mod interception;
 mod logins;
 mod meta;
 mod network_health;
+mod orphan_volumes;
 mod pending;
 mod ports;
 mod problems;
@@ -228,6 +229,8 @@ fn environment_router() -> OpenApiRouter<AppState> {
         ))
         .routes(routes!(logins::list_logins))
         .routes(routes!(logins::forget_login))
+        .routes(routes!(orphan_volumes::list_orphan_volumes))
+        .routes(routes!(orphan_volumes::restore_orphan_volume))
 }
 
 /// The routes that may take far longer than the rest (the system check boots a test machine, the

@@ -334,7 +334,8 @@ async fn sign_in(front: SocketAddr, workspace: &str, password: &str) -> Result<S
 const COUNT: &str = r#"
 hosts=$(ps -eo args= | grep -c -e '--type=extensionHos[t]' || true)
 pty=$(ps -eo args= | grep -c -e '--type=ptyHos[t]' || true)
-echo "hosts=$hosts pty=$pty health=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:41337/healthz)"
+shells=$(ps -eo args= | grep -c -e 'shellIntegration-bas[h]' || true)
+echo "hosts=$hosts pty=$pty shells=$shells health=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:41337/healthz)"
 "#;
 
 /// Parses `key=<n>` out of [`COUNT`]'s line.
@@ -505,6 +506,21 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
         count(line, "pty") >= 1
     })
     .await;
+    // No "Trust Folder" prompt stands in the way (`--disable-workspace-trust`): the terminal's
+    // shell started although nobody clicked anything.
+    let trusted = counts_until(&runtime, &sandbox, "the terminal's shell", |line| {
+        count(line, "shells") >= 1
+    })
+    .await;
+    assert!(trusted.contains("health=200"), "{trusted}");
+    shell
+        .wait(
+            &name,
+            "!document.querySelector('.workspace-trust-editor, .monaco-dialog-box')",
+            "true",
+            PAGE_BUDGET,
+        )
+        .await;
 
     // The window closes: the front counts none, and the cleanup ends the real extension host and
     // leaves the terminal host and the server.
@@ -637,7 +653,7 @@ const cookie = (n) => document.cookie.split('; ').find((c) => c.startsWith(n + '
   const answer = await fetch(keyPath, { method: 'POST' });
   const key = [...new Uint8Array(await answer.arrayBuffer())].map((b) => b.toString(16).padStart(2, '0')).join('');
   const socket = new WebSocket('ws://' + location.host + '/socket');
-  socket.onopen = () => { window.state = { build: ${JSON.stringify(build)}, token: !!cookie('vscode-tkn'), keyPath, key }; };
+  socket.onopen = () => { window.state = { build: ${JSON.stringify(build)}, argv: ${JSON.stringify(process.argv.slice(2))}, token: !!cookie('vscode-tkn'), keyPath, key }; };
 })();
 </script>`;
 
@@ -840,6 +856,15 @@ async fn vm_browser_microsoft_s_server_opens_with_its_token_and_switches_builds_
         .await;
     assert_eq!(first["build"], BUILD_A, "{first}");
     assert_eq!(first["token"], true, "{first}");
+    // The folder is trusted at the server: the real server's flag, so no prompt holds the shell.
+    assert!(
+        first["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a == "--disable-workspace-trust"),
+        "{first}"
+    );
     assert_eq!(first["keyPath"], "/_puddle/mint-key", "{first}");
     let key = first["key"].as_str().unwrap().to_owned();
     assert_eq!(key.len(), 64, "{first}");

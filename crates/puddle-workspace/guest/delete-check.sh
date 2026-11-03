@@ -72,9 +72,9 @@ for d in * .[!.]* ..?*; do
         repo=$d
         list U status --porcelain=v1 --untracked-files=normal
         if g rev-parse -q --verify HEAD >/dev/null 2>&1; then
-            list C log --format='%h %s' HEAD --branches --not --remotes
+            list C log --format='%h %s' HEAD --branches --tags --not --remotes
         else
-            list C log --format='%h %s' --branches --not --remotes
+            list C log --format='%h %s' --branches --tags --not --remotes
         fi
         list S stash list
     else

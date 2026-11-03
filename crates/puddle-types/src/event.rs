@@ -1066,6 +1066,7 @@ mod tests {
             [
                 "status_changed",
                 "oom_kill",
+                "disk_nearly_full",
                 "workspace_progress",
                 "pending_opened",
                 "pending_updated",
@@ -1100,7 +1101,7 @@ mod tests {
             let required = v["required"].as_array().unwrap();
             assert!(required.iter().any(|r| r == "type"), "{v}");
         }
-        let progress = &variants[2];
+        let progress = &variants[3];
         assert!(
             progress["required"]
                 .as_array()
@@ -1109,7 +1110,7 @@ mod tests {
                 .any(|r| r == "detail"),
             "detail is always present, null when empty: {progress}"
         );
-        let global = &variants[7];
+        let global = &variants[8];
         assert!(global["properties"].get("workspace").is_none());
         assert_eq!(
             variants[0]["properties"]["workspace"]["$ref"],

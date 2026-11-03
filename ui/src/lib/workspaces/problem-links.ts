@@ -48,8 +48,14 @@ export function editorUpdateProblemOf(
   return problems.find((p) => p.key === editorUpdateKey(workspace));
 }
 
+/** The key of the problem that names the workspace disks the workspace list does not name. */
+export const ORPHAN_VOLUMES_KEY = "orphan-volumes";
+
 /** The page place for a problem about a workspace; `undefined` for one about nothing. */
 export function problemLink(problem: Problem): ProblemLink | undefined {
+  if (problem.key === ORPHAN_VOLUMES_KEY) {
+    return { href: "/workspaces", label: "Restore a workspace" };
+  }
   const workspace = problem.workspace;
   if (!workspace) return undefined;
   const base = `/workspaces/${encodeURIComponent(workspace)}`;

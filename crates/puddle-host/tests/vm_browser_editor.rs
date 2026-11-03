@@ -59,6 +59,67 @@ const EXPLORER_READY: &str =
 const EXPLORER_ROWS: &str = "[...document.querySelectorAll('.explorer-folders-view .monaco-list-row')]\
      .map(r => ({ name: r.querySelector('.label-name')?.textContent, level: r.getAttribute('aria-level') }))";
 
+/// What the window shows when its explorer does not get ready: where it is, the explorer's rows,
+/// the side bar's view and any dialog or notification in front of it.
+const WINDOW_STATE: &str = r"(() => {
+  const text = (e, n) => (e?.textContent || '').replace(/\s+/g, ' ').slice(0, n);
+  const all = (selector, n) => [...document.querySelectorAll(selector)].map(e => text(e, n));
+  return {
+    href: location.href,
+    rows: all('.explorer-folders-view .monaco-list-row', 80),
+    sidebar: text(document.querySelector('.part.sidebar .title-label'), 80),
+    panes: all('.part.sidebar .pane-header', 80),
+    welcome: all('.part.sidebar .welcome-view-content', 300),
+    dialogs: all('.monaco-dialog-box', 400),
+    notifications: all('.notifications-toasts .notification-list-item', 300),
+    status: text(document.querySelector('.part.statusbar'), 400),
+  };
+})()";
+
+/// The guest's side of a window whose explorer does not get ready: the editor server's command
+/// line, the multi-root file, the volume, and the end of the server's own logs.
+const SERVER_STATE: &str = r#"
+ps -eo pid,etimes,args | grep -e '[c]ode-server' | cut -c1-400
+data=$(ps -eo args= | grep -o -e '--user-data-dir [^ ]*' | head -n 1 | cut -d' ' -f2)
+for f in /workspaces/*/.puddle/editor/*.code-workspace; do [ -f "$f" ] && { echo "== $f"; cat "$f"; echo; }; done
+echo "== volume"; ls -a /workspaces/*/
+for f in $(find "$data/logs" -type f 2>/dev/null | sort | tail -n 12); do echo "== $f"; tail -n 30 "$f"; done
+echo "== agent"; tail -n 30 /run/puddle/agent.log
+true
+"#;
+
+/// Waits in `sandbox`'s newest page until its explorer lists rows and reads `result`. When it does
+/// not, the failure carries what the window and the guest show, so a timeout names its cause.
+async fn explorer(
+    shell: &ShellStandIn,
+    runtime: &MsbRuntime,
+    sandbox: &WorkspaceName,
+    result: &str,
+) -> Value {
+    let page = shell.page(sandbox.as_str());
+    let request = PageRequest::new("", EXPLORER_READY)
+        .result(result)
+        .budget(WORKBENCH_BUDGET);
+    let outcome = shell.browser.lock().await.wait(page, &request).await;
+    match outcome {
+        Ok(outcome) => outcome.result,
+        Err(e) => {
+            let state = PageRequest::new("", "true")
+                .result(WINDOW_STATE)
+                .budget(PAGE_BUDGET);
+            let window = shell.browser.lock().await.wait(page, &state).await;
+            let window = match window {
+                Ok(outcome) => outcome.result.to_string(),
+                Err(e) => format!("(not read: {e})"),
+            };
+            let server = guest(runtime, sandbox, SERVER_STATE).await;
+            panic!(
+                "{sandbox}'s explorer did not get ready: {e}\nthe window: {window}\nthe guest:\n{server}"
+            );
+        }
+    }
+}
+
 /// Waits until the editor server answers its health check.
 const EDITOR_UP: &str = "for i in $(seq 1 100); do curl -sf -o /dev/null http://127.0.0.1:41337/healthz && exit 0; sleep 1; done; exit 1";
 
@@ -392,9 +453,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
         "{origin}"
     );
     assert!(answer.get("url").is_none_or(Value::is_null), "{answer}");
-    let rows = shell
-        .wait(&name, EXPLORER_READY, EXPLORER_ROWS, WORKBENCH_BUDGET)
-        .await;
+    let rows = explorer(&shell, &runtime, &sandbox, EXPLORER_ROWS).await;
     let place = shell.wait(&name, "true", WHERE, PAGE_BUDGET).await;
     assert_eq!(place["login"], false, "{place}");
     let password = guest(&runtime, &sandbox, "cat /run/puddle/editor-password").await;
@@ -473,9 +532,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
 
     // Opened again within the grace: the kept session, no second sign-in, a new extension host.
     attach().await;
-    shell
-        .wait(&name, EXPLORER_READY, "true", WORKBENCH_BUDGET)
-        .await;
+    explorer(&shell, &runtime, &sandbox, "true").await;
     assert_eq!(
         shell.wait(&name, "true", WHERE, PAGE_BUDGET).await["login"],
         false
@@ -516,9 +573,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     assert_ne!(after, before, "the new boot kept the old boot's password");
     let sign_ins = 2;
     attach().await;
-    let rows = shell
-        .wait(&name, EXPLORER_READY, EXPLORER_ROWS, WORKBENCH_BUDGET)
-        .await;
+    let rows = explorer(&shell, &runtime, &sandbox, EXPLORER_ROWS).await;
     let place = shell.wait(&name, "true", WHERE, PAGE_BUDGET).await;
     assert_eq!(place["login"], false, "{place}");
     assert_eq!(*shell.sign_ins.lock().unwrap(), sign_ins);

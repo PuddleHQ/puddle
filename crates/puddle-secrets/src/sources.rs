@@ -234,19 +234,11 @@ pub(crate) fn parse_fill(
     let password = password
         .filter(|p| !p.is_empty())
         .ok_or(SourceError::NotSignedIn)?;
-    let valid_for = match expiry {
-        None => None,
-        Some(at) => {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            if at <= now {
-                return Err(SourceError::NotSignedIn);
-            }
-            Some(Duration::from_secs(at - now))
-        }
-    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let valid_for = remaining_validity(expiry, now)?;
     let secret = token_secret(password, true)?;
     Ok(Fetched {
         credential: Credential {
@@ -255,6 +247,16 @@ pub(crate) fn parse_fill(
         },
         valid_for,
     })
+}
+
+/// Time left until `expiry` (Unix seconds), `None` when the answer states none; an expiry at or before
+/// `now` means the sign-in has lapsed.
+fn remaining_validity(expiry: Option<u64>, now: u64) -> Result<Option<Duration>, SourceError> {
+    match expiry {
+        None => Ok(None),
+        Some(at) if at <= now => Err(SourceError::NotSignedIn),
+        Some(at) => Ok(Some(Duration::from_secs(at - now))),
+    }
 }
 
 #[cfg(test)]
@@ -313,22 +315,23 @@ mod tests {
     #[test]
     fn fill_answer_expiry() {
         let (h, p) = target();
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let live = format!(
-            "host=dev.azure.com\npath=org\npassword=x\npassword_expiry_utc={}\n",
-            now + 3600
+        // The remaining time is checked on the pure function, with a fixed clock: it has no secret in
+        // reach and no dependence on the machine's speed.
+        assert_eq!(remaining_validity(None, 1000), Ok(None));
+        assert_eq!(
+            remaining_validity(Some(4600), 1000),
+            Ok(Some(Duration::from_secs(3600)))
         );
-        let got = parse_fill(&live, &h, &p, None).unwrap();
-        let left = got.valid_for.unwrap();
-        // flake-ok: `left` is the stated expiry minus a clock that only moves forward, so at most the
-        // 3600 s asked for however slow the machine is; the lower bound keeps a 100 s margin.
-        assert!(
-            left > Duration::from_secs(3500) && left <= Duration::from_secs(3600),
-            "{left:?}"
+        assert_eq!(
+            remaining_validity(Some(1001), 1000),
+            Ok(Some(Duration::from_secs(1)))
         );
+        assert_eq!(
+            remaining_validity(Some(1000), 1000),
+            Err(SourceError::NotSignedIn)
+        );
+        let live = "host=dev.azure.com\npath=org\npassword=x\npassword_expiry_utc=99999999999\n";
+        assert!(parse_fill(live, &h, &p, None).unwrap().valid_for.is_some());
         let dead = "host=dev.azure.com\npath=org\npassword=x\npassword_expiry_utc=5\n";
         assert_eq!(
             parse_fill(dead, &h, &p, None).unwrap_err(),

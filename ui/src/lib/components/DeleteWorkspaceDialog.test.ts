@@ -84,6 +84,24 @@ describe("what the dialog says about the disk", () => {
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
+  it("says the check ignores git-ignored files, for a dirty and a clean report", async () => {
+    open({ check: dirtyCheck("web") });
+    expect(await screen.findByRole("note")).toHaveTextContent(
+      "The unsaved work check ignores git-ignored files.",
+    );
+    cleanup();
+    open({ check: cleanCheck("web") });
+    expect(await screen.findByRole("note")).toHaveTextContent(
+      "The unsaved work check ignores git-ignored files.",
+    );
+  });
+
+  it("leaves the git-ignored note out when the disk is gone and nothing was checked", async () => {
+    open({ check: cleanCheck("web", { volume_missing: true }) });
+    await screen.findByRole("alertdialog");
+    expect(screen.queryByRole("note")).toBeNull();
+  });
+
   it("owns up when it could not check everything, and that nothing was found", async () => {
     open({
       check: cleanCheck("web", {

@@ -125,6 +125,44 @@ async fn an_empty_volume_and_a_repo_without_remote_are_judged_right() {
 }
 
 #[tokio::test]
+async fn a_commit_only_a_tag_holds_is_listed_and_a_git_ignored_file_is_not() {
+    for shell in shells() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vol = tmp.path().join("vol");
+        let repo = vol.join("solo");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        std::fs::write(repo.join(".gitignore"), "ignored.log\n").unwrap();
+        std::fs::write(repo.join("a"), "a\n").unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-qm", "base"]);
+        git(&repo, &["checkout", "-q", "--detach"]);
+        std::fs::write(repo.join("b"), "b\n").unwrap();
+        git(&repo, &["add", "b"]);
+        git(&repo, &["commit", "-qm", "only on a tag"]);
+        git(&repo, &["tag", "keep-me"]);
+        git(&repo, &["checkout", "-q", "main"]);
+        std::fs::write(repo.join("ignored.log"), "noise\n").unwrap();
+        let report = check(shell, &vol).await;
+        let solo = &report.findings.repos[0];
+        assert!(
+            solo.uncommitted.is_empty(),
+            "{shell}: {:?}",
+            solo.uncommitted
+        );
+        assert_eq!(solo.unpushed.total(), 2, "{shell}: {:?}", solo.unpushed);
+        assert!(
+            solo.unpushed
+                .items
+                .iter()
+                .any(|c| c.ends_with(" only on a tag")),
+            "{shell}: {:?}",
+            solo.unpushed
+        );
+    }
+}
+
+#[tokio::test]
 async fn long_lists_are_capped_and_counted() {
     for shell in shells() {
         let tmp = tempfile::tempdir().unwrap();

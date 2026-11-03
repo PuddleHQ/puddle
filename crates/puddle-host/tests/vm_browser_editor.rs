@@ -448,11 +448,11 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     .await;
     // No "Trust Folder" prompt stands in the way (`--disable-workspace-trust`): the terminal's
     // shell started although nobody clicked anything.
-    let trusted = counts_until(&runtime, &sandbox, "the terminal's shell", |line| {
+    let shell_counts = counts_until(&runtime, &sandbox, "the terminal's shell", |line| {
         count(line, "shells") >= 1
     })
     .await;
-    assert!(trusted.contains("health=200"), "{trusted}");
+    assert!(shell_counts.contains("health=200"), "{shell_counts}");
     shell
         .wait(
             &name,

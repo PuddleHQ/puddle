@@ -148,7 +148,12 @@ mod tests {
     /// editor's folder must not reach it, so the desktop editor keeps its Workspace Trust prompt.
     #[test]
     fn settings_leave_workspace_trust_to_the_desktop_editor() {
-        let text = String::from_utf8(machine_settings(3128).contents().to_vec()).unwrap();
+        let text = String::from_utf8(
+            machine_settings(3128, SessionUser::Root)
+                .contents()
+                .to_vec(),
+        )
+        .unwrap();
         assert!(!text.contains("workspace.trust"), "{text}");
         assert!(!text.contains("workspaceTrust"), "{text}");
     }

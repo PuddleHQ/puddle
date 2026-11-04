@@ -183,11 +183,17 @@ jobs:
       contents: read
       actions: write
     steps:
-      - name: Free disk space at start
+      - name: Disk at start
         run: df -h /
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # the diff-coverage gate needs the base commit
+      # Runners of the pool sometimes start with a 72 GB root disk (14 GB free) instead of 145 GB; this removes
+      # the preinstalled toolchains no job uses when under 60 GB is free (ci/free-disk.sh) and prints what it freed.
+      - name: free disk space on a runner that starts low
+        env:
+          FREE_DISK_BELOW_GB: "1000"
+        run: ci/free-disk.sh
       - name: Toolchain (from rust-toolchain.toml)
         run: rustup toolchain install && rustc --version
       # The 6.7 GB entry is saved by every develop run whose restore was not an exact hit (rust-cache skips

@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 
 use puddle_ca::{CaCertificate, TrustBundle};
-use puddle_types::{GuestEnv, GuestFile, GuestPath};
+use puddle_types::{GuestEnv, GuestFile, GuestPath, SessionUser};
 
 use crate::devcert::GuestDevCert;
 use crate::select::{CorporateRoots, Fingerprint};
@@ -59,6 +59,7 @@ pub struct GuestTrust {
     host: Vec<(Fingerprint, String)>,
     puddle: TrustBundle,
     dev: Option<GuestDevCert>,
+    user: SessionUser,
 }
 
 impl GuestTrust {
@@ -73,7 +74,16 @@ impl GuestTrust {
                 .collect(),
             puddle: puddle.clone(),
             dev: None,
+            user: SessionUser::Root,
         }
+    }
+
+    /// The same trust for a guest whose sessions run as `user` (root when not set): .NET's trust
+    /// folder is in that user's home.
+    #[must_use]
+    pub fn for_user(mut self, user: SessionUser) -> Self {
+        self.user = user;
+        self
     }
 
     /// The same trust with the development certificate: trusted by the guest's system store, by
@@ -159,7 +169,7 @@ impl GuestTrust {
             let _ = env.set(name, value);
         }
         if self.dev.is_some() {
-            env.extend(&GuestDevCert::env());
+            env.extend(&GuestDevCert::env(self.user));
         }
         env
     }
@@ -434,6 +444,11 @@ mod tests {
             env.get("SSL_CERT_DIR")
                 .unwrap()
                 .starts_with("/root/.aspnet/dev-certs/trust:")
+        );
+        let as_agent = trust.clone().for_user(SessionUser::Agent).env();
+        assert_eq!(
+            as_agent.get("SSL_CERT_DIR"),
+            Some("/home/agent/.aspnet/dev-certs/trust:/etc/ssl/certs:/usr/lib/ssl/certs")
         );
         assert_eq!(env.get("SSL_CERT_FILE"), Some(CA_BUNDLE_PATH));
         let steps: Vec<String> = trust.boot_steps().iter().map(ToString::to_string).collect();

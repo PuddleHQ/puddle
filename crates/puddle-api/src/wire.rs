@@ -912,6 +912,78 @@ impl From<store::RuleDeleteReason> for RuleDeleteReason {
     }
 }
 
+/// What a `workspace_op` record is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceOpKind {
+    /// A workspace made.
+    Create,
+    /// A workspace deleted.
+    Delete,
+    /// A workspace's display name changed.
+    Rename,
+    /// A workspace started (only a failed start is recorded).
+    Start,
+    /// A workspace stopped (only a failed stop is recorded).
+    Stop,
+    /// An identity made.
+    IdentityCreated,
+    /// An identity changed.
+    IdentityUpdated,
+    /// An identity deleted.
+    IdentityDeleted,
+    /// The default identity changed.
+    IdentityDefaultSet,
+    /// A workspace's identity list changed.
+    IdentitiesChanged,
+    /// A repository added to a workspace's list.
+    RepoAdded,
+    /// A repository's pull or push switch changed.
+    RepoSwitched,
+    /// A repository removed from a workspace's list.
+    RepoRemoved,
+}
+
+impl From<store::WorkspaceOpKind> for WorkspaceOpKind {
+    fn from(kind: store::WorkspaceOpKind) -> Self {
+        use store::WorkspaceOpKind as K;
+        match kind {
+            K::Create => Self::Create,
+            K::Delete => Self::Delete,
+            K::Rename => Self::Rename,
+            K::Start => Self::Start,
+            K::Stop => Self::Stop,
+            K::IdentityCreated => Self::IdentityCreated,
+            K::IdentityUpdated => Self::IdentityUpdated,
+            K::IdentityDeleted => Self::IdentityDeleted,
+            K::IdentityDefaultSet => Self::IdentityDefaultSet,
+            K::IdentitiesChanged => Self::IdentitiesChanged,
+            K::RepoAdded => Self::RepoAdded,
+            K::RepoSwitched => Self::RepoSwitched,
+            K::RepoRemoved => Self::RepoRemoved,
+        }
+    }
+}
+
+/// How a workspace operation ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceOpOutcome {
+    /// It went through.
+    Succeeded,
+    /// It did not; `detail` says why.
+    Failed,
+}
+
+impl From<store::WorkspaceOpOutcome> for WorkspaceOpOutcome {
+    fn from(outcome: store::WorkspaceOpOutcome) -> Self {
+        match outcome {
+            store::WorkspaceOpOutcome::Succeeded => Self::Succeeded,
+            store::WorkspaceOpOutcome::Failed => Self::Failed,
+        }
+    }
+}
+
 /// One audit record (rules spec R-24): a tagged union on `type`. `host`, `path` and the like come
 /// from the guest, so escape them when rendering. Records written by an older Puddle lack the
 /// fields added since, which read as `null`.
@@ -1161,6 +1233,24 @@ pub enum AuditRecord {
         /// Reasons that no longer apply.
         removed: Vec<SystemReason>,
     },
+    /// A workspace operation, or a change to the identities and repository lists a workspace
+    /// uses: who asked, which workspace and how it ended.
+    WorkspaceOp {
+        /// Epoch ms.
+        ts: u64,
+        /// What was done.
+        op: WorkspaceOpKind,
+        /// The workspace; `null` for a change that belongs to none (an identity).
+        #[schema(required = true)]
+        workspace_id: Option<String>,
+        /// How it ended.
+        outcome: WorkspaceOpOutcome,
+        /// Who asked: `cli`, `ui`, `api` or `system`.
+        actor: String,
+        /// Why it failed, or what the operation touched; `null` when there is nothing to add.
+        #[schema(required = true)]
+        detail: Option<String>,
+    },
     /// The oldest records were deleted to keep the audit under its size cap.
     AuditTrimmed {
         /// Epoch ms.
@@ -1381,6 +1471,21 @@ impl From<store::AuditRecord> for AuditRecord {
                 added: SystemReason::parse_all(&added),
                 removed: SystemReason::parse_all(&removed),
             },
+            R::WorkspaceOp {
+                ts,
+                op,
+                workspace_id,
+                outcome,
+                actor,
+                detail,
+            } => Self::WorkspaceOp {
+                ts,
+                op: op.into(),
+                workspace_id,
+                outcome: outcome.into(),
+                actor,
+                detail,
+            },
             R::AuditTrimmed {
                 ts,
                 deleted_records,
@@ -1432,6 +1537,10 @@ pub enum AuditOutcome {
     Blocked,
     /// A pending request that expired.
     Expired,
+    /// A workspace operation that went through.
+    Succeeded,
+    /// A workspace operation that failed.
+    Failed,
 }
 
 impl From<AuditOutcome> for store::AuditOutcome {
@@ -1442,6 +1551,8 @@ impl From<AuditOutcome> for store::AuditOutcome {
             AuditOutcome::Pending => Self::Pending,
             AuditOutcome::Blocked => Self::Blocked,
             AuditOutcome::Expired => Self::Expired,
+            AuditOutcome::Succeeded => Self::Succeeded,
+            AuditOutcome::Failed => Self::Failed,
         }
     }
 }
@@ -1484,6 +1595,8 @@ pub enum AuditType {
     RuleSetChanged,
     /// The System managed reasons changed.
     SystemManagedChanged,
+    /// A workspace operation, or a change to identities or repository lists.
+    WorkspaceOp,
     /// The audit trimmed to its size cap.
     AuditTrimmed,
 }
@@ -1509,6 +1622,7 @@ impl AuditType {
             Self::RuleSetSwitched => "rule_set_switched",
             Self::RuleSetChanged => "rule_set_changed",
             Self::SystemManagedChanged => "system_managed_changed",
+            Self::WorkspaceOp => "workspace_op",
             Self::AuditTrimmed => "audit_trimmed",
         }
     }
@@ -2965,6 +3079,7 @@ mod tests {
             AuditType::RuleSetSwitched,
             AuditType::RuleSetChanged,
             AuditType::SystemManagedChanged,
+            AuditType::WorkspaceOp,
             AuditType::AuditTrimmed,
         ]
         .into_iter()
@@ -2980,6 +3095,8 @@ mod tests {
             (AuditOutcome::Pending, store::AuditOutcome::Pending),
             (AuditOutcome::Blocked, store::AuditOutcome::Blocked),
             (AuditOutcome::Expired, store::AuditOutcome::Expired),
+            (AuditOutcome::Succeeded, store::AuditOutcome::Succeeded),
+            (AuditOutcome::Failed, store::AuditOutcome::Failed),
         ] {
             assert_eq!(
                 serde_json::to_value(wire).unwrap(),

@@ -2720,12 +2720,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Ok(())
     }
 
-    /// Deletes what the browser editor kept for a deleted workspace, so one made later under the
-    /// same name starts clean: the front's half of Microsoft's secret key and the windows' browser
-    /// data. A failure is a notice (the data stays and the name would inherit it).
-    async fn forget_browser_state(&self, name: &WorkspaceName) {
+    /// Deletes what the browser editor kept under `name`: the front's half of Microsoft's secret
+    /// key and the windows' browser data. Returns what could not be deleted, one reason each.
+    async fn clear_browser_state(&self, name: &WorkspaceName) -> Vec<String> {
         let inner = &self.inner;
-        let key = problem_key("browser-data", name);
         let mut failed = Vec::new();
         // The windows first: one still open could mint the key again after it was forgotten.
         if let Err(e) = inner.launcher.forget_browser(name).await {
@@ -2734,6 +2732,35 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         if let Err(e) = inner.front_halves.forget(name) {
             failed.push(format!("the editor's secret key could not be deleted: {e}"));
         }
+        failed
+    }
+
+    /// The editor's origin is `<name>.localhost`, so a workspace of this name would reach the
+    /// browser data an earlier one left (a delete cut short, or made where no window could clean
+    /// it). No window can exist for a name with no workspace: clear it before the create.
+    async fn clear_left_over_browser_state(
+        &self,
+        name: &WorkspaceName,
+    ) -> Result<(), WorkspaceError> {
+        let failed = self.clear_browser_state(name).await;
+        if failed.is_empty() {
+            return Ok(());
+        }
+        Err(WorkspaceError::Conflict(format!(
+            "browser data left from an earlier workspace named {name} could not be removed ({}), \
+             and the new one would inherit it; {name} was not created. Close its editor windows \
+             and try again",
+            failed.join("; ")
+        )))
+    }
+
+    /// Deletes what the browser editor kept for a deleted workspace, so one made later under the
+    /// same name starts clean. A failure is a notice (the data stays; a create under the name
+    /// tries again and is refused while it cannot).
+    async fn forget_browser_state(&self, name: &WorkspaceName) {
+        let inner = &self.inner;
+        let key = problem_key("browser-data", name);
+        let failed = self.clear_browser_state(name).await;
         if failed.is_empty() {
             inner.problems.clear(&key);
         } else {
@@ -2741,9 +2768,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 key,
                 format!("{name}'s browser editor data was not deleted"),
                 format!(
-                    "{}. A workspace made later with the name {name} would find it; close the \
-                     editor windows and delete its folders under webview and front in Puddle's \
-                     data folder.",
+                    "{}. A workspace made later with the name {name} is refused until it is gone; \
+                     close the editor windows and delete its folders under webview and front in \
+                     Puddle's data folder.",
                     failed.join("; ")
                 ),
             ));
@@ -2878,6 +2905,9 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                      {} was not created. Choose another name; Puddle does not reuse or delete that volume",
                     new.name
                 )));
+            }
+            if !self.state().slots.contains_key(&id) {
+                self.clear_left_over_browser_state(&new.name).await?;
             }
             {
                 let mut state = self.state();

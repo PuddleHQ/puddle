@@ -2877,9 +2877,10 @@ async fn stopping_a_workspace_closes_its_editor_windows() {
 
     stop_and_wait(&api, &mut events, "acme").await;
     assert_eq!(*rig.launcher.closed.lock().unwrap(), ["acme"]);
-    assert!(
-        rig.launcher.forgotten.lock().unwrap().is_empty(),
-        "a stop keeps the windows' data: the workspace comes back"
+    assert_eq!(
+        *rig.launcher.forgotten.lock().unwrap(),
+        ["acme"],
+        "a stop keeps the windows' data (the one entry is the create's clean start): the workspace comes back"
     );
     host.shutdown().await;
 }
@@ -2924,7 +2925,7 @@ async fn deleting_a_workspace_deletes_the_editor_s_secret_key_and_the_windows_da
     );
     delete_and_wait(&api, &mut events, "acme").await;
     assert!(!key.exists(), "a delete removes the key");
-    assert_eq!(*rig.launcher.forgotten.lock().unwrap(), ["acme"]);
+    assert_eq!(*rig.launcher.forgotten.lock().unwrap(), ["acme", "acme"]);
     assert_eq!(
         *rig.launcher.closed.lock().unwrap(),
         ["acme", "acme"],
@@ -2965,6 +2966,48 @@ async fn a_delete_that_cannot_remove_the_editor_s_data_says_so_and_still_deletes
             && problem.detail.contains("a window still holds it"),
         "both failures are named: {}",
         problem.detail
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_workspace_starts_without_browser_data_left_under_its_name() {
+    // A delete that was cut short (a crash, `puddle serve` with no window to clean) leaves the
+    // webview folder and the key half behind; the name's origin is the same, so the next
+    // workspace of that name must not find them.
+    let rig = Rig::new();
+    let key = HostPaths::new(rig.dir.path().join("data"))
+        .front_keys()
+        .join("acme.key");
+    std::fs::create_dir_all(key.parent().unwrap()).unwrap();
+    std::fs::write(&key, b"left by an earlier acme").unwrap();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    assert_eq!(*rig.launcher.forgotten.lock().unwrap(), ["acme"]);
+    assert!(!key.exists(), "the old key half is gone");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_create_that_cannot_clear_left_over_browser_data_is_refused() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    *rig.launcher.forget_fails_with.lock().unwrap() = Some("a window still holds it".into());
+    let reply = api.post("/api/workspaces", &new_workspace("acme")).await;
+    assert_eq!(reply.status, 409, "{}", reply.body);
+    assert!(
+        reply.body.contains("a window still holds it") && reply.body.contains("browser data"),
+        "{}",
+        reply.body
+    );
+    let list = api.get("/api/workspaces").await;
+    assert!(
+        !list.body.contains("acme"),
+        "no workspace was made: {}",
+        list.body
     );
     host.shutdown().await;
 }

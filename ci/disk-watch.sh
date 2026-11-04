@@ -54,8 +54,8 @@ paths() {
 # du that falls back to sudo, for root-only dirs (/var/crash, docker); a user without sudo gets what it can read.
 du_run() { # <du args...>
     local out
-    out=$(timeout 40 du "$@" 2>/dev/null)
-    if [ -z "$out" ] && [ "${#sudo_cmd[@]}" -gt 0 ]; then out=$(timeout 40 "${sudo_cmd[@]}" du "$@" 2>/dev/null); fi
+    out=$(timeout 15 du "$@" 2>/dev/null)
+    if [ -z "$out" ] && [ "${#sudo_cmd[@]}" -gt 0 ]; then out=$(timeout 15 "${sudo_cmd[@]}" du "$@" 2>/dev/null); fi
     printf '%s\n' "$out"
 }
 
@@ -72,7 +72,7 @@ deep() { # what the targeted list can miss: the top level of the disk, and space
     du_run -xm -d1 "$root" | sort -rn | head -12
     if command -v lsof >/dev/null 2>&1; then
         echo "-- files deleted but still open (lsof +L1)"
-        timeout 20 "${sudo_cmd[@]}" lsof -nP +L1 2>/dev/null | head -10
+        timeout 10 "${sudo_cmd[@]}" lsof -nP +L1 2>/dev/null | head -10
     fi
     echo "-- biggest processes (RSS KiB)"
     ps -eo rss=,pid=,comm= --sort=-rss | head -5
@@ -114,7 +114,6 @@ guard() { # <label>
         [ "$free" -lt "$min" ] && min=$free
         echo "$((SECONDS - t0)) s free=${free}GB" >>"$log"
         if [ "$free" -lt "$floor_gb" ]; then
-            snap "$label: under the floor" deep >/dev/null
             echo "::error title=runner disk full::$label: ${free} GB free (floor ${floor_gb} GB) after $((SECONDS - t0)) s; stopping the step's processes so the job ends readable. Sizes in the job summary"
             if [ -n "${DISK_WATCH_KILL:-}" ]; then
                 pkill -TERM -f -- "$DISK_WATCH_KILL"
@@ -122,10 +121,13 @@ guard() { # <label>
                 wait $!
                 pkill -KILL -f -- "$DISK_WATCH_KILL"
             fi
+            # After the kill: nothing writes any more, and a slow du or lsof can no longer cost the step its disk.
+            snap "$label: under the floor" deep >/dev/null
             finish
         elif [ "$free" -lt "$warn_gb" ] && [ "$warned" = 0 ]; then
             warned=1
-            snap "$label: under the warning level" deep >/dev/null
+            # In the background, so the floor check is not held up by a slow du.
+            snap "$label: under the warning level" deep >/dev/null &
             echo "::warning title=runner disk low::$label: ${free} GB free after $((SECONDS - t0)) s (warning level ${warn_gb} GB); sizes in the job summary"
         fi
         sleep "$interval" &

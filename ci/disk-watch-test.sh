@@ -53,7 +53,7 @@ DISK_WATCH_KILL='sleep 3[0]0$' "$script" guard full >"$tmp/out" 2>&1 &
 g=$!
 sleep 0.5
 echo 2 >"$tmp/free"
-for _ in $(seq 1 100); do kill -0 "$g" 2>/dev/null || break; sleep 0.2; done
+for _ in $(seq 1 300); do kill -0 "$g" 2>/dev/null || break; sleep 0.2; done
 kill -0 "$g" 2>/dev/null && { bad "the guard did not end after stopping the step"; kill "$g"; }
 kill -0 "$victim" 2>/dev/null && { bad "the guard under the floor left the process running"; kill "$victim"; }
 has "$tmp/out" '::error title=runner disk full::full: 2 GB free' "floor annotation"

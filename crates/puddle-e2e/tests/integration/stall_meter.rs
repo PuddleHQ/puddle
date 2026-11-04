@@ -28,6 +28,8 @@ use tokio::net::{TcpListener, TcpStream};
 /// `/proc/net/tcp` to subtract.
 const BOUND: Duration = Duration::from_secs(3);
 const PAUSE: Duration = Duration::from_secs(4);
+/// How long the planted-drop transfer runs before the writer cuts the link.
+const CUT_AFTER: Duration = Duration::from_millis(500);
 /// How long the namespace's loopback drops everything: long enough for the backoff to double
 /// past the bound twice.
 const DROP_FOR: Duration = Duration::from_secs(4);
@@ -135,14 +137,21 @@ fn two_sockets_in_backoff_at_once_count_once() {
     assert_eq!(accrual.total(), Duration::from_millis(60));
 }
 
-/// Writes 1 MiB chunks to `server` for `run` and returns the progress it measured.
-async fn send_for<'a>(client: &mut TcpStream, backoff: &'a Backoff, run: Duration) -> Progress<'a> {
+/// Writes 1 MiB chunks to `server` for `run` and returns the progress it measured. After each
+/// chunk, `after_chunk` gets the time since the first write began.
+async fn send_for<'a>(
+    client: &mut TcpStream,
+    backoff: &'a Backoff,
+    run: Duration,
+    mut after_chunk: impl FnMut(Duration),
+) -> Progress<'a> {
     let chunk = vec![7u8; CHUNK];
     let mut progress = Progress::new(backoff);
-    let until = Instant::now() + run;
-    while Instant::now() < until {
+    let start = Instant::now();
+    while start.elapsed() < run {
         client.write_all(&chunk).await.unwrap();
         progress.mark();
+        after_chunk(start.elapsed());
     }
     client.shutdown().await.unwrap();
     progress
@@ -172,7 +181,7 @@ async fn a_reader_that_stops_reading_is_still_a_stall() {
     let sink = tokio::spawn(drain(listener, PAUSE));
     let mut client = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     let backoff = Backoff::watch(vec![port, client.local_addr().unwrap().port()]);
-    let worst = send_for(&mut client, &backoff, Duration::from_secs(6))
+    let worst = send_for(&mut client, &backoff, Duration::from_secs(6), |_| {})
         .await
         .worst;
     sink.await.unwrap();
@@ -194,7 +203,17 @@ async fn a_reader_that_stops_reading_is_still_a_stall() {
     );
 }
 
-/// Runs in the network namespace made by [`a_kernel_drop_and_its_backoff_are_not_a_stall`].
+/// Runs `cmd` with `sh -c` and fails the case when it fails.
+fn sh(cmd: &str) {
+    let ok = Command::new("sh")
+        .args(["-c", cmd])
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok, "{cmd} failed");
+}
+
+/// Runs in the network namespace made by [`drop_in_a_namespace`].
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "runs only inside the namespace the case above makes"]
 async fn kernel_drop_inner() {
@@ -203,14 +222,6 @@ async fn kernel_drop_inner() {
         return;
     }
     println!("INNER-RAN");
-    let sh = |cmd: &str| {
-        let ok = Command::new("sh")
-            .args(["-c", cmd])
-            .status()
-            .unwrap()
-            .success();
-        assert!(ok, "{cmd} failed");
-    };
     sh("ip link set lo up");
     let iptables = std::env::var(IPTABLES).unwrap_or_else(|_| "iptables".into());
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
@@ -218,15 +229,25 @@ async fn kernel_drop_inner() {
     let sink = tokio::spawn(drain(listener, Duration::ZERO));
     let mut client = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     let backoff = Backoff::watch(vec![port, client.local_addr().unwrap().port()]);
-    tokio::spawn(async move {
-        // The test's timeline: the link works for 0.5 s, then is cut for DROP_FOR.
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        sh(&format!("{iptables} -A INPUT -i lo -j DROP"));
-        // The test's timeline: the cut lasts DROP_FOR, then the link is restored.
-        tokio::time::sleep(DROP_FOR).await;
-        sh(&format!("{iptables} -F INPUT"));
-    });
-    let progress = send_for(&mut client, &backoff, Duration::from_secs(14)).await;
+    // The writer cuts the link itself, between two chunks, so the cut falls inside the measured
+    // transfer however late a loaded host runs it, and a cut that fails fails the case here.
+    let mut restore = None;
+    let progress = send_for(&mut client, &backoff, Duration::from_secs(14), |elapsed| {
+        if restore.is_none() && elapsed >= CUT_AFTER {
+            sh(&format!("{iptables} -A INPUT -i lo -j DROP"));
+            let flush = format!("{iptables} -F INPUT");
+            restore = Some(std::thread::spawn(move || {
+                // The test's timeline: the cut lasts DROP_FOR, then the link is restored.
+                std::thread::sleep(DROP_FOR);
+                sh(&flush);
+            }));
+        }
+    })
+    .await;
+    let restore = restore.expect("the transfer ended before the cut");
+    if let Err(panic) = restore.join() {
+        std::panic::resume_unwind(panic);
+    }
     sink.await.unwrap();
     // The drop is the longest gap by wall clock. On a loaded host another gap can have more own
     // time than the drop's remainder (the meter's `worst`), so the case reads the drop's gap and
@@ -246,7 +267,7 @@ async fn kernel_drop_inner() {
 
 #[test]
 fn a_kernel_drop_and_its_backoff_are_not_a_stall() {
-    let (passed, text) = drop_in_a_namespace(&[]);
+    let (passed, text) = drop_in_a_namespace(&[]).unwrap();
     assert!(passed, "the planted drop failed:\n{text}");
     eprintln!("{text}");
 }
@@ -256,7 +277,7 @@ fn a_kernel_drop_and_its_backoff_are_not_a_stall() {
 /// broken setup is never taken for a broken meter.
 #[test]
 fn a_cut_that_fails_is_reported_as_the_cut() {
-    let (passed, text) = drop_in_a_namespace(&[(IPTABLES, "false")]);
+    let (passed, text) = drop_in_a_namespace(&[(IPTABLES, "false")]).unwrap();
     assert!(!passed, "a run with no cut passed:\n{text}");
     assert!(
         text.contains("false -A INPUT -i lo -j DROP failed"),
@@ -270,7 +291,7 @@ fn a_cut_that_fails_is_reported_as_the_cut() {
 
 /// Runs [`kernel_drop_inner`] in a network namespace of its own, with `env` added, and returns
 /// whether it passed and what it printed.
-fn drop_in_a_namespace(env: &[(&str, &str)]) -> (bool, String) {
+fn drop_in_a_namespace(env: &[(&str, &str)]) -> Result<(bool, String), String> {
     let exe = std::env::current_exe().unwrap();
     let filter = [
         "--exact",
@@ -280,12 +301,12 @@ fn drop_in_a_namespace(env: &[(&str, &str)]) -> (bool, String) {
         "--test-threads=1",
     ];
     let mut tried = Vec::new();
-    for prefix in [
-        &["unshare", "-rn"][..],
-        &["sudo", "-n", "unshare", "-n"][..],
+    for (program, args) in [
+        ("unshare", &["-rn"][..]),
+        ("sudo", &["-n", "unshare", "-n"][..]),
     ] {
-        let out = Command::new(prefix[0])
-            .args(&prefix[1..])
+        let out = Command::new(program)
+            .args(args)
             .arg("env")
             .arg(format!("{INNER}=1"))
             .args(env.iter().map(|(name, value)| format!("{name}={value}")))
@@ -300,9 +321,12 @@ fn drop_in_a_namespace(env: &[(&str, &str)]) -> (bool, String) {
         );
         if text.contains("INNER-RAN") {
             // skip-ok: the inner case ran in a namespace; this ends the search for one
-            return (out.status.success(), text);
+            return Ok((out.status.success(), text));
         }
-        tried.push(format!("{prefix:?}: {text}"));
+        tried.push(format!("{program} {args:?}: {text}"));
     }
-    panic!("no network namespace could be made:\n{}", tried.join("\n"));
+    Err(format!(
+        "no network namespace could be made:\n{}",
+        tried.join("\n")
+    ))
 }

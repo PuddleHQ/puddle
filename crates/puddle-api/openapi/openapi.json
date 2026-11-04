@@ -8168,6 +8168,118 @@
         }
       }
     },
+    "/api/workspaces/{id}/session-user": {
+      "put": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Sets the guest user the workspace's sessions, browser editor and clones run as: `agent`\n(passwordless `sudo`) or `root`. It applies at the next start; a running workspace keeps the\nuser it started with until then. A workspace that is being created or deleted answers 409.",
+        "operationId": "put_session_user",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionUserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the workspace with its new session user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the workspace is being created or deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "not `agent` or `root`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/workspaces/{id}/shell-init": {
       "get": {
         "tags": [
@@ -14907,6 +15019,28 @@
           "microsoft"
         ]
       },
+      "SessionUser": {
+        "type": "string",
+        "description": "Who sessions run as in the guest. The default is the one for a new workspace; a boot plan that\nnames no user stays `root` (see `puddle-boot`), so nothing changes for a caller that never asks.\n\n```\nuse puddle_types::SessionUser;\nassert_eq!(SessionUser::default(), SessionUser::Agent);\nassert_eq!(SessionUser::Agent.name(), \"agent\");\nassert_eq!(SessionUser::Agent.home(), \"/home/agent\");\nassert_eq!(SessionUser::Root.home(), \"/root\");\n```",
+        "enum": [
+          "agent",
+          "root"
+        ]
+      },
+      "SessionUserRequest": {
+        "type": "object",
+        "description": "`PUT /api/workspaces/{id}/session-user`.",
+        "required": [
+          "session_user"
+        ],
+        "properties": {
+          "session_user": {
+            "$ref": "#/components/schemas/SessionUser",
+            "description": "`agent` (passwordless `sudo`, `sudo -i` for a root shell) or `root`."
+          }
+        },
+        "additionalProperties": false
+      },
       "SettingSource": {
         "type": "string",
         "description": "Which level an effective value came from.",
@@ -15668,6 +15802,7 @@
           "display_name",
           "repositories",
           "start_folder",
+          "session_user",
           "image",
           "memory_mib",
           "status",
@@ -15757,6 +15892,10 @@
               "$ref": "#/components/schemas/WorkspaceRepository"
             },
             "description": "The repositories Puddle manages for it, in the order they were added (0 to 100)."
+          },
+          "session_user": {
+            "$ref": "#/components/schemas/SessionUser",
+            "description": "The guest user its sessions, browser editor and clones run as: `agent` (with passwordless\n`sudo`) for a workspace made since non-root sessions came in, `root` for one made before or\nswitched back. A change applies at the next start (`PUT\n/api/workspaces/{id}/session-user`)."
           },
           "settings_error": {
             "type": [

@@ -108,6 +108,7 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
             workspaces::delete_workspace
         ))
         .routes(routes!(start_folder::put_start_folder))
+        .routes(routes!(workspaces::put_session_user))
         .routes(routes!(workspaces::start_workspace))
         .routes(routes!(workspaces::stop_workspace))
         .routes(routes!(workspaces::reclaim_workspace))

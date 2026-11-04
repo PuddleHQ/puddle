@@ -34,7 +34,7 @@ pub const PREPARE_SH: &str = include_str!("../guest/prepare.sh");
 
 /// How long the preparation may take. It is instant unless the volume changes owner, when every
 /// file on it is given to the new one (once; a large `node_modules` is many files).
-pub(crate) const PREPARE_TIMEOUT: Duration = Duration::from_secs(900);
+pub(crate) const PREPARE_TIMEOUT: Duration = Duration::from_mins(15);
 
 /// A workspace's paths in the guest.
 #[derive(Debug, Clone, PartialEq, Eq)]

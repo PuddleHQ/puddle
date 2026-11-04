@@ -2,6 +2,7 @@
 <script lang="ts">
   import InterceptionSetting from "#lib/components/InterceptionSetting.svelte";
   import KeptLoginsList from "#lib/components/KeptLoginsList.svelte";
+  import SessionUserSetting from "#lib/components/SessionUserSetting.svelte";
   import StartFolderSetting from "#lib/components/StartFolderSetting.svelte";
   import UnknownFields from "#lib/components/UnknownFields.svelte";
   import { page } from "$app/state";
@@ -216,6 +217,8 @@
     </div>
 
     <StartFolderSetting {workspace} />
+
+    <SessionUserSetting {workspace} />
 
     <section class="card" aria-labelledby="memory-h">
       <h2 id="memory-h">Memory</h2>

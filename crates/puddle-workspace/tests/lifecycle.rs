@@ -863,7 +863,10 @@ fn stub_prepare(rt: &FakeRuntime, user: SessionUser, code: i32, output: &'static
     rt.on_exec(move |_: &mut ExecContext<'_>, r: &ExecRequest| {
         (r.program == "sh" && r.args.get(1).map(String::as_str) == Some(PREPARE_SH)).then(|| {
             assert_eq!(r.user.as_deref(), Some("root"));
-            assert_eq!(r.args.get(3..).unwrap(), ["/workspaces/acme", user.name()]);
+            assert_eq!(
+                r.args.iter().skip(3).collect::<Vec<_>>(),
+                ["/workspaces/acme", user.name()]
+            );
             ExecOutput::new(code, output, "chown: no such user\n")
         })
     });

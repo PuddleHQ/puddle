@@ -102,6 +102,7 @@ async fn create_is_accepted_busy_and_finishes_with_progress_events() {
             "display_name": "web",
             "repositories": [{"url": REPO, "directory": "api"}],
             "start_folder": null,
+            "session_user": "agent",
             "image": puddle_api::DEFAULT_IMAGE,
             "memory_mib": 8192,
             "status": "created",
@@ -1292,6 +1293,46 @@ async fn desktop_attach_names_the_unreadable_settings_instead_of_saying_direct_s
     assert!(message.contains("settings cannot be read"), "{message}");
     assert!(!message.contains("direct SSH is off for this workspace"));
     assert_eq!(api.launcher.opened().len(), 0);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_session_user_is_set_and_read_back_and_only_agent_or_root_is_taken() {
+    let api = start().await;
+    running(&api, "web").await;
+    assert_eq!(
+        api.get("/api/workspaces/web").await.json()["session_user"],
+        "agent"
+    );
+    let put = |body: Value| {
+        let api = &api;
+        async move {
+            api.send("PUT", "/api/workspaces/web/session-user", Some(&body))
+                .await
+        }
+    };
+    let set = put(json!({"session_user": "root"})).await;
+    assert_eq!(set.status, 200, "{}", set.body);
+    assert_eq!(set.json()["session_user"], "root");
+    assert_eq!(
+        api.get("/api/workspaces/web").await.json()["session_user"],
+        "root"
+    );
+    for body in [
+        json!({"session_user": "vscode"}),
+        json!({}),
+        json!({"session_user": "agent", "x": 1}),
+    ] {
+        assert_eq!(put(body.clone()).await.status, 422, "{body}");
+    }
+    let missing = api
+        .send(
+            "PUT",
+            "/api/workspaces/nope/session-user",
+            Some(&json!({"session_user": "agent"})),
+        )
+        .await;
+    assert_eq!(missing.status, 404, "{}", missing.body);
     api.running.shutdown().await;
 }
 

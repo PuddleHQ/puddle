@@ -1350,10 +1350,10 @@ fn the_hook_adds_the_session_user_at_the_first_free_uid_and_keeps_it_after() {
         );
         assert!(stdout.contains("no sudo in this image"), "{stdout}");
 
-        let users = fr.read("/etc/passwd");
-        assert_eq!(
-            users.lines().last(),
-            Some("agent:x:1001:1001::/home/agent:/bin/sh")
+        let passwd = fr.read("/etc/passwd");
+        assert!(
+            passwd.ends_with("agent:x:1001:1001::/home/agent:/bin/sh\n"),
+            "{passwd}"
         );
         let group = fr.read("/etc/group");
         assert!(group.contains("\nagent:x:1001:\n"), "{group}");
@@ -1400,10 +1400,7 @@ fn the_hook_adds_the_session_user_at_the_first_free_uid_and_keeps_it_after() {
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(!stdout.contains("added"), "{stdout}");
         assert!(stdout.contains("session user agent (uid 1001)"), "{stdout}");
-        assert!(
-            fr.read("/etc/passwd") == users,
-            "the second boot changed the user database"
-        );
+        assert_eq!(fr.read("/etc/passwd"), passwd);
         assert_eq!(fr.read("/etc/group"), group);
         assert!(
             fr.owned().contains(&format!("1001:1001 {machine}")),

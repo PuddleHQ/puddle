@@ -2750,12 +2750,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 .clear(&problem_key("browser-data", name));
             return Ok(());
         }
-        // Give the name back: the create is refused.
-        let mut state = self.state();
-        state.slots.remove(id);
-        if let Err(e) = self.persist(&state) {
-            tracing::warn!(workspace = %name, error = %e, "could not save the list after a refused create");
-        }
+        // Give the name back (not saved yet): the create is refused.
+        self.state().slots.remove(id);
         Err(WorkspaceError::Conflict(format!(
             "browser data left from an earlier workspace named {name} could not be removed ({}), \
              and the new one would inherit it; {name} was not created. Close its editor windows \
@@ -2939,6 +2935,12 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 state
                     .slots
                     .insert(id.clone(), Slot::new(record.clone(), true));
+            }
+            // Reserved before the clear: a create that loses the race for the name is refused
+            // above and cannot clear the winner's data.
+            self.clear_left_over_browser_state(&id, &new.name).await?;
+            {
+                let mut state = self.state();
                 if let Err(e) = self.persist(&state) {
                     state.slots.remove(&id);
                     return Err(WorkspaceError::Unavailable(format!(
@@ -2947,9 +2949,6 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     )));
                 }
             }
-            // Reserved first: a create that loses the race for the name is refused above before it
-            // can clear the winner's data.
-            self.clear_left_over_browser_state(&id, &new.name).await?;
             // The name is reserved and the list saved: set up what the clones need first.
             git.set_up(&new.name, &new.repositories).await;
             self.status_event(&record);

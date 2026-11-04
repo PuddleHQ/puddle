@@ -416,6 +416,21 @@ describe("changing a row", () => {
     expect(await rowOf("TOKEN")).toHaveTextContent(
       "Sent only to api.example.com in the path.",
     );
+
+    dialog = await edit();
+    await fireEvent.click(
+      within(dialog).getByRole("radio", { name: "In a header (most tools)" }),
+    );
+    await save();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(api.bodies.at(-1)).toEqual({
+      kind: "secret",
+      hosts: ["api.example.com"],
+      place: { in: "header" },
+    });
+    expect(await rowOf("TOKEN")).toHaveTextContent(
+      "Sent only to api.example.com.",
+    );
     expect(api.secretValues["TOKEN"]).toBe("kept");
   });
 

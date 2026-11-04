@@ -354,6 +354,43 @@ mod tests {
         assert!(closed.load(Ordering::Acquire));
     }
 
+    /// Counts the flushes and shutdowns that reach it and accepts all writes.
+    #[derive(Default)]
+    struct Counting {
+        flushes: usize,
+        shutdowns: usize,
+    }
+
+    impl AsyncWrite for Counting {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.flushes += 1;
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.shutdowns += 1;
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn the_watch_hands_a_flush_and_a_shutdown_on_to_the_stream() {
+        let (mut watched, closed) = ClientWatch::new(Counting::default());
+        watched.flush().await.unwrap();
+        assert_eq!((watched.inner.flushes, watched.inner.shutdowns), (1, 0));
+        watched.shutdown().await.unwrap();
+        assert_eq!((watched.inner.flushes, watched.inner.shutdowns), (1, 1));
+        assert!(!closed.load(Ordering::Acquire));
+    }
+
     #[test]
     fn accept_failures_are_reported_once_per_run_and_a_stop_always() {
         let error = IpcError::NoRuntime;

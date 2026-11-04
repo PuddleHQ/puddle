@@ -574,9 +574,12 @@ async fn a_failed_session_is_reported_to_the_target_with_its_cause() {
         .unwrap()
         .unwrap();
     // The report follows the session's end; wait for it rather than race the close.
-    eventually("the failure was never reported", WAIT, || {
-        !target.reports.lock().unwrap().is_empty()
-    })
+    // Shorter than WAIT: a mutant that never reports must fail inside the mutation run's test timeout.
+    eventually(
+        "the failure was never reported",
+        Duration::from_secs(10),
+        || !target.reports.lock().unwrap().is_empty(),
+    )
     .await;
     endpoint.close().await;
     let reports = target.reports.lock().unwrap();

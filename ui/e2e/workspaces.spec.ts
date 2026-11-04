@@ -1638,9 +1638,9 @@ test.describe("a workspace whose disk is nearly full", () => {
   }) => {
     await backend.control.reset("disks-full");
     await openList(page, backend);
-    await expect(card(page, "full-root")).toContainText("nearly full");
-    await expect(card(page, "full-volume")).toContainText("nearly full");
-    await expect(card(page, "roomy")).not.toContainText("nearly full");
+    await expect(card(page, "full-root")).toContainText(/\d+ % full/);
+    await expect(card(page, "full-volume")).toContainText(/\d+ % full/);
+    await expect(card(page, "roomy")).not.toContainText(/\d+ % full/);
 
     await openDetail(page, backend, "roomy");
     await expect(page.getByTestId("disk-warning-root")).toHaveCount(0);

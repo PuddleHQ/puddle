@@ -401,13 +401,15 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
 - **Diff coverage before the slow gates (pre-push).** `scripts/check.sh diff-coverage-fast` runs the tests of only the
   crates whose `.rs` files the change touches (`scripts/diff-coverage-crates.sh` names them) with coverage, then the same
   diff-coverage tool on that report, so an added line no test runs fails in about half a minute (3 crates, warm build) to
-  a few minutes, and not after the whole `pre-push` set. It runs in its own target directory (`<target>/diff-coverage-fast`)
-  with the old test executables removed first, because a report reads every executable in a directory and one left
-  by an earlier run, built from older sources, brings its old line numbers. A change to `Cargo.toml`, `Cargo.lock`
+  a few minutes, and not after the whole `pre-push` set. It builds in the `coverage` gate's instrumented directory (`<target>/llvm-cov-target`), so the third-party crates
+  are compiled once and not once per gate (about 8 GB less disk on a warm lane). A report reads every test executable
+  and profile file in a directory, and one left by an earlier run, built from older sources or run by other tests,
+  brings its old line numbers or counts, so the gate removes both before it runs and again when it ends; the
+  libraries stay built. Its report is `<target>/diff-coverage-fast.lcov`. A change to `Cargo.toml`, `Cargo.lock`
   or `.cargo/` names no crate; a `.rs` file outside `crates/` skips the gate (the full gate measures it). A line only another
   crate's tests run is reported as uncovered here and cleared by the full `coverage` gate: cover it from its own crate,
-  or list it in `scripts/diff-coverage-exclusions.txt`. It leaves the later `coverage` gate and its `lcov.info`
-  alone, and `all` (CI) does not run it.
+  or list it in `scripts/diff-coverage-exclusions.txt`. It never touches the `coverage` gate's `lcov.info`, and
+  `all` (CI) does not run it.
 - **Pure-logic crates stay at 100 % of their lines** (gate `coverage`, tool `ui/scripts/full-coverage.ts`). The
   crates listed in `scripts/full-coverage-crates.txt` (pure logic: no operating-system, network or VM code) fail the run on the first executable line
   under `src/` that no test of the workspace run executes, whatever the workspace total says. A crate joins the

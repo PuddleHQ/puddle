@@ -98,6 +98,12 @@ covprobe() {
     for d in "${CARGO_TARGET_DIR:-target}"/llvm-cov-target "${CARGO_TARGET_DIR:-target}"/diff-coverage-fast; do [ -d "$d" ] && echo "COVPROBE $1 du-mb $d $(du -xsm "$d" | cut -f1)"; done
     echo "COVPROBE $1 time $(date +%s)"
 }
+# Removes what a coverage report would read from an earlier run in the shared instrumented directory: the test
+# executables (the libraries stay built) and the profile files. `cargo llvm-cov nextest --no-report` cleans neither.
+coverage_scrub() {
+    find "$1/llvm-cov-target/debug" -maxdepth 2 -type f -perm -u+x ! -name '*.so' ! -name '*.d' -delete 2>/dev/null || true
+    find "$1/llvm-cov-target" -maxdepth 1 -name '*.profraw' -type f -delete 2>/dev/null || true
+}
 diff_coverage() {
     label=$1 lcov=$2 exts=$3
     shift 3
@@ -406,24 +412,28 @@ run_gate() {
             echo "diff-coverage-fast: only puddle-app changed and it is skipped here; CI measures it"
             exit 0
         fi
-        # Its own target directory, and the old test binaries removed from it first: a report reads every
-        # executable in the directory, so a binary left by an earlier run of other crates, built from older
-        # sources, would put the old line numbers into this report. Cargo links the missing ones again; every
-        # library stays built for the next run. The full coverage gate's directory (and its lcov.info) is never touched.
-        target=${CARGO_TARGET_DIR:-target}/diff-coverage-fast
+        # The same instrumented target directory as the `coverage` gate (`<target>/llvm-cov-target`), so the third-party
+        # crates it builds are built once, not once per gate (15 GB of a host lane when each kept its own copy). A
+        # report reads every profile file and every test executable in the directory, so one left by an earlier run
+        # (other crates, older sources) would bring its old line numbers or another run's counts; `coverage_scrub`
+        # removes both before this run and again when it ends, so neither gate reports what the other left. Every
+        # library stays built. The lcov file is this gate's own, never the `coverage` gate's `lcov.info`.
+        target=${CARGO_TARGET_DIR:-target}
+        lcov=$target/diff-coverage-fast.lcov
         echo "COVPROBE fast start $(date +%s)"
         echo "diff-coverage-fast: tests with coverage for:$packages"
-        find "$target/llvm-cov-target/debug" -maxdepth 2 -type f -perm -u+x ! -name '*.so' ! -name '*.d' -delete 2>/dev/null || true
+        coverage_scrub "$target"
+        trap 'coverage_scrub "$target"' EXIT
         # shellcheck disable=SC2086 # $packages is a list of `-p <crate>` pairs
-        CARGO_TARGET_DIR=$target scripts/coverage-run.sh "$plain_cargo" $packages --all-features --locked \
+        scripts/coverage-run.sh "$plain_cargo" $packages --all-features --locked \
             --profile "${NEXTEST_PROFILE:-default}"
-        CARGO_TARGET_DIR=$target "$plain_cargo" llvm-cov report --lcov --output-path "$target/lcov.info"
+        "$plain_cargo" llvm-cov report --lcov --output-path "$lcov"
         # The exclusion notes ("matched nothing in this diff") list every entry of the file that this change does
         # not touch: hundreds of lines, so only their count is printed.
         rc=0
-        report=$(diff_coverage "diff-coverage-fast (rust)" "$target/lcov.info" .rs 2>&1) || rc=$?
+        report=$(diff_coverage "diff-coverage-fast (rust)" "$lcov" .rs 2>&1) || rc=$?
         printf '%s\n' "$report" | grep -v 'matched nothing in this diff' || true
-        covprobe fast "$target/lcov.info"
+        covprobe fast "$lcov"
         echo "diff-coverage-fast: $(printf '%s\n' "$report" | grep -c 'matched nothing in this diff' || true) exclusion note(s) for untouched code left out"
         if [ "$rc" != 0 ]; then
             echo "diff-coverage-fast: only the tests of$packages ran; a line another crate's tests run is reported here and cleared by the full coverage gate" >&2

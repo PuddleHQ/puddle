@@ -214,6 +214,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     creating: false,
                     deleting: false,
                     volume_missing: false,
+                    delete_note: None,
                 },
             );
             if let Err(e) = self.persist(&state) {

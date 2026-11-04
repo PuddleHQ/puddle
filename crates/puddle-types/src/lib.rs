@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Shared types for Puddle's crates: identifiers, wire types and errors that cross crate
 //! boundaries. Keep this crate small and free of I/O, so every other crate can depend on it.
+//! (measurement touch)
 //!
 //! | Item | What |
 //! |---|---|

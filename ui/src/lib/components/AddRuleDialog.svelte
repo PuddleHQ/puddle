@@ -8,6 +8,7 @@
   import type { RuleSetChoice } from "#lib/decision/model.ts";
   import type { NewRule, ServerError } from "#lib/stores/rules.svelte.ts";
   import FormDialog from "./FormDialog.svelte";
+  import SetChip from "./SetChip.svelte";
 
   // The form keeps what was typed while it is closed, so a refused rule (or a cancelled confirm)
   // can be corrected instead of retyped. `onSubmit` gets a complete request; it returns `null` when
@@ -194,7 +195,7 @@
             value="set:{set.id}"
             bind:group={scope}
           />
-          In rule set <b>{set.name}</b>
+          In rule set <b><SetChip name={set.name} fill={set.fill} /></b>
           {#if set.everywhere}<span class="hint">(on everywhere; asks)</span
             >{/if}
         </label>

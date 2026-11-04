@@ -1064,3 +1064,181 @@ async fn changing_an_identity_succeeds_when_the_credential_store_will_not_give_u
     // The row changed; the token waits for the sweep at the next start.
     assert_eq!(vault.ids(), std::slice::from_ref(&token));
 }
+
+/// The `workspace_op` records of the activity log, oldest first, as `(op, workspace, detail)`.
+async fn ops(api: &Api) -> Vec<(String, Value, Value)> {
+    let page = api
+        .get("/api/audit?type=workspace_op&after=0&outcome=succeeded")
+        .await
+        .json();
+    page["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            let r = &e["record"];
+            assert_eq!(r["actor"], "api", "{r}");
+            assert_eq!(r["outcome"], "succeeded", "{r}");
+            (
+                r["op"].as_str().unwrap().to_owned(),
+                r["workspace_id"].clone(),
+                r["detail"].clone(),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn identity_changes_are_in_the_activity_log_and_a_refused_one_is_not() {
+    let api = start().await;
+    let work = make(&api, "Work", &["acme"], false).await;
+    let personal = make(&api, "Personal", &[], true).await;
+    // A refused change leaves nothing behind.
+    let dup = api
+        .send(
+            "POST",
+            "/api/identities",
+            Some(&body("work", &["x"], false)),
+        )
+        .await;
+    assert_eq!(dup.status, 409);
+    api.send("PUT", &format!("/api/identities/{personal}/default"), None)
+        .await;
+    api.send(
+        "PUT",
+        &format!("/api/identities/{work}"),
+        Some(&body("Job", &["acme"], false)),
+    )
+    .await;
+    api.send("DELETE", &format!("/api/identities/{work}"), None)
+        .await;
+    assert_eq!(
+        api.send("DELETE", &format!("/api/identities/{work}"), None)
+            .await
+            .status,
+        404
+    );
+
+    let seen = ops(&api).await;
+    let labels = |op: &str| -> Vec<Value> {
+        seen.iter()
+            .filter(|(o, ..)| o == op)
+            .map(|(_, ws, detail)| {
+                assert!(ws.is_null(), "an identity belongs to no workspace");
+                detail.clone()
+            })
+            .collect()
+    };
+    assert_eq!(
+        labels("identity_created"),
+        [json!("Work"), json!("Personal")]
+    );
+    assert_eq!(labels("identity_default_set"), [json!("Personal")]);
+    assert_eq!(labels("identity_updated"), [json!("Job")]);
+    assert_eq!(labels("identity_deleted"), [json!("Job")]);
+    assert_eq!(seen.len(), 5, "{seen:?}");
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_workspaces_identity_and_repository_changes_are_in_the_activity_log() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let id = make(&api, "Work", &["acme"], false).await;
+    let attached = api
+        .send(
+            "POST",
+            "/api/workspaces/shop/identities",
+            Some(&json!({"identity": id})),
+        )
+        .await;
+    assert_eq!(attached.status, 200, "{}", attached.body);
+    api.send(
+        "DELETE",
+        &format!("/api/workspaces/shop/identities/{id}"),
+        None,
+    )
+    .await;
+    api.send(
+        "PUT",
+        "/api/workspaces/shop/identities",
+        Some(&json!({"ids": [id]})),
+    )
+    .await;
+    let add =
+        json!({"host": "github.com", "owner": "acme", "repo": "docs", "pull": true, "push": true});
+    let row = api
+        .send("POST", "/api/workspaces/shop/git/repos", Some(&add))
+        .await
+        .json()["id"]
+        .as_i64()
+        .unwrap();
+    // A second add of the same row is refused and leaves no record.
+    assert_eq!(
+        api.send("POST", "/api/workspaces/shop/git/repos", Some(&add))
+            .await
+            .status,
+        409
+    );
+    api.send(
+        "PUT",
+        &format!("/api/workspaces/shop/git/repos/{row}"),
+        Some(&json!({"pull": false, "push": true})),
+    )
+    .await;
+    api.send(
+        "DELETE",
+        &format!("/api/workspaces/shop/git/repos/{row}"),
+        None,
+    )
+    .await;
+
+    let seen: Vec<_> = ops(&api)
+        .await
+        .into_iter()
+        .filter(|(op, ..)| op != "identity_created")
+        .collect();
+    let shop = json!("shop");
+    assert_eq!(
+        seen,
+        [
+            (
+                "identities_changed".to_owned(),
+                shop.clone(),
+                json!(format!("attached identity {id}"))
+            ),
+            (
+                "identities_changed".to_owned(),
+                shop.clone(),
+                json!(format!("took identity {id} off"))
+            ),
+            (
+                "identities_changed".to_owned(),
+                shop.clone(),
+                json!("the list now has 1 identities")
+            ),
+            (
+                "repo_added".to_owned(),
+                shop.clone(),
+                json!("github.com/acme/docs in the Git settings")
+            ),
+            (
+                "repo_switched".to_owned(),
+                shop.clone(),
+                json!(format!("row {row}: pull off, push on"))
+            ),
+            (
+                "repo_removed".to_owned(),
+                shop,
+                json!(format!("row {row} of the Git settings"))
+            ),
+        ]
+    );
+    // The filter by workspace finds the workspace's records and not the identity's.
+    let page = api
+        .get("/api/audit?type=workspace_op&workspace=shop&after=0")
+        .await
+        .json();
+    assert_eq!(page["entries"].as_array().unwrap().len(), 6);
+    api.running.shutdown().await;
+}

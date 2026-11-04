@@ -3174,7 +3174,7 @@ async fn vm_host_dockers_data_is_on_a_disk_of_the_sandbox_that_a_rebuild_replace
     let rebuilt = guest(
         &runtime,
         &sandbox,
-        &format!("{script}\ntest -e /tmp/old-sandbox && echo same-sandbox"),
+        &format!("{script}\ntest -e /tmp/old-sandbox && echo same-sandbox || true"),
     )
     .await;
     assert!(!rebuilt.contains("same-sandbox"), "not rebuilt: {rebuilt}");

@@ -261,7 +261,7 @@ impl Launcher for ShellStandIn {
                 .lock()
                 .await
                 .open(
-                    &PageRequest::new(format!("{}/", target.origin), "true")
+                    &PageRequest::new(start_address(target), "true")
                         .on_commit()
                         .budget(PAGE_BUDGET),
                 )
@@ -283,6 +283,22 @@ impl Launcher for ShellStandIn {
             self.closed.lock().unwrap().push(workspace.to_string());
             self.close_pages(workspace.as_str()).await;
         })
+    }
+}
+
+/// The address the shell's window opens: the editor's root with the place the host named, as the
+/// shell builds it (`/?workspace=<file>` or `/?folder=<path>`), or the root alone.
+fn start_address(target: &BrowserTarget) -> String {
+    match &target.open {
+        Some(open) => {
+            let key = if open.is_workspace_file {
+                "workspace"
+            } else {
+                "folder"
+            };
+            format!("{}/?{key}={}", target.origin, open.path)
+        }
+        None => format!("{}/", target.origin),
     }
 }
 
@@ -381,13 +397,13 @@ async fn windows_become(windows: &puddle_front::Windows, workspace: &WorkspaceNa
 }
 
 /// K tier, code-server. An attach in the browser opens the workspace's editor signed in (no
-/// login page, and the password nowhere in an address), and the editor shows the volume's
-/// checkouts; the front counts the window. Closing the window ends the guest's real extension
+/// login page, and the password nowhere in an address), and with the server already running on the
+/// volume root the window itself opens the multi-root file with one root per checkout and the
+/// volume; the front counts the window. Closing the window ends the guest's real extension
 /// host (the shell's last-window cleanup) and keeps the terminal host; opening it again within the
 /// grace finds the editor with the kept session (no second sign-in). A stop closes the window
 /// before the guest goes; the next start makes a new password, and the window opens signed in
-/// again with a new sign-in on the multi-root file the attach wrote, not on the volume the last
-/// window showed, with one root per checkout and the volume.
+/// again with a new sign-in on the same file.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_close_ends_the_extension_hosts()
@@ -462,16 +478,21 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     for seen in [&origin, &place.to_string()] {
         assert!(!seen.contains(password.trim()), "the password is in {seen}");
     }
-    assert_eq!(place["search"], format!("?folder={root}"), "{place}");
-    let names: Vec<&str> = rows
+    // The server was running with the volume root before the attach found two checkouts: the
+    // window itself asks for the multi-root file the attach wrote, so no restart is needed.
+    let file = format!("{root}/.puddle/editor/{name}.code-workspace");
+    assert_eq!(place["search"], format!("?workspace={file}"), "{place}");
+    let roots: Vec<&str> = rows
         .as_array()
         .unwrap()
         .iter()
+        .filter(|row| row["level"] == "1")
         .filter_map(|row| row["name"].as_str())
         .collect();
-    for checkout in ["api", "web", "notes.txt"] {
-        assert!(names.contains(&checkout), "{checkout} missing in {rows}");
-    }
+    assert!(
+        roots.contains(&"api") && roots.contains(&"web") && roots.len() == 3,
+        "{rows}"
+    );
     assert_eq!(*shell.sign_ins.lock().unwrap(), 1);
     windows_become(windows, &sandbox, true).await;
     let open = counts_until(&runtime, &sandbox, "the window's extension host", |line| {

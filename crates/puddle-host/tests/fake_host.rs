@@ -5010,6 +5010,39 @@ async fn the_desktop_editor_opens_the_start_folder_or_the_multi_root_file_on_the
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_browser_editor_gets_the_same_place_to_open_as_the_desktop_one_with_the_server_already_running()
+ {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let open = || async { browser_target(&rig, &api, "acme").await.open.unwrap() };
+    let root = open().await;
+    assert_eq!(root.path, "/workspaces/acme");
+    assert!(!root.is_workspace_file);
+
+    // The workspace keeps running; two checkouts appear, and the attach alone brings the file.
+    rig.guest
+        .put_checkout("api", "https://example.org/acme/api.git");
+    rig.guest
+        .put_checkout("web", "https://example.org/acme/web.git");
+    let multi = open().await;
+    assert_eq!(
+        multi.path,
+        "/workspaces/acme/.puddle/editor/acme.code-workspace"
+    );
+    assert!(multi.is_workspace_file);
+
+    let reply = put_start_folder(&api, "acme", Some("api")).await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let folder = open().await;
+    assert_eq!(folder.path, "/workspaces/acme/api");
+    assert!(!folder.is_workspace_file);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_launcher_that_fails_says_why_in_the_answer() {
     let rig = Rig::new();
     let host = rig.start().await;

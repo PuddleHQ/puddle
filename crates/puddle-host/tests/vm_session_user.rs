@@ -9,6 +9,9 @@
 //! The tools reach the live registries on purpose (Debian, npm, the Python Package Index, GitHub,
 //! Anthropic's API):
 //! the bar is the real tools, and the failure messages name the third party.
+//! So it is part of the real-tool radar (the name starts `vm_radar_`: weekly, or with the
+//! `full-test` label), not the per-pull-request gate, which covers the session user with
+//! `vm_session_user_*` in puddle-boot and the host tests that clone and log in as `agent`.
 #![expect(
     clippy::unwrap_used,
     clippy::panic,
@@ -54,8 +57,11 @@ async fn run_as(vm: &VmHost, sandbox: &WorkspaceName, user: &str, script: &str) 
     let handle = vm.runtime.get(&sandbox.sandbox_name()).await.unwrap();
     let out = handle
         .exec(
+            // The script is an argument, not stdin, so a tool that reads stdin cannot eat the
+            // rest of it.
             ExecRequest::sh(format!(
-                "cd && exec bash -l -s <<'PUDDLE_EOF'\n{script}\nPUDDLE_EOF"
+                "cd && exec bash -l -c '{}'",
+                script.replace('\'', "'\\''")
             ))
             .as_user(user)
             .with_timeout(Duration::from_mins(15)),
@@ -76,7 +82,7 @@ async fn ok_as(vm: &VmHost, sandbox: &WorkspaceName, user: &str, script: &str) -
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn vm_session_user_agent_runs_the_real_tools_at_their_widest_and_a_switch_to_root_takes_back_the_files()
+async fn vm_radar_session_user_agent_runs_the_real_tools_at_their_widest_and_a_switch_to_root_takes_back_the_files()
  {
     let vm = start_vm_host("sesu").await;
     let api = Api::new(vm.host.url(), vm.host.token());
@@ -186,7 +192,7 @@ async fn check_identity_and_claude_code(vm: &VmHost, sandbox: &WorkspaceName) {
         sandbox,
         "agent",
         "ANTHROPIC_API_KEY=sk-ant-puddle-not-a-key timeout 120 \
-           claude --dangerously-skip-permissions -p 'say hi' 2>&1; echo \"exit=$?\"
+           claude --dangerously-skip-permissions -p 'say hi' </dev/null 2>&1; echo \"exit=$?\"
          stat -c 'config %U' ~/.claude.json ~/.claude 2>&1",
     )
     .await;
@@ -207,7 +213,7 @@ async fn check_identity_and_claude_code(vm: &VmHost, sandbox: &WorkspaceName) {
         vm,
         sandbox,
         "agent",
-        "sudo -n claude --dangerously-skip-permissions -p 'say hi' 2>&1; echo \"exit=$?\"",
+        "sudo -n claude --dangerously-skip-permissions -p 'say hi' </dev/null 2>&1; echo \"exit=$?\"",
     )
     .await;
     assert!(as_root.contains(ROOT_REFUSAL), "{as_root}");

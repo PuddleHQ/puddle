@@ -605,3 +605,25 @@ async fn foreign_sandboxes_dirs_and_volumes_are_listed_but_not_owned() {
     assert!(vols[0].volume_name().is_none());
     assert!(rt.volume(&vol("data-disk")).await.unwrap().is_none());
 }
+
+#[tokio::test]
+async fn the_specs_owned_disks_and_volume_mounts_can_be_read_back() {
+    let rt = FakeRuntime::new();
+    let s = spec("a")
+        .with_volume(VolumeMount::named(vol("v"), path("/w")).ensure_size(DiskSize::mib(1)))
+        .with_owned_disk(OwnedDisk {
+            guest: path("/var/lib/d"),
+            size: DiskSize::mib(2),
+        });
+    let name = s.name.clone();
+    assert!(rt.owned_disks(&name).is_empty());
+    assert!(rt.volume_mounts(&name).is_empty());
+    rt.create(s).await.unwrap();
+    let disks = rt.owned_disks(&name);
+    assert_eq!(disks.len(), 1);
+    assert_eq!(disks[0].guest, path("/var/lib/d"));
+    assert_eq!(disks[0].size, DiskSize::mib(2));
+    let volumes = rt.volume_mounts(&name);
+    assert_eq!(volumes.len(), 1);
+    assert_eq!(volumes[0].guest, path("/w"));
+}

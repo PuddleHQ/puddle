@@ -3659,6 +3659,68 @@ async fn a_restart_keeps_the_workspaces_and_rebuilds_the_sandbox_on_the_same_vol
     again.shutdown().await;
 }
 
+/// Docker's data folder is a disk of the sandbox itself: every sandbox the host makes has one,
+/// a stop and start keeps the sandbox (and so the disk), a rebuilt sandbox gets a fresh one, and
+/// the workspace volume never carries it.
+#[tokio::test(flavor = "multi_thread")]
+async fn every_sandbox_has_its_own_20_gib_disk_for_dockers_data_and_the_volume_does_not() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api1 = api(&host);
+    let mut events = api1.events().await;
+    create(&api1, &mut events, "acme").await;
+    let sandbox = SandboxName::new("acme").unwrap();
+    let docker_disk = |rig: &Rig| {
+        rig.runtime
+            .owned_disks(&sandbox)
+            .into_iter()
+            .map(|d| (d.guest.as_str().to_owned(), d.size))
+            .collect::<Vec<_>>()
+    };
+    let expected = vec![(
+        "/var/lib/docker".to_owned(),
+        puddle_compute::DiskSize::gib(20),
+    )];
+    assert_eq!(docker_disk(&rig), expected);
+    let volumes = rig.runtime.volume_mounts(&sandbox);
+    assert_eq!(volumes.len(), 1, "{volumes:?}");
+    assert!(
+        volumes
+            .iter()
+            .all(|v| !v.guest.as_str().starts_with("/var/lib")),
+        "{volumes:?}"
+    );
+
+    // A stop and start is the same sandbox with the same disk.
+    for step in ["stop", "start"] {
+        let reply = api1.post(&format!("/api/workspaces/acme/{step}"), "").await;
+        assert_eq!(reply.status, 202, "{}", reply.body);
+        events.until(ended("acme"), Duration::from_secs(20)).await;
+    }
+    assert_eq!(docker_disk(&rig), expected);
+    assert_eq!(
+        rig.runtime
+            .calls()
+            .iter()
+            .filter(|c| format!("{:?}", c.op) == "Create")
+            .count(),
+        1
+    );
+
+    // A new process rebuilds the sandbox, and the new one has the disk too.
+    host.shutdown().await;
+    drop(host);
+    drop(events);
+    let again = rig.start().await;
+    let api2 = api(&again);
+    let mut events = api2.events().await;
+    api2.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(docker_disk(&rig), expected);
+    again.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_crashed_sandbox_is_reported_crashed_and_start_recovers_it() {
     let rig = Rig::new();

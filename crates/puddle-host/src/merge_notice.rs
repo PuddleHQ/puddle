@@ -3,7 +3,7 @@
 //! the file stays as it is, so the settings Puddle wanted in it are missing until it is fixed.
 
 use puddle_boot::MACHINE_SETTINGS_GUEST;
-use puddle_types::{Problem, WorkspaceName};
+use puddle_types::{Problem, Problems, WorkspaceName};
 
 /// The system `ssh_config`, where Puddle adds one `Include` line.
 const SSH_CONFIG_SYSTEM: &str = "/etc/ssh/ssh_config";
@@ -23,8 +23,9 @@ fn consequence(path: &str) -> &'static str {
         "VS Code in this workspace keeps its own port forwarding, so it can forward the port of \
          Puddle's proxy, and its Git sign-in guard is not switched on"
     } else if path == SSH_CONFIG_SYSTEM {
-        "ssh in this workspace does not read Puddle's SSH settings, so its connections do not go \
-         through Puddle"
+        "ssh in this workspace, and git, scp and rsync over it, do not read Puddle's SSH \
+         settings, so their connections fail with a bare \"Connection closed\" instead of \
+         Puddle's message"
     } else if path.ends_with("/config.json") {
         "Docker does not get Puddle's proxy settings and bypasses the proxy, so image pulls and \
          builds that need the network fail"
@@ -51,6 +52,26 @@ pub(crate) fn merge_notices(workspace: &WorkspaceName, left: &[(&str, &str)]) ->
             .about(workspace.clone())
         })
         .collect()
+}
+
+/// Makes the notices of `workspace` match `left`: the files still left get their notice, and the
+/// notice of a file the hook no longer leaves (repaired, or dropped from the plan) ends. Runs
+/// after every plan the hook ran in the guest, so a rewrite while the sandbox runs counts too.
+pub(crate) fn settle_merge_notices(
+    problems: &Problems,
+    workspace: &WorkspaceName,
+    left: &[(&str, &str)],
+) {
+    let notices = merge_notices(workspace, left);
+    let prefix = merge_notice_prefix(workspace);
+    for stale in problems.list() {
+        if stale.key.starts_with(&prefix) && !notices.iter().any(|n| n.key == stale.key) {
+            problems.clear(&stale.key);
+        }
+    }
+    for notice in notices {
+        problems.raise(notice);
+    }
 }
 
 #[cfg(test)]
@@ -108,6 +129,65 @@ mod tests {
             notices[1]
                 .detail
                 .contains("Puddle's settings for it are not applied")
+        );
+    }
+
+    #[test]
+    fn each_file_has_its_own_consequence() {
+        let left = [
+            ("/root/.docker/config.json", "x"),
+            (MACHINE_SETTINGS_GUEST, "x"),
+            (SSH_CONFIG_SYSTEM, "x"),
+        ];
+        let details: Vec<String> = merge_notices(&workspace(), &left)
+            .into_iter()
+            .map(|p| p.detail)
+            .collect();
+        assert!(details[0].contains("Docker does not get Puddle's proxy settings"));
+        assert!(details[1].contains("Git sign-in guard is not switched on"));
+        assert!(details[2].contains("\"Connection closed\""));
+        assert!(details[2].contains("git, scp and rsync"));
+    }
+
+    #[test]
+    fn a_docker_config_in_another_folder_still_says_pulls_fail() {
+        let left = [("/work/docker/config.json", "x")];
+        let [problem] = merge_notices(&workspace(), &left).try_into().unwrap();
+        assert!(problem.detail.contains("bypasses the proxy"));
+    }
+
+    fn settled(left: &[(&str, &str)], problems: &Problems) {
+        settle_merge_notices(problems, &workspace(), left);
+    }
+
+    fn keys(problems: &Problems) -> Vec<String> {
+        problems.list().into_iter().map(|p| p.key).collect()
+    }
+
+    #[test]
+    fn settling_raises_the_left_files_and_ends_the_ones_no_longer_left() {
+        let problems = Problems::new(std::sync::Arc::new(puddle_types::CollectingSink::default()));
+        settled(&[("/a", "bad"), ("/b", "bad")], &problems);
+        assert_eq!(
+            keys(&problems),
+            ["merge-left:acme:/a", "merge-left:acme:/b"]
+        );
+        settled(&[("/b", "still bad")], &problems);
+        assert_eq!(keys(&problems), ["merge-left:acme:/b"]);
+        assert!(problems.list()[0].detail.contains("still bad"));
+        settled(&[], &problems);
+        assert_eq!(problems.list(), Vec::<Problem>::new());
+    }
+
+    #[test]
+    fn settling_leaves_other_problems_and_other_workspaces_alone() {
+        let problems = Problems::new(std::sync::Arc::new(puddle_types::CollectingSink::default()));
+        problems.raise(Problem::new("kubernetes:acme", "t", "d"));
+        problems.raise(Problem::new("merge-left:acmeless:/a", "t", "d"));
+        settled(&[], &problems);
+        assert_eq!(
+            keys(&problems),
+            ["kubernetes:acme", "merge-left:acmeless:/a"]
         );
     }
 

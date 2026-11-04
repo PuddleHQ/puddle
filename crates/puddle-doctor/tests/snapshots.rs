@@ -1138,7 +1138,7 @@ fn folder(path: &str, mode: u32, owned: bool) -> WritableFolder {
 fn linux_data_path_clear() {
     let fake = Fake {
         data_path: Some(DataPathFacts::Checked {
-            dir: "/home/dev/.local/share/puddle".into(),
+            dir: "/home/dev/.local/share/puddle".into(), // flake-ok: a path the fake probe reports, never opened
             writable: Vec::new(),
         }),
         ..linux()
@@ -1151,7 +1151,7 @@ fn linux_data_path_clear() {
 fn linux_data_path_group_writable() {
     let fake = Fake {
         data_path: Some(DataPathFacts::Checked {
-            dir: "/home/dev/.local/share/puddle".into(),
+            dir: "/home/dev/.local/share/puddle".into(), // flake-ok: a path the fake probe reports, never opened
             writable: vec![folder("/home/dev/.local", 0o775, true)],
         }),
         ..linux()
@@ -1201,7 +1201,7 @@ fn linux_data_path_several_world_writable_and_not_owned() {
 fn linux_data_path_unreadable() {
     let fake = Fake {
         data_path: Some(DataPathFacts::Unreadable {
-            dir: "/home/dev/.local/share/puddle".into(),
+            dir: "/home/dev/.local/share/puddle".into(), // flake-ok: a path the fake probe reports, never opened
             detail: "Permission denied (os error 13)".into(),
         }),
         ..linux()

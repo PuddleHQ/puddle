@@ -594,6 +594,7 @@ impl<R: Runtime + Clone> Host<R> {
                 events: events.clone() as Arc<dyn EventSink>,
                 clock: clock.clone(),
                 settings: settings.clone(),
+                store: store.clone(),
                 launcher: options.launcher,
                 ssh,
                 book,

@@ -80,13 +80,19 @@ impl Guest {
             .tempdir()
             .unwrap();
         let root = dir.path().to_path_buf();
-        for d in ["proc/sys/fs/inotify", "proc/sys/kernel/random", "etc"] {
+        for d in [
+            "proc/sys/fs/inotify",
+            "proc/sys/kernel/random",
+            "proc/sys/net/ipv4",
+            "etc",
+        ] {
             std::fs::create_dir_all(root.join(d)).unwrap();
         }
         for f in [
             "fs/inotify/max_user_instances",
             "fs/inotify/max_user_watches",
             "kernel/unprivileged_bpf_disabled",
+            "net/ipv4/ip_unprivileged_port_start",
         ] {
             std::fs::write(root.join("proc/sys").join(f), "0\n").unwrap();
         }

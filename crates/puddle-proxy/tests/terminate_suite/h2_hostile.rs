@@ -68,7 +68,7 @@ async fn a_rapid_reset_flood_is_ended_and_most_of_it_never_reaches_the_server() 
     let server = H2Server::recording(&pki, "bound.test", ok()).await;
     let injector = TestInjector::always();
     let rig = rig_with(&pki, server.addr, &ProxyConfig::default(), injector.clone());
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut tls = raw(&mut guest).await;
     // A paused clock still jumps to the next timer whenever the runtime waits on I/O, unless a
     // blocking task is running; this one runs until the test drops `thaw`.
@@ -124,7 +124,7 @@ async fn a_continuation_flood_ends_the_connection_and_nothing_is_sent_upstream()
         &ProxyConfig::default(),
         TestInjector::always(),
     );
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut tls = raw(&mut guest).await;
     tls.write_all(&frame(1, 0x1, 1, &get_block(b"/")))
         .await
@@ -156,7 +156,7 @@ async fn a_header_block_left_open_is_cut_off_after_the_head_timeout() {
     let server = H2Server::recording(&pki, "bound.test", ok()).await;
     let config = ProxyConfig::default().with_head_timeout(Duration::from_secs(1));
     let rig = rig_with(&pki, server.addr, &config, TestInjector::always());
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut tls = raw(&mut guest).await;
     // The server's SETTINGS are acknowledged first: any frame between a HEADERS without
     // END_HEADERS and its CONTINUATION would end the connection as a protocol error at once, and
@@ -193,7 +193,7 @@ async fn a_header_list_over_the_limit_never_reaches_the_server() {
         &ProxyConfig::default(),
         TestInjector::always(),
     );
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let client = guest
         .tls_with("bound.test:443", None, &[b"h2"], true)
         .await
@@ -245,7 +245,7 @@ async fn streams_over_the_limit_are_refused_and_the_server_never_sees_more_than_
         &ProxyConfig::default(),
         TestInjector::always(),
     );
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut tls = raw(&mut guest).await;
     let block = get_block(b"/slow");
     let mut burst = Vec::new();
@@ -278,7 +278,7 @@ async fn a_content_length_that_the_body_does_not_match_is_never_forwarded_as_a_c
         &ProxyConfig::default(),
         TestInjector::always(),
     );
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let client = guest
         .tls_with("bound.test:443", None, &[b"h2"], true)
         .await
@@ -315,7 +315,7 @@ async fn a_stream_reset_cleanly_short_of_its_content_length_never_ends_upstream_
     let (addr, frames, _server) =
         terminate_support::h2_rig::record_frames(&pki, "bound.test", true).await;
     let rig = rig_with(&pki, addr, &ProxyConfig::default(), TestInjector::always());
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let client = guest
         .tls_with("bound.test:443", None, &[b"h2"], true)
         .await
@@ -391,7 +391,7 @@ async fn headers_that_only_exist_to_smuggle_are_refused_before_the_server_sees_a
         ("te", "gzip"),
         ("proxy-connection", "keep-alive"),
     ] {
-        let mut guest = rig.guest().await;
+        let mut guest = rig.guest();
         let client = guest
             .tls_with("bound.test:443", None, &[b"h2"], true)
             .await
@@ -456,7 +456,7 @@ async fn control_characters_in_a_header_or_the_path_are_refused() {
         }),
     ];
     for (what, block) in cases {
-        let mut guest = rig.guest().await;
+        let mut guest = rig.guest();
         let mut tls = raw(&mut guest).await;
         tls.write_all(&frame(1, 0x4 | 0x1, 1, &block))
             .await
@@ -511,7 +511,7 @@ async fn a_stream_the_guest_resets_is_cancelled_upstream() {
         &ProxyConfig::default(),
         TestInjector::always(),
     );
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut tls = raw(&mut guest).await;
     tls.write_all(&frame(1, 0x4 | 0x1, 1, &get_block(b"/hang")))
         .await
@@ -563,7 +563,7 @@ async fn a_stream_that_is_idle_by_design_is_not_cut_by_the_body_stall_timeout() 
         Duration::from_secs(1),
     );
     let rig = rig_with(&pki, server.addr, &config, TestInjector::always());
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     // Only the window runs on a paused clock (the proxy, the rig and the server share this runtime), so its
     // 5 s cost no wall time. Setup stays real: the policy runs on the blocking pool, which a paused clock
@@ -601,7 +601,7 @@ async fn hostile_hg20_an_h2_follow_up_to_a_redirect_carries_no_credential_to_the
         .allow(vec!["bound.test", "evil.test"])
         .injector(injector.clone())
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let first = client.get("bound.test", "/start").await;
     assert_eq!(

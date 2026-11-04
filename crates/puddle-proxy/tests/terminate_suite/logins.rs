@@ -186,7 +186,7 @@ fn refresh_with(token: &str) -> String {
 
 /// A request that should carry a token to the API host, and the `Authorization` it arrived with.
 pub(crate) async fn api_call(login: &Login, bearer: &str) -> Option<String> {
-    let mut guest = login.rig.guest().await;
+    let mut guest = login.rig.guest();
     let mut client = guest.tls(&format!("{API_HOST}:443"), None).await.unwrap();
     client
         .send(&request(
@@ -217,7 +217,7 @@ async fn a_claude_login_keeps_the_real_tokens_and_every_later_request_uses_them_
  {
     let pki = Pki::new();
     let login = claude_login(&pki, true, Arc::new(MemoryStore::new())).await;
-    let mut guest = login.rig.guest().await;
+    let mut guest = login.rig.guest();
     let mut client = guest.tls(&format!("{TOKEN_HOST}:443"), None).await.unwrap();
 
     // The code exchange.
@@ -297,7 +297,7 @@ async fn a_stand_in_goes_only_toward_its_own_hosts_and_the_refresh_token_only_to
  {
     let pki = Pki::new();
     let login = claude_login(&pki, true, Arc::new(MemoryStore::new())).await;
-    let mut guest = login.rig.guest().await;
+    let mut guest = login.rig.guest();
     let mut client = guest.tls(&format!("{TOKEN_HOST}:443"), None).await.unwrap();
     client
         .send(&request(
@@ -329,7 +329,7 @@ async fn a_stand_in_goes_only_toward_its_own_hosts_and_the_refresh_token_only_to
         .stand_ins(&login.registry)
         .exchanges(Arc::new(login.logins.clone()))
         .build();
-    let mut other = rig.guest().await;
+    let mut other = rig.guest();
     let mut away = other.tls("elsewhere.test:443", None).await.unwrap();
     away.send(&request(
         "GET",
@@ -369,7 +369,7 @@ async fn a_stand_in_goes_only_toward_its_own_hosts_and_the_refresh_token_only_to
 async fn hostile_hg34_a_captured_stand_in_means_nothing_in_another_workspace() {
     let pki = Pki::new();
     let login = claude_login(&pki, true, Arc::new(MemoryStore::new())).await;
-    let mut guest = login.rig.guest().await;
+    let mut guest = login.rig.guest();
     let mut client = guest.tls(&format!("{TOKEN_HOST}:443"), None).await.unwrap();
     client
         .send(&request(
@@ -386,7 +386,7 @@ async fn hostile_hg34_a_captured_stand_in_means_nothing_in_another_workspace() {
 
     // The second workspace has stand-ins of its own (none) for the same hosts: what the first
     // one captured goes out from there as the text it is, in a header and in a refresh body.
-    let mut other = login.rig.other_guest().await;
+    let mut other = login.rig.other_guest();
     let mut to_api = other.tls(&format!("{API_HOST}:443"), None).await.unwrap();
     to_api
         .send(&request(
@@ -424,7 +424,7 @@ async fn a_login_that_cannot_be_captured_still_works_and_the_user_is_told() {
     let login = claude_login(&pki, true, Arc::new(MemoryStore::new())).await;
     // The credential store goes away after the workspace started.
     login.store.break_it();
-    let mut guest = login.rig.guest().await;
+    let mut guest = login.rig.guest();
     let mut client = guest.tls(&format!("{TOKEN_HOST}:443"), None).await.unwrap();
     client
         .send(&request(
@@ -457,7 +457,7 @@ async fn with_capture_off_the_real_token_goes_to_the_workspace_and_nothing_is_de
     let pki = Pki::new();
     let login = claude_login(&pki, false, Arc::new(MemoryStore::new())).await;
     assert!(login.logins.hosts().is_empty());
-    let mut guest = login.rig.guest().await;
+    let mut guest = login.rig.guest();
     let mut client = guest.tls(&format!("{TOKEN_HOST}:443"), None).await.unwrap();
     client
         .send(&request(
@@ -490,7 +490,7 @@ async fn with_capture_off_the_real_token_goes_to_the_workspace_and_nothing_is_de
 async fn the_stand_ins_a_workspace_still_holds_after_a_restart_work_again() {
     let pki = Pki::new();
     let first = claude_login(&pki, true, Arc::new(MemoryStore::new())).await;
-    let mut guest = first.rig.guest().await;
+    let mut guest = first.rig.guest();
     let mut client = guest.tls(&format!("{TOKEN_HOST}:443"), None).await.unwrap();
     client
         .send(&request(
@@ -539,7 +539,7 @@ async fn the_api_key_a_login_creates_is_swapped_in_x_api_key_toward_the_api_host
         .stand_ins(&login.registry)
         .exchanges(Arc::new(login.logins.clone()))
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls(&format!("{API_HOST}:443"), None).await.unwrap();
     client
         .send(&request(
@@ -628,7 +628,7 @@ async fn a_github_login_in_either_answer_format_is_captured_and_swapped_for_api_
         .stand_ins(&registry)
         .exchanges(Arc::new(logins))
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("github.com:443", None).await.unwrap();
     let device = "client_id=178c&device_code=d&grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code";
 
@@ -787,7 +787,7 @@ async fn over_http2_a_claude_login_is_captured_and_swapped_the_same_way() {
         .stand_ins(&registry)
         .exchanges(Arc::new(logins))
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest
         .h2(&format!("{TOKEN_HOST}:443"), &[b"h2", b"http/1.1"])
         .await;

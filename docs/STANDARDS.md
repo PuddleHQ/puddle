@@ -283,7 +283,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
 
 | Tier | What | Where it lives | Runs |
 |---|---|---|---|
-| L0 static | fmt, clippy (Linux + msvc), deny (bans, licences, sources), advisories (RustSec, and npm as `ui-audit`; neither on pull requests to `develop`), typos, SPDX, shellcheck, secrets (gitleaks), standalone (no planning-note references, "Puddle" capitalised in prose), git-pins (no dependency pinned by a branch), silent skips, rustdoc, API contract | `scripts/check.sh` | every push, every PR |
+| L0 static | fmt, clippy (Linux + msvc), deny (bans, licences, sources), advisories (RustSec, and npm as `ui-audit`; neither on pull requests to `develop`), typos, SPDX, shellcheck, secrets (gitleaks), standalone (no planning-note references, "Puddle" capitalised in prose), git-pins (no dependency pinned by a branch), mutants-exclusions (no stale mutation exclusion), silent skips, rustdoc, API contract | `scripts/check.sh` | every push, every PR |
 | L1 unit | one module's logic: parsers, rules, state machines, address classifier, path handling | `#[cfg(test)] mod tests` in the same file | every push (Linux), nightly + PRs to `main` (Windows) |
 | L2 integration, no VM | real proxy + real agent over a Unix socket / named pipe, fake guest client, fake upstreams; API over loopback; the hostile-guest **tier P** | `crates/<crate>/tests/*.rs`; cross-crate ones in `crates/puddle-e2e/tests/` | every push |
 | L3 Linux KVM e2e (**K**) | a real msb microVM; the product's behaviours; hostile-guest **tier V** | `crates/puddle-vm-tests/tests/`, functions or files named `vm_*` | `vm-linux.yml`: every pull request to `develop`, by hand on any branch, nightly on `develop` |
@@ -496,7 +496,7 @@ replaced by its default, a `&&` turned into `||`) and runs the crate's tests; a 
 
 | Set | Gates | Runs |
 |---|---|---|
-| `fast` | fmt, typos, spdx, shellcheck, hooks, platform-literals, standalone, git-pins, silent-skips | pre-commit hook |
+| `fast` | fmt, typos, spdx, shellcheck, hooks, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips | pre-commit hook |
 | `pre-push` | `fast`, then `diff-coverage-fast`, then every other gate of `all` except `ui-e2e`, `advisories` and `ui-audit` | pre-push hook |
 | `all` (the default) | every gate, `ui-e2e`, `advisories` and `ui-audit` included | `ci.yml` (every push and PR, except `advisories` and `ui-audit`, see below), by hand |
 
@@ -611,6 +611,13 @@ so a red `vm-linux (KVM, msb microVMs)` names the test instead of saying `cancel
 12-minute cap and the whole run a deadline (`VM_TEST_DEADLINE`, 28 minutes in the queue), so a hang ends with a name.
 A run where every test is several times slower than usual is a slow runner, not a hang: the deadline names the test it
 cut, and the slowest-tests list and the runner figures show the cause.
+
+A runner that fills its disk dies with its job log (`No space left on device` in the runner's own `_diag` log, nothing
+else), so `ci/disk-watch.sh` writes what survives it: the `disk at start` step puts `df` and an annotation (under 60 GB
+free) in the job summary, `snap` steps (`if: always()`) after each heavy step of the `vm-linux` jobs and the Rust job put
+`df` and the size of the dirs a job fills there, and `guard`, in the same step as the tests or the build, logs free space
+every 2 seconds to `disk-watch-*.log` (kept with the results), takes a deep snapshot under 30 GB free and, under 5 GB,
+annotates `::error` and stops cargo or nextest so the job ends readable with its artifacts. Self-test: `ci/disk-watch-test.sh`.
 
 The VM no-hypervisor policy fails a merge queue run like a PR, and `verdict --nightly-skips` accepts a skip only on a
 scheduled run. Self-tests: `ci/scope-test.sh` (light mode and merge queue cases, a verdict matrix over every event and

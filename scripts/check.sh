@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
-#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, silent-skips, quality, secrets, clippy, clippy-windows, deny, advisories, notices, openapi, test, doc, coverage,
+#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips, quality, secrets, clippy, clippy-windows, deny, advisories, notices, openapi, test, doc, coverage,
 #   coverage-ratchet, diff-coverage, diff-coverage-fast, coverage-determinism, mutants,
 #   ui, ui-licences, ui-audit, ui-e2e
-#   fast     = fmt typos spdx shellcheck hooks platform-literals standalone git-pins silent-skips   (pre-commit hook)
+#   fast     = fmt typos spdx shellcheck hooks platform-literals standalone git-pins mutants-exclusions silent-skips   (pre-commit hook)
 #   all      = fast quality git-env secrets clippy clippy-windows deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage
 #              (CI, the nightly run, by hand; coverage runs the tests, and must follow `ui`: the embedded UI is built there)
 #   pre-push = every gate of `all` except ui-e2e, the slowest one, and advisories and ui-audit, which depend on
@@ -172,7 +172,7 @@ run_gate() {
         scripts/pre-push-test.sh && scripts/diff-coverage-crates-test.sh && scripts/mutants-test.sh && scripts/cap-test-memory-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
             scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/coverage-cargo-test.sh && scripts/coverage-determinism.sh --self-test && scripts/flake-lints-test.sh && scripts/flake-rules-test.sh &&
             ci/fetch-msb-test.sh && ci/fetch-gitleaks-test.sh && ci/fetch-code-server-test.sh && ci/fetch-tauri-cli-test.sh && ci/check-runtime-layout-test.sh &&
-            ci/scope-test.sh && ci/apt-setup-test.sh && ci/advisories-issue-test.sh && ci/quality-issue-test.sh && ci/lab-override-check-test.sh && ci/cache-drop-test.sh &&
+            ci/scope-test.sh && ci/apt-setup-test.sh && ci/advisories-issue-test.sh && ci/quality-issue-test.sh && ci/lab-override-check-test.sh && ci/cache-drop-test.sh && ci/disk-watch-test.sh &&
             ci/should-run-test.sh && ci/nightly-issue-test.sh && ci/cancel-group-test.sh && ci/bisect-red-test.sh && ci/cache-gc-test.sh && ci/raise-coverage-baseline-test.sh && ci/test-vm-skip-policy.sh && ci/stress-test.sh && ci/vm-tests-report-test.sh
         ;;
     git-env)
@@ -192,6 +192,14 @@ run_gate() {
         ;;
     standalone) scripts/check-standalone.sh --self-test && scripts/check-standalone.sh && scripts/check-product-name.sh --self-test && scripts/check-product-name.sh ;;
     git-pins) scripts/check-git-pins.sh --self-test && scripts/check-git-pins.sh ;;
+    # An `exclude_re` entry of .cargo/mutants.toml that matches no mutant of `cargo mutants --list` is stale
+    # (the code it covered moved): fails, so a position-keyed exclusion cannot rot unseen. A failed
+    # listing is an empty list, which the script refuses. `--colors never`: CI sets CARGO_TERM_COLOR=always,
+    # which makes cargo-mutants colour the function names inside each line, so no entry matched.
+    mutants-exclusions)
+        python3 -I scripts/check-mutants-exclusions.py --self-test &&
+            "$cargo" mutants --list --no-config --colors never | python3 -I scripts/check-mutants-exclusions.py --list -
+        ;;
     # Every `unsafe`, lint suppression, `#[ignore]`, product `unwrap` and TODO must say why in place; a site
     # without a reason fails. No baseline file: a new site with a reason is fine (docs/STANDARDS.md, "Quality").
     quality)
@@ -436,7 +444,7 @@ run_gate() {
 }
 
 # The gate sets, in run order. `pre-push` is derived from `all`, so a gate added to `all` is in it too.
-fast_gates="fmt typos spdx shellcheck hooks platform-literals standalone git-pins silent-skips"
+fast_gates="fmt typos spdx shellcheck hooks platform-literals standalone git-pins mutants-exclusions silent-skips"
 all_gates="$fast_gates quality git-env secrets clippy clippy-windows deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage"
 # After the fast gates and before the slow ones: a change whose added lines no test runs fails in minutes.
 pre_push_gates=$fast_gates" diff-coverage-fast"

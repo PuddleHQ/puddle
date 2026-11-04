@@ -101,7 +101,7 @@ async fn a_stored_secret_a_stand_in_swap_and_a_login_leave_no_value_in_the_trace
         .injector(TestInjector::new(|_| InjectDecision::PassThrough))
         .stand_ins(&stand_ins)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(
@@ -121,7 +121,7 @@ async fn a_stored_secret_a_stand_in_swap_and_a_login_leave_no_value_in_the_trace
 
     // A login: the proxy captures the real tokens, then swaps them back on the API call.
     let login = claude_login(&pki, true, Arc::new(MemoryStore::new())).await;
-    let mut guest = login.rig.guest().await;
+    let mut guest = login.rig.guest();
     let mut client = guest.tls(&format!("{TOKEN_HOST}:443"), None).await.unwrap();
     client
         .send(&request(

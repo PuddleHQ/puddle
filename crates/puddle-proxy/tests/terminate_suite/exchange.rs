@@ -213,7 +213,7 @@ async fn an_answer_is_replaced_and_the_guest_gets_it_at_its_own_length() {
     let upstream = server(&pki, Arc::new(|_| json_reply(r#"{"a":"short"}"#))).await;
     let (exchanges, seen) = rewriter(None, Plan::Replace(r#"{"a":"a much longer replacement"}"#));
     let rig = rig_for(&pki, &upstream, exchanges, &registry(&[HOST]));
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls(&format!("{HOST}:443"), None).await.unwrap();
     client.send(&post(PATH, "application/json", "{}", "")).await;
     let response = client.response("POST").await;
@@ -247,7 +247,7 @@ async fn a_chunked_answer_is_read_in_full_and_sent_with_a_length() {
     let upstream = server(&pki, Arc::new(move |_| reply.clone())).await;
     let (exchanges, seen) = rewriter(None, Plan::Replace("{}"));
     let rig = rig_for(&pki, &upstream, exchanges, &registry(&[HOST]));
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls(&format!("{HOST}:443"), None).await.unwrap();
     client.send(&post(PATH, "application/json", "{}", "")).await;
     let response = client.response("POST").await;
@@ -266,7 +266,7 @@ async fn an_answer_the_rewriter_keeps_or_does_not_want_reaches_the_guest_as_the_
         let upstream = server(&pki, Arc::new(|_| json_reply(r#"{"ok":true}"#))).await;
         let (exchanges, seen) = rewriter(None, plan);
         let rig = rig_for(&pki, &upstream, exchanges, &registry(&[HOST]));
-        let mut guest = rig.guest().await;
+        let mut guest = rig.guest();
         let mut client = guest.tls(&format!("{HOST}:443"), None).await.unwrap();
         client.send(&post(PATH, "application/json", "{}", "")).await;
         let response = client.response("POST").await;
@@ -286,7 +286,7 @@ async fn an_answer_over_the_cap_goes_through_whole_and_the_rewriter_is_told() {
     let upstream = server(&pki, Arc::new(move |_| reply.clone())).await;
     let (exchanges, seen) = rewriter(None, Plan::Replace("never"));
     let rig = rig_for(&pki, &upstream, exchanges, &registry(&[HOST]));
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls(&format!("{HOST}:443"), None).await.unwrap();
     client.send(&post(PATH, "application/json", "{}", "")).await;
     let response = client.response("POST").await;
@@ -303,7 +303,7 @@ async fn the_upstream_is_asked_for_an_unencoded_answer_only_when_the_answer_is_r
     let upstream = server(&pki, Arc::new(|_| json_reply("{}"))).await;
     let (exchanges, _) = rewriter(None, Plan::Keep);
     let rig = rig_for(&pki, &upstream, exchanges, &registry(&[HOST]));
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls(&format!("{HOST}:443"), None).await.unwrap();
     client
         .send(&post(
@@ -334,7 +334,7 @@ async fn a_stand_in_in_the_named_field_is_swapped_for_the_real_value_toward_its_
     let upstream = server(&pki, Arc::new(|_| json_reply("{}"))).await;
     let (exchanges, _) = rewriter(Some("refresh_token"), Plan::Skip);
     let rig = rig_for(&pki, &upstream, exchanges, &registry(&[HOST]));
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls(&format!("{HOST}:443"), None).await.unwrap();
 
     let json = format!(
@@ -391,7 +391,7 @@ async fn hostile_hg32_a_stand_in_in_the_refresh_field_goes_out_unchanged_toward_
     let upstream = server(&pki, Arc::new(|_| json_reply("{}"))).await;
     let (exchanges, _) = rewriter(Some("refresh_token"), Plan::Skip);
     let rig = rig_for(&pki, &upstream, exchanges, &registry(&["elsewhere.test"]));
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls(&format!("{HOST}:443"), None).await.unwrap();
     let json = format!(r#"{{"refresh_token":"{STAND_IN}"}}"#);
     client
@@ -414,7 +414,7 @@ async fn hostile_hg32_a_body_that_is_not_a_token_message_is_never_swapped() {
     let upstream = server(&pki, Arc::new(|_| json_reply("{}"))).await;
     let (exchanges, _) = rewriter(Some("refresh_token"), Plan::Skip);
     let rig = rig_for(&pki, &upstream, exchanges, &registry(&[HOST]));
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls(&format!("{HOST}:443"), None).await.unwrap();
     for (content_type, body) in [
         ("text/plain", format!("refresh_token={STAND_IN}")),
@@ -442,7 +442,7 @@ async fn hostile_hg32_a_request_body_over_the_cap_is_refused_and_nothing_goes_up
     let upstream = server(&pki, Arc::new(|_| json_reply("{}"))).await;
     let (exchanges, _) = rewriter(Some("refresh_token"), Plan::Skip);
     let rig = rig_for(&pki, &upstream, exchanges, &registry(&[HOST]));
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls(&format!("{HOST}:443"), None).await.unwrap();
     let big = format!(
         r#"{{"refresh_token":"{STAND_IN}","x":"{}"}}"#,
@@ -461,7 +461,7 @@ async fn requests_that_are_not_exchanges_stream_untouched() {
     let upstream = server(&pki, Arc::new(|_| json_reply(r#"{"stays":"as is"}"#))).await;
     let (exchanges, seen) = rewriter(Some("refresh_token"), Plan::Replace("{}"));
     let rig = rig_for(&pki, &upstream, exchanges, &registry(&[HOST]));
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls(&format!("{HOST}:443"), None).await.unwrap();
     let json = format!(r#"{{"refresh_token":"{STAND_IN}"}}"#);
     // Another path, and a GET of the exchange's own path.
@@ -491,7 +491,7 @@ async fn an_answer_that_stops_halfway_is_a_failed_request_not_a_stalled_one() {
     .await;
     let (exchanges, seen) = rewriter(None, Plan::Replace("{}"));
     let rig = rig_for(&pki, &upstream, exchanges, &registry(&[HOST]));
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls(&format!("{HOST}:443"), None).await.unwrap();
     client.send(&post(PATH, "application/json", "{}", "")).await;
     let response = client.response("POST").await;
@@ -532,7 +532,7 @@ async fn over_http2_the_request_swap_and_the_answer_rewrite_work_toward_an_http2
         .stand_ins(&registry(&[HOST]))
         .exchanges(exchanges)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest
         .h2(&format!("{HOST}:443"), &[b"h2", b"http/1.1"])
         .await;
@@ -587,7 +587,7 @@ async fn over_http2_toward_an_http11_server_the_same_exchange_works() {
         Plan::Replace(r#"{"token":"a longer one"}"#),
     );
     let rig = rig_for(&pki, &upstream, exchanges, &registry(&[HOST]));
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2(&format!("{HOST}:443"), &[b"h2"]).await;
     let json = format!(r#"{{"refresh_token":"{STAND_IN}"}}"#);
     let got = client
@@ -634,7 +634,7 @@ async fn over_http2_an_answer_over_the_cap_goes_through_whole() {
         .injector(pass_through())
         .exchanges(exchanges)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2(&format!("{HOST}:443"), &[b"h2"]).await;
     let got = client
         .request(
@@ -663,7 +663,7 @@ async fn over_http2_a_body_over_the_cap_is_refused() {
         .stand_ins(&registry(&[HOST]))
         .exchanges(exchanges)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2(&format!("{HOST}:443"), &[b"h2"]).await;
     let big = format!(
         r#"{{"refresh_token":"{STAND_IN}","x":"{}"}}"#,
@@ -723,7 +723,7 @@ async fn a_body_the_injector_asked_for_is_read_once_and_the_exchange_swaps_in_it
         .stand_ins(&registry(&[HOST]))
         .exchanges(exchanges)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls(&format!("{HOST}:443"), None).await.unwrap();
     let json = format!(r#"{{"refresh_token":"{STAND_IN}"}}"#);
     client
@@ -752,7 +752,7 @@ async fn over_http2_a_body_the_injector_asked_for_is_read_once_and_the_exchange_
         .stand_ins(&registry(&[HOST]))
         .exchanges(exchanges)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2(&format!("{HOST}:443"), &[b"h2"]).await;
     let json = format!(r#"{{"refresh_token":"{STAND_IN}"}}"#);
     let got = client
@@ -846,7 +846,7 @@ async fn trailers_of_an_answer_that_is_read_are_not_part_of_what_the_guest_gets(
         .injector(pass_through())
         .exchanges(exchanges)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2(&format!("{HOST}:443"), &[b"h2"]).await;
     let got = client
         .request(
@@ -889,7 +889,7 @@ async fn over_http2_an_answer_that_breaks_off_is_a_failed_request() {
         .injector(pass_through())
         .exchanges(exchanges)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2(&format!("{HOST}:443"), &[b"h2"]).await;
     let got = client
         .request(

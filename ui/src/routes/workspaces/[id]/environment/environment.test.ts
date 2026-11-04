@@ -347,6 +347,57 @@ describe("changing a row", () => {
     expect(api.secretValues["TOKEN"]).toBe("kept");
   });
 
+  describe("a typed secret value", () => {
+    const editToken = async () => {
+      const row = await rowOf("TOKEN");
+      await fireEvent.click(
+        within(row).getByRole("button", { name: "Edit TOKEN" }),
+      );
+      return screen.findByRole("dialog");
+    };
+
+    it("is gone after it was saved: the next save sends no value", async () => {
+      render(Page);
+      let dialog = await editToken();
+      await fireEvent.input(within(dialog).getByLabelText("Value"), {
+        target: { value: "first-secret" },
+      });
+      await fireEvent.click(
+        within(dialog).getByRole("button", { name: "Save" }),
+      );
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(api.bodies.at(-1)).toMatchObject({ value: "first-secret" });
+
+      dialog = await editToken();
+      expect(within(dialog).getByLabelText("Value")).toHaveValue("");
+      await fireEvent.click(
+        within(dialog).getByRole("button", { name: "Save" }),
+      );
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(api.bodies.at(-1)).not.toHaveProperty("value");
+    });
+
+    it("is gone after the dialog was cancelled", async () => {
+      render(Page);
+      let dialog = await editToken();
+      await fireEvent.input(within(dialog).getByLabelText("Value"), {
+        target: { value: "abandoned" },
+      });
+      await fireEvent.click(
+        within(dialog).getByRole("button", { name: "Cancel" }),
+      );
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+      dialog = await editToken();
+      expect(within(dialog).getByLabelText("Value")).toHaveValue("");
+      await fireEvent.click(
+        within(dialog).getByRole("button", { name: "Save" }),
+      );
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(api.bodies.at(-1)).not.toHaveProperty("value");
+    });
+  });
+
   it("overrides a global variable with the workspace's own, starting from its name", async () => {
     render(Page);
     const row = await rowOf("EDITOR");

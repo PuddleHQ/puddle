@@ -271,14 +271,27 @@ impl Drop for FakeServer {
 
 impl FakeServer {
     pub(crate) async fn tls(config: Arc<rustls::ServerConfig>, handler: Handler) -> Self {
-        Self::start(Some(config), handler).await
+        Self::start(Some(config), handler, false).await
     }
 
     pub(crate) async fn plain(handler: Handler) -> Self {
-        Self::start(None, handler).await
+        Self::start(None, handler, false).await
     }
 
-    async fn start(config: Option<Arc<rustls::ServerConfig>>, handler: Handler) -> Self {
+    /// A TLS server that answers as soon as it has read a request's head, without reading the
+    /// body (the recorded body is empty), as a server that refuses an upload does.
+    pub(crate) async fn tls_answering_before_the_body(
+        config: Arc<rustls::ServerConfig>,
+        handler: Handler,
+    ) -> Self {
+        Self::start(Some(config), handler, true).await
+    }
+
+    async fn start(
+        config: Option<Arc<rustls::ServerConfig>>,
+        handler: Handler,
+        before_body: bool,
+    ) -> Self {
         let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
         let addr = listener.local_addr().unwrap();
         let accepted = Arc::new(AtomicUsize::new(0));
@@ -302,9 +315,9 @@ impl FakeServer {
                                     return;
                                 };
                                 handshakes.fetch_add(1, Ordering::SeqCst);
-                                serve_http(tls, conn, handler, requests).await;
+                                serve_http(tls, conn, handler, requests, before_body).await;
                             }
-                            None => serve_http(tcp, conn, handler, requests).await,
+                            None => serve_http(tcp, conn, handler, requests, before_body).await,
                         }
                     });
                 }
@@ -336,10 +349,11 @@ async fn serve_http<S: AsyncRead + AsyncWriteExt + Unpin>(
     conn: usize,
     handler: Handler,
     requests: Arc<Mutex<Vec<Recorded>>>,
+    before_body: bool,
 ) {
     let mut reader = BufReader::new(stream);
     loop {
-        let Some(recorded) = read_request(&mut reader, conn).await else {
+        let Some(recorded) = read_request(&mut reader, conn, !before_body).await else {
             return;
         };
         requests
@@ -383,6 +397,7 @@ async fn serve_http<S: AsyncRead + AsyncWriteExt + Unpin>(
 async fn read_request<S: AsyncRead + Unpin>(
     reader: &mut BufReader<S>,
     conn: usize,
+    read_body: bool,
 ) -> Option<Recorded> {
     let mut line = String::new();
     if reader.read_line(&mut line).await.ok()? == 0 {
@@ -411,7 +426,9 @@ async fn read_request<S: AsyncRead + Unpin>(
             .map(|(_, v)| v.clone())
     };
     let mut body = Vec::new();
-    if let Some(length) = find("content-length") {
+    if !read_body {
+        // The caller answers on the head alone.
+    } else if let Some(length) = find("content-length") {
         body.resize(length.parse().ok()?, 0);
         reader.read_exact(&mut body).await.ok()?;
     } else if find("transfer-encoding").is_some_and(|v| v.eq_ignore_ascii_case("chunked")) {

@@ -6,13 +6,11 @@ use std::sync::Arc;
 
 use puddle_host::{HostOptions, HostShutdown, MsbFactory, RuntimeFactory, SystemPlatform};
 use puddle_lifecycle::LifecycleError;
+use puddle_log::{ScopedFilter, init_stderr};
 use puddle_types::Problems;
 use tauri::{AppHandle, Manager, RunEvent, Runtime};
 use tauri_plugin_opener::OpenerExt;
-use tracing_subscriber::Layer;
 use tracing_subscriber::filter::{LevelFilter, Targets};
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
 use url::Url;
 
 use crate::autostart::{self, LoginEntry};
@@ -485,9 +483,12 @@ fn bring_forward_unless_sign_in(args: &[String], bring_forward: impl FnOnce()) {
     }
 }
 
-/// The environment variable that sets the log filter, the standard one: `debug`, or
-/// `warn,puddle_host=trace` for one crate.
-const LOG_VAR: &str = "RUST_LOG";
+/// The variable that sets the log level of Puddle's crates (`puddle_log` has the syntax).
+const PUDDLE_LOG_VAR: &str = "PUDDLE_LOG";
+
+/// The standard filter variable, read when `PUDDLE_LOG` is not set: `debug`, or
+/// `warn,puddle_host=trace` for one crate. It applies to every crate alike.
+const RUST_LOG_VAR: &str = "RUST_LOG";
 
 /// The filter `RUST_LOG` asks for, `info` when it is unset. A value that does not parse gives
 /// `info` and comes back as the second item, so `run` can say so once logging is on.
@@ -501,19 +502,31 @@ fn log_targets(value: Option<&str>) -> (Targets, Option<String>) {
     }
 }
 
-/// Starts logging to stderr as `RUST_LOG` (`value`) asks. The first subscriber wins; a second call
-/// in one process (tests) keeps the first.
-fn init_logging(value: Option<&str>) {
-    let (targets, bad_filter) = log_targets(value);
-    let _ = tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_writer(std::io::stderr)
-                .with_filter(targets),
-        )
-        .try_init();
-    if let Some(value) = bad_filter {
-        tracing::warn!("{LOG_VAR}={value:?} is not a log filter; logging at info");
+/// The filter the two variables ask for: `PUDDLE_LOG` when set, else `RUST_LOG`, else `info`. A
+/// value that is not a filter gives `info` and a sentence for `run` to log once logging is on.
+fn log_filter(puddle_log: Option<&str>, rust_log: Option<&str>) -> (ScopedFilter, Option<String>) {
+    if let Some(text) = puddle_log {
+        return ScopedFilter::parse(text).map_or_else(
+            |_| {
+                let said =
+                    format!("{PUDDLE_LOG_VAR}={text:?} is not a log filter; logging at info");
+                (ScopedFilter::default(), Some(said))
+            },
+            |filter| (filter, None),
+        );
+    }
+    let (targets, bad) = log_targets(rust_log);
+    let said = bad.map(|v| format!("{RUST_LOG_VAR}={v:?} is not a log filter; logging at info"));
+    (ScopedFilter::uniform(targets), said)
+}
+
+/// Starts logging to stderr as the variables (`puddle_log`, `rust_log`) ask. The first subscriber
+/// wins; a second call in one process (tests) keeps the first.
+fn init_logging(puddle_log: Option<&str>, rust_log: Option<&str>) {
+    let (filter, bad_filter) = log_filter(puddle_log, rust_log);
+    init_stderr(filter, false);
+    if let Some(said) = bad_filter {
+        tracing::warn!("{said}");
     }
 }
 
@@ -524,7 +537,10 @@ fn init_logging(value: Option<&str>) {
 ///
 /// [`ShellError`] if the app can't start.
 pub fn run(options: &Options) -> Result<(), ShellError> {
-    init_logging(std::env::var(LOG_VAR).ok().as_deref());
+    init_logging(
+        std::env::var(PUDDLE_LOG_VAR).ok().as_deref(),
+        std::env::var(RUST_LOG_VAR).ok().as_deref(),
+    );
     // Every panic after this writes a crash file into the data folder (nothing is sent).
     if let Some(folder) = data_folder(options) {
         crash::install(folder.join(crash::FOLDER));
@@ -584,8 +600,27 @@ pub(crate) mod tests {
 
     #[test]
     fn logging_starts_for_a_good_value_and_for_a_bad_one() {
-        init_logging(None);
-        init_logging(Some("puddle=loud"));
+        init_logging(None, None);
+        init_logging(None, Some("puddle=loud"));
+        init_logging(Some("loud"), None);
+    }
+
+    #[test]
+    fn puddle_log_wins_over_rust_log_and_scopes_the_level_to_puddle_crates() {
+        let (filter, said) = log_filter(Some("trace"), Some("error"));
+        assert!(said.is_none());
+        assert!(filter.would_enable("puddle_app", &Level::TRACE));
+        assert!(!filter.would_enable("tauri", &Level::DEBUG));
+        let (filter, _) = log_filter(None, Some("debug"));
+        assert!(filter.would_enable("tauri", &Level::DEBUG));
+    }
+
+    #[test]
+    fn a_puddle_log_that_does_not_parse_gives_info_and_comes_back() {
+        let (filter, said) = log_filter(Some("loud"), Some("trace"));
+        assert!(said.unwrap().starts_with("PUDDLE_LOG=\"loud\""));
+        assert!(filter.would_enable("puddle_app", &Level::INFO));
+        assert!(!filter.would_enable("puddle_app", &Level::DEBUG));
     }
 
     #[test]

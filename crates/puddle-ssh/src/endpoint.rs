@@ -322,6 +322,37 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for ClientWatch<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt as _, duplex};
+
+    #[tokio::test]
+    async fn the_watch_passes_bytes_through_and_notes_only_the_clients_end_of_stream() {
+        let (client, server) = duplex(64);
+        let (mut watched, closed) = ClientWatch::new(server);
+        let (mut client_read, mut client_write) = tokio::io::split(client);
+
+        client_write.write_all(b"ping").await.unwrap();
+        let mut got = [0_u8; 4];
+        watched.read_exact(&mut got).await.unwrap();
+        assert_eq!(&got, b"ping");
+        assert!(!closed.load(Ordering::Acquire), "data is not an end");
+
+        watched.write_all(b"pong").await.unwrap();
+        watched.flush().await.unwrap();
+        let mut back = [0_u8; 4];
+        client_read.read_exact(&mut back).await.unwrap();
+        assert_eq!(&back, b"pong");
+
+        // Our own shutdown is not the client leaving.
+        watched.shutdown().await.unwrap();
+        assert!(!closed.load(Ordering::Acquire));
+        // A zero-length read into a full buffer is no end either.
+        assert_eq!(watched.read(&mut []).await.unwrap(), 0);
+        assert!(!closed.load(Ordering::Acquire));
+
+        client_write.shutdown().await.unwrap();
+        assert_eq!(watched.read(&mut got).await.unwrap(), 0);
+        assert!(closed.load(Ordering::Acquire));
+    }
 
     #[test]
     fn accept_failures_are_reported_once_per_run_and_a_stop_always() {
@@ -356,7 +387,7 @@ mod tests {
     fn starting_outside_a_runtime_is_refused() {
         struct Never;
         impl SshTarget for Never {
-            type Error = std::io::Error;
+            type Error = io::Error;
             fn label(&self) -> String {
                 "never".into()
             }
@@ -385,7 +416,7 @@ mod tests {
         Never.recovered();
         rt.block_on(async {
             assert!(Never.admit().await.is_err());
-            Never.serve(tokio::io::duplex(1).0).await.unwrap();
+            Never.serve(duplex(1).0).await.unwrap();
         });
     }
 }

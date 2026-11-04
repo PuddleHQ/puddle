@@ -501,15 +501,10 @@ fn log_targets(value: Option<&str>) -> (Targets, Option<String>) {
     }
 }
 
-/// Runs the app until it quits. The close button hides the window to the tray or quits, as Settings
-/// say ([`desktop`]).
-///
-/// # Errors
-///
-/// [`ShellError`] if the app can't start.
-pub fn run(options: &Options) -> Result<(), ShellError> {
-    // The first subscriber wins; a second `run` in one process (tests) keeps the first.
-    let (targets, bad_filter) = log_targets(std::env::var(LOG_VAR).ok().as_deref());
+/// Starts logging to stderr as `RUST_LOG` (`value`) asks. The first subscriber wins; a second call
+/// in one process (tests) keeps the first.
+fn init_logging(value: Option<&str>) {
+    let (targets, bad_filter) = log_targets(value);
     let _ = tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
@@ -520,6 +515,16 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
     if let Some(value) = bad_filter {
         tracing::warn!("{LOG_VAR}={value:?} is not a log filter; logging at info");
     }
+}
+
+/// Runs the app until it quits. The close button hides the window to the tray or quits, as Settings
+/// say ([`desktop`]).
+///
+/// # Errors
+///
+/// [`ShellError`] if the app can't start.
+pub fn run(options: &Options) -> Result<(), ShellError> {
+    init_logging(std::env::var(LOG_VAR).ok().as_deref());
     // Every panic after this writes a crash file into the data folder (nothing is sent).
     if let Some(folder) = data_folder(options) {
         crash::install(folder.join(crash::FOLDER));
@@ -575,6 +580,12 @@ pub(crate) mod tests {
         let (mixed, _) = log_targets(Some("warn,puddle_host=trace"));
         assert!(mixed.would_enable("puddle_host", &Level::TRACE));
         assert!(!mixed.would_enable("puddle_app", &Level::INFO));
+    }
+
+    #[test]
+    fn logging_starts_for_a_good_value_and_for_a_bad_one() {
+        init_logging(None);
+        init_logging(Some("puddle=loud"));
     }
 
     #[test]

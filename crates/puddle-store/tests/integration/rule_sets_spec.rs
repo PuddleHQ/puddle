@@ -392,7 +392,7 @@ fn r39_your_own_rules_decide_before_any_set() {
         decide(&store, "a", "ads.example.com"),
         Decision::SetDeny {
             set: RuleSetId::User(blocks),
-            rule_id: block.id,
+            rule_id: Some(block.id),
             pattern: PatternKind::Exact
         }
     );
@@ -414,6 +414,47 @@ fn r39_your_own_rules_decide_before_any_set() {
         decide(&store, "b", "ads.example.com"),
         Decision::SetDeny { .. }
     ));
+}
+
+#[test]
+fn r39_a_set_may_hold_allows_and_denies_and_the_most_specific_entry_wins() {
+    let (_, store) = fixture();
+    let mixed = user_set(&store, "Mixed");
+    let entry = |pattern: &str, effect| {
+        store
+            .add_rule(&new_rule(Scope::Set(mixed), pattern, effect))
+            .unwrap()
+    };
+    let allow = entry("*.example.com", Effect::Allow);
+    let deny = entry("ads.example.com", Effect::Deny);
+    entry("*.cdn.example.com", Effect::Allow);
+    let tie_deny = entry("*.cdn.example.com", Effect::Deny);
+    let set = RuleSetId::User(mixed);
+    assert_eq!(
+        decide(&store, "a", "www.example.com"),
+        Decision::SetAllow {
+            set,
+            rule_id: Some(allow.id),
+            pattern: PatternKind::Suffix
+        }
+    );
+    assert_eq!(
+        decide(&store, "a", "ads.example.com"),
+        Decision::SetDeny {
+            set,
+            rule_id: Some(deny.id),
+            pattern: PatternKind::Exact
+        }
+    );
+    // Equal detail: the deny wins.
+    assert_eq!(
+        decide(&store, "a", "img.cdn.example.com"),
+        Decision::SetDeny {
+            set,
+            rule_id: Some(tie_deny.id),
+            pattern: PatternKind::Suffix
+        }
+    );
 }
 
 #[test]

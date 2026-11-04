@@ -112,7 +112,127 @@ setk() { # setk <key> <value>
 setk fs.inotify.max_user_instances 1024
 setk fs.inotify.max_user_watches 524288
 setk kernel.unprivileged_bpf_disabled 1
+# Every port open to every user, so a dev server on 80 or 443 starts without root.
+setk net.ipv4.ip_unprivileged_port_start 0
 say "sysctls set"
+
+# --- 2b. The session user ------------------------------------------------------------------------
+# Sessions and the browser editor run as this user. root needs nothing; any other user is made
+# here when the image has none, by writing passwd, group and shadow directly (images without
+# useradd or adduser), and owns what this hook writes below its home.
+SESSION_USER=root
+SESSION_HOME=/root
+SESSION_OWNER=0:0
+
+# own <uid:gid> <path>: chown as root. Under a fake root (unit tests, not root) the request is
+# recorded in $ROOT/owned instead.
+own() {
+    if [ "$IS_ROOT" = 1 ]; then
+        chown -h "$1" "$2" || die "cannot give $2 to $1"
+    else
+        printf '%s %s\n' "$1" "${2#"$ROOT"}" >>"$ROOT/owned"
+    fi
+}
+
+# below_home <guest path>: whether the path is inside the session user's home (not the home).
+below_home() {
+    [ "$SESSION_USER" != root ] || return 1
+    case $1 in "$SESSION_HOME"/*) return 0 ;; esac
+    return 1
+}
+
+# mkdir_for <guest path of a file>: creates its directory; the parts made below the session
+# user's home belong to that user.
+mkdir_for() {
+    d=${1%/*}
+    if below_home "$1"; then
+        rest=${d#"$SESSION_HOME"}
+        at=$SESSION_HOME
+        while [ -n "$rest" ]; do
+            rest=${rest#/}
+            part=${rest%%/*}
+            rest=${rest#"$part"}
+            at=$at/$part
+            if [ ! -e "$ROOT$at" ] && [ ! -L "$ROOT$at" ]; then
+                mkdir "$ROOT$at" || die "cannot create the directory $at"
+                own "$SESSION_OWNER" "$ROOT$at"
+            fi
+        done
+    else
+        mkdir -p "$ROOT${d:-/}" || die "cannot create the directory for $1"
+    fi
+}
+
+# free_id <n>: whether no user has uid n and no group has gid n.
+free_id() {
+    ! awk -F: -v n="$1" '$3 == n { found = 1 } END { exit !found }' "$ROOT/etc/passwd" "$ROOT/etc/group" 2>/dev/null
+}
+
+# add_to_group <group> <user>: adds the user to an existing group's member list.
+add_to_group() {
+    line=$(grep "^$1:" "$ROOT/etc/group" 2>/dev/null) || return 0
+    members=${line##*:}
+    case ",$members," in *",$2,"*) return 0 ;; esac
+    awk -F: -v OFS=: -v g="$1" -v u="$2" \
+        '$1 == g { $4 = ($4 == "" ? u : $4 "," u) } { print }' "$ROOT/etc/group" >"$RUN/group.new" ||
+        die "cannot add $2 to the group $1"
+    # cat, not mv: keeps the file's mode, owner and inode (it can be a mount).
+    cat "$RUN/group.new" >"$ROOT/etc/group" || die "cannot write /etc/group"
+    rm -f "$RUN/group.new"
+    say "session user $2 added to the group $1"
+}
+
+session_user() { # session_user <name> <home>
+    name=$1 home=$2
+    case $name in '' | *[!a-z0-9_-]*) die "bad session user '$name' in the plan" 2 ;; esac
+    case $home in /*) ;; *) die "bad home '$home' for the session user in the plan" 2 ;; esac
+    if [ "$name" = root ]; then return 0; fi
+    [ -f "$ROOT/etc/passwd" ] || die "the image has no /etc/passwd"
+    entry=$(grep "^$name:" "$ROOT/etc/passwd")
+    if [ -z "$entry" ]; then
+        n=1000
+        until free_id "$n"; do n=$((n + 1)); done
+        gid=$n
+        gline=$(grep "^$name:" "$ROOT/etc/group" 2>/dev/null)
+        if [ -n "$gline" ]; then
+            gid=$(printf '%s' "$gline" | cut -d: -f3)
+        else
+            printf '%s:x:%s:\n' "$name" "$gid" >>"$ROOT/etc/group" || die "cannot write /etc/group"
+        fi
+        shell=/bin/sh
+        [ -x "$ROOT/bin/bash" ] && shell=/bin/bash
+        printf '%s:x:%s:%s::%s:%s\n' "$name" "$n" "$gid" "$home" "$shell" >>"$ROOT/etc/passwd" ||
+            die "cannot write /etc/passwd"
+        if [ -f "$ROOT/etc/shadow" ]; then
+            printf '%s:*:%s:0:99999:7:::\n' "$name" $(($(date +%s) / 86400)) >>"$ROOT/etc/shadow" ||
+                die "cannot write /etc/shadow"
+        fi
+        entry=$(grep "^$name:" "$ROOT/etc/passwd")
+        say "session user $name added (uid $n)"
+    fi
+    uid=$(printf '%s' "$entry" | cut -d: -f3)
+    gid=$(printf '%s' "$entry" | cut -d: -f4)
+    own_home=$(printf '%s' "$entry" | cut -d: -f6)
+    if [ "$own_home" != "$home" ]; then
+        say "session user $name has the home $own_home in this image; Puddle's files for it are in $home"
+    fi
+    SESSION_USER=$name SESSION_HOME=$home SESSION_OWNER=$uid:$gid
+    if [ ! -d "$ROOT$home" ]; then
+        mkdir -p "$ROOT$home" || die "cannot create the home $home"
+        chmod 0750 "$ROOT$home" || die "cannot set the mode of $home"
+        own "$SESSION_OWNER" "$ROOT$home"
+    fi
+    add_to_group docker "$name"
+    sudo_at=
+    for d in /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin; do
+        if [ -x "$ROOT$d/sudo" ]; then sudo_at=$d/sudo && break; fi
+    done
+    if [ -n "$sudo_at" ]; then
+        say "session user $name (uid $uid), sudo at $sudo_at"
+    else
+        say "session user $name (uid $uid), no sudo in this image"
+    fi
+}
 
 # --- 3. Files, applied in plan order ----------------------------------------------------------
 # Three kinds: puddle_file writes a whole file Puddle owns; puddle_merge sets only Puddle's keys in
@@ -144,10 +264,11 @@ merge_result() { # merge_result <path> <tool output>
 
 # shellcheck disable=SC2329 # the plan calls these
 {
+    puddle_session_user() { session_user "$1" "$2"; }
     puddle_file() { # puddle_file <path> <octal mode> <printf format of the contents>
         dst=$ROOT$1
         dir=${dst%/*}
-        mkdir -p "${dir:-/}" || die "cannot create the directory for $1"
+        mkdir_for "$1"
         tmp=${dir}/.puddle-new.$$
         rm -f "$tmp"
         # shellcheck disable=SC2059 # a printf format with every special byte escaped (plan.rs)
@@ -170,6 +291,7 @@ merge_result() { # merge_result <path> <tool output>
             die "$1 is a directory"
         }
         mv -f "$tmp" "$dst" || die "cannot move $1 into place"
+        if below_home "$1"; then own "$SESSION_OWNER" "$dst"; fi
         printf '%s\n' "$1" >>"$RUN/files.new"
     }
     puddle_merge_tool() { MERGE_TOOL=$1; }
@@ -177,13 +299,14 @@ merge_result() { # merge_result <path> <tool output>
         [ -n "$MERGE_TOOL" ] && [ -x "$ROOT$MERGE_TOOL" ] ||
             die "cannot merge $1: the merge tool ${MERGE_TOOL:-(none)} is missing or not executable"
         dst=$ROOT$1
-        dir=${dst%/*}
-        mkdir -p "${dir:-/}" || die "cannot create the directory for $1"
+        mkdir_for "$1"
         # shellcheck disable=SC2059 # as in puddle_file
         (umask 077 && printf "$3" >"$RUN/merge.spec") || die "cannot write the merge spec for $1"
         out=$("$ROOT$MERGE_TOOL" merge-file apply "$STATE/merge" "$1" "$dst" "$2" <"$RUN/merge.spec" 2>&1) ||
             die "cannot merge $1: $out"
         merge_result "$1" "$out"
+        # Below the home every file is the session user's, also one the tool just made as root.
+        if below_home "$1" && [ -f "$dst" ] && [ ! -L "$dst" ]; then own "$SESSION_OWNER" "$dst"; fi
         printf '%s\n' "$1" >>"$RUN/merge.new"
     }
     puddle_keep() { # puddle_keep <path>: a file an earlier plan merged stays as it is, still Puddle's

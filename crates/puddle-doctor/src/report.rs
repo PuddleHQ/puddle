@@ -58,6 +58,8 @@ pub enum CheckId {
     JobObject,
     /// Microsoft Entra Global Secure Access.
     GlobalSecureAccess,
+    /// The folders above Puddle's data: can other accounts write in them.
+    DataPath,
 }
 
 impl CheckId {
@@ -73,6 +75,7 @@ impl CheckId {
             Self::TestBoot => "Test boot",
             Self::JobObject => "Job object",
             Self::GlobalSecureAccess => "Global Secure Access",
+            Self::DataPath => "Data folder path",
         }
     }
 }
@@ -142,6 +145,10 @@ pub enum Finding {
     GlobalSecureAccessInstalled,
     /// Whether the Global Secure Access client is installed couldn't be read.
     GlobalSecureAccessUnknown,
+    /// A folder above Puddle's data is writable by other accounts and not sticky.
+    DataPathWritable,
+    /// The folders above Puddle's data couldn't be read.
+    DataPathUnreadable,
 }
 
 /// One line of the report.

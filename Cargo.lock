@@ -6227,6 +6227,7 @@ dependencies = [
  "object",
  "puddle-fs",
  "puddle-runtime",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

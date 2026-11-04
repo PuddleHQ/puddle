@@ -138,8 +138,8 @@ impl StartRefusal {
     pub const fn way_out(self) -> &'static str {
         match self {
             Self::RootDiskNeedsRecovery => {
-                "Delete the workspace and create it again to give it a fresh root disk; the \
-                 volume with your work can be kept."
+                "Delete the workspace and create it again to give it a fresh root disk. What \
+                 was installed outside the volume is lost; the volume with your work can be kept."
             }
         }
     }

@@ -33,6 +33,8 @@ const PAUSE: Duration = Duration::from_secs(4);
 const DROP_FOR: Duration = Duration::from_secs(4);
 const CHUNK: usize = 1 << 20;
 const INNER: &str = "PUDDLE_STALL_METER_INNER";
+/// The program the inner case cuts and restores the link with; `iptables` when unset.
+const IPTABLES: &str = "PUDDLE_STALL_METER_IPTABLES";
 
 const HEAD: &str =
     "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid\n";
@@ -210,6 +212,7 @@ async fn kernel_drop_inner() {
         assert!(ok, "{cmd} failed");
     };
     sh("ip link set lo up");
+    let iptables = std::env::var(IPTABLES).unwrap_or_else(|_| "iptables".into());
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let sink = tokio::spawn(drain(listener, Duration::ZERO));
@@ -218,10 +221,10 @@ async fn kernel_drop_inner() {
     tokio::spawn(async move {
         // The test's timeline: the link works for 0.5 s, then is cut for DROP_FOR.
         tokio::time::sleep(Duration::from_millis(500)).await;
-        sh("iptables -A INPUT -i lo -j DROP");
+        sh(&format!("{iptables} -A INPUT -i lo -j DROP"));
         // The test's timeline: the cut lasts DROP_FOR, then the link is restored.
         tokio::time::sleep(DROP_FOR).await;
-        sh("iptables -F INPUT");
+        sh(&format!("{iptables} -F INPUT"));
     });
     let progress = send_for(&mut client, &backoff, Duration::from_secs(14)).await;
     sink.await.unwrap();
@@ -243,6 +246,31 @@ async fn kernel_drop_inner() {
 
 #[test]
 fn a_kernel_drop_and_its_backoff_are_not_a_stall() {
+    let (passed, text) = drop_in_a_namespace(&[]);
+    assert!(passed, "the planted drop failed:\n{text}");
+    eprintln!("{text}");
+}
+
+/// A cut that never went in leaves the transfer running at full speed, which the drop's checks
+/// would read as a kernel that did not back off. The run has to fail on the cut instead, so a
+/// broken setup is never taken for a broken meter.
+#[test]
+fn a_cut_that_fails_is_reported_as_the_cut() {
+    let (passed, text) = drop_in_a_namespace(&[(IPTABLES, "false")]);
+    assert!(!passed, "a run with no cut passed:\n{text}");
+    assert!(
+        text.contains("false -A INPUT -i lo -j DROP failed"),
+        "the failed cut is not named:\n{text}"
+    );
+    assert!(
+        !text.contains("did not back off"),
+        "the failed cut was reported as the meter's:\n{text}"
+    );
+}
+
+/// Runs [`kernel_drop_inner`] in a network namespace of its own, with `env` added, and returns
+/// whether it passed and what it printed.
+fn drop_in_a_namespace(env: &[(&str, &str)]) -> (bool, String) {
     let exe = std::env::current_exe().unwrap();
     let filter = [
         "--exact",
@@ -260,6 +288,7 @@ fn a_kernel_drop_and_its_backoff_are_not_a_stall() {
             .args(&prefix[1..])
             .arg("env")
             .arg(format!("{INNER}=1"))
+            .args(env.iter().map(|(name, value)| format!("{name}={value}")))
             .arg(&exe)
             .args(filter)
             .output()
@@ -270,10 +299,8 @@ fn a_kernel_drop_and_its_backoff_are_not_a_stall() {
             String::from_utf8_lossy(&out.stderr)
         );
         if text.contains("INNER-RAN") {
-            assert!(out.status.success(), "the planted drop failed:\n{text}");
-            eprintln!("{text}");
-            // skip-ok: the planted drop ran and passed; this ends the search for a namespace
-            return;
+            // skip-ok: the inner case ran in a namespace; this ends the search for one
+            return (out.status.success(), text);
         }
         tried.push(format!("{prefix:?}: {text}"));
     }

@@ -11394,6 +11394,17 @@
                   "secret"
                 ]
               },
+              "place": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SecretPlace",
+                    "description": "Where in a request the stand-in is swapped; header values when left out."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "value": {
                 "type": [
                   "string",
@@ -11417,6 +11428,7 @@
           "kind",
           "value",
           "hosts",
+          "place",
           "overridden",
           "changed_at"
         ],
@@ -11445,6 +11457,17 @@
           "overridden": {
             "type": "boolean",
             "description": "A global variable that the workspace's own variable of the same name hides. Only ever\n`true` in a workspace's list."
+          },
+          "place": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SecretPlace",
+                "description": "Where in a request a secret's stand-in is swapped; `null` for a plain variable."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "scope": {
             "$ref": "#/components/schemas/EnvScope",
@@ -15066,6 +15089,61 @@
           "workspace",
           "global"
         ]
+      },
+      "SecretPlace": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The values of request headers: what almost every tool uses.",
+            "required": [
+              "in"
+            ],
+            "properties": {
+              "in": {
+                "type": "string",
+                "enum": [
+                  "header"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The one query parameter `name` (`appid`, `access_token`, `key`), for an API that takes its\nkey nowhere else.",
+            "required": [
+              "name",
+              "in"
+            ],
+            "properties": {
+              "in": {
+                "type": "string",
+                "enum": [
+                  "query"
+                ]
+              },
+              "name": {
+                "type": "string",
+                "description": "The parameter's name: 1 to 64 visible characters, none of `&`, `=`, `#`, `%`, `+`."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The path (a Telegram bot's `/bot<token>/`, a webhook URL).",
+            "required": [
+              "in"
+            ],
+            "properties": {
+              "in": {
+                "type": "string",
+                "enum": [
+                  "path"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Where in a request Puddle swaps a secret's stand-in for its real value, toward the secret's\nhosts only. Anywhere else the stand-in goes out unchanged."
       },
       "ServerChoice": {
         "type": "string",

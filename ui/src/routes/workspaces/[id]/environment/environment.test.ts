@@ -214,6 +214,7 @@ describe("adding", () => {
     expect(api.bodies.at(-1)).toEqual({
       kind: "secret",
       hosts: ["registry.npmjs.org", "*.npmjs.org"],
+      place: { in: "header" },
       value: "npm_abc123",
     });
     expect(document.body.textContent).not.toContain("npm_abc123");
@@ -343,6 +344,7 @@ describe("changing a row", () => {
     expect(api.bodies.at(-1)).toEqual({
       kind: "secret",
       hosts: ["api.example.com", "other.example.com"],
+      place: { in: "header" },
     });
     expect(api.secretValues["TOKEN"]).toBe("kept");
   });
@@ -396,6 +398,112 @@ describe("changing a row", () => {
       await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
       expect(api.bodies.at(-1)).not.toHaveProperty("value");
     });
+  });
+
+  it("moves a secret to a query parameter or the path, and the row says where it goes", async () => {
+    api.secretValues["TOKEN"] = "kept";
+    render(Page);
+    const edit = async () => {
+      const row = await rowOf("TOKEN");
+      await fireEvent.click(
+        within(row).getByRole("button", { name: "Edit TOKEN" }),
+      );
+      return screen.findByRole("dialog");
+    };
+    let dialog = await edit();
+    expect(
+      within(dialog).getByRole("radio", { name: "In a header (most tools)" }),
+    ).toBeChecked();
+    expect(within(dialog).queryByLabelText("Parameter name")).toBeNull();
+    await fireEvent.click(
+      within(dialog).getByRole("radio", { name: "In a query parameter" }),
+    );
+    const save = () =>
+      fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await save();
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+      "Name the query parameter",
+    );
+    await fireEvent.input(within(dialog).getByLabelText("Parameter name"), {
+      target: { value: "app&id" },
+    });
+    expect(within(dialog).queryByRole("alert")).toBeNull();
+    await save();
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+      "without spaces or & = # % +",
+    );
+    expect(api.calls.filter((c) => c.startsWith("PUT"))).toEqual([]);
+    await fireEvent.input(within(dialog).getByLabelText("Parameter name"), {
+      target: { value: " appid " },
+    });
+    await save();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(api.bodies.at(-1)).toEqual({
+      kind: "secret",
+      hosts: ["api.example.com"],
+      place: { in: "query", name: "appid" },
+    });
+    expect(await rowOf("TOKEN")).toHaveTextContent(
+      "Sent only to api.example.com in the query parameter appid.",
+    );
+
+    dialog = await edit();
+    expect(
+      within(dialog).getByRole("radio", { name: "In a query parameter" }),
+    ).toBeChecked();
+    expect(within(dialog).getByLabelText("Parameter name")).toHaveValue(
+      "appid",
+    );
+    await fireEvent.click(
+      within(dialog).getByRole("radio", { name: "In the path of the URL" }),
+    );
+    await save();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(api.bodies.at(-1)).toEqual({
+      kind: "secret",
+      hosts: ["api.example.com"],
+      place: { in: "path" },
+    });
+    expect(await rowOf("TOKEN")).toHaveTextContent(
+      "Sent only to api.example.com in the path.",
+    );
+
+    dialog = await edit();
+    await fireEvent.click(
+      within(dialog).getByRole("radio", { name: "In a header (most tools)" }),
+    );
+    await save();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(api.bodies.at(-1)).toEqual({
+      kind: "secret",
+      hosts: ["api.example.com"],
+      place: { in: "header" },
+    });
+    expect(await rowOf("TOKEN")).toHaveTextContent(
+      "Sent only to api.example.com.",
+    );
+    expect(api.secretValues["TOKEN"]).toBe("kept");
+  });
+
+  it("says once what the swap cannot cover, and only for a secret", async () => {
+    render(Page);
+    const dialog = await openAdd();
+    expect(dialog).not.toHaveTextContent("How the swap works");
+    await fireEvent.click(
+      within(dialog).getByRole("radio", { name: /Secret:/ }),
+    );
+    const notes = within(dialog).getAllByRole("note");
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toHaveTextContent("How the swap works");
+    for (const part of [
+      "AWS access keys with SigV4",
+      "HMAC",
+      "JWT",
+      "databases, SMTP, SSH",
+      "used only inside the workspace",
+    ]) {
+      expect(notes[0]).toHaveTextContent(part);
+    }
   });
 
   it("overrides a global variable with the workspace's own, starting from its name", async () => {

@@ -70,7 +70,7 @@ impl RuleSetInfo {
 pub struct RuleSetEntryInfo {
     /// `example.com` or `.example.com`.
     pub pattern: String,
-    /// Allow or deny (built-in entries only allow).
+    /// Allow or deny (a built-in set's entries all share its effect).
     pub effect: Effect,
     /// What it is for (built-in entries).
     pub note: String,
@@ -132,22 +132,14 @@ pub fn parse_rule_set(text: &str) -> Option<RuleSetId> {
 /// Builds the engine's snapshot from the database and the catalogue.
 pub(super) fn load_index(conn: &Connection) -> Result<RuleIndex, StoreError> {
     let rules = load_rules(conn)?;
-    let mut entries = Vec::new();
-    for set in BUILT_IN_SETS {
-        for pattern in catalogue::patterns(set.entries) {
-            entries.push(SetEntry {
-                set: RuleSetId::BuiltIn(set.slug),
-                pattern,
-                workspace: None,
-            });
-        }
-    }
+    let mut entries = catalogue::set_entries(BUILT_IN_SETS);
     for (workspace, reason) in load_reasons(conn)? {
         for pattern in catalogue::patterns(reason.hosts()) {
             entries.push(SetEntry {
                 set: RuleSetId::System,
                 pattern,
                 workspace: workspace.clone(),
+                effect: Effect::Allow,
             });
         }
     }
@@ -425,7 +417,7 @@ impl Store {
                     .iter()
                     .map(|entry| RuleSetEntryInfo {
                         pattern: entry.pattern.to_owned(),
-                        effect: Effect::Allow,
+                        effect: set.effect,
                         note: entry.note.to_owned(),
                         rule_id: None,
                         expires_at: None,

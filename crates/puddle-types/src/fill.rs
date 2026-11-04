@@ -217,4 +217,16 @@ mod tests {
         // A negative id never occurs, but must not panic.
         let _ = Fill::default_for_user_set(i64::MIN);
     }
+
+    #[cfg(feature = "openapi")]
+    #[test]
+    fn the_rgb_schema_is_a_hex_colour_string() {
+        use utoipa::PartialSchema;
+
+        let schema = serde_json::to_value(Rgb::schema()).unwrap();
+        assert_eq!(schema["type"], "string");
+        assert_eq!(schema["pattern"], "^#[0-9a-fA-F]{6}$");
+        assert_eq!(schema["examples"], serde_json::json!(["#0a6a85"]));
+        assert_eq!(schema["description"], "A colour as `#rrggbb`.");
+    }
 }

@@ -121,7 +121,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 None => self.inner.problems.clear(PROBLEM_KEY),
             },
             Err(e) => {
-                tracing::warn!(error = %e, "the unclaimed workspace disks could not be listed")
+                tracing::warn!(error = %e, "the unclaimed workspace disks could not be listed");
             }
         }
     }

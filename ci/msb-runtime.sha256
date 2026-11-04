@@ -9,6 +9,13 @@
 #
 # Fork tags (PuddleHQ/microsandbox, 2026-10-06). The tag's source commit pins the Linux build.
 # Older tags stay listed so earlier commits still fetch their runtime (e.g. windows-e2e.ps1 -Bisect).
+v0.7.12-puddle.3 msb-windows-x86_64.exe f3ed68d92f25da37d09a63835b8f5ffc00cf320c8b1e37f7c8d65eaa532746b0
+v0.7.12-puddle.3 libkrunfw-windows-x86_64.dll a0bcc5aabfca7185a54ce72ea619be4c815064046eb809262bcbd595d6a48e4a
+v0.7.12-puddle.3 agentd-x86_64 17486e66924b08999edc64448184afe95f23499c4522af762145fc782d33e2a4
+v0.7.12-puddle.3 msb-linux-x86_64 4907c28caca0835c76bfc8ec24a9aa95d2646f2c3439a31dc45cbf8fe79c576d
+v0.7.12-puddle.3 libkrunfw-linux-x86_64.so 3854efcd3fe625528fa00207d97586d9790db8c436bb6881a43986604336d18e
+v0.7.12-puddle.3 source-commit 3579b08ca7ee87ce7ff5a2ce6a1fc11a220d5540
+v0.7.12-puddle.3 libkrunfw-linux-version 5.6.1
 v0.7.12-puddle.2 msb-windows-x86_64.exe 77966a8c55fa513541d15e74ce0ca7aca4e085435c2f034cd8157d74893548d0
 v0.7.12-puddle.2 libkrunfw-windows-x86_64.dll 144965fa6d631b6e605353f6092e9572cc2355c16c7f7bdfd96f9616ef624d91
 v0.7.12-puddle.2 agentd-x86_64 2dce2325bcd6f091eb22f75dd5cb1ce15313a9fdbeb48310e92bb2cb3aab205d

@@ -111,7 +111,7 @@ async fn a_stream_over_the_workspace_budget_is_refused_and_a_finished_one_gives_
         .name("bound.test", server.addr)
         .config(&config)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let mut holders = Vec::new();
     for _ in 0..2 {
@@ -182,7 +182,7 @@ async fn sockets_of_the_http11_pool_count_against_the_workspace_connection_limit
         .name("bound.test", server.addr)
         .config(&config)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let mut slow = Vec::new();
     for _ in 0..3 {
@@ -253,7 +253,7 @@ async fn a_stream_that_is_never_polled_ends_its_connection_and_the_audit_says_wh
         .name("bound.test", server.addr)
         .config(&config)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut tls = raw(&mut guest).await;
     // SETTINGS: INITIAL_WINDOW_SIZE (4) = 0, so no stream is ever allowed a byte of DATA.
     let mut settings = vec![0, 4];
@@ -315,7 +315,7 @@ async fn a_peer_that_ignores_the_shutdown_is_dropped_after_the_grace() {
         .name("bound.test", server.addr)
         .config(&config)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut tls = raw(&mut guest).await;
     let started = tokio::time::Instant::now();
     // Acknowledges SETTINGS and nothing else: the PING that follows the GOAWAY stays unanswered.
@@ -354,7 +354,7 @@ async fn a_stream_queued_behind_the_servers_stream_limit_is_answered_after_the_h
         .name("bound.test", server.addr)
         .config(&config)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let mut first = client.sender.clone();
     let _held = tokio::spawn(async move {
@@ -452,7 +452,7 @@ async fn streams_asking_for_a_dead_server_share_one_attempt() {
         .name("bound.test", dead.addr)
         .config(&config)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     // The handshake's own attempt fails after the TLS timeout; the first stream is told why.
     let (code, reader) = guest.connect_to("bound.test:443").await;
     assert_eq!(code, 200);
@@ -516,7 +516,7 @@ async fn a_stream_waiting_for_another_streams_attempt_gives_up_after_the_head_ti
         .name("bound.test", dead.addr)
         .config(&config)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let (code, reader) = guest.connect_to("bound.test:443").await;
     assert_eq!(code, 200);
     let client = paused(Box::pin(guest.h2_after_connect(reader, "bound.test:443"))).await;
@@ -558,7 +558,7 @@ async fn streams_waiting_for_an_attempt_that_works_all_use_its_connection() {
         }
     });
     let rig = RigBuilder::new(&pki).name("bound.test", front_addr).build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let client = guest.h2("bound.test:443", &[b"h2"]).await;
     let statuses = concurrent_gets(&client, 4).await;
     assert_eq!(
@@ -590,7 +590,7 @@ async fn a_stream_the_server_never_answers_is_ended_by_the_idle_limit() {
         .name("bound.test", server.addr)
         .config(&config)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let asked = tokio::time::Instant::now();
     let got = paused(tokio::time::timeout(FAR, client.get("bound.test", "/hold")))
@@ -638,7 +638,7 @@ async fn the_guest_leg_announces_fixed_windows() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut tls = raw(&mut guest).await;
     let (opening, _) = frames_until_end(&mut tls, Duration::from_millis(500)).await;
     assert_eq!(
@@ -674,7 +674,7 @@ async fn an_agreed_websocket_over_http11_that_goes_silent_is_closed_and_recorded
         .name("bound.test", server.addr)
         .config(&config)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(
@@ -737,7 +737,7 @@ async fn an_agreed_websocket_over_http2_that_goes_silent_is_closed_and_recorded(
         .name("bound.test", server.addr)
         .config(&config)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let request = http::Request::builder()
         .method("CONNECT")
@@ -775,7 +775,7 @@ async fn a_control_frame_flood_is_recorded_as_the_limit_that_ended_the_connectio
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut tls = raw(&mut guest).await;
     let mut pings = Vec::new();
     for _ in 0..1100 {
@@ -800,7 +800,7 @@ async fn a_header_block_left_open_is_recorded_as_the_limit_that_ended_the_connec
         .name("bound.test", server.addr)
         .config(&config)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut tls = raw(&mut guest).await;
     ack_server_settings(&mut tls).await;
     tls.write_all(&frame(1, 0x1, 1, &get_block(b"/")))

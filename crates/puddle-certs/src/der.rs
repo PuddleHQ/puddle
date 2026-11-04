@@ -261,6 +261,24 @@ mod tests {
             assert!(t(UTC_TIME, bad).is_err(), "{bad}");
         }
         assert!(t(GENERALIZED_TIME, "700101000000Z").is_err());
+        // One field out of range alone refuses the time; the last valid value of each is accepted.
+        for bad in [
+            "700001000000Z", // month 0
+            "701301000000Z", // month 13
+            "700100000000Z", // day 0
+            "700132000000Z", // day 32
+            "700101240000Z", // hour 24
+            "700101006000Z", // minute 60
+            "700101000061Z", // second 61
+        ] {
+            assert!(t(UTC_TIME, bad).is_err(), "{bad}");
+        }
+        assert_eq!(t(UTC_TIME, "700101000000Z"), Ok(0));
+        assert_eq!(t(UTC_TIME, "700131000000Z"), Ok(30 * 86_400));
+        assert_eq!(t(UTC_TIME, "701201000000Z"), Ok(334 * 86_400));
+        assert_eq!(t(UTC_TIME, "700101235959Z"), Ok(86_399));
+        // A leap second is read as the next second.
+        assert_eq!(t(UTC_TIME, "700101000060Z"), Ok(60));
         assert!(t(INTEGER, "700101000000Z").is_err());
     }
 
@@ -281,6 +299,11 @@ mod tests {
         assert_eq!(
             parse(&[0x02, 0x00]),
             Err(Malformed("no certificate sequence"))
+        );
+        // Four length bytes are the most it reads: this one is supported and then runs short.
+        assert_eq!(
+            parse(&[0x30, 0x84, 0, 0, 0, 0]),
+            Err(Malformed("truncated"))
         );
         assert_eq!(parse(&[0x30, 0x00]), Err(Malformed("truncated")));
         assert_eq!(

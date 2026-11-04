@@ -481,3 +481,21 @@ fn a_workspace_whose_request_rule_deletion_cannot_be_recorded_keeps_its_request_
     assert_eq!(err.to_string(), DISK_FULL);
     assert_eq!(store.request_rules(None).unwrap(), [rule]);
 }
+
+#[test]
+fn a_workspace_operation_that_cannot_be_recorded_is_logged_and_dropped() {
+    let store = store();
+    let op = NewWorkspaceOp {
+        op: WorkspaceOpKind::Create,
+        workspace: Some(WorkspaceName::new("acme").unwrap()),
+        outcome: WorkspaceOpOutcome::Succeeded,
+        actor: Actor::Api,
+        detail: None,
+    };
+    store.fail_audit_writes("workspace_op");
+    assert!(!store.note_workspace_op(&op));
+    assert_eq!(store.audit_lines(0, 10).unwrap(), []);
+    store.audit_writes_work_again();
+    assert!(store.note_workspace_op(&op));
+    assert_eq!(store.audit_lines(0, 10).unwrap().len(), 1);
+}

@@ -19,8 +19,7 @@ use std::path::Path;
 use std::process::Stdio;
 
 use git_support::{GitRig, PERSONAL, SHA, WORK, token_basic};
-use terminate_support::{Guest, LOCAL};
-use tokio::net::TcpListener;
+use terminate_support::Guest;
 use tokio::process::Command;
 use tokio::task::JoinHandle;
 
@@ -54,30 +53,11 @@ fn git_available() -> bool {
     found
 }
 
-/// A loopback port that is a Git client's HTTP proxy: every connection becomes a stream into the
-/// guest's route, as the guest agent relays the proxy port.
-async fn proxy_port(guest: &Guest) -> (u16, JoinHandle<()>) {
-    let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let mut control = guest.control.clone();
-    let task = tokio::spawn(async move {
-        while let Ok((mut tcp, _)) = listener.accept().await {
-            let Ok(mut stream) = control.open_stream().await else {
-                return;
-            };
-            tokio::spawn(async move {
-                let _ = tokio::io::copy_bidirectional(&mut tcp, &mut stream).await;
-            });
-        }
-    });
-    (port, task)
-}
-
 impl Git {
     async fn new() -> Self {
         let t = GitRig::new().await;
-        let guest = t.rig.guest().await;
-        let (port, bridge) = proxy_port(&guest).await;
+        let guest = t.rig.guest();
+        let (port, bridge) = guest.proxy_port().await;
         let home = tempfile::tempdir().unwrap();
         std::fs::write(home.path().join("ca.pem"), t.rig.ca.certificate().pem()).unwrap();
         std::fs::write(home.path().join("gitconfig"), "").unwrap();

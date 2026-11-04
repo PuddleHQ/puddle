@@ -7,15 +7,15 @@ use std::collections::BTreeSet;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use puddle_store::IdentityId;
+use puddle_store::{IdentityId, WorkspaceOpKind};
 use puddle_types::CheckoutDir;
 
 use crate::ApiErrorBody;
 use crate::checkouts::AddRepository;
 use crate::error::{ApiError, blocking};
 use crate::extract::Path;
-use crate::routes::AppState;
 use crate::routes::workspaces::{StoreGitSetup, git_request, view, workspace_id};
+use crate::routes::{AppState, record_op};
 use crate::wire::{AddRepositoryRequest, Checkouts, Workspace};
 
 /// The directory in a path. A string that can't be a checkout directory names no entry.
@@ -90,7 +90,22 @@ pub(crate) async fn add_repository(
         AddRepository::Existing { .. } => StatusCode::OK,
     };
     let git = StoreGitSetup::new(state.store.clone());
+    let directory = match &add {
+        AddRepository::Clone(new) => new.repository.directory.to_string(),
+        AddRepository::Existing { directory, .. } => directory.to_string(),
+    };
     let record = state.workspaces.add_repository(&id, add, &git).await?;
+    let (store, name) = (state.store.clone(), record.name.clone());
+    blocking(move || {
+        record_op(
+            &store,
+            WorkspaceOpKind::RepoAdded,
+            Some(&name),
+            Some(format!("{directory} on the workspace's list")),
+        );
+        Ok(())
+    })
+    .await?;
     Ok((
         status,
         Json(view(&state, record).await.with_identities(git.take())),
@@ -150,5 +165,16 @@ pub(crate) async fn remove_repository(
 ) -> Result<Json<Workspace>, ApiError> {
     let (id, directory) = (workspace_id(&id)?, entry_directory(&directory)?);
     let record = state.workspaces.remove_repository(&id, &directory).await?;
+    let (store, name) = (state.store.clone(), record.name.clone());
+    blocking(move || {
+        record_op(
+            &store,
+            WorkspaceOpKind::RepoRemoved,
+            Some(&name),
+            Some(format!("{directory} off the workspace's list")),
+        );
+        Ok(())
+    })
+    .await?;
     Ok(Json(view(&state, record).await))
 }

@@ -395,6 +395,22 @@ mod tests {
         assert_eq!(extra.matches("-----BEGIN CERTIFICATE-----").count(), 2);
     }
 
+    #[test]
+    fn a_development_certificate_the_user_also_trusted_in_windows_is_listed_once() {
+        let dev = dev_cert();
+        let der = pem::parse(dev.cert_pem()).unwrap().into_contents();
+        // The same certificate among the host's roots (a leaf is no root `select` would take, so
+        // the host list is built directly).
+        let trust = GuestTrust {
+            host: vec![(Fingerprint::of(&der), dev.cert_pem().to_owned())],
+            puddle: TrustBundle::new(),
+            dev: Some(dev),
+            user: SessionUser::Root,
+        };
+        let extra = text(&trust.guest_files(), EXTRA_CAS_PATH);
+        assert_eq!(extra.matches("-----BEGIN CERTIFICATE-----").count(), 1);
+    }
+
     fn dev_cert() -> GuestDevCert {
         let dir = tempfile::tempdir().unwrap();
         let manager = crate::devcert::DevCertManager::new(dir.path(), crate::devcert::Unsupported);
@@ -496,6 +512,7 @@ mod tests {
         let trust = GuestTrust::new(&CorporateRoots::default(), &TrustBundle::new())
             .with_dev_cert(dev.clone());
         let bytes: Vec<u8> = key_body.bytes().collect();
+        assert_eq!(format!("{dev:?}"), "GuestDevCert { .. }");
         let leaked = format!("{dev:?} {trust:?} {:?}", trust.guest_files());
         assert!(!leaked.contains(&key_body), "key text in Debug output");
         assert!(

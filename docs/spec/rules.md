@@ -179,7 +179,7 @@ readable as JSONL (one record per line).
   plain HTTP/1.x only, `bytes_up`, `bytes_down`), `pending_created`, `pending_decided`, `pending_expired` (only when a workspace is deleted),
   `rule_created`, `rule_updated`, `rule_deleted`,
   `rule_expired` (with the full rule), `request_rule_created`, `request_rule_deleted` (R-49, the rule on method and path with
-  its host, methods and path, and for a deletion why and by whom), `audit_trimmed` (`deleted_records`, `oldest_ts_kept`), and
+  its host, methods and path, and for a deletion why and by whom), `workspace_op` (R-56), `audit_trimmed` (`deleted_records`, `oldest_ts_kept`), and
   the rule set records of R-43. Records written by earlier versions still read: `pending_suppressed`
   (`workspace_id`, `count`) and `pending_expired` with reason `stale`; nothing writes them any more.
   On a decrypted host whose client refuses Puddle's certificate (it does not
@@ -230,13 +230,29 @@ readable as JSONL (one record per line).
   capped at 5000 *(default)*: the sweeper deletes the oldest ones past it, hosts and all, and writes one
   `connection` record with `reason: merged` and the number deleted as `count`. A flood of requests nobody answers cannot
   fill the audit and push real history out, and nothing is refused (R-44, R-45).
+- **R-56 Workspace operations are audited.** A `workspace_op` record says who asked (`actor`: `cli`,
+  `ui`, `api` or `system`), what was done (`op`), to which workspace (`workspace_id`, `null` for an
+  identity, which belongs to none), how it ended (`outcome`: `succeeded` or `failed`) and a short
+  plain sentence (`detail`, `null` when there is nothing to add). The `op` values are `create`,
+  `delete`, `rename`, `start`, `stop`, `identity_created`, `identity_updated`, `identity_deleted`,
+  `identity_default_set`, `identities_changed`, `repo_added`, `repo_switched` and `repo_removed`.
+  A create or a delete is written whether it worked or not; a start or a stop only when it failed
+  (a start that worked shows in the workspace's state); a rename when it worked, or when the
+  workspace list could not be saved; the identity and repository changes when they worked. A call
+  Puddle refuses before it changes anything (a name taken, a workspace that is not stopped) is the
+  caller's error and writes nothing. A delete of a workspace whose volume was already gone says so in
+  `detail`, and a failure's `detail` is the reason the user was shown. `detail` holds names, labels
+  and ids only, never a secret (R-25). The record is additive: logs written before it read as before.
+  The record is filtered like any other (R-28): `type=workspace_op`, `workspace`, and
+  `outcome=succeeded|failed`, which only this record has. A record that cannot be written is logged
+  and dropped, and the operation it describes stands.
 
 - **R-28 Reading the audit with filters.** The API filters on the server, on stored columns and
   indexes (never by parsing JSON): `workspace`, `type`, `outcome`, `host_contains` (case-folded
   substring), `from` (inclusive) and `to` (exclusive) as epoch ms. All set filters must match.
   `host` is the record's host, or a rule record's pattern. `outcome` (`allow`, `deny`, `pending`,
-  `blocked`, `expired`) exists for `connection` (its `decision`), `pending_created` (`pending`),
-  `pending_decided` (`allow` or `deny`) and `pending_expired` (`expired`); every other record has
+  `blocked`, `expired`, `succeeded`, `failed`) exists for `connection` (its `decision`), `pending_created` (`pending`),
+  `pending_decided` (`allow` or `deny`), `pending_expired` (`expired`) and `workspace_op` (`succeeded` or `failed`); every other record has
   none and never matches an `outcome` filter. `origin` (`workspace` or `puddle`) matches `connection`
   records only (a Puddle record is one without a workspace); every other record has no origin and
   never matches. *`origin` added 2026-10-07.* Pages are at most 500 records: newest first, paged
@@ -374,7 +390,10 @@ the API. *Added 2026-10-08.*
   |---|---|---|
   | The browser editor runs Microsoft's VS Code server (consent granted for the terms Puddle shows) | `update.code.visualstudio.com`, `vscode.download.prss.microsoft.com`, `marketplace.visualstudio.com`, `*.gallery.vsassets.io`, `*.gallerycdn.vsassets.io` | every workspace |
   | The browser editor runs the bundled code-server (the default) | `open-vsx.org`, `openvsx.eclipsecontent.org` | every workspace |
-  | Direct SSH is on for a workspace | the five Microsoft hosts | that workspace |
+  | Direct SSH is on for a workspace, for desktop VS Code | the five Microsoft hosts | that workspace |
+  | Direct SSH is on for a workspace, for Cursor | `cursor.blob.core.windows.net` (server download), `marketplace.cursorapi.com`, `marketplace.cursor-cdn.com` (extensions) | that workspace |
+  | Direct SSH is on for a workspace, for JetBrains Gateway | `download.jetbrains.com`, `download-cdn.jetbrains.com`, `download-cf.jetbrains.com`, `cache-redirector.jetbrains.com`, `data.services.jetbrains.com` (IDE backend), `plugins.jetbrains.com`, `downloads.marketplace.jetbrains.com` (plugins) | that workspace |
+  | Direct SSH is on for a workspace, for Zed | `github.com`, `release-assets.githubusercontent.com` (remote server download) | that workspace |
 
   Open VSX is in force from the first start, on a fresh install with no settings stored: the
   default editor is code-server, so every workspace, including one whose browser editor was never
@@ -388,6 +407,13 @@ the API. *Added 2026-10-08.*
   were added and removed, and open requests the new hosts decide are closed by `system` (R-37).
   Direct SSH is the workspace's effective `direct_ssh` setting (its own value, else the global
   default).
+  Direct SSH has no per-editor choice: switching it on gives the workspace every desktop editor's
+  list above, each shown on the Rules screen with its own reason, and an own deny of any host
+  overrides it (R-39). The AI, sign-in, licence and telemetry hosts of these editors are not in
+  the lists.
+  Zed's list holds `github.com` as a whole, because Zed's release download starts there and Puddle
+  cannot tell that fetch from another one: with direct SSH on, the workspace can reach any GitHub
+  repository, a wider allow than the other lists.
 - **R-42 A set's allow reaches a local destination only like a wildcard.** After resolving a name
   a set allowed, an address in a local category counts as reached by a wildcard rule (R-14): with
   "wildcards reach local addresses" off, it needs an own exact allow of the name or the address,

@@ -41,7 +41,7 @@ async fn once(method: &str, target: &str, with: RequestRule) -> (u16, usize) {
         .allow(vec!["api.test"])
         .request_rules(RequestRules::new(vec![with]))
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("api.test:443", None).await.unwrap();
     client
         .send(
@@ -140,7 +140,7 @@ async fn a_websocket_over_http2_meets_a_rule_on_its_get() {
             "/chat",
         )]))
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("api.test:443", &[b"h2"]).await;
     let request = http::Request::builder()
         .method("CONNECT")

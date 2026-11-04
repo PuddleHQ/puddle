@@ -51,5 +51,5 @@ else
     fi
 fi
 
-# shellcheck disable=SC2086
+# shellcheck disable=SC2086 # $deny is a command plus its arguments, meant to split.
 exec $deny "$@"

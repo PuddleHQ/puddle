@@ -57,7 +57,7 @@ async fn a_terminated_connection_goes_through_a_basic_company_proxy_by_name() {
         .name("bound.test", server.addr)
         .via(through(&proxy, "corp", &proxy_password))
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     let response = client.get("bound.test", "/x").await;
     assert_eq!(response.status, 200);
@@ -99,7 +99,7 @@ async fn a_bad_certificate_behind_the_company_proxy_is_still_a_502_with_nothing_
         .name("bound.test", server.addr)
         .via(through(&proxy, "u", &fixture::password("unused")))
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     let response = client.get("bound.test", "/x").await;
     assert_eq!(response.status, 502);
@@ -120,7 +120,7 @@ async fn a_company_proxy_that_refuses_the_tunnel_has_its_refusal_passed_on_and_n
         .name("bound.test", server.addr)
         .via(through(&proxy, "u", &fixture::password("unused")))
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     let response = client.get("bound.test", "/x").await;
     // The company proxy's own refusal, as on a spliced tunnel.
@@ -172,7 +172,7 @@ async fn a_terminated_connection_signs_in_to_an_ntlm_company_proxy_on_one_connec
         .name("bound.test", server.addr)
         .via(through_with(&proxy, Arc::new(NtlmAuth)))
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     let response = client.get("bound.test", "/x").await;
     assert_eq!(response.status, 200);
@@ -197,7 +197,7 @@ async fn http2_runs_end_to_end_inside_the_company_proxy_tunnel() {
         .name("bound.test", server.addr)
         .via(through(&proxy, "corp", &proxy_password))
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2", b"http/1.1"]).await;
     let mut tasks = Vec::new();
     for i in 0..20 {
@@ -249,7 +249,7 @@ async fn an_h2_guest_over_an_http11_server_behind_a_company_proxy_uses_a_few_tun
         .name("bound.test", server.addr)
         .via(through(&proxy, "u", &fixture::password("unused")))
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let client = guest.h2("bound.test:443", &[b"h2"]).await;
     let mut tasks = Vec::new();
     for i in 0..40 {

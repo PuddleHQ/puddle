@@ -4355,7 +4355,7 @@ export interface components {
          * @description Why Puddle allows a System managed host: a choice you made.
          * @enum {string}
          */
-        SystemReason: "microsoft_server" | "code_server" | "direct_ssh";
+        SystemReason: "microsoft_server" | "code_server" | "direct_ssh" | "direct_ssh_cursor" | "direct_ssh_jetbrains" | "direct_ssh_zed";
         /**
          * @description The colour theme of Puddle's window.
          * @enum {string}

@@ -771,40 +771,179 @@ async fn azure_devops_takes_a_pat_as_basic_an_entra_token_as_a_bearer_and_every_
 // A source that cannot supply its secret.
 
 #[tokio::test]
-async fn a_source_that_needs_a_sign_in_is_a_502_that_says_so_and_never_a_401() {
+async fn a_push_with_a_source_that_needs_a_sign_in_is_a_502_that_says_so_and_never_a_401() {
     tokio::time::pause();
     let w = world();
     let work = &w.store.identities().unwrap()[0];
     let source = work.credentials[0].source.clone();
     w.credentials.fail(&source, SourceError::NotSignedIn);
-    let decision = w.decide("github.com", "GET", FETCH, &[]).await;
-    let (status, code, message) = refusal(&decision);
-    assert_eq!((status, code), (502, "credential_unavailable"));
-    assert!(message.contains("Work"), "{message}");
-    assert!(message.contains("not signed in"), "{message}");
-    assert!(message.contains("sign in to it in Puddle"), "{message}");
-    assert!(message.contains("t-work"), "names the source: {message}");
+    for (method, target) in [
+        ("GET", PUSH_ADVERT),
+        ("POST", "/acme/web.git/git-receive-pack"),
+    ] {
+        let decision = w.decide("github.com", method, target, &[]).await;
+        let (status, code, message) = refusal(&decision);
+        assert_eq!((status, code), (502, "credential_unavailable"), "{target}");
+        assert!(message.contains("Work"), "{message}");
+        assert!(message.contains("not signed in"), "{message}");
+        assert!(message.contains("sign in to it in Puddle"), "{message}");
+        assert!(message.contains("t-work"), "names the source: {message}");
+    }
     // The source's cache raises the sign-in notice, not the injector: no second one.
     assert_eq!(w.events.take(), []);
     // The same request with the workspace's own header does not need the source.
     assert!(matches!(
-        w.decide("github.com", "GET", FETCH, &[OWN]).await,
+        w.decide(
+            "github.com",
+            "POST",
+            "/acme/web.git/git-receive-pack",
+            &[OWN]
+        )
+        .await,
         InjectDecision::PassThrough
     ));
 }
 
 #[tokio::test]
-async fn a_source_that_is_broken_is_a_502_without_a_sign_in_notice() {
+async fn a_read_with_a_source_that_needs_a_sign_in_goes_out_with_no_credential() {
+    tokio::time::pause();
+    let w = world();
+    let work = &w.store.identities().unwrap()[0];
+    let source = work.credentials[0].source.clone();
+    for error in [SourceError::NotSignedIn, SourceError::Timeout(Tool::Gh)] {
+        w.credentials.fail(&source, error);
+        for (method, target) in [
+            ("GET", FETCH),
+            ("POST", "/acme/web.git/git-upload-pack"),
+            ("GET", "/acme/web.git/info/lfs/objects/abc"),
+            ("POST", "/acme/web.git/info/lfs/locks/verify"),
+        ] {
+            let decision = w.decide("github.com", method, target, &[]).await;
+            let InjectDecision::PassThroughNoting(unauthorized) = decision else {
+                panic!("{method} {target}: {decision:?}");
+            };
+            // A private repository's `401` is the sign-in refusal, never the server's `401`.
+            let replaced = unauthorized.refusal().expect("replaced");
+            assert_eq!(replaced.status(), 502);
+            assert_eq!(replaced.code(), "credential_unavailable");
+            assert!(replaced.message().contains("sign in to it in Puddle"));
+            assert!(replaced.message().contains("Work"));
+        }
+    }
+    // An LFS download batch is a read too, an upload is not.
+    let download = br#"{"operation":"download","objects":[]}"#;
+    let upload = br#"{"operation":"upload","objects":[]}"#;
+    let batch = "/acme/web.git/info/lfs/objects/batch";
+    let ok = w
+        .decide_with("github.com", "POST", batch, &[], Some(download))
+        .await;
+    assert!(matches!(ok, InjectDecision::PassThroughNoting(_)), "{ok:?}");
+    for body in [Some(&upload[..]), Some(&b"not json"[..]), None] {
+        let refused = w.decide_with("github.com", "POST", batch, &[], body).await;
+        assert_eq!(refusal(&refused).1, "credential_unavailable", "{body:?}");
+    }
+    // No notice from the injector, and no secret was read twice over for nothing.
+    assert_eq!(w.events.take(), []);
+}
+
+#[tokio::test]
+async fn a_request_that_reads_like_a_read_but_writes_never_goes_out_anonymously() {
+    tokio::time::pause();
+    let w = world();
+    let work = &w.store.identities().unwrap()[0];
+    w.credentials
+        .fail(&work.credentials[0].source, SourceError::NotSignedIn);
+    for (method, target) in [
+        ("GET", PUSH_ADVERT),
+        (
+            "GET",
+            "/acme/web.git/info/refs?service=git-upload-pack&service=git-receive-pack",
+        ),
+        ("GET", "/acme/web.git/git-receive-pack"),
+        ("HEAD", "/acme/web.git/git-receive-pack"),
+        ("POST", "/acme/web.git/git-receive-pack"),
+        ("PUT", "/acme/web.git/git-upload-pack"),
+        ("DELETE", "/acme/web.git/info/refs?service=git-upload-pack"),
+        ("PATCH", "/acme/web.git/info/refs"),
+        ("PUT", "/acme/web.git/info/lfs/objects/abc"),
+        ("POST", "/acme/web.git/info/lfs/objects/verify"),
+        ("POST", "/acme/web.git/info/lfs/locks"),
+        ("POST", "/acme/web.git/info/lfs/locks/9/unlock"),
+        ("GET", "/acme/web.git/info/lfs/git-receive-pack"),
+    ] {
+        let decision = w.decide("github.com", method, target, &[]).await;
+        assert!(
+            matches!(decision, InjectDecision::Refuse(_)),
+            "{method} {target}: {decision:?}"
+        );
+    }
+    // A path that names the repository two ways is refused before anything else.
+    let decision = w
+        .decide("github.com", "GET", "/acme/web.git/../x.git/info/refs", &[])
+        .await;
+    assert_eq!(refusal(&decision).1, "bad_git_path");
+}
+
+#[tokio::test]
+async fn the_repository_table_still_gates_an_anonymous_read() {
+    tokio::time::pause();
+    let w = world();
+    w.switches(true, true);
+    let work = &w.store.identities().unwrap()[0];
+    w.credentials
+        .fail(&work.credentials[0].source, SourceError::NotSignedIn);
+    // Not on the pull list: refused by the table before the credential is asked for.
+    w.list("github.com/acme/closed", false, false);
+    let decision = w
+        .decide(
+            "github.com",
+            "GET",
+            "/acme/closed.git/info/refs?service=git-upload-pack",
+            &[],
+        )
+        .await;
+    assert_eq!(refusal(&decision).1, "pull_denied");
+}
+
+#[tokio::test]
+async fn an_anonymous_read_carries_no_header_of_puddles() {
+    tokio::time::pause();
+    let w = world();
+    let work = &w.store.identities().unwrap()[0];
+    w.credentials
+        .fail(&work.credentials[0].source, SourceError::NotSignedIn);
+    let decision = w.decide("github.com", "GET", FETCH, &[]).await;
+    let InjectDecision::PassThroughNoting(unauthorized) = decision else {
+        panic!("{decision:?}");
+    };
+    let text = format!(
+        "{:?}",
+        unauthorized.refusal().map(|r| r.message().to_owned())
+    );
+    assert!(!text.contains("CANARY"), "{text}");
+}
+
+#[tokio::test]
+async fn a_push_with_a_broken_source_is_a_502_without_a_sign_in_notice_and_a_read_goes_out_anonymously()
+ {
     let w = world();
     let work = &w.store.identities().unwrap()[0];
     w.credentials.fail(
         &work.credentials[0].source,
         SourceError::ToolMissing(Tool::Gh),
     );
-    let (status, code, message) = refusal(&w.decide("github.com", "GET", FETCH, &[]).await);
+    let (status, code, message) = refusal(&w.decide("github.com", "GET", PUSH_ADVERT, &[]).await);
     assert_eq!((status, code), (502, "credential_unavailable"));
     assert!(message.contains("is not installed"), "{message}");
     assert!(message.contains("check it in Puddle"), "{message}");
+    // A read needs no credential from a source that is not there: it goes out without one.
+    let read = w.decide("github.com", "GET", FETCH, &[]).await;
+    let InjectDecision::PassThroughNoting(unauthorized) = read else {
+        panic!("{read:?}");
+    };
+    let replaced = unauthorized.refusal().expect("replaced");
+    assert!(replaced.message().contains("is not installed"));
+    assert!(replaced.message().contains("check it in Puddle"));
     assert_eq!(w.events.take(), []);
 }
 

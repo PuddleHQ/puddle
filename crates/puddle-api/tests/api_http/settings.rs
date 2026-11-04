@@ -337,6 +337,27 @@ async fn consents_are_recorded_with_the_server_time() {
 }
 
 #[tokio::test]
+async fn the_free_space_lines_are_in_range_and_never_cross() {
+    let api = start().await;
+    // The free-space lines: a range of 1 to 10000 GB, and the failure line never above the warning line.
+    for bad in [
+        json!({"ui": {"disk_warn_free_gb": 0}}),
+        json!({"ui": {"disk_fail_free_gb": 10_001}}),
+        json!({"ui": {"disk_warn_free_gb": 10, "disk_fail_free_gb": 11}}),
+        json!({"ui": {"disk_fail_free_gb": 25}}),
+    ] {
+        let reply = api.send("PUT", "/api/settings", Some(&bad)).await;
+        assert_eq!(reply.status, 422, "{bad}: {}", reply.body);
+    }
+    assert_eq!(
+        api.settings.load_global().unwrap(),
+        None,
+        "a refused change stores nothing"
+    );
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
     let api = start().await;
     let ms = json!({"vscode_server": {"server": "microsoft"}});
@@ -411,23 +432,6 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
     assert_eq!(
         api.get("/api/consents").await.json()["vscode_server"]["state"],
         "granted"
-    );
-
-    // The free-space lines: a range of 1 to 10000 GB, and the failure line never above the warning line.
-    for bad in [
-        json!({"ui": {"disk_warn_free_gb": 0}}),
-        json!({"ui": {"disk_fail_free_gb": 10_001}}),
-        json!({"ui": {"disk_warn_free_gb": 10, "disk_fail_free_gb": 11}}),
-        json!({"ui": {"disk_fail_free_gb": 25}}),
-    ] {
-        let reply = api.send("PUT", "/api/settings", Some(&bad)).await;
-        assert_eq!(reply.status, 422, "{bad}: {}", reply.body);
-    }
-    let stored = api.settings.load_global().unwrap().unwrap();
-    assert_eq!(
-        stored["ui"]["disk_warn_free_gb"],
-        json!(null),
-        "a refused change stores nothing"
     );
 
     let bad = json!({"ui": {"theme": "purple"}});

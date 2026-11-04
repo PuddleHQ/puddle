@@ -4,7 +4,6 @@
 //! when the runtime check passed. The real msb is booted by `vm_doctor` (puddle-vm-tests).
 #![expect(
     clippy::unwrap_used,
-    clippy::panic,
     reason = "test helpers outside #[test] fns fail the test by panicking"
 )]
 

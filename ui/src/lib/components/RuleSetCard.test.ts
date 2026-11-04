@@ -128,3 +128,50 @@ describe("a set you made", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("what a set does", () => {
+  const entry = (pattern: string, effect: "allow" | "deny") => ({
+    pattern,
+    pattern_kind: "exact" as const,
+    effect,
+    note: "",
+    rule_id: null,
+    expires_at: null,
+  });
+
+  it("says Allows for a set of allows", () => {
+    mount(builtIn("github"));
+    expect(screen.getByText("Allows")).toBeInTheDocument();
+  });
+
+  it("says Blocks for a built-in deny set and gives each entry a Deny label", () => {
+    mount(
+      builtIn("trackers", {
+        entries: [
+          entry("a.tracker.example", "deny"),
+          entry("b.example", "deny"),
+        ],
+      }),
+    );
+    expect(screen.getByText("Blocks")).toBeInTheDocument();
+    expect(screen.getAllByText("Deny")).toHaveLength(2);
+    expect(screen.queryByText("Allow")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Delete/ })).toBeNull();
+  });
+
+  it("says Allows and blocks for a mixed set and labels every entry", () => {
+    mount(
+      mine(5, {
+        entries: [entry("ok.example", "allow"), entry("ads.example", "deny")],
+      }),
+    );
+    expect(screen.getByText("Allows and blocks")).toBeInTheDocument();
+    expect(screen.getAllByText("Allow")).toHaveLength(1);
+    expect(screen.getAllByText("Deny")).toHaveLength(1);
+  });
+
+  it("says nothing about an empty set", () => {
+    mount(mine(6));
+    expect(screen.queryByText(/^Allows|^Blocks/)).toBeNull();
+  });
+});

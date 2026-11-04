@@ -27,10 +27,10 @@ pub(crate) use unix::{code_integrity, file_access, global_secure_access, job};
 #[cfg(windows)]
 pub(crate) use windows::{code_integrity, file_access, global_secure_access, hypervisor, job};
 
-/// msb's rule about the folders above its catalog exists only on Linux here.
+/// msb's rule about the folders above its catalog exists only on Linux here; the probe never asks elsewhere.
 #[cfg(not(target_os = "linux"))]
-pub(crate) fn data_path(_dir: Option<&std::path::Path>) -> Option<crate::facts::DataPathFacts> {
-    None
+pub(crate) fn data_path(_dir: Option<&std::path::Path>) -> crate::facts::DataPathFacts {
+    crate::facts::DataPathFacts::NoFolder
 }
 
 #[cfg(not(any(unix, windows)))]

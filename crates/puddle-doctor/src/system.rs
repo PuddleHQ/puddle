@@ -179,6 +179,6 @@ impl Probe for SystemProbe {
     }
 
     fn data_path(&self) -> Option<DataPathFacts> {
-        sys::data_path(self.data_dir.as_deref())
+        cfg!(target_os = "linux").then(|| sys::data_path(self.data_dir.as_deref()))
     }
 }

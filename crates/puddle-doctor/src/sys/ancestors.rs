@@ -21,18 +21,18 @@ const STICKY: u32 = 0o1000;
 const ANY_BY_OTHERS: u32 = 0o077;
 
 /// The facts about the folders above `dir` (`None`: Puddle's data folder is unknown).
-pub(crate) fn data_path(dir: Option<&Path>) -> Option<DataPathFacts> {
+pub(crate) fn data_path(dir: Option<&Path>) -> DataPathFacts {
     let Some(dir) = dir else {
-        return Some(DataPathFacts::NoFolder);
+        return DataPathFacts::NoFolder;
     };
     let euid = rustix::process::geteuid().as_raw();
-    Some(match writable_ancestors(Path::new("/"), dir, euid) {
+    match writable_ancestors(Path::new("/"), dir, euid) {
         Ok((dir, writable)) => DataPathFacts::Checked { dir, writable },
         Err(e) => DataPathFacts::Unreadable {
             dir: dir.to_path_buf(),
             detail: e.to_string(),
         },
-    })
+    }
 }
 
 /// The folders msb would refuse among those from `top` down to `dir` (or its nearest existing
@@ -147,13 +147,13 @@ mod tests {
     #[test]
     fn the_sticky_bit_makes_a_shared_folder_safe() {
         let (root, data, uid) = tree(0o1777, 0o3770, 0o755);
-        assert!(check(root.path(), &data, uid).is_empty());
+        assert_eq!(check(root.path(), &data, uid), []);
     }
 
     #[test]
     fn a_folder_only_its_owner_can_enter_protects_everything_below_it() {
         let (root, data, uid) = tree(0o700, 0o775, 0o777);
-        assert!(check(root.path(), &data, uid).is_empty());
+        assert_eq!(check(root.path(), &data, uid), []);
     }
 
     #[test]
@@ -203,11 +203,11 @@ mod tests {
 
     #[test]
     fn the_real_probe_reads_this_machine_and_says_nothing_without_a_folder() {
-        assert_eq!(data_path(None), Some(DataPathFacts::NoFolder));
+        assert_eq!(data_path(None), DataPathFacts::NoFolder);
         let dir = tempfile::tempdir().unwrap();
         assert!(matches!(
             data_path(Some(dir.path())),
-            Some(DataPathFacts::Checked { .. })
+            DataPathFacts::Checked { .. }
         ));
     }
 
@@ -215,7 +215,7 @@ mod tests {
     fn a_folder_that_cannot_be_resolved_is_unreadable_and_named() {
         let facts = data_path(Some(Path::new("")));
         assert!(
-            matches!(&facts, Some(DataPathFacts::Unreadable { dir, detail })
+            matches!(&facts, DataPathFacts::Unreadable { dir, detail }
                 if dir == Path::new("") && !detail.is_empty()),
             "{facts:?}"
         );

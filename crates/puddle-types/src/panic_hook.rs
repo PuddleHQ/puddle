@@ -42,11 +42,10 @@ pub fn silenced<T>(make: impl FnOnce() -> T) -> Option<T> {
         }
     }));
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(make));
-    // Taking our hook out drops its clone, so `previous` is normally the only owner again.
+    // Taking our hook out drops its clone, so `previous` has one owner again.
     drop(std::panic::take_hook());
-    match Arc::try_unwrap(previous) {
-        Ok(hook) => std::panic::set_hook(hook),
-        Err(shared) => std::panic::set_hook(Box::new(move |info| shared(info))),
+    if let Some(hook) = Arc::into_inner(previous) {
+        std::panic::set_hook(hook);
     }
     result.ok()
 }

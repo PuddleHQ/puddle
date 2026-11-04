@@ -248,30 +248,24 @@ fn the_backend_asks_a_workspace_s_guest_to_end_its_extension_hosts_while_the_hos
     start(&options, &Machine::default()).unwrap();
 }
 
-/// Windows gives a program's main thread 1 MiB of stack by default; `build.rs` links the program
-/// with 8 MiB because the host's start-up, unoptimised, outgrows 1 MiB (the setup hook and the exit
-/// hook run on that thread). This test only shows the work fits a 1 MiB thread where frames are
-/// small; the program's real stack is checked by the Windows smoke test.
+/// The host's start-up and quit run on the program's main thread (the setup hook and the exit
+/// hook), whose stack `build.rs` links at 8 MiB on Windows. Here they run on a thread with half of
+/// that, so the program keeps at least twice what the work needs. A debug build on Windows needs
+/// about 1.04 MB (the OpenAPI document the API router builds holds the largest frames), so Windows'
+/// default 1 MiB does not fit; the Windows smoke test checks the program's real main thread.
 #[test]
-fn the_host_starts_and_stops_from_a_thread_with_the_windows_main_thread_stack() {
+fn the_host_starts_and_stops_on_half_the_programs_main_thread_stack() {
+    let main_stack: usize = env!("PUDDLE_MAIN_STACK_BYTES").parse().unwrap();
     let dir = tempfile::tempdir().unwrap();
     let options = options_in(dir.path());
     let app = app();
     let handle = app.handle().clone();
     let source = Source::prepare(&options, &Machine::default());
-    let size: usize = std::env::var("PROBE_STACK")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1024 * 1024);
     let stopped = std::thread::Builder::new()
-        .stack_size(size)
+        .stack_size(main_stack / 2)
         .spawn(move || {
-            probe::report("enter");
             shell::start(&handle, &options, source).unwrap();
-            probe::report("after start");
-            let s = shell::stop(&handle);
-            probe::report("after stop");
-            s
+            shell::stop(&handle)
         })
         .unwrap()
         .join()
@@ -325,52 +319,4 @@ fn a_build_without_the_fixture_refuses_to_show_it() {
     };
     let err = tauri::async_runtime::block_on(Source::Fixture.start(&options)).unwrap_err();
     assert!(matches!(err, BackendError::NoFixture), "{err}");
-}
-
-#[allow(unsafe_code, clippy::all)]
-mod probe {
-    #[cfg(windows)]
-    #[repr(C)]
-    struct Mbi {
-        base: usize,
-        alloc_base: usize,
-        alloc_protect: u32,
-        partition: u16,
-        region_size: usize,
-        state: u32,
-        protect: u32,
-        ty: u32,
-    }
-    #[cfg(windows)]
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn GetCurrentThreadStackLimits(low: *mut usize, high: *mut usize);
-        fn VirtualQuery(addr: *const u8, buf: *mut Mbi, len: usize) -> usize;
-    }
-    /// Committed span of this thread's stack = the deepest point reached so far (page granular).
-    #[cfg(windows)]
-    pub fn report(at: &str) {
-        let (mut low, mut high) = (0usize, 0usize);
-        unsafe { GetCurrentThreadStackLimits(&mut low, &mut high) };
-        let mut addr = low;
-        let mut lowest_used = high;
-        while addr < high {
-            let mut m: Mbi = unsafe { std::mem::zeroed() };
-            unsafe { VirtualQuery(addr as *const u8, &mut m, std::mem::size_of::<Mbi>()) };
-            if m.state == 0x1000 {
-                lowest_used = m.base;
-                break;
-            }
-            addr = m.base + m.region_size;
-        }
-        let here = &at as *const _ as usize;
-        eprintln!(
-            "PROBE {at}: reserved {} committed-peak {} sp-depth {}",
-            high - low,
-            high - lowest_used,
-            high - here
-        );
-    }
-    #[cfg(not(windows))]
-    pub fn report(_: &str) {}
 }

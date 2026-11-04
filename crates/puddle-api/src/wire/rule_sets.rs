@@ -20,7 +20,7 @@ pub enum SystemReason {
     DirectSsh,
     /// Direct SSH is on for the workspace, for Cursor.
     DirectSshCursor,
-    /// Direct SSH is on for the workspace, for JetBrains Gateway.
+    /// Direct SSH is on for the workspace, for `JetBrains` Gateway.
     #[serde(rename = "direct_ssh_jetbrains")]
     DirectSshJetBrains,
     /// Direct SSH is on for the workspace, for Zed.

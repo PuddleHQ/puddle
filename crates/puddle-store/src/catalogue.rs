@@ -122,7 +122,7 @@ pub enum SystemReason {
     /// Direct SSH is on for the workspace: Cursor's Remote SSH installs Cursor's server and its
     /// extensions in it.
     DirectSshCursor,
-    /// Direct SSH is on for the workspace: JetBrains Gateway downloads the IDE backend there and
+    /// Direct SSH is on for the workspace: `JetBrains` Gateway downloads the IDE backend there and
     /// the backend installs plugins.
     DirectSshJetBrains,
     /// Direct SSH is on for the workspace: Zed downloads its remote server there.
@@ -219,7 +219,7 @@ impl SystemReason {
                 "Direct SSH is on for this workspace: Cursor installs its server and its extensions there."
             }
             Self::DirectSshJetBrains => {
-                "Direct SSH is on for this workspace: JetBrains Gateway downloads the IDE backend there, and the backend installs plugins."
+                "Direct SSH is on for this workspace: `JetBrains` Gateway downloads the IDE backend there, and the backend installs plugins."
             }
             Self::DirectSshZed => {
                 "Direct SSH is on for this workspace: Zed downloads its remote server there."
